@@ -209,8 +209,9 @@ test('the Messages composer: its own listbox, and its keys run before the send c
   // The menu's keys come first: with it open, Enter inserts and never sends.
   // The @ and # list's keys (QA 2026-09-24 Q13) come next, and never meet
   // these: the emoji menu opens only while neither of those lists shows.
-  // #5361: the send chord is Ctrl/Cmd+Enter; plain Enter is a new line.
-  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\)/);
+  // Only then is Enter a send (lib/enter-sends.ts: where there is a
+  // keyboard, and never with Shift held or a composition being committed).
+  assert.match(composer, /onKeyDown=\{\(event\) => \{ if \(onEmojiKeyDown\(event\)\) return; if \(suggestionKeys\(event\)\) return; if \(enterSends\(event\.nativeEvent\)\) \{ event\.preventDefault\(\); submit\(\); \}/);
   const handler = composer.slice(composer.indexOf('function onEmojiKeyDown('), composer.indexOf('function onComposerChange('));
   for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape']) {
     assert.ok(handler.includes(`'${key}'`), `${key} is the menu's while it is open`);

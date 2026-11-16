@@ -121,7 +121,7 @@ test('a deployed document loads only build-scoped forms of SHELL_ASSETS', () => 
   const deployed = prefixShellAssetUrls(readPublic('index.html'), sha);
   const scoped = new Set(sw.SHELL_ASSETS.map((p) => sw.shellAssetUrl(p, sha)));
   const assets = localAssets(deployed);
-  assert.ok(assets.length >= 30, `expected the shell's ~34 assets, saw ${assets.length}`);
+  assert.ok(assets.length >= 24, `expected the shell's ~27 assets, saw ${assets.length}`);
   for (const asset of assets) {
     assert.ok(scoped.has(asset), `the deployed document loads ${asset}, which is not the scoped form of any SHELL_ASSETS entry`);
     const parsed = sw.parseBuildScopedPath(asset);

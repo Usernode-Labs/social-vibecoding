@@ -21,8 +21,8 @@
 //
 // And beside them (`rereads`, step 5 of docs/plans/bot-one-model.md, 11
 // Nov 2026), the numbers that say whether it reads requests again less and
-// says less twice: its reads per request, why it read, by week, how often a
-// Main Chat answer had to be repaired, and the taps on its offers that found
+// says less twice: its reads per request, why it read, by week, how often
+// one of its chat answers had to be repaired, and the taps on its offers that found
 // nothing to do (404) or an offer gone (410), by week. Notes said twice per
 // request are counted once its posts carry their said-once keys (step 4):
 // null until then.
@@ -83,7 +83,7 @@ function watchFor(h) {
 /**
  * Step 5: the re-read numbers from their query rows (READS_SQL, one row;
  * READ_WHY_SQL and OFFER_TAPS_SQL, a row per week and code or surface),
- * with the Main Chat answers of the same window (`chat`, CHAT_SQL's
+ * with the bot's chat answers of the same window (`chat`, CHAT_SQL's
  * figures as shapeHealth reads them). Weeks newest first, only those with
  * something in them. Pure.
  */
@@ -125,7 +125,7 @@ function shapeRereads({ reads = {}, why = [], taps = [], duplicates = null } = {
     perRequest: share(readCount, requests),
     otherRuns: Object.fromEntries(Object.entries(kinds).map(([k, n]) => [k, int(n)])),
     byWeek: [...weeks.values()].filter((w) => w.week).sort((a, b) => b.week.localeCompare(a.week)),
-    // Main Chat answers that were repaired: a request that failed or a claim
+    // The bot's chat answers that were repaired: a request that failed or a claim
     // caught, and asked again (homeroom_bot_dm_turns), of all of them.
     claimRepair: { recovered, turns: chatTurns, rate: share(recovered, chatTurns) },
     // Step 4 (11 Nov 2026): notes on requests said, or asked for, more than

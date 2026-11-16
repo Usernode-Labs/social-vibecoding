@@ -132,12 +132,9 @@ test('no write path runs user text through the display clip', () => {
   assert.match(body, /descriptionChars: bodyCheck\.value\.length/);
   assert.match(body, /descriptionChars: z\.number\(\)/);
 
-  // answer_questions posts into the request thread — same rule, and the
-  // limit is the platform's own chat cap rather than an invented one.
-  const answerIdx = SRC.indexOf("server.registerTool('answer_questions'");
-  const answerBody = SRC.slice(answerIdx, SRC.indexOf("server.registerTool('submit_platform_build'"));
-  assert.match(answerBody, /max: MAX_ANSWER_CHARS/);
-  assert.match(answerBody, /content: answerCheck\.value/);
+  // A message posted into a thread follows the same rule (post_message and
+  // the claim notes, pinned below), and its limit is the platform's own chat
+  // cap rather than an invented one.
   const wsSrc = fs.readFileSync(path.join(__dirname, '../src/services/ws.js'), 'utf8');
   assert.match(wsSrc, new RegExp(`MAX_CHAT_LEN = ${tools.MAX_ANSWER_CHARS}\\b`),
     'MAX_ANSWER_CHARS tracks the chat cap the platform actually enforces');
@@ -841,8 +838,8 @@ test('get_request skips the pictures when asked, and for a model that cannot see
     optedOut.restore();
   }
 
-  // The Mayor's shim says what its turn's model can do. A text-only model is
-  // fetched nothing; one that can look gets the pictures like anyone else.
+  // Homeroom bot's shim says what its turn's model can do. A text-only model
+  // is fetched nothing; one that can look gets the pictures like anyone else.
   const textOnly = imageConnector(issues, images, { delegation: { kind: 'agent_mayor' }, imageInput: false });
   try {
     const result = await textOnly.handlers.get('get_request')({ slug: 'recipe-box', number: 5 });
@@ -1000,16 +997,15 @@ test('untrusted() neutralizes envelope tags inside the text', () => {
   }
 });
 
-test('the connector and the Mayor\'s prompt share one envelope neutralizer', () => {
+test('the connector uses the one shared envelope neutralizer', () => {
   const { neutralizeEnvelope } = require('../src/services/untrusted-envelope');
   for (const text of ENVELOPE_ESCAPES) {
     assert.doesNotMatch(neutralizeEnvelope(text), /<\s*\/?\s*untrusted-content/i, text);
   }
   assert.equal(neutralizeEnvelope('<untrusted-contents>ok'), '<untrusted-contents>ok',
     'a different tag name is left alone');
-  const mayorPrompt = fs.readFileSync(path.join(__dirname, '../src/services/mayor/agent-prompt.js'), 'utf8');
-  assert.match(mayorPrompt, /require\('\.\.\/untrusted-envelope'\)/);
-  assert.doesNotMatch(mayorPrompt, /\/<\\\/\?untrusted-content>\/gi/, 'no second, weaker regex');
+  assert.match(SRC, /require\('\.\/untrusted-envelope'\)/);
+  assert.doesNotMatch(SRC, /\/<\\\/\?untrusted-content>\/gi/, 'no second, weaker regex');
 });
 
 test('a discussion message or a request body cannot close its envelope early', async () => {
@@ -1448,7 +1444,7 @@ test('claiming a request marks it and posts the progress note on its thread', as
     assert.equal(out.webPath, `${ORIGIN}/app/recipe-box/dev/issues/12`);
 
     // The claim goes through the platform's own route, and the note through
-    // the same chat route answer_questions uses — no new endpoint for either.
+    // the app's ordinary chat route — no new endpoint for either.
     assert.deepEqual(calls.map((c) => `${c.method} ${c.pathname}`), [
       'GET /api/apps/recipe-box/github-issues',
       'POST /api/apps/recipe-box/github-issues/12/claim',
@@ -2269,10 +2265,10 @@ test('a revision whose title and description landed is told so, not that another
 
 // ── submit_work `propose: true` — the review boundary, on the owner's ask ──
 //
-// A session continuation deliberately lands quietly; until now the ONLY way
-// to put it up for a vote was the dev chat's Propose-to-group button (#1306),
-// so an owner who had already told the agent "put it up for the vote" got the
-// change landed and then had to go press a button themselves. `propose: true`
+// A session continuation deliberately lands quietly; the only other way to
+// put it up for a vote is the change page's own button (#1306), so an owner
+// who had already told the agent "put it up for the vote" got the change
+// landed and then had to go press a button themselves. `propose: true`
 // runs the same POST /api/sessions/:id/promote the button runs, under the
 // caller's own token — the route applies every gate — reopening a paused
 // session first, since an external update usually lands on one.
@@ -2373,7 +2369,7 @@ test('a promote the platform refuses is reported beside a landed update, never a
 test('a promote 404 is recovered by reopening — the paused case the update could not report', async () => {
   // An unchanged resubmit carries no targetKind/resumeRequired, so the first
   // promote answers 404 (the session is paused, not active). The recovery is
-  // the same reopen the dev chat performs on entry, then one more promote.
+  // a reopen, then one more promote.
   const paths = [];
   const h = proposeHarness((method, pathname) => {
     paths.push(pathname);
@@ -2852,7 +2848,6 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // challenges, templates and scoring rules. Registered only for a full
     // platform admin, and every route behind them refuses anybody else.
     'add_challenge',
-    'answer_questions',
     // #3654. Cancelling a benchmark run: full platform admins only.
     'cancel_bench_run',
     // The App bench studio (services/bench/studio.js), the benchmark's suites,
@@ -2915,10 +2910,10 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // Admin › Journey, the waitlist and first-mile funnel, read from
     // services/journey.js: registered only for a full platform admin, and
     // refused in every handler for anybody else (tests/mcp-journey-tools.test.js).
-    'get_journey_cohorts', 'get_journey_first_mile', 'get_journey_person', 'get_journey_readings',
+    'get_journey_cohorts', 'get_journey_first_mile', 'get_journey_flows', 'get_journey_person', 'get_journey_readings',
     // #4884. One discussion message whole, when the page cut the thread.
     'get_message',
-    'get_platform_build', 'get_platform_conventions', 'get_proposal',
+    'get_platform_conventions', 'get_proposal',
     'get_recent_shots', 'get_request',
     // A test project's run report (services/run-report.js), beside the
     // test-account tools: full platform admins only, like them.
@@ -2959,10 +2954,6 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // (services/connector-uploads.js). External clients only.
     'prepare_upload',
     'prepare_work',
-    // #2779. The native change lifecycle. recheck_change is on every surface;
-    // the other four are registered only for an agent session's Mayor — see
-    // the per-kind test below and services/mcp-audiences.js.
-    'promote_change',
     // A group vote on closing a request, like the request page's "Propose to
     // close". It files the proposal; the vote decides, and the platform
     // closes the issue only when it passes.
@@ -2972,6 +2963,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // does, and the card changes only when that passes.
     'propose_featured_illustration',
     'rate_homeroom_bot_run',
+    // #2779. Re-runs a change's checks on its current commit, on every
+    // surface that may write.
     'recheck_change',
     // #3654. Grading a finished benchmark run again: full platform admins only.
     'regrade_bench_run',
@@ -2999,11 +2992,8 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'set_featured_apps',
     // The bot's settings, as the console's Save saves them: full admins only.
     'set_homeroom_bot_settings',
-    'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_platform_build', 'submit_shots_eval_pick', 'submit_work',
-    'sync_change',
+    'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick', 'submit_shots_eval_pick', 'submit_work',
     'update_proposal_description', 'update_proposal_issues', 'whoami',
-    'withdraw_change',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
   // user's own coding agent and puts the result to a vote; it does not vote,
@@ -3136,7 +3126,7 @@ test('patch or branch is the agent\'s call on every surface, never the user\'s',
   assert.match(sDesc, /\(1\) `taskId` plus the `branch` you pushed to your fork, any name, the default whenever you can push; \(2\) `taskId` plus `patch` when you cannot/);
   assert.match(sDesc, /`share: true` on shape \(1\)/, 'share takes the branch, which is shape (1) now');
   assert.match(sDesc, /your call between \(1\) and \(2\), never the user's/);
-  const sBlock = SRC.slice(sIdx, SRC.indexOf("server.registerTool('start_platform_build'"));
+  const sBlock = SRC.slice(sIdx, SRC.indexOf("server.registerTool('list_my_work_orders'"));
   assert.match(sBlock, /Patch or branch is your decision: never ask the user to choose/);
 });
 
@@ -3221,7 +3211,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'deploy_bench_preview', 'edit_bench_task', 'edit_challenge', 'keep_bench_trial',
     'label_bench_task', 'launch_bench_run', 'launch_bench_studio', 'launch_shots_eval',
     'move_challenge',
-    'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'promote_change', 'propose_close_request',
+    'post_message', 'post_spec', 'prepare_upload', 'prepare_work', 'propose_close_request',
     'propose_featured_illustration',
     'rate_homeroom_bot_run', 'recheck_change', 'regrade_bench_run', 'remove_challenge', 'reorder_challenges', 'rerun_bench_trial',
     'retire_test_account',
@@ -3233,10 +3223,10 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     // Featured apps: full admins only.
     'set_discover_flag',
     'set_featured_apps',
-    'set_homeroom_bot_settings', 'start_change',
-    'start_platform_build', 'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
-    'submit_platform_build', 'submit_shots_eval_pick', 'submit_work', 'sync_change',
-    'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
+    'set_homeroom_bot_settings',
+    'submit_bench_grade', 'submit_bench_reference', 'submit_bot_config_pick',
+    'submit_shots_eval_pick', 'submit_work',
+    'update_proposal_description', 'update_proposal_issues',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -3244,8 +3234,6 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     const body = SRC.slice(idx, next > 0 ? next : undefined);
     assert.match(body, /annotations: writeAnnotations/, `${name} is a write`);
   }
-  // answer_questions is a write that is deliberately not in this group.
-  assert.ok(!tools.ACTING_TOOLS.includes('answer_questions'));
 });
 
 // ── #1218: the naming contract the shipped allow rules rest on ─────────
@@ -3369,7 +3357,6 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
     'create_request', 'prepare_upload', 'propose_featured_illustration', 'prepare_work', 'submit_work',
-    'start_platform_build', 'answer_questions', 'submit_platform_build',
     'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];
   for (const name of writeTools) {
@@ -3449,62 +3436,6 @@ test('the work order is described as a payload to reproduce, not prose to summar
   const charter = require('../src/services/mcp-charter').CHARTER_FULL;
   assert.match(charter, /relay them in order, as written/i);
   assert.match(charter, /retype the branch name or the 40-character commit id/i);
-});
-
-test('the platform-build fallback is described as the second choice', () => {
-  const idx = SRC.indexOf("server.registerTool('start_platform_build'");
-  const desc = SRC.slice(idx, idx + 1200);
-  // Honest about whose money it spends, and about the better path.
-  assert.match(desc, /weekly Homeroom credits/);
-  assert.match(desc, /Prefer prepare_work/);
-  assert.match(desc, /user explicitly chooses the platform build/,
-    'missing tools never silently opt the user into platform credit spend');
-  assert.match(desc, /never infer consent/);
-  // Bounded before the platform is asked to start anything.
-  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('get_platform_build'"));
-  const capIdx = body.indexOf('connectorLimits.checkFallbackStart');
-  const callIdx = body.indexOf('callPlatform(');
-  assert.ok(capIdx > 0 && capIdx < callIdx, 'the cap is checked before the build starts');
-  // Re-running after answers is the same start, so it is capped too.
-  const answerBody = SRC.slice(
-    SRC.indexOf("server.registerTool('answer_questions'"),
-    SRC.indexOf("server.registerTool('submit_platform_build'")
-  );
-  assert.match(answerBody, /connectorLimits\.checkFallbackStart/);
-});
-
-test('a build that stopped at a spec needs a person, and says so', () => {
-  // headless_outcome 'spec' means the run produced a written plan for a
-  // human to read and approve. Approving it on someone's behalf is exactly
-  // the decision this connector must not make, so there is no path past it
-  // — get_platform_build flags it and submit_platform_build refuses.
-  const getBody = SRC.slice(
-    SRC.indexOf("server.registerTool('get_platform_build'"),
-    SRC.indexOf("server.registerTool('answer_questions'")
-  );
-  assert.match(getBody, /needsHumanReview = ready && outcome === 'spec'/);
-  assert.match(getBody, /readyToSubmit = ready && \(outcome === 'code' \|\| outcome === 'spec_code'\)/);
-
-  const submitBody = SRC.slice(SRC.indexOf("server.registerTool('submit_platform_build'"));
-  assert.match(submitBody, /'not_ready'/);
-  assert.match(submitBody, /'needs_answers'/);
-  assert.match(submitBody, /'needs_human_review'/);
-  assert.match(submitBody, /will not approve it on their behalf/);
-  // The refusals come before the clone/promote calls, not after.
-  assert.ok(
-    submitBody.indexOf("'needs_human_review'") < submitBody.indexOf('clone-headless'),
-    'a spec-only build is refused before anything is cloned'
-  );
-});
-
-test('a build’s own output is treated as data', () => {
-  // The summary is a model's description of a repository it just read —
-  // the single most injection-prone string the connector returns.
-  const body = SRC.slice(
-    SRC.indexOf("server.registerTool('get_platform_build'"),
-    SRC.indexOf("server.registerTool('answer_questions'")
-  );
-  assert.match(body, /summary: untrusted\(lastAssistantText\(messages\), MAX_BODY_CHARS\)/);
 });
 
 test('the proposal a connector opens is an ordinary imported proposal', () => {
@@ -4077,7 +4008,7 @@ test('steps are clipped to the column that stores them', () => {
 test('submit_work forwards the testing notes it was given, and only those', () => {
   const body = SRC.slice(
     SRC.indexOf("server.registerTool('submit_work'"),
-    SRC.indexOf("server.registerTool('start_platform_build'")
+    SRC.indexOf("server.registerTool('list_my_work_orders'")
   );
   assert.ok(body.length > 0, 'the submit_work registration is findable');
   // Shaped once, then spread conditionally — so an omitted field is omitted
@@ -4353,7 +4284,7 @@ test('prepare_work reports the proposals already up for a vote on the request', 
 test('submit_work reaches the update through the platform route, not around it', () => {
   const block = SRC.slice(
     SRC.indexOf("server.registerTool('submit_work'"),
-    SRC.indexOf("server.registerTool('start_platform_build'")
+    SRC.indexOf("server.registerTool('list_my_work_orders'")
   );
   // The same arrangement as the import loopback beside it: the caller's own
   // token, replayed at the platform's ordinary entry point. Nothing about the
@@ -4379,7 +4310,7 @@ test('submit_work reaches the update through the platform route, not around it',
 test('an update carries the testing routes too, and reports what a resubmit did', () => {
   const block = SRC.slice(
     SRC.indexOf("server.registerTool('submit_work'"),
-    SRC.indexOf("server.registerTool('start_platform_build'")
+    SRC.indexOf("server.registerTool('list_my_work_orders'")
   );
   // ONE shaped object, reaching both submissions — not a second parse for the
   // update path, which is how the two would drift.

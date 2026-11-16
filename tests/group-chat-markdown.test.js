@@ -375,26 +375,26 @@ test('_attachQuoteHandlers: a modified click stands down before preventDefault, 
   assert.match(keydownBranch, /GroupChat\._openRef\(ref\)/);
 });
 
-// ─── (A3) renderMessageBody fallback (no DevChat / no markdown libs) ─────────
+// ─── (A3) renderMessageBody fallback (no PlatformMarkdown / no markdown libs) ─
 
-test('renderMessageBody falls back to escaped mention/ref rendering without DevChat', () => {
-  const { renderMessageBody } = loadGroupChat(); // no DevChat in sandbox
+test('renderMessageBody falls back to escaped mention/ref rendering without PlatformMarkdown', () => {
+  const { renderMessageBody } = loadGroupChat(); // no PlatformMarkdown in sandbox
   const out = renderMessageBody('plain @bob <b>not bold</b> #4');
   assert.match(out, /gc-mention/, 'mention chipped on the fallback path');
   assert.match(out, /gc-ref-issue/, 'ref chipped on the fallback path');
   assert.match(out, /&lt;b&gt;not bold&lt;\/b&gt;/, 'raw HTML stays escaped (no markdown rendered)');
 });
 
-test('renderMessageBody uses DevChat.renderMarkdown when available', () => {
+test('renderMessageBody uses PlatformMarkdown.render when available', () => {
   let receivedOpts = null;
-  const DevChat = {
-    renderMarkdown(text, opts) {
+  const PlatformMarkdown = {
+    render(text, opts) {
       receivedOpts = opts;
       // stand-in for marked+DOMPurify output: a <p> wrapper, mention left in text
       return `<p class="dc-p"><strong>bold</strong> @bob</p>`;
     },
   };
-  const { renderMessageBody } = loadGroupChat({ DevChat });
+  const { renderMessageBody } = loadGroupChat({ PlatformMarkdown });
   const out = renderMessageBody('**bold** @bob');
   assert.equal(receivedOpts && receivedOpts.breaks, true, 'breaks:true passed through');
   assert.match(out, /<strong>bold<\/strong>/, 'markdown formatting preserved');

@@ -174,8 +174,6 @@ test('handleVoteUpdate still does the per-proposal refresh work it owns', () => 
   // runs the Workshop's refresh and the drawer's.
   assert.match(handleVoteUpdateCode, /App\._liveRefresh\('vote', data\.sessionId, \{[^}]*home: true/,
     'the dev tab and the work drawer still refresh on a vote update');
-  assert.match(handleVoteUpdateCode, /refreshCurrentSessionStatus\(data\.sessionId\)/,
-    'the open session pill still advances');
 });
 
 // ─── 4. The stale-version nudge that replaces it survived ───────────

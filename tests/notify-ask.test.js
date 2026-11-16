@@ -12,7 +12,6 @@
 //   5. Members are told when a project they joined while it was made opens
 //      (services/project-opened.js), and the email that stands in for a
 //      push: project_opened. The vote digest is not emailed (#5794).
-//   6. The agent session's browser prompt is explained first, once.
 //
 // Run with: node --test tests/notify-ask.test.js
 
@@ -22,7 +21,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -207,6 +205,68 @@ test('each moment has its words, in the app and on the web', () => {
   for (const text of Object.values(catalog).map((e) => e.text)) {
     assert.doesNotMatch(text, /—/, 'no em dash in the copy');
   }
+  assert.ok(catalog['ask.unsure'] && catalog['ask.unsure'].description,
+    'the line for an answer that could not be read is cataloged, with a description');
+});
+
+// A tap's answer is read, not guessed: only a real refusal may say off.
+async function askOsOf(chrome) {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const prior = globalThis.window;
+  globalThis.window = { NativeChrome: chrome };
+  try {
+    const { askOs } = loadTsx('frontend/src/features/notify-ask/ask-state.ts');
+    return await askOs();
+  } finally {
+    if (had) globalThis.window = prior; else delete globalThis.window;
+  }
+}
+
+test('askOs keeps the app\'s outcome: granted, denied, no-app, unknown', async () => {
+  const says = (answer) => ({ notifyWhenReady: async () => answer });
+  assert.deepEqual(await askOsOf(says({ outcome: 'granted' })), { outcome: 'granted', settings: false });
+  assert.deepEqual(await askOsOf(says({ outcome: 'unknown' })), { outcome: 'unknown', settings: false });
+  assert.deepEqual(await askOsOf(says({ outcome: 'no-app' })), { outcome: 'no-app', settings: false });
+  assert.deepEqual(await askOsOf(says({ outcome: 'something-else' })), { outcome: 'unknown', settings: false },
+    'an unrecognised outcome is not a refusal');
+  assert.equal((await askOsOf({ notifyWhenReady: async () => { throw new Error('down'); } })).outcome, 'unknown',
+    'a throw is never off');
+  assert.equal((await askOsOf(undefined)).outcome, 'no-app', 'no bridge is not the app, not a refusal');
+});
+
+test('a reported refusal is read once more before it is trusted', async () => {
+  const refused = (permission, settings = true) => ({
+    notifyWhenReady: async () => ({ outcome: 'denied', settings }),
+    notifyAskPermission: async () => ({ permission }),
+  });
+  assert.deepEqual(await askOsOf(refused('denied')), { outcome: 'denied', settings: true },
+    'a second refusal keeps the way to the settings page');
+  assert.deepEqual(await askOsOf(refused('granted')), { outcome: 'granted', settings: false },
+    'a grant that landed after the watch is allowed');
+  assert.deepEqual(await askOsOf(refused(null)), { outcome: 'unknown', settings: false },
+    'an unreadable re-read is unknown, never off');
+  assert.deepEqual(await askOsOf({
+    notifyWhenReady: async () => ({ outcome: 'denied', settings: true }),
+    notifyAskPermission: async () => { throw new Error('down'); },
+  }), { outcome: 'unknown', settings: false }, 'a throwing re-read is unknown, never off');
+});
+
+test('only a real refusal draws the off line', () => {
+  const src = read('frontend', 'src', 'features', 'notify-ask', 'notify-ask.tsx');
+  const ask = src.slice(src.indexOf('const notifyMe ='), src.indexOf('const gotApp'));
+
+  assert.equal((src.match(/setPhase\('off'\)/g) || []).length, 1, 'one off line, in one place');
+  assert.match(ask, /answer\.outcome === 'denied'[\s\S]*?setPhase\('off'\)/, 'denied: the off line');
+  assert.match(ask, /else \{\s*telemetry\.done\('failure', \{ errorCode: 'unknown' \}\);\s*setPhase\('unsure'\);/,
+    'unknown (and no-app) keep the ask instead of claiming off');
+  assert.doesNotMatch(ask, /setPhase\('off'\)[\s\S]*answer\.outcome === 'denied'/,
+    'nothing before a real denial says off');
+
+  assert.match(src, /'notifications:ask\.unsure'/, 'a literal id');
+  assert.match(src, /data-notify-ask-unsure=""/, 'the line has its own node');
+
+  assert.ok(ask.indexOf('await askOs()') < ask.indexOf("recordAsk('app', moment, 'yes')"),
+    'the answer is read before it is recorded, so an unreadable one is not saved');
 });
 
 test('a small group is 2 to 8 people in a private project', () => {
@@ -350,57 +410,6 @@ test('the vote digest is not emailed: it owes nothing, and nothing sends one', a
   assert.deepEqual(sent, [
     { userId: 8, kind: 'project_opened', appName: 'Run Club', appSlug: 'run-club' },
   ], 'only the project opening is sent; the digest owes no email');
-});
-
-// ── 6. The agent session's browser prompt ───────────────────────────────
-
-function bootDevAlerts({ permission = 'default', answer = true, native = false, stored = {} } = {}) {
-  const calls = { confirm: 0, request: 0 };
-  const sandbox = {
-    console: { log() {}, warn() {}, error() {} },
-    localStorage: {
-      getItem(k) { return Object.hasOwn(stored, k) ? stored[k] : null; },
-      setItem(k, v) { stored[k] = String(v); },
-    },
-    Notification: {
-      permission,
-      requestPermission() { calls.request += 1; return Promise.resolve('granted'); },
-    },
-    PlatformUI: { confirm() { calls.confirm += 1; return Promise.resolve(answer); } },
-    PlatformI18n: { t: (id) => id },
-    document: { visibilityState: 'visible', addEventListener() {} },
-    addEventListener() {},
-    usernode: native ? { isNative: true } : undefined,
-  };
-  sandbox.window = sandbox;
-  vm.createContext(sandbox);
-  vm.runInContext(read('public', 'js', 'dev-alerts.js'), sandbox);
-  return { DevAlerts: sandbox.DevAlerts, calls, stored };
-}
-
-test('the first send explains, and the browser prompt comes only after Notify me', async () => {
-  const yes = bootDevAlerts();
-  await yes.DevAlerts.offerNotifyPermission();
-  assert.equal(yes.calls.confirm, 1, 'the in-app question first');
-  assert.equal(yes.calls.request, 1, 'then the browser\'s prompt');
-  await yes.DevAlerts.offerNotifyPermission();
-  assert.equal(yes.calls.confirm, 1, 'once per device');
-
-  const no = bootDevAlerts({ answer: false });
-  await no.DevAlerts.offerNotifyPermission();
-  assert.equal(no.calls.request, 0, 'Not now asks the browser nothing');
-
-  const answered = bootDevAlerts({ permission: 'denied' });
-  await answered.DevAlerts.offerNotifyPermission();
-  assert.equal(answered.calls.confirm, 0, 'the browser was answered already');
-
-  const app = bootDevAlerts({ native: true });
-  await app.DevAlerts.offerNotifyPermission();
-  assert.equal(app.calls.confirm, 0, 'the Homeroom app has its own ask');
-
-  const chat = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  assert.match(chat, /DevAlerts\.offerNotifyPermission\(\)/);
-  assert.doesNotMatch(chat, /DevAlerts\.requestNotifyPermission\(\)/, 'never the bare prompt on a send');
 });
 
 // ── The Android bridge call ────────────────────────────────────────────

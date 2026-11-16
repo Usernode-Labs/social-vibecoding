@@ -306,8 +306,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the top-level screen is a REPORT of what your apps want from you, not
     // a place to start something; the menu's went with the app strip above
     // it. Every plus left in the shell renders behind state.
+    // PlusThinIcon, UserCircleIcon and CheckLongIcon left this list and the
+    // module together: only the retired dev chat's banners drew them.
     'M12 4v16m8-8H4',
-    'M12 4.5v15m7.5-7.5h-15',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
     // WarningTriangleIcon left this list with #2716: Settings → Delete
@@ -316,7 +317,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M13 7l5 5m0 0l-5 5m5-5H6',
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
     'M15 18l-6-6 6-6',
-    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
     'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
@@ -352,7 +352,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // on), so it is in the cold document. The Needs-you rail still draws it
     // behind state too.
     'M4 6h16M4 12h16M4 18h16',
-    'M4.5 12.75l6 6 9-13.5',
     // CheckIcon ('M5 13l4 4L19 7') left this list with #6136: every setup step's
     // tick in Settings > Connectors carries one, hidden until it is pressed.
     'M5 15l7-7 7 7',
@@ -454,6 +453,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
     'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M16 11l2 2 4-4',
+    // The hub's Invite card (community-card.tsx InviteHeroCard) draws a person
+    // and a plus on its button; the card is drawn once the community's read
+    // is back, so it renders behind state. Its body and head are the two
+    // paths above.
+    'M19 8v6M22 11h-6',
     'M11.5 15H7a4 4 0 00-4 4v2',
     'M6 7a4 4 0 108 0 4 4 0 10-8 0z',
     'M21.38 16.63a2.12 2.12 0 00-3-3l-4.01 4a2 2 0 00-.51.86l-.84 2.87a.5.5 0 00.62.62l2.87-.84a2 2 0 00.86-.51z',
@@ -492,7 +496,14 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14',
     'M6 4.5v15M18 4.5v15M6 12h12',
     'M7.5 7.5H11V11H7.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75M16.5 7.5H20V11h-3.5V7.5Zm0 0v3.5c0 2.25-1 3.75-2.5 4.75',
-    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
+    'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z',    // ── #6653: the composer's strikethrough ────────────────────────────
+    //
+    // StrikethroughIcon (the S and the line through it) draws in a channel's
+    // formatting row and its right-click menu, which mount only once a
+    // channel is open. LinkIcon is already on this list above.
+    'M16.5 6.4c-.9-1.2-2.5-1.9-4.4-1.9-2.6 0-4.3 1.2-4.3 3.1 0 2.4 2.6 3 5.1 3.6M8 17.6c.9 1.2 2.5 1.9 4.4 1.9 2.7 0 4.6-1.3 4.6-3.2 0-1.2-.6-2-1.8-2.6',
+    'M4.5 12h15',
+    // ── Audit D08: the ⋯ menu's line icons ────────────────────────────
     //
     // Star (kudos), archive, chart-bar (campaign), bell-slash (mute) and
     // arrows-right-left (merge, split, break up) draw only in an open ⋯ menu

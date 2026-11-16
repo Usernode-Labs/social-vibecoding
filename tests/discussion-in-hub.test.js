@@ -425,7 +425,7 @@ test('#general opened on the Messages screen goes to its tab as soon as the stor
   try {
     const store = loadTsx('frontend/src/features/messages/store.ts');
     assert.equal(store.channelHubSlug(GENERAL), null, 'nothing known yet');
-    store.route(GENERAL, null, null, { focusMessageId: 41 });
+    store.route(GENERAL, null, { focusMessageId: 41 });
     await settleStore();
     assert.deepEqual(doors, [['homeroom-ef56', { conversationId: GENERAL, threadRootId: null, focusMessageId: 41 }]],
       'the message the address named goes with it');
@@ -442,7 +442,7 @@ test('...but not before the platform\'s slug is known, nor for a viewer its page
     try {
       if (platform) window.PlatformTarget.known = () => ({ restricted: true });
       const store = loadTsx('frontend/src/features/messages/store.ts');
-      store.route(GENERAL, null, null, {});
+      store.route(GENERAL, null, {});
       await settleStore();
       assert.deepEqual(doors, [], platform ? 'restricted: the room stays here' : 'no slug: the room stays here');
       assert.equal(store.channelHubSlug(GENERAL), null);

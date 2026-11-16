@@ -41,7 +41,7 @@ export const BOT_CHIP_CLASS = 'inline-flex max-w-full items-center gap-1 rounded
 
 // The stages at which a filed request's card still says "Got it": the bot
 // has it and has not started building.
-const JUST_FILED = new Set(['waiting_first_version', 'reading', 'waiting']);
+const JUST_FILED = new Set(['waiting_first_version', 'reading', 'waiting', 'waiting_plan']);
 
 /**
  * Pure: whether a card says that the group can see the request
@@ -97,7 +97,12 @@ function filedWords(card: BotRequestCard, now: number): string {
   switch (card.state?.stage) {
     // What a request held for its project's first version waits for (the DM card's words).
     case 'waiting_first_version': return say('chat:group.botCard.filed.firstVersionWait', 'chat:group.botCard.filed.firstVersionWaitUntitled');
-    case 'waiting': return say('chat:group.botCard.filed.waitingBuilder', 'chat:group.botCard.filed.waitingBuilderUntitled');
+    // Ready, in Homeroom bot's own line: it says whose line, and that it
+    // starts by itself (13 Nov 2026: "Waiting for a free builder" read as a
+    // wait for another person).
+    case 'waiting': return say('chat:group.botCard.filed.waitingSlot', 'chat:group.botCard.filed.waitingSlotUntitled');
+    // Held by their own private thread with the bot: it waits for them.
+    case 'waiting_plan': return say('chat:group.botCard.filed.waitingPlan', 'chat:group.botCard.filed.waitingPlanUntitled');
     case 'building': return say('chat:group.botCard.filed.building', 'chat:group.botCard.filed.buildingUntitled');
     case 'question': return translate('chat:group.botCard.filed.question');
     case 'checking': return say('chat:group.botCard.filed.checking', 'chat:group.botCard.filed.checkingUntitled');
@@ -121,11 +126,11 @@ function filedWords(card: BotRequestCard, now: number): string {
 
 // Every stage filedWords has a sentence of its own for; any other stage
 // reads as a request just taken.
-const FILED_STAGES = new Set(['waiting_first_version', 'waiting', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped']);
+const FILED_STAGES = new Set(['waiting_first_version', 'waiting', 'waiting_plan', 'building', 'question', 'checking', 'proposed', 'approved', 'live', 'closed', 'person', 'stopped']);
 
 // The stages of a filed request whose card also says, on a person's first
 // request (WP-C), that it stays in the project's requests under their name.
-const STAYS_STAGES = new Set(['waiting_first_version', 'waiting', 'building']);
+const STAYS_STAGES = new Set(['waiting_first_version', 'waiting', 'waiting_plan', 'building']);
 
 /**
  * A fix sent to one of the bot's changes, where it stands: for each stage,
@@ -225,7 +230,7 @@ export interface BotRequestCardActions {
 }
 
 // The stages a request's card offers See progress at: it is still going.
-const GOING = new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking']);
+const GOING = new Set(['waiting_first_version', 'reading', 'waiting', 'waiting_plan', 'building', 'checking']);
 
 export function BotRequestCardView({ card, actions = {} }: { card: BotRequestCard; actions?: BotRequestCardActions }) {
   const t = useMessages('chat');

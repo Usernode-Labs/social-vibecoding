@@ -499,13 +499,21 @@ export function init() {
         firstWork.disabled = false;
       }
     });
-    // B8: Open chat is the chat with Homeroom bot, where the request's card is.
+    // B8: Open chat, after a request was filed. 14 Nov 2026: the request's
+    // own story (its plan's thread, else its page: messages/store.ts
+    // openBotRequest), since there is no Main Chat for its card to be in;
+    // with nothing filed to name, a new chat with Homeroom bot.
     sentChat?.addEventListener('click', () => {
+      const filed = sentFiled;
       closeFeedback();
-      window.UsernodeReact?.messages?.openBot?.();
+      const messages = window.UsernodeReact?.messages;
+      if (filed?.appSlug && filed.issueNumber && messages?.openBotRequest) messages.openBotRequest(filed.appSlug, filed.issueNumber);
+      else messages?.openBot?.();
     });
-    // B8: building it yourself instead, as the first-request moment's Try a
-    // fix yourself does: the request on the board, and a change from it.
+    // B8: having it built now, as the first-request moment's Build it now
+    // does: the request's page, and Homeroom bot asked to build it where it
+    // builds requests for this viewer (AppView._botDoor). Where it does
+    // not, the page's own-agent link is the way to build it.
     sentFix?.addEventListener('click', async () => {
       const bot = sentBot;
       if (!bot?.canFix || !bot.appSlug || !Number.isSafeInteger(bot.issueNumber)) return;
@@ -513,8 +521,8 @@ export function init() {
         const opening = App.navigateToApp(bot.appSlug, 'dev', bot.issueNumber, 'issues');
         closeFeedback();
         await opening;
-        if (App.currentApp === bot.appSlug && AppView.appData?.slug === bot.appSlug) {
-          await AppView.createPrForIssue(bot.issueNumber);
+        if (App.currentApp === bot.appSlug && AppView.appData?.slug === bot.appSlug && AppView._botDoor()) {
+          await AppView.askBotToBuild(bot.issueNumber);
         }
       } catch (err) {
         PlatformUI.toast(t('dialogs:feedback.fix.failedRequest'));
@@ -539,8 +547,8 @@ export function init() {
         closeFeedback();
         await opening;
         if (App.currentApp === moment.appSlug && AppView.appData?.slug === moment.appSlug
-            && Number(moment.userId) === Number(App.user?.id)) {
-          await AppView.createPrForIssue(moment.issueNumber);
+            && Number(moment.userId) === Number(App.user?.id) && AppView._botDoor()) {
+          await AppView.askBotToBuild(moment.issueNumber);
         }
       } catch (err) {
         PlatformUI.toast(t('dialogs:feedback.fix.failedIssue'));
@@ -1911,7 +1919,7 @@ export function init() {
     });
 
     // ── #4065: drop files on the form ──────────────────────────────
-    // Messages, group chat and agent sessions already take a dropped file;
+    // Messages and group chat already take a dropped file;
     // this dialog only had its pickers, and a file dropped on it made the
     // browser navigate away to the file, taking the draft with it. A drop
     // anywhere on the form now goes where the pickers would send it: images

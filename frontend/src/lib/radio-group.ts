@@ -15,6 +15,8 @@ import { arrowStep } from './i18n/direction';
  *     Home and End pick the first and the last;
  *   - moving picks, through the same `choose` a click calls, and focus
  *     follows to the radio picked.
+ *   - a key pressed on something in the group that is not a radio is left
+ *     alone.
  *
  * The radios are found in the group's own subtree, in document order, so the
  * `options` must be in the order they are drawn. It holds no state and reads
@@ -32,6 +34,10 @@ export function radioGroupKeys<T extends string>(
     tabIndex: (option: T): 0 | -1 => (option === focusable ? 0 : -1),
     /** Put on the radiogroup element. */
     onKeyDown(event: KeyboardEvent<HTMLElement>) {
+      // A group may hold more than its radios (the stepper under "how many"):
+      // a key pressed on anything else is that control's own.
+      const from = event.target as Element | null;
+      if (from && typeof from.closest === 'function' && !from.closest('[role="radio"]')) return;
       const next = nextRadioIndex(event.key, value != null ? options.indexOf(value) : -1, options.length);
       if (next === null) return;
       event.preventDefault();

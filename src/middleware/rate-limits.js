@@ -92,8 +92,8 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
       //     answered. That covers a limiter SHARED with non-v4 routes —
       //     `attachmentUploadLimiter` gates POST
       //     /api/v4/admin/challenge-illustrations as well as conversations,
-      //     chat, sessions and app illustrations, so a limiter-level flag
-      //     could not fix the v4 route without changing the other four.
+      //     chat and app illustrations, so a limiter-level flag
+      //     could not fix the v4 route without changing the other three.
       //     Deciding per request does. It also means a v4 limiter added
       //     later cannot forget.
       //   * THE FLAG, for the routes that share the envelope but not the
@@ -862,38 +862,11 @@ function issueKindLimiter(req, res, next) {
   return limiter(req, res, next);
 }
 
-// Agent instruction/skill file saves (#460): 30 / minute / user, split
-// off the issues bucket so an editing session (many saves in a row) can
-// never lock the user out of governance actions. Same shape and
-// reasoning as attachmentUploadLimiter below: honest editing never
-// bites, scripted loops bounce quickly.
-const agentFileWriteLimiter = makeLimiter({
-  windowMs: 60 * 1000,
-  max: 30,
-  name: 'agent-file-write',
-  keyByUser: true,
-  exemptAdmins: true,
-  message: (s) => `Rate limit reached: up to 30 file saves per minute. You can try again ${retryPhrase(s)}.`,
-});
-
-// Chat: 30 / minute / user. Loose enough that no honest user notices
-// during normal back-and-forth, tight enough that scripted abuse
-// (looping POSTs to drain the daily LLM cap) bounces off well before
-// hitting the daily limit. Per-user keying so a single abusive account
-// behind shared NAT can't degrade other users on the same IP.
-const chatLimiter = makeLimiter({
-  windowMs: 60 * 1000,
-  max: 30,
-  name: 'chat',
-  keyByUser: true,
-  message: 'Too many chat messages. Slow down for a minute.',
-});
-
 // Native app/group-chat JSON writes: 60 / minute / user. Browser clients
 // normally use the WebSocket path, while CLI/MCP clients use
-// POST /api/apps/:slug/messages. Keep this bucket separate from chatLimiter:
-// posting native discussion replies must not consume the budget for agent
-// turns (which can incur an LLM spend), or vice versa.
+// POST /api/apps/:slug/messages. A bucket of its own: posting discussion
+// replies must not consume a budget meant for calls that spend on a model,
+// or the other way round.
 const groupChatWriteLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
@@ -1028,9 +1001,8 @@ const friendshipLimiter = makeLimiter({
 });
 
 // #556: live title previews for the feedback modal (POST /api/feedback/
-// title). Same sizing rationale as chatLimiter — each call is a Haiku
-// spend against the daily LLM budget, so this must not become a faster
-// drain path. The FE debounces to ~1–3 calls per modal in honest use
+// title). Each call is a Haiku spend against the daily LLM budget, so this
+// must not become a faster drain path. The FE debounces to ~1–3 calls per modal in honest use
 // (plus its own per-open cap), so 20/min never bites, while a scripted
 // loop bounces quickly. Per-user keyed for shared-NAT fairness.
 const feedbackTitleLimiter = makeLimiter({
@@ -1041,11 +1013,11 @@ const feedbackTitleLimiter = makeLimiter({
   message: 'Too many title previews. Slow down for a minute.',
 });
 
-// Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
-// a ≤20 MB bytea INSERT; honest use is a handful per message, so 30/min
-// never bites, while a scripted loop trying to balloon the DB bounces
-// off quickly (per-session totals are additionally capped at 50 MB in
-// the route itself). Per-user keyed for shared-NAT fairness.
+// Attachment uploads (#450; conversations, chat and the illustration
+// routes): 30 / minute / user. Each upload is a bytea INSERT; honest use is
+// a handful per message, so 30/min never bites, while a scripted loop
+// trying to balloon the DB bounces off quickly. Per-user keyed for
+// shared-NAT fairness.
 const attachmentUploadLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 30,
@@ -1278,22 +1250,12 @@ const homeLayoutLimiter = makeLimiter({
   message: 'Too many layout changes. Slow down for a minute.',
 });
 
-// #940: saved dev-chat drafts, now server-backed. One write per deliberate
+// Saved drafts in the chat with Homeroom bot. One write per deliberate
 // save / trash / send, plus a burst when a device that was offline flushes
 // its local mirror on reconcile (bounded by MAX_SAVED_DRAFTS = 20 posts +
 // its tombstones). 60/min per user clears that flush with room to spare and
 // still bounds a runaway client. Per-user keyed, mirroring boardOrderLimiter
 // — drafts belong to the account, not to an IP.
-// Creating an agent session (#2779): no worker and no model call, so this is
-// a bound on litter, not on spend. Generous for a person, low for a script.
-const agentSessionCreateLimiter = makeLimiter({
-  windowMs: 60 * 60 * 1000,
-  max: 60,
-  name: 'agent-session-create',
-  keyByUser: true,
-  message: 'Too many new agent sessions. Try again later.',
-});
-
 const draftWriteLimiter = makeLimiter({
   windowMs: 60 * 1000,
   max: 60,
@@ -1749,4 +1711,4 @@ const linkCardLimiter = makeLimiter({
 const dictationLimiter = makeLimiter({ windowMs: 60000, max: 12, name: 'dictation', shared: true, keyByUser: true,
   message: 'Too many recordings. Try again in a minute.' });
 
-module.exports = { languageCacheLimiter, dictationLimiter, FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, challengeAdminLimiter, featuredAdminLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, emojiTileLimiter, agentSessionCreateLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, usernameCheckLimiter, releaseLinkLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, notificationBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, publicProjectReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, uiTelemetryAnonLimiter, firstSessionMomentLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, waitlistAnswersLimiter, smsTestLimiter, smsTestNumberLimiter, emailPreviewLimiter, mailTestLimiter };
+module.exports = { languageCacheLimiter, dictationLimiter, FEEDBACK_SUBMITS_PER_HOUR, linkCardLimiter, benchGradingLimiter, benchRunLimiter, benchStudioLimiter, challengeAdminLimiter, featuredAdminLimiter, testAccountLimiter, inviteLinkCreateLimiter, inviteRedeemLimiter, invitePreviewLimiter, emojiTileLimiter, appAllowanceRequestLimiter, topochainMobileReadLimiter, partnerActivityLimiter, partnerActivityParticipantLimiter, explorerProxyLimiter, githubLookupLimiter, userDirectoryLimiter, dbExportLimiter, loginBurstLimiter, loginSustainedLimiter, loginIdentityLimiter, registerLimiter, otpRequestLimiter, otpRequestEmailLimiter, otpVerifyLimiter, usernameCheckLimiter, releaseLinkLimiter, phoneOtpRequestLimiter, phoneOtpRequestPhoneLimiter, phoneVerifyLimiter, oauthSignInLimiter, passwordResetRequestLimiter, passwordResetRequestEmailLimiter, passwordResetConfirmLimiter, walletAuthLimiter, mobileWalletClaimLimiter, homeLayoutLimiter, draftWriteLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, groupChatWriteLimiter, conversationMessageLimiter, conversationActionLimiter, conversationSafetyLimiter, conversationInviteLimiter, conversationReactionLimiter, conversationReportLimiter, friendshipLimiter, messageBookmarkLimiter, notificationBookmarkLimiter, appChatReadLimiter, attributeVoteLimiter, governanceVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, feedbackSubmitLimiter, boardOrderLimiter, issueScreenshotLimiter, requestSpecLimiter, feedbackVideoLimiter, profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter, publicProfileReadLimiter, publicProjectReadLimiter, profileReportLimiter, topochainMobilePushRegistrationLimiter, reportAiLimiter, uiTelemetryLimiter, uiTelemetryAnonLimiter, firstSessionMomentLimiter, workshopAskLimiter, reportSnapshotLimiter, waitlistJoinLimiter, waitlistJoinAnonLimiter, waitlistJoinClientLimiter, waitlistJoinClientUserLimiter, waitlistTokenLimiter, waitlistTokenScanLimiter, waitlistCodeConfirmLimiter, waitlistResendLimiter, waitlistResendIpLimiter, waitlistStatusLimiter, waitlistStatusIpLimiter, waitlistAnswersLimiter, smsTestLimiter, smsTestNumberLimiter, emailPreviewLimiter, mailTestLimiter };

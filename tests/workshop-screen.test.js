@@ -318,6 +318,85 @@ test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
   assert.equal(sectionFold(0, 3).label, null);
 });
 
+test('opening Needs you while the community list reads the counts asks for them once (#6591)', async () => {
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  // A window before the load, so the scope publishes its loader beside the
+  // page's controller: the two then share one lib/shared-read.ts, as in the
+  // shell's bundle.
+  global.window = {};
+  try {
+    const { workshopController, workshopStore } = loadTsx('frontend/src/features/workshop/index.tsx');
+    const scope = global.window.UsernodeReact.communityScope;
+    const pending = [];
+    global.fetch = (url, opts) => new Promise((resolve) => { pending.push({ url: String(url), cache: opts && opts.cache, resolve }); });
+    const counts = (needs) => ({ ok: true, json: async () => ({ counts: { a: { working: 0, needs } } }) });
+    const feed = { ok: true, json: async () => ({ items: [], max: 0 }) };
+    const apps = { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) };
+    const settle = (answer) => {
+      for (const read of pending.splice(0)) {
+        read.resolve(read.url === '/api/workshop/counts' ? answer
+          : read.url === '/api/workshop/needs-feed' ? feed : apps);
+      }
+    };
+    const asked = (url) => pending.filter((read) => read.url === url).length;
+
+    // A page load that lands on Needs you: the sidebar's list and the page
+    // ask in the same moment.
+    const listed = scope.loadCommunities();
+    const opened = workshopController.open();
+    assert.equal(asked('/api/workshop/counts'), 1, 'one request serves the list and the page');
+    assert.equal(asked('/api/workshop/needs-feed'), 1, 'the feed is the page\'s own read');
+    settle(counts(2));
+    await Promise.all([listed, opened]);
+    assert.deepEqual(workshopStore.get().feed, []);
+    assert.equal(workshopStore.get().feedError, false);
+
+    // NOTHING IS KEPT: a re-entry asks the server for itself, past any saved
+    // copy, even while another read of the same address is on its way.
+    workshopController.close();
+    const again = scope.loadCommunities(true);
+    const reopened = workshopController.open();
+    const reads = pending.filter((read) => read.url === '/api/workshop/counts');
+    assert.equal(reads.length, 2, 'a re-entry may follow a vote, so it does not take another reader\'s request');
+    assert.deepEqual(reads.map((read) => read.cache), ['no-cache', 'no-cache']);
+    settle(counts(1));
+    await Promise.all([again, reopened]);
+
+    // And the quiet refresh after a change never shares either.
+    const forced = scope.loadCommunities(true);
+    const quiet = workshopController.refreshNeeds();
+    assert.equal(asked('/api/workshop/counts'), 2);
+    settle(counts(0));
+    await Promise.all([forced, quiet]);
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
+
+test('a first entry whose shared counts read fails still draws the feed (#6591)', async () => {
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = {};
+  try {
+    const { workshopController, workshopStore } = loadTsx('frontend/src/features/workshop/index.tsx');
+    const asked = [];
+    global.fetch = async (url) => {
+      asked.push(String(url));
+      if (url === '/api/workshop/counts') return { ok: false, json: async () => ({}) };
+      return { ok: true, json: async () => ({ items: [], max: 0 }) };
+    };
+    await workshopController.open();
+    assert.deepEqual(asked, ['/api/workshop/counts', '/api/workshop/needs-feed']);
+    assert.equal(workshopStore.get().feedError, false, 'the counts are the optional half');
+    workshopController.close();
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    global.fetch = priorFetch;
+  }
+});
+
 test('the controller reads the feed and the counts, survives losing the counts, and says when the feed is lost (One Home, #6361)', async () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const { workshopController, workshopStore } = mod;
@@ -627,21 +706,11 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
     'the lander publishes no arrow of its own');
   assert.match(appViewJs, /App\.setBackIcon\?\.\('none'\);/,
     'and the sub-view reset is an empty slot, not the house');
-  // The reset still sits ABOVE the branches, so the session's own ← survives
-  // it and nothing else inherits that arrow. #2770 moved its destination: a
-  // change is an agent conversation, so it hangs off Messages, not the board.
-  const reset = appViewJs.indexOf("App.setBackIcon?.('none');");
-  const session = appViewJs.indexOf("if (subTab === 'sessions' && ref) {");
-  assert.ok(reset > 0 && session > reset,
-    'the reset leads, so every sub-view that wants a slot claims it after');
-  const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
-  assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
-    'and a session leads with a real ← up to Messages (#2770)');
   // The ✕ is the app TAB's alone (on a phone, or with the rail not kept
   // beside it), and it lands wherever the visit began.
   assert.match(read('public/js/app.js'), /return \['close', App\._closeAppHref\(\)\];/);
   // An arrow WITH an href is what turns the phone's back gesture on — still
-  // true, and still what the session sub-view relies on.
+  // true for every screen that publishes one.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
     /mode === 'arrow' && !!href/);
 });
@@ -665,11 +734,10 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   // …except on a desktop, where the rail stays beside it by default (#3319,
   // tests/nav-rail-pinned.test.js).
   assert.match(body, /!!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
-  // The Workshop tab is lit, so the rail knows where you are — except on the
-  // app's DISCUSSION, which is a row in the Messages inbox and lights that
-  // instead (#2718 review).
-  // (A thread opened from the Homeroom bot tab's page lights that tab: App._isBotTopic.)
-  assert.match(body, /\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
+  // The Workshop tab is lit, so the rail knows where you are — except on a
+  // thread opened from the Homeroom bot tab's page, which lights that tab
+  // (App._isBotTopic).
+  assert.match(body, /\? \(App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
     'and the Workshop tab is lit, so the rail knows where you are');
 
   // A TAB HOP inside the app crosses that line without a screen reveal, so

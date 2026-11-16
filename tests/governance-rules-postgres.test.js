@@ -28,6 +28,7 @@ stub(require.resolve('../src/services/ws'), {
 
 const governance = require('../src/services/governance');
 const appManifest = require('../src/services/app-manifest');
+const { readPrGate } = require('../src/workflow/rules/pr-gate.ts');
 
 test('a project’s rules, stored by the reconcile and read by the gate', { timeout: 180000 }, async (t) => {
   const admin = new Pool({ connectionString: DSN, connectionTimeoutMillis: 10000 });
@@ -151,6 +152,54 @@ test('a project’s rules, stored by the reconcile and read by the gate', { time
     assert.equal(described.mode, 'rules');
     assert.equal(described.preset, null);
     assert.deepEqual(described.rules.map((r) => [r.group, r.size, r.need]), [['lifeguards', 2, 2]]);
+  });
+
+  await t.test('a group the app keeps is read live, in both gates', async () => {
+    assert.equal(await reconcile({
+      groups: [{ name: 'App users', keptByApp: true }],
+      rules: [{ group: 'App users', atLeast: 1 }],
+    }), true);
+    const stored = (await pool.query('SELECT governance_rules FROM apps WHERE id = $1', [app.id])).rows[0].governance_rules;
+    assert.equal(stored.groups[0].keptByApp, true);
+    assert.deepEqual(stored.groups[0].ids, [], 'the app resolves its own people');
+
+    // The app reports maya.
+    const report = (userIds) => pool.query(
+      `INSERT INTO app_groups (app_id, key, name, reported_at) VALUES ($1, 'app users', 'App users', NOW())
+       ON CONFLICT (app_id, key) DO UPDATE SET reported_at = NOW() RETURNING id`, [app.id]);
+    const group = async () => (await pool.query(
+      "SELECT id FROM app_groups WHERE app_id = $1 AND key = 'app users'", [app.id])).rows[0];
+    const setMembers = async (ids) => {
+      await report();
+      const g = await group();
+      await pool.query('DELETE FROM app_group_members WHERE group_id = $1', [g.id]);
+      for (const id of ids) {
+        await pool.query('INSERT INTO app_group_members (group_id, user_id) VALUES ($1, $2)', [g.id, id]);
+      }
+      governance.invalidateGovernance(app.id);
+    };
+    const machine = (id) => readPrGate(pool, {
+      sessionId: id, appId: app.id, openedAt: null, explicitApproval: false, explicitReason: null, authorId: evan.id, now: new Date(),
+    });
+
+    await setMembers([maya.id]);
+    const his = await proposal(evan);
+    await vote(his, maya, 'yes');
+    assert.equal((await gate(his)).mergeable, true);
+    assert.equal((await machine(his)).mergeable, true, 'the workflow gate agrees');
+
+    // Maya stops qualifying: her vote row stays, but it no longer counts.
+    await setMembers([]);
+    assert.equal((await gate(his)).mergeable, false);
+    assert.equal((await machine(his)).mergeable, false);
+    // She qualifies again: the same vote counts again.
+    await setMembers([maya.id]);
+    assert.equal((await gate(his)).mergeable, true);
+
+    const described = await governance.describeApproval(pool, app.id, await governance.getGovernance(pool, app.id));
+    assert.equal(described.groups[0].keptByApp, true);
+    assert.equal(described.groups[0].size, 1);
+    assert.ok(described.groups[0].reportedAt);
   });
 
   await t.test('an old-style block takes the project back to the two columns', async () => {

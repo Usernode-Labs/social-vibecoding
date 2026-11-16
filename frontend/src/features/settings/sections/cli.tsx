@@ -10,7 +10,7 @@ import { CliTokensList } from '../cli-tokens-list';
  * Settings surface. Settings._renderCliTokens() owns the keyset fetch and the
  * DELETE; the ROWS are ../cli-tokens-list.tsx's since #1191 — the section
  * stays static markup around one stateful child, which is the same shape the
- * App-AI and agent-files panes already have.
+ * App-AI pane already has.
  */
 export function CliSection() {
   // Subscribed: settings.js toggles #cli-tokens-more's `hidden` and writes the

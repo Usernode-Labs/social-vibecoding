@@ -107,8 +107,8 @@ const CODEX_CONFIG_TOML = `[mcp_servers.homeroom]
 url = "${CODEX_URL_PLACEHOLDER}"`;
 
 /**
- * The two product walkthroughs moved to ../connector-setup-steps (#2706).
- * The dev session page's hand-off launchpad now teaches the same connector
+ * The two product walkthroughs are in ../connector-setup-steps (#2706).
+ * A new thread's setup steps teach the same connector
  * inline instead of sending the reader here, and a second copy of six and
  * seven steps is a second copy to keep true. `SetupStep` travelled with
  * them because the Codex and generic routes below still render rows in the
@@ -543,10 +543,9 @@ export function ConnectorsSection() {
                     <pre> and `align-items: stretch` made it a ~210px violet slab
                     — louder than #connector-url-copy, which is the section's real
                     primary action — while taking ~80px of width off a block that
-                    already scrolls sideways on a phone. The row is the idiom
-                    sections/agent-files.tsx uses for its upload controls, and it
-                    is also where the destination filename belongs: the two blocks
-                    are byte-identical, so the file each one is for is the only
+                    already scrolls sideways on a phone. The row is also where
+                    the destination filename belongs: the two blocks are
+                    byte-identical, so the file each one is for is the only
                     thing that distinguishes them.
                 */}
                 <div className="flex items-center justify-between gap-2 mb-1">

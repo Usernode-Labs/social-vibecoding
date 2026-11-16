@@ -178,19 +178,13 @@ test('statusBarToneFor: an open dark overlay wins, then the app, then nothing', 
   assert.equal(tone({ sideStrip: true, previewFullscreen: true }), 'dark');
 });
 
-test('only the FULLSCREEN preview counts', async () => {
+test('the preview counts while it is shown: it is always fullscreen', async () => {
   const h = boot();
   const read = () => h.NativeChrome._statusBarToneState();
   assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false });
 
   h.overlays['staging-overlay'].classes.delete('hidden');
   assert.equal(read().previewFullscreen, true);
-  h.overlays['staging-overlay'].classes.add('staging-overlay-docked');
-  assert.equal(read().previewFullscreen, false, 'docked, it sits mid-page');
-  h.overlays['staging-overlay'].classes.delete('staging-overlay-docked');
-  h.overlays['staging-overlay'].classes.add('staging-overlay-under-chrome');
-  assert.equal(read().previewFullscreen, false,
-    'under a session\'s chrome, the platform header is what the bar is over');
 
   h.overlays['visual-compare-overlay'].classes.delete('hidden');
   assert.equal(read().compareOpen, true);
@@ -428,7 +422,7 @@ test('until the app takes a tone, the preview bar\'s safe-area band is the shell
     light: /html\s*\{\s*background-color:\s*(#[0-9a-f]{6})/.exec(head)[1],
     dark: /html\.dark\s*\{\s*background-color:\s*(#[0-9a-f]{6})/.exec(head)[1],
   };
-  const bar = '#staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar';
+  const bar = '#staging-overlay .staging-chrome-bar';
   const rule = (prefix) => {
     const at = css.indexOf(`${prefix} ${bar} {`);
     assert.ok(at !== -1, `missing: ${prefix} ${bar}`);
@@ -447,7 +441,7 @@ test('until the app takes a tone, the preview bar\'s safe-area band is the shell
 
   // The inset itself is untouched (tests/platform-safe-bottom.test.js).
   assert.match(css,
-    /#staging-overlay:not\(\.staging-overlay-docked\):not\(\.staging-overlay-under-chrome\) \.staging-chrome-bar\s*\{\s*padding-top:\s*calc\(0\.5rem \+ var\(--platform-safe-top\)\);\s*\}/);
+    /#staging-overlay \.staging-chrome-bar\s*\{\s*padding-top:\s*calc\(0\.5rem \+ var\(--platform-safe-top\)\);\s*\}/);
 });
 
 test('NATIVE-BRIDGE.md carries the producer contract', () => {

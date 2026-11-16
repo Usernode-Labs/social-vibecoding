@@ -141,7 +141,10 @@ test('a commit id in the document adds no rule to the stylesheet', async () => {
   // A full id, the short form, and ids that spell words out of hex letters.
   for (const id of ['0205380668653afb4b844ae55546df26b3d27814', '1234567', 'deadbeef', 'facade0', 'feedface', 'accede0']) {
     const scoped = stamp.prefixShellAssetUrls(tags.join('\n'), id);
-    assert.equal(scoped.split(`/b/${id}/`).length - 1 >= 30, true, `the tags were not scoped for ${id}`);
+    // 27 local scripts and stylesheets are scoped (the shell's 18 classic
+    // scripts among them), so a floor of 25 still catches a prefix that
+    // stopped applying.
+    assert.equal(scoped.split(`/b/${id}/`).length - 1 >= 25, true, `the tags were not scoped for ${id}`);
     assert.equal(await compile(`${anchor}\n${stamp.formatBuildMeta(id)}\n${scoped}`), nothing,
       `the commit id ${id} compiled to a rule: the stylesheet would differ between the document Tailwind `
       + 'scanned and the one the image serves');

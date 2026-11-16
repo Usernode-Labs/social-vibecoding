@@ -92,10 +92,9 @@ const EVENT_TYPES = Object.freeze({
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.
   SYNC_MAIN: 'sync_main',
   // Fable 5 classifier fallback: a platform-authored Anthropic call was
-  // served by the fallback model (usage.iterations detection). Recorded
-  // with { requested, served, category, source } via
-  // services/model-fallback.js. No backfill — detection didn't exist
-  // before these emitters shipped.
+  // served by the fallback model (usage.iterations detection), recorded
+  // with { requested, served, category, source }. No code records it now;
+  // the kind stays so the rows already written keep their name.
   MODEL_FALLBACK: 'model_fallback',
   // Whole-chain refusal: the requested model AND its fallback declined
   // (or the fallback couldn't run and the direct retry declined too).
@@ -171,13 +170,6 @@ const EVENT_TYPES = Object.freeze({
   // calls themselves are counted. metadata: { os, upgrade }.
   APP_VERSION_CHECKED: 'app_version_checked',
 
-  // #907: a coding turn was dispatched to a coding agent on the user's own
-  // machine instead of a platform worker container. Recorded on the turn's
-  // terminal transition so the ratio of local to platform turns — and how
-  // often a local turn is abandoned or declined — is visible without
-  // reading the staging:private local_agent_turns table.
-  // metadata: { outcome, runtime, durationMs }.
-  LOCAL_AGENT_TURN: 'local_agent_turn',
   // Content-free, provider-neutral LLM invocation baseline (#717). Detailed
   // fields live in a strict allowlisted metadata shape written by
   // services/llm-telemetry.js; OpenRouter's existing agent_turns ledger is
@@ -362,7 +354,7 @@ const EVENT_TYPES = Object.freeze({
   PLATFORM_POD_EXIT: 'platform_pod_exit',
   // A retained recovery of an interrupted turn ran out of attempts and was
   // given up on (services/recovery-retry.js scheduleRetainedRecovery):
-  // { sessionId, recovery: 'interactive' | 'headless' | ..., code, failures }.
+  // { sessionId, recovery: 'interactive' | ..., code, failures }.
   // The turn is left to the stale-turn watchdog; the platform signals file
   // these (signal-observers/turn-recovery.js).
   TURN_RECOVERY_GAVE_UP: 'turn_recovery_gave_up',

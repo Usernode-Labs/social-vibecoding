@@ -570,6 +570,16 @@ test('the header runs across the strip; its controls stay beside it', () => {
   assert.match(block, /html\[data-side-strip="right"\] #platform-header \{\s*margin-right: calc\(-1 \* var\(--platform-strip-w, 0px\)\);\s*padding-right: calc\(1rem \+ var\(--platform-strip-w, 0px\)\);/);
 });
 
+// 6666: the bell's sheet is fixed like the header, so its ground spans the
+// screen while its content — the close disc, Mark all read, the search, the
+// tabs and every row — stops beside the column.
+test('the bell\'s sheet keeps its ground and moves its content beside the strip', () => {
+  assert.match(block, /html\[data-side-strip="right"\] #notifications-sheet \{\s*padding-right: var\(--platform-strip-w, 0px\);/,
+    'the sheet\'s content stops left of the column');
+  assert.match(block, /html\[data-side-strip="left"\] #notifications-sheet \{\s*padding-left: var\(--platform-strip-w, 0px\);/,
+    'mirrored when the column is on the left');
+});
+
 test('a sheet screen\'s strip wears the sheet, opaque, under the header', () => {
   const ground = block.match(/html\[data-side-strip\] body:has\(([^{]+)\) \.platform-side-strip-ground \{([^}]*)\}/);
   assert.ok(ground, 'the ground has a rule');
@@ -805,6 +815,9 @@ test('the corner keeps the content, the header\'s controls and the five cells ou
     'the header spans the screen; its controls clear the 84px corner (6070)');
   assert.match(cornerBlock, /html\[data-side-corner="left"\] #platform-header \{\s*margin-left: calc\(-1 \* var\(--platform-corner-w, 0px\)\);\s*padding-left: calc\(1rem \+ 84px\);/,
     'mirrored for Split View against the left edge');
+  assert.match(cornerBlock, /html\[data-side-corner="right"\] #notifications-sheet \{\s*padding-right: var\(--platform-corner-w, 0px\);/,
+    'the bell\'s sheet moves its content by the corner\'s own width (6666)');
+  assert.match(cornerBlock, /html\[data-side-corner="left"\] #notifications-sheet \{\s*padding-left: var\(--platform-corner-w, 0px\);/);
   assert.match(cornerBlock, /html\[data-side-corner="right"\] #platform-tabs \{\s*padding-right: var\(--platform-corner-w, 0px\);/,
     'the bar keeps its ground; its cells stay left of the corner');
   assert.match(cornerBlock, /html\[data-side-corner="left"\] #platform-tabs \{\s*padding-left: var\(--platform-corner-w, 0px\);/);

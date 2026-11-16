@@ -180,8 +180,6 @@ export interface HomeroomBotMeta {
   waiting?: string;
   /** An on-hold summary: how many of the person's requests are held. */
   count?: number;
-  /** A moment in a request's thread the main chat also lists, under its "↳ in …" label. */
-  alsoInChat?: boolean;
   /**
    * 1 Nov 2026 (C2.4): the new project a design's card offers to make (kind
    * `make_offer`): its name, the design's thread and version. Once made, the
@@ -774,9 +772,9 @@ export interface ThreadRootRef {
   content: string;
   deleted: boolean;
   /**
-   * #6250: the thread was started from the bot's "+", so neither its opener
-   * line nor its replies are in Main Chat (bot-shared.ts alsoInChat). A
-   * thread the bot opened from Main stays, as the way to its row.
+   * #6250: the thread was started from the bot's "+" (New chat). It kept the
+   * thread's opener line and its replies out of Main Chat while there was
+   * one; the server still says it, and a thread's name reads it.
    */
   plusThread?: boolean;
 }
@@ -805,13 +803,6 @@ export interface ConversationSummary {
    * invitation, whose unread state is hidden, and from an older server.
    */
   lastReadMessageId?: number | null;
-  /**
-   * #6426: when the viewer last looked at this conversation, as the server
-   * records it (its read state). Main Chat's "Welcome back" card shows after
-   * eight hours away. Absent from an older server, and hidden on an
-   * invitation like the read cursor.
-   */
-  lastVisitAt?: string | null;
   /**
    * QA 2026-09-24 Q2: the viewer asked for this direct conversation and the
    * other person has not accepted yet. One opening message is allowed; after
@@ -869,19 +860,6 @@ export interface MessagesRoute {
    */
   appSlug: string | null;
   /**
-   * #2813: an AGENT thread open beside the list on a desktop — an agent
-   * session (`#messages/agent/<id>`) or an app's dev session
-   * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
-   * screen of their own (`#agent/<id>`, `#app/<slug>/dev/sessions/<id>`).
-   * On a PHONE a dev session still goes to its own: the router swaps that
-   * address there. An agent session opens here on a phone too, as the
-   * second level of the inbox's drawer (Evan, 18 Oct 2026).
-   *
-   * Mutually exclusive with the other two, for the same reason they are
-   * with each other: one thread is open.
-   */
-  agent: MessagesAgentThread | null;
-  /**
    * #2387: a reply thread open beside the conversation or app channel — the
    * id of the message it hangs off (`#messages/<id>/thread/<root>`,
    * `#messages/app/<slug>/thread/<root>`). Null when no thread is open.
@@ -900,14 +878,15 @@ export interface MessagesRoute {
    * fixture without it reads as false.
    */
   embedded?: boolean;
+  /**
+   * 14 Nov 2026: the embedded conversation is the chat with Homeroom bot on
+   * its tab (features/ai/), which draws its threads and nothing else. The
+   * conversation's own stream is never read, drawn or marked read; only who
+   * is in it (`active`) and the one thread open (`thread`) are. Optional so
+   * a fixture without it reads as false.
+   */
+  threadsOnly?: boolean;
 }
-
-/** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
-export type MessagesAgentThread =
-  | { kind: 'session'; slug: string; id: number }
-  // #2779: an agent session, a conversation with the Mayor (a serial id), or
-  // `new`: the one New change opens, unsent until its first message.
-  | { kind: 'agent'; id: number | 'new' };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {
@@ -954,10 +933,10 @@ export interface MessagesSnapshot {
    * #2718: the other two kinds of thread this screen lists.
    *
    * `discussions` is GET /api/messages/app-discussions — the general thread
-   * on each app the viewer is a member of, one row per app. Agent sessions
-   * are NOT here: they are already in features/agent-session's own store,
-   * and a second copy of a list that is loaded, merged and invalidated
-   * elsewhere is a copy that drifts.
+   * on each app the viewer is a member of, one row per app. The changes in
+   * flight are NOT here: they are already in the Improve store, and a second
+   * copy of a list that is loaded, merged and invalidated elsewhere is a
+   * copy that drifts.
    */
   discussions: AppDiscussion[];
   discussionsLoaded: boolean;
@@ -998,13 +977,6 @@ export interface MessagesSnapshot {
    * nothing was unread. Optional so a fixture without it reads as null.
    */
   unreadMark?: UnreadMark | null;
-  /**
-   * The message a reply thread opens at (store.openThreadAt): the strip's
-   * Needs you button opens a request's thread at the question it asks.
-   * Scrolled to and flashed once by the thread pane, never by the
-   * conversation beside it. Optional so a fixture without it reads as null.
-   */
-  threadFocusId?: number | null;
 }
 
 export interface ReplyThreadState {

@@ -16,6 +16,12 @@
 //   4. Private threads: done more than a week ago, put away, or filed as a
 //      request that has finished, which then leaves Needs you.
 //   5. Pages, a kind and a project narrow it; the route is signed in only.
+//   6. Staging's seeded private thread about a change that is live
+//      (migrate.js seedStagingLiveChangePrivateThread) is History's for the
+//      shots' member fixture, and not Needs you's.
+//   7. Staging's seeded first-version thread that starts on an older
+//      message (migrate.js seedStagingOlderFirstVersionThread) is one of
+//      the fixture's threads, named by its project.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/ai-history-postgres.test.js
 
@@ -225,6 +231,92 @@ test('the Homeroom bot tab\'s History against the full schema', { timeout: 12000
   const body = await res.json();
   assert.ok(Array.isArray(body.rows) && body.rows.length > 0 && body.rows.every((r) => r.kind === 'change'));
   assert.ok('next' in body);
+
+  // Staging's seed (13 Nov 2026): a private thread about the fake change
+  // seedStagingMergedVoteRow puts live, for the shots' member fixture. It is
+  // History's ("Live"), never a Needs you row, and seeding twice adds nothing.
+  const migrate = require('../src/db/migrate');
+  const source = require('node:fs').readFileSync(require.resolve('../src/db/migrate'), 'utf8');
+  assert.equal(source.split('\'staging-fixture/merged-vote-row\'').length - 1, 2,
+    'the thread is about the change seedStagingMergedVoteRow seeds, found by its branch');
+  assert.ok(source.indexOf('await seedStagingLiveChangePrivateThread(pool);') > source.indexOf('await seedStagingMergedVoteRow(pool, config);'),
+    'seeded after its change');
+  const capture = await user('usernode-capture');
+  const stagingBot = await user('homeroom_bot', true);
+  const home = await project('ah-home', 'public');
+  await pool.query(
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, pr_number, pr_title, session_title, status, merged_at, live_at, created_at)
+     VALUES ($1, $2, 'staging-fixture/merged-vote-row', 9042, '[staging fixture] Books read list', '[staging fixture] Books read list',
+             'merged', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '1 day')`,
+    [home.id, bob.id]);
+  const theirs = await one(`INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`, [capture.id]);
+  await pool.query(
+    `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id) VALUES ($1, $2, $3)`,
+    [theirs.id, Math.min(capture.id, stagingBot.id), Math.max(capture.id, stagingBot.id)]);
+  await pool.query(
+    `INSERT INTO conversation_members (conversation_id, user_id, role, status) VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')`,
+    [theirs.id, capture.id, stagingBot.id]);
+  const env = process.env.USERNODE_ENV;
+  try {
+    delete process.env.USERNODE_ENV;
+    await migrate.seedStagingLiveChangePrivateThread(pool);
+    assert.equal((await one('SELECT COUNT(*)::int AS n FROM private_threads WHERE user_id = $1', [capture.id])).n, 0, 'a no-op outside staging');
+    process.env.USERNODE_ENV = 'staging';
+    await migrate.seedStagingLiveChangePrivateThread(pool);
+    await migrate.seedStagingLiveChangePrivateThread(pool);
+  } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
+  const seeded = (await pool.query(
+    'SELECT root_message_id, about_kind, about_number, state FROM private_threads WHERE user_id = $1', [capture.id])).rows;
+  assert.deepEqual(seeded.map((r) => [r.about_kind, r.about_number, r.state]), [['change', 9042, 'open']], 'one thread, however often it is seeded');
+  assert.equal((await one('SELECT COUNT(*)::int AS n FROM conversation_messages WHERE conversation_id = $1', [theirs.id])).n, 3);
+  const theirWork = await aiWork.workFor(pool, { user: { id: capture.id }, deps: { bot: stagingBot } });
+  assert.equal(theirWork.private.find((p) => p.rootId === Number(seeded[0].root_message_id)).resultDone, true);
+  assert.deepEqual(aiWork.listsOf([], theirWork).needsYou.filter((r) => /Books read list/.test(r.title)), [], 'not under Needs you');
+  const theirPast = (await aiHistory.historyFor(pool, { user: { id: capture.id }, kind: 'solo', deps: { bot: stagingBot } })).rows;
+  assert.deepEqual(theirPast.map((r) => `${r.title}:${r.outcome}:${r.app.slug}`), ['[staging fixture] Books read list:live:ah-home']);
+
+  // Staging's seed (15 Nov 2026): a first version's thread whose first
+  // message is the "live" line the bot sent into Main Chat, as the move to
+  // threads listed them (earlier-chat.js). The client read that message as
+  // the project's hub and closed the thread (tests/bot-request-page.test.js);
+  // the fixture has one so the shots can open it. Seeded after the fake
+  // project it is about, and twice adds nothing.
+  assert.ok(source.indexOf('await seedStagingOlderFirstVersionThread(pool);') > source.indexOf('await seedStagingStorageNotices(pool);'),
+    'seeded after its project');
+  const box = await one(
+    `INSERT INTO apps (name, slug, status, created_by, view_visibility, collab_visibility)
+     VALUES ('Staging demo: recipe box', 'staging-demo-recipe-box', 'running', $1, 'private', 'members') RETURNING id`, [capture.id]);
+  try {
+    delete process.env.USERNODE_ENV;
+    await migrate.seedStagingOlderFirstVersionThread(pool);
+    assert.equal((await one(`SELECT COUNT(*)::int AS n FROM private_threads WHERE user_id = $1 AND kind = 'first_version'`, [capture.id])).n, 0, 'a no-op outside staging');
+    process.env.USERNODE_ENV = 'staging';
+    await migrate.seedStagingOlderFirstVersionThread(pool);
+    await migrate.seedStagingOlderFirstVersionThread(pool);
+  } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
+  const firsts = (await pool.query(
+    `SELECT p.root_message_id, p.app_id, p.state, p.last_read_message_id, m.sender_id, m.thread_root_id, m.metadata->'homeroomBot' AS meta
+       FROM private_threads p JOIN conversation_messages m ON m.id = p.root_message_id
+      WHERE p.user_id = $1 AND p.kind = 'first_version'`, [capture.id])).rows;
+  assert.equal(firsts.length, 1, 'one thread, however often it is seeded');
+  assert.deepEqual([firsts[0].app_id, firsts[0].state, firsts[0].sender_id, firsts[0].thread_root_id], [box.id, 'open', stagingBot.id, null]);
+  assert.deepEqual(firsts[0].meta, {
+    kind: 'merged', appSlug: 'staging-demo-recipe-box', appName: 'Staging demo: recipe box', issueNumber: 1, firstVersion: true, live: true,
+  }, 'its first message is a first version\'s news, not the line that opens a new one');
+  const under = (await pool.query(
+    'SELECT id, sender_id, content FROM conversation_messages WHERE thread_root_id = $1 ORDER BY id', [firsts[0].root_message_id])).rows;
+  assert.deepEqual(under.map((r) => r.sender_id), [capture.id, stagingBot.id]);
+  for (const r of under) assert.match(r.content, /^Staging demo: /, 'obviously fake');
+  assert.equal(firsts[0].last_read_message_id, under[1].id, 'read: it opens calm');
+  // The move off Main Chat would have listed the same message the same way.
+  assert.equal(require('../src/services/conversations').isRequestNewsMeta(firsts[0].meta), false);
+  const listed = (await aiWork.workFor(pool, { user: { id: capture.id }, deps: { bot: stagingBot } }))
+    .private.find((p) => p.rootId === Number(firsts[0].root_message_id));
+  assert.deepEqual([listed.title, listed.kind, listed.app.slug, listed.unread], ['Staging demo: recipe box, first version', 'first_version', 'staging-demo-recipe-box', 0]);
 });
 
 test('History\'s demo rows are obviously fake, two pages of them', () => {

@@ -2061,17 +2061,13 @@
 
     // Read off the document: the overlays' classes (React toggles them
     // through refs, frontend/src/features/staging/), the community tint and
-    // the app-tone attribute. The preview counts only when FULLSCREEN: docked it sits
-    // mid-page, and under a session's chrome the platform header is what
-    // the status bar is over.
+    // the app-tone attribute.
     _statusBarToneState() {
       const state = { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false };
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
-        state.previewFullscreen = shown(preview) &&
-          !preview.classList.contains('staging-overlay-docked') &&
-          !preview.classList.contains('staging-overlay-under-chrome');
+        state.previewFullscreen = shown(preview);
         state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
         state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');

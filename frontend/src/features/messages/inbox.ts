@@ -1,30 +1,21 @@
 /**
- * One inbox out of three lists (#2718).
+ * One inbox out of two lists (#2718).
  *
  * ── What changed, and why here ────────────────────────────────────────
  *
  * Messages was the `conversations` domain and nothing else: people talking
- * to people. Two other kinds of thread existed and were reachable only from
- * inside the thing they belonged to — an app's own discussion, which lived
- * on that app's board, and an agent chat, which lived in the Improve panel's
- * list. Neither was findable from a screen called Messages, which is the one
- * screen somebody looking for "what was said to me" opens.
- *
- * The navigation change makes Messages the platform's one inbox, which is
- * what every host in the study does: Slack and Teams put a channel, a DM and
- * a bot thread in one sidebar and tell them apart with a mark rather than
- * with three sidebars.
+ * to people. A person's changes in flight were reachable only from the
+ * Improve panel's list, not from a screen called Messages, which is the one
+ * screen somebody looking for "what is waiting on me" opens.
  *
  * THIS MODULE IS THE MERGE, and it is pure on purpose. The ordering and the
  * filtering are the argument the screen makes, and a test should be able to
- * drive them with three arrays rather than three fetches and a database.
+ * drive them with two arrays rather than two fetches and a database.
  *
  * ── Ordered by when something last happened ───────────────────────────
  *
- * One clock for all three, because an inbox sorted per-kind is three lists
- * stacked rather than one list. A row with no timestamp at all sorts last
- * rather than first: "we do not know when" is not "just now", and an agent
- * session that has never been opened would otherwise lead the inbox.
+ * Newest first within a section. A row with no timestamp at all sorts last
+ * rather than first: "we do not know when" is not "just now".
  *
  * ── Channels live in their communities now ────────────────────────────
  *
@@ -53,29 +44,27 @@
  * that sends no section is an older one whose rows are all member apps, so
  * they are all yours, in the order they always had.
  *
- * ── Three sections: Homeroom bot, Agents, People (16 Oct 2026) ────────
+ * ── Two sections: Agents, People (16 Oct 2026) ────────────────────────
  *
- * One clock put the bot's news, an agent turning, and a person's message in
- * one queue, so a person was easily three screens down under bot news. The
- * list is three headed sections now, in a fixed order: the Homeroom bot's
- * chat (always first, as B5 pinned it), then Agents (the agent sessions
- * and the changes in flight), then People (direct messages
- * and group chats). Each is newest first on its own clock. The filter chips
- * (All, People, Agents) went with it: the headings say which is which, and
- * a section folds from its heading (./index.tsx).
+ * One clock put an agent turning and a person's message in one queue, so a
+ * person was easily screens down under agent news. The list is two headed
+ * sections, in a fixed order: Agents (the changes in flight), then People
+ * (direct messages and group chats). Each is newest first on its own clock.
+ * The headings say which is which, and a section folds from its heading
+ * (./index.tsx).
  *
- * ── The bot leads Agents; Agents shows its week (16 Oct 2026) ─────────
+ * ── Agents shows its week (16 Oct 2026) ───────────────────────────────
  *
- * The Homeroom bot is an agent too, so it is Agents' first row rather than
- * a section of its own: pinned there, never folded away, so Agents is never
- * an empty heading. Under it Agents shows at most AGENTS_SHOWN of what was
- * active in the last AGENTS_RECENT_DAYS days, newest first, and whatever
- * asks for you or is open; the rest wait behind "N older chats".
+ * A pinned row leads Agents and is never folded away. Under it Agents shows
+ * at most AGENTS_SHOWN of what was active in the last AGENTS_RECENT_DAYS
+ * days, newest first, and whatever asks for you; the rest wait behind "N
+ * older changes".
  */
 
-// `mayor` is an agent session (#2779): a conversation with the Mayor that
-// works on any app, as opposed to `session` (one change's classic dev chat).
-export type InboxKind = 'person' | 'channel' | 'app' | 'session' | 'mayor';
+// `session` is a change in flight: its row opens the change's page.
+import type { ConversationSummary } from './types';
+
+export type InboxKind = 'person' | 'channel' | 'app' | 'session';
 
 /** Which section of the list an entry is drawn in, in the order they are drawn. */
 export type InboxSection = 'agents' | 'people';
@@ -116,25 +105,22 @@ export interface AppDiscussion {
 }
 
 /**
- * A change in flight — a dev session, or a work order handed to an agent
- * elsewhere (#2770).
- *
- * A CHANGE IS AN AGENT CONVERSATION: the viewer talks to the agent that
- * builds, the same as in an agent session, so it is listed under Agents
- * beside them. The row is ../improve/session-row.tsx's, drawn from the Improve
- * store's own list, so this shape is only the part the merge needs — the
- * view carries the rest through untouched.
+ * A change in flight — one an agent is building, or a work order handed to
+ * an agent elsewhere (#2770), listed under Agents. The row is
+ * ../improve/session-row.tsx's, drawn from the Improve store's own list, so
+ * this shape is only the part the merge needs — the view carries the rest
+ * through untouched.
  */
-export interface AgentSession {
+export interface ChangeInFlight {
   key: string;
   lastActivityAt?: string | null;
 }
 
 /**
  * Agents shows at most five of what was active this week (16 Oct 2026): the
- * agent sessions pile up (one per thing somebody started). The week keeps a
- * quiet one from padding the list with chats nobody has touched in a
- * month; the five keep a busy one from pushing People down.
+ * changes pile up (one per thing somebody started). The week keeps a quiet
+ * one from padding the list with changes nobody has touched in a month; the
+ * five keep a busy one from pushing People down.
  */
 export const AGENTS_RECENT_DAYS = 7;
 export const AGENTS_SHOWN = 5;
@@ -188,8 +174,8 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
 }
 
 /**
- * Merge the lists into one, in two sections: Agents, the Homeroom bot's
- * chat first, then People, each newest first.
+ * Merge the lists into one, in two sections: Agents, then People, each
+ * newest first.
  *
  * The caller keeps its own arrays — this returns descriptors, not rows, so
  * each kind is still drawn by the component that knows how, and each entry
@@ -202,9 +188,7 @@ function byClock(a: InboxEntry, b: InboxEntry): number {
 export function buildInbox(input: {
   conversations: Array<{ id: number; lastActivityAt: string; kind?: string; homeroomBot?: boolean }>;
   /** Optional so a caller with no Improve store still merges the others. */
-  sessions?: AgentSession[];
-  /** Agent sessions (#2779), newest activity first like everything else. */
-  mayors?: Array<{ id: number; lastActivityAt: string | null }>;
+  sessions?: ChangeInFlight[];
 }): InboxEntry[] {
   const agents: InboxEntry[] = [];
   const people: InboxEntry[] = [];
@@ -217,9 +201,6 @@ export function buildInbox(input: {
   for (const item of input.sessions || []) {
     agents.push({ key: `session:${item.key}`, kind: 'session', section: 'agents', at: item.lastActivityAt || null });
   }
-  for (const item of input.mayors || []) {
-    agents.push({ key: `mayor:${item.id}`, kind: 'mayor', section: 'agents', at: item.lastActivityAt || null });
-  }
   // Stable within a timestamp: `sort` is stable in every engine this ships
   // to, so two rows that happened in the same second keep the order their
   // own source gave them — which for conversations is the server's.
@@ -230,8 +211,8 @@ export function buildInbox(input: {
 
 /**
  * Whether an agent entry asks for you, so it is never folded behind "N older
- * chats" and has a seat in the sidebar (#5693): a change waiting on your
- * answer, an agent at work, or an open work order. #5289: an open work order
+ * changes" (#5693): a change waiting on your answer, an agent at work, or
+ * an open work order. #5289: an open work order
  * is work in flight on the person's own machine, and since the bell lost its
  * Messages filter this list is the only place it shows. There are few of
  * them: each closes once it is shared or submitted. Pure.
@@ -239,14 +220,10 @@ export function buildInbox(input: {
 export function agentAsksForYou(
   entry: { kind: string; key: string },
   sessions: { get(key: string): { kind?: string; awaitingInput?: boolean; busy?: boolean } | undefined },
-  mayors: { get(key: string): { busy?: boolean } | undefined },
 ): boolean {
-  if (entry.kind === 'session') {
-    const session = sessions.get(entry.key.slice('session:'.length));
-    return !!session && (session.kind === 'task' || !!session.awaitingInput || !!session.busy);
-  }
-  if (entry.kind === 'mayor') return !!mayors.get(entry.key.slice('mayor:'.length))?.busy;
-  return false;
+  if (entry.kind !== 'session') return false;
+  const session = sessions.get(entry.key.slice('session:'.length));
+  return !!session && (session.kind === 'task' || !!session.awaitingInput || !!session.busy);
 }
 
 /**
@@ -256,7 +233,7 @@ export function agentAsksForYou(
  * open one wherever it sits, and every one `keep` names (a change waiting on
  * you, an agent at work: nothing that asks for you is folded away). The
  * rest are `older`:
- * counted for the "N older chats" link, and drawn below it, in `olderShown`,
+ * counted for the "N older changes" link, and drawn below it, in `olderShown`,
  * once it is pressed, so the link stays where it was and marks where this
  * week ends. A search draws every match, and People all of its rows. Pure.
  */

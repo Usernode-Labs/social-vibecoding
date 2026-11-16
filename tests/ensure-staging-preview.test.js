@@ -125,14 +125,15 @@ test('ensureStaging shows the "spinning back up" loader and waits on {rebuilding
       ? { status: 'rebuilding' }
       : { status: 'ready', url: 'https://rebuilt-NEW.example', verified: true }),
   }));
-  await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { jump: true });
+  const APP = { slug: 'usernode-2d5619', self_hosted: true };
+  await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { app: APP });
   // Loader is up with the rebuild copy (viewer-neutral since #689 — shared
   // sessions route non-owners through this path too); no swap yet.
   assert.match(dom.els['staging-loader-title'].textContent, /spinning the preview back up/i);
   assert.equal(swaps.length, 0, 'does not open until the rebuild resolves');
   assert.ok(AppView._pendingStagingPreview, 'a pending marker is parked');
   assert.equal(AppView._pendingStagingPreview.sessionId, 7);
-  assert.equal(AppView._pendingStagingPreview.jump, true);
+  assert.equal(AppView._pendingStagingPreview.app, APP, 'the app the open was asked for is parked with it');
 
   // staging_ready lands → re-verifies through ensure-staging, then opens the
   // NEW url (not the stale fallback).
@@ -140,7 +141,7 @@ test('ensureStaging shows the "spinning back up" loader and waits on {rebuilding
   assert.equal(requests, 2, 'rebuild completion is verified before navigation');
   assert.equal(swaps.length, 1, 'opens after the rebuild');
   assert.equal(swaps[0].url, 'https://rebuilt-NEW.example', 'uses the fresh url from staging_ready');
-  assert.equal(swaps[0].opts.jump, true, 'carries the original jump intent');
+  assert.equal(swaps[0].opts.app, APP, 'carries the original open\'s app');
   assert.deepEqual(swaps[0].testing, { md: 'do x', path: '/x' }, 'carries the testing guidance');
   assert.equal(AppView._pendingStagingPreview, null, 'pending marker cleared');
 });
@@ -186,7 +187,8 @@ test('#3413 a failed rebuild keeps its reason and offers "Retry preview" that re
     endpoints.push(url);
     return { ok: true, json: async () => bodies[requests++] };
   });
-  await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { jump: true });
+  const APP = { slug: 'usernode-2d5619', self_hosted: true };
+  await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { app: APP });
   assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'no retry while the rebuild runs');
   AppView.onStagingRebuildResult(7, { failed: true, error: 'Container config error: bad port' });
   assert.match(dom.els['staging-loader-title'].textContent, /couldn|n.t be rebuilt/i, 'failure title stays up');
@@ -200,7 +202,7 @@ test('#3413 a failed rebuild keeps its reason and offers "Retry preview" that re
     'retry asks the same collaborator ensure route the card button does');
   assert.equal(swaps.length, 1, 'the retried open resolves normally');
   assert.equal(swaps[0].url, 'https://rebuilt.example');
-  assert.equal(swaps[0].opts.jump, true, 'carries the original open arguments');
+  assert.equal(swaps[0].opts.app, APP, 'carries the original open arguments');
   assert.deepEqual(swaps[0].testing, { md: 'do x', path: '/x' });
   assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'the retry hides once the open restarts');
 });
@@ -296,10 +298,13 @@ test('#816 a verified {ready} opens the iframe with ZERO readiness probes', asyn
 
 test('#2691 self-app preview keeps its deep link while enabling demo fixtures', async () => {
   const { AppView, dom } = makeAppView(okJson({ status: 'ready' }), { stubSwap: false });
+  // The page a change names (`startPath`, services/preview-start.js) is what
+  // the first load opens; the dev chat's "Test this change" jump, which
+  // opened the testing path instead, is retired with the dev chat.
   await AppView.swapToStaging(
     'https://live.example',
-    { path: '/?view=kanban#app/usernode-2d5619/dev', md: null },
-    { verified: true, jump: true }
+    null,
+    { verified: true, startPath: '/?view=kanban#app/usernode-2d5619/dev' }
   );
   assert.equal(
     dom.els['staging-iframe'].src,
@@ -675,7 +680,8 @@ test('#1993 ignores another app’s cached token and an expired fresh-cache entr
 test('#1993 token remains on the preview origin with a hostile testing path', async () => {
   const h = authHarness(async () => tokenResponse('private-token'));
   h.AppView.appData.self_hosted = false;
-  await h.AppView.swapToStaging('https://live.example', { path: '/\\attacker.example/path' }, { verified: true, jump: true });
+  await h.AppView.swapToStaging('https://live.example', { path: '/\\attacker.example/path' },
+    { verified: true, startPath: '/\\attacker.example/path' });
   assert.equal(h.dom.els['staging-iframe'].src, 'https://live.example/?token=private-token&un-theme=light');
 });
 
@@ -832,10 +838,10 @@ test('#6077 a page that fails or hangs offers a retry that really re-runs the sa
     const endpoints = [];
     const { AppView, dom, sandbox } = makeAppView(async (url) => {
       endpoints.push(url);
-      return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+      return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true, startPath: '/x' }) };
     }, { stubSwap: false });
     const held = holdGiveUpTimers(sandbox);
-    await AppView.ensureStaging(7, 'https://fallback.example', { md: 'do x', path: '/x' }, { jump: true });
+    await AppView.ensureStaging(7, 'https://fallback.example', { md: 'do x', path: '/x' }, {});
     const firstLoad = AppView._stagingLoadId;
     if (stuck === 'error') dom.els['staging-iframe'].onerror();
     else held.iframe[0]();

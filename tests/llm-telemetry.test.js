@@ -9,10 +9,7 @@ const llm = require('../src/services/llm');
 const telemetry = require('../src/services/llm-telemetry');
 const worker = require('../src/services/worker');
 const agentTurn = require('../src/services/agent-turn');
-const {
-  runCodexAttemptLoop,
-  _recordLocalCodingInvocationForTests: recordLocalCodingInvocation,
-} = require('../src/routes/sessions');
+const { runCodexAttemptLoop } = require('../src/routes/sessions');
 
 function fakeStream(message) {
   return {
@@ -226,12 +223,9 @@ test('server-side fallback iterations become separate model-invocation events', 
 test('direct helpers emit their fixed provider-neutral component labels', async () => {
   await withTelemetrySink(async (rows) => {
     const responses = [
-      { ...finalMessage(), content: [{ type: 'text', text: '{"title":"Telemetry baseline"}' }] },
       { ...finalMessage(), content: [{ type: 'text', text: '{"title":"Add telemetry","body":"Measured","summary":"Usage is visible."}' }] },
-      { ...finalMessage(), content: [{ type: 'text', text: '{"estimate":"maybe halfway","remaining_seconds":120}' }] },
-      { ...finalMessage(), content: [{ type: 'tool_use', name: 'suggest_replies', input: { replies: ['Continue'] } }] },
-      { ...finalMessage(), content: [{ type: 'text', text: '{"replies":["Continue"]}' }] },
       { ...finalMessage(), content: [{ type: 'text', text: 'Add usage telemetry' }] },
+      { ...finalMessage(), content: [{ type: 'text', text: 'A calm, roomy look.' }] },
       { ...finalMessage(), content: [{
         type: 'text',
         text: '{"narrative":"Steady progress.","highlights":[],"risks":[],"owners":[]}',
@@ -244,27 +238,22 @@ test('direct helpers emit their fixed provider-neutral component labels', async 
     } } };
     const ctx = { appId: 2, sessionId: 3 };
     await withClient(client, async () => {
-      await llm.generateSessionTitle({ requests: ['measure'], telemetryContext: ctx });
       await llm.generatePrMetadata({ userRequest: 'measure', ccSummary: 'done', telemetryContext: ctx });
-      await llm.estimateRunProgress({ userRequest: 'measure', progressTail: [], elapsedMs: 1, steps: 0, telemetryContext: ctx });
-      await llm.requireQuickReplies({
-        rules: 'specific', context: 'reply', model: 'claude-opus-5',
-        tool: { name: 'suggest_replies' }, telemetryContext: ctx,
-      });
-      await llm.generateQuickReplies({ rules: 'specific', context: 'reply', telemetryContext: ctx });
       await llm.generateIssueTitle({ description: 'measure usage', telemetryContext: ctx });
+      await llm.generateFirstLook({
+        system: 's', user: 'u', model: 'claude-opus-5-5', timeoutMs: 1000, telemetryContext: ctx,
+      });
       await llm.generateReportSummary({ inputJson: '{}', appName: 'App', knownUsernames: [], telemetryContext: ctx });
     });
     assert.deepEqual(rows.map((row) => row.component), [
-      'session_title', 'pr_metadata', 'progress_estimate', 'quick_replies',
-      'quick_replies', 'issue_title', 'report_summary',
+      'pr_metadata', 'issue_title', 'first_version_look', 'report_summary',
     ]);
     assert.ok(rows.every((row) => row.backend === 'helper'));
-    assert.deepEqual(helperCalls.map((args) => args.length), [1, 1, 1, 2, 1, 1, 1],
-      'telemetry preserves each helper SDK call arity, including an explicit undefined options arg');
-    assert.equal(rows[6].output_format, 'json_schema');
-    assert.equal(rows[6].max_output_tokens, 2000);
-    assert.ok(rows[6].request_system_characters > 0);
+    assert.deepEqual(helperCalls.map((args) => args.length), [1, 1, 2, 1],
+      'telemetry preserves each helper SDK call arity, including a call that passes request options');
+    assert.equal(rows[3].output_format, 'json_schema');
+    assert.equal(rows[3].max_output_tokens, 2000);
+    assert.ok(rows[3].request_system_characters > 0);
   });
 });
 
@@ -864,40 +853,6 @@ test('Claude coding-agent billing keeps platform and full BYOK paths distinct', 
   });
 });
 
-test('an accepted local run that disconnects is measured, while an unaccepted offer is not', async () => {
-  await withTelemetrySink(async (rows) => {
-    const base = {
-      id: 99,
-      prompt: 'private local prompt',
-      created_at: new Date('2026-08-17T10:00:00.000Z'),
-      accepted_at: new Date('2026-08-17T10:00:02.000Z'),
-      finished_at: new Date('2026-08-17T10:00:12.000Z'),
-      summary: 'private local result',
-    };
-    recordLocalCodingInvocation(null, {
-      session: { id: 42, app_id: 7 }, turnId: 99, turn: base,
-      outcome: 'abandoned', component: 'coding_agent_build',
-      attemptNumber: 1, correlationId: 'local-run-1',
-    });
-    recordLocalCodingInvocation(null, {
-      session: { id: 42, app_id: 7 }, turnId: 100,
-      turn: { ...base, id: 100, accepted_at: null },
-      outcome: 'abandoned', component: 'coding_agent_build',
-      attemptNumber: 2, correlationId: 'local-run-1',
-    });
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].provider, 'local');
-    assert.equal(rows[0].outcome, 'error');
-    assert.equal(rows[0].error_class, 'network');
-    assert.equal(rows[0].queue_duration_ms, 2000);
-    assert.equal(rows[0].duration_ms, 10000);
-    assert.equal(rows[0].request_text_characters, 'private local prompt'.length);
-    assert.equal(rows[0].request_user_text_characters, 'private local prompt'.length);
-    assert.equal(rows[0].response_text_characters, 'private local result'.length);
-    assert.equal(JSON.stringify(rows[0]).includes('private local'), false);
-  });
-});
-
 test('the aggregate report normalizes OpenRouter per-attempt deltas and preserves unavailable values', async () => {
   const captured = [];
   let queryNumber = 0;
@@ -1070,15 +1025,11 @@ test('OpenRouter telemetry excludes a durable intent that never physically dispa
   }
 });
 
-test('Mayor/headless call sites carry every required phase label', () => {
-  // #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
-  const src = ['../src/services/mayor/turn.js', '../src/routes/sessions.js']
-    .map((rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8')).join('\n');
-  for (const component of [
-    'mayor_phase_1', 'mayor_data_iteration', 'mayor_phase_2',
-    'headless_decision', 'headless_wrapup',
-    'coding_agent_scout', 'coding_agent_build', 'coding_agent_headless',
-  ]) {
+test('coding-agent call sites carry every required phase label', () => {
+  // The Codex attempt loop (routes/sessions.js runCodexAttemptLoop) names
+  // the scout and the build it runs.
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  for (const component of ['coding_agent_scout', 'coding_agent_build']) {
     assert.match(src, new RegExp(`['"]${component}['"]`), `${component} is attributed at its caller`);
   }
   const maintenance = fs.readFileSync(path.join(__dirname, '../src/services/fleet-maintenance.js'), 'utf8');
@@ -1092,8 +1043,11 @@ test('schema makes invocation event replay idempotent', () => {
 });
 
 test('coding-agent component context is persisted for retry and restart attribution', () => {
+  // The worker persists the context with the turn; a build's next attempt
+  // (durable-turn.js followTurn) and the boot's recovery (turn-recovery.js)
+  // both read it back.
   const workerSource = fs.readFileSync(path.join(__dirname, '../src/services/worker.js'), 'utf8');
-  const sessionSource = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  const sessionSource = fs.readFileSync(path.join(__dirname, '../src/services/durable-turn.js'), 'utf8');
   const serverSource = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
     + fs.readFileSync(path.join(__dirname, '../src/services/turn-recovery.js'), 'utf8');
   for (const field of [

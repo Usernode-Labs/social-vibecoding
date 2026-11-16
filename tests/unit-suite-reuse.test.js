@@ -183,8 +183,8 @@ test('every way a person asks for the checks again reaches the manual-recheck tr
   assert.match(route.slice(0, 12000), /recheckSessionChecks\(\{ config, pool, session, reason: 'manual-recheck' \}\)/);
   assert.match(read('src/services/mcp-tools.js'), /callPlatform\(baseUrl, accessToken, 'POST', `\/api\/sessions\/\$\{changeId\}\/recheck`/);
   assert.match(read('src/cli/main.js'), /target: `\/api\/sessions\/\$\{sessionId\}\/recheck`/);
-  // Deploying a preview by hand, and every other preview a person asks for:
-  // the preview machine runs its checks as 'manual-recheck'.
+  // Every preview a person asks for: the preview machine runs its checks as
+  // 'manual-recheck'.
   assert.match(read('src/workflow/preview/machine.ts'), /to: \(s, e, f, ctx\) => \{\s+const trigger = 'manual-recheck';\s+const only = e\.payload\.reason === 'preview';/);
   const recovery = read('src/services/staging-recovery.js');
   assert.match(recovery, /'manual-recheck': 'manual-recheck',/);
@@ -574,10 +574,6 @@ test('every manual entry marks the head as owed a fresh suite, durably, before i
   // On the head the request is for, read from the row now, which the busy
   // drain also waits on (not a checks pin an older run left).
   assert.match(route, /const requestedHead = await stagingRecovery\.requestedRecheckHead\(pool, session\);\s+await require\('\.\.\/services\/unit-suite-reuse'\)\.markFreshOwed\(pool, \{\s+sessionId, commitSha: requestedHead,/);
-  // Deploying a preview by hand.
-  // On the exact head, resolved once, and before the machine is asked
-  // (behaviourally: tests/unit-suite-reuse-machine-postgres.test.js).
-  assert.match(sessions, /const head = await previewWorkflow\.exactHead\(pool, session, commitHash === 'latest' \? null : commitHash\);[\s\S]{0,600}markFreshOwed\(pool, \{ sessionId: session\.id, commitSha: head \}\);[\s\S]{0,300}const out = await previewWorkflow\.request\(\{\s+pool, session, head, reason: 'deploy'/);
   // Every recheck a person asks for (the route, testing-update), before the
   // machine is asked: tests/recheck-moved-head.test.js.
   assert.match(read('src/services/staging-recovery.js'), /if \(checkTriggerForReason\(reason\) === 'manual-recheck'\) \{[\s\S]{0,700}markFreshOwed\(pool, \{\s+sessionId: session\.id, commitSha: await requestedRecheckHead\(pool, session\),\s+\}\);/);

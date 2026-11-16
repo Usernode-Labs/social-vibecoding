@@ -98,13 +98,12 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
   // A design drawn for a project that does not exist yet (C1's drafting
   // writes these): its thread, its row with no project, version 1 and 2 by
   // the bot, and the design bot's Make the project card under them.
-  const line = await dm.sendDm(pool, { bot, userId: ada.id, content: 'New thread, for a new project: watering.', threadRootId: false, moment: null,
-    metadata: { kind: 'opened_thread', changeKind: 'project' } });
+  // 14 Nov 2026: a line that opens a thread carries the thread's row with
+  // it (sendDm `thread`), written in the message's own transaction.
+  const line = await dm.sendDm(pool, { bot, userId: ada.id, content: 'New thread, for a new project: watering.', moment: null,
+    thread: { kind: 'design' }, metadata: { kind: 'opened_thread', changeKind: 'project' } });
   const { rows: [row] } = await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, NULL, 'design', 'open') RETURNING id`,
-    [ada.id, line.conversationId, line.messageId],
-  );
+    'SELECT id FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [line.messageId, ada.id]);
   await pool.query(`INSERT INTO design_threads (private_thread_id, title, surface, width, height) VALUES ($1, 'Watering', 'app', 390, 844)`, [row.id]);
   await designs.addVersion(pool, { threadId: row.id, html: DRAWN, author: 'bot', note: 'A list of plants' });
   await designs.addVersion(pool, { threadId: row.id, html: DRAWN.replace('Water now', 'Watered'), author: 'bot', note: 'A clearer button' });

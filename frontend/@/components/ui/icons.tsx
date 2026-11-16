@@ -291,37 +291,21 @@ export const TrophyIcon = stroked(
  */
 export const CheckIcon = stroked('CheckIcon', 'M5 13l4 4L19 7');
 
-// ── The dev chat's banner glyphs ─────────────────────────────────────────
-//
-// Five ports, moved here from inline `<svg>`s in `renderChatView`'s four
-// banner templates when that strip converted. Each is the heroicons 24-outline
-// path the templates carried; none is a redraw, and none of the four glyphs
-// above is the same shape — `CheckIcon` and `PlusWideIcon` are the shell's own
-// smaller-box spellings, and swapping either in would have been a visual
-// change on a strip this slice does not otherwise touch.
-export const CheckLongIcon = stroked('CheckLongIcon', 'M4.5 12.75l6 6 9-13.5');
-export const PlusThinIcon = stroked('PlusThinIcon', 'M12 4.5v15m7.5-7.5h-15');
+// Two heroicons 24-outline paths, as their templates carried them.
 export const ClockIcon = stroked('ClockIcon', 'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z');
-export const UserCircleIcon = stroked(
-  'UserCircleIcon',
-  'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z'
-);
 export const WarningTriangleIcon = stroked(
   'WarningTriangleIcon',
   'M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.732 0 2.814-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z'
 );
 
-// Five more ports, from `renderChatView`'s composer and `_renderSavedDrafts`'
-// three row actions, moved here when that block converted. Each is the path
-// the template carried, unchanged.
+// A composer's glyphs and a draft row's three actions. Each is the path its
+// template carried, unchanged.
 //
 // Their FRAME is normalised onto `stroked`, which is a real DOM difference
 // and a deliberate one: the templates wrote `stroke-linecap` and
 // `stroke-linejoin` on the `<svg>`, this factory writes them on each `<path>`.
 // Both inherit, so nothing draws differently — and the alternative is a
 // fourth renderer whose only job is to hold five glyphs' attribute placement.
-// Size still comes from `width`/`height` attributes, which is how the
-// composer wrote them (every other call site in the shell uses a class).
 export const PaperclipIcon = stroked(
   'PaperclipIcon',
   'M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48'
@@ -480,6 +464,13 @@ export const TagIcon = stroked(
 // a check for Assigned to you, a pen for Created by you. New glyphs, so not
 // transcribed from older markup: lucide's user-check and user-pen, on the
 // same 24 grid at the same 2px stroke as UserIcon.
+/** A person and a plus: invite somebody (the hub's Invite card, community-card.tsx InviteHeroCard). */
+export const UserPlusIcon = stroked('UserPlusIcon', [
+  'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
+  'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
+  'M19 8v6M22 11h-6',
+]);
+
 export const UserCheckIcon = stroked('UserCheckIcon', [
   'M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2',
   'M5 7a4 4 0 108 0 4 4 0 10-8 0z',
@@ -1034,6 +1025,12 @@ export const BoldIcon = stroked('BoldIcon', [
 export const ItalicIcon = stroked('ItalicIcon', 'M10 4.5h7.5M6.5 19.5H14M14.5 4.5l-5 15');
 
 export const UnderlineIcon = stroked('UnderlineIcon', 'M7 4.5v6.75a5 5 0 0 0 10 0V4.5M5 20h14');
+
+/** Strikethrough: an S with a line drawn through it (#6653). */
+export const StrikethroughIcon = stroked('StrikethroughIcon', [
+  'M16.5 6.4c-.9-1.2-2.5-1.9-4.4-1.9-2.6 0-4.3 1.2-4.3 3.1 0 2.4 2.6 3 5.1 3.6M8 17.6c.9 1.2 2.5 1.9 4.4 1.9 2.7 0 4.6-1.3 4.6-3.2 0-1.2-.6-2-1.8-2.6',
+  'M4.5 12h15',
+]);
 
 export const HeadingIcon = stroked('HeadingIcon', 'M6 4.5v15M18 4.5v15M6 12h12');
 

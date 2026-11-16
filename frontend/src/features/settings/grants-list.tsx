@@ -64,8 +64,9 @@ const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-x
  * back so the click is an informed one.
  *
  * The button is the language's compact accent action — the `compact` + `xs`
- * string #agent-files-save writes, one card over. Revoke above keeps its
- * hand-written red tint because it is destructive; this is the opposite act.
+ * string the App permissions rows' Re-enable writes, one card over. Revoke
+ * above keeps its hand-written red tint because it is destructive; this is the
+ * opposite act.
  */
 function RevokedRow({ grant }: { grant: GrantView }) {
   const t = useMessages('settings');
@@ -83,6 +84,7 @@ function RevokedRow({ grant }: { grant: GrantView }) {
         </span>
         <Button
           type="button"
+          aria-label={t('settings:grants.reenableLabel', { app: grant.appName })}
           data-role="re-enable"
           layout="shrink"
           variant="compact"
@@ -117,6 +119,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
               `text`, with `ring={false}` because the string carried no focus
               rule and the browser's own outline is the cue. */}
           <Input
+            aria-label={t('settings:grants.capFieldLabel', { app: grant.appName })}
             data-role="cap"
             type="number"
             min="0.01"
@@ -150,6 +153,7 @@ function GrantRow({ grant }: { grant: GrantView }) {
         */}
         <button
           type="button"
+          aria-label={t('settings:grants.revokeLabel', { app: grant.appName })}
           data-role="revoke"
           className="rounded bg-red-50 hover:bg-red-100 dark:bg-red-950 dark:hover:bg-red-900 px-2 py-0.5 font-medium text-red-700 dark:text-red-400 transition-colors touch-target-32"
           onClick={() => { void controller()?._onGrantRevoke?.(grant.appId, grant.appName); }}

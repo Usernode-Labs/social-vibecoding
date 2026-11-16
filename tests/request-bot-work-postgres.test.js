@@ -237,7 +237,6 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
       // The bot's build session even names request 4 here, and it is still
       // nobody's in_progress: the rule that keeps a bot off the claim list.
       assert.equal(byNumber.get(4).in_progress, null);
-      assert.equal(byNumber.get(4).headless, null);
 
       assert.equal((await get('/api/apps/plant-pal/github-issues/4')).issue.bot.what, 'building',
         'the request opened by its address says so too');

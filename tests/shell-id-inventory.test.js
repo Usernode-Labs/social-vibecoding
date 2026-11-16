@@ -390,6 +390,42 @@ const RETIRED_IDS = {
   'waitlist-queued': 'The "already on the list" note a signed-in visitor saw in place of the join form. A signed-in #waitlist goes to the waiting room now, which shows their spot.',
   // ── #6276: Needs you is the review flow, with no switch ────────────
   'review-flow-enabled': 'The New Needs you switch in Settings, Experimental. The review flow is what every Needs you draws now, so there is nothing to turn on and the row is gone (features/settings/sections/experimental.tsx).',
+  // ── Agent chats and dev chats are retired, with the session Mayor ───
+  // The conversations with the Mayor (#agent/<id>) and a change's dev chat
+  // (#app/<slug>/dev/sessions/<id>) are gone; Homeroom bot is where a
+  // person asks for a change, and the change's page is where it is followed.
+  // What only those chats used left the shell with them.
+  'devchat-alerts-toggle': 'Settings > Notifications\' sound and system arrival alerts for a dev chat reply. Retired with the dev chat (public/js/dev-alerts.js is gone); the phone push test (#devchat-alerts-test) and the mobile push categories stay (features/settings/sections/alerts.tsx).',
+  'ai-progress-estimate': 'The "AI progress estimate" switch in Settings, Experimental: an estimated progress bar on a dev chat turn. Retired with the dev chat; Experimental keeps Advanced mode and the Look menu (features/settings/sections/experimental.tsx).',
+  'ai-progress-estimate-status': 'The save line under the AI progress estimate switch, gone with it.',
+  'settings-local-agents-section': 'Settings, Experimental\'s "Local coding agent" block (#907): the machines leased to run a dev chat turn on the account\'s own computer. Retired with the CLI\'s local agent (agent run --session); Settings > CLI still sets up a coding agent for the native proposal flow.',
+  'settings-local-agents-list': 'The leased machines in the Local coding agent block, gone with it.',
+  'settings-local-agents-status': 'The Local coding agent block\'s status line, gone with it.',
+  'staging-fullscreen-btn': 'The staging overlay\'s Full screen / Exit full screen toggle for a preview docked beside a dev chat (#771). The preview only opens full screen now, so there is nothing to toggle (features/staging/staging-overlay.tsx).',
+  'staging-dock-close': 'The close button of a preview docked beside a dev chat or an agent chat. The docked mode left with the chats; the full-screen overlay keeps its own close.',
+  'settings-openrouter-models-wrap': 'Settings > OpenRouter\'s model block: the model the coding agent ran a dev chat or agent chat turn on. Retired with those turns; the section keeps the account\'s OpenRouter key (features/settings/sections/openrouter.tsx).',
+  'settings-openrouter-model': 'The OpenRouter model picker in that block, gone with it.',
+  'settings-openrouter-reasoning': 'The reasoning-effort select in that block, gone with it.',
+  'settings-openrouter-set-default': 'The "make OpenRouter my coding agent" button, which set the backend a new dev chat started on. Gone with the dev chat.',
+  'settings-claude-set-default': 'The "use Claude instead" button beside it, gone with it.',
+  // ── Settings › Agent instructions & skills is retired ───────────────
+  // A person's instruction and skill files reached a coding agent only
+  // through the dev chat's build and scout turns, which copied them into
+  // the hosted worker. Those turns are gone and Homeroom bot's builds never
+  // read the files, so the pane (#settings/agent-files) configured nothing
+  // and left the shell, with its routes (/api/me/agent-files).
+  'agent-files-section': 'The Agent instructions & skills pane\'s root. Retired with the pane: no build copies the files into the worker any more.',
+  'agent-files-instructions-list': 'The pane\'s list of instruction files (features/settings/agent-files-list.tsx), gone with it.',
+  'agent-files-skills-list': 'The pane\'s list of skill files, gone with it.',
+  'agent-files-input': 'The pane\'s hidden file picker behind the two Upload buttons, gone with it.',
+  'agent-files-form': 'The pending-upload form shown after a file was picked, gone with the pane.',
+  'agent-files-form-title': 'That form\'s title line, gone with it.',
+  'agent-files-name': 'That form\'s name field, gone with it.',
+  'agent-files-desc-wrap': 'The label wrapping that form\'s skill description field, gone with it.',
+  'agent-files-desc': 'That form\'s skill description field, gone with it.',
+  'agent-files-save': 'That form\'s Save button, gone with it.',
+  'agent-files-cancel': 'That form\'s Cancel button, gone with it.',
+  'agent-files-status': 'The pane\'s status line, gone with it.',
 };
 
 // Ids a conversion chunk deliberately added, each with the reason.
@@ -398,6 +434,9 @@ const ADDED_IDS = {
   'settings-reduce-motion': 'The Reduce motion switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): writes data-motion="reduce" on <html> through the head module (window.Display). Ships off in the prerender and reads the stored setting in an effect, like #settings-high-contrast beside it.',
   // ── Card preview loops: Settings > Accessibility ───────────────────
   'settings-card-previews': 'The Play previews switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): whether project cards play their short, silent preview loops (lib/card-previews.ts). Ships off in the prerender and reads the device setting in an effect, like #settings-high-contrast beside it.',
+  'settings-high-contrast-note': 'The sentence under the High contrast switch (features/settings/sections/accessibility.tsx), named by the switch\'s aria-describedby so a screen reader reads it with the switch (#6510).',
+  'settings-reduce-motion-note': 'The sentence under the Reduce motion switch, named by the switch\'s aria-describedby (#6510).',
+  'settings-card-previews-note': 'The sentence under the Play previews switch, named by the switch\'s aria-describedby (#6510).',
   // ── #6371: This week, the page the weekly digest opens ─────────────
   'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────
@@ -425,11 +464,14 @@ const ADDED_IDS = {
   // ── iPhone Duo: the side strip (24 Oct 2026) ───────────────────────
   'platform-side-strip-top': 'iPhone Duo: the top of the column of system chrome down the screen\'s edge, holding the header\'s back controls while <html data-side-strip> is set (features/nav/strip-back.tsx, app.css THE SIDE STRIP). Ships drawn as nothing; display:none off the strip.',
   'platform-side-strip-back': 'iPhone Duo: #back-btn\'s copy in the side strip, rendered from the same useBackSlot hook and handing its press to #back-btn. Ships hidden with no href, as #back-btn does.',
-  // ── New look (an experiment) ───────────────────────────────────────
-  'new-look-enabled': 'New look: the switch in Settings, Experimental (off by default, kept on the device by the head\'s window.Skin) that sets data-skin="brand" on <html>, which app.css draws the new look from in light mode. settings.js paints and saves it through window.Skin.',
-  // ── The frame's looks (an admin's preview) ─────────────────────────
-  'settings-look-section': 'Look: the menu\'s own wrapper under New look in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin): the looks are an admin\'s preview while they are drawn screen by screen.',
-  'settings-look': 'Look: the menu of the one frame\'s five looks (Standard, then glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from, light and dark. Exclusive with New look; settings.js paints and saves both through window.Skin.',
+  // ── The looks (an admin's preview) ─────────────────────────────────
+  // New look's switch, #new-look-enabled, stood here from request #6278
+  // until 13 Nov 2026. Its look was redrawn as "Paper, simplified, with
+  // brand styling" and became the Look menu's first option, so the switch
+  // and its id are gone. The id leaves THIS map rather than entering
+  // RETIRED_IDS, because the frozen baseline never recorded it.
+  'settings-look-section': 'Look: the menu\'s own wrapper in Settings, Experimental, shipped hidden. settings.js _renderAdminSection lifts the class only for a real admin (App._realIsAdmin), or on a device left in one of the menu\'s looks: the looks are an admin\'s preview while they are drawn screen by screen.',
+  'settings-look': 'Look: the menu of the looks (Standard, then brand, which keeps the standard pages in the website\'s colours, then the one frame\'s five: glass, paper, pastel, mosaic, sunrise). Kept on the device by the head\'s window.Skin, which sets the chosen id as data-skin on <html> for app.css to draw from. settings.js paints and saves it through window.Skin.',
   // ── #5097: Settings > Privacy, "Share usage analytics" ──────────────
   // ── #5097: Settings > Privacy, usage data ──────────────
   'settings-usage-analytics-section': '#5097: the usage data block, the last of Settings > Privacy under #5104\'s contact settings (features/settings/sections/usage-analytics.tsx): what Homeroom keeps, and the address to write to be left out of screen usage data.',
@@ -667,12 +709,11 @@ const ADDED_IDS = {
   'app-access-open': '#4666: the Access section\'s one button, which opens the Who can see & change it sheet (features/dialogs/who-decides.tsx). It replaced the three access choices and their Propose button (#app-access-propose) and status line (#app-access-status): who can see it and how changes are approved are one proposal now.',
   'members-load-error': '#2304: dialog-level feedback when Members & approvals is opened before its app row has loaded, replacing the misleading visibility-specific status target.',
   'staging-retry-btn': '#1993: retry preview sign-in after token acquisition fails; initially hidden.',
-  // ── OpenRouter catalog controls ──────────────────────────────────
-  'settings-openrouter-model-search': 'Filters the OpenRouter catalog by model name, id or provider without another network request.',
-  'settings-openrouter-favorites-only': 'Limits the settings picker to the viewer\'s saved OpenRouter model favorites.',
-  'settings-openrouter-refresh-models': 'Asks OpenRouter for a fresh catalog (at most once a minute) and reports when it was refreshed.',
-  'settings-openrouter-star-model': 'Adds or removes the selected OpenRouter model from the viewer\'s persistent favorites.',
-  'settings-openrouter-catalog-meta': 'Shows the visible and total model counts plus catalog freshness beside the picker.',
+  // The OpenRouter catalog controls (#settings-openrouter-model-search,
+  // -favorites-only, -refresh-models, -star-model, -catalog-meta) left this
+  // map with Settings > OpenRouter's model block, retired with the dev chat
+  // and agent chat turns it chose a model for (RETIRED_IDS above). They were
+  // only ever ADDED ids, so they simply leave.
   // ── #1538: check my status ────────────────────────────────────────
   // The waitlist confirm step doubles as "read where I stand", so the panel
   // that used to print one fixed sentence now prints what the row actually
@@ -879,11 +920,9 @@ const ADDED_IDS = {
   // #5973: Settings -> User guide, the tour's places to read.
   'settings-guide-section': 'Settings -> User guide, the pane root inside its [data-settings-section="guide"] wrapper.',
   'settings-guide-voting': 'The card saying how a change gets voted in; dapp.json selects on it.',
-  // #1281 — the session-CLI bridge opt-in. The spec marks that venue
-  // settings-gated and "most users: no", so the gate needs somewhere to
-  // live: Settings → Experimental, beside the other per-user preview flag.
-  'session-bridge-enabled': 'Opt-in switch for the session-CLI bridge venue (#1281).',
-  'session-bridge-status': 'Save/error line for the session-bridge switch (#1281).',
+  // #session-bridge-enabled and #session-bridge-status (#1281, the
+  // session-CLI bridge opt-in in Settings, Experimental) left this map with
+  // the CLI's local agent they gated. They were only ever ADDED ids.
   // Username changes — Settings -> Username, the change-your-@handle form. It sits in
   // Settings rather than the profile edit sheet because the endpoint requires
   // the current password, which is the same reason Change password is here.
@@ -1118,9 +1157,9 @@ const ADDED_IDS = {
   // #global-chat-screen and #global-chat-composer left this map when
   // Global Chat (#2377, #2543) was removed with its screen. They were only
   // ever ADDED ids, so they simply leave.
-  // ── #2779: agent sessions (on for everyone; the Experimental pane's
-  //    switch and its status line are retired and left this map) ──
-  'agent-session-screen': '#2779: the React-owned agent session screen, one conversation with the Mayor that works on any app. Ships hidden and empty for hydration parity; the hash router reveals it at #agent/<id>, and App.REACT_SCREEN_IDS keeps its visibility single-owned. Everything inside it renders only once a conversation is open, so the root is its one static id.',
+  // #agent-session-screen (#2779, the agent session screen at #agent/<id>)
+  // left this map when agent chats were retired: #agent/<id> rewrites to
+  // Homeroom bot now (App._oldChatAddress). It was only ever an ADDED id.
   // ── #2707: the feedback destination is chosen, never assumed ────
   'feedback-target-hint': 'The line under the Send Feedback destination row. With both destinations selectable nothing is preselected any more, so Submit is disabled until one is tapped — and a control that refuses without saying why is the dead button #1603 fixed one field down. Ships empty and hidden (the controller owns the text, and the one-destination case never shows it), and carries the radiogroup\'s aria-describedby while it is up.',
   // ── #2718 REVIEW: the Improve panel retired, and ten ids with it ─────
@@ -1232,6 +1271,12 @@ const ADDED_IDS = {
   'platform-rail-pinned': 'The sidebar\'s Pinned section (role=group), between #platform-tab-messages and #platform-rail-communities, hidden while nothing is pinned. Home\'s drag recognizer drops a My apps tile on it; dapp.json pins the bar order through it.',
   'platform-rail-pinned-label': 'The section\'s "Pinned" heading, which names the group.',
   'platform-rail-search': 'D: the search beside that heading, shown on hover or focus: Home with its search box focused (features/workshop/communities-search.ts; All communities\' search until One Home, #6361). dapp.json selects on it.',
+  // Request #6479: Settings › Language's Time zone list, under the language
+  // (features/settings/sections/language.tsx). It ships with the Auto option
+  // alone; settings.js adds the world's zones after mount.
+  'settings-timezone-section': '#6479: the Time zone block under #settings-language-section.',
+  'settings-timezone': '#6479: the Time zone select. settings.js fills and saves it (POST /api/me/timezone); dapp.json\'s language check selects on it.',
+  'settings-timezone-status': '#6479: the Saved / failed line under the Time zone select.',
 };
 
 test('the shell still carries every id in the frozen baseline', () => {

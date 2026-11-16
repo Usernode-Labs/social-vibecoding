@@ -259,8 +259,27 @@ test('signed out, nothing is kept', async (t) => {
 
 // ── 3. The store: a read with no answer ──────────────────────────────────
 
+// A read with no answer makes the store ask the shell's probe
+// (lib/offline.ts), which re-checks on an interval for as long as it believes
+// the network is down, and can settle after its test has ended. Nothing here
+// brings the network back, so the intervals started while the stores are up
+// are stopped when the file ends, or they would hold it open after its last
+// test.
+const realSetInterval = globalThis.setInterval;
+const storeIntervals = [];
+function trackedSetInterval(...args) {
+  const handle = realSetInterval(...args);
+  storeIntervals.push(handle);
+  return handle;
+}
+test.after(() => {
+  globalThis.setInterval = realSetInterval;
+  for (const handle of storeIntervals.splice(0)) clearInterval(handle);
+});
+
 function storeHarness(t, overrides = {}) {
   const saved = ['window', 'fetch'].map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+  globalThis.setInterval = trackedSetInterval;
   t.after(() => {
     for (const [key, descriptor] of saved) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

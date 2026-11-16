@@ -11,10 +11,10 @@
 //
 // ── 1. The legacy classic scripts ──────────────────────────────────────
 //
-// public/js/** is 27 files of global-scope script with no module system (25
+// public/js/** is 20 files of global-scope script with no module system (18
 // of them shell tags; cli-authorize.js and connect-authorize.js are page IIFEs
 // for server-rendered documents and were never in the shell):
-// each defines a global (App, Home, AppView, DevChat, AuthScreens, …) and
+// each defines a global (App, AppView, GroupChat, AuthScreens, …) and
 // several depend on an earlier one already existing. app.js is LAST on
 // purpose — it registers its DOMContentLoaded handler after every other
 // module's, so App.init() runs after all of them. Reordering the tags
@@ -24,7 +24,7 @@
 // ── 2. The React entry's position ──────────────────────────────────────
 //
 // The entry must be a `type="module"` script (therefore deferred) so it
-// executes AFTER all 24 classic scripts have defined their globals and
+// executes AFTER all 18 classic scripts have defined their globals and
 // BEFORE DOMContentLoaded runs their init()s. See frontend/src/main.tsx.
 //
 // ── 3. The stylesheet cascade ──────────────────────────────────────────
@@ -64,8 +64,9 @@ const ADDED_SCRIPTS = [
   '/vendor/purify-3.4.17.min.js', // security update; replacement pinned below
 
   '/js/nav-link.js', // #1036 — the real-anchor / new-tab seam
-  '/js/dev-flow-select.js', // #1049 — the dev-flow picker + walkthrough
-  '/js/session-options.js', // #1055 — the composer's session/billing menu
+  // dev-flow-select.js (#1049, the dev-flow picker) and session-options.js
+  // (#1055, the composer's session menu) left this list with the dev chat
+  // they served: they post-dated the baseline, so they simply leave.
   '/js/build-venues.js', // the six build venues, shared by every picker
   '/js/feedback-queue.js', // #1054 — the offline feedback outbox, before app.js
   '/js/ui-telemetry.js', // privacy-bounded journey telemetry, before consumers
@@ -304,6 +305,19 @@ const RETIRED_SCRIPTS = {
   '/js/app-secrets.js': 'app-secrets dialog converted to a React island (chunk I)',
   '/js/screenshot-select.js':
     "the feedback dialog's screenshot capture moved into the bundle (chunk I)",
+  // Agent chats and dev chats are retired, with the session Mayor. These
+  // five classic helpers served only those chats, so they left with them:
+  // the tag in Shell.tsx, the SHELL_ASSETS entry and the file.
+  '/js/dev-alerts.js':
+    "Settings' sound and system arrival alerts for a dev chat reply, retired with the dev chat",
+  '/js/spec-sections.js':
+    "the two-half spec splitter the dev chat's and agent chat's spec viewers read, retired with them",
+  '/js/session-transcript.js':
+    'the read-only dev chat transcript on a request page, retired with the dev chat',
+  '/js/cc-progress-summary.js':
+    "the dev chat's coding-agent progress summary, retired with the dev chat",
+  '/js/streaming-markdown.js':
+    "the dev chat's live streaming Markdown holdback, retired with the dev chat",
 };
 
 // public/js/topochain-events.js is deliberately NOT in that map, and now stays
@@ -357,12 +371,15 @@ test('the shell still loads the expected number of legacy scripts', () => {
   // they are the only two modules the nine dialogs owned outright. #1281's
   // launchpad.js — the panel that stands in for the composer when a session
   // builds somewhere else — makes 25. #1891 moves it into React (24). The UI
-  // telemetry collector adds one bounded classic module (25).
+  // telemetry collector adds one bounded classic module (25). Retiring agent
+  // chats and dev chats takes the seven modules only they used (18):
+  // dev-flow-select.js, session-options.js, dev-alerts.js, spec-sections.js,
+  // session-transcript.js, cc-progress-summary.js and streaming-markdown.js.
   const bodyScripts = scriptsOf(after.slice(after.indexOf('</head>')))
     .filter((s) => s.src && s.src.startsWith('/js/'));
   assert.equal(
-    bodyScripts.length, 25,
-    `expected the 25 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
+    bodyScripts.length, 18,
+    `expected the 18 legacy /js/** scripts at the end of <body>, found ${bodyScripts.length}. `
     + 'Adding or removing one is fine, but it also needs a matching SHELL_ASSETS entry in '
     + 'public/sw.js (tests/pwa-shell-wiring.test.js enforces that) — so update this count '
     + 'deliberately rather than loosening the check.',
@@ -449,54 +466,15 @@ test('feedback-queue.js loads ahead of app.js, which arms and drains it', () => 
     'feedback-queue.js must load before app.js, which reads window.FeedbackQueue');
 });
 
-test('dev-flow-select.js loads ahead of the modules that consume it', () => {
-  // Excluded from the fixture comparison above for the same reason as
-  // nav-link.js, so its position is pinned here. #1049: dev-chat.js owns the
-  // state and calls DevFlowSelect.pickerHtml / wizardHtml / wire, and
-  // app-view.js pokes DevChat._devFlow from the "+" menu — the module itself
-  // has no dependencies at all. dev-chat.js keeps its entry below even though
-  // #1084 chunk G retired its tag: the `idx === -1` arm covers it, and the
-  // deferred bundle runs after every classic script anyway.
-  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
-  const at = srcs.indexOf('/js/dev-flow-select.js');
-  assert.notEqual(at, -1, 'the shell must load /js/dev-flow-select.js');
-  for (const consumer of ['/js/dev-chat.js', '/js/app-view.js', '/js/app.js']) {
-    const idx = srcs.indexOf(consumer);
-    assert.ok(idx === -1 || at < idx,
-      `dev-flow-select.js must load before ${consumer}, which reads window.DevFlowSelect`);
-  }
-});
-
-test('session-options.js loads ahead of the modules that consume it', () => {
-  // Excluded from the fixture comparison above for the same reason as the
-  // two modules before it, so its position is pinned here. #1055: dev-chat.js
-  // owns the state and calls SessionOptions.open / openInstructions; the
-  // module itself depends only on PlatformUI, which loads earlier still.
-  // dev-chat.js keeps its entry below despite #1084 chunk G retiring its tag,
-  // for the same reason as in the dev-flow-select.js check above.
-  const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
-  const at = srcs.indexOf('/js/session-options.js');
-  assert.notEqual(at, -1, 'the shell must load /js/session-options.js');
-  const platformUi = srcs.indexOf('/js/platform-ui.js');
-  assert.ok(platformUi === -1 || platformUi < at,
-    'platform-ui.js must load before session-options.js, which presents through the seam');
-  for (const consumer of ['/js/dev-chat.js', '/js/app.js']) {
-    const idx = srcs.indexOf(consumer);
-    assert.ok(idx === -1 || at < idx,
-      `session-options.js must load before ${consumer}, which reads window.SessionOptions`);
-  }
-});
-
 test('build-venues.js loads ahead of the modules that consume it', () => {
   // Excluded from the fixture comparison above for the same reason as the
-  // three modules before it, so its position is pinned here. It is the
-  // single list of the six build venues, and it is a LEAF: pure data, copy
-  // and presentation, depending only on PlatformUI for the sheet. Every
-  // surface that asks "where should this be built?" reads window.BuildVenues,
-  // which is four modules — if any one of them loads first it silently falls
-  // back to whatever local copy it still has, which is exactly the drift
-  // this module exists to end. dev-chat.js keeps its entry below despite
-  // #1084 chunk G retiring its tag (the `idx === -1` arm covers it).
+  // two modules before it, so its position is pinned here. It is the single
+  // list of the six build venues, and it is a LEAF: pure data and copy. A
+  // change card names where its work happened through window.BuildVenues —
+  // if a consumer loads first it silently falls back to whatever local copy
+  // it still has, which is exactly the drift this module exists to end.
+  // dev-chat.js and session-options.js keep their entries below although
+  // their tags are retired (the `idx === -1` arm covers them).
   const srcs = scriptsOf(after).filter((s) => s.src && s.src.startsWith('/js/')).map((s) => s.src);
   const at = srcs.indexOf('/js/build-venues.js');
   assert.notEqual(at, -1, 'the shell must load /js/build-venues.js');
@@ -515,7 +493,7 @@ test('build-venues.js loads ahead of the modules that consume it', () => {
 
 test('session-state.js loads ahead of the modules that consume it', () => {
   // Excluded from the baseline comparison above for the same reason as the
-  // four modules before it, so its position is pinned here. #1038: a pure
+  // three modules before it, so its position is pinned here. #1038: a pure
   // leaf store — it touches window.App only at call time — but app-view.js
   // registers SessionState.onEvent / SessionState.subscribe at MODULE SCOPE,
   // behind a `if (window.SessionState)` guard, so a tag that loads late (or

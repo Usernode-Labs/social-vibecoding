@@ -4629,9 +4629,9 @@ ${basic ? '' : `<div class="card-menu-slug">${escapeHtml(app.slug)}</div><div cl
 
   // ===== "Your apps" drag-and-drop (issue #128) =====
   //
-  // Vanilla Pointer Events (same pattern as the spec-viewer resizer in
-  // dev-chat.js — setPointerCapture + move/up/cancel on the captured
-  // element), no library and no HTML5 draggable (poor touch support).
+  // Vanilla Pointer Events (setPointerCapture + move/up/cancel on the
+  // captured element), no library and no HTML5 draggable (poor touch
+  // support).
   //
   // Homescreen-style visuals: picking a card up spawns a floating
   // clone ("ghost") that tracks the pointer, while the real card stays
@@ -5394,10 +5394,10 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 // copy and build-log.js's comment says it deliberately kept one local so load
 // order wouldn't matter. Nothing else ever read it.
 //
-// escapeHtml has two, and they change which copy they resolve to. dev-chat.js
-// and app-secrets.js call `escapeHtml` (and, in app-secrets, `escapeAttr`, which
+// escapeHtml has one, and it changes which copy it resolves to.
+// app-secrets.js calls `escapeHtml` (and `escapeAttr`, which
 // is app-view.js's and calls the ambient escapeHtml) without declaring one, so
-// they were reaching THIS function; with home.js out of the classic chain the
+// it was reaching THIS function; with home.js out of the classic chain the
 // last declaration standing is app-view.js's. The two differ: this one is a
 // textContent→innerHTML pass, which escapes `& < >` but NOT quotes (hence the
 // `.replace(/"/g, '&quot;')` its own callers above add), while app-view.js's

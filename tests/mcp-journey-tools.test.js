@@ -23,13 +23,13 @@ const tools = require('../src/services/mcp-tools');
 const journey = require('../src/services/journey');
 const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constants');
 
-const TOOLS = ['get_journey_cohorts', 'get_journey_first_mile', 'get_journey_person', 'get_journey_readings'];
+const TOOLS = ['get_journey_cohorts', 'get_journey_first_mile', 'get_journey_flows', 'get_journey_person', 'get_journey_readings'];
 const ADMIN = { id: 1, username: 'evan', isAdmin: true, canAdminWrite: true };
 // The answer budget the tools hold themselves to (JOURNEY_MAX_CHARS).
 const MAX_CHARS = 48_000;
 
 function delegationFor(kind) {
-  return { kind, grantId: 'g'.repeat(22), changeId: null, appId: null, appSlug: null, agentSessionId: 4 };
+  return { kind, grantId: 'g'.repeat(22), changeId: null, appId: null, appSlug: null };
 }
 
 function register({ user = { ...ADMIN }, scopes = [READ_SCOPE, WRITE_SCOPE], pool = fakePool(), delegation = null } = {}) {
@@ -121,8 +121,8 @@ test('only a full admin\'s own connector has the Journey tools at all', () => {
     assert.ok(!tools.ACTING_TOOLS.includes(name), `${name} reads`);
     assert.equal(tools.isHintEligibleTool(name), true, `${name} is covered by the read-only allow rules`);
   }
-  // Not the platform's own agents: a full admin's Mayor or Homeroom bot
-  // answering them sees none of them.
+  // Not the platform's own agents: Homeroom bot answering a full admin, or a
+  // change's coding agent, sees none of them.
   for (const kind of ['agent_mayor', 'bot_admin', 'worker_read']) {
     const delegated = register({ delegation: delegationFor(kind) });
     for (const name of TOOLS) assert.ok(!delegated.specs.has(name), `${name} is not offered to ${kind}`);

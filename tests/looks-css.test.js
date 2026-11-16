@@ -173,7 +173,7 @@ test('a kit rule for a worn component also names the product\'s own markup for i
   // has no word for. looks.json "wear" says which of the product's classes
   // is each kit class of those components, and the rule names both.
   assert.equal(looks.wornSelector('html[data-skin] .fr-post .fr-who'), 'html[data-skin]:where(:not([data-skin="brand"])) .messages-message .messages-message-author',
-    'the kit is any look\'s, and the New look ("brand") is not one: its conversations keep the standard markup\'s rules');
+    'the kit is any look\'s, and the brand look is not one: its conversations keep the standard markup\'s rules');
   assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post .fr-when'), 'html[data-skin="mosaic"] .messages-message .messages-message-head time');
   assert.equal(looks.wornSelector('html[data-skin="mosaic"] .fr-post'), 'html[data-skin="mosaic"] .messages-message');
   // (The day's label has a second wearer, the count of a reply thread's replies: lane M, tests/messages-frame-stream.test.js.)
@@ -350,11 +350,12 @@ test('version 2 dresses nothing of the product\'s own that it did not dress befo
   // its nodes ARE named here; what holds for them is the line above: each
   // such rule needs a kit element, and the room has none, so none of them
   // draws there. A conversation's and a request's nodes stay unnamed.
-  // Since the left-overs pass a conversation's cards and the bot's news
-  // lines wear the row, the card and the event line (the owner asked for
-  // the tour's s10), so those four nodes are named too, under the same
-  // condition; no other conversation or request node is.
-  const BOT_WEAR = /\.messages-object-card:is\(\.messages-message \*\)|:is\(\.messages-object-list,\.messages-attachment\):is\(\.messages-message \*\)|section:is\(\.messages-bot-card > \*\)|:is\(button:is\(\.messages-bot-news > \*\),div:is\(\.messages-bot-settled-run > \*\)\)/g;
+  // Since the left-overs pass a conversation's cards wear the row and the
+  // card (the owner asked for the tour's s10), so those three nodes are
+  // named too, under the same condition; no other conversation or request
+  // node is. (The bot's news lines wore the event line until 14 Nov 2026:
+  // they were rows of the bot chat's own stream, which no screen draws.)
+  const BOT_WEAR = /\.messages-object-card:is\(\.messages-message \*\)|:is\(\.messages-object-list,\.messages-attachment\):is\(\.messages-message \*\)|section:is\(\.messages-bot-card > \*\)/g;
   assert.doesNotMatch(css.replace(BOT_WEAR, ''), /messages-|dev-request|dev-change/, 'no other conversation or request node is named');
   assert.match(css, /data-waiting-|waiting-about-save/, 'the waiting room\'s controls are named, by their own hooks');
 });
@@ -364,7 +365,6 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   // event line out of the map on purpose; the lane that redraws the page
   // adds it, with the stream's card and its label.
   const roots = looks.config.wear.roots;
-  // (The bot's news lines in a conversation are a further wearer, after it.)
   assert.deepEqual({ to: roots.evt.to, parts: roots.evt.parts }, { to: '#dev-topic-thread #gc-thread-messages .dev-request-event', parts: { ei: '.dev-request-event-glyph' } },
     'two ids: the standard look\'s rule for the line names both, and a worn rule must outweigh it');
   assert.equal(looks.wornSelector('html[data-skin] .fr-evt .fr-ei').split(',html')[0], 'html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event .dev-request-event-glyph');
@@ -386,9 +386,9 @@ test('an item\'s page keeps the product\'s discussion and dresses it: the stream
   assert.equal(looks.wornSelector('html[data-skin="sunrise"] .fr-sechead .fr-cap', '.sechead .cap'), 'html[data-skin="sunrise"] #dev-topic-thread .dev-request #gc-thread-messages .messages-reply-count');
   assert.equal(looks.wornSelector('html[data-skin] .fr-sechead', '.sechead'), null);
   assert.equal(looks.wornSelector('html[data-skin] .fr-cap.fr-over'), null);
-  const css = section();
-  assert.ok(css.includes(',html[data-skin]:where(:not([data-skin="brand"])) #dev-topic-thread #gc-thread-messages .dev-request-event,'), 'and the bot\'s news lines after it');
-  assert.ok(css.includes(':is(button:is(.messages-bot-news > *),div:is(.messages-bot-settled-run > *)){display:flex;align-items:center;gap:12px;font-size:13px;color:var(--fr-mut);min-width:0}'));
+  // The event line has the one wearer: the bot's news lines, a second, went with the stream that drew them.
+  assert.equal(roots.evt.also, undefined);
+  assert.doesNotMatch(section(), /messages-bot-news|messages-bot-settled-run/);
 });
 
 // ── The committed section ────────────────────────────────────────────────
@@ -407,10 +407,10 @@ test('app.css carries exactly what the script builds from frontend/looks/', () =
   assert.equal(section(), looks.build(), 'run `node scripts/build-looks-css.js` after changing a file in frontend/looks/');
 });
 
-test('the section sits just before the New look\'s block, which stays last', () => {
+test('the section sits just before the brand look\'s block, which stays last', () => {
   const css = read('public', 'css', 'app.css');
   const end = css.indexOf(END) + END.length;
-  assert.match(css.slice(end, end + 80), /^\n\n\/\* ── THE NEW LOOK, AN EXPERIMENT/);
+  assert.match(css.slice(end, end + 80), /^\n\n\/\* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING/);
 });
 
 // The product's classes looks.json "wear" names: the only ones the section may carry.
@@ -474,7 +474,7 @@ test('each look is headed by its flag, in the registry\'s order, with its fonts,
 test('what every look shares: the product\'s tokens follow the look\'s, at a look\'s own weight', () => {
   const text = section();
   const m = text.match(/html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\)\{([^}]*)\}/);
-  assert.ok(m, 'one rule for any look but New look, its exception inside :where() so More contrast still outweighs it');
+  assert.ok(m, 'one rule for any look but the brand look, its exception inside :where() so More contrast still outweighs it');
   for (const [token, from] of [['--text-primary', '--fr-ink'], ['--text-secondary', '--fr-mut'], ['--text-muted', '--fr-faint'], ['--border', '--fr-line'],
     ['--border-light', '--fr-line'], ['--accent', '--fr-acc'], ['--accent-ink', '--fr-acc-ink'], ['--accent-tint-ink', '--fr-acc'], ['--lit-ink', '--fr-lit'],
     ['--lit-tint', '--fr-lit-t'], ['--lit-line', '--fr-line'], ['--dc-sheet-raise', '--fr-surface'],

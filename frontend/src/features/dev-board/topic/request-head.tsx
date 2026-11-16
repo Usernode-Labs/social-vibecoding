@@ -99,12 +99,12 @@ function host(id: string): Element | null {
  * replaces.
  */
 function translatedWords(markdown: string): string {
-  const devChat = typeof window !== 'undefined' ? (window as any).DevChat : null;
-  if (!devChat?.renderMarkdown) {
+  const renderer = typeof window !== 'undefined' ? window.PlatformMarkdown : null;
+  if (!renderer?.render) {
     const escaped = markdown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
     return `<div class="dev-issue-body">${escaped}</div>`;
   }
-  const rendered = devChat.renderMarkdown(markdown, { images: true });
+  const rendered = renderer.render(markdown, { images: true });
   const mentions = typeof window !== 'undefined' ? (window as any).renderRequestMentions : null;
   return `<div class="dev-issue-body">${mentions ? mentions(rendered) : rendered}</div>`;
 }
@@ -300,7 +300,7 @@ export function RequestWords({ html, translate, note }: {
   ) : null;
   return (
     <div className="dev-request-ask" onClick={togglePin}>
-      {/* DevChat.renderMarkdown's output, sanitised where it is built. The
+      {/* PlatformMarkdown.render's output, sanitised where it is built. The
           clamp class is React's; the fold writes the node's height only for
           the length of the animation, and puts the clamp back as it ends so
           React's next render agrees with the DOM. */}
@@ -647,22 +647,14 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const ownAgent = !!(r.status.ownAgent && !r.status.closed && agentSlug && r.number);
   const [agentOpen, setAgentOpen] = useState(false);
   const menuKey = requestMenuKey(r.menuKey, r.number);
-  // 1 Nov 2026: Build it now left the face for Work on this with Homeroom
-  // bot, and is the row beside it here, as an agent session.
-  const agentSession = !!(r.status.agentSession && !r.status.closed && r.number);
   useThreadMenu(menuKey, 'agent', [
-    ...(agentSession ? [{
-      label: translate('project:topic.request.agentSession.summary'),
-      icon: 'generate',
-      act: () => call('chooseIssueWork', [r.number]),
-    }] : []),
     ...(ownAgent ? [{
       label: translate('project:topic.request.ownAgent.summary'),
       icon: 'generate',
       act: () => setAgentOpen(true),
     }] : []),
   ]);
-  const threadMenu = ownAgent || agentSession || !!threadRead.data?.follow;
+  const threadMenu = ownAgent || !!threadRead.data?.follow;
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -702,6 +694,13 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               </p>
             );
           })()}
+          {r.similar && slug ? (
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-request-twin={r.similar.number}>
+              <RichMessage id="project:topic.request.twin" values={{ number: r.similar.number, title: r.similar.title }} components={[
+                <a key="twin" className="font-semibold text-violet-700 hover:underline dark:text-violet-300" href={`#app/${encodeURIComponent(slug)}/dev/issues/${r.similar.number}`} />,
+              ]} />
+            </p>
+          ) : null}
           {/* Under a look: "The request" over its card, and who asked and
               when at the card's top (the head above, which the kit's page
               puts away with the title). */}
@@ -723,6 +722,20 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
             />
           )}
+          {/* #6680: the viewer's own design thread, linked under the request's
+              words (right after "Filed from a design thread…"), which opens it
+              in the Homeroom bot column. Nobody else's read carries it, so no
+              one else sees a hint that the thread exists. */}
+          {!editing && r.fromThread ? (
+            <p className="mt-1 text-[13px] text-zinc-500 dark:text-zinc-400" data-request-from-thread={r.fromThread.rootId}>
+              <a
+                className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                href={`#homeroom-bot/thread/${r.fromThread.rootId}`}
+              >
+                {t('project:topic.request.fromThread')}
+              </a>
+            </p>
+          ) : null}
           {working && !r.status.closed ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} frame={frame} />
           )}

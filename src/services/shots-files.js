@@ -64,6 +64,10 @@ const MAX_ELEMENT_SCREENS_TALL = 2;
 // What the card says, after "Not in these shots:", about a change whose
 // before and after screens came out the same.
 const UNCHANGED_NOTE = 'any visible difference. The before and after screens came out the same, so these shots cannot show this change.';
+// What the card says, after "Not in these shots:", about a change folded
+// onto another change's screen: its own after shot was saved but is not the
+// one drawn (shots-diff.screensFor's `foldedAfter`).
+const FOLDED_NOTE = 'its own after screen. Another change shares this screen, and that change\'s after screen is the one shown.';
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const PNG_IEND = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
 const EBML_MAGIC = Buffer.from([0x1a, 0x45, 0xdf, 0xa3]);
@@ -393,6 +397,20 @@ function markUnchanged(stories, ids) {
   });
 }
 
+// Mark ready changes whose own after screen was not the one the card draws,
+// because another change on the same screen shows its after instead, and say
+// so in the note shown beside their shots. A note the agent already wrote is
+// kept, with the sentence added after it. A second pass marks nothing.
+function markFolded(stories, ids) {
+  return stories.map((story) => {
+    if (story.status !== 'ready' || !ids.has(story.id) || story.folded) return story;
+    const note = story.note
+      ? `${story.note} Its own after screen is not the one shown: another change shares this screen.`.slice(0, MAX_NOTE)
+      : FOLDED_NOTE;
+    return { ...story, folded: true, note };
+  });
+}
+
 // What a change's result reads as wherever results are read
 // (shots-state.runSummary's shotResults, the admin listing, the runs
 // export): ready, unchanged, skipped or failed. The verdict stores an
@@ -541,6 +559,7 @@ module.exports = {
   CONDITION_KINDS,
   MAX_CONDITIONS,
   UNCHANGED_NOTE,
+  FOLDED_NOTE,
   ShotError,
   inspectImage,
   inspectClip,
@@ -552,6 +571,7 @@ module.exports = {
   checkElementSize,
   identicalStories,
   markUnchanged,
+  markFolded,
   RESULT_STATUSES,
   resultStatus,
   OUTCOMES,

@@ -2,8 +2,8 @@
  * App-secrets dialog (#app-secrets-modal).
  *
  * App secrets modal (per-app env vars declared in dapp.json).
- * Opened from the "App secrets" row in the dev-chat tab's Edit
- * section (see AppView.renderDevChatTab). Admins can set/clear
+ * Opened from the "App secrets" row of the Dev tab's "+" menu
+ * (../dev-board/actions-row.tsx). Admins can set/clear
  * values directly; non-admins propose changes via the existing
  * issues vote machinery.
  *

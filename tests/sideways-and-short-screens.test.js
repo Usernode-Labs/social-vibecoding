@@ -49,5 +49,5 @@ test('the sidebar scrolls when it is taller than the screen, with You and the co
 });
 
 test('typing on a short screen, the conversation\'s header folds away', () => {
-  assert.match(CSS, /@media \(max-height: 500px\) \{\n  html:is\(\.un-kb, \.platform-kb-open\) :is\(\.messages-thread-header, #ai-screen \.ai-main-head\) \{\n    display: none;/);
+  assert.match(CSS, /@media \(max-height: 500px\) \{\n  html:is\(\.un-kb, \.platform-kb-open\) \.messages-thread-header \{\n    display: none;/);
 });

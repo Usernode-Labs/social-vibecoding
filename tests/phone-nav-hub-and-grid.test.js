@@ -44,8 +44,25 @@ test('on a phone the Hub lists every live topic, each a door to its channel', ()
   assert.equal(message('project:hub.topics.title'), 'Topics');
 
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /\{slug && drawerOn \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
-    'on a phone only: a wide window lists the topics in its sidebar');
+  // At every width: a wide window draws it beside For you, in two columns.
+  assert.match(ws, /\{slug \? <TopicsCard data=\{community\} onOpen=\{\(key\) => openTab\(key\)\} \/> : null\}/,
+    'at every width, not the phone alone');
+  const css = read('public/css/app.css');
+  assert.match(css, /@media \(min-width: 1100px\) \{\s*html:not\(\[data-skin\]\) #dev-workshop:has\(> \.dev-ws\[data-ws-tab="status"\]\) \{ max-width: 1080px; \}/, 'a wider page on a wide window');
+  assert.match(css, /> \[data-ws-hub-for-you\] \+ \[data-ws-hub-topics\] \{ grid-column: 2; \}/, 'Topics beside For you');
+  assert.match(css, /> \.dev-ws-hero \+ \.dev-ws-invite-hero,/, 'the Invite card beside the hero');
+  // The Invite card: a member's, where other people are in, opening the invite pane.
+  const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
+  assert.match(card, /export function showsInviteHero\(data: CommunityPayload \| null \| undefined\): boolean \{\s*if \(!data \|\| !data\.is_member \|\| data\.audience === 'solo'\) return false;\s*return \(Number\(data\.member_count\) \|\| 0\) > 1;/);
+  assert.match(card, /className="dev-ws-invite-hero-btn"\s+data-ws-community-invite=""\s+title=\{t\('project:communityCard\.invite\.title'\)\}\s+onClick=\{openInviteLinks\}/);
+  assert.match(ws, /\{slug \? <InviteHeroCard slug=\{slug\} data=\{community\} \/> : null\}/);
+  assert.equal(message('project:hub.invite.button'), 'Invite people');
+  // Request 6687: the card's ✕ closes it (hub-dismissed.ts), and the hero
+  // row's small Invite is then the way in.
+  assert.match(card, /export function InviteHeroCard\(\{ slug, data \}: \{ slug: string; data: CommunityPayload \| null \| undefined \}\): ReactNode \{\s*const t = useMessages\('project'\);\s*const \[closed, close\] = useHubDismissed\(slug, 'invite'\);\s*if \(!showsInviteHero\(data\) \|\| !data \|\| closed\) return null;/,
+    'the card reads the closed flag and draws nothing once closed');
+  assert.match(card, /<section className="dev-ws-invite-hero" data-ws-invite-hero="" aria-label=\{t\('project:hub\.invite\.title'\)\}>\s*<HubCardClose card="invite" onClose=\{close\} \/>/,
+    'its ✕ is the same close button the other hub cards carry');
 });
 
 test('For you\'s Workshop row is there at every width, opening the Workshop, and named for the place', () => {

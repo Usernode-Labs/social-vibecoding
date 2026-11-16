@@ -16,6 +16,16 @@
 // its admins. And a project's first version, which goes live without a vote
 // for the person who just described it (evaluate() says why).
 //
+// One rule tells without holding: `unread`, a change too large to read whole
+// or whose diff could not be loaded. It used to hold, and nearly every time
+// the reason was a rebuilt bundle committed beside a few lines of source, so
+// an admin was put in front of changes that carried nothing. The admins are
+// still told, once for each version, by the same bell row and mail, which
+// say it is not held;
+// the change goes live on its votes and checks like any other. Such a change
+// has a 'notice' row, which no gate reads. When a rule that holds trips on
+// the same change, it is held as before and `unread` is one of its reasons.
+//
 // A hold is a row in release_holds. What an admin decided is NOT a column:
 // the gate reads pr_votes, like every other tally, so an approval a new
 // version cleared is not remembered as given.
@@ -38,12 +48,63 @@ const KIND = 'release_hold';
 const CLOSE_REASON = 'admin-declined';
 const DIFF_CHAR_BUDGET = 120000;
 const NOTE_MAX = 1000;
+// What a bell row's detail starts with when the change is not held: the
+// admins are only told (frontend notifications.js and the push read it).
+const NOTICE_DETAIL = 'notice:';
 
 // The gated capabilities an app declares in dapp.json's `permissions`
 // (services/app-permissions.js), as they are spelled there.
 const { GATED_NAMES } = require('./app-permissions');
 const CAPABILITY = new RegExp(`"(${GATED_NAMES.join('|')})"`);
-const PERSON_COLUMN = /\b(user_id|username|email|phone|wallet_address|usernode_pubkey|full_name|birth(day|date)?|address)\b/i;
+// A column that holds a person's contact or personal details, by the words in
+// its name ("email", "contact_email", "phone_number", "date_of_birth",
+// "home_address"). Saying WHOSE a row is does not count: user_id, username
+// and usernode_pubkey are what the platform hands every app about its
+// signed-in person, and nearly every table carries one of them.
+const PERSON_WORD = /^(e?mail|phone|mobile|birth(day|date)?|dob|address|street|postcode|zip)$/;
+const PERSON_PAIR = /(^|_)((full|first|last|real|legal)_name|date_of_birth|postal_code|zip_code)(_|$)/;
+function isPersonColumn(name) {
+  const n = String(name || '').toLowerCase();
+  return PERSON_PAIR.test(n) || n.split('_').some((w) => PERSON_WORD.test(w));
+}
+
+// The columns of the tables a file's added lines create: the first word of
+// each top-level piece between a CREATE TABLE's own brackets. A person word
+// anywhere else in the file (a query, a comment, a route, the code after the
+// statement) is not a column of a new table, so it holds nothing. A table
+// whose closing bracket is not among the added lines is read to the end of
+// what was added, or TABLE_BODY_LINES, whichever comes first.
+const TABLE_BODY_LINES = 200;
+function newTableColumns(added) {
+  const columns = [];
+  for (let i = 0; i < added.length; i += 1) {
+    const start = /\bCREATE\s+TABLE\b/i.exec(added[i]);
+    if (!start) continue;
+    let depth = 0;
+    let piece = '';
+    let done = false;
+    const flush = () => {
+      const word = /^\s*["`\[]?([A-Za-z_][A-Za-z0-9_]*)/.exec(piece);
+      if (word) columns.push(word[1]);
+      piece = '';
+    };
+    let j = i;
+    for (; j < added.length && j - i < TABLE_BODY_LINES && !done; j += 1) {
+      const text = j === i ? added[j].slice(start.index + start[0].length) : added[j];
+      if (j > i && /\bCREATE\s+TABLE\b/i.test(text)) break;
+      for (const ch of text) {
+        if (ch === '(') { depth += 1; if (depth === 1) continue; }
+        if (ch === ')') { depth -= 1; if (depth === 0) { flush(); done = true; break; } }
+        if (depth === 1 && ch === ',') flush();
+        else if (depth >= 1) piece += ch;
+      }
+      if (depth === 1) flush();
+    }
+    i = Math.max(i, j - 1);
+  }
+  return columns;
+}
+
 const TEST_FILE = /(^|\/)(tests?|__tests__|fixtures)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
 
 // The rules, in the order every surface lists them. `key` is what the row
@@ -57,9 +118,7 @@ const RULES = Object.freeze([
   Object.freeze({
     key: 'people',
     words: 'It starts keeping data about people',
-    read: (c) => c.files.some((f) => !TEST_FILE.test(f.path)
-      && f.added.some((l) => /\bCREATE\s+TABLE\b/i.test(l))
-      && f.added.some((l) => PERSON_COLUMN.test(l) && !/\bCREATE\s+TABLE\b/i.test(l))),
+    read: (c) => c.files.some((f) => !TEST_FILE.test(f.path) && newTableColumns(f.added).some(isPersonColumn)),
   }),
   Object.freeze({
     key: 'secret',
@@ -83,17 +142,24 @@ const RULES = Object.freeze([
     read: (c) => !!c.contentFlagged,
   }),
   // The rules above only mean something on a change that was read whole. One
-  // too large for the reader, or whose diff could not be loaded, is held
-  // rather than waved through: a wallet send past the cut-off is still a
-  // wallet send.
+  // too large for the reader, or whose diff could not be loaded, says so to
+  // the admins and holds nothing (`holds: false`): what was read of it still
+  // trips the rules above, and the part past the cut-off is theirs to look
+  // at if they choose.
   Object.freeze({
     key: 'unread',
     words: 'It could not be read in full',
+    holds: false,
     read: (c) => !!c.unread,
   }),
 ]);
 const RULE_KEYS = Object.freeze(RULES.map((r) => r.key));
 const RULE_BY_KEY = new Map(RULES.map((r) => [r.key, r]));
+
+/** Whether any of these rules holds the change, rather than only telling the admins. */
+function holds(list) {
+  return cleanRules(list).some((k) => RULE_BY_KEY.get(k).holds !== false);
+}
 
 function isManifest(path) { return /(^|\/)dapp\.json$/.test(path); }
 
@@ -239,14 +305,13 @@ async function evaluate({
         const d = await github.getProposalDiff(repoOwner, repoName, `${baseRef}...${commitHash}`, DIFF_CHAR_BUDGET);
         diff = String(d?.diff || '');
         // Cut off at the budget, or a file list the compare did not finish:
-        // what was read still counts, and the rest holds the change.
+        // what was read still counts, and the admins are told about the rest.
         unread = !!d?.truncated || d?.filesComplete === false;
       } catch (err) {
-        // Fails CLOSED, unlike the Content rules row beside it: that row
-        // must never turn checks red for the platform's own trouble, but a
-        // hold is not a red check. A change nobody could read waits for an
-        // admin, and the next run that reads it whole ends the hold.
-        log.warn('release-holds', 'Could not load the diff, so the change is held', { sessionId: session.id, err: err.message });
+        // A change nobody could read is not passed over in silence: the
+        // admins are told, like one cut off at the budget, and the next run
+        // that reads it whole says what it holds.
+        log.warn('release-holds', 'Could not load the diff, so the admins are told', { sessionId: session.id, err: err.message });
         unread = true;
         failed = true;
       }
@@ -259,7 +324,7 @@ async function evaluate({
     }
 
     const outcome = await apply(pool, { sessionId: session.id, appId: app.id, commitHash, rules });
-    if (outcome.state === 'held') {
+    if (outcome.state === 'held' || outcome.state === 'notice') {
       await (deps.notify || notifyIfDue)({ config, pool, sessionId: session.id });
     }
     return outcome;
@@ -271,13 +336,33 @@ async function evaluate({
 
 async function apply(pool, { sessionId, appId, commitHash, rules }) {
   const head = String(commitHash).toLowerCase();
-  if (!rules.length) {
+  if (!holds(rules)) {
     const { rowCount } = await pool.query(
       `UPDATE release_holds SET status = 'fixed', decided_at = NOW()
         WHERE session_id = $1 AND status = 'waiting'`, [sessionId]);
-    if (rowCount) log.info('release-holds', 'A new version trips no rule, so the hold ended', { sessionId });
-    return { state: rowCount ? 'fixed' : 'clear', rules: [] };
+    if (rowCount) log.info('release-holds', 'A new version trips no rule that holds, so the hold ended', { sessionId });
+    if (!rules.length) {
+      await endNotice(pool, sessionId);
+      return { state: rowCount ? 'fixed' : 'clear', rules: [] };
+    }
+    // Only rules that tell: one 'notice' row per change, which no gate
+    // reads. A later version keeps the row and is told about again: being
+    // told of one version says nothing about the next, which nobody read
+    // in full either.
+    const { rows: [notice] } = await pool.query(
+      `INSERT INTO release_holds (app_id, session_id, head_sha, rules, status)
+       VALUES ($1, $2, $3, $4::text[], 'notice')
+       ON CONFLICT (session_id) WHERE status = 'notice'
+       DO UPDATE SET head_sha = EXCLUDED.head_sha, rules = EXCLUDED.rules,
+                     notified_at = CASE WHEN release_holds.head_sha IS DISTINCT FROM EXCLUDED.head_sha
+                                        THEN NULL ELSE release_holds.notified_at END
+       RETURNING id, (xmax = 0) AS opened`, [appId, sessionId, head, rules]);
+    if (notice?.opened) log.info('release-holds', 'Admins will be told about a change, which is not held', { sessionId, rules });
+    return { state: 'notice', rules, id: notice ? Number(notice.id) : null, opened: !!notice?.opened };
   }
+  // Held now: the hold's own tell says everything, so a notice nobody has
+  // been sent yet is not sent after it.
+  await endNotice(pool, sessionId);
   const { rows: [row] } = await pool.query(
     `INSERT INTO release_holds (app_id, session_id, head_sha, rules)
      VALUES ($1, $2, $3, $4::text[])
@@ -288,26 +373,43 @@ async function apply(pool, { sessionId, appId, commitHash, rules }) {
   return { state: 'held', rules, id: row ? Number(row.id) : null, opened: !!row?.opened };
 }
 
+// A 'notice' row stands only while the change's newest version is one the
+// admins are merely told about. Once a version is read whole, or is held,
+// the row ends, so the clock never tells them about a version that is gone.
+async function endNotice(pool, sessionId) {
+  await pool.query(
+    `UPDATE release_holds SET status = 'fixed', decided_at = NOW()
+      WHERE session_id = $1 AND status = 'notice'`, [sessionId]);
+}
+
 // ── Telling the admins ──────────────────────────────────────────────────
 
 /**
- * Tell the full admins about a hold, once, and only when the change is up
- * for a vote: a change still being worked on asks nobody. Called when the
- * checks settle and again when the change is proposed. Never throws.
+ * Tell the full admins about a hold, or about a change they are only told
+ * of, once, and only when the change is up for a vote: a change still being
+ * worked on asks nobody. Called when the checks settle and again when the
+ * change is proposed. A change with both rows is told of its hold. Never
+ * throws.
  */
 async function notifyIfDue({ config = null, pool, sessionId, deps = {} } = {}) {
   try {
     const { rows: [hold] } = await pool.query(
       `UPDATE release_holds rh SET notified_at = NOW()
          FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-        WHERE rh.session_id = $1 AND rh.status = 'waiting' AND rh.notified_at IS NULL
+        WHERE rh.id = (SELECT due.id FROM release_holds due
+                        WHERE due.session_id = $1 AND due.status IN ('waiting', 'notice') AND due.notified_at IS NULL
+                        ORDER BY (due.status = 'waiting') DESC, due.id LIMIT 1)
+          AND rh.notified_at IS NULL
           AND cs.id = rh.session_id AND cs.status = 'promoted'
-      RETURNING rh.id, rh.rules, cs.id AS session_id, cs.user_id AS author_id, cs.app_id,
+      RETURNING rh.id, rh.rules, rh.status, cs.id AS session_id, cs.user_id AS author_id, cs.app_id,
                 a.slug AS app_slug, a.name AS app_name,
                 COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''), 'A change') AS title`,
       [sessionId]);
     if (!hold) return { notified: 0 };
     const rules = cleanRules(hold.rules);
+    // A row that only tells says so in the bell row's detail and the mail's
+    // `held`, which is what the words of both are chosen by.
+    const held = hold.status !== 'notice';
 
     // Full admins, never the author: their own yes would not count.
     const { rows: created } = await pool.query(
@@ -318,13 +420,14 @@ async function notifyIfDue({ config = null, pool, sessionId, deps = {} } = {}) {
           AND admin.anonymised_at IS NULL
           AND admin.id IS DISTINCT FROM $2
        RETURNING id, user_id`,
-      [hold.session_id, hold.author_id, hold.app_id, rules.join(',')]);
+      [hold.session_id, hold.author_id, hold.app_id, `${held ? '' : NOTICE_DETAIL}${rules.join(',')}`]);
     const notifications = deps.notifications || require('./notifications');
     await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)))
       .catch((err) => log.warn('release-holds', 'Pushing the hold to the bell failed', { sessionId, err: err.message }));
 
-    await mailAdmins({ config, pool, hold, rules, adminIds: created.map((r) => r.user_id), deps });
-    log.info('release-holds', 'Admins asked to approve a held change', { sessionId, admins: created.length });
+    await mailAdmins({ config, pool, hold, rules, held, adminIds: created.map((r) => r.user_id), deps });
+    log.info('release-holds', held ? 'Admins asked to approve a held change' : 'Admins told about a change that is not held',
+      { sessionId, admins: created.length });
     return { notified: created.length };
   } catch (err) {
     log.warn('release-holds', 'Could not tell the admins about a hold', { sessionId, err: err.message });
@@ -336,7 +439,7 @@ function changeUrl(slug, sessionId) {
   return `${PRODUCTION_ORIGIN}/#app/${encodeURIComponent(slug)}/dev/proposals/${Number(sessionId)}`;
 }
 
-async function mailAdmins({ config, pool, hold, rules, adminIds, deps = {} }) {
+async function mailAdmins({ config, pool, hold, rules, held = true, adminIds, deps = {} }) {
   if (!adminIds.length) return;
   const send = deps.sendMail || ((cfg, message) => require('./mail').send(cfg, message));
   const [{ rows: admins }, { rows: [author] }] = await Promise.all([
@@ -349,6 +452,7 @@ async function mailAdmins({ config, pool, hold, rules, adminIds, deps = {} }) {
     title: hold.title,
     author: author?.username || '',
     reasons: ruleWords(rules),
+    held,
     url: changeUrl(hold.app_slug, hold.session_id),
   };
   await Promise.all(admins.map((admin) => Promise.resolve()
@@ -367,7 +471,7 @@ async function sweep(pool, { config = null, deps = {} } = {}) {
   const cfg = config || require('../config');
   const { rows } = await pool.query(
     `SELECT rh.session_id FROM release_holds rh JOIN chat_sessions cs ON cs.id = rh.session_id
-      WHERE rh.status = 'waiting' AND rh.notified_at IS NULL AND cs.status = 'promoted'
+      WHERE rh.status IN ('waiting', 'notice') AND rh.notified_at IS NULL AND cs.status = 'promoted'
       ORDER BY rh.created_at LIMIT 50`);
   let notified = 0;
   for (const r of rows) {
@@ -480,6 +584,7 @@ const LIST_SQL = `
 
 // How a hold reads once it is no longer waiting on anybody.
 function outcomeOf(r) {
+  if (r.status === 'notice') return 'notice';
   if (r.status === 'declined') return 'declined';
   if (r.status === 'fixed') return 'fixed';
   if (r.session_status === 'merged') return 'approved';
@@ -531,8 +636,8 @@ async function listForAdmin(pool, { viewerId = null, historyLimit = 100 } = {}) 
 function _resetCache() { evaluated.clear(); }
 
 module.exports = {
-  KIND, CLOSE_REASON, RULES, RULE_KEYS,
-  addedByFile, tripped, cleanRules, ruleWords,
+  KIND, CLOSE_REASON, NOTICE_DETAIL, RULES, RULE_KEYS,
+  addedByFile, tripped, cleanRules, ruleWords, holds,
   heldSql, approvedSql, gateFor, forSessions,
   evaluate, apply, notifyIfDue, sweep, onVote, listForAdmin, changeUrl,
   _resetCache,

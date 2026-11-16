@@ -73,7 +73,7 @@ function register(kind, user = { id: 7, username: 'ada', isAdmin: true, canAdmin
     accessToken: 'svmcd_test', scopes: [READ_SCOPE, WRITE_SCOPE], user,
     clientName: 'Homeroom', clientId: 'c1', origin: 'https://usernode.example', baseUrl: 'http://platform.internal',
     pool: { async query() { return { rows: [] }; } }, config: {}, tokenId: 1, grantId: 'g'.repeat(22),
-    delegation: { kind, grantId: 'g'.repeat(22), changeId: null, appId: null, appSlug: null, agentSessionId: null },
+    delegation: { kind, grantId: 'g'.repeat(22), changeId: null, appId: null, appSlug: null },
   });
   return { specs, handlers };
 }
@@ -149,7 +149,7 @@ test('the token chain accepts the new kind, the table allows it, and the shim mi
     /ADD CONSTRAINT mcp_delegations_kind_check\s+CHECK \(kind IN \('agent_mayor', 'worker_read', 'bot_admin'\)\)/);
   const shim = read('src/services/mayor/mcp-shim.js');
   assert.match(shim, /const grantKind = kind === 'bot_admin' \? 'bot_admin' : 'agent_mayor';/);
-  assert.match(shim, /userId, kind: grantKind, agentSessionId/);
+  assert.match(shim, /userId, kind: grantKind, appId, changeId, scopes, ttlSeconds,/);
 });
 
 // ── A turn's run ────────────────────────────────────────────────────────

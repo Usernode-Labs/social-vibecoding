@@ -102,3 +102,75 @@ for (const [file, exportName, trackId, attr, options] of [
     });
   });
 }
+
+// The same promise in the dialogs and vote forms (part of #6510): every group
+// below drew role="radio" buttons that each took a Tab press and ignored the
+// arrows. Each one's pick only fills in a draft, so an arrow may make it. The
+// groups whose pick acts at once (a vote's Yes and No, a ballot's choices)
+// are deliberately not here: an arrow key must never cast a vote.
+const DRAFT_GROUPS = [
+  ['frontend/src/features/who-decides/parts.tsx', "'../../lib/radio-group'", ['keys']],
+  ['frontend/src/features/dialogs/who-decides.tsx', "'../../lib/radio-group'", ['seeKeys', 'kindKeys']],
+  ['frontend/src/features/review-flow/vote-sheet.tsx', "'../../lib/radio-group'", ['whyKeys']],
+  ['frontend/src/features/dev-board/card/dev-card.tsx', "'../../../lib/radio-group'", ['whyKeys']],
+  ['frontend/src/features/messages/bot-make.tsx', "'../../lib/radio-group'", ['audienceKeys']],
+  ['frontend/src/features/comment-pin/comment-pin.tsx', "'../../lib/radio-group'", ['targetKeys']],
+];
+
+for (const [file, from, names] of DRAFT_GROUPS) {
+  test(`${file}: its radio groups answer the arrow keys`, () => {
+    const src = read(file);
+    assert.ok(src.includes(`import { radioGroupKeys } from ${from};`), 'imports the shared keys');
+    for (const name of names) {
+      assert.ok(src.includes(`const ${name} = radioGroupKeys(`), `${name} is built from the shared keys`);
+      assert.ok(src.includes(`onKeyDown={${name}.onKeyDown}`), `${name}: the group answers the keys`);
+      assert.ok(src.includes(`tabIndex={${name}.tabIndex(`), `${name}: each radio gets its roving tabIndex`);
+    }
+  });
+}
+
+test('radioGroupKeys: a key on another control inside the group is not the group\'s', () => {
+  const { radioGroupKeys } = loadTsx(LIB);
+  const picked = [];
+  const keys = radioGroupKeys(['a', 'b'], 'a', (v) => picked.push(v));
+  const group = fakeGroup(2);
+  const fire = (isRadio) => {
+    let prevented = false;
+    keys.onKeyDown({
+      key: 'ArrowDown',
+      currentTarget: group.el,
+      target: { closest: (sel) => (sel === '[role="radio"]' && isRadio ? {} : null) },
+      preventDefault() { prevented = true; },
+    });
+    return prevented;
+  };
+  assert.equal(fire(false), false, 'a stepper button keeps its own keys');
+  assert.deepEqual(picked, []);
+  assert.equal(fire(true), true);
+  assert.deepEqual(picked, ['b']);
+});
+
+test('a group whose pick casts a vote is left to Tab and Enter', () => {
+  const sheet = read('frontend/src/features/review-flow/vote-sheet.tsx');
+  const pair = sheet.match(/<div className="rf-pair"[^>]*>/);
+  assert.ok(pair, 'the Yes and No pair is still drawn');
+  assert.doesNotMatch(pair[0], /onKeyDown/, 'an arrow key does not vote');
+  const ballot = read('frontend/src/features/dev-board/topic/thread-changes.tsx').match(/<div className="dev-change-gate-act"[^>]*>/);
+  assert.ok(ballot, 'the ballot is still drawn');
+  assert.doesNotMatch(ballot[0], /onKeyDown/, 'an arrow key does not pick on a ballot');
+});
+
+test('the approval presets: the picked tile is the one tab stop, else the first', () => {
+  const tiles = (picked) => {
+    const html = renderComponent('frontend/src/features/who-decides/parts.tsx', 'PresetTiles', {
+      picked, now: null, viewer: {}, onPick() {}, labelId: 'x',
+    });
+    return [...html.matchAll(/<button[^>]*data-who-preset="([^"]+)"[^>]*>/g)].map((m) => [m[1], /tabindex="0"/.test(m[0])]);
+  };
+  const none = tiles(null);
+  assert.ok(none.length >= 2, 'the tiles render');
+  assert.deepEqual(none.map(([, stop]) => stop), none.map((_, i) => i === 0), 'nothing picked: the first tile');
+  const last = none[none.length - 1][0];
+  const some = tiles(last);
+  assert.deepEqual(some.map(([, stop]) => stop), some.map(([key]) => key === last), 'the picked tile');
+});

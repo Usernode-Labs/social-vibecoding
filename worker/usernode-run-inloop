@@ -318,7 +318,9 @@ function createFrontProxy({ appPort, assetOrigin, routeAssets }) {
   return server;
 }
 
-function freePort() {
+// One ephemeral bind, immediately released: what the kernel hands out may be
+// a port something closed a moment ago.
+function probeFreePort() {
   return new Promise((resolve, reject) => {
     const probe = net.createServer();
     probe.unref();
@@ -328,6 +330,21 @@ function freePort() {
       probe.close(() => resolve(port));
     });
   });
+}
+
+const FREE_PORT_ATTEMPTS = 20;
+
+// An internal port is only safe if the front proxy will not wind up on it
+// too: the front port is bound after this, so the ephemeral probe can hand
+// back the very port the proxy is about to open and the app then crashes
+// with EADDRINUSE. Probe again until the port is one the launch does not
+// already claim.
+async function freePort({ avoid = [], probe = probeFreePort } = {}) {
+  for (let attempt = 0; attempt < FREE_PORT_ATTEMPTS; attempt += 1) {
+    const port = await probe();
+    if (!avoid.includes(port)) return port;
+  }
+  throw new Error(`no port outside ${avoid.join(', ')} was free after ${FREE_PORT_ATTEMPTS} tries`);
 }
 
 // Untracked, not-ignored paths, or null outside a git checkout.
@@ -493,7 +510,7 @@ async function main() {
 
   const publicPort = Number(env.PORT);
   let appPort;
-  try { appPort = await freePort(); } catch (err) {
+  try { appPort = await freePort({ avoid: [publicPort] }); } catch (err) {
     process.stderr.write(`usernode-run-inloop: could not reserve an internal port: ${err.message}\n`);
     process.exitCode = 2;
     return;
@@ -611,6 +628,7 @@ module.exports = {
   platformAssetOrigin,
   isPlatformAssetPath,
   createFrontProxy,
+  freePort,
   PLATFORM_ASSET_PREFIXES,
   readLaunch,
   stopLaunch,

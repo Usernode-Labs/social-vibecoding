@@ -67,9 +67,9 @@ const RULES = Object.freeze({
     families: Object.freeze({
       // Its question to the requester (an overlap asks them one too).
       question: Object.freeze(['question', 'person', 'empty', 'overlap']),
-      // Its plan; and, as a build starts, how it builds it beside or on top
-      // of another open change that shares its files (#6423, #6428).
-      plan: Object.freeze(['plan', 'spec', 'overlap_stack', 'overlap_parallel']),
+      // Its plan; and, as a build starts, that it builds on top of another
+      // open change it depends on (#6428).
+      plan: Object.freeze(['plan', 'spec', 'overlap_stack']),
       // Built it, up for a vote (a person's change saying it does this
       // request is that too).
       proposal: Object.freeze(['proposal', 'change_claim']),

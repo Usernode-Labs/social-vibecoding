@@ -8,12 +8,14 @@
 // project not chosen (75 apps, theirs at position 53), the change's id typed
 // in for them, and the chip it left on the composer read
 // "flat-4b-chores-e98ecd · Proposa…". The change page knows the project and
-// the change, so now:
+// the change, so now (14 Nov 2026: there is no Main Chat to attach it in):
 //
-//   - app-view.js hands openBot the change with its project (id and slug);
-//   - openBot attaches a reference that names its project and itself on the
-//     bot chat's composer directly, with the box asking "What should
-//     change?" and the caret in it; anything less still opens the dialog;
+//   - app-view.js hands openBot the change with its project (id and slug)
+//     and its pull request's number;
+//   - openBot opens the private thread about a change it can name by that
+//     number; any other complete item opens a new chat set to its project,
+//     with the item attached in the new chat's box, the box asking "What
+//     should change?" and the caret in it;
 //   - the chip reads as the card it becomes ("Change · <title> · <project> ·
 //     waiting for approval"), from the server's own reading of it, and never
 //     shows the short name or "Proposal";
@@ -34,63 +36,121 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 test('the change page hands the change over with its project', () => {
   const view = read('public/js/app-view.js');
-  const fn = view.slice(view.indexOf('  askBotForChanges(sessionId, title) {'), view.indexOf('  /** B8: whether Homeroom bot builds requests here'));
+  const fn = view.slice(view.indexOf('  askBotForChanges(sessionId, title, number) {'), view.indexOf('  /** B8: whether Homeroom bot builds requests here'));
   assert.match(fn, /type: 'proposal', sessionId: Number\(sessionId\), title: title \|\| null,/);
   assert.match(fn, /appId: Number\(app\.id\) > 0 \? Number\(app\.id\) : undefined,/);
   assert.match(fn, /appSlug: app\.slug \|\| App\.currentApp \|\| undefined,/);
+  assert.match(fn, /number: Number\(number\) > 0 \? Number\(number\) : undefined,/, 'its pull request\'s number, for the thread about it');
   assert.match(fn, /messages\.openBot\(reference\)/);
+  assert.match(view, /act: \(\) => AppView\.askBotForChanges\(item\.id, item\.session_title \|\| item\.pr_title \|\| null, item\.pr_number\),/);
 });
 
-test('openBot attaches a complete change directly, and leaves anything less to the dialog', async () => {
-  let opened = 0;
+test('openBot opens the thread about a change it can name, and carries any other item into a new chat', async () => {
   const fakeApi = new Proxy({
-    async openBotConversation() { opened += 1; return 77; },
     strictId: (v) => (Number.isInteger(Number(v)) && Number(v) > 0 ? Number(v) : null),
   }, { get: (t, k) => (k in t ? t[k] : () => { throw new Error(`api.${String(k)} not stubbed`); }) });
-  const store = loadTsx('frontend/src/features/messages/store.ts', { stubs: { './api': fakeApi } });
+  const started = [];
+  const went = [];
+  let fails = false;
+  const carry = loadTsx('frontend/src/features/messages/new-chat-carry.ts');
+  const store = loadTsx('frontend/src/features/messages/store.ts', {
+    stubs: {
+      './api': fakeApi,
+      './new-chat-carry': carry,
+      '../../lib/thread-about': {
+        async startThreadAbout(slug, number, kind) {
+          started.push([slug, number, kind]);
+          if (fails) throw new Error('nope');
+          return { rootId: 900, href: '#homeroom-bot/thread/900', holds: false };
+        },
+      },
+      '../ai/door': { ...loadTsx('frontend/src/features/ai/door.ts'), goBotAddress: (href) => went.push(href) },
+    },
+  });
   assert.equal(message('messages:store.askForChangesPlaceholder'), 'What should change?');
   assert.equal(store.ASK_FOR_CHANGES_PLACEHOLDER, 'messages:store.askForChangesPlaceholder');
 
   assert.equal(store.stagedComplete({ type: 'proposal', sessionId: 6269, appSlug: 'flat-4b-chores-e98ecd' }), true);
   assert.equal(store.stagedComplete({ type: 'proposal', sessionId: 6269, appId: 12 }), true);
-  assert.equal(store.stagedComplete({ type: 'proposal', sessionId: 6269 }), false, 'no project: the dialog asks');
+  assert.equal(store.stagedComplete({ type: 'proposal', sessionId: 6269 }), false, 'no project');
   assert.equal(store.stagedComplete({ type: 'proposal', appSlug: 'x' }), false, 'no change');
   assert.equal(store.stagedComplete({ type: 'issue', issueNumber: 4, appSlug: 'x' }), true);
   assert.equal(store.stagedComplete({ type: 'spec', sessionId: 4, appSlug: 'x' }), false, 'a spec needs its version');
 
+  // A change named by its pull request's number: the private thread about it.
   const change = { type: 'proposal', sessionId: 6269, appId: 12, appSlug: 'flat-4b-chores-e98ecd', title: 'Show whose turn each chore is' };
-  await store.openBot(change);
-  assert.equal(opened, 1);
-  assert.equal(store.takePendingShare(), undefined, 'no Share item dialog');
-  assert.equal(store.takePendingAttach(5), null, 'only for the chat with the bot');
-  assert.deepEqual(store.takePendingAttach(77), { object: change, placeholder: 'What should change?' });
-  assert.equal(store.takePendingAttach(77), null, 'once');
+  await store.openBot({ ...change, number: 31 });
+  assert.deepEqual(started, [['flat-4b-chores-e98ecd', 31, 'change']]);
+  assert.deepEqual(went, ['#homeroom-bot/thread/900']);
+  assert.equal(carry.takeCarried(), null, 'nothing is carried into a thread that exists');
 
+  // No number (or the thread could not be started): a new chat set to its
+  // project, with the change attached in its box and the box asking.
+  await store.openBot(change);
+  assert.equal(started.length, 1, 'no number, no thread asked for');
+  assert.equal(went[1], '#homeroom-bot/new?project=flat-4b-chores-e98ecd');
+  assert.deepEqual(carry.takeCarried(), { object: change, placeholder: 'What should change?' });
+  assert.equal(carry.takeCarried(), null, 'once');
+  fails = true;
+  await store.openBot({ ...change, number: 31 });
+  assert.equal(went[2], '#homeroom-bot/new?project=flat-4b-chores-e98ecd', 'a thread that could not be started falls back to the new chat');
+  assert.deepEqual(carry.takeCarried(), { object: change, placeholder: 'What should change?' }, 'its number is the door\'s, never the item\'s');
+
+  // A group decision has no thread about it: the same new chat, carrying it.
+  const decision = { type: 'governance', proposalId: 8, appSlug: 'flat-4b-chores-e98ecd', title: 'Close #4' };
+  await store.openBot(decision);
+  assert.equal(went[3], '#homeroom-bot/new?project=flat-4b-chores-e98ecd');
+  assert.deepEqual(carry.takeCarried(), { object: decision, placeholder: 'What should change?' });
+
+  // A project alone: a new chat set to it, with nothing attached; nothing at all: a new chat.
+  await store.openBot({ type: 'app', appSlug: 'plant-pal', title: 'Plant Pal' });
+  assert.equal(went[4], '#homeroom-bot/new?project=plant-pal');
+  assert.equal(carry.takeCarried(), null);
   await store.openBot({ type: 'proposal', sessionId: 6269 });
-  assert.equal(store.takePendingAttach(77), null);
-  assert.deepEqual(store.takePendingShare(), { type: 'proposal', sessionId: 6269 }, 'an incomplete one is still chosen in the dialog');
+  assert.equal(went[5], '#homeroom-bot/new', 'an item that names no project carries nothing');
+  assert.equal(carry.takeCarried(), null);
+  await store.openBot();
+  assert.equal(went[6], '#homeroom-bot/new');
+  assert.equal(store.takePendingAttach, undefined, 'the bot chat\'s composer takes no attachment: there is none');
 });
 
-test('the composer takes the attached change: its chip, its prompt, the caret, and only the reference is sent', () => {
+test('a carried item waits a moment for its new chat, and is taken once', () => {
+  const carry = loadTsx('frontend/src/features/messages/new-chat-carry.ts');
+  const item = { type: 'issue', appSlug: 'plant-pal', issueNumber: 4 };
+  carry.carryToNewChat(item, 'What should change?', 1000);
+  assert.deepEqual(carry.takeCarried(1000 + carry.CARRY_MS - 1), { object: item, placeholder: 'What should change?' });
+  assert.equal(carry.takeCarried(1000), null, 'once');
+  carry.carryToNewChat(item, null, 1000);
+  assert.equal(carry.takeCarried(1000 + carry.CARRY_MS), null, 'a door whose address opened no chat does not hand its item to a later one');
+  carry.carryToNewChat(item, null, 1000);
+  carry.carryToNewChat(null);
+  assert.equal(carry.takeCarried(1000), null, 'taken back');
+});
+
+test('the new chat takes the carried item: its chip, its prompt, the caret, and only the reference is sent', () => {
+  const panel = read('frontend/src/features/messages/new-thread.tsx');
+  assert.match(panel, /const held = takeCarried\(\);/);
+  assert.match(panel, /preset = held\n\s+\? \{ project: fresh\?\.project \?\? null, builder: fresh\?\.builder \|\| 'homeroom', object: held\.object, placeholder: held\.placeholder \}\n\s+: fresh \|\| null;/,
+    'what a door carried is what the chat is about');
+  assert.match(panel, /const \[object, setObject\] = useState<StagedObject \| null>\(\(\) => preset\?\.object \|\| null\);/);
+  assert.match(panel, /<div className="messages-pending-object" data-bot-new-thread-object=\{object\.type\}>/);
+  assert.match(panel, /\{pendingObjectLabel\(object, stagedCard\)\}/, 'the chip reads what a sent card reads');
+  assert.match(panel, /<button type="button" onClick=\{\(\) => \{ setObject\(null\); setPrompt\(null\); \}\} aria-label=\{t\('messages:composer\.removeSharedItem'\)\}>×<\/button>/);
+  assert.match(panel, /placeholder=\{own \? t\('messages:newThread\.builder\.placeholder'\) : \(object && prompt\) \|\| t\('messages:newThread\.placeholder'\)\}/);
+  assert.match(panel, /\.\.\.\(object \? \{ object: referenceOf\(object\) \} : \{\}\),/, 'the staged title is never sent');
+  assert.match(panel, /if \(preset\.object\) toField\(\);/, 'the caret is in the box');
+  // The conversation composer keeps its own chip, for an item shared in a chat with people.
   const composer = read('frontend/src/features/messages/composer.tsx');
-  assert.match(composer, /window\.addEventListener\('usernode:messages-attach', attachPending\);/);
-  assert.match(composer, /const pending = takePendingAttach\(conversationId\);/);
-  // #6212: the item is the person's own, so moving around never takes it off.
-  assert.match(composer, /setChip\(pending\.object, 'person'\); setPrompt\(pending\.placeholder\); setFocusWanted\(true\);/);
   assert.equal(message('messages:composer.placeholderThread'), 'Reply in thread…');
   assert.equal(message('messages:composer.placeholder'), 'Message…');
-  // One request, one story: a thread's placeholder is chosen apart (a
-  // request's thread in the chat with Homeroom bot says which request);
-  // a room's thread keeps "Reply in thread…".
-  assert.match(composer, /placeholder=\{inThread \? threadPlaceholder : \(prompt \|\| t\('messages:composer\.placeholder'\)\)\}/);
   assert.match(composer, /const threadPlaceholder = !botRequest \? t\('messages:composer\.placeholderThread'\)/);
   assert.match(composer, /\{pendingObjectLabel\(object, stagedCard\)\}/);
   assert.match(composer, /object: object \? referenceOf\(object\) : undefined/, 'the staged title is never sent');
   assert.match(composer, /api\.resolveLinkCards\(\[\{ type, appSlug, issueNumber, sessionId, proposalId \}\]\)/,
     'the chip reads what a sent card reads');
   assert.doesNotMatch(composer, /function objectLabel/, 'the slug-and-id label is gone');
-  // The store's attach and the composer's listener meet on one event name.
-  assert.match(read('frontend/src/features/messages/store.ts'), /new CustomEvent\('usernode:messages-attach'\)/);
+  assert.doesNotMatch(composer, /takePendingAttach|usernode:messages-attach/, 'the one-shot that attached a change in Main Chat\'s box is gone');
+  assert.doesNotMatch(read('frontend/src/features/messages/store.ts'), /usernode:messages-attach|pendingAttach/);
 });
 
 test('the chip names the title and the project, never the short name or "Proposal"', () => {

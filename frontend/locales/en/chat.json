@@ -255,13 +255,21 @@
     "text": "Got it: your request. Waiting for the first version to go live. I’ll start on this as soon as it does.",
     "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and will start once the project's first version is live. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
   },
-  "group.botCard.filed.waitingBuilder": {
-    "text": "Got it: {{title}}. Waiting for a free builder.",
-    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and it waits in line; a 'builder' is one of the workers that build changes. {{title}} is the request's title, in the person's own words. The bot speaks as 'I'."
+  "group.botCard.filed.waitingSlot": {
+    "text": "Got it: {{title}}. Homeroom bot will build it when it has a free slot. It starts by itself.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and it waits in the bot's own line on the project until the bot has a free slot. Nobody else builds it and the person has nothing to do: the bot starts on it by itself. {{title}} is the request's title, in the person's own words. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
-  "group.botCard.filed.waitingBuilderUntitled": {
-    "text": "Got it: your request. Waiting for a free builder.",
-    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request and it waits in line; a 'builder' is one of the workers that build changes. Used when the request has no title, so it is called 'your request'. The bot speaks as 'I'."
+  "group.botCard.filed.waitingSlotUntitled": {
+    "text": "Got it: your request. Homeroom bot will build it when it has a free slot. It starts by itself.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and it waits in the bot's own line on the project until the bot has a free slot. Nobody else builds it and the person has nothing to do: the bot starts on it by itself. Used when the request has no title, so it is called 'your request'. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botCard.filed.waitingPlan": {
+    "text": "Got it: {{title}}. It’s waiting for you: you’re planning it with Homeroom bot in a private thread.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and will not start on it while the person is working out its plan with the bot in a private thread of their own. It waits for the person, not for a free slot. {{title}} is the request's title, in the person's own words. Homeroom bot is the product's assistant that builds changes; keep its name."
+  },
+  "group.botCard.filed.waitingPlanUntitled": {
+    "text": "Got it: your request. It’s waiting for you: you’re planning it with Homeroom bot in a private thread.",
+    "description": "Text of Homeroom bot's private card under the person's own chat message: the bot took the request, and will not start on it while the person is working out its plan with the bot in a private thread of their own. It waits for the person, not for a free slot. Used when the request has no title, so it is called 'your request'. Homeroom bot is the product's assistant that builds changes; keep its name."
   },
   "group.botCard.filed.building": {
     "text": "Building it now: {{title}}.",

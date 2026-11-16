@@ -15,9 +15,7 @@
  * spoken, so the two never show together.
  *
  * A tap PUTS THE WORDS IN THE BOX, focused with the caret at the end, to be
- * finished or sent; it never sends. That is what Homeroom bot's suggested
- * replies do (features/agent-session/index.tsx `Replies`, #3033), and these
- * wear the same pill.
+ * finished or sent; it never sends.
  *
  * ── Whether "never posted" can be known ──────────────────────────────
  *

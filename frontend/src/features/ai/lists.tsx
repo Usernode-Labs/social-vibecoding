@@ -6,9 +6,6 @@
  *          Needs you: 15 · …           chips to see only some projects' work
  *   ( All ) ( Homeroom ) ( Game Corner ) ( Run Club )    ( 28 more ⌄ )
  *
- *   [bot] Main Chat          2 new   ← 1 Nov 2026: the list's first row, the
- *                                      chat with the bot itself (./index.tsx)
- *
  *   NEEDS YOU · 15                   ← a band, the sheet's width
  *   [tile] Homeroom
  *     ☑ #6038  Spell out the approval rules…      Vote
@@ -40,12 +37,16 @@
  *                    (./project-picker.tsx, 30 Oct 2026: a chip a project
  *                    was unusable with dozens).
  *   no row lines     space and the project's name group the rows.
+ *   search           the box by New chat narrows every list to the threads
+ *                    that match (#6398) and, under them, lists the messages
+ *                    in the person's threads with the bot that do, each a
+ *                    link to that message (13 Nov 2026, ./search.ts).
  *
  * Rows here are 14px over one line, not the shell's 15 over 13 (AGENTS.md,
  * "Type and colour"): this page's exception, recorded there.
  *
- * The row whose place is in the column beside the list (Main Chat, a
- * private thread, or a request, a change or a decision on its page: #6218)
+ * The row whose place is in the column beside the list (a private thread,
+ * or a request, a change or a decision on its page: #6218)
  * is drawn lit, where you are (`--lit-tint`, `--lit-ink`). A row is lit by
  * the column it opens (./column.ts rowKey), the one the page says is open.
  * #6153: a design thread filed as a request is that request's row (In
@@ -60,32 +61,30 @@ import { Chip } from '@/components/ui/chip';
 import { SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
+  ArrowPathIcon, ArrowUpTrayIcon, BallotIcon, CameraIcon, ChatBubbleTailIcon, ChatIcon, CheckIcon, ChevronDownIcon, ClockIcon, CodeIcon,
   CogIcon, EyeIcon, HandRaisedIcon, LockIcon, PlayIcon, ReplyArrowIcon, WarningTriangleIcon, XIcon,
 } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
-import { BOT_AVATAR } from '../messages/format';
 import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder,
+  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst,
   type AiApp, type AiThread, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { reload as reloadTab } from '../../lib/tab-build';
-import { dayHeading, useAiLines, type Glyph, type Line } from './lines';
+import { Marked, followFound } from './found';
+import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import { SmallTile } from './small-tile';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
+import type { Found } from './search';
 
 // The plane a list stands on, as GroupedList draws one: the sheet's solid
 // fill, 20px, one inset hairline. Complete literals for Tailwind.
 const PLANE = 'mx-4 rounded-[20px] bg-[color:var(--dc-sheet-solid)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
-// #6424: Main Chat's card holds one row, so when that chat is open the card
-// itself is lit. A tinted box inside the round card left an uneven white ring.
-const MAIN_LIT = 'mx-4 rounded-[20px] bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)] shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 // A chip on a sheet: the sheet's own hairline round it, so a white chip does not melt into it.
 const CHIP_EDGE = 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]';
 
@@ -94,7 +93,7 @@ const G = 'h-[18px] w-[18px]';
 const GLYPHS: Record<Glyph, (props: { className?: string }) => ReactNode> = {
   chat: ChatIcon, play: PlayIcon, hand: HandRaisedIcon, check: CheckIcon, again: ArrowPathIcon, warning: WarningTriangleIcon,
   lock: LockIcon, ballot: BallotIcon, upload: ArrowUpTrayIcon, eye: EyeIcon, cog: CogIcon, reply: ReplyArrowIcon, code: CodeIcon,
-  clock: ClockIcon, x: XIcon, bubble: ChatBubbleTailIcon,
+  clock: ClockIcon, camera: CameraIcon, x: XIcon, bubble: ChatBubbleTailIcon,
 };
 function GlyphIcon({ name }: { name: Glyph }): ReactNode {
   const Icon = GLYPHS[name];
@@ -110,9 +109,6 @@ const GLYPH_OWE = 'flex shrink-0 text-violet-600 dark:text-violet-300';
 const GLYPH = 'flex shrink-0 text-zinc-400 dark:text-zinc-500';
 // Where you are: the row whose chat is in the column, on the lit tint.
 const LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start rounded-md bg-[color:var(--lit-tint)] text-[color:var(--lit-ink)]';
-// #6424: the row inside a lit card: the lit row's layout without its own
-// fill and radius, so the card's edges are the only ones on screen.
-const MAIN_LIT_ROW = 'flex w-full min-h-[44px] md:min-h-[36px] items-center gap-3 py-1.5 md:py-1 text-start';
 
 function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   // #6159: a private thread's row has its ⋯ beside it, with Mark done.
@@ -207,6 +203,44 @@ function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; 
 }
 
 /**
+ * 13 Nov 2026: the words the search found, in a message's snippet. The
+ * accent's own tint behind them (a token, so it follows the theme) and the
+ * title's ink and weight, so they stand out of the quiet line round them.
+ */
+const FOUND_MARK = 'rounded-[3px] bg-[color:var(--accent-tint)] font-semibold text-zinc-900 dark:text-zinc-100';
+
+/**
+ * 13 Nov 2026 (./search.ts): a message the search found, as one of the
+ * list's quiet rows, and a link to it: its snippet with the found words
+ * marked, where it is (its thread's name, or the chat itself) and its day.
+ * Under 1024px, where the line has no room for it (the width a row gives up
+ * its number at), where it is goes on a second line, as a row's reason
+ * does on a phone. The link's name says all of it, and who wrote it.
+ */
+function FoundRow({ line }: { line: FoundLine }): ReactNode {
+  return (
+    <a
+      href={line.href}
+      className={LIVE_ROW}
+      title={line.name}
+      aria-label={line.name}
+      onClick={(e) => followFound(e, line.href)}
+      data-ai-found={line.thread ? 'thread' : 'chat'}
+    >
+      <span className={GLYPH} aria-hidden="true"><GlyphIcon name="chat" /></span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] leading-5 text-zinc-600 dark:text-zinc-400" data-ai-found-words="">
+          <Marked parts={line.parts} className={FOUND_MARK} />
+        </span>
+        <span className="block truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400 lg:hidden">{line.place}</span>
+      </span>
+      <span className="hidden max-w-[40%] shrink truncate text-[13px] text-zinc-500 dark:text-zinc-400 lg:block" data-ai-found-place="">{line.place}</span>
+      <span className="shrink-0 whitespace-nowrap text-[13px] text-zinc-500 dark:text-zinc-400">{line.date}</span>
+    </a>
+  );
+}
+
+/**
  * #6262: the line between what is new in a project and what the reader has
  * already seen. The small caps label style of the section headings.
  */
@@ -250,40 +284,6 @@ function FreshBadge({ count, className = '' }: { count: number; className?: stri
       <span aria-hidden="true">{count}</span>
       <span className="sr-only">{t('messages:ai.filter.fresh', { count })}</span>
     </span>
-  );
-}
-
-/**
- * 1 Nov 2026: Main Chat, the chat with the bot itself, as the list's first
- * row: the bot's mark, its name and, on the right, what is new in it, in
- * words ("2 new"), or nothing. Pressed, it is the column's (./index.tsx).
- */
-function MainChatRow({ lit, unread, open }: { lit: boolean; unread: number; open: () => void }): ReactNode {
-  const t = useMessages('messages');
-  return (
-    <div className={`${lit ? MAIN_LIT : PLANE} px-2 py-1.5`} data-ai-sheet="main">
-      <button
-        type="button"
-        className={`${lit ? MAIN_LIT_ROW : ROW} px-2`}
-        onClick={open}
-        data-ai-main-row=""
-        data-ai-lit={lit ? '' : undefined}
-        aria-current={lit ? 'true' : undefined}
-      >
-        <img src={BOT_AVATAR} alt="" className="h-6 w-6 shrink-0 rounded-[8px] object-cover" />
-        <span className={lit
-          ? 'min-w-0 flex-1 truncate text-sm leading-5 font-semibold'
-          : 'min-w-0 flex-1 truncate text-sm leading-5 font-semibold text-zinc-900 dark:text-zinc-100'}
-        >
-          {t('messages:store.header.main')}
-        </span>
-        {unread > 0 ? (
-          <span className="shrink-0 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-main-unread="">
-            {t('messages:ai.main.new', { count: unread })}
-          </span>
-        ) : null}
-      </button>
-    </div>
   );
 }
 
@@ -521,7 +521,9 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   // #6262: Needs you draws what is new first, before the order is held, so
   // a held list keeps the order it was drawn in (#6245). #6408: Live this
   // week does the same without the styles, so its first few include any new.
-  const ordered = freshStyle || foldFresh ? freshFirst(lines) : lines;
+  // #6672: Needs you then lifts each project by its newest activity, so a
+  // project whose only row is a fresh private chat is not always last.
+  const ordered = freshStyle ? recentGroupsFirst(freshFirst(lines)) : foldFresh ? freshFirst(lines) : lines;
   const held = hold && holding && drawn.current ? holdOrder(ordered, drawn.current) : ordered;
   const startHold = () => {
     if (!hold) return;
@@ -619,7 +621,7 @@ function ListsFailed({ failed, onRetry }: { failed: 'unreachable' | 'failed'; on
 }
 
 export function AiLists({
-  hero, main, query = '', lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
+  hero, query = '', found, onFoundRetry, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live, openRow, openThread, onDone,
   picked: pickedIn = [], onPick, appFor, history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The page's title, drawn in the sheet the chips are in. */
@@ -627,15 +629,21 @@ export function AiLists({
   /**
    * #6398: what the page's search box says. The lists keep only the threads
    * whose title, number or project name contains it, upper and lower case
-   * alike; a section with no match folds away, and Main Chat steps aside
-   * while you search. '' (the box closed or empty) filters nothing.
+   * alike; a section with no match folds away. '' (the box closed or
+   * empty) filters nothing.
    */
   query?: string;
-  /** Main Chat's row: whether it is the one in the column, what is new in it, and its press. */
-  main: { lit: boolean; unread: number; open: () => void };
   /**
-   * What the column shows (./column.ts columnKey): `main`, `private:<root>`
-   * or `page:<route>`. The row that opens it is lit: a private thread's row,
+   * 13 Nov 2026: the messages in the person's threads with the bot that
+   * match what the box says (./search.ts useBotSearch), listed under the
+   * threads that do; null while the first answer is on its way.
+   */
+  found?: Found | null;
+  /** Search the messages again: the Try again of the note that says they could not be. */
+  onFoundRetry?: () => void;
+  /**
+   * What the column shows (./column.ts columnKey): `private:<root>` or
+   * `page:<route>`. The row that opens it is lit: a private thread's row,
    * the row of the request it was filed as (#6153), or a request's, a
    * change's or a decision's row while its page is in the column (#6218).
    */
@@ -678,8 +686,8 @@ export function AiLists({
   const {
     searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory });
+    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
   // More, open under its chip.
   const [more, setMore] = useState<DOMRect | null>(null);
   const phone = usePhone();
@@ -723,13 +731,12 @@ export function AiLists({
           </div>
         ) : <div className="pb-3" />}
       </div>
-      {/* #6398: Main Chat is not a thread you are searching for, so it steps
-          aside while a search is on, and one short note says when nothing on
-          the page matched. */}
-      {searching ? null : <MainChatRow lit={main.lit} unread={main.unread} open={main.open} />}
+      {/* #6398: one short note says when nothing on the page matched: no
+          thread, and (13 Nov 2026) no message either, once the messages'
+          answer is in (./lines.ts noneWords). */}
       {noMatches ? (
         <div className={`${PLANE} px-4 py-3`} data-ai-search-empty="">
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.none', { query: query.trim() })}</p>
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{noneWords}</p>
         </div>
       ) : null}
       {more ? (
@@ -880,6 +887,39 @@ export function AiLists({
               ) : null}
             </div>
           </section>
+        </div>
+      ) : null}
+      {/* 13 Nov 2026: the messages that match, under the threads that do: a
+          card of its own, its rows links to each message. Drawn only while a
+          search is on and has found some (nothing in the prerender). */}
+      {foundLines.length ? (
+        <div className={`${PLANE} pb-2`} data-ai-sheet="found">
+          <section className="pb-1" data-ai-list="found">
+            <div className="mb-1 rounded-t-[20px] bg-zinc-900/[0.035] px-4 pt-3 pb-2 dark:bg-white/[0.045]" data-ai-band="">
+              <SectionHeader className="px-0 pt-0 pb-0">{t('messages:ai.search.messages', { count: foundLines.length })}</SectionHeader>
+            </div>
+            <div className="px-4">
+              {foundLines.map((line) => <FoundRow key={line.key} line={line} />)}
+              {foundMore ? (
+                <p className="py-2 text-[13px] text-zinc-500 dark:text-zinc-400" data-ai-found-more="">{t('messages:ai.search.more')}</p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {/* The messages could not be searched: said plainly, with a way to ask
+          again, as a list that could not be read says it (ListsFailed). */}
+      {foundFailed ? (
+        <div className={`${PLANE} px-4 py-3`} data-ai-search-failed="" role="status">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('messages:ai.search.failed')}</p>
+          <button
+            type="button"
+            className="mt-1 inline-flex min-h-[44px] md:min-h-0 items-center py-1 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
+            onClick={() => onFoundRetry?.()}
+            data-ai-search-retry=""
+          >
+            {t('core:common.tryAgain')}
+          </button>
         </div>
       ) : null}
     </div>

@@ -42,8 +42,7 @@ const APP_ROW = {
 
 function startServer() {
   const app = express();
-  // Mirrors the real app's global JSON parser (server.js), which is what
-  // makes POST /share's optional `{ transcript: true }` body readable.
+  // Mirrors the real app's global JSON parser (server.js).
   app.use(express.json());
   app.use((req, res, next) => { req.user = VIEWER; next(); });
   app.use(sessionRoutes({}));
@@ -77,7 +76,6 @@ function sharedRow(overrides = {}) {
 // unshare UPDATEs.
 function makeDispatcher({
   sharedRows = [], shareResult = [], unshareResult = [],
-  shareTranscriptResult = [], unshareTranscriptResult = [],
   importedDetails = [], attributeBuckets = [], attributeMine = [],
 } = {}) {
   return async (sql, params) => {
@@ -87,14 +85,6 @@ function makeDispatcher({
     if (/FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id/.test(sql)
         && /collab_visibility/.test(sql)) {
       return { rows: [APP_ROW] }; // sessionCollabGuard resolve
-    }
-    // Order matters: /share-transcript sets BOTH stamps, so its SQL also
-    // matches "SET shared_at = COALESCE" — match the narrower shape first.
-    if (/transcript_shared_at = COALESCE/.test(sql)) {
-      return { rows: shareTranscriptResult };
-    }
-    if (/SET transcript_shared_at = NULL/.test(sql)) {
-      return { rows: unshareTranscriptResult };
     }
     if (/WHERE cs\.id = ANY\(\$1::int\[\]\)/.test(sql)) {
       const wanted = new Set(params[0]);
@@ -125,15 +115,9 @@ async function get(server, path) {
   return { res, body: await res.json() };
 }
 
-async function post(server, path, json) {
+async function post(server, path) {
   const port = server.address().port;
-  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
-    method: 'POST',
-    ...(json === undefined ? {} : {
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(json),
-    }),
-  });
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, { method: 'POST' });
   return { res, body: await res.json() };
 }
 
@@ -173,15 +157,13 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // teardownStaging does not clear it the way it clears staging_url.
     assert.match(q.sql,
       /\(cs\.pr_number IS NOT NULL OR cs\.checks_commit_sha IS NOT NULL\s*OR cs\.shared_at IS NOT NULL\)\s*AS can_preview/);
-    // GitHub identity is visible with the shared change; private chat is not.
+    // GitHub identity is visible with the shared change; private chat is not:
+    // no agent session, no message text, and no transcript flag (sharing a
+    // change never publishes its chat).
     assert.match(q.sql, /cs\.pr_number, cs\.pr_url/);
     assert.doesNotMatch(q.sql, /cc_session_id/);
-    // Transcript sharing adds a BOOLEAN plus a count for the chip label —
-    // never the transcript itself, and never the raw timestamp column
-    // (the card only needs "is it readable?").
-    assert.match(q.sql, /\(cs\.transcript_shared_at IS NOT NULL\) AS transcript_shared/);
-    assert.match(q.sql, /AS message_count/);
     assert.doesNotMatch(q.sql, /m\.content/);
+    assert.doesNotMatch(q.sql, /transcript_shared/);
   } finally {
     server.close();
   }
@@ -311,129 +293,13 @@ test('share is owner-scoped: the UPDATE keys on (id, viewer) and keeps the origi
 
     const q = capturedQueries.find((c) => /SET shared_at = COALESCE/.test(c.sql));
     assert.ok(q, 'share UPDATE was issued');
-    // Third param is the transcript opt-in, FALSE with no body — see the
-    // next test for why that default is the load-bearing part.
-    assert.deepStrictEqual(q.params, [5, VIEWER.id, false]);
+    assert.deepStrictEqual(q.params, [5, VIEWER.id]);
     assert.match(q.sql, /cs\.user_id = \$2/);
     assert.match(q.sql, /is_headless = FALSE/);
     // Idempotent re-share keeps the first shared_at (ordering stability).
     assert.match(q.sql, /COALESCE\(cs\.shared_at, NOW\(\)\)/);
-  } finally {
-    server.close();
-  }
-});
-
-test('plain share does NOT publish the transcript (the default must stay private)', async () => {
-  capturedQueries = [];
-  poolQueryHandler = makeDispatcher({
-    shareResult: [{ id: 5, shared_at: '2026-06-12T00:00:00Z', transcript_shared_at: null, app_id: 42, app_slug: 'demo' }],
-  });
-  const server = await startServer();
-  try {
-    // Every pre-existing caller of /share sends no body at all.
-    const { res, body } = await post(server, '/api/sessions/5/share');
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(body.transcript_shared_at, null);
-
-    const q = capturedQueries.find((c) => /SET shared_at = COALESCE/.test(c.sql));
-    assert.strictEqual(q.params[2], false, 'transcript flag defaults to false');
-    // With the flag false the CASE leaves the column as-is, so a session
-    // whose transcript was already shared isn't silently un-shared either.
-    assert.match(q.sql, /ELSE cs\.transcript_shared_at END/);
-  } finally {
-    server.close();
-  }
-});
-
-test('share with { transcript: true } sets BOTH stamps in one write', async () => {
-  capturedQueries = [];
-  poolQueryHandler = makeDispatcher({
-    shareResult: [{
-      id: 5, shared_at: '2026-06-12T00:00:00Z',
-      transcript_shared_at: '2026-06-12T00:00:00Z', app_id: 42, app_slug: 'demo',
-    }],
-  });
-  const server = await startServer();
-  try {
-    const { res, body } = await post(server, '/api/sessions/5/share', { transcript: true });
-    assert.strictEqual(res.status, 200);
-    assert.ok(body.shared_at);
-    assert.ok(body.transcript_shared_at);
-
-    const q = capturedQueries.find((c) => /SET shared_at = COALESCE/.test(c.sql));
-    assert.strictEqual(q.params[2], true);
-    assert.match(q.sql, /COALESCE\(cs\.transcript_shared_at, NOW\(\)\)/);
-  } finally {
-    server.close();
-  }
-});
-
-test('share-transcript sets both stamps (publishing the chat implies visibility)', async () => {
-  capturedQueries = [];
-  poolQueryHandler = makeDispatcher({
-    shareTranscriptResult: [{
-      id: 5, shared_at: '2026-06-12T00:00:00Z',
-      transcript_shared_at: '2026-06-12T00:05:00Z', app_id: 42, app_slug: 'demo',
-    }],
-  });
-  const server = await startServer();
-  try {
-    const { res, body } = await post(server, '/api/sessions/5/share-transcript');
-    assert.strictEqual(res.status, 200);
-    assert.ok(body.shared_at, 'shared_at comes back set');
-    assert.ok(body.transcript_shared_at);
-
-    const q = capturedQueries.find((c) => /transcript_shared_at = COALESCE/.test(c.sql));
-    assert.ok(q, 'share-transcript UPDATE was issued');
-    assert.deepStrictEqual(q.params, [5, VIEWER.id]);
-    // Owner-scoped, non-headless, and it sets shared_at too so the flags
-    // can never disagree in the "readable but invisible" direction.
-    assert.match(q.sql, /cs\.user_id = \$2/);
-    assert.match(q.sql, /is_headless = FALSE/);
-    assert.match(q.sql, /shared_at = COALESCE\(cs\.shared_at, NOW\(\)\)/);
-    // Idempotent: re-sharing keeps both original stamps.
-    assert.match(q.sql, /COALESCE\(cs\.transcript_shared_at, NOW\(\)\)/);
-  } finally {
-    server.close();
-  }
-});
-
-test("share-transcript on a session the viewer doesn't own is a 404", async () => {
-  poolQueryHandler = makeDispatcher({ shareTranscriptResult: [] });
-  const server = await startServer();
-  try {
-    const { res, body } = await post(server, '/api/sessions/5/share-transcript');
-    assert.strictEqual(res.status, 404);
-    assert.ok(body.error);
-  } finally {
-    server.close();
-  }
-});
-
-test('unshare-transcript clears ONLY the transcript stamp', async () => {
-  capturedQueries = [];
-  poolQueryHandler = makeDispatcher({
-    unshareTranscriptResult: [{ id: 5, shared_at: '2026-06-12T00:00:00Z', app_id: 42, app_slug: 'demo' }],
-  });
-  const server = await startServer();
-  try {
-    const { res, body } = await post(server, '/api/sessions/5/unshare-transcript');
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(body.transcript_shared_at, null);
-    // The session stays on the board — revoking reading is not hiding.
-    assert.ok(body.shared_at);
-
-    const q = capturedQueries.find((c) => /SET transcript_shared_at = NULL/.test(c.sql));
-    assert.ok(q, 'unshare-transcript UPDATE was issued');
-    assert.deepStrictEqual(q.params, [5, VIEWER.id]);
-    // Anchored so it can't be satisfied by the `transcript_shared_at =
-    // NULL` substring: the SET clause must touch the transcript column and
-    // nothing else.
-    assert.doesNotMatch(q.sql, /SET shared_at = NULL/, 'must not clear shared_at');
-    assert.doesNotMatch(q.sql, /,\s*shared_at = NULL/, 'must not clear shared_at');
-    // Not status-filtered: revoking has to work on a promoted/archived row
-    // just as well as an active one.
-    assert.doesNotMatch(q.sql, /status IN/);
+    // Sharing a change shows its card, never its chat.
+    assert.doesNotMatch(q.sql, /transcript_shared_at/);
   } finally {
     server.close();
   }
@@ -464,8 +330,8 @@ test('unshare clears BOTH stamps, owner-scoped, 404 otherwise', async () => {
     const q = capturedQueries.find((c) => /SET shared_at = NULL/.test(c.sql));
     assert.ok(q, 'unshare UPDATE was issued');
     assert.deepStrictEqual(q.params, [5, VIEWER.id]);
-    // Hiding a session must never leave its chat readable behind a card
-    // nobody can see — a reader could still hold the session id.
+    // A private session keeps no mark of a transcript published in the
+    // past either (account deletion still reads that column).
     assert.match(q.sql, /transcript_shared_at = NULL/);
 
     poolQueryHandler = makeDispatcher({ unshareResult: [] });

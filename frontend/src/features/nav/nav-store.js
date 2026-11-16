@@ -55,10 +55,9 @@ import { createStore } from '../../lib/plain-store.js';
 /**
  * Screen root id → the tab that owns it.
  *
- * FIVE TABS, TEN ROOTS: the bar names sections, not screens, so several
- * roots share a tab. An agent session is a conversation, so it lights
- * Messages; Leaderboard, Settings and Admin are all things about YOU or your account,
- * so they light Me. `#app-view` is absent on purpose — an app is not one of
+ * FIVE TABS, NINE ROOTS: the bar names sections, not screens, so several
+ * roots share a tab. Leaderboard, Settings and Admin are all things about
+ * YOU or your account, so they light Me. `#app-view` is absent on purpose — an app is not one of
  * the platform's places, so the rail beside a running app (on a desktop;
  * a phone's bar is hidden there) lights nothing.
  *
@@ -67,7 +66,6 @@ import { createStore } from '../../lib/plain-store.js';
 export const TAB_FOR_SCREEN = Object.freeze({
   'home-screen': 'home',
   'messages-screen': 'messages',
-  'agent-session-screen': 'messages',
   // #6019 follow-up: the AI tab's own page. Main, the chat with the bot, is
   // a conversation of the Messages screen, lit as AI by the bar itself.
   'ai-screen': 'ai',

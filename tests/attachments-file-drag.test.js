@@ -5,11 +5,10 @@
 //   * the drop zone (features/attachments/file-drag.tsx): a depth count that
 //     stays lit while the pointer crosses the card's own controls, lights only
 //     for a FILE drag and never where a drop would be refused;
-//   * each composer drawing it (group chat, dev chat, agent session,
-//     "Suggest an improvement", Messages);
+//   * each composer drawing it (group chat, "Suggest an improvement",
+//     Messages);
 //   * one error line for every file a drop left out — the first reason and
-//     how many more — in the group chat, the dev chat, the agent session and
-//     Messages;
+//     how many more — in the group chat and Messages;
 //   * the window guard (lib/file-drop-guard.ts): a file dropped where nothing
 //     takes it does not open in place of the app.
 //
@@ -22,7 +21,6 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-const { composerHtml } = require('./lib/dev-composer-html');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -97,7 +95,7 @@ test('the outline is the Messages one, and lies over the card', () => {
   assert.match(html, /aria-hidden="true"/);
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-drop-overlay,\s*\.attach-drop-overlay \{\s*position: absolute;/, 'one style for both');
-  assert.match(css, /\.gc-composer-card,[\s\S]{0,80}\.dc-card,\s*\.agent-session-composer,\s*#feedback-form \{ position: relative; \}/);
+  assert.match(css, /\.gc-composer-card,\s*#gc-form,\s*#gc-thread-form,\s*#feedback-form \{ position: relative; \}/);
 });
 
 // ── Each composer draws it ────────────────────────────────────────────
@@ -116,23 +114,7 @@ test('the group chat’s card draws the zone while its slot says dragging', () =
   api.composerStore.set(api.EMPTY_COMPOSER);
 });
 
-test('the dev chat’s card draws the zone from its model', () => {
-  const base = JSON.parse(JSON.stringify({
-    venueNoteHtml: '', hidden: false, models: null,
-    drafts: { rows: [], busy: false }, attachError: null, placeholder: '',
-    send: { kind: 'send' },
-  }));
-  assert.doesNotMatch(composerHtml(base), /attach-drop-overlay/);
-  assert.match(composerHtml({ ...base, dragging: true }), /Drop files to attach<\/div><\/form>/);
-});
-
-test('the agent session, the improvement form and Messages each wire the shared zone', () => {
-  const session = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(session, /useFileDrag\(\{\s*disabled: snapshot\.session\?\.status === 'archived' \|\| !snapshot\.session,/);
-  assert.match(session, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat \{\.\.\.drop\.handlers\}/,
-    'the chat column, not only the box, so a drop on the transcript does not open the file');
-  assert.match(session, /\{drop\.dragging \? <DropOverlay \/> : null\}/);
-
+test('the improvement form and Messages each wire the shared zone', () => {
   const feedback = read('frontend/src/features/dialogs/feedback.tsx');
   assert.match(feedback, /<HostDropOverlay host=\{feedbackForm\} label=\{t\('dialogs:feedback\.dropLabel'\)\} isDisabled=\{feedbackLocked\} \/>/);
   assert.equal(message('dialogs:feedback.dropLabel'), 'Drop images or a clip to attach');
@@ -143,7 +125,7 @@ test('the agent session, the improvement form and Messages each wire the shared 
   // forwards to no longer has a zone of its own.
   const messages = read('frontend/src/features/messages/index.tsx');
   assert.match(messages, /useFileDrag\(\{ disabled: !ready, onFiles:/);
-  assert.match(messages, /data-opening=\{[^}]*\} \{\.\.\.drop\.handlers\}/, 'the conversation pane takes the drop');
+  assert.match(messages, /aria-label=\{snap\.active\?\.title \|\| t\('messages:thread\.paneName'\)\} \{\.\.\.drop\.handlers\}>/, 'the conversation pane takes the drop');
   assert.match(messages, /<DropOverlay className="messages-drop-overlay" \/>/);
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.doesNotMatch(composer, /useFileDrag/, 'the box no longer owns the drop');
@@ -225,27 +207,6 @@ test('group chat: the drag tracker publishes dragging per scope, never when read
   setReadOnly(true);
   fire('dragenter', dragEvent());
   assert.equal(slot.thread.dragging, false, 'a read-only thread shows no zone');
-});
-
-test('dev chat: the same summary, and the zone only where a drop is taken', async () => {
-  const src = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(src, /dragging: DevChat\._dragging && !DevChat\._dropDisabled\(\),/);
-  assert.match(src, /_dropDisabled\(\) \{\s*return !DevChat\.currentSession \|\| !!DevChat\.isStreaming/);
-  assert.match(src, /refuse\(PlatformI18n\.t\('devchat:attach\.tooMany', \{ count: L\.maxPerMessage \}\), files\.length - i\);/);
-  assert.equal(message('devchat:attach.tooMany', { count: 4 }), 'Up to 4 files per message.');
-  assert.match(src, /DevChat\._setAttachError\(DevChat\._refusalSummary\(firstRefusal, refused - 1\)\);/);
-});
-
-test('agent session: the tray counts every file it refused', () => {
-  const att = loadTsx('frontend/src/features/agent-session/attachments.ts');
-  const f = (name, size = 10) => ({ name, size });
-  const six = att.acceptFiles(0, [f('a.png'), f('huge.png', 5 * 1024 * 1024), f('b.png'), f('c.png'), f('d.png'), f('e.png')]);
-  assert.deepEqual(six.accepted.map((x) => x.name), ['a.png', 'b.png', 'c.png', 'd.png']);
-  assert.equal(six.error, '"huge.png" is too big. Images max 4 MB.');
-  assert.equal(six.refusedCount, 2);
-  assert.equal(att.acceptFiles(0, [f('a.png')]).refusedCount, 0);
-  assert.match(read('frontend/src/features/agent-session/store.ts'),
-    /if \(error\) toast\(refusalSummary\(error, refusedCount - 1\)\);/);
 });
 
 test('Messages: files past the room are counted, not dropped without a word', () => {

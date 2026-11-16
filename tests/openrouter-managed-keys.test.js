@@ -160,7 +160,6 @@ test('default-open managed provisioning stores the key internally and returns on
   let createArgs;
   let reservation;
   let stored;
-  let defaultModel;
   let notificationsSent = 0;
   let identityQueries = 0;
   const client = {
@@ -176,7 +175,6 @@ test('default-open managed provisioning stores the key internally and returns on
         return { rows: [{ id: 17 }] };
       }
       if (/SELECT id FROM credentials\.managed_openrouter_keys/.test(text)) return { rows: [{ id: 17 }] };
-      if (/INSERT INTO user_agent_preferences/.test(text)) defaultModel = params[2];
       return { rows: [] };
     },
   };
@@ -234,10 +232,6 @@ test('default-open managed provisioning stores the key internally and returns on
   assert.equal(stored.apiKey, 'sk-or-v1-issued-once');
   assert.equal(stored.metadata.source, 'usernode_managed');
   assert.equal(stored.metadata.managedKeyId, 17);
-  // The preference stores no model: the account follows the platform
-  // default (services/default-model.js) until its person picks one. The
-  // first session still runs on the model chosen now.
-  assert.equal(defaultModel, null, 'provisioning stores "follow the platform default", not the default of the day');
   assert.equal(result.defaultModel, 'z-ai/glm-5.3-flash');
   assert.equal(result.apiKey, undefined, 'the provisioning result must not expose the credential');
   assert.equal(result.last4, undefined, 'the claim response does not need credential-shaped data');
@@ -353,9 +347,10 @@ test('ensureIncludedKey is idempotent and never throws', async (t) => {
   );
 });
 
-test('every account-creation path creates the included key, and the read is the safety net', () => {
+test('every account-creation path creates the included key, and the reads are the safety net', () => {
   const authSource = fs.readFileSync(path.join(root, 'src/routes/auth.js'), 'utf8');
   const credentialsSource = fs.readFileSync(path.join(root, 'src/routes/credentials.js'), 'utf8');
+  const dictationSource = fs.readFileSync(path.join(root, 'src/routes/dictation.js'), 'utf8');
   const adminUsersSource = fs.readFileSync(
     path.join(root, 'src/routes/topochain/admin/users.js'), 'utf8',
   );
@@ -364,8 +359,10 @@ test('every account-creation path creates the included key, and the read is the 
       `the ${reason} path creates the included key`);
   }
   assert.match(adminUsersSource, /ensureIncludedKey\([\s\S]{0,200}?reason: 'admin_created'/);
-  assert.match(credentialsSource, /ensureIncludedKey\([\s\S]{0,200}?reason: 'coding_agent_read'/,
-    'and the new-change screen\'s preference read retries for anyone without one');
+  assert.match(credentialsSource, /ensureIncludedKey\([\s\S]{0,200}?reason: 'settings_read'/,
+    'Settings\' key status read retries for anyone without one');
+  assert.match(dictationSource, /ensureIncludedKey\)\([\s\S]{0,200}?reason: 'dictation'/,
+    'and so does voice input\'s key read');
   // The gates this issue removed must not come back by another name.
   assert.doesNotMatch(credentialsSource, /betaAllowed/);
   assert.doesNotMatch(authSource, /openrouterBetaUserIds/);
@@ -702,7 +699,7 @@ test('the settings screen states the included key rather than offering to create
   // it carries — and there is no button beside it, because the key was
   // created with the account.
   assert.match(weekly.el('settings-openrouter-included-status').textContent,
-    /^Active \(sk-or-…ab12\)\. It carries the platform's \$175\.00 weekly allowance, and you may choose any available model\.$/);
+    /^Active \(sk-or-…ab12\)\. It carries the platform's \$175\.00 weekly allowance\.$/);
   assert.equal(weekly.el('settings-openrouter-included').classList.contains('hidden'), false);
 
   // A key issued before the weekly policy and not yet re-limited reads truthfully.
@@ -760,10 +757,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   const appManifest = require('../src/services/app-manifest');
 
   assert.match(schema, /CREATE TABLE IF NOT EXISTS credentials\.managed_openrouter_keys/);
-  assert.match(schema, /CREATE TABLE IF NOT EXISTS user_agent_model_favorites/);
   assert.match(schema, /user_id\s+BIGINT NOT NULL UNIQUE/);
-  assert.match(routes, /post\('\/api\/me\/credentials\/openrouter\/managed'/);
-  assert.match(routes, /patch\('\/api\/me\/coding-agent\/models\/favorite'/);
   assert.match(routes, /Cache-Control', 'no-store'/);
   assert.match(admin, /patch\('\/api\/admin\/openrouter-keys\/:id'/);
   assert.match(admin, /delete\('\/api\/admin\/openrouter-keys\/:id'/);
@@ -776,7 +770,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
   assert.doesNotMatch(settings, /_claimManagedOpenRouterKey/);
   assert.doesNotMatch(settingsSection, /Create my included key/);
   assert.match(settingsSection, /\{t\('settings:openrouter\.intro'\)\}/);
-  assert.match(require('./lib/platform-i18n').message('settings:openrouter.intro'), /GLM 5\.3 Flash/);
+  assert.match(require('./lib/platform-i18n').message('settings:openrouter.intro'), /comes with an included OpenRouter key/);
   // The runtime copy is that same message: settings.js writes it over the static markup.
   assert.match(settings, /intro\.textContent = tr\('settings:openrouter\.intro'\);/);
   assert.ok(
@@ -863,7 +857,7 @@ test('schema and surfaces pin one issuance, admin-only lifecycle, and deploy-own
     (item) => item.key === 'OPENROUTER_MANAGED_DAILY_LIMIT_USD',
   );
   assert.match(dailyDeclaration.description, /^No longer used\./);
-  for (const file of ['public/js/app-view.js', 'public/js/build-venues.js', 'frontend/src/features/dev-chat/dev-chat.js']) {
+  for (const file of ['public/js/app-view.js', 'public/js/build-venues.js']) {
     assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /included daily credits/,
       `${file} must not promise a cadence it cannot read from the key`);
   }
@@ -912,21 +906,23 @@ test('configured GLM 5.3 Flash is preferred without filtering the remaining mode
 
 // QA 2026-09-24: "Start work" toasted "Ask an administrator to check
 // USERNODE_OPENROUTER_MANAGEMENT_API_KEY". A person cannot act on a server
-// variable. Both user-facing doors (session creation and the managed-key
-// claim) answer in plain words and leave the variable to the server log;
-// the error itself, which the admin console and the log print, keeps it.
+// variable. The one door a person meets it at now, Settings' key status,
+// answers with a reason, and the screen says it in plain words; the error
+// itself, which the admin console and the log print, keeps the variable.
 test('an unconfigured deployment tells the person in plain words, and the log keeps the variable', () => {
-  const managed = require('../src/services/openrouter-managed-keys');
-  const text = managed.NOT_CONFIGURED_USER_MESSAGE;
-  assert.equal(typeof text, 'string');
-  assert.doesNotMatch(text, /USERNODE_|OPENROUTER|API_KEY/, 'no environment variable');
-  assert.doesNotMatch(text, /—/, 'and no em dash');
   const service = fs.readFileSync(path.join(root, 'src/services/openrouter-managed-keys.js'), 'utf8');
   assert.match(service, /'Company OpenRouter keys are not configured yet\. Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY\.'/,
     'the error keeps the variable for the log and the admin console');
-  const sessions = fs.readFileSync(path.join(root, 'src/routes/sessions.js'), 'utf8');
-  assert.match(sessions, /err\.code === 'not_configured'\s*\? managedOpenRouter\.NOT_CONFIGURED_USER_MESSAGE/);
-  assert.doesNotMatch(sessions, /Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY/);
   const credentials = fs.readFileSync(path.join(root, 'src/routes/credentials.js'), 'utf8');
-  assert.match(credentials, /if \(err\.code === 'not_configured'\) \{[\s\S]{0,300}?log\.warn\([\s\S]{0,200}?err: err\.message[\s\S]{0,200}?error: managedOpenRouter\.NOT_CONFIGURED_USER_MESSAGE/);
+  assert.match(credentials, /!managedOpenRouter\.managedKeysEnabled\(config\) \? 'not_configured'/,
+    'the key status names the reason, not the variable');
+  const settings = fs.readFileSync(path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8');
+  assert.match(settings, /includedStatus\.textContent = tr\('settings:openrouter\.included\.notConfigured'\);/);
+  const text = require('./lib/platform-i18n').message('settings:openrouter.included.notConfigured');
+  assert.equal(text, 'Included keys are not configured by the platform administrator yet.');
+  assert.doesNotMatch(text, /USERNODE_|OPENROUTER|API_KEY/, 'no environment variable');
+  for (const file of ['src/routes/credentials.js', 'src/routes/dictation.js', 'src/routes/sessions.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(root, file), 'utf8'), /Ask an administrator to check USERNODE_OPENROUTER_MANAGEMENT_API_KEY/,
+      `${file} does not spell the variable out to a person`);
+  }
 });

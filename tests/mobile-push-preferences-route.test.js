@@ -62,8 +62,10 @@ test('authenticated settings API returns defaults and persists partial account u
     const initial = await initialResponse.json();
     assert.equal(initialResponse.status, 200);
     assert.match(initialResponse.headers.get('cache-control'), /no-store/);
-    // 7 → 8 with #1374's app_alerts category, 8 → 10 with WP-E's two.
-    assert.equal(initial.preferences.length, 10);
+    // 7 → 8 with #1374's app_alerts category, 8 → 10 with WP-E's two, 10 → 9
+    // when shared_work stopped being offered (nothing sends spec_shared).
+    assert.equal(initial.preferences.length, 9);
+    assert.equal(initial.preferences.some((row) => row.key === 'shared_work'), false);
     assert.equal(initial.preferences.find((row) => row.key === 'messages').enabled, true);
     assert.equal(initial.preferences.find((row) => row.key === 'direct_interactions').enabled, true);
     assert.equal(initial.preferences.find((row) => row.key === 'lightweight_activity').enabled, false);

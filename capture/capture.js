@@ -2724,19 +2724,28 @@ function emitPageFail(reason) {
 }
 
 /**
+ * The capture image's browser, for the single-purpose runs (a design page,
+ * a design render). Chrome for Testing, installed by playwright-core at the
+ * worker's Chromium revision, so the image audit can read its version.
+ * Required lazily so the platform's test suite (no puppeteer-core outside
+ * the capture image) can require this file.
+ */
+function launchCaptureBrowser() {
+  const puppeteer = require('puppeteer-core');
+  return puppeteer.launch({
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
+    headless: true,
+    args: CHROMIUM_LAUNCH_ARGS,
+  });
+}
+
+/**
  * Open one page at one size and emit the design serializer's answer.
  * `deps` is a test seam: launch (a browser factory) and delayMs.
  */
 async function runPageCapture(spec, deps = {}) {
   if (!spec) { emitPageFail('no_page_capture'); return null; }
-  const launch = deps.launch || (async () => {
-    const puppeteer = require('puppeteer-core');
-    return puppeteer.launch({
-      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/local/bin/chromium',
-      headless: true,
-      args: CHROMIUM_LAUNCH_ARGS,
-    });
-  });
+  const launch = deps.launch || launchCaptureBrowser;
   const delayMs = Number.isFinite(deps.delayMs) ? deps.delayMs : 1000;
   let browser = null;
   try {
@@ -2772,7 +2781,94 @@ async function runPageCapture(spec, deps = {}) {
   }
 }
 
+// ── #6681: a design version rendered as the preview shows it ────────────
+//
+// DESIGN_RENDER ({ html, viewport, compare? }, each image base64) renders a
+// design version with JavaScript off and every request aborted, so the
+// picture is what the preview and the plan show. It runs no shots and no
+// checks. Each image is emitted as:
+//
+//   __USERNODE_RENDER__ bytes=<n>
+//   <base64 PNG, one line>
+//   __USERNODE_RENDER_END__
+//
+// or __USERNODE_RENDER_FAIL__ reason=<encoded> when a picture cannot be made.
+function parseDesignRender(env) {
+  const raw = String((env || {}).DESIGN_RENDER || '').trim();
+  if (!raw) return null;
+  try {
+    const spec = JSON.parse(raw);
+    if (!spec || typeof spec.html !== 'string' || !spec.html.trim()) return null;
+    const viewport = spec.viewport || {};
+    const width = Number(viewport.width);
+    const height = Number(viewport.height);
+    return {
+      html: spec.html,
+      viewport: {
+        width: Number.isFinite(width) && width > 0 ? Math.min(Math.round(width), 1920) : 1280,
+        height: Number.isFinite(height) && height > 0 ? Math.min(Math.round(height), 1600) : 800,
+      },
+      compare: typeof spec.compare === 'string' && spec.compare.trim() ? spec.compare : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function emitRender(png) {
+  const b64 = Buffer.from(png).toString('base64');
+  _sink(`__USERNODE_RENDER__ bytes=${png.length}\n`);
+  _sink(`${b64}\n`);
+  _sink('__USERNODE_RENDER_END__\n');
+}
+
+function emitRenderFail(reason) {
+  _sink(`__USERNODE_RENDER_FAIL__ reason=${encodeURIComponent(String(reason || 'failed').slice(0, 200))}\n`);
+}
+
+/** Render one document at one size, PNG, with JavaScript off and every request aborted. */
+async function shootDocument(browser, html, viewport) {
+  const page = await browser.newPage();
+  try {
+    await page.setJavaScriptEnabled(false);
+    await page.setRequestInterception(true);
+    page.on('request', (request) => { request.abort().catch(() => {}); });
+    await page.setViewport({ ...viewport, deviceScaleFactor: 1 });
+    await page.setContent(Buffer.from(html, 'base64').toString('utf8'), { waitUntil: 'load', timeout: 20000 });
+    return await page.screenshot({ type: 'png', fullPage: false });
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
+/**
+ * Render the design's version and, when given, its comparison. `deps` is a
+ * test seam: launch (a browser factory).
+ */
+async function runDesignRender(spec, deps = {}) {
+  if (!spec) { emitRenderFail('no_design_render'); return null; }
+  const launch = deps.launch || launchCaptureBrowser;
+  let browser = null;
+  try {
+    browser = await launch();
+    emitRender(await shootDocument(browser, spec.html, spec.viewport));
+    if (spec.compare) emitRender(await shootDocument(browser, spec.compare, spec.viewport));
+    return true;
+  } catch (err) {
+    emitRenderFail(err?.message || 'render_failed');
+    return null;
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+  }
+}
+
 async function main() {
+  // #6681: a design version rendered for the design bot to look at.
+  const designRender = parseDesignRender(process.env);
+  if (designRender) {
+    await runDesignRender(designRender);
+    return;
+  }
   // #6354: one page for a design. It runs no media pass and no checks.
   const pageCapture = parsePageCapture(process.env);
   if (pageCapture) {
@@ -2877,4 +2973,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture };
+module.exports = { timingSummary, testShard, groupCost, heaviestFirst, shardGroups, resolveTestViewport, RETRY_INDEX_BASE, RETRY_SHARD_STRIDE, networkSnapshot, tentativeInterfaces, waitForNetworkSettled, launchWhenSettled, NETWORK_SETTLE_MAX_MS, documentOf, stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS, MAX_SELECTOR_LEN, parsePageCapture, runPageCapture, parseDesignRender, runDesignRender };

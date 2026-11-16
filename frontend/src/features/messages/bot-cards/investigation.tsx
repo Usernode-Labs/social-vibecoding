@@ -26,6 +26,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { getLanguage } from '../../../lib/i18n/runtime';
 import type { BotCardProps } from './index';
 import { decideCard, sayAsMe } from './index';
+import { inZone, zonedDay } from '../../../lib/time-zone';
 
 type Translate = (id: string, values?: Record<string, unknown>) => string;
 
@@ -110,9 +111,12 @@ export function notesShown(notes: string, now: Date, locale?: string): string {
 
 function timeOf(at: string, now: Date, locale?: string): string {
   const d = new Date(at);
-  const sameDay = d.toDateString() === now.toDateString();
+  // #6479: the day and time in the zone picked in Settings › Language.
+  const a = zonedDay(d);
+  const b = zonedDay(now);
+  const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
   try {
-    return new Intl.DateTimeFormat(locale, sameDay ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(d);
+    return new Intl.DateTimeFormat(locale, inZone(sameDay ? { hour: 'numeric', minute: '2-digit' } : { weekday: 'short', hour: 'numeric', minute: '2-digit' })).format(d);
   } catch {
     return d.toISOString().slice(11, 16);
   }

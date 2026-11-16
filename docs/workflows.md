@@ -780,63 +780,50 @@ A new machine brings the same two layers:
 | `shots-eval` | `evals`, one for the shots evals | `open` | Grants eval trials and runs each one's phases; the leader's eval runner is deleted |
 | `release` | `release:<GIT_SHA>`, one per release of the platform | `adopting` → `done`, `failed` or `abandoned` | Runs the boot adoptions once per release (`release.adopt`), in that release's own processes |
 | `clock` | `clock:<job>`, one per scheduled platform job | `waiting` ⇄ `running`; `retired` | Runs each job on its schedule (`clock.<job>`), wherever the workflow runs; its old leader timers are deleted |
-| `turn` | `agent:<id>` for a conversation, `session:<id>` for a change | `idle` ⇄ `running` | A person's turn is its `turn.run` work item; the leader's turn recovery, its watchdog, the conversation lease's renewal and the process holds' mirror are deleted |
+| `turn` | `session:<id>`, one per change | `idle` ⇄ `running` | A coding record nothing carries is taken to an end by a `recover` turn, its `turn.run` work item; the leader's turn recovery, its watchdog and the process holds' mirror are deleted |
 | `bot-look` | `look:<id>`, for each look into a project's code a chat with the Homeroom bot asked for (`look_into`) | `looking` → `done` / `failed` | New: the look is its `look.run` work item, a read-only turn on durable steps |
 | `bot-investigation` | `investigation:<id>`, for each investigation the Homeroom bot runs for a person, from its Start | `checking` ⇄ `waiting` → `ended` | New: each check-in is its `investigation.checkIn` work item, the next one its deadline |
 
 ### turn
 
-A person's turn (`src/workflow/turn/`, the handler `services/turns.js`): one instance per
-stream (`agent:<id>`, a conversation; `session:<id>`, a change), one `turn.run` work item
+A coding record nothing carries, taken to an end (`src/workflow/turn/`, the handler
+`services/turns.js`): one instance per change (`session:<id>`), one `turn.run` work item
 per turn, run whole in whichever workflow process claims it.
-- **Asked with the message.** The route writes the person's message, the conversation's
-  claim and the turn's `Asked` in one transaction (`platform.askTurn`), then follows the
-  turn's stream from any process (`services/session-bus.js`, rows in `stream_events`)
-  until that turn's own end: a `done` carrying its `turnId`, published when its item ends
-  (`turns.js`) or, for a turn that failed for good or ran out of time, by the machine's
-  `released` write. An agent turn whose claim no longer names it when its item starts
-  runs nothing. Turns asked while one runs wait, in order; the same turn twice is
-  one. Kinds: `agent` (a conversation's Mayor, the coding run it dispatches, its
-  wrap-up), `classic` (a change's own dev chat: a CLI hand-off, a request's spec),
-  `headless` (an auto session on a request), `recover` (a coding record nothing carries).
-- **The item owns what the turn writes.** Its coding run's record and its local agent's
-  turn name it (`turnOwner`); the claim lasts as long as the turn, released when the item
-  ends; a turn that failed for good ends interrupted, with Retry. Its spend is kept as it
-  happens (`turn_spend`), its worker by `session_workers` and the worker-eviction clock.
-- **Resumed, not recovered.** A process that goes loses only the item's lease. A process
-  that loses a lease while it runs on (the database out of reach for most of a lease)
-  exits rather than follow the turn beside the next claim, unless the item was cancelled
-  or the process is stopping (`turns.js endOnLostLease`). The next claim carries the
-  turn on (`resume`): the coding run its record names it the owner of
-  is followed to its end (the leader's old adoption, `services/turn-recovery.js`), a
-  local agent's turn is taken over by its waiter, a Mayor turn cut before its answer
-  ends interrupted with Retry, a dev chat cut before its reply gets its note once.
-- **Stop.** `StopRequested` on the instance; the turn hears it (an agent turn from its
-  claim, a dev chat turn by polling its instance until its handle takes it) and `turn.stop`
-  kills a coding run by its journal. A headless run between its steps is no Stop's target
-  (its Stop takes the person's own path, as before). Past six hours the turn is ended
-  (`Tick`).
+- **Every coding run belongs to the work that dispatched it** (a build, a sync with main,
+  a shots run, the Homeroom bot's reads and fixes: "Turns workflow work runs", below).
+  That work's item owns the run's record (`chat_sessions.active_turn`) and carries it on
+  when its process goes. What is left for this machine is a record whose item settled
+  without letting it go.
+- **Asked by the clock.** The `turn-leftovers` clock (`services/turn-leftovers.js`, every
+  minute) asks a `recover` turn, the machine's only kind, for each such record
+  (`platform.askTurn`): one no outstanding work item holds, no durable build or shots run
+  carries, and that has not moved for two minutes. Web appends nothing here. Turns asked
+  while one runs wait, in order; the same turn twice is one.
+- **The run is the adoption** (`services/turn-recovery.js`): the coding run the record
+  names is followed to its end and its result published. While the adoption cannot read
+  what it needs (the worker's state, who holds the session) it is tried again every ten
+  seconds, thirty times at most (`turns.js RECOVERY_RETRY`).
+- **Asked again, then ended.** A record still there is asked for again ten minutes after
+  the last ask, four times at most; the last ends it as a forced Stop would
+  (`RECORD_RETRY`).
+- **Resumed, not recovered.** A process that goes loses only the item's lease, and the
+  next claim runs the recovery again. A process that loses a lease while it runs on (the
+  database out of reach for most of a lease) exits rather than follow the turn beside the
+  next claim, unless the item was cancelled or the process is stopping (`turns.js
+  endOnLostLease`).
+- **Out of time.** Past six hours the turn is ended and its run cancelled (`Tick`); the
+  clock asks for the record again. A turn instance still `running` with no run item
+  behind it is ended by the same clock (`platform.endOrphanTurn`: a `Tick` that names the
+  turn, so a pass that races the real result never ends the turn that follows).
 - **Busy, for every process.** Whether a change is worked on is read from these records
-  (`session-work.ts` `workedOnSql`: a turn's record, a running turn instance, a local
-  turn, shots, a live operation, a build, a sync, the bot's look), never from another
-  process's memory. A process's holds (`services/processes.js`) are its own drain's.
-- **What a turn owes after it** is the machine's work, never a call after its end: a
-  turn that stopped before finishing tells its person once (`turn.stalled`,
-  `turns.tellStalled`), a change's dev chat turn that did not end its own way (failed,
-  out of time or of claims) gets the dev chat's repair once, unless another turn runs on
-  the change (`turn.repair`, `turns.repairCut`), and a conversation opened on a request is named from it beside its
-  run (`turn.name`, `agent-sessions.nameFromRequest`). A change's `session_state` (busy or
-  idle) is pushed from the transition that starts or ends its turn (`pushes.ts
-  sessionState`), from the change's row; `session-state.js` reads busy from the durable
-  records above, never from what one process last published.
-- **Leftovers** (`services/turn-leftovers.js`, the `turn-leftovers` clock, every minute):
-  a coding record whose item settled without releasing it gets a `recover` turn, asked
-  again ten minutes after the last while it is still there, four times at most; the last
-  ends it as a forced Stop would (`RECORD_RETRY`).
-- **No release from before the turn machine runs beside this one.** What #5714 kept for
-  one (its claims, headless runs and local turns taken over, the holds written for it, the
-  claim renewed, the spend mark, the Stop forward) is deleted; a rollback past #5714 is not
-  supported (docs/kubernetes-operations.md, "Rolling back past this release").
+  (`session-work.ts` `workedOnSql`: a turn's record, a running turn instance, shots, a
+  live operation, a build, a sync, the bot's look), never from another process's memory.
+  A process's holds (`services/processes.js`) are its own drain's. A change's
+  `session_state` (busy or idle) is pushed from the transition that starts or ends its
+  turn (`pushes.ts sessionState`), from the change's row; `session-state.js` reads busy
+  from the durable records above, never from what one process last published.
+- **No release from before the turn machine runs beside this one**: a rollback past #5714
+  is not supported (docs/kubernetes-operations.md, "Rolling back past this release").
 
 ### Turns workflow work runs
 
@@ -851,15 +838,15 @@ the Homeroom bot's builds, reads and fixes, a bench trial) is its work item's:
   sync or a bot look spinning a turn up from the work itself (`syncWorkingSql`,
   `botLookingSql`).
 - **A Stop is an event to the owner.** A person's Stop of the session (`POST
-  /api/sessions/:id/stop`, the agent conversation's Stop) finds the instance whose turn it
-  is (`TURN_OWNER_SQL`: the record's owner; else, only while the session has no turn record,
-  the sync, shots run, build or bot look spinning one up) and appends `StopRequested` there
-  (`platform.stopWorkflowTurn`). A person's turn is the `turn` machine's, found the same
-  way (a running `turn` instance on the session, for a dev chat turn before its record).
-  A record no work item holds (an older release's) answers nothing there, so that Stop
-  takes the durable path and never ends a platform job that merely waits beside it. The machine records it as
-  stopped by that person (never a failure or a conflict), ends its work, and queues
-  `turn.stop`.
+  /api/sessions/:id/stop`, and the Homeroom bot's Stop of its own build) finds the
+  instance whose turn it is (`TURN_OWNER_SQL`: the record's owner; else, only while the
+  session has no turn record, the sync, shots run, build or bot look spinning one up) and
+  appends `StopRequested` there (`platform.stopWorkflowTurn`). A record no work item
+  holds (one a `recover` turn is taking to its end) answers nothing there, so that Stop
+  takes the durable path (`requestSessionStop`: the stamp on the record, and the kill
+  inside the worker) and never ends a platform job that merely waits beside it. The
+  machine records it as stopped by that person (never a failure or a conflict), ends its
+  work, and queues `turn.stop`.
 - **`turn.stop`** (`src/workflow/turn-stop.ts`, one handler for every machine): stamps the
   record stopped, kills only that turn, by its journal (`worker.stopTurnByJournal`: a turn
   started after it is never touched), and releases the record when its work was cancelled.
@@ -880,7 +867,7 @@ something owes it a look to the look's end and the build a ready look asks for. 
 instance per request (`request:<appId>:<issue>`); the queue (`homeroom_bot_queue`) is its
 projection, guarded so only its transitions write a row it holds.
 - **Owed.** The refresh (`bot.refresh` on the lane), a person's ask (`enqueueFront`'s
-  callers: the DM, the Mayor, the voice's asks, a filed or asked request, main-red-fix),
+  callers: the DM and its model's tools, the voice's asks, a filed or asked request, main-red-fix),
   admin Run now and triage again append `Owed`; the queue's merge rules apply (a person's
   ask first, a debt the bot owes itself kept while its request is quiet). While a look
   runs, a person's ask, a voice ask or a fix waits for after it; the refresh's own finds
@@ -1124,7 +1111,7 @@ What a merged pull request still has to do once GitHub has merged it
   again two minutes later (`notBefore`). A change is carried only if, under its own lock,
   its head is still the one the carrier listed and no turn, shots run or checks run is
   working on it. An operation (a sync with main or a dispatch starting its worker, a
-  hand-off's commit upload, a local agent run) is recorded on the preview machine's
+  hand-off's commit upload) is recorded on the preview machine's
   instance and read by the guard (`worked_on`, below), in whichever process decides.
 - **Every web process's issue lists.** GitHub's open-issues list is cached per process,
   with the requests just closed hidden from it. A merge and its close work publish an
@@ -1333,9 +1320,9 @@ release built is known, and retired by identity once a newer attempt serves).
   replica, and `published`/`unpublished` end the sleep. A sleeping preview is neither lost
   (`preview-runtimes`) nor judged for its environment by `preview-env`: it is rebuilt when
   something wakes it instead.
-- **What people read.** The transitions write the lines: the dev chat's "Staging
-  deployed!" when a new attempt serves, and "Staging build failed" when a build fails
-  while a turn's "Building staging preview..." card is still open; an imported pull
+- **What people read.** The transitions write the lines: "Staging deployed!" in the
+  change's record when a new attempt serves, and "Staging build failed" when a build
+  fails while a turn's "Building staging preview..." card is still open; an imported pull
   request's thread hears when its preview is being built and when it is ready; the first
   failure of a streak tells the author once.
 - **Retirement:** archive, merge, included changes and app deletion retire the preview
@@ -1491,8 +1478,8 @@ on, `reviewed_head_sha` and `approval_epoch`, and what makes each platform sync 
   warning closes it, and a vote since the warning clears it instead.
 - **One close for every reason** (withdrawn, voted down, gone quiet, replaced, superseded,
   its request closed, red and untouched, the bot's and the bench's own endings): the votes
-  voided, its work orders abandoned, a secret it held discarded, the conversation that started
-  it told, the bell settled and the thread line written in the transaction; its pull request
+  voided, its work orders abandoned, a secret it held discarded, the bell settled and the
+  thread line written in the transaction; its pull request
   closed, its worker destroyed and its CC volume purged when asked, as work; a change of
   the Homeroom bot's tells its change machine (`Closed`) and, withdrawn because its
   requests closed, says so in each request's thread; the preview machine asked to retire its preview for good (which tells shots). A
@@ -1713,6 +1700,32 @@ bot owes them there. One instance per person (`person:<userId>`).
   one. An answer whose work fails for good gets one fixed line (`dm.sorry`: "I couldn't
   answer just now", or for a later try, that it still could not), and a retry of an answer
   that had said "I'll get back to you" still owes the later try it promised.
+- **Stop.** While the bot works on their message the composer offers Stop
+  (`POST /api/conversations/:id/bot-stop`, naming the message the bot's typing event says
+  it is answering). `StopRequested` marks the answer under way (`current.stop`) and
+  **cancels nothing**: the answer's own work watches for the mark
+  (`services/homeroom-bot-stop.js`: read as the try begins and every second after, in
+  whichever process runs it, with nothing kept between calls), ends its turn at the next
+  safe point (before a
+  model request or a tool call; a request in flight is cut off) and says "Stopped." in the
+  answer's place, under the answer's own key, with what the turn had already done that
+  stays done. So the turn is never still running after the chat says it stopped, and the
+  next message waits for it as ever. The watch's signal is the turn's own, never the work
+  item's lease signal, which also aborts when the process stops for a release. A stopped
+  answer is never asked again: one that deferred or failed for good after the Stop, and a
+  try waiting on the timer, each say so once (`dm.stopped`), and no `dm.sorry` follows. A
+  Stop of some other message, or one heard more than five minutes after it was pressed
+  (asked again after a rollout), stops nothing; nor does one that finds no answer under way.
+- **Saved drafts.** While the bot works on their message, words typed in the composer are
+  saved, not sent: Send's place is Stop and, beside it, "Save draft", and Enter saves too
+  (`features/messages/bot-stop.ts` is the rule). Drafts are the person's own, text only,
+  twenty to a list (the chat's, and one for each thread), kept in `conversation_drafts`
+  (`staging:private`) through `GET/POST/DELETE /api/conversations/:id/bot-drafts`, which
+  answer only for their own chat with the bot; their other devices hear
+  `conversation_drafts_changed` and re-read. A draft is sent by a tap on its row once the
+  bot is free, never on its own, as an ordinary message. The machine knows nothing of
+  drafts: a message that does arrive while an answer is under way (another client, the
+  connector) still waits its turn as before.
 - **Taps and hellos.** A tap under one of the bot's offers, or Build it under a plan, is
   decided once here (`Tapped` → `dm.act`, claimed by its work item; an act that fails for
   good is settled as failed and said). A hello owed (joining a project by an invite, the

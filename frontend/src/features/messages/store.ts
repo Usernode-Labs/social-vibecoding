@@ -4,16 +4,20 @@ import { t } from '../../lib/i18n/runtime';
 import { ACTION_OUTBOX_EVENT, actionOutbox, type ActionOutcome } from '../../lib/action-outbox';
 import { KEPT_DRAW_MS } from '../../lib/kept-copies';
 import { isOffline, probe } from '../../lib/offline';
-import { botTabAddress, botTabFromMessages, goBotAddress, knownBotConversation, noteBotConversation, openBotTab } from '../ai/door';
+import { startThreadAbout } from '../../lib/thread-about';
+import { botNewAddress, botOldAddress, botTabFromMessages, goBotAddress, knownBotConversation, noteBotConversation, openBotTab } from '../ai/door';
+import { openBotMessage, openFirstVersion } from '../ai/where';
 import { navStore } from '../nav/nav-store.js';
 import { messagesDrawerApplies } from '../nav-drawer/messages-drawer';
 import * as api from './api';
+import { botDraftsChanged, resyncBotDrafts } from './bot-drafts';
 import { WORK_CHANGED_EVENT, inMainStream, openAppTarget, threadsAllowed } from './bot-shared';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
 import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import { type AppDiscussion, type InboxSection } from './inbox';
 import { MAX_UNSENT, messagesOutbox, type PendingSend, type UnsentState } from './outbox';
-import { openRequestPage, requestPageOf, type RequestPage } from './request-page';
+import { carryToNewChat } from './new-chat-carry';
+import { openRequestPage, requestPage, requestPageOf, type RequestPage } from './request-page';
 import { markFor } from './unread-anchor';
 import type {
   ConversationDetail,
@@ -24,7 +28,6 @@ import type {
   HomeroomBotAction,
   MessageAttachment,
   MessageReaction,
-  MessagesAgentThread,
   MessagesSnapshot,
   ReplyThreadState,
   SharedObjectReference,
@@ -50,6 +53,12 @@ export interface Typist {
   bot?: boolean;
   /** What the bot says it is doing now (its typing event's `doing`); null while it thinks. */
   doing?: BotDoing | null;
+  /**
+   * Task 2148: the viewer's message the bot is answering, when that answer
+   * can be stopped (its typing event's `answering`, services/homeroom-bot-
+   * dm.js pushTyping). The composer's Stop sends it back (./bot-stop.ts).
+   */
+  answering?: number;
 }
 
 /**
@@ -93,10 +102,14 @@ export function botDoingOf(raw: unknown): BotDoing | null {
  * words are held: the bot's message takes the card's place when the typing
  * stops.
  */
-export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null): Typist {
+export function botTypist(prior: Typist | undefined, shown: string, doing: BotDoing | null, answering: number | null = null): Typist {
   // The furthest step named this turn, kept through a wordless one.
   const held = doing ?? prior?.doing ?? null;
-  return { name: shown, unnamed: false, bot: true, doing: held };
+  // Task 2148: the message it answers, as its newest event names it; an
+  // event that names none keeps the one before (every event of an answer
+  // that can be stopped names it).
+  const answered = answering ?? prior?.answering ?? null;
+  return { name: shown, unnamed: false, bot: true, doing: held, ...(answered ? { answering: answered } : {}) };
 }
 
 interface InternalState extends MessagesSnapshot {
@@ -110,7 +123,7 @@ type Listener = () => void;
 
 const listeners = new Set<Listener>();
 let state: InternalState = {
-  route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+  route: { open: false, conversationId: null, appSlug: null, threadRootId: null, focusMessageId: null },
   conversations: [],
   active: null,
   messages: [],
@@ -136,7 +149,6 @@ let state: InternalState = {
   listCollapsed: false,
   showMoreChannels: false,
   unreadMark: null,
-  threadFocusId: null,
 };
 
 /*
@@ -225,12 +237,17 @@ const heldTyping = new Map<string, { conversationId: number; scope: ComposerScop
  */
 const typingHolders = new Map<string, Map<number, boolean>>();
 const TYPING_HOLD_MS = 5000;
-let pendingShare: SharedObjectReference | null | undefined;
 /**
- * A change the change page's Ask for changes put straight on the chat with
- * Homeroom bot's composer (see openBot), for that conversation only.
+ * #6674: the bot's card while the tab is away, and the answers that correct
+ * it. `staleBotTyping` marks a scope whose bot entry outlived its expiry
+ * because the page was hidden (a phone app does not run timers while it is
+ * gone, and coming back must not flash an empty space);
+ * `botWorkingGeneration` tells a live typing event from a status read that
+ * started before it, so the newest news wins.
  */
-let pendingAttach: { conversationId: number; object: StagedObject; placeholder: string } | null = null;
+const staleBotTyping = new Set<ComposerScope>();
+const botWorkingGeneration = new Map<ComposerScope, number>();
+let pendingShare: SharedObjectReference | null | undefined;
 /** A `#messages/channel/<handle>` link followed before the lists landed. */
 let pendingChannel: string | null = null;
 let listRequest = 0;
@@ -530,8 +547,15 @@ function botToTab(): boolean {
   if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== botConversationId()) return false;
-  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
-  const href = botTabAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
+  // Only from this conversation's own address, read as the router reads it
+  // (public/js/app.js: the query off, the id as a number), so every address
+  // the router opened the chat from here goes on to the tab. The chat's own
+  // stream is drawn on no screen: nothing here may be left showing it.
+  const parts = window.location.hash.replace(/^#/, '').split('?')[0].split('/');
+  if (parts[0] !== 'messages' || Number(parts[1]) !== conversationId) return false;
+  // The chat itself was Main Chat: its old address, which the tab resolves
+  // to the thread those messages are in now (../ai/where.ts).
+  const href = botOldAddress({ threadRootId: state.route.threadRootId, focusMessageId: state.route.focusMessageId });
   try {
     history.replaceState(null, '', `${window.location.pathname}${window.location.search}${href}`);
   } catch {
@@ -693,9 +717,7 @@ let focusLoaded: number | null = null;
  * The newest message of the conversation itself on screen — the read cursor's
  * position. Since the #2387 follow-up the main stream also carries its
  * threads' replies as lines, and a reply is no position in it: the server
- * reads a thread when handed one, and leaves the cursor where it was. One
- * request, one story: a moment the chat with Homeroom bot also lists in its
- * main stream (`alsoInChat`) is a position in it, as the server counts it.
+ * reads a thread when handed one, and leaves the cursor where it was.
  */
 function newestMainId(messages: ConversationMessage[]): number | null {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
@@ -728,17 +750,6 @@ function browserOffline(): boolean {
   return typeof navigator !== 'undefined' && navigator.onLine === false;
 }
 
-/**
- * How many messages a page of a conversation reads. The Homeroom bot's chat
- * folds most of its news into a few "N finished" lines (./bot-news-line.tsx),
- * so a page of 50 fills little of the screen and opening it read page after
- * page to fill it, behind its spinner (./open-hold.ts). There it reads the
- * server's most (services/conversations.js caps a page at 100).
- */
-function pageSize(conversation: Pick<ConversationDetail, 'homeroomBot'> | null): number {
-  return conversation?.homeroomBot === true ? 100 : 50;
-}
-
 export async function loadThread(conversationId: number, force = false): Promise<void> {
   if (!validId(conversationId)) return;
   if (leftConversations.has(conversationId)) {
@@ -747,6 +758,10 @@ export async function loadThread(conversationId: number, force = false): Promise
       loadingThread: false, threadError: null, threadGone: 'left',
       active: null, messages: [], nextBefore: null, nextAfter: null,
     });
+    return;
+  }
+  if (state.route.threadsOnly && state.route.embedded && state.route.conversationId === conversationId) {
+    await loadThreadsOnly(conversationId, force);
     return;
   }
   const linked = state.route.conversationId === conversationId ? state.route.focusMessageId : null;
@@ -830,8 +845,8 @@ export async function loadThread(conversationId: number, force = false): Promise
         ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId, null, read, pageSize(active)).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId, null, read, pageSize(active))), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
       // In its community's page the room has no address of its own (#3653):
@@ -857,7 +872,9 @@ export async function loadThread(conversationId: number, force = false): Promise
       : preserveVisibleThread ? null : markFor(conversationId, active);
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true, unreadMark });
     upsertConversation(active);
-    applyPendingQuote();
+    // #6674: in the chat with Homeroom bot, ask what it is doing in the place
+    // on screen, so a thread opened while it works draws the card at once.
+    seedBotWorkingOnScreen();
     // A link to a reply inside a thread opens that thread beside it.
     if (focus && page.threadRootId && state.route.threadRootId !== page.threadRootId) {
       publish({ route: { ...state.route, threadRootId: page.threadRootId } });
@@ -896,6 +913,54 @@ export async function loadThread(conversationId: number, force = false): Promise
     });
   } finally {
     if (early) clearTimeout(early);
+  }
+}
+
+/**
+ * THE CHAT WITH HOMEROOM BOT, THREADS ONLY (14 Nov 2026). Its tab draws the
+ * person's threads and nothing else (../ai/index.tsx): there is no stream of
+ * the conversation's own to show, so none is read. Only who is in it is
+ * (`active`: the thread pane's gate, its typing line and what its box may
+ * send), once, and then the thread the route names. No page of messages, no
+ * "New" line, and nothing marked read here: a thread marks itself read when
+ * it is drawn (loadReplyThread).
+ *
+ * A forced read is a refresh after an event: the open thread re-reads itself
+ * (handleEvent, resync), and the conversation's detail is read again only
+ * when it is not known yet.
+ */
+async function loadThreadsOnly(conversationId: number, force: boolean): Promise<void> {
+  const openThreadNamed = () => {
+    const rootId = state.route.conversationId === conversationId ? state.route.threadRootId : null;
+    if (rootId) void loadReplyThread(conversationId, rootId);
+  };
+  if (state.active?.id === conversationId) {
+    if (state.messages.length || state.loadingThread) publish({ messages: [], nextBefore: null, nextAfter: null, loadingThread: false });
+    if (!force) openThreadNamed();
+    return;
+  }
+  const request = ++threadRequest;
+  const listed = state.conversations.find((item) => item.id === conversationId) || null;
+  publish({
+    loadingThread: !listed, threadError: null, threadGone: null,
+    active: listed, messages: [], nextBefore: null, nextAfter: null,
+  });
+  // The inbox row is a full summary: the thread can open on it at once.
+  if (listed) openThreadNamed();
+  try {
+    const active = await api.getConversation(conversationId, { fresh: force || !browserOffline() });
+    if (request !== threadRequest || state.route.conversationId !== conversationId || !state.route.threadsOnly) return;
+    if (active.homeroomBot && active.kind !== 'channel') noteBotConversation(active.id);
+    publish({ active, loadingThread: false, online: true });
+    upsertConversation(active);
+    openThreadNamed();
+  } catch {
+    if (request !== threadRequest) return;
+    const kept = listed || listedConversation(conversationId);
+    // The conversation as the list (or this device) knows it stands in; the
+    // thread is asked for either way, and says so itself when it cannot load.
+    publish({ active: kept, loadingThread: false, threadError: null });
+    if (!listed) openThreadNamed();
   }
 }
 
@@ -1063,7 +1128,7 @@ export async function loadOlder(): Promise<boolean> {
   if (!conversationId || !state.nextBefore || state.loadingOlder) return true;
   publish({ loadingOlder: true });
   try {
-    const page = await api.listMessages(conversationId, state.nextBefore, undefined, pageSize(state.active));
+    const page = await api.listMessages(conversationId, state.nextBefore);
     if (state.route.conversationId !== conversationId) return true;
     const known = new Set(state.messages.map((message) => message.id));
     const older = page.messages.filter((message) => !known.has(message.id));
@@ -1104,24 +1169,21 @@ function notifyConversationRead(conversationId: number): void {
 export function route(
   conversationId?: number | null,
   appSlug?: string | null,
-  agent?: MessagesAgentThread | null,
   extras: { threadRootId?: number | null; focusMessageId?: number | null } = {},
 ): void {
   const nextId = validId(conversationId) ? conversationId : null;
   // #2387: a reply thread and a message link ride on a conversation or an
-  // app channel, never on an agent thread or the bare list.
+  // app channel, never on the bare list.
   const nextRoot = (nextId || validSlug(appSlug)) && validId(extras.threadRootId) ? extras.threadRootId : null;
   const nextFocus = (nextId || validSlug(appSlug)) && validId(extras.focusMessageId) ? extras.focusMessageId : null;
   if (unreadHold && unreadHold !== nextId) unreadHold = null;
   // ONE THREAD IS OPEN (#2718 review). An app's discussion and a conversation
   // are both threads of this inbox, addressed differently because one is an
   // app and the other a row in this database — so naming one clears the
-  // other rather than leaving two panes' worth of state half-set. #2813's
-  // agent threads join the same rule, last in precedence.
+  // other rather than leaving two panes' worth of state half-set.
   const nextSlug = nextId ? null : validSlug(appSlug);
-  const nextAgent = nextId || nextSlug ? null : validAgentThread(agent);
   if (state.route.open && state.route.conversationId === nextId
-      && state.route.appSlug === nextSlug && sameAgentThread(state.route.agent, nextAgent)) {
+      && state.route.appSlug === nextSlug) {
     const threadChanged = state.route.threadRootId !== nextRoot;
     const focusChanged = !!nextFocus && state.route.focusMessageId !== nextFocus;
     if (threadChanged || focusChanged) {
@@ -1139,7 +1201,7 @@ export function route(
   // A new address reads its link afresh, even one followed before.
   focusLoaded = null;
   publish({
-    route: { open: true, conversationId: nextId, appSlug: nextSlug, agent: nextAgent, threadRootId: nextRoot, focusMessageId: nextFocus },
+    route: { open: true, conversationId: nextId, appSlug: nextSlug, threadRootId: nextRoot, focusMessageId: nextFocus },
     thread: null,
     nextAfter: null,
     // A conversation opened again is read afresh: its "New" line was the
@@ -1162,46 +1224,6 @@ export function route(
   else publish({ active: null, messages: [], nextBefore: null, loadingThread: false });
   if (nextSlug) void loadDiscussion(nextSlug);
   revealAppFocus(nextSlug, nextFocus);
-}
-
-/**
- * An agent thread out of the address bar (#2813). A session's id is a
- * serial; anything else is not a thread this inbox can open, and the pane
- * falls back to "choose a conversation".
- */
-export function validAgentThread(agent?: MessagesAgentThread | null): MessagesAgentThread | null {
-  if (!agent || typeof agent !== 'object') return null;
-  if (agent.kind === 'session') {
-    const slug = validSlug(agent.slug);
-    return slug && validId(agent.id) ? { kind: 'session', slug, id: agent.id } : null;
-  }
-  if (agent.kind === 'agent') {
-    if (agent.id === 'new') return { kind: 'agent', id: 'new' };
-    return validId(agent.id) ? { kind: 'agent', id: agent.id } : null;
-  }
-  return null;
-}
-
-function sameAgentThread(a: MessagesAgentThread | null, b: MessagesAgentThread | null): boolean {
-  if (!a || !b) return a === b;
-  if (a.kind === 'session' && b.kind === 'session') return a.slug === b.slug && a.id === b.id;
-  if (a.kind === 'agent' && b.kind === 'agent') return a.id === b.id;
-  return false;
-}
-
-/**
- * The inbox's own address for an agent thread (#2813). The rows link here on
- * every viewport; on a phone the router swaps it for `fullScreenAddress`.
- */
-export function agentThreadAddress(agent: MessagesAgentThread): string {
-  if (agent.kind === 'agent') return `#messages/agent/${agent.id}`;
-  return `#messages/session/${encodeURIComponent(agent.slug)}/${agent.id}`;
-}
-
-/** Where the same thread lives as a screen of its own — a phone's destination. */
-export function fullScreenAddress(agent: MessagesAgentThread): string {
-  if (agent.kind === 'agent') return `#agent/${agent.id}`;
-  return `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`;
 }
 
 /**
@@ -1279,11 +1301,10 @@ export function close(): void {
   // durable draft. Leaving Messages cancels it instead of surprising the user
   // in an unrelated conversation later.
   pendingShare = undefined;
-  pendingAttach = null;
   replyThreadRequest += 1;
   unreadHold = null;
   publish({
-    route: { open: false, conversationId: null, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+    route: { open: false, conversationId: null, appSlug: null, threadRootId: null, focusMessageId: null },
     active: null, messages: [], loadingThread: false, threadError: null,
     discussionContext: null, discussionError: null, thread: null, nextAfter: null, unreadMark: null,
   });
@@ -1306,6 +1327,7 @@ export function close(): void {
 export function embed(
   conversationId: number,
   at: { threadRootId?: number | null; focusMessageId?: number | null } | null = null,
+  { threadsOnly = false }: { threadsOnly?: boolean } = {},
 ): void {
   if (!validId(conversationId) || state.route.open) return;
   // #3653: a door into the room can name a place in it — a reply thread to
@@ -1322,15 +1344,23 @@ export function embed(
     if (focus && state.route.focusMessageId !== focus) {
       focusLoaded = null;
       publish({ route: { ...state.route, focusMessageId: focus } });
-      void loadThread(conversationId);
+      // Threads only: the message is the open thread's, which shows it
+      // (ReplyThreadPanel reads `route.focusMessageId`); no stream to window.
+      if (!state.route.threadsOnly) void loadThread(conversationId);
     }
     return;
   }
   focusLoaded = null;
   unreadHold = null;
   publish({
-    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: root, focusMessageId: focus },
+    route: {
+      open: false, embedded: true, conversationId, appSlug: null, threadRootId: root, focusMessageId: focus,
+      ...(threadsOnly ? { threadsOnly: true } : {}),
+    },
     thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null, unreadMark: null,
+    // A conversation whose stream this embed never reads starts with none of
+    // the last one's rows.
+    ...(threadsOnly ? { messages: [], nextBefore: null } : {}),
   });
   void loadConversations();
   void loadThread(conversationId);
@@ -1346,7 +1376,7 @@ export function isOpen(): boolean {
 }
 
 export function handleBack(): boolean {
-  const onThread = !!state.route.conversationId || !!state.route.appSlug || !!state.route.agent;
+  const onThread = !!state.route.conversationId || !!state.route.appSlug;
   if (!state.route.open || !onThread || !listAside()) return false;
   // A CHANNEL is not a level of this list: it is its community's room, and
   // its way back is that community's hub, which the header's arrow names
@@ -1363,7 +1393,7 @@ export function handleBack(): boolean {
       ? `#messages/app/${encodeURIComponent(state.route.appSlug)}`
       : `#messages/${state.route.conversationId}`;
     try { history.replaceState(null, '', parent); } catch { /* non-fatal */ }
-    route(state.route.conversationId, state.route.appSlug, null);
+    route(state.route.conversationId, state.route.appSlug);
     syncChrome();
     return true;
   }
@@ -1426,7 +1456,7 @@ export function followPlatformSlug(): () => void {
   return subscribePlatformSlug(() => { if (state.route.open && !channelToHub()) syncChrome(); });
 }
 
-/** Whether the conversation open here, not embedded elsewhere, is the chat with Homeroom bot (Main). */
+/** Whether the conversation open here, not embedded elsewhere, is the chat with Homeroom bot (for the moment before it goes to its tab). */
 function botOnShow(): boolean {
   return !!state.route.conversationId && !state.route.embedded
     && !!state.active && state.active.id === state.route.conversationId && !!state.active.homeroomBot;
@@ -1457,16 +1487,14 @@ export function syncChrome(): void {
   // #4229: and on a strip too narrow for the list beside it, where the list
   // has stepped aside just as it does on a phone.
   // THE PHONE'S DRAWER (../nav-drawer/messages-drawer.ts): a conversation
-  // with people, an agent chat or an agent session is its second level, and
-  // the header draws the drawer's own arrow (a button, not this href'd one,
-  // so WebKit's history swipe stays off while a finger pans the drawer) and
-  // names it.
-  if ((state.route.conversationId || state.route.agent) && messagesDrawerApplies({
+  // with people is its second level, and the header draws the drawer's own
+  // arrow (a button, not this href'd one, so WebKit's history swipe stays
+  // off while a finger pans the drawer) and names it.
+  if (state.route.conversationId && messagesDrawerApplies({
     phone: isMobile(),
     open: state.route.open,
     conversationId: state.route.conversationId,
     appSlug: state.route.appSlug,
-    agent: state.route.agent,
     threadRootId: state.route.threadRootId,
     embedded: state.route.embedded,
     activeKind: state.active && state.active.id === state.route.conversationId ? state.active.kind : null,
@@ -1476,15 +1504,7 @@ export function syncChrome(): void {
     app.setHeaderTitle?.(t('messages:store.header.messages'));
     return;
   }
-  // #6019: Main, the chat with Homeroom bot, is a level under the AI tab's
-  // page (features/ai/): its arrow goes back there, at every width, and the
-  // bar names it. A thread of it is a level under Main, as any reply thread is.
-  if (botOnShow() && !(isMobile() && state.route.threadRootId)) {
-    app.setBackIcon?.('arrow', '#homeroom-bot');
-    app.setHeaderTitle?.(t('messages:store.header.main'));
-    return;
-  }
-  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug || state.route.agent);
+  const thread = listAside() && !!(state.route.conversationId || state.route.appSlug);
   // #2387: a reply thread, on a phone, is a level over its conversation: the
   // chevron goes back to the conversation, and the bar says "Thread".
   if (isMobile() && state.route.threadRootId && (state.route.conversationId || state.route.appSlug)) {
@@ -1557,69 +1577,73 @@ function turnsPageInPlace(href: string): boolean {
 
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
-  // 1 Nov 2026: the chat with Homeroom bot opens on its tab, as Main Chat.
-  if (validId(conversationId) && conversationId === botConversationId()) { openBotTab(null); return; }
+  // 14 Nov 2026: the chat with Homeroom bot is its tab's, and every
+  // conversation in it is a thread: a door that only knows the chat opens a
+  // new one.
+  if (validId(conversationId) && conversationId === botConversationId()) { goBotAddress(botNewAddress(null)); return; }
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(conversationId || null);
   else window.location.hash = target;
 }
 
+/** What a door into the bot's chat is about: an item, and for a change its pull request's number when the door knows it. */
+export type BotDoorReference = StagedObject & { number?: number | null };
+
 /**
- * B8: open the signed-in person's chat with Homeroom bot, from any door that
- * says "ask Homeroom bot". It is made the first time. 1 Nov 2026: it opens
- * on the bot's tab, as Main Chat (../ai/door.ts), never on this screen.
+ * B8: the signed-in person's chat with Homeroom bot, from any door that says
+ * "ask Homeroom bot". 14 Nov 2026: there is no Main Chat to open, so the
+ * door opens what it is about:
+ *
+ *   a change, by its number   the private thread about that change, started
+ *                             or found (../../lib/thread-about.ts), as "Work
+ *                             on this with Homeroom bot" opens it;
+ *   any other item            a new chat set to its project, with the item
+ *                             attached in its box and the box asking what
+ *                             should change (./new-chat-carry.ts);
+ *   a project                 a new chat set to that project;
+ *   nothing                   a new chat.
+ *
+ * Nothing is sent or made by the door itself beyond that thread: a new chat
+ * becomes a thread when its first message is sent.
  */
-export async function openBot(reference?: StagedObject | null): Promise<void> {
-  let id: number | null = botConversationId();
-  if (!id) {
-    try { id = await api.openBotConversation(); } catch { id = null; }
-    noteBotConversation(id);
+export async function openBot(reference?: BotDoorReference | null): Promise<void> {
+  const slug = typeof reference?.appSlug === 'string' && reference.appSlug.trim() ? reference.appSlug.trim() : null;
+  if (reference?.type === 'proposal' && slug && validId(reference.number)) {
+    try {
+      const thread = await startThreadAbout(slug, reference.number, 'change');
+      goBotAddress(thread.href);
+      return;
+    } catch { /* a new chat about it instead */ }
   }
-  // B8: a change to write about ("Ask for changes"). One that names its
-  // project and itself is attached on the composer as it is, with the caret
-  // in the box and the box asking what should change: no dialog to fill in
-  // (the change page knows both). Anything less is chosen in the Share item
-  // dialog, as Share stages one (see share below).
-  const attach = !!id && !!reference && stagedComplete(reference);
-  if (attach && id && reference) pendingAttach = { conversationId: id, object: reference, placeholder: t(ASK_FOR_CHANGES_PLACEHOLDER) };
-  else if (reference) pendingShare = reference;
-  const already = !!id && state.route.conversationId === id;
-  openBotTab(null);
-  if (reference && already && typeof window !== 'undefined') {
-    if (attach) window.dispatchEvent(new CustomEvent('usernode:messages-attach'));
-    else window.dispatchEvent(new CustomEvent('usernode:messages-share', { detail: pendingShare }));
+  if (reference && reference.type !== 'app' && stagedComplete(reference)) {
+    const { number: _number, ...object } = reference;
+    carryToNewChat(object, t(ASK_FOR_CHANGES_PLACEHOLDER));
+  } else {
+    carryToNewChat(null);
   }
+  goBotAddress(botNewAddress({ project: slug }));
 }
 
 /**
- * 16 Oct 2026 (C4): "See progress" on a request's page. The chat with the
- * bot, opened at that request: at the message waiting on the person when
- * there is one, read off the request's track (services/homeroom-bot-track.js),
- * else at the last thing the chat said about it. Before, it opened the chat
- * alone, and the person had to find the request in it. 31 Oct 2026: never
- * in a thread of the request's: its story is the page this was pressed on
- * (./request-page.ts), so a message in one of the old ones is passed over.
+ * 16 Oct 2026 (C4): "See progress" on a request's page or its card in a
+ * project's channel. 14 Nov 2026: a plan said in the private thread its
+ * request started in opens there, at the plan; anything else is the
+ * request's own page, its thread, where its news is (./request-page.ts).
+ * It used to open Main Chat at the last thing said about the request.
  */
 export async function openBotRequest(slug: string, number: number): Promise<void> {
-  await openBot();
   try {
     const work = await api.getHomeroomBotWork({ fresh: true });
     const track = (work.tracks || []).find((item) => item.appSlug === slug && item.issueNumber === Number(number));
-    const known = track?.askId ? state.messages.find((item) => item.id === track.askId) : null;
-    const ask = track?.askId && !known?.threadRootId ? track.askId : null;
-    const about = (item: ConversationMessage) => !item.threadRootId && item.sender.bot
-      && item.metadata?.homeroomBot?.appSlug === slug && Number(item.metadata?.homeroomBot?.issueNumber) === Number(number);
-    const last = [...state.messages].reverse().find(about);
-    // A plan said in the private thread its request started in (never a
-    // request's card's: the server leaves those out) opens there, at the plan.
     if (track?.askId && track.askThreadId) {
       openBotTab({ threadRootId: track.askThreadId, focusMessageId: track.askId });
       return;
     }
-    const at = ask || last?.id || null;
-    if (at) openBotTab({ threadRootId: null, focusMessageId: at });
-  } catch { /* the chat itself, then */ }
+  } catch { /* the request's page, then */ }
+  const page = requestPage({ appSlug: slug, issueNumber: Number(number) });
+  if (page) openRequestPage(page);
+  else void openBot({ type: 'app', appSlug: slug });
 }
 
 /** What the composer's box asks once Ask for changes has attached a change. */
@@ -1636,37 +1660,17 @@ export function stagedComplete(reference: SharedObjectReference): boolean {
   return validId(reference.sessionId);
 }
 
-/**
- * The change Ask for changes staged for `conversationId`'s composer, once:
- * null for any other conversation, which leaves it waiting for its own.
- */
-export function takePendingAttach(conversationId: number): { object: StagedObject; placeholder: string } | null {
-  if (!pendingAttach || pendingAttach.conversationId !== conversationId) return null;
-  const { object, placeholder } = pendingAttach;
-  pendingAttach = null;
-  return { object, placeholder };
-}
-
-/**
- * Attach `object` to `conversationId`'s composer when it next reads its
- * one-shot, for a page that names what Main Chat is about before that composer
- * has mounted (a request reopened from its bot-page address, features/ai/,
- * 3 Nov 2026). A composer already mounted takes it when the caller also sends
- * `usernode:messages-attach`, as openBot does.
- */
-export function stashObject(conversationId: number, object: StagedObject): void {
-  if (!validId(conversationId)) return;
-  pendingAttach = { conversationId, object, placeholder: '' };
-}
-
-// B6: a message of the bot's to quote in the composer once its chat has
-// loaded: the App tab's Change something, under a first version's plan.
+// B6: a message of the bot's to quote in its thread's reply box, once that
+// thread has drawn it.
 let pendingQuote: { conversationId: number; messageId: number } | null = null;
 
 /**
- * B6: open the chat with Homeroom bot with one of its messages quoted in the
- * composer, as a reply to it, and the caret after it. A message not in the
- * chat's newest page is not quoted: the chat still opens.
+ * B6: open the chat with Homeroom bot at one of its messages, quoted in the
+ * reply box as a reply to it, with the caret after it. 14 Nov 2026: every
+ * message is in a thread, so this opens that thread at the message
+ * (../ai/where.ts asks which) and the quote goes to the thread's own box. A
+ * message in no thread, or not among the thread's replies as loaded, is not
+ * quoted: the page still opens.
  */
 export async function quoteBotMessage(conversationId?: number | null, messageId?: number | null): Promise<void> {
   let id: number | null = validId(conversationId) ? Number(conversationId) : null;
@@ -1676,23 +1680,22 @@ export async function quoteBotMessage(conversationId?: number | null, messageId?
   }
   noteBotConversation(id);
   pendingQuote = id && validId(messageId) ? { conversationId: id, messageId: Number(messageId) } : null;
-  // 1 Nov 2026: on the bot's tab, as Main Chat (open() sends it there).
-  if (id) openBotTab(null);
-  else open(id);
-  applyPendingQuote();
+  await openBotMessage(validId(messageId) ? Number(messageId) : null);
 }
 
-/** Quote the pending message once its chat is the one on screen with it loaded. */
+/** Quote the pending message in its thread's box, once that thread is the one open with it loaded. */
 function applyPendingQuote(): void {
   const wanted = pendingQuote;
-  if (!wanted || state.route.conversationId !== wanted.conversationId || state.active?.id !== wanted.conversationId) return;
+  const thread = state.thread;
+  if (!wanted || !thread || thread.loading || thread.conversationId !== wanted.conversationId) return;
+  const message = thread.root?.id === wanted.messageId ? thread.root : thread.messages.find((item) => item.id === wanted.messageId);
+  // Another thread, or one that does not hold it: nothing to quote there.
   pendingQuote = null;
-  const message = state.messages.find((item) => item.id === wanted.messageId);
   if (!message) return;
-  setReply(scopeKey(wanted.conversationId, null), message);
+  setReply(scopeKey(wanted.conversationId, thread.rootId), message);
   if (typeof window !== 'undefined') {
     window.requestAnimationFrame(() => {
-      document.querySelector<HTMLTextAreaElement>('.messages-composer-input')?.focus({ preventScroll: true });
+      document.querySelector<HTMLTextAreaElement>('.messages-reply-pane .messages-composer-input')?.focus({ preventScroll: true });
     });
   }
 }
@@ -1748,20 +1751,6 @@ export function openDiscussion(slug: string): void {
   if (turnsPageInPlace(target)) return;
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
-  else window.location.hash = target;
-}
-
-/**
- * The same, for an agent thread (#2813). The rows are ordinary links to
- * `agentThreadAddress`; this is for the callers that are not a link — and
- * for re-selecting the thread already open, which a link cannot do.
- */
-export function openAgentThread(agent: MessagesAgentThread): void {
-  if (typeof window === 'undefined') return;
-  const safe = validAgentThread(agent);
-  if (!safe) return;
-  const target = agentThreadAddress(safe);
-  if (window.location.hash === target) route(null, null, safe);
   else window.location.hash = target;
 }
 
@@ -2070,8 +2059,7 @@ export function quoteInComposer(message: ConversationMessage, conversationId: nu
 export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
   const conversationId = state.route.conversationId;
   if (!conversationId || conversationId !== question.conversationId) return;
-  // One request, one story: the answer goes in the request's thread,
-  // whether it was tapped there or on the moment the main chat also shows.
+  // One request, one story: the answer goes in the thread the question is in.
   const rootId = botThreadOf(question);
   const scope = scopeKey(conversationId, rootId);
   const draft = draftFor(scope);
@@ -2682,31 +2670,9 @@ export function threadAddress(conversationId: number, rootId: number): string {
   return `#messages/${conversationId}/thread/${rootId}`;
 }
 
-/**
- * Open a request's thread at one of its messages (the strip's buttons, a
- * news line in the chat with Homeroom bot): the thread pane scrolls to it
- * and flashes it (`threadFocusId`). Without a root it opens the message
- * itself, wherever it is, by its link.
- */
-export function openThreadAt(rootId: number | null | undefined, focusId: number | null | undefined = null): void {
-  const conversationId = state.route.conversationId;
-  if (typeof window === 'undefined' || !conversationId) return;
-  if (!validId(rootId)) {
-    if (validId(focusId)) openAddress(messageAddress(conversationId, focusId));
-    return;
-  }
-  publish({ threadFocusId: validId(focusId) && focusId !== rootId ? focusId : null });
-  openThread(rootId);
-}
-
-/** The open conversation's main stream as loaded, for a request's story (./bot-request.ts storyRootIn). */
+/** The open conversation's own stream as loaded: none for the chat with Homeroom bot, which reads its threads only. */
 export function loadedMessages(): readonly ConversationMessage[] {
   return state.messages;
-}
-
-/** The thread pane has shown the message it was opened at. */
-export function clearThreadFocus(): void {
-  if (state.threadFocusId) publish({ threadFocusId: null });
 }
 
 /**
@@ -2725,7 +2691,7 @@ export function openThread(rootId: number): void {
   if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
   // A request's story opens on the request's page, never as a thread here.
   const page = requestPageFor(findRow(rootId));
-  if (page) { openRequestPage(page, conversationId); return; }
+  if (page) { openRequestPage(page); return; }
   // #3494: in its community's page the thread opens beside the room there,
   // with no address of its own: the page's address is the page's.
   if (state.route.embedded) {
@@ -2733,7 +2699,7 @@ export function openThread(rootId: number): void {
     return;
   }
   const target = threadAddress(conversationId, rootId);
-  if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
+  if (window.location.hash === target) route(conversationId, null, { threadRootId: rootId });
   else window.location.hash = target;
 }
 
@@ -2813,7 +2779,7 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
     const story = requestPageFor(page.root || findRow(rootId));
     if (story) {
       closeThread();
-      openRequestPage(story, conversationId);
+      openRequestPage(story);
       return;
     }
     publish({
@@ -2827,12 +2793,24 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
         firstUnreadId: same && current && current.firstUnreadId !== undefined ? current.firstUnreadId : page.firstUnreadId,
       },
     });
-    const newest = known.reduce((top, item) => Math.max(top, item.id), 0);
+    applyPendingQuote();
+    // #6674: the thread was opened while Homeroom bot works in it: ask now
+    // rather than wait for its next renewal.
+    if (state.active?.peer?.bot) void seedBotWorking(conversationId, rootId);
+    // 14 Nov 2026: in the chat with Homeroom bot a thread's first message is
+    // unread like any reply (the bot's hello, with nothing under it yet:
+    // services/private-threads.js THREAD_UNREAD_WHERE), so a thread nobody
+    // has replied in is read up to it. Opening the hello left its row's new
+    // mark and the tab's badge standing for good. Only there: anywhere else
+    // a thread's first message is the main stream's, and reading up to it
+    // would move the conversation's own cursor.
+    const first = state.route.threadsOnly && state.route.conversationId === conversationId ? rootId : 0;
+    const newest = known.reduce((top, item) => Math.max(top, item.id), first);
     if (newest) {
       readWhenThere(`thread:${conversationId}:${rootId}`, conversationId, () => {
         // The newest reply drawn when they are back, in the thread still open.
         if (state.thread?.conversationId !== conversationId || state.thread.rootId !== rootId) return;
-        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), 0);
+        const now = state.thread.messages.reduce((top, item) => Math.max(top, item.id), first);
         if (now > 0) void markThreadRead(conversationId, rootId, now);
       });
     }
@@ -3054,10 +3032,15 @@ function showing(): boolean {
 export async function resync(): Promise<void> {
   void flushQueued();
   void loadAppDiscussions();
+  // The saved drafts on screen in the chat with Homeroom bot (./bot-drafts.ts).
+  resyncBotDrafts();
   const reads = [loadConversations(true)];
   const conversationId = state.route.conversationId;
   if (conversationId && onScreen(conversationId)) {
     reads.push(loadThread(conversationId, true));
+    // #6674: a reconnect is a return to the page: what Homeroom bot is doing
+    // now is read rather than waited for (loadThread asks the main scope).
+    seedBotWorkingOnScreen();
     const rootId = state.route.threadRootId;
     if (rootId && state.thread?.rootId === rootId) reads.push(loadReplyThread(conversationId, rootId, true));
     if (typeof window !== 'undefined' && typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent(WORK_CHANGED_EVENT));
@@ -3114,6 +3097,12 @@ export function handleEvent(raw: ConversationEvent): void {
       }
       break;
     }
+    case 'conversation_drafts_changed':
+      // Another tab or device of the viewer's saved, sent or deleted a draft
+      // in their chat with Homeroom bot: the list on screen there is read
+      // again (./bot-drafts.ts). The event carries no words.
+      botDraftsChanged(event);
+      break;
     case 'conversation_read':
       void loadConversations(true);
       // The reader's OWN other tabs, and only those: the event goes to every
@@ -3151,6 +3140,11 @@ export function handleEvent(raw: ConversationEvent): void {
       if (!userId || userId === currentUser().id || !username) break;
       // Where they type: the main stream, or the thread the event names.
       const scope = scopeKey(conversationId, api.strictId(event.threadRootId ?? event.thread_root_id) || null);
+      // #6674: a live event is newer than any answer a status read started
+      // before it can bring, and it says where the bot is now: a card held
+      // for the background is no longer held.
+      botWorkingGeneration.set(scope, (botWorkingGeneration.get(scope) || 0) + 1);
+      staleBotTyping.delete(scope);
       const current = state.typing[scope] || [];
       const expiryKey = `${scope}:${userId}`;
       const existingExpiry = typingExpiry.get(expiryKey);
@@ -3185,7 +3179,7 @@ export function handleEvent(raw: ConversationEvent): void {
         // nobody else's event carries that.
         const prior = current.find((each) => each.name === shown);
         const entry: Typist = botPeer
-          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing))
+          ? botTypist(prior?.bot ? prior : undefined, shown, botDoingOf(event.doing), api.strictId(event.answering) || null)
           : { name: shown, unnamed: [...holders.values()].every(Boolean) };
         next = isShown ? current.map((each) => (each.name === shown ? entry : each)) : [...current, entry];
       }
@@ -3193,6 +3187,15 @@ export function handleEvent(raw: ConversationEvent): void {
       if (event.typing !== false && typeof window !== 'undefined') {
         typingExpiry.set(expiryKey, window.setTimeout(() => {
           typingExpiry.delete(expiryKey);
+          // #6674: a page in the background expires the card while its
+          // reader is away. The bot's card is held instead, and coming back
+          // asks what the bot is doing now (seedBotWorking); a person's
+          // typing line still leaves as it always did.
+          if (botPeer && typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+            staleBotTyping.add(scope);
+            return;
+          }
+          staleBotTyping.delete(scope);
           dropTyping(scope, shown);
         }, 6000));
       }
@@ -3219,6 +3222,78 @@ function releaseHeldTyping(conversationId: number): void {
     typingExpiry.delete(key);
     dropTyping(held.scope, held.shown);
   }
+}
+
+/**
+ * #6674: ask the server what Homeroom bot is doing in the place on screen,
+ * and feed the answer through the typing event's own path. A returning page
+ * (from another app, a locked phone, a reconnect) draws the bot's working
+ * card at once instead of waiting for the next renewal of its ephemeral
+ * typing event, which took five to ten seconds.
+ *
+ * A live event for the same place that arrives while the read is in flight
+ * is newer news and wins; a failed read leaves the card the reader last saw
+ * on its ordinary expiry.
+ */
+export async function seedBotWorking(conversationId: number, threadRootId: number | null = null): Promise<void> {
+  if (!validId(conversationId)) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  const active = state.active;
+  if (!active || active.id !== conversationId || !active.peer?.bot) return;
+  const scope = scopeKey(conversationId, threadRootId);
+  const generation = (botWorkingGeneration.get(scope) || 0) + 1;
+  botWorkingGeneration.set(scope, generation);
+  let working: api.BotWorking;
+  try {
+    working = await api.getBotWorking(conversationId, threadRootId);
+  } catch {
+    expireHeldBotTyping(scope);
+    return;
+  }
+  if (botWorkingGeneration.get(scope) !== generation) return;
+  if (state.route.conversationId !== conversationId) return;
+  const botId = working.botId || (active.peer?.bot ? active.peer.id : 0);
+  if (!botId) return;
+  staleBotTyping.delete(scope);
+  // A synthetic typing event: renewal, the 6s expiry and #4220's hold of the
+  // card while the bot's message is being read behave exactly as live ones.
+  handleEvent({
+    type: 'conversation_typing',
+    conversationId,
+    userId: botId,
+    typing: working.typing,
+    ...(threadRootId ? { threadRootId } : {}),
+    ...(working.typing && working.doing ? { doing: working.doing } : {}),
+    ...(working.typing && working.answering ? { answering: working.answering } : {}),
+  });
+}
+
+/** #6674: the status read failed, so a card held for the background goes on its ordinary expiry. */
+function expireHeldBotTyping(scope: ComposerScope): void {
+  if (!staleBotTyping.delete(scope)) return;
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  if (typeof window === 'undefined') return;
+  const bot = (state.typing[scope] || []).find((entry) => entry.bot);
+  if (!bot) return;
+  const expiryKey = `${scope}:${api.strictId(state.active?.peer?.id) || 0}`;
+  const existing = typingExpiry.get(expiryKey);
+  if (existing) window.clearTimeout(existing);
+  typingExpiry.set(expiryKey, window.setTimeout(() => {
+    typingExpiry.delete(expiryKey);
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      staleBotTyping.add(scope);
+      return;
+    }
+    dropTyping(scope, bot.name);
+  }, 6000));
+}
+
+/** #6674: seed the scope on screen, when it is the chat with Homeroom bot. */
+function seedBotWorkingOnScreen(): void {
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return;
+  if (!state.active || state.active.id !== conversationId || !state.active.peer?.bot) return;
+  void seedBotWorking(conversationId, state.route.threadRootId || null);
 }
 
 /** The names on a conversation's typing line, or a thread's in it, in the order they came. */
@@ -3315,19 +3390,21 @@ function paintSaved(messageId: number, saved: boolean): void {
 
 export const messagesController = {
   open,
-  // B8: the chat with Homeroom bot (app-view.js's doors to it).
-  openBot: (reference?: StagedObject | null) => { void openBot(reference); },
-  // 16 Oct 2026: a request's page's See progress, at the request's own thread.
+  // B8: a door that says "ask Homeroom bot" (app-view.js's): the thread it
+  // is about, or a new chat set to its project (14 Nov 2026: no Main Chat).
+  openBot: (reference?: BotDoorReference | null) => { void openBot(reference); },
+  // 16 Oct 2026: a request's page's See progress: its plan's thread, else the request's page.
   openBotRequest: (slug: string, number: number) => { void openBotRequest(slug, number); },
   // #6019: one of the bot chat's threads, on the bot's tab (1 Nov 2026: ../ai/door.ts).
   openBotThread: (rootId: number) => { openBotTab({ threadRootId: rootId, focusMessageId: null }); },
-  // B6: the App tab's Change something, under a first version's plan.
+  // A project's first-version thread, or the Homeroom bot page when it has none (../ai/where.ts).
+  openBotFirstVersion: (slug: string) => { void openFirstVersion(slug); },
+  // B6: one of the bot's messages, quoted in its thread's reply box.
   quoteBotMessage: (conversationId?: number | null, messageId?: number | null) => { void quoteBotMessage(conversationId, messageId); },
   openAddress,
   openDiscussion,
   openThread,
   closeThread,
-  openAgentThread,
   route,
   close,
   isOpen,
@@ -3386,6 +3463,10 @@ export function initializeMessagesStore(): () => void {
   const onPresence = () => { notePresence(); };
   for (const type of PRESENCE_EVENTS) window.addEventListener(type, onPresence, presence);
   document.addEventListener('visibilitychange', onPresence);
+  // #6674: coming back to the page asks Homeroom bot what it is doing now,
+  // instead of waiting for the next renewal of its typing event.
+  const onVisible = () => { if (document.visibilityState === 'visible') seedBotWorkingOnScreen(); };
+  document.addEventListener('visibilitychange', onVisible);
   // The header's title is written from here: say it again in the language on screen.
   const onLanguage = () => { if (state.route.open) syncChrome(); };
   document.addEventListener('homeroom:language-changed', onLanguage);
@@ -3420,6 +3501,7 @@ export function initializeMessagesStore(): () => void {
     window.removeEventListener(ACTION_OUTBOX_EVENT, onAction);
     for (const type of PRESENCE_EVENTS) window.removeEventListener(type, onPresence, presence);
     document.removeEventListener('visibilitychange', onPresence);
+    document.removeEventListener('visibilitychange', onVisible);
     document.removeEventListener('homeroom:language-changed', onLanguage);
     document.removeEventListener('sv:authed', onAuthed);
   };

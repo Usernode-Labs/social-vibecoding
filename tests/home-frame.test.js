@@ -197,7 +197,7 @@ test('a search shows Home\'s own results: its heading, its no-match line, and a 
   assert.match(found, /<h3 class="fr-cap fr-sub">1 result<\/h3><div class="fr-card"><div class="fr-tiles">/);
   assert.doesNotMatch(found, />Edit</, 'a search is not the shelf');
   const none = group(render({}, homeStubs({ query: 'zz', grid: { view: 'search', emptyQuery: 'zz' } })), 'home-frame-apps');
-  assert.match(none, /<p class="fr-secnote">No apps match “zz”\. Clear the search and try <span class="fr-acc">Discover communities<\/span> below\.<\/p>/);
+  assert.match(none, /<p class="fr-secnote">None of your apps match “zz”\.<\/p>/);
   const failed = group(render({}, homeStubs({ grid: { notice: { text: 'Couldn\'t load your apps', tone: 'error' } } })), 'home-frame-apps');
   assert.match(failed, /<div class="fr-note fr-bad">.*?Couldn&#x27;t load your apps.*?<button type="button" class="fr-btn fr-quiet fr-sm">Try again<\/button>/s);
 });
@@ -244,7 +244,7 @@ test('Communities to join: the kind filter, Featured first, every one a picture 
   const g = group(html, 'home-frame-to-join');
   assert.match(g, /<h2 class="fr-cap">Communities to join<\/h2><\/div><div class="fr-btnrow fr-chips" role="group" aria-label="[^"]+"><button type="button" class="fr-btn fr-sm" aria-pressed="true" data-home-join-kind="all">All<\/button><button type="button" class="fr-btn fr-quiet fr-sm" aria-pressed="false" data-home-join-kind="games">Games<\/button>/);
   assert.match(g, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-c2" data-home-join-featured=""><a class="fr-card fr-fcard" href="\/app\/moon\/workshop\?ws=status" data-home-join-card="moon"><span class="fr-fcover[^>]*>.*?🌙.*?<span class="fr-t">Moon<\/span><\/span><\/a>/s, 'in their featured order: the whole card is the door, the picture or the tile on the community\'s colour, then its name');
-  assert.match(g, /<span class="fr-t">Star<\/span><span class="fr-s fr-two">Twelve small games\.<\/span><\/span><\/a>/);
+  assert.match(g, /<span class="fr-t">Star<\/span><span class="fr-s" title="Twelve small games\.">Twelve small games\.<\/span><\/span><\/a>/, 'one line, the whole sentence on hover (#6659)');
   assert.match(g, /<h3 class="fr-cap fr-sub">More communities<\/h3><div class="fr-grid" data-home-join-rest=""><a class="fr-card fr-fcard" href="\/app\/[a-z]+\/workshop\?ws=status"/, 'the rest follow as the same cards, under their own label whenever Featured is shown (#6584)');
   assert.match(g, /<a class="fr-card fr-fcard" href="\/app\/busy\/workshop\?ws=status" aria-label="Busy, 12 people used it lately" data-home-join-card="busy">.*?<span class="fr-pill"><svg.*?<\/svg>12<\/span>/s, 'who is there, on the cover, from five people');
   assert.doesNotMatch(g, /<button[^>]*data-home-join=|>Join<|members<|up for a vote|fr-fm|fr-fdoor/, 'no foot, no Join, no member or vote count: the page behind the card has Join');

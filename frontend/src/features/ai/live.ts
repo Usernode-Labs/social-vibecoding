@@ -18,8 +18,9 @@
  *     project (`notification_new`, `notifications_changed`: yours alone);
  *   - Homeroom bot started or finished work for you (WORK_CHANGED_EVENT,
  *     which app.js also sends when its socket reconnects);
- *   - Main Chat had a message: a private thread is listed once it has a
- *     reply, and leaves once it is filed or posted;
+ *   - the chat with the bot had a message: a private thread is listed
+ *     once it has a reply, shows what is new in it, and leaves once it is
+ *     filed or posted;
  *   - the reads may have missed something (lib/live-reads.ts): the socket
  *     reconnected, the browser tab came back after a while, or the service
  *     worker corrected a read it first answered from its saved copy.
@@ -64,7 +65,7 @@ export interface SocketEvent {
   [key: string]: unknown;
 }
 
-/** What the page shows: the projects in its lists, and Main Chat's conversation. */
+/** What the page shows: the projects in its lists, and the chat with the bot. */
 export interface Showing {
   projects: ReadonlySet<string>;
   botId: number | null;
@@ -74,7 +75,7 @@ export interface Showing {
 const PROJECT_EVENTS: ReadonlySet<string> = new Set(['session_update', 'vote_update', 'issue_update', 'app_version_changed', 'work_state']);
 const BANNER_ACTIONS: ReadonlySet<string> = new Set(['behind_main', 'freshness', 'sync_status', 'staging_ready']);
 const YOUR_EVENTS: ReadonlySet<string> = new Set(['notification_new', 'notifications_changed']);
-const MAIN_EVENTS: ReadonlySet<string> = new Set(['conversation_message_created', 'conversation_message_updated']);
+const CHAT_EVENTS: ReadonlySet<string> = new Set(['conversation_message_created', 'conversation_message_updated']);
 
 /** Pure: whether an events-socket message can move a row of the lists. */
 export function movesLists(event: SocketEvent | null | undefined, showing: Showing): boolean {
@@ -86,7 +87,7 @@ export function movesLists(event: SocketEvent | null | undefined, showing: Showi
     return !event.appSlug || showing.projects.has(String(event.appSlug));
   }
   if (YOUR_EVENTS.has(type)) return true;
-  if (MAIN_EVENTS.has(type)) {
+  if (CHAT_EVENTS.has(type)) {
     const id = Number(event.conversationId ?? event.conversation_id);
     return !!showing.botId && id === showing.botId;
   }

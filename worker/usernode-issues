@@ -5,9 +5,8 @@
 # The worker container carries no GitHub credentials. This script POSTs
 # nothing and changes nothing — it GETs the platform's internal issues
 # endpoint, which fetches the (public) repo's issues anonymously,
-# caches/paginates/filters PRs, and returns normalized JSON. It is the
-# scout + build counterpart to the Mayor's in-process list_github_issues /
-# get_github_issue tools.
+# caches/paginates/filters PRs, and returns normalized JSON. It is how a
+# scout or build turn reads the repository's issues.
 #
 # This is allowed in BOTH build and scout modes:
 # reading public issues is harmless and never escapes the container. It

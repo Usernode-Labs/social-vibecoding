@@ -359,11 +359,18 @@ const areaOf = (region) => Math.max(
 );
 
 // The screens a run's card shows. Changes on one screen size whose before
-// screens are the same image share one screen, with an area for each; the
-// first change's after screen is the one shown, since the agent may have
-// hovered something different for each. `stories` are the ready ones, in the
-// declaration's order. Production callers use shots-diff-worker so decoding
-// and matching cannot block health responses or workflow lease renewals.
+// AND after screens look the same share one screen, with an area for each;
+// the first change's after screen is the one shown, since the agent may have
+// hovered something different for each. Comparing the after screens too is
+// what keeps a new page: an address that used to fall through to another
+// declared page has that page's before screen, but its own after screen, so
+// it gets a screen of its own instead of the other change's after. A change
+// declared as not there before (`baseState: 'not_present'`) never folds and
+// never takes another change in, whatever the images look like. A screen
+// lists in `foldedAfter` the changes on it whose own after screen is not the
+// one shown. `stories` are the ready ones, in the declaration's order.
+// Production callers use shots-diff-worker so decoding and matching cannot
+// block health responses or workflow lease renewals.
 async function screensFor(stories, files) {
   const find = (storyId, viewport, side, variant) => files.find((file) => file.storyId === storyId
     && file.viewport === viewport && file.side === side && file.variant === variant && file.media === 'png');
@@ -386,6 +393,19 @@ async function screensFor(stories, files) {
       if (!viewports.includes(viewport.name)) viewports.push(viewport.name);
     }
   }
+  // A change declared as not on the before build is a page that did not
+  // exist: its before screen is whatever that address fell through to, so it
+  // says nothing about the other changes and they say nothing about it.
+  const notPresent = (story) => story.intent?.baseState === 'not_present';
+  // Whether a story's after screen already looks like the one its group
+  // shows. Same image settles it; otherwise both are decoded at their own
+  // densities and the comparison must find nothing to outline.
+  const sameAfter = (group, head, story, viewportName) => {
+    if (group.head.sha256 === head.sha256) return true;
+    const shown = pixelsOf(group.head, densityOf(group.head, group.stories[0], viewportName));
+    const own = pixelsOf(head, densityOf(head, story, viewportName));
+    return !!shown && !!own && shown.w === own.w && regions(shown, own).length === 0;
+  };
   const screens = [];
   for (const viewport of viewports) {
     const groups = [];
@@ -393,9 +413,17 @@ async function screensFor(stories, files) {
       const base = find(story.id, viewport, 'base', 'context');
       const head = find(story.id, viewport, 'head', 'context');
       if (!base || !head) continue;
-      const group = groups.find((entry) => entry.baseSha === base.sha256);
-      if (group) group.stories.push(story);
-      else groups.push({ baseSha: base.sha256, stories: [story], base, head });
+      const own = notPresent(story);
+      const group = own ? null : groups.find((entry) => !entry.notPresent
+        && entry.baseSha === base.sha256 && sameAfter(entry, head, story, viewport));
+      if (group) {
+        group.stories.push(story);
+        group.heads.set(story.id, head);
+      } else {
+        groups.push({
+          baseSha: base.sha256, stories: [story], base, head, notPresent: own, heads: new Map([[story.id, head]]),
+        });
+      }
     }
     for (const group of groups) {
       await new Promise((resolve) => setImmediate(resolve));
@@ -452,6 +480,11 @@ async function screensFor(stories, files) {
         viewport,
         stories: group.stories.map((story) => story.id),
         shot: group.stories[0].id,
+        // Changes on this screen whose own after screen is not the one shown:
+        // their own shot is kept but the card draws the first change's.
+        foldedAfter: group.stories.slice(1)
+          .filter((story) => group.heads.get(story.id).sha256 !== group.head.sha256)
+          .map((story) => story.id),
         width: before.w,
         heightBefore: before.h,
         heightAfter: after.h,
@@ -470,8 +503,9 @@ async function screensFor(stories, files) {
 // obvious case, and a pair that differs only by antialiasing is the same to
 // a person looking at it. A change with any screen that differs is not here.
 // A screen's areas compare its before with the after of `shot`, the first
-// change on it, so they say nothing about the other changes sharing that
-// before screen: those are left out (counted as differing).
+// change on it, so they say nothing about the other changes folded onto that
+// screen: those are left out (counted as differing), even when their after
+// screens matched within the comparison's tolerance.
 function unchangedStories(screens) {
   const changed = new Set();
   const seen = new Set();

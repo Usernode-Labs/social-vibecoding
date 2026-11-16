@@ -553,37 +553,16 @@ const SENDS = [
   ['frontend/src/features/group-chat/composer.tsx', 'className="gc-send shrink-0"'],
   ['frontend/src/features/group-chat/composer.tsx', '<Button type="submit" size="sm" className="shrink-0"'],
   ['frontend/src/features/messages/composer.tsx', 'className="messages-send"'],
-  ['frontend/src/features/dev-chat/composer.tsx', 'className="dc-draft-btn dc-draft-send"'],
-  // The agent session (the bot's chat): Send (Stop while it works), and
-  // Stop and Save draft in its place while a draft is being saved.
-  ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-send={kind}'],
-  ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-send="save"'],
-  ['frontend/src/features/agent-session/index.tsx', 'variant="pillDanger" ink="dangerTint" size="icon"'],
-  ['frontend/src/features/agent-session/index.tsx', 'data-agent-session-draft-send'],
-  ['frontend/src/features/agent-session/propose-confirm.tsx', 'data-agent-session-propose-confirm'],
   // The Workshop's own Ask composer went with the reel (#6276); questions
   // about a change are asked in the AI chat now.
   ['frontend/src/features/dev-board/card/feed-thread.tsx', 'className="dev-feed-send shrink-0'],
   ['frontend/src/features/dev-board/card/dev-card.tsx', 'className={`dev-vote-reason-send dev-vote-reason-send-${side}`}'],
-  ['frontend/src/features/dev-chat/spec-viewer.tsx', 'id="dc-spec-share-send"'],
 ];
 
 test('every composer\'s Send prevents the mousedown, so a press never takes focus from the field', () => {
   for (const [file, anchor] of SENDS) {
     assert.match(openingTag(file, anchor), KEEPS_FOCUS, `${file}: ${anchor}`);
   }
-});
-
-test('the dev session\'s Send keeps focus in every state it wears', () => {
-  const src = read('frontend/src/features/dev-chat/composer.tsx');
-  const common = /const common = \{([\s\S]*?)\n  \};/.exec(src);
-  assert.ok(common, 'SendButton\'s shared props are missing');
-  assert.match(common[1], /onMouseDown: \(event: MouseEvent<HTMLButtonElement>\) => event\.preventDefault\(\),/);
-  const body = src.slice(src.indexOf('function SendButton('), src.indexOf('function SavedDrafts('));
-  const buttons = body.match(/<Button\b/g) || [];
-  const spread = body.match(/<Button\s+\{\.\.\.common\}/g) || [];
-  assert.ok(buttons.length >= 5, 'send, save, stop, stopping, busy');
-  assert.equal(spread.length, buttons.length, 'every state spreads the shared props');
 });
 
 test('a press on Send still closes the suggestion lists, as the blur did', () => {
@@ -616,19 +595,10 @@ test('every button labelled Send in the shell keeps focus (a new composer is cau
       }
       const tag = openingTagAt(src, found.index, file);
       seen += 1;
-      // The dev session's Send carries it in the shared props pinned above.
-      assert.ok(KEEPS_FOCUS.test(tag) || /\{\.\.\.common\}/.test(tag), `${file}: ${tag.slice(0, 80)}`);
+      assert.ok(KEEPS_FOCUS.test(tag), `${file}: ${tag.slice(0, 80)}`);
     }
   }
-  assert.ok(seen >= 7, `found ${seen}`);
-});
-
-test('"Send answers" is left to the press hold: its fields commit on their own blur', () => {
-  // Preventing the press there would keep a typed answer focused, so it
-  // would never commit before the answers are sent.
-  const tag = openingTag('frontend/src/features/dev-chat/transcript.tsx', 'className="dc-qa-send"');
-  assert.doesNotMatch(tag, /onMouseDown/);
-  assert.match(read('frontend/src/features/dev-chat/transcript.tsx'), /onBlur=\{\(e\) => controller\(\)\?\._onQaTypedCommit\?\.\(e\.currentTarget\)\}/);
+  assert.ok(seen >= 6, `found ${seen}`);
 });
 
 // ── 3. The keys leave a short page (overnight audit K01, L03) ──────────────
@@ -681,7 +651,7 @@ test('short: a blur under a press keeps it until the press\'s click, as the open
 });
 
 test('short: app.css folds the page\'s chrome on it, the platform header only in a browser tab', () => {
-  assert.match(APP_CSS, /html\.platform-kb-short :is\(\.messages-thread-header, #ai-screen \.ai-main-head, \.dev-request-back\) \{\s*display: none;/);
+  assert.match(APP_CSS, /html\.platform-kb-short :is\(\.messages-thread-header, \.dev-request-back\) \{\s*display: none;/);
   assert.match(APP_CSS, /html\.web-browser-chrome\.platform-kb-short #platform-header \{\s*display: none;/);
   assert.match(APP_CSS, /html\.web-browser-chrome\.platform-kb-short \{\s*--platform-header-h: 0px;/);
   assert.match(APP_CSS, /html\.platform-kb-short #mobile-install-banner:not\(\.hidden\) \{\s*display: none;/);

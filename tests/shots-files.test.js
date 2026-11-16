@@ -589,6 +589,28 @@ test('markUnchanged only marks ready changes, once', () => {
   assert.deepEqual(shots.markUnchanged(stories, new Set()), stories);
 });
 
+test('markFolded says a change shares a screen only when its own after is not the one shown, once', () => {
+  const stories = [
+    { id: 'a', status: 'ready', files: 2 },
+    { id: 'b', status: 'ready', files: 2, note: 'The fold needs a hidden app.' },
+    { id: 'c', status: 'skipped', reason: 'No data.' },
+  ];
+  const marked = shots.markFolded(stories, new Set(['a', 'b', 'c']));
+  assert.deepEqual(marked, [
+    { id: 'a', status: 'ready', files: 2, folded: true, note: shots.FOLDED_NOTE },
+    {
+      id: 'b', status: 'ready', files: 2, folded: true,
+      note: 'The fold needs a hidden app. Its own after screen is not the one shown: another change shares this screen.',
+    },
+    { id: 'c', status: 'skipped', reason: 'No data.' },
+  ], 'only ready changes are marked, and an agent note is kept');
+  assert.equal(shots.FOLDED_NOTE, 'its own after screen. Another change shares this screen, and that change\'s after screen is the one shown.');
+  assert.deepEqual(shots.markFolded(marked, new Set(['a', 'b'])), marked, 'a second pass adds nothing');
+  assert.deepEqual(shots.markFolded(stories, new Set()), stories);
+  const long = shots.markFolded([{ id: 'd', status: 'ready', note: 'x'.repeat(500) }], new Set(['d']));
+  assert.ok(long[0].note.length <= 500, 'the note stays within its cap');
+});
+
 // The verdict keeps an unchanged change ready (its shots publish and count
 // toward the run); every result read off it says unchanged, so a change
 // whose before and after came out the same is not read as plain ready.

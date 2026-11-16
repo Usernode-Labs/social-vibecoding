@@ -11,13 +11,17 @@
 //
 //   1. Which page a bot message stands for (request-page.ts), and that the
 //      bot's own private threads (a draft, a design) are not one of them.
-//   2. Every way in goes there: a news line, a moment's "↳ in …" label, a
-//      thread opened by id, a link to an old thread, and "See progress"
-//      opens Main Chat, never a thread. (The activity drawer, another way
-//      in, is gone: 5 Nov 2026.)
-//   3. A request's message offers no thread of its own.
-//   4. What still asks something in the chat is drawn whole in Main Chat,
-//      for as long as its request waits, so nothing is left in a thread.
+//      Nor is a project's first version (15 Nov 2026): its news is the
+//      first message of a thread the bot page lists, and while it stood for
+//      the project's hub that thread closed as it opened, with the hub in
+//      its place.
+//   2. Every way in goes there: a thread opened by id and a link to an old
+//      thread. (14 Nov 2026: a moment's "↳ in …" label, one more way in,
+//      went with Main Chat, and so did the one-line news rows of the chat's
+//      own stream, whose tap was another; the activity drawer on 5 Nov
+//      2026.)
+//   3. A row draws nothing of a request's story: the stream that did is
+//      drawn on no screen, and a bot row is always in a thread.
 //
 // Run with: node --test tests/bot-request-page.test.js
 
@@ -31,7 +35,6 @@ const { loadTsx } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const PAGE = 'frontend/src/features/messages/request-page.ts';
-const NEWS = 'frontend/src/features/messages/bot-news-line.tsx';
 const STORE = 'frontend/src/features/messages/store.ts';
 
 const BOT = { id: 2, username: 'homeroom_bot', bot: true };
@@ -39,15 +42,30 @@ const ADA = { id: 7, username: 'ada' };
 const msg = (sender, homeroomBot, extra = {}) => ({ id: 40, sender, content: 'x', metadata: { homeroomBot }, ...extra });
 const plain = (v) => JSON.parse(JSON.stringify(v));
 
-test('a bot message about a request stands for the request\'s page; a first version for its project\'s hub', () => {
+test('a bot message about a request stands for the request\'s page', () => {
   const { requestPageOf } = loadTsx(PAGE);
   assert.deepEqual(plain(requestPageOf(msg(BOT, { kind: 'activity', appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 18, requestTitle: 'Dark mode' }))), {
     route: 'app/plant-pal/dev/issues/18', label: 'Dark mode', place: { slug: 'plant-pal', name: 'Plant Pal' }, issueNumber: 18,
   });
   assert.equal(requestPageOf(msg(BOT, { kind: 'question', appSlug: 'plant-pal', issueNumber: 7 })).label, 'Request #7');
-  assert.deepEqual(plain(requestPageOf(msg(BOT, { kind: 'activity', appSlug: 'plant-pal', appName: 'Plant Pal', firstVersion: true }))), {
-    route: 'app/plant-pal/dev', label: 'Plant Pal', place: { slug: 'plant-pal', name: 'Plant Pal' }, issueNumber: null,
-  });
+});
+
+test('a first version\'s message stands for no page: its thread is drawn, not swapped for the project\'s hub', () => {
+  const { requestPage, requestPageOf } = loadTsx(PAGE);
+  // What a first version's thread starts on: an older Main Chat message
+  // listed as one (earlier-chat.js), each kind the bot stamped that way, or
+  // the notice that opened it. Its number is 1 under its own project, never
+  // a request's page either.
+  for (const kind of ['activity', 'plan', 'merged', 'ack', 'first_version_failed']) {
+    assert.equal(requestPageOf(msg(BOT, { kind, appSlug: 'plant-pal', appName: 'Plant Pal', firstVersion: true })), null, kind);
+    assert.equal(requestPageOf(msg(BOT, { kind, appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 1, firstVersion: true })), null, `${kind}, numbered`);
+  }
+  assert.equal(requestPageOf(msg(BOT, { kind: 'first_version_started', appSlug: 'plant-pal', appName: 'Plant Pal' })), null);
+  assert.equal(requestPage({ appSlug: 'plant-pal', appName: 'Plant Pal', issueNumber: 1, firstVersion: true }), null);
+  // The server has the same rule: a first version's news is not a request's.
+  const { isRequestNewsMeta } = require('../src/services/conversations');
+  assert.equal(isRequestNewsMeta({ kind: 'merged', appSlug: 'plant-pal', issueNumber: 1, firstVersion: true }), false);
+  assert.equal(isRequestNewsMeta({ kind: 'merged', appSlug: 'plant-pal', issueNumber: 18 }), true);
 });
 
 test('the bot\'s own private threads, a person\'s message and a message about no request are none', () => {
@@ -60,28 +78,34 @@ test('the bot\'s own private threads, a person\'s message and a message about no
   assert.equal(requestPageOf(null), null);
 });
 
-test('it opens beside the bot page in Main Chat\'s place when the panel takes it, else the page, which goes back', () => {
+test('it opens beside the bot page, in its column, when the panel takes it, else the page, which goes back', () => {
   const source = read(PAGE);
-  assert.match(source, /sidePanel\?\.take\?\.\(page\.route, \{ place: page\.place, label: page\.label \}\)/);
-  assert.match(source, /'usernode:messages-object-selected'/, 'Main Chat\'s composer carries the request, as the list\'s rows do');
+  assert.match(source, /if \(w\.UsernodeReact\?\.sidePanel\?\.take\?\.\(page\.route, \{ place: page\.place, label: page\.label \}\)\) return;/);
+  // 14 Nov 2026: Main Chat's composer carried the request; there is no Main
+  // Chat, so opening a request's page attaches it to nothing.
+  assert.doesNotMatch(source, /messages-object-selected|conversationId/);
   assert.match(source, /Improve\?\.enterTopicFrom\?\.\(window\.location\.hash/);
-  assert.match(source, /AppView\?\._landOnHub\?\.\(page\.place\.slug\)/, 'a door to a project\'s hub lands on the hub');
+  // Every page it opens is a request's now: the hub was a first version's.
+  assert.doesNotMatch(source, /_landOnHub|dev`, label/, 'no first version\'s door to its project\'s hub');
   assert.match(source, /window\.location\.hash = page\.route;/);
 });
 
 test('every way into a request\'s story goes to its page', () => {
-  const news = read(NEWS);
-  assert.match(news, /function tap\(\) \{\n {4}if \(page\) openRequestPage\(page, message\.conversationId\);/);
-  assert.match(news, /else openThreadAt\(rootId, /, 'only news that names no page (sent before it named its project) opens where it is told');
+  // The one-line news rows of the chat's own stream, whose tap opened the
+  // page, went with that stream (14 Nov 2026), and their door with them.
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/messages/bot-news-line.tsx')));
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /onClick=\{\(\) => \(story \? openRequestPage\(story, conversationId\) : openThread\(/, 'the "↳ in …" label');
+  // The "↳ in …" label over a moment Main Chat also listed was one more way
+  // in; it went with Main Chat and the stamp that drew it (14 Nov 2026).
+  assert.doesNotMatch(row, /openRequestPage|data-bot-thread-label/, 'a row has no door of its own to a request\'s story');
   // The activity drawer, which opened its rows the same way, is gone (5 Nov 2026).
   assert.doesNotMatch(read('frontend/src/features/messages/bot-strip.tsx'), /openRequestPage|openThreadAt/, 'no door of its own');
   const store = read(STORE);
+  assert.doesNotMatch(store, /openThreadAt|threadFocusId/, 'and nothing opens a thread of the chat at a request\'s news');
   const open = store.slice(store.indexOf('export function openThread(rootId: number)'));
-  assert.match(open.slice(0, 600), /const page = requestPageFor\(findRow\(rootId\)\);\n {2}if \(page\) \{ openRequestPage\(page, conversationId\); return; \}/, 'a thread opened by id');
+  assert.match(open.slice(0, 600), /const page = requestPageFor\(findRow\(rootId\)\);\n {2}if \(page\) \{ openRequestPage\(page\); return; \}/, 'a thread opened by id');
   const load = store.slice(store.indexOf('export async function loadReplyThread('));
-  assert.match(load.slice(0, 2400), /const story = requestPageFor\(page\.root \|\| findRow\(rootId\)\);\n {4}if \(story\) \{\n {6}closeThread\(\);\n {6}openRequestPage\(story, conversationId\);/, 'a link to an old thread');
+  assert.match(load.slice(0, 2400), /const story = requestPageFor\(page\.root \|\| findRow\(rootId\)\);\n {4}if \(story\) \{\n {6}closeThread\(\);\n {6}openRequestPage\(story\);/, 'a link to an old thread');
   const pane = read('frontend/src/features/messages/index.tsx');
   assert.match(pane, /if \(botChat && kind === 'direct' && requestPageOf\(root\)\) return null;/, 'and the pane never draws one');
 });
@@ -92,12 +116,13 @@ test('the store asks only in the chat with the bot', () => {
   assert.match(fn, /state\.active\?\.kind !== 'direct' \|\| !threadsAllowed\(state\.active\)\) return null;/);
 });
 
-test('"See progress" opens Main Chat at the request, never inside a thread of its own', () => {
+test('"See progress" opens the request\'s page, never Main Chat or a thread of the request\'s own', () => {
   const store = read(STORE);
   const fn = store.slice(store.indexOf('export async function openBotRequest('), store.indexOf('/** What the composer\'s box asks'));
-  assert.match(fn, /const ask = track\?\.askId && !known\?\.threadRootId \? track\.askId : null;/);
-  // 1 Nov 2026: on the Homeroom bot tab, Main Chat at that message.
-  assert.match(fn, /if \(at\) openBotTab\(\{ threadRootId: null, focusMessageId: at \}\);/);
+  // 14 Nov 2026: it opened Main Chat at the last thing said about the
+  // request. A request's news is on its page, so that is where it goes.
+  assert.match(fn, /const page = requestPage\(\{ appSlug: slug, issueNumber: Number\(number\) \}\);\n {2}if \(page\) openRequestPage\(page\);/);
+  assert.doesNotMatch(fn, /focusMessageId: at|threadRootId: null/);
   assert.doesNotMatch(fn, /openThreadAt\(track\.rootId/);
   // A plan said in the private thread its request started in opens there, at the plan.
   assert.match(fn, /if \(track\?\.askId && track\.askThreadId\) \{\s*openBotTab\(\{ threadRootId: track\.askThreadId, focusMessageId: track\.askId \}\);\s*return;\s*\}/);
@@ -117,28 +142,17 @@ test('an answer to a moment from an old story thread is said in Main Chat; a thr
   assert.match(fn, /if \(rootRow\) return requestPageFor\(rootRow\) \? null : root;/);
 });
 
-test('a request\'s message offers no thread: no Reply in thread, no "N updates in its thread"', () => {
+test('a row has no thread of a request\'s to offer: a bot row is drawn in a thread', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /const story = botChat && kind === 'direct' && !inThread \? requestPageOf\(message\) : null;/);
-  assert.match(row, /const threadRoot = !live \|\| inThread \|\| !threads \|\| story \? null/);
-  assert.match(row, /message\.thread && !inThread && kind === 'direct' && threads && !story \?/);
-  assert.match(row, /\) : message\.thread && !inThread && !story \? \(/);
-});
-
-test('what still asks something here is drawn whole in Main Chat while its request waits', () => {
-  const { asksInChat } = loadTsx(NEWS);
-  const ask = (meta, extra) => asksInChat(msg(BOT, { appSlug: 'plant-pal', issueNumber: 18, ...meta }, extra));
-  assert.equal(ask({ kind: 'question', question: 'Which colour?', answers: ['Blue'], status: 'open' }), true);
-  assert.equal(ask({ kind: 'question', questions: [{ question: 'a' }, { question: 'b' }], status: 'open' }), true);
-  assert.equal(ask({ kind: 'plan', plan: { bullets: ['x'] }, status: 'open' }), true);
-  assert.equal(ask({ kind: 'build_failed', actions: [{ id: 'retry', label: 'Try again' }], status: 'open' }), true);
-  assert.equal(ask({ kind: 'question', question: 'Which colour?', status: 'answered' }), false, 'answered');
-  assert.equal(ask({ kind: 'plan', plan: { bullets: ['x'] }, status: 'open', replaced: true }), false, 'replaced by a newer plan');
-  assert.equal(ask({ kind: 'activity', status: 'open' }), false, 'a card asks nothing');
-  assert.equal(ask({ kind: 'question', question: 'Which colour?', status: 'open' }, { deleted: true }), false);
+  // The chat's own stream drew a request's card with "N updates" under it,
+  // and no thread at all for a request's news. Nothing draws that stream.
+  assert.match(row, /const threadRoot = !live \|\| inThread \|\| !threads \? null : message\.threadRootId \|\| message\.id;/);
+  assert.match(row, /\{message\.thread && !inThread \? \(\s+<ThreadSummaryChip/);
+  assert.doesNotMatch(row, /requestPageOf|data-bot-thread-link|row\.botThread/);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const asking = \(message: ConversationMessage\) => botDm && asksInChat\(message\) && !newsStatusOf\(message, botWork\)\?\.settled;/,
-    'what the tray no longer holds has moved on, and is a line again');
-  assert.match(screen, /foldBotNews\(snap\.messages, \(message\) => isMovedActivity\(message\) \|\| plans\.hidden\.has\(message\.id\) \|\| asking\(message\)\)/, 'never folded into a line');
-  assert.match(screen, /if \(botDm && isBotNews\(message\) && !asks\) \{/, 'and never drawn as one');
+  const stream = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
+  assert.doesNotMatch(stream, /botChat|botDm|isBotNews|BotNewsLine|asksInChat/, 'the conversation\'s own transcript draws nothing the bot\'s way');
+  // Every row drawn the bot's way is in a thread's pane.
+  const pane = screen.slice(screen.indexOf('function ReplyThreadPanel('), screen.indexOf('function AppReplyThreadPanel('));
+  for (const m of pane.match(/<MessageRow [^\n]*/g) || []) assert.match(m, / inThread botChat=\{botChat\}/);
 });

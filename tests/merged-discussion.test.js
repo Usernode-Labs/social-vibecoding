@@ -38,7 +38,9 @@ function makeEl(id) {
     _handlers: {},
     addEventListener(type, fn) { this._handlers[type] = fn; },
     querySelector() { return null; },
-    querySelectorAll() { return { forEach() {} }; },
+    // An array, as a NodeList is iterable: the board's comment wiring walks
+    // the result with for…of in a microtask after the paint.
+    querySelectorAll() { return []; },
     scrollTo() {},
   };
 }
@@ -63,7 +65,7 @@ function makeAppView({ els = {}, thread = null } = {}) {
     document: {
       getElementById: (id) => (id === 'dev-topic-thread' ? thread : getEl(id)),
       querySelector: () => null,
-      querySelectorAll: () => ({ forEach() {} }),
+      querySelectorAll: () => [],
       addEventListener() {},
       createElement: () => ({ style: {}, classList: { add() {}, remove() {} } }),
       body: { appendChild() {} },

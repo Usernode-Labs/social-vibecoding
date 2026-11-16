@@ -9,14 +9,13 @@
 //
 //   1. the configured default itself, and that it is read from config rather
 //      than hardcoded at the call site;
-//   2. that a user's own choice in Settings still wins over it — raising a
+//   2. that a choice saved on the session still wins over it — raising a
 //      default must never overwrite somebody's setting.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const runtimeConfig = require('../src/config');
@@ -193,82 +192,6 @@ test('a deployment that configures no coding default sends no effort', async (t)
     config: { ...BASE_CONFIG, openrouterDefaultCodexReasoning: null },
   });
   assert.equal(ctx.agentReasoningEffort, null);
-});
-
-// ── What Settings shows ───────────────────────────────────────────────
-
-// The server is the only thing that knows the platform default, so the
-// picker's first choice is labelled from /api/me/coding-agent.
-function settingsHarness(codingAgentPayload) {
-  const options = [
-    { value: '', textContent: 'Default' },
-    { value: 'xhigh', textContent: 'Extra high' },
-  ];
-  const elements = new Map();
-  const el = (id) => {
-    if (!elements.has(id)) {
-      const classes = new Set(['hidden']);
-      elements.set(id, {
-        id, textContent: '', placeholder: '', value: '', disabled: false,
-        options: id === 'settings-openrouter-reasoning' ? options : undefined,
-        classList: {
-          add: (...names) => names.forEach((name) => classes.add(name)),
-          remove: (...names) => names.forEach((name) => classes.delete(name)),
-          toggle: (name, force) => {
-            const on = force === undefined ? !classes.has(name) : !!force;
-            if (on) classes.add(name); else classes.delete(name);
-            return on;
-          },
-          contains: (name) => classes.has(name),
-        },
-      });
-    }
-    return elements.get(id);
-  };
-  const context = vm.createContext({
-    window: {},
-    document: {
-      addEventListener() {},
-      querySelectorAll: () => [],
-      querySelector: () => null,
-      // No model select, so _loadOpenRouterModels returns before it fetches.
-      getElementById: (id) => (id === 'settings-openrouter-model' ? null : el(id)),
-    },
-    fetch: async (url) => ({
-      ok: true,
-      status: 200,
-      json: async () => (String(url).startsWith('/api/me/coding-agent')
-        ? codingAgentPayload
-        : { configured: false, managedProvisioning: {} }),
-    }),
-    setTimeout, clearTimeout, setInterval, clearInterval, console,
-    // settings.js reads its text through this global; the real English catalog.
-    PlatformI18n: require('./lib/platform-i18n').englishPlatformI18n(),
-  });
-  context.window.window = context.window;
-  context.window.document = context.document;
-  vm.runInContext(
-    fs.readFileSync(path.join(root, 'frontend/src/features/settings/settings.js'), 'utf8'),
-    context,
-  );
-  return { Settings: context.window.Settings, options };
-}
-
-test('Settings names the level the platform runs at', async () => {
-  const { Settings, options } = settingsHarness({
-    codexAvailable: true, defaultReasoningEffort: 'xhigh', backends: {},
-  });
-  await Settings._refreshOpenRouter();
-  assert.equal(options[0].textContent, 'Default (Extra high)');
-});
-
-test('Settings keeps the plain wording when the server names no default', async () => {
-  const { Settings, options } = settingsHarness({
-    codexAvailable: true, defaultReasoningEffort: null, backends: {},
-  });
-  await Settings._refreshOpenRouter();
-  assert.equal(options[0].textContent, 'Default',
-    'an unreadable default must not be invented in the picker');
 });
 
 // ── The cost note the admin screen owes an admin ──────────────────────

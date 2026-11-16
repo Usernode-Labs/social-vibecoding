@@ -106,7 +106,7 @@ test('the triage prompt says what counts as complicated, leaning towards buildin
   assert.match(md, /- adds a new screen or a new kind of thing to the app \(a leaderboard, sign-up, a new tab\);/);
   assert.match(md, /- changes how people get around the app, or what it stores;/);
   assert.match(md, /- could reasonably be done two quite different ways, so a quick look first saves a wasted build;/);
-  assert.match(md, /- is large: several screens at once, or more than about a day's work for a person\./);
+  assert.match(md, /- is large: several screens at once, or the first part of a request too big for one build;/);
   assert.match(flat, /Copy changes, fixes, small tweaks and requests that spell out exactly what to do are never complicated\./);
   // #5224: the plan's lines stay short, one point each, in the requester's words.
   assert.match(md, /"plan": \["a first version or complicated change: 3 to 5 short lines, one point each, at most 60 characters, what people will see or do"\]/);
@@ -744,8 +744,11 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
     // B05 (audit 2 Nov 2026): the draft is right where the plan is, not one
     // thread away, and the plan offers no Build it while it waits.
     const { rows: [where] } = await pool.query('SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1', [out.messageId]);
-    assert.equal(where.thread_root_id, null, 'the draft is not in a thread of its own');
-    assert.equal(Number(where.reply_to_id), Number(sent.messageId), 'it answers what they wrote');
+    // 14 Nov 2026: every message is in a thread. The draft is under what
+    // they wrote, in that message's thread (its own here: it was sent with
+    // none named), never in a second thread opened for the draft.
+    assert.equal(Number(where.thread_root_id), Number(sent.messageId), 'the draft answers what they wrote, under it');
+    assert.equal(where.reply_to_id, null, 'in a thread, what it answers is the line above it');
     const { rows: opened } = await pool.query(
       `SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND metadata->'homeroomBot'->>'kind' = 'opened_draft'`,
       [card.conversation_id],

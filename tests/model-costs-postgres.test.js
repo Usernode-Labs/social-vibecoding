@@ -92,16 +92,13 @@ test('the measured typical change counts input once, against the full PostgreSQL
     changes: 22,
   });
 
-  // The same rows through the payloads: the profile the picker and the
-  // console state, and an estimate priced from it.
-  const picker = await modelCosts.pickerPayload(pool);
-  assert.deepEqual(picker.typicalChange, {
-    inputTokens: 1_500_000, cachedInputTokens: 1_430_000, cacheWriteInputTokens: 30_000,
-    outputTokens: 15_000, source: 'recorded_usage',
-  });
-  assert.equal(picker.models['z-ai/glm-5.3-flash'].estimateCents,
-    modelCosts.estimateCents(modelCosts.publishedPricing('z-ai/glm-5.3-flash'), profile));
+  // The same rows through the console's payload: the profile it states,
+  // and an estimate priced from it.
   const console_ = await modelCosts.adminPayload(pool, { days: 30 });
-  assert.equal(console_.typicalChange.cachedInputTokens, 1_430_000);
-  assert.equal(console_.typicalChange.changes, 22);
+  assert.deepEqual(console_.typicalChange, {
+    inputTokens: 1_500_000, cachedInputTokens: 1_430_000, cacheWriteInputTokens: 30_000,
+    outputTokens: 15_000, source: 'recorded_usage', changes: 22,
+  });
+  assert.equal(console_.rows.find((r) => r.modelId === 'z-ai/glm-5.3-flash').derivedCents,
+    modelCosts.estimateCents(modelCosts.publishedPricing('z-ai/glm-5.3-flash'), profile));
 });

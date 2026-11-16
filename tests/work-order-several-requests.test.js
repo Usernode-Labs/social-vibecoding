@@ -4,8 +4,7 @@
 // requests went in as a free-text brief that NAMED them, and a number in a
 // brief is not a link: the proposal (PR #3040) merged with no `Closes #N`
 // line, no linked_issues, and all three requests still open for somebody to
-// close by hand. Agent chat's own start_change has always taken a list; the
-// connector path could not.
+// close by hand. The connector path could not take a list.
 //
 // Now prepare_work takes `requestNumbers`. Every one is recorded on the job
 // (external_agent_tasks.linked_issues, the first also as issue_number), is

@@ -21,7 +21,7 @@
  *   - `pointer-events-none`, so the heading's overlap never eats a tap meant
  *     for a control beside it;
  *   - the SUBTITLE BESIDE the name rather than under it — a destination
- *     inside an app (Board, Activity, a session's lifecycle) says which part
+ *     inside an app (Board, Activity) says which part
  *     of the app you are in without overwriting which app it is;
  *   - the LOGOTYPE when the name is the platform's own, drawn from the title
  *     string because that is the only fact available at first render. The
@@ -84,8 +84,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { headerTitleStore } from './header-title-store.js';
 import { improveStore } from '../improve/improve-store.js';
 import { navStore } from '../nav/nav-store.js';
-import { sessionHeaderStore } from '../dev-chat/session-header-store';
-import { MergeStatusPill } from '../dev-chat/session-header';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
 import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
@@ -104,7 +102,6 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji, selfHosted } = useStoreState(improveStore);
   const { screen } = useStoreState(navStore);
-  const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
     // "Your communities" (features/workshop/community-switcher.tsx): the
   // app's name opens it.
@@ -117,9 +114,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // has settled that it applies, after hydration.
   const drawerOn = useDrawerMode() !== null;
 
-  const onSession = tab === 'dev' && subTab === 'sessions';
-  const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
-  const showSubtitle = onSession ? !!sessionPill : !!subtitle;
+  const showSubtitle = !!subtitle;
   const showsWordmark = text === PLATFORM_NAME && !showSubtitle;
 
   // The app's own artwork, in the shape ../apps/app-card-view expects. The
@@ -129,7 +124,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const inApp = screen === 'app-view';
   const record = { icon_url: iconUrl, icon_emoji: iconEmoji, name: name || text };
   // The app's Workshop: the Dev half's board route in its Workshop layout.
-  // Its Kanban layout, a session and the general chat have no scope panel,
+  // Its Kanban layout and the general chat have no scope panel,
   // so the strip is left alone there.
   const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';
   // A card opened from it (#3602): an item's page is still the community's,
@@ -254,13 +249,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
                 className="shrink-0 text-[0.6875rem] leading-none font-medium
                            text-zinc-500 dark:text-zinc-400"
               >
-                {/* `#header-status-pill` keeps its id and its seat: it is still
-                    the lifecycle pill's, still inside #platform-header, and the
-                    declared check that looks for it does not care which
-                    descendant holds it. */}
-                {onSession
-                  ? <span id="header-status-pill" className="min-w-0 truncate">{sessionPill}</span>
-                  : subtitle}
+                {subtitle}
               </span>
             ) : null}
           </span>

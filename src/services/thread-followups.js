@@ -185,10 +185,16 @@ async function deliver(pool, row, text, { deps = {} } = {}) {
   const bot = deps.bot || await dm.botAccount(pool);
   if (!bot) return null;
   if (row.place_type === 'dm') {
+    // 14 Nov 2026: in the thread it was promised in. One promised in Main
+    // Chat, before every message was in a thread, is told in Earlier chat,
+    // where what was said in Main is now.
+    const promisedIn = row.thread_root_id == null
+      ? await require('./private-threads').earlierRootFor(pool, Number(row.user_id)).catch(() => null)
+      : Number(row.thread_root_id);
     const sent = await dm.sendDm(pool, {
       bot, userId: Number(row.user_id), content: body,
       idempotencyKey: `followup:${Number(row.id)}`,
-      threadRootId: row.thread_root_id == null ? undefined : Number(row.thread_root_id),
+      threadRootId: promisedIn == null ? undefined : promisedIn,
     });
     // homeroom-bot-dm.js sendDm answers { messageId }: reading `id` alone
     // left every DM follow-up owed, so it was sent again on each pass.

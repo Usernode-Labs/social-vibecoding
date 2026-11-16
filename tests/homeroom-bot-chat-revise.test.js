@@ -90,7 +90,11 @@ test('where a request stands, from its work state', () => {
   assert.equal(stage({ stage: 'waiting_for_you', why: 'needs_detail' }), 'person');
   assert.equal(stage({ stage: 'planning' }), 'building', 'writing the plan for its build');
   assert.equal(stage({ stage: 'planning', line: { code: 'retry_plan' } }), 'waiting');
-  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you' } }), 'waiting');
+  // 13 Nov 2026: held for its requester's plan is a stage of its own, never
+  // the bot's line: whatever it had reached (`ready`: its build was waiting).
+  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you' } }), 'waiting_plan');
+  assert.equal(stage({ stage: 'planning', line: { code: 'planning_with_you', ready: true } }), 'waiting_plan');
+  assert.ok(botChat.CARD_STAGES.includes('waiting_plan'));
   for (const code of ['queued', 'held_builds', 'held_waiting']) assert.equal(stage({ stage: 'building', line: { code } }), 'waiting', code);
   for (const code of [null, 'starting', 'reviewing', 'proposing', 'fixing', 'revising', 'claimed']) {
     assert.equal(stage({ stage: 'building', line: code ? { code } : null }), 'building', String(code));

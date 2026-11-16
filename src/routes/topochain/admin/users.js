@@ -379,7 +379,7 @@ function usersAdminRoutes(config) {
         // are enrollment records for people who have not signed up, and a
         // company-funded key per imported row is not what that spreadsheet
         // asked for. Anyone who does sign in gets one from the lazy path in
-        // GET /api/me/coding-agent.
+        // Settings' key status read or voice input.
         await managedOpenRouter.ensureIncludedKey({
           pool, userId: user.id, config, reason: 'admin_created',
         });

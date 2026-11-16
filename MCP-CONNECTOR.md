@@ -150,8 +150,8 @@ either surface explaining why. The setting looked broken.
 
 The reasoning behind it does not apply to this connector. Nothing the connector
 exposes writes to an app — one exception, demo mode, is taken up at the end of
-this section. Every acting call files a *request* — a proposal, an
-issue, a build — and the platform merges none of it without a group vote:
+this section. Every acting call files a *request* — a proposal or an
+issue — and the platform merges none of it without a group vote:
 
 | Tool | What it actually does |
 |---|---|
@@ -161,24 +161,12 @@ issue, a build — and the platform merges none of it without a group vote:
 | `create_app` | Makes a new project for the caller alone, spending one of their app slots; invites nobody and touches no other project, and what is built in it goes to its own vote (#6026) |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |
-| `start_platform_build` | Spends the user's daily Homeroom credits |
-| `submit_platform_build` | Puts that build to a group vote |
 | `recheck_change` | Re-runs a proposal's checks on the commit it already has; no code or vote moves |
 | `demo_mode`, `demo_propose`, `demo_promote`, `demo_vote`, `demo_reset` | Demo mode — the exception, below |
-
-Four more acting tools, `start_change`, `promote_change`, `sync_change` and
-`withdraw_change`, exist only for the Mayor of an agent session inside Homeroom
-(#2779). An external client never sees them. The Mayor runs each one only after
-the user confirms it on a card.
 
 The vote is the confirmation, and it is a better one than a prompt clicked
 through mid-loop by the one person already driving the agent. A per-call prompt
 bought a click, not a decision.
-
-`start_platform_build` is the one whose old justification was not about
-write-visibility at all — it spends a daily credit allowance. That allowance is
-capped by `connectorLimits` on the server, which is where a spending limit
-belongs; it does not need a second gate in the client.
 
 These tools are still named as a group, in `ACTING_TOOLS`. That list no longer
 controls prompting — it decides which tools stay out of the setup hint and out
@@ -407,12 +395,13 @@ section is how a session reads them and what it must not do with them.
 
 | Tool | What it actually does |
 |---|---|
-| `get_journey_cohorts` | The admit-day cohorts, newest first (how many were admitted, how many have an account), how many came in another way in the last 28 days, and how many were invited by a link and not let in yet (the last 90 days). Read-only |
-| `get_journey_first_mile` | One cohort (`admitted`: a day, `other_way`, or `invited`), one compact row per person in admit order: each step from admitted (or, for `invited`, from the invite link opened) to first_act as its time, `done` or its state, the step notes, where they stopped and why, mail opened and clicked, the mail's own page and what happened there, which admit mail led in, how they signed up, their waitlist row (joined, days waited, which form, answered the follow-up), the invite that brought them, tour, welcome message, onboarding progress. Whole-cohort counts per step on every page. 50 people a page (`limit` up to 100, `offset` from `nextOffset`); a page that would pass 48,000 characters comes back shorter. Read-only |
+| `get_journey_cohorts` | The admit-day cohorts, newest first (how many were admitted, how many have an account), how many came in another way in the last 28 days, how many were invited by a link and not let in yet (the last 90 days), and how many joined the waitlist and have not been let off it yet. Read-only |
+| `get_journey_first_mile` | One cohort (`admitted`: a day, `other_way`, `invited`, or `waiting` for the people still on the waitlist, at most 2,000 of them with the longest wait first and the full count as `waiting`), one compact row per person in admit order: each step from admitted (or, for `invited`, from the invite link opened; for `waiting`, from joining the waitlist to being let off it) to first_act as its time, `done` or its state, the step notes, where they stopped and why, mail opened and clicked, the mail's own page and what happened there, which admit mail led in, how they signed up, their waitlist row (joined, days waited, which form, answered the follow-up), the invite that brought them, where they came from (`cameFrom`: the referring host, utm tags and ref of their waitlist sign-up, the referring host and copied or shared tag of the invite they opened), tour, welcome message, onboarding progress. Whole-cohort counts per step on every page. 50 people a page (`limit` up to 100, `offset` from `nextOffset`); a page that would pass 48,000 characters comes back shorter. Read-only |
+| `get_journey_flows` | Who is in which project and whom they brought, for every real person over all time, by name: `apps` (each project the page's people name, with its `audience` as it is now: `solo`, `invited` or `open`; who made it and when; its members) and `people`, each with one entry per project they have anything to do with (made it, a member, who invited them, days used, first and last day, changes and how many went live, votes, requests, feedback, messages) and one per project they invited people to (links made and shared, people invited by name, opens by somebody else, and the real people who followed, joined or still waiting). A count of 0 and a false flag are left out of an entry. 50 people a page (`limit` up to 100, `offset` from `nextOffset`); a page that would pass 48,000 characters comes back shorter. Read-only |
 | `get_journey_person` | One person with an account (`userId`), as the page's dialog has them, with how they came in, and `leftOut` when they are on the left-out list. Read-only |
-| `get_journey_readings` | One of the page's other readings (`which`: summary, stages, loops, creation, first_session, pairs, next_steps, left_out), for a `week` (a Monday, or `all`) and one cohort (`admitted`). A reading over 48,000 characters has its longest lists halved until it fits, and `truncated` names them. Read-only |
+| `get_journey_readings` | One of the page's other readings (`which`: summary, stages, loops, creation, first_session, pairs, next_steps, left_out), for a `week` (a Monday, or `all`) and one cohort (`admitted`: a day, `other_way`, `invited` or `waiting`). A reading over 48,000 characters has its longest lists halved until it fits, and `truncated` names them. Read-only |
 
-These four call the journey service directly, with the left-out list the
+These five call the journey service directly, with the left-out list the
 console's routes read (`services/journey-left-out.js`), instead of looping
 back over HTTP: `/api/admin` stays outside the connector's allowlist, and a
 read is no reason to widen it. The wall is therefore the handler's own check

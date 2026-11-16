@@ -43,7 +43,6 @@ import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
 import { AboutSection } from './about';
 import { AccessibilitySection } from './accessibility';
 import { AdminPreviewSection } from './admin-preview';
-import { AgentFilesSection } from './agent-files';
 import { AlertsSection } from './alerts';
 import { BlockedAppsSection } from './blocked-apps';
 import { ApiKeySection } from './api-key';
@@ -102,11 +101,9 @@ export function SettingsSections() {
       <UsageSection />
       <OpenRouterSection />
       <ApiKeySection />
-      {/* ── Integrations & automation ── the chat connectors and CLI, then
-          the instruction files and skills those agents read. */}
+      {/* ── Integrations & automation ── the chat connectors and CLI. */}
       <ConnectorsSection />
       <CliSection />
-      <AgentFilesSection />
       {/* ── Preferences ── THE UI OVERHAUL moved Theme out of the hamburger
           drawer; see ./theme.tsx for why it is a stateful pane. Appearance
           is the theme and the desktop sidebar switch; #5285 moved the

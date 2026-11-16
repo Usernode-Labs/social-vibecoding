@@ -415,6 +415,8 @@ function stagingMockIssues(repoUrl) {
       + 'Steps to reproduce:\n1. Enable dark mode in the header\n'
       + '2. Refresh the page\n3. The app is back in light mode\n\n'
       + 'Expected: the preference persists across reloads.', 2),
+    mk(9006503, '[Mock] Dark mode toggle forgets its setting after refresh',
+      'Staging-only sample of a similar open request. Compare the two before deciding.', 3),
     mk(900002, '[Mock] Add a keyboard shortcut for voting',
       'Staging-only mock issue for previewing the Dev card list.\n\n'
       + 'Power users vote on a lot of proposals — pressing Y/N while a '
@@ -447,12 +449,12 @@ function stagingMockIssues(repoUrl) {
       'Staging-only mock issue with a deliberately long title (~120 '
       + 'chars) for checking that dev-card titles wrap instead of '
       + 'truncating on narrow phone screens.', 14),
-    // #361: row for the headless `code` outcome — an auto-run that produced
-    // a reviewable commit. Its viewer-owned clones (seeded in migrate.js)
-    // demonstrate both "Changes ready" card variants (preview-OK and
-    // preview-failed).
+    // The row with two people working on it at once (stagingMockInProgress),
+    // and the one the mock proposals in votes.js inherit their priority and
+    // assignee from.
     mk(900006, '[Mock] Voting buttons need a clearer disabled state',
-      'Staging-only mock issue for previewing the headless "code" outcome.\n\n'
+      'Staging-only mock issue for previewing a request two people are '
+      + 'working on.\n\n'
       + 'When a proposal is closed, the Yes/No buttons stay full-colour but '
       + 'do nothing on click. They should render visibly disabled (greyed '
       + 'out, no hover) so it is obvious voting is over.', 11),
@@ -465,7 +467,7 @@ function stagingMockIssues(repoUrl) {
       + 'button state. A synthetic per-viewer session is attached to this '
       + "row so the start-work button reads \"Create new proposal\" "
       + 'instead of "Create proposal" — exactly what a viewer who already '
-      + 'started a dev chat on this issue would see.', 7),
+      + 'started a change on this issue would see.', 7),
     // #556: dedicated row for reviewing the author-only "edit title"
     // pencil in the topic head. The staging enrichment block in
     // GET /github-issues marks it as authored by whoever is viewing, so
@@ -486,7 +488,7 @@ function stagingMockIssues(repoUrl) {
       + 'must appear at the top of the Issues column, above the manually '
       + 'ordered cards.', 1),
     // Card-as-pointer revision: a deliberately BARE issue — no attributes,
-    // no bounty, no claim, no headless run — so the "a card with no metadata
+    // no bounty, no claim — so the "a card with no metadata
     // carries no grey Set-priority / Set-category / Unassigned chips" rule is
     // visible in a preview. Every other mock row is enriched by the
     // staging-attributes block in GET /github-issues; this number is
@@ -521,35 +523,20 @@ function stagingMockIssues(repoUrl) {
       + 'state. Its mock close proposal passed long enough ago that the '
       + 'spinner has timed out, so the card reads "Close pending — will '
       + 'retry automatically" instead of spinning forever.', 8),
-    // #1112: the two work-states that no other mock row can show, because
-    // both need a session in a state the other rows never sit in. The
-    // in-progress enrichment below attaches a 5-day-old PAUSED session to
-    // this one, so the chip reads "Paused · maya-builder" in the grey tone
-    // and the topic head prints the self-clear date.
+    // #1112: the work state no other mock row can show, because it needs a
+    // session in a state the other rows never sit in. The in-progress
+    // enrichment below attaches a 5-day-old PAUSED session to this one, so
+    // the chip reads "Paused · maya-builder" in the grey tone and the topic
+    // head prints the self-clear date.
     mk(900014, '[Mock] Someone started this and paused',
       'Staging-only mock issue for previewing the #1112 "Paused" work '
       + 'state. A dev session on this row was last touched five days ago '
       + 'and is paused, so the card carries the grey "Paused" chip rather '
       + 'than the old catch-all "In progress" one, and the topic head '
       + 'explains in a sentence when the mark clears itself.', 26),
-    // #1112: the amber "Needs an answer" state — a headless auto-solve run
-    // that finished with the `question` outcome and is waiting on a human.
-    mk(900015, '[Mock] Auto-solve run asked a question',
-      'Staging-only mock issue for previewing the #1112 "Needs an answer" '
-      + 'work state: the synthetic headless run below reports the '
-      + '`question` outcome, so the card asks for a reply instead of '
-      + 'claiming that work is happening right now.', 19),
-    // #1112: keep the finished-draft state on its own row. Reusing 900005
-    // made the check depend on older staging fixtures that already use that
-    // number for the failed-run demo, so the synthetic state could be
-    // shadowed by seed history instead of rendering `draft_ready`.
-    mk(900016, '[Mock] Auto-solve draft ready to review',
-      'Staging-only mock issue for previewing the #1112 "Draft ready to '
-      + 'review" work state. Its synthetic headless run finished with a '
-      + 'draft, and no other staging fixture shares this issue number.', 17),
     // #1251: the row that makes the fix reviewable. Mock proposal 9000013
     // declares this number in linked_issues and NOTHING else touches it —
-    // no session, no claim, no synthetic headless state — so before the fix
+    // no session, no claim — so before the fix
     // it appeared in the list feed and in no kanban column at all, and
     // after it sits in In progress alongside its proposal in In review.
     // Every other mock issue is already in-progress for some other reason,
@@ -1145,8 +1132,8 @@ async function readRequestComments(pool, app, number, { demo = false, max = null
 
 // Pick the "In progress" chip's link destination from an issue's live
 // linked sessions, per viewer. Priority: a promoted/merging session (the
-// proposal — group-visible to everyone) > the viewer's own session (their
-// dev chat) > a shared session (its public discussion). Other users'
+// proposal — group-visible to everyone) > the viewer's own session (its
+// change page) > a shared session (its public discussion). Other users'
 // PRIVATE sessions yield no target — by current semantics they appear on
 // no group surface, so the chip stays informational for those viewers.
 // Ties within a class break to the most recently active session.
@@ -1174,8 +1161,7 @@ function pickInProgressTarget(sessions, viewerId) {
 
 // Compose one issue's `in_progress` field from its live linked sessions
 // and live claims (already expiry-filtered). Returns null when neither
-// exists — the FE treats null as "no chip" (headless runs contribute via
-// the separate issue.headless enrichment, ORed client-side).
+// exists — the FE treats null as "no chip".
 function composeInProgress(sessions, claims, viewerId) {
   const sess = sessions || [];
   const live = claims || [];
@@ -2352,9 +2338,7 @@ function issueRoutes(config) {
   // anonymous, cached, never-throws) for the "Open Issues" activity-panel
   // section. Augments each issue with this app's OPEN-bounty count and a
   // per-viewer `my_bounty` flag, the issue's creating user
-  // (`created_by_username`, #133), the latest live headless auto session
-  // (`headless`, #155 — including the viewer's own derived session as
-  // `headless.mySessionId`, #172), plus the viewer's remaining weekly kudos
+  // (`created_by_username`, #133), plus the viewer's remaining weekly kudos
   // allowance so the FE can disable the "Give kudos" button when the shared
   // budget is spent. Distinct from the platform-internal `issues` table
   // (governance proposals) listed by GET /api/apps/:slug/issues above.
@@ -2537,77 +2521,13 @@ function issueRoutes(config) {
       );
       const chatByNumber = new Map(chatRows.map((r) => [r.n, r]));
 
-      // #155: latest live headless auto session per issue, so the panel can
-      // render the right button state (Generate proposal / Generating… / the
-      // outcome-specific "Review … & start session" clone button). 'failed'
-      // rows are excluded — the button recovers to Generate proposal so the
-      // run can be retried.
-      // staging_url/pr_number ride along (#183) so the panel can render the
-      // changes-ready label + Preview button for auto runs that pushed code
-      // and built a preview. staging_url is nulled on teardown, so a GC'd
-      // preview degrades the label back to the plain outcome wording.
-      // #2684: a synthetic user's sessions (the Homeroom bot's shadow-mode
-      // triage turns) are never work on an issue that a card should show,
-      // here or in the in_progress derivation below.
-      const { rows: headlessRows } = await pool.query(
-        `SELECT DISTINCT ON (cs.headless_issue_number)
-                cs.headless_issue_number AS n, cs.id, cs.headless_status,
-                cs.headless_outcome, cs.staging_url, cs.pr_number, u.username,
-                cs.user_id
-           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
-          WHERE cs.app_id = $1 AND cs.is_headless = TRUE
-            AND cs.headless_status IN ('generating', 'ready')
-            AND u.is_synthetic IS NOT TRUE
-          ORDER BY cs.headless_issue_number, cs.created_at DESC`,
-        [app.id]
-      );
-      // #172: the viewer's own most recent non-archived clone of each
-      // listed headless session, so the FE can swap the clone button for
-      // "Go to session" once they've already started one. Strictly
-      // per-viewer — sessions are owner-scoped, so another user's clone
-      // isn't navigable and must not hide the clone button. 'archived'
-      // clones are excluded (one-way abandoned state) so the user can
-      // start over. No dedicated index: the lookup filters by user_id +
-      // cloned_from_session_id over a handful of ids, fine at current
-      // volumes.
-      const headlessIds = headlessRows.map((r) => r.id);
-      const myCloneByHeadlessId = new Map();
-      if (headlessIds.length) {
-        const { rows: cloneRows } = await pool.query(
-          `SELECT DISTINCT ON (cloned_from_session_id)
-                  cloned_from_session_id AS src, id
-             FROM chat_sessions
-            WHERE user_id = $1 AND cloned_from_session_id = ANY($2)
-              AND status <> 'archived'
-            ORDER BY cloned_from_session_id, created_at DESC`,
-          [req.user.id, headlessIds]
-        );
-        for (const r of cloneRows) myCloneByHeadlessId.set(r.src, r.id);
-      }
-
-      const headlessByNumber = new Map(headlessRows.map((r) => [r.n, {
-        sessionId: r.id,
-        status: r.headless_status,
-        outcome: r.headless_outcome,
-        username: r.username,
-        // #1372: whether the VIEWER started this run. `username` cannot
-        // stand in for it — comparing display names client-side is not an
-        // authorization answer, and the client needs a real one here: the
-        // question-outcome button navigates into the run's own session,
-        // which /api/sessions/:id serves only to its owner.
-        mine: r.user_id === req.user.id,
-        mySessionId: myCloneByHeadlessId.get(r.id) || null,
-        stagingUrl: r.staging_url || null,
-        prNumber: r.pr_number || null,
-      }]));
-
-      // #287: the viewer's own most recent non-archived dev chat started
+      // #287: the viewer's own most recent non-archived change started
       // from each issue's start-work button (created_from_issue_number),
       // so the row can swap "Create proposal" → "Create new proposal".
       // Strictly per-viewer (sessions are owner-scoped — another user's
       // session must not flip the label) and 'archived' rows are excluded
       // so the button reverts to "Create proposal" after the viewer
-      // abandons their session. Independent of the headless lookup above.
+      // abandons their session.
       // A person's posted plan (request-specs.js) is not work: it has no
       // branch, so it never counts as the viewer's own session here — the
       // same rule as issue-proposal-ref.js (1 Nov 2026, #6385).
@@ -2624,19 +2544,19 @@ function issueRoutes(config) {
       );
       const myPrSessionByNumber = new Map(prSessionRows.map((r) => [r.n, r.id]));
 
-      // "In progress" derivation — the dispatch-driven half. Every LIVE
-      // non-headless session that declared linked_issues (via the Mayor's
-      // addresses_issues at dispatch time) marks its issues in progress.
+      // "In progress" derivation — the session-driven half. Every LIVE
+      // non-headless session that declared linked_issues marks its issues
+      // in progress.
       // Live = active/promoted/merging always; paused only within the
       // IN_PROGRESS_PAUSED_WINDOW_DAYS activity window (rejection,
       // withdrawal, and stale-PR takedown all land in 'archived' and merge
-      // in 'merged', so those exclude themselves). Headless runs are
-      // deliberately NOT part of this field — they already ship as
-      // issue.headless above, and the FE ORs the two (keeps the 8s
-      // headless poller's field-scoped merge correct). A person's posted
-      // plan (request-specs.js) is not work: a planning record with no
-      // branch never counts, the same rule as issue-proposal-ref.js
-      // (1 Nov 2026, #6385).
+      // in 'merged', so those exclude themselves). The `is_headless` guard
+      // keeps the unattended runs of the past, and the bench's preview
+      // sessions, out of it. #2684: a synthetic user's sessions (the
+      // Homeroom bot's shadow-mode triage turns) are never work on an issue
+      // that a card should show. A person's posted plan (request-specs.js)
+      // is not work: a planning record with no branch never counts, the
+      // same rule as issue-proposal-ref.js (1 Nov 2026, #6385).
       const { rows: inProgressRows } = await pool.query(
         `SELECT UNNEST(cs.linked_issues) AS n,
                 cs.id, cs.user_id, cs.status, cs.shared_at,
@@ -2748,18 +2668,17 @@ function issueRoutes(config) {
           created_by_username: creatorByNumber.get(issue.number)
             || creatorFromSourceLine(issue.body)
             || ghLogin,
-          headless: headlessByNumber.get(issue.number) || null,
           // Dispatch/claim-derived "In progress" status (sessions + manual
-          // claims; headless rides separately on `headless` above). The
-          // `target` inside is per-viewer — see pickInProgressTarget.
+          // claims). The `target` inside is per-viewer — see
+          // pickInProgressTarget.
           in_progress: composeInProgress(
             inProgressByNumber.get(issue.number),
             claimsByNumber.get(issue.number),
             req.user.id
           ),
           // The Homeroom bot reading or building this request right now
-          // ({ what, since }), or null. Its own field, like `headless`: the
-          // bot is never `in_progress`.
+          // ({ what, since }), or null. Its own field: the bot is never
+          // `in_progress`.
           bot: botAsked(issue.number),
           // 11 Nov 2026: where it stands (services/work-state.js), the one
           // source its status card draws, with the viewer's own `mine` and
@@ -2786,45 +2705,7 @@ function issueRoutes(config) {
         };
       });
 
-      // #227: the staging mocks have no chat_sessions rows, so the feed's
-      // auto-solve-first ordering would be unreviewable in a preview.
-      // Attach synthetic headless state to two [Mock] rows — 900003
-      // 'generating' (30h old, naturally last by recency, so the re-rank
-      // is unmistakable) and 900005 'ready'/spec — only where no real
-      // headless row already claimed the number, so prod-cloned data is
-      // never overridden. Request-time and read-only; strictly a no-op
-      // in production.
       if (IS_STAGING) {
-        const mockHeadless = new Map([
-          [900003, { status: 'generating', outcome: null }],
-          [900005, { status: 'ready', outcome: 'spec' }],
-          // #1112: the `question` outcome — a finished run that is waiting on
-          // a human answer, which the work-state chip reports as amber
-          // "Needs an answer" rather than as work in flight.
-          [900015, { status: 'ready', outcome: 'question' }],
-          // #1112: dedicated row for the finished-draft state. Unlike the
-          // older 900005 ranking fixture, this number is not also used by a
-          // persisted staging headless seed.
-          [900016, { status: 'ready', outcome: 'spec' }],
-        ]);
-        for (const issue of issues) {
-          const m = mockHeadless.get(issue.number);
-          if (m && !issue.headless) {
-            issue.headless = {
-              sessionId: issue.number,
-              status: m.status,
-              outcome: m.outcome,
-              username: 'staging-tester',
-              // No chat_sessions row backs these numbers, so the run-session
-              // navigation has nothing to open — the mock exercises the
-              // not-my-run path on purpose.
-              mine: false,
-              mySessionId: null,
-              stagingUrl: null,
-              prNumber: null,
-            };
-          }
-        }
         // #287: the staging mocks have no chat_sessions rows, so the
         // "Create new proposal" variant of the start-work button would
         // never render in a preview. Attach a synthetic myPrSessionId to
@@ -2832,7 +2713,7 @@ function issueRoutes(config) {
         // proposal") so the has-session button is reviewable — only where
         // no real session already claimed it. The id is synthetic (the
         // mock issue number); clicking "Create new proposal" still just
-        // spawns a fresh dev chat, so this is purely for visual review of
+        // starts a fresh change, so this is purely for visual review of
         // the button label. Request-time, read-only, no-op in production.
         for (const issue of issues) {
           if (issue.number === 900007 && !issue.myPrSessionId) {
@@ -2953,6 +2834,8 @@ function issueRoutes(config) {
       const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
       const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
+      const twins = await require('../services/request-similarity').boardTwins(pool, app.id, issues, FEEDBACK_FALLBACK_TITLE);
+      for (const issue of issues) issue.similar = twins.get(Number(issue.number)) || null;
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
@@ -2984,7 +2867,7 @@ function issueRoutes(config) {
   // requests — anything it cannot return is a 404 here. View-gated like the
   // list. Returns `{ issue }` in the list's row shape: creator, bounty tally,
   // discussion count and attributes are resolved the same way; the
-  // per-viewer work fields (headless run, in-progress, own session) are left
+  // per-viewer work fields (in-progress, own session) are left
   // empty, because a closed issue's page offers no work on it. `addressed_by`
   // (#2431) is the exception the closed page needs most: the change that
   // closed it is a record, not an offer of work. `bot` is the other: on an
@@ -3163,15 +3046,24 @@ function issueRoutes(config) {
       }
       const addressed = addressedBy.get(number)
         || (issue === mock && mock.mockAddressedBy) || null;
-      const issueFields = { ...issue };
+      const twins = issue.state === 'closed' ? new Map() : await require('../services/request-similarity').boardTwins(
+        pool, app.id, [...(IS_STAGING ? stagingMockIssues(app.repo_url) : []), issue], FEEDBACK_FALLBACK_TITLE);
+      const issueFields = { ...issue, similar: twins.get(number) || null };
       delete issueFields.mockAddressedBy;
       delete issueFields.mockClosedVia;
+      // #6680: the viewer's own design thread that filed this request, or
+      // posted its plan there, which the request page links back to. Read for
+      // the signing-in viewer alone, so another member's read gets null and
+      // learns nothing of a private thread. Never throws; absent is null.
+      const fromThread = await require('../services/design-threads').threadForRequest(pool, {
+        userId: req.user?.id, appId: app.id, number,
+      });
 
       // #6604: a request's page draws from THIS read alone now — the board's
       // list is not loaded behind it — so the work state its card shows has
       // to be composed here, exactly as the list composes it: the live
       // sessions that linked this request, the manual claims still in their
-      // window, the viewer's own dev chat, and a headless run. Without them a
+      // window, and the viewer's own change. Without them a
       // paused request read "Nobody is working on this yet" and its
       // "Continue work" / "Create new proposal" buttons were missing.
       if (issue.state !== 'closed') {
@@ -3205,30 +3097,6 @@ function issueRoutes(config) {
           || (IS_STAGING && req.query.demo === '1' ? stagingMockInProgress(req.user).get(number) : null)
           || null;
 
-        const { rows: headlessRows } = await pool.query(
-          `SELECT cs.id, cs.headless_status, cs.headless_outcome,
-                  cs.staging_url, cs.pr_number, u.username, cs.user_id
-             FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
-            WHERE cs.app_id = $1 AND cs.is_headless = TRUE
-              AND cs.headless_issue_number = $2
-              AND cs.headless_status IN ('generating', 'ready')
-              AND u.is_synthetic IS NOT TRUE
-            ORDER BY cs.created_at DESC
-            LIMIT 1`,
-          [app.id, number]
-        );
-        const h = headlessRows[0] || null;
-        issueFields.headless = h ? {
-          sessionId: h.id,
-          status: h.headless_status,
-          outcome: h.headless_outcome,
-          username: h.username,
-          mine: h.user_id === req.user.id,
-          mySessionId: null,
-          stagingUrl: h.staging_url || null,
-          prNumber: h.pr_number || null,
-        } : null;
-
         const { rows: prSessionRows } = await pool.query(
           `SELECT id FROM chat_sessions
             WHERE app_id = $1 AND user_id = $2
@@ -3255,11 +3123,11 @@ function issueRoutes(config) {
             || creatorFromSourceLine(issue.body)
             || ghLogin,
           in_progress: issueFields.in_progress ?? null,
-          headless: issueFields.headless ?? null,
           bot,
           botAwaits,
           botHold,
           standing,
+          fromThread,
           track,
           myPrSessionId: issueFields.myPrSessionId ?? null,
           addressed_by: addressed,
@@ -3884,7 +3752,6 @@ module.exports = {
   composeInProgress,
   IN_PROGRESS_PAUSED_WINDOW_DAYS,
   ISSUE_CLAIM_TTL_DAYS,
-  // #3752: a conversation opened on a staging mock request is named from it
-  // (agent-sessions.js lookupRequestTitle), as this file's issue page reads it.
+  // The staging mock requests, as this file's issue page reads them.
   stagingMockIssues,
 };

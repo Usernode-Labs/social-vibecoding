@@ -129,50 +129,6 @@ test('the change page says it where anyone reads it: the Votes card\'s line, out
   assert.doesNotMatch(merging.page, /next release/);
 });
 
-// ── Agent sessions: the pill, the drawer, the inbox row, the menu ───────
-
-const HOMEROOM_CHANGE = {
-  id: 50, appSlug: 'usernode-2d5619', appName: 'Homeroom', status: 'merging', title: 'Say when it goes live',
-  prNumber: 4600, appSelfHosted: true,
-};
-
-test('an agent session\'s change: the drawer says when, the rows say it short', () => {
-  const transcript = loadTsx('frontend/src/features/agent-session/transcript.ts');
-  const now = Date.now();
-  const release = inEight();
-  assert.equal(transcript.changeReleaseLine({ ...HOMEROOM_CHANGE, release }, now), `${SENTENCE}.`);
-  assert.equal(transcript.changeReleaseLine(HOMEROOM_CHANGE, now), null, 'no release read: nothing extra');
-  assert.equal(transcript.changeReleaseLine({ ...HOMEROOM_CHANGE, status: 'merged', release }, now), null, 'live');
-  // The pill's label stays the state's word.
-  assert.equal(transcript.changeStatusLabel('merging'), 'Going live');
-  // A list row's words after the change's name.
-  assert.equal(transcript.changeRowWords({ ...HOMEROOM_CHANGE, release }, now), 'Goes live in about 8 minutes');
-  assert.equal(transcript.changeRowWords(HOMEROOM_CHANGE, now), 'Going live');
-  assert.equal(transcript.changeRowWords({ status: 'promoted' }, now), 'Waiting for approval');
-  assert.equal(transcript.changeRowWords({ status: 'merged' }, now), 'Live');
-  assert.equal(transcript.changeRowWords({ status: 'active' }, now), 'In progress');
-
-  const api = loadTsx('tests/fixtures/agent-session-api.ts');
-  const session = (activeChange) => ({
-    id: 7, title: 'Say when', status: 'open', focusApp: null, focusContext: {}, busy: false,
-    activeChange, changes: [], lastActivityAt: null, createdAt: null,
-  });
-  const drawer = renderToHtml(createElement(api.ChangesDrawer, { session: session({ ...HOMEROOM_CHANGE, release }) }));
-  assert.match(drawer, new RegExp(`title="${SENTENCE.replace(/[()]/g, '\\$&')}\\.">Going live</span>`));
-  assert.match(drawer, new RegExp(`<p [^>]*data-agent-session-release="true">${SENTENCE.replace(/[()]/g, '\\$&')}\\.</p>`));
-  const child = renderToHtml(createElement(api.ChangesDrawer, {
-    session: session({ ...HOMEROOM_CHANGE, appSlug: 'notes', appName: 'Notes', appSelfHosted: false }),
-  }));
-  assert.match(child, />Going live<\/span>/);
-  assert.doesNotMatch(child, /data-agent-session-release|next release/);
-
-  // Messages' agent rows read the same words.
-  const messages = read('frontend/src/features/messages/index.tsx');
-  const row = messages.slice(messages.indexOf('function MayorSessionRow('), messages.indexOf('function AgentSessionThread('));
-  // The change's name, then where it stands, as two facts on one line (bot-shared dotText).
-  assert.match(row, /dotText\(\[\s*change\.title \|\|[^\n]*\n\s*changeRowWords\(change\),\s*\]\)/);
-});
-
 // ── The Homeroom bot's DM: the ready card, the activity card, the tray ──
 
 const NOW = new Date('2026-10-09T18:00:00Z');

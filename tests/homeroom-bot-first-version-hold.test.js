@@ -45,9 +45,9 @@ test('what a held request is doing, in the bot\'s words, and what it waits for',
     waitingFor: { reason: 'first_version_pending', number: 1 },
   });
   // The first version, an admin's Run now, and every other project read as before.
-  assert.equal(progress.queuedWait({ ...row, issue_number: 1 }, { queuePosition: 1, holds }).doing, 'next in line for a free builder');
-  assert.equal(progress.queuedWait({ ...row, queue_reason: 'admin' }, { queuePosition: 1, holds }).doing, 'next in line for a free builder');
-  assert.equal(progress.queuedWait({ ...row, app_id: 12 }, { queuePosition: 1, holds }).doing, 'next in line for a free builder');
+  assert.equal(progress.queuedWait({ ...row, issue_number: 1 }, { queuePosition: 1, holds }).doing, progress.QUEUE_NEXT);
+  assert.equal(progress.queuedWait({ ...row, queue_reason: 'admin' }, { queuePosition: 1, holds }).doing, progress.QUEUE_NEXT);
+  assert.equal(progress.queuedWait({ ...row, app_id: 12 }, { queuePosition: 1, holds }).doing, progress.QUEUE_NEXT);
   assert.equal(progress.buildWait({ ...row, app_id: 12 }, { holds }).doing, 'ready to build; its build starts next');
   assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
   // Before the first version is filed it has no number to give.
@@ -63,7 +63,10 @@ test('the card of a request filed or queued while the first version is not live 
   assert.equal(activity.cardText(ctx, dmSvc, { filed: true, waitsForFirstVersion: true }),
     `${line}\n\nFiled. Waiting for the first version to go live. I'll start on this as soon as it does.`);
   // Without the hold, the words are what they were.
-  assert.equal(activity.cardText(ctx, dmSvc, { queued: true }), `${line}\n\nWaiting for a free builder. This card follows it from here.`);
+  // 13 Nov 2026: and they say whose line it is: the bot's own, which starts
+  // by itself ("Waiting for a free builder" read as a wait for another person).
+  assert.equal(activity.QUEUED_WORDS, 'I\'ll start on this by myself as soon as I have a free slot.');
+  assert.equal(activity.cardText(ctx, dmSvc, { queued: true }), `${line}\n\n${activity.QUEUED_WORDS} This card follows it from here.`);
   assert.equal(activity.cardText(ctx, dmSvc, { filed: true }), `${line}\n\nFiled. This card follows it from here.`);
   // A look that started is never held, whatever it is handed.
   assert.match(activity.cardText(ctx, dmSvc, { waitsForFirstVersion: true }), /I'm working on this now/);

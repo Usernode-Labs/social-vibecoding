@@ -45,9 +45,10 @@ import { Switch } from '@/components/ui/switch';
 
 import { changeHref } from '../../lib/change-href';
 import { useMessages } from '../../lib/i18n/react';
+import { radioGroupKeys } from '../../lib/radio-group';
 import { audienceLine, reloadCommunity, useCommunity } from '../dev-board/workshop/community-card';
 import {
-  creatorGroupLine, currentValue, groupKey, groupLabel, groupNameProblem, groupSize, matchPreset, MAX_AT_LEAST,
+  creatorGroupLine, currentValue, groupKey, groupLabel, groupNameProblem, groupPeopleKind, groupSize, matchPreset, MAX_AT_LEAST,
   MAX_GROUPS, MAX_RULES, MIN_MINIMUM, minOf, presetName, presetOf, presetValue, ruleGroupChoices, rulePhrase,
   ruleSignature, ruleToday, sameValue, valueProblem, type Group, type Kind, type PresetKey, type Rule,
   type RulesValue,
@@ -58,11 +59,13 @@ import { useDialog } from './use-dialog';
 
 type Screen = 'main' | 'own' | 'group' | 'rule';
 type Visibility = 'private' | 'public';
+// The two rows of "Who can see it", in the order they are drawn.
+const VISIBILITIES: readonly Visibility[] = ['private', 'public'];
 
 /** What the approval section has picked: a preset, or rules of the project's own. */
 type Choice = { kind: 'preset'; key: PresetKey } | { kind: 'own'; value: RulesValue };
 
-interface GroupDraft { index: number | null; name: string; people: string[] }
+interface GroupDraft { index: number | null; name: string; people: string[]; keptByApp: boolean; size?: number; reportedAt?: string | null }
 interface RuleDraft { index: number | null; group: string; kind: Kind; n: number; min: number | null }
 
 /** Where a rule's minimum starts when it is switched on. */
@@ -159,6 +162,10 @@ export function WhoDecidesDialog() {
   const currentVis: Visibility = visibility?.view === 'public' ? 'public' : 'private';
   const buildLimited = visibility?.view === 'public' && visibility?.build === 'private';
   const pickedVis: Visibility = vis || currentVis;
+  // Public but building by invitation is neither row until one is picked.
+  const seeChecked: Visibility | null = pickedVis === 'public' && buildLimited && !vis ? null : pickedVis;
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const seeKeys = radioGroupKeys(VISIBILITIES, seeChecked, setVis);
   const name = community?.name || slug;
   const memberCount = Number(community?.member_count) || 0;
 
@@ -264,9 +271,21 @@ export function WhoDecidesDialog() {
     setScreen('main');
   }
 
+  // The line under a group's name on the Groups list: the people picked here,
+  // or, for a group the app keeps, how many it last reported (#6669).
+  function groupLine(g: Group): string {
+    const kind = groupPeopleKind(g);
+    if (kind === 'keptByApp') return t('dialogs:whoDecides.group.keptByAppSub', { count: g.size ?? 0 });
+    if (kind === 'people') return g.people.join(', ');
+    return t('dialogs:whoDecides.group.nobody');
+  }
+
   function editGroup(index: number | null) {
     const g = index != null && draft ? draft.groups[index] : null;
-    setGroupDraft({ index, name: g ? g.name : '', people: g ? [...g.people] : [] });
+    setGroupDraft({
+      index, name: g ? g.name : '', people: g ? [...g.people] : [],
+      keptByApp: !!g?.keptByApp, size: g?.size, reportedAt: g?.reportedAt ?? null,
+    });
     setScreen('group');
   }
 
@@ -274,7 +293,9 @@ export function WhoDecidesDialog() {
     if (!draft || !groupDraft) return;
     const problem = groupNameProblem(groupDraft.name, draft.groups, groupDraft.index != null ? groupKey(draft.groups[groupDraft.index].name) : null);
     if (problem) return;
-    const nextGroup: Group = { name: groupDraft.name.replace(/\s+/g, ' ').trim(), people: groupDraft.people };
+    const nextGroup: Group = groupDraft.keptByApp
+      ? { name: groupDraft.name.replace(/\s+/g, ' ').trim(), people: [], keptByApp: true, size: groupDraft.size ?? 0, reportedAt: groupDraft.reportedAt ?? null }
+      : { name: groupDraft.name.replace(/\s+/g, ' ').trim(), people: groupDraft.people };
     const groups = [...draft.groups];
     let rules = draft.rules;
     if (groupDraft.index != null) {
@@ -340,13 +361,14 @@ export function WhoDecidesDialog() {
         {community?.can_manage !== false ? (
           <>
             <SectionHeader className="px-1 pb-2 pt-4" id="who-see-label">{t('dialogs:whoDecides.see.title')}</SectionHeader>
-            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-see-label" data-who-see="">
-              {(['private', 'public'] as const).map((v) => (
+            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-see-label" data-who-see="" onKeyDown={seeKeys.onKeyDown}>
+              {VISIBILITIES.map((v) => (
                 <ListRow
                   key={v}
                   as="button"
                   role="radio"
-                  aria-checked={pickedVis === v && !(v === 'public' && buildLimited && !vis)}
+                  aria-checked={seeChecked === v}
+                  tabIndex={seeKeys.tabIndex(v)}
                   data-who-see-option={v}
                   onClick={() => setVis(v)}
                   leading={<IconTile size="xs">{v === 'private' ? <LockIcon aria-hidden="true" /> : <GlobeIcon aria-hidden="true" />}</IconTile>}
@@ -354,7 +376,7 @@ export function WhoDecidesDialog() {
                   subtitle={t(v === 'private' ? 'dialogs:whoDecides.see.privateSub' : 'dialogs:whoDecides.see.publicSub')}
                   subtitleClassName="whitespace-normal"
                   chevron={false}
-                  trailing={<Picked on={pickedVis === v && !(v === 'public' && buildLimited && !vis)} />}
+                  trailing={<Picked on={seeChecked === v} />}
                 />
               ))}
             </GroupedList>
@@ -567,7 +589,9 @@ export function WhoDecidesDialog() {
             trailing={<span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.builtIn')}</span>} />
           {draft.groups.map((g, i) => (
             <ListRow key={groupKey(g.name)} as="button" data-who-group={i} onClick={() => editGroup(i)} title={g.name}
-              subtitle={g.people.length ? g.people.join(', ') : t('dialogs:whoDecides.group.nobody')} subtitleClassName="whitespace-normal" />
+              subtitle={groupLine(g)}
+              subtitleClassName="whitespace-normal"
+              trailing={g.keptByApp ? <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.keptByApp')}</span> : undefined} />
           ))}
           {draft.groups.length < MAX_GROUPS ? (
             <ListRow as="button" data-who-add-group="" onClick={() => editGroup(null)}
@@ -622,30 +646,64 @@ export function WhoDecidesDialog() {
           />
           {problem ? <p className="mt-1 px-1 text-[13px] text-red-700 dark:text-red-400" role="alert">{problem}</p> : null}
         </div>
-        <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.people.length })}</SectionHeader>
-        <GroupedList className="mx-0" data-who-group-people="">
-          {groupDraft.people.map((p) => (
-            <ListRow key={p} leading={<Face name={p} />} title={p} chevron={false}
-              trailing={(
-                <button type="button" aria-label={t('dialogs:whoDecides.group.removePerson', { name: p })} onClick={() => setPeople(groupDraft.people.filter((x) => x !== p))}
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400">
-                  <XIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
-              )} />
-          ))}
-          {!groupDraft.people.length ? <ListRow title={t('dialogs:whoDecides.group.nobody')} chevron={false} /> : null}
-          {pool.length ? (
-            <div className="flex flex-wrap items-center gap-2 px-4 py-3">
-              <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.add')}</span>
-              {pool.slice(0, 24).map((p) => (
-                <Button key={p} type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={() => setPeople([...groupDraft.people, p])} className="flex items-center gap-1.5">
-                  <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />{p}
-                </Button>
-              ))}
-            </div>
-          ) : null}
+        <GroupedList className="mx-0 mt-3">
+          <label className="flex w-full cursor-pointer items-start gap-4 px-4 py-3.5">
+            <span className="ui-lrow-tx min-w-0 flex-1">
+              <span className="ui-lrow-t block text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">
+                {t('dialogs:whoDecides.group.keptSwitch')}
+              </span>
+              <span className="ui-lrow-s mt-0.5 block text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
+                {t('dialogs:whoDecides.group.keptSwitchSub')}
+              </span>
+            </span>
+            <Switch
+              data-who-kept-switch=""
+              checked={groupDraft.keptByApp}
+              onChange={(e) => setGroupDraft({
+                ...groupDraft,
+                keptByApp: e.currentTarget.checked,
+                people: e.currentTarget.checked ? [] : groupDraft.people,
+              })}
+            />
+          </label>
         </GroupedList>
-        <p className={`mt-2 ${NOTE}`}>{t('dialogs:whoDecides.group.note', { name })}</p>
+        {groupDraft.keptByApp ? (
+          <>
+            <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.size ?? 0 })}</SectionHeader>
+            <p className={`mt-2 ${NOTE}`} data-who-kept-line="">
+              {groupDraft.reportedAt
+                ? t('dialogs:whoDecides.group.keptReported', { when: new Date(groupDraft.reportedAt).toLocaleString() })
+                : t('dialogs:whoDecides.group.keptNever')}
+            </p>
+          </>
+        ) : (
+          <>
+            <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.people', { count: groupDraft.people.length })}</SectionHeader>
+            <GroupedList className="mx-0" data-who-group-people="">
+              {groupDraft.people.map((p) => (
+                <ListRow key={p} leading={<Face name={p} />} title={p} chevron={false}
+                  trailing={(
+                    <button type="button" aria-label={t('dialogs:whoDecides.group.removePerson', { name: p })} onClick={() => setPeople(groupDraft.people.filter((x) => x !== p))}
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 dark:text-zinc-400">
+                      <XIcon className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  )} />
+              ))}
+              {!groupDraft.people.length ? <ListRow title={t('dialogs:whoDecides.group.nobody')} chevron={false} /> : null}
+              {pool.length ? (
+                <div className="flex flex-wrap items-center gap-2 px-4 py-3">
+                  <span className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('dialogs:whoDecides.group.add')}</span>
+                  {pool.slice(0, 24).map((p) => (
+                    <Button key={p} type="button" variant="pillNeutral" size="sm" ink="neutral" onClick={() => setPeople([...groupDraft.people, p])} className="flex items-center gap-1.5">
+                      <PlusIcon className="h-3.5 w-3.5" aria-hidden="true" />{p}
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
+            </GroupedList>
+            <p className={`mt-2 ${NOTE}`}>{t('dialogs:whoDecides.group.note', { name })}</p>
+          </>
+        )}
         {usedBy.length ? (
           <>
             <SectionHeader className="px-1 pb-2 pt-5">{t('dialogs:whoDecides.group.usedBy', { count: usedBy.length })}</SectionHeader>
@@ -688,6 +746,9 @@ export function WhoDecidesDialog() {
     const others = draft.rules.filter((_, i) => i !== ruleDraft.index);
     const duplicate = others.some((r) => ruleSignature(r) === ruleSignature(rule));
     const set = (patch: Partial<RuleDraft>) => setRuleDraft({ ...ruleDraft, ...patch });
+    const pickKind = (k: Kind) => set({ kind: k, n: k === 'atLeast' ? Math.min(ruleDraft.n, MAX_AT_LEAST) : (k === 'majority' ? ruleDraft.n : 50) });
+    // One tab stop, and the arrow keys move the pick (#6510).
+    const kindKeys = radioGroupKeys(KINDS, ruleDraft.kind, pickKind);
     const size = groupSize(rule.group, ruleCtx);
     return (
       <>
@@ -715,10 +776,10 @@ export function WhoDecidesDialog() {
         {rule.group !== 'creator' ? (
           <>
             <SectionHeader className="px-1 pb-2 pt-5" id="who-rule-kind-label">{t('dialogs:whoDecides.rule.howMany')}</SectionHeader>
-            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-rule-kind-label">
+            <GroupedList className="mx-0" role="radiogroup" aria-labelledby="who-rule-kind-label" onKeyDown={kindKeys.onKeyDown}>
               {KINDS.map((k) => (
-                <ListRow key={k} as="button" role="radio" aria-checked={ruleDraft.kind === k} data-who-rule-kind={k}
-                  onClick={() => set({ kind: k, n: k === 'atLeast' ? Math.min(ruleDraft.n, MAX_AT_LEAST) : (k === 'majority' ? ruleDraft.n : 50) })}
+                <ListRow key={k} as="button" role="radio" aria-checked={ruleDraft.kind === k} tabIndex={kindKeys.tabIndex(k)} data-who-rule-kind={k}
+                  onClick={() => pickKind(k)}
                   title={t(KIND_IDS[k].label)} subtitle={t(KIND_IDS[k].sub)} subtitleClassName="whitespace-normal" chevron={false}
                   trailing={<Picked on={ruleDraft.kind === k} />} />
               ))}

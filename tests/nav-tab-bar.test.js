@@ -364,10 +364,6 @@ test('the same five tabs stand up at desktop, and the band goes away', () => {
   const roots = block.slice(block.indexOf('  :is(#home-screen'), block.indexOf('padding-inline-start: calc('));
   assert.doesNotMatch(roots, /#app-view/, 'an app covers the rail');
   assert.match(roots, /#messages-screen/, 'every platform root does move over');
-  // QA 2026-09-24 Q23: the agent session's own screen drew from the window's
-  // edge, under the rail, with its chips and the start of its composer
-  // unreachable there.
-  assert.match(roots, /#agent-session-screen/, 'the agent session screen moves over too');
   // IT MOVES OVER ANYWAY WHILE ITS RAIL IS UP (#2718 review), through a rule
   // of its own keyed off the bar rather than off the screen id — because
   // `#app-view` is two screens behind one id, and only one of them covers the
@@ -503,7 +499,7 @@ test('every screen change clears the peek, and nothing else does', () => {
   assert.match(mount, /tabNamed = !!tabOverride;/);
   assert.match(mount, /window\.matchMedia\?\.\(SIDEBAR_ROWS_QUERY\)\.addEventListener\?\.\('change', \(\) => \{\n      const \{ screen, tab \} = navStore\.get\(\);\n      if \(!screen \|\| tabNamed\) return;/);
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
     'and app.js is the one place that decides which of the two it is');
   // ON A CHANGE, not on every call. Re-asserting the screen you are already
   // on is not navigation, and clearing there yanks the rail out from under
@@ -762,21 +758,15 @@ test('the Messages tab cannot be dead, whatever the flag says', () => {
     /if \(App\._inMessages && App\._isScreenVisible\('messages-screen'\) && messages\?\.isOpen\?\.\(\)\)/);
 });
 
-test('an app\'s channel belongs to its community, and a change to Messages', () => {
+test('an app\'s channel belongs to its community', () => {
   // `dev/chat` is the project's CHANNEL. It was a row in the Messages inbox
   // (#2718 review) and lit Messages; the channels live on each community's
-  // hub now, so it lights Communities and its chevron goes up to the hub. A
-  // dev session is still an agent conversation (#2770), a thread of Messages.
+  // hub now, so it lights Communities and its chevron goes up to the hub.
   assert.match(read('public/js/app.js'),
-    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/);
+    /screen === 'app-view' && !inApp\s*\n\s*\? \(App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/);
   const appJs = read('public/js/app.js');
-  const pred = appJs.slice(appJs.indexOf('  _isMessagesThread() {'));
-  assert.match(pred.slice(0, pred.indexOf('\n  },')),
-    /return App\.currentTab === 'dev' && App\.currentSubTab === 'sessions';/,
-    'a dev session alone is a thread of Messages');
+  assert.doesNotMatch(appJs, /_isMessagesThread/, 'no screen of an app is a thread of Messages any more');
   assert.match(appJs, /_isChannelThread\(\) \{\s*return App\.currentTab === 'dev' && App\.currentSubTab === 'chat';/);
-  assert.match(appJs, /if \(App\._isMessagesThread\(\)\) return \['arrow', '#messages'\];/,
-    'and the back slot agrees with the tab that lights');
   assert.match(appJs, /if \(App\._isChannelThread\(\)\) return \['arrow', App\._hubHref\(App\.currentApp\)\];/,
     'the channel\'s way up is its hub');
   assert.match(appJs, /_hubHref\(slug\) \{\s*(?:\/\/[^\n]*\n\s*)*return slug \? `#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/hub` : '\/';/,
@@ -786,12 +776,6 @@ test('an app\'s channel belongs to its community, and a change to Messages', () 
   assert.match(branch.slice(0, branch.indexOf('\n    }')),
     /App\.setBackIcon\?\.\('arrow', App\._hubHref\?\.\(App\.currentApp\) \|\| '\/'\);/,
     'a level inside the hub shows the way up to it');
-  // A CHANGE IS AN AGENT CONVERSATION (#2770): its screen hangs off Messages
-  // the same way, rather than off the board it used to point at.
-  const session = appView.slice(appView.indexOf("if (subTab === 'sessions' && ref) {"));
-  assert.match(session.slice(0, session.indexOf('\n    }')),
-    /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
-    'a dev session shows the way up to Messages');
 });
 
 // ── #2824: the lit tab's sliding marker ───────────────────────────────

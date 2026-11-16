@@ -21,7 +21,7 @@ const { WORDS_PATH } = require('./upstream-lineage');
 //
 // Existing apps (created before this feature) won't have this block. The
 // easiest fix is to paste this `<script>` near the top of `<body>` in
-// public/index.html — or ask the coding agent in dev chat.
+// public/index.html — or ask Homeroom bot to.
 // Sentinel: usernode-dev-console@1 (keep this marker so updates/tooling
 // can locate and replace the block in the future).
 const DEV_CONSOLE_FORWARDER = `
@@ -476,7 +476,7 @@ because a permission rule names its server literally: the same short list,
 once per spelling the connector may be registered under.
 
 If you want the acting calls (\`submit_work\`, \`create_request\`,
-\`prepare_work\`, \`start_platform_build\`, \`submit_platform_build\`) allowed
+\`prepare_work\`) allowed
 too, grant that on your own account rather than here — set the connector to
 allow-always in Claude's connector settings, or add the rules to your own
 \`~/.claude/settings.json\`, where the decision covers your machine only.
@@ -759,7 +759,7 @@ public/private tables, "don't \`git push\`", etc.):
 **Platform conventions (authoritative, always current):**
 ${PLATFORM_BASE_URL}/claude.md
 
-**Inside Homeroom** (its dev chat, and Homeroom bot's builds), do not
+**Inside Homeroom** (Homeroom bot's builds), do not
 fetch that URL: what applies to your change is already in your
 instructions, and the \`homeroom\` MCP server's
 \`get_platform_conventions\` reads any one section of the conventions
@@ -804,9 +804,8 @@ answers the same question.
 
 A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
 this check for you and tells you when you are behind. It is silent offline, so
-its silence is not proof the checkout is current. Inside Homeroom (its dev
-chat, and Homeroom bot's builds) the platform fixes the base commit, and none
-of this applies.
+its silence is not proof the checkout is current. Inside Homeroom (Homeroom
+bot's builds) the platform fixes the base commit, and none of this applies.
 
 ${starter ? starterClaudeSection(starter) : `## Starter template
 
@@ -1713,9 +1712,9 @@ Rules the room keeps for you, and a new game should too:
   page only shows the result. A guest (no account) can watch, never play.
 - Time on the server is \`Date.now()\` inside the room: games run on real
   time, not a preview's chosen \`req.now\`.
-- Content rules: no weapons, combat or attacking characters, and no
-  gambling or wagering. Shooting games are out; breaking rocks, racing,
-  building and quizzes are fine.
+- Content rules: cartoon and fantasy combat, weapons and shooting are
+  fine in a game, and so is wagering pretend points. Nothing realistic or
+  graphic, and no real-money gambling.
 
 Update \`README.md\` when what the game does changes.
 

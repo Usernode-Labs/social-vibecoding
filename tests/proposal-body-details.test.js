@@ -32,7 +32,7 @@ function makeAppView(renderMarkdown) {
     console,
     relTime: () => 'just now',
     App: { user: { id: 42 } },
-    DevChat: { renderMarkdown },
+    PlatformMarkdown: { render: renderMarkdown },
     Kudos: { renderButton: () => '' },
     ConfirmModal: { show: async () => true },
     document: {

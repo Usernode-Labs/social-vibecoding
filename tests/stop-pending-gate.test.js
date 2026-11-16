@@ -6,19 +6,16 @@
 // signal sent", and the agent then started and ran to completion —
 // production session 2974 kept working for 17m51s after the click.
 //
-// Four rules fix that, and they're pure precisely so they can be pinned
+// Three rules fix that, and they're pure precisely so they can be pinned
 // here without a docker daemon or a live turn (same pattern as
 // services/turn-watchdog.js):
 //
-//   1. stopPendingFor       — the pre-dispatch gate. Consulted at five
-//      points between the Mayor's tool call and the exec that starts the
-//      agent.
+//   1. stopPendingFor       — the pre-dispatch gate, consulted between the
+//      dispatch and the exec that starts the agent.
 //   2. classifyStopProbe    — the confirm loop's verdict. The route no
 //      longer assumes one kill worked; it probes and re-issues.
 //   3. classifyStopRequest  — what POST /stop does with one request,
 //      including the guard that keeps Force stop strictly second-order.
-//   4. killsWorkerInPhase   — which phases drive the kill (and so stamp
-//      the pending-stop record the gates read).
 //
 // Run with: node --test tests/stop-pending-gate.test.js
 
@@ -33,7 +30,6 @@ const {
 } = require('../src/workflow/rules/worker-interrupt.ts');
 const {
   classifyStopRequest,
-  killsWorkerInPhase,
   stopPendingFor,
 } = require('../src/services/stop-policy');
 
@@ -48,17 +44,17 @@ test('stopPendingFor: a live handle does not', () => {
 });
 
 test('stopPendingFor: a missing handle never gates', () => {
-  // Headless turns run without a stop handle. Gating them on an absent
-  // object would break every automated run — the failure mode this
-  // tolerance exists to prevent.
+  // A turn may run without a stop handle. Gating it on an absent object
+  // would break every such run — the failure mode this tolerance exists to
+  // prevent.
   assert.equal(stopPendingFor(null), false);
   assert.equal(stopPendingFor(undefined), false);
 });
 
 test('stopPendingFor: only the boolean flag counts, not the phase', () => {
   // The gate deliberately ignores `phase`: a stop landing in the awaited
-  // gap between the Mayor's stream and setPhase('cc') is still a stop,
-  // and that gap is exactly where stops used to be dropped entirely.
+  // gap before setPhase('cc') is still a stop, and that gap is exactly
+  // where stops used to be dropped entirely.
   assert.equal(stopPendingFor({ stopped: true, phase: 'mayor1' }), true);
   assert.equal(stopPendingFor({ stopped: true, phase: 'cc' }), true);
 });
@@ -177,16 +173,6 @@ test('classifyStopRequest: no handle means no active turn', () => {
   assert.equal(classifyStopRequest({ handle: undefined }), 'no_active_turn');
 });
 
-test('classifyStopRequest: the wrap-up stays stop-proof', () => {
-  // Deliberate: by phase-2 the commit, PR and staging already exist, and
-  // killing the summary would leave the user without context for changes
-  // that are real.
-  assert.equal(
-    classifyStopRequest({ handle: { phase: 'mayor2', stopped: false } }),
-    'wrap_up_not_stoppable'
-  );
-});
-
 test('classifyStopRequest: force is refused unless a stop is already pending', () => {
   // THE guard on the escape hatch. Force destroys the worker container, so
   // it may only ever be the second thing that happens — never the first.
@@ -208,29 +194,4 @@ test('classifyStopRequest: force with no handle cleans up an orphan', () => {
   // the container) may not have. There is no ordinary stop to precede the
   // force here, so the guard above must not apply.
   assert.equal(classifyStopRequest({ handle: null, force: true }), 'force_orphan');
-});
-
-test('classifyStopRequest: force cannot bypass the wrap-up rule either', () => {
-  assert.equal(
-    classifyStopRequest({ handle: { phase: 'mayor2', stopped: true }, force: true }),
-    'wrap_up_not_stoppable'
-  );
-});
-
-// ── Which phases drive the in-container kill ────────────────────────────
-
-test('killsWorkerInPhase: the coding phase, and the gap before it', () => {
-  assert.equal(killsWorkerInPhase('cc'), true);
-  // #937: 'mayor1' is the fix for the dropped-stop window. setPhase('cc')
-  // happens immediately before the tool call, but awaited work (spend
-  // recording, the busy-worker guard, a GitHub PR round trip, attachment
-  // loads) sits between the end of the Mayor stream and there. A stop
-  // landing in that window used to match no branch at all, so only the
-  // abort ran — and the abort is inert outside the Anthropic stream.
-  assert.equal(killsWorkerInPhase('mayor1'), true);
-});
-
-test('killsWorkerInPhase: never the wrap-up', () => {
-  assert.equal(killsWorkerInPhase('mayor2'), false);
-  assert.equal(killsWorkerInPhase(null), false);
 });

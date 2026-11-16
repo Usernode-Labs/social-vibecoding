@@ -115,7 +115,10 @@ test('the words stay true: the tabs as the bar names them, and no rule it did no
   assert.match(message('agent:appContext.row.about', { app: 'Run Club' }), /^About Run Club/);
   assert.equal(message('agent:appContext.about.addToMyApps'), 'Pin to Home');
   assert.equal(message('dialogs:feedback.target.platformSub'), 'The platform itself');
-  assert.equal(message('messages:store.header.main'), 'Main Chat');
+  // 14 Nov 2026: Main Chat is gone; the guide names New chat, the tab's button.
+  assert.equal(message('messages:newThread.start'), 'New chat');
+  assert.equal(message('settings:guide.term.newChat.title'), 'New chat');
+  assert.doesNotMatch(all, /Main Chat/);
   assert.equal(message('dialogs:whoDecides.see.publicSub'), 'Anyone can open it and join.');
   assert.equal(message('dialogs:whoDecides.see.privateSub'), 'Only members can open it.');
   // The shortcuts it lists are the ones the code binds.

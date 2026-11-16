@@ -25,7 +25,7 @@
   },
   "tabs.ai": {
     "text": "Homeroom bot",
-    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private chat with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
+    "description": "Tab in the main navigation: opens the person's page with Homeroom bot, the AI that builds what people ask for (their private threads with it and their work across projects). The bot's own name. On a phone it sits under an icon in a bar of five, in one of its two wider seats; keep it within about twelve characters."
   },
   "tabs.unreadAi": {
     "text": "Unread messages from the Homeroom bot",
@@ -307,10 +307,6 @@
     "text": "Copy",
     "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: copies the text or link beside it to the clipboard."
   },
-  "common.dismiss": {
-    "text": "Dismiss",
-    "description": "Accessible name of an X button that hides a notice or banner without acting on it. Generic: used only where nothing about the place changes its meaning."
-  },
   "common.copied": {
     "text": "Copied",
     "description": "Generic confirmation shown briefly in place of a Copy button after the text or link was copied to the clipboard."
@@ -475,26 +471,6 @@
     "text": "Merged; goes live in the next release (about {{count}} minutes)",
     "description": "Says when a change merged into Homeroom itself goes live, on every surface that shows such a change (a change's page, a card's tooltip, a chat card): it goes out with Homeroom's next release, expected in about {{count}} minutes. No full stop: the surrounding message adds it."
   },
-  "release.short.waiting": {
-    "text": "Waiting for a release",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): Homeroom's next release is held up, so no time is promised."
-  },
-  "release.short.now": {
-    "text": "Going live now",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): the Homeroom release that carries it is rolling out now."
-  },
-  "release.short.next": {
-    "text": "Goes live in the next release",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): it goes out with Homeroom's next release, and no time is known yet."
-  },
-  "release.short.minutes_one": {
-    "text": "Goes live in about a minute",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): Homeroom's next release, which carries it, is expected in about {{count}} minute. English spells the one minute out; a translation may use {{count}}."
-  },
-  "release.short.minutes_other": {
-    "text": "Goes live in about {{count}} minutes",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): Homeroom's next release, which carries it, is expected in about {{count}} minutes."
-  },
   "release.countLine.waiting_one": {
     "text": "{{count}} merged change waiting for a release",
     "description": "Status line at the top of Homeroom's own Workshop board \"Done\" column: {{count}} change (here 1) was merged and Homeroom's next release, which would carry it, is held up."
@@ -623,10 +599,6 @@
     "text": "Back to {{place}}",
     "description": "On a phone, the header's back arrow on a page under one of a community's places (All items, under the Workshop): goes up to that place. {{place}} is the place's name, such as Workshop. Its accessible name and tooltip."
   },
-  "header.drawer.toBot": {
-    "text": "Back to the list",
-    "description": "On a phone, the header's back arrow in Main Chat, the person's private chat with Homeroom bot: slides back to the Homeroom bot tab's list of what needs them and what is in progress. Its accessible name and tooltip."
-  },
   "header.drawer.messages": {
     "text": "Messages",
     "description": "On a phone, the header's title over the list of the person's conversations, when the conversations are drawn as the navigation drawer's outer level."
@@ -666,6 +638,10 @@
   "work.stage.syncing": {
     "text": "Syncing with main",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change conflicts with main and Homeroom is resolving that now or next, with nobody asked for anything."
+  },
+  "work.stage.shots": {
+    "text": "Taking screenshots",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change's tests passed, and Homeroom is taking the before and after screenshots people look at before they vote. Nothing else is left before it goes on, and nobody is asked for anything."
   },
   "work.stage.upForVote": {
     "text": "Up for a vote",
@@ -872,8 +848,8 @@
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub held its merge back for a moment (busy, or a refusal nobody has to act on). Homeroom tries again in a few minutes."
   },
   "work.line.shots": {
-    "text": "Taking the before and after screenshots",
-    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Checking: the change's tests passed, and Homeroom is still taking the before and after screenshots people look at before they vote, so nobody is asked to vote on it yet."
+    "text": "Tests passed: only the before and after screenshots are left",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Taking screenshots: the change's tests passed, and the only thing left before it goes on (up for a vote, or live when it already has its votes) is the before and after screenshots Homeroom is taking, so nobody is asked to vote on it yet."
   },
   "work.line.firstVersion": {
     "text": "First version: it goes live without a vote",

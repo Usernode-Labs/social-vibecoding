@@ -588,16 +588,19 @@ test('a question in the DM draws its answers, the default marked, and says an an
   assert.match(offered, /<span>Not now<\/span>/);
   assert.doesNotMatch(offered, /suggested|Write my own|public discussion/);
   // #3770: File it is the act, filled in the accent, and Not now the neutral
-  // fill beside it. Not `.messages-bot-other`, which the declared check
-  // (homeroom-bot-dm-question) reads as a Something else.
+  // fill beside it. Not `.messages-bot-other`, which reads as a Something else.
   assert.match(offered, /<button type="button" class="messages-bot-primary" data-bot-answer="default"><span>File it<\/span><\/button><button type="button" class="messages-bot-secondary" data-bot-answer="other"><span>Not now<\/span><\/button><\/div>/);
   assert.match(html, /<button type="button" data-bot-answer="default"><span>Newest first<\/span>/);
   assert.doesNotMatch(html, /messages-bot-primary|messages-bot-secondary/, 'a question\'s answers keep one look: none of them is the act');
   const css = read('public/css/app.css');
   assert.match(css, /\.messages-bot-answers \.messages-bot-primary \{ color: var\(--accent-ink\); background: var\(--accent\); \}/);
   assert.match(css, /\.messages-bot-answers \.messages-bot-other,\s*\.messages-bot-answers \.messages-bot-secondary \{\s*color: var\(--text-secondary\);\s*background: var\(--dc-raised\);/);
-  const check = JSON.parse(read('dapp.json')).tests.find((t) => t.id === 'homeroom-bot-dm-question');
-  assert.match(check.expectSelector, /\[aria-label\^="File this"\] > button:last-child:not\(\.messages-bot-other\)/);
+  // 14 Nov 2026: the declared check that found this pair in Main Chat
+  // (homeroom-bot-dm-question) went with Main Chat; its place in dapp.json
+  // is the old address's landing (homeroom-bot-old-main-address).
+  const declared = JSON.parse(read('dapp.json')).tests;
+  assert.ok(!declared.some((t) => t.id === 'homeroom-bot-dm-question'));
+  assert.equal(declared.find((t) => t.id === 'homeroom-bot-old-main-address').path, '/?demo=1#homeroom-bot/main');
   const chose = { ...offer, metadata: { homeroomBot: { ...offer.metadata.homeroomBot, status: 'answered', answer: 'File it' } } };
   assert.match(renderToHtml(createElement(BotQuestion, { message: chose, conversationId: 3 })), /You chose: File it/);
 });
@@ -1050,7 +1053,8 @@ test('"typing" goes out before the answer starts, bounded', () => {
   // 1 Nov 2026: the work is handed what says what it is doing, and what moves it.
   assert.ok(fn.indexOf('stop.ready') < fn.indexOf('return await work(typing);'), 'the answer waits for its typing event');
   assert.match(fn, /setTimeout\(resolve, TYPING_FIRST_WAIT_MS\)/, 'but never long');
-  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root\);/);
+  // Task 2148: and it names the message a stoppable answer is for, from its first event.
+  assert.match(src, /created\.first = sendTyping\(pool, botId, id, true, io, root, null, answered\);/);
   assert.match(src, /stop\.ready = entry\.first \|\| Promise\.resolve\(\);/);
 });
 
@@ -1084,4 +1088,71 @@ test('news the card and the tray show is never a DM message of its own; what nee
   for (const kind of ['question', 'followup_ask', 'plan', 'proposal', 'person', 'empty', 'blocked', 'build_failed', 'followup_failed']) {
     assert.equal(dm.cardOnly(kind, {}), false, kind);
   }
+});
+
+// ── #6674: what the bot is doing, as another process can answer ─────────
+//
+// A page coming back to the app asks the server what the bot is doing, and
+// that read can land on a pod that never ran the bot's typing loop. Every
+// typing event is published to the other instances, and this process answers
+// from its own state first.
+
+test('the bot\'s typing is published to the other instances, place and all', async (t) => {
+  const bus = require('../src/services/ws-bus');
+  const real = bus.publish;
+  const published = [];
+  bus.publish = (kind, routing, data) => { published.push({ kind, routing, data }); };
+  t.after(() => { bus.publish = real; });
+  const { ws } = typingHarness(t);
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 51, threadRootId: 9001, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  assert.deepEqual(published.at(-1), {
+    kind: 'bot_typing',
+    routing: null,
+    data: { conversationId: 51, threadRootId: 9001, typing: true, doing: null, answering: null },
+  }, 'the first typing, in the place it types');
+  await handed.doing({ kind: 'code', project: 'Ear Trainer' });
+  assert.deepEqual(published.at(-1).data, {
+    conversationId: 51, threadRootId: 9001, typing: true,
+    doing: { kind: 'code', project: 'Ear Trainer' }, answering: null,
+  }, 'what it is doing rides along');
+  finish('done');
+  await answering;
+  await settle();
+  assert.deepEqual(published.at(-1).data, {
+    conversationId: 51, threadRootId: 9001, typing: false, doing: null, answering: null,
+  }, 'and a stop forgets the place');
+});
+
+test('what the bot is doing now is this process\'s state first, and another instance\'s copy otherwise', async (t) => {
+  const mirror = require('../src/services/bot-typing-mirror');
+  mirror._reset();
+  t.after(() => mirror._reset());
+  const { ws } = typingHarness(t);
+  mirror.note({ conversationId: 61, threadRootId: 7, typing: true, doing: { kind: 'request', number: 12 }, answering: 88 });
+  assert.deepEqual(dm.botWorkingNow(61, 7), { typing: true, doing: { kind: 'request', number: 12 }, answering: 88 },
+    'another instance said so');
+  assert.deepEqual(dm.botWorkingNow(61, null), { typing: false }, 'another place is not working');
+  assert.deepEqual(dm.botWorkingNow(62, 7), { typing: false }, 'another conversation is not working');
+
+  let finish;
+  let handed;
+  const answering = dm.whileTyping({}, { botId: 2, conversationId: 61, threadRootId: 7, ws }, (typing) => {
+    handed = typing;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  await settle();
+  await handed.doing({ kind: 'drawing' });
+  assert.deepEqual(dm.botWorkingNow(61, 7), { typing: true, doing: { kind: 'drawing' }, answering: null },
+    'this process knows better than the copy');
+  mirror._reset();
+  finish('done');
+  await answering;
+  await settle();
+  assert.deepEqual(dm.botWorkingNow(61, 7), { typing: false }, 'stopped');
 });

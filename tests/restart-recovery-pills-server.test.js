@@ -1,20 +1,15 @@
 'use strict';
 
-// Server-side half of #786: every restart-recovery breadcrumb must persist
-// the turn's quick-reply pills (and broadcast them on its status event), and
-// a dev chat turn cut before its reply must repair the two shapes that leave
-// no breadcrumb at all.
-//
-// Without these the dev-chat pill bar comes back empty after a restart: the
-// pills on a dispatch turn come ONLY from the Mayor's phase-2 wrap-up, which
-// the recovery paths deliberately don't resume.
+// What restart recovery says when a coding turn could not be resumed
+// (services/turn-recovery.js adoptOrphanWorker): one breadcrumb, persisted
+// and broadcast, in words that never name the restart (#896); the shape it
+// came from is kept in metadata for operators. And a sync turn an older
+// release dispatched is handed back to the merge queue rather than told
+// about in chat.
 //
 // server.js only boots under the require.main guard, so requiring it here
-// exposes adoptOrphanWorker without starting servers. The repair is a
-// classic turn's own when its item resumes (services/turns.js resumeClassic:
-// turn-recovery.js repairUnansweredTurn), driven here against a scripted
-// pool. worker and ws are stubbed via require.cache BEFORE the require so
-// server.js binds the stubs.
+// exposes adoptOrphanWorker without starting servers. worker and ws are
+// stubbed via require.cache BEFORE the require so server.js binds the stubs.
 //
 // Run with: node --test tests/restart-recovery-pills-server.test.js
 
@@ -31,11 +26,9 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 // config.load() requires the four separated platform keys (REQUIRED_PROD).
 require('./platform-keys').setPlatformKeys();
 
-const recoveryPills = require('../src/services/recovery-pills');
-
 // ── worker stub ─────────────────────────────────────────────────────────
 // isWorkerExecuting returns `true` so adoptOrphanWorker takes the mid-exec
-// "kill the orphan exec" branch (case d); flipped per-test where needed.
+// "kill the orphan exec" branch; flipped per-test where needed.
 let workerExecuting = true;
 const workerPath = require.resolve('../src/services/worker');
 const realWorker = require(workerPath);
@@ -49,7 +42,7 @@ require.cache[workerPath].exports = {
   clearActiveTurn: async () => true,
 };
 
-// ── ws stub (restoreMissingQuickReplies broadcasts its breadcrumb) ──────
+// ── ws stub (the breadcrumb's status event goes out on it) ──────────────
 const broadcasts = [];
 const wsPath = require.resolve('../src/services/ws');
 const realWs = require(wsPath);
@@ -58,13 +51,12 @@ require.cache[wsPath].exports = {
   broadcastGlobal: (msg) => { broadcasts.push(msg); },
 };
 
-// ── db/pool stub (restoreMissingQuickReplies resolves its own pool) ─────
-let backfillPool = null;
+// ── db/pool stub: nothing here reads the shared pool ────────────────────
 const poolPath = require.resolve('../src/db/pool');
 const realPool = require(poolPath);
 require.cache[poolPath].exports = {
   ...realPool,
-  getPool: () => backfillPool,
+  getPool: () => null,
 };
 
 const origSetInterval = global.setInterval;
@@ -79,17 +71,14 @@ try {
   global.setTimeout = origSetTimeout;
 }
 
-// The repair a resumed classic turn runs for its change, against the pool
-// this test scripted, for each change the script names.
-const { repairUnansweredTurn } = require('../src/services/turn-recovery');
-const restoreMissingQuickReplies = async () => {
-  for (const session of backfillPool.sessions) await repairUnansweredTurn(backfillPool, session);
-};
-
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8')
   // With what a turn's recovery runs, moved out of server.js unchanged
   // (services/turn-recovery.js).
   + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
+
+// The one sentence every unresumable shape shows (turn-recovery.js
+// TURN_UNFINISHED_BREADCRUMB).
+const TURN_UNFINISHED = "That coding turn didn't finish. Please send your request again.";
 
 // Collect the metadata of every chat_session_messages INSERT a pool saw.
 function insertedRows(calls) {
@@ -127,7 +116,7 @@ const SESSION = {
 
 test.beforeEach(() => { broadcasts.length = 0; });
 
-test('mid-exec-killed breadcrumb carries the unrecoverable pills', async () => {
+test('a turn killed mid-exec leaves one breadcrumb, persisted and broadcast', async () => {
   workerExecuting = true;
   const pool = makeAdoptPool({ ...SESSION });
   await adoptOrphanWorker(
@@ -137,9 +126,7 @@ test('mid-exec-killed breadcrumb carries the unrecoverable pills', async () => {
 
   const rows = insertedRows(pool.calls);
   assert.equal(rows.length, 1, 'one breadcrumb posted');
-  assert.equal(rows[0].content, recoveryPills.TURN_UNFINISHED_BREADCRUMB);
-  assert.deepEqual(rows[0].metadata.quickReplies,
-    recoveryPills.buildRecoveryQuickReplies('unrecoverable'));
+  assert.equal(rows[0].content, TURN_UNFINISHED);
   // #896: same user-facing text for every unresumable shape; the shape
   // itself is preserved in metadata for operators.
   assert.equal(rows[0].metadata.recoveredReason, 'mid_exec_killed');
@@ -147,21 +134,10 @@ test('mid-exec-killed breadcrumb carries the unrecoverable pills', async () => {
 
   const status = broadcasts.find((b) => b.event === 'status');
   assert.ok(status, 'a status event was broadcast');
-  assert.deepEqual(status.quickReplies,
-    recoveryPills.buildRecoveryQuickReplies('unrecoverable'),
-    'the live tab gets the pills without a reload');
-  // #3181: and the owner is told the session stopped before finishing.
-  assert.ok(stalledNotifyFor(pool, 77), 'the stalled-session notification ran');
+  assert.equal(status.text, TURN_UNFINISHED, 'the live tab reads it without a reload');
 });
 
-// #3181: notifySessionStalled's first step, the owner lookup it shares with
-// session_done, issued for this session.
-function stalledNotifyFor(pool, sessionId) {
-  return pool.calls.some((c) => /SET notify_on_done = FALSE[\s\S]*RETURNING user_id, app_id/.test(c.sql)
-    && c.params[0] === sessionId);
-}
-
-test('worker-gone breadcrumb carries the unrecoverable pills', async () => {
+test('a turn whose worker is gone leaves the same breadcrumb', async () => {
   // No container for the session (state 'exited' with an active_turn record)
   // takes the "its worker is gone" branch.
   workerExecuting = false;
@@ -177,56 +153,37 @@ test('worker-gone breadcrumb carries the unrecoverable pills', async () => {
   const rows = insertedRows(pool.calls);
   const gone = rows.find((r) => r.metadata.recoveredReason === 'worker_gone');
   assert.ok(gone, 'the worker-gone breadcrumb was posted');
-  assert.equal(gone.content, recoveryPills.TURN_UNFINISHED_BREADCRUMB);
-  assert.deepEqual(gone.metadata.quickReplies,
-    recoveryPills.buildRecoveryQuickReplies('unrecoverable'));
-  assert.ok(stalledNotifyFor(pool, 77), '#3181: the owner is told it stopped before finishing');
+  assert.equal(gone.content, TURN_UNFINISHED);
+  assert.equal(gone.metadata.recovered, true);
 });
 
-// ── 2. resumeDetachedTurnInner / watchdog breadcrumbs (source-invariant)
+// ── 2. resumeDetachedTurnInner (source-invariant) ──────────────────────
 //
-// Those two live behind boot-only code paths that would need the journal
-// transport and the notification stack stubbed to drive end-to-end; assert
-// the wiring at the source level instead, which is what would regress.
+// It lives behind boot-only code that would need the journal transport and
+// the notification stack stubbed to drive end to end; assert the wiring at
+// the source level instead, which is what would regress.
 
-// #896 replaced the generic recovery breadcrumb with a real Mayor wrap-up
-// (runRecoveredWrapUp). The pill kind it falls back to is still chosen from
-// the finalize outcome — that fallback is what keeps the pill bar populated
-// when the model call can't be made.
-test('the recovered-turn success tail picks its wrap-up pill kind from the outcome', () => {
-  assert.match(SERVER_SRC,
-    /wrapUpPillKind = finalizeOutcome === 'push_failed' \? 'push_failed' : 'code_done'/,
-    'a recovered build wrap-up must fall back to code_done pills, or push_failed when the push failed');
-  assert.match(SERVER_SRC, /const \{ runRecoveredWrapUp \} = require\('(?:\.\/src|\.\.)\/routes\/sessions'\)/,
-    'the build/scout branches end by re-issuing the Mayor wrap-up');
-  assert.match(SERVER_SRC,
-    /fallbackPillKind: wrapUpPillKind/,
-    'the wrap-up receives the fallback pill kind so the bar is never left empty');
-});
-
-// #896: a sync turn is system work with no Mayor reply on the live path
-// either — recovering one must not manufacture a chat message. What it does
-// owe is the follow-through of the older release's merge-queue pass that
+// #896: a sync turn is system work with no reply in chat. What it does owe
+// is the follow-through of the older release's merge-queue pass that
 // dispatched it and died with that process: take back the 'integrating'
 // that pass recorded, and ask the app's merge queue (the workflow machine)
 // to look again so the merge attempt happens. (A sync the proposal machine
-// ran is followed by its own work item and never reaches this branch.) Without that, the card said "bringing up to date with
-// main" until an unrelated trigger came by, and a proposal whose verdict
-// carried onto the merged head had no trigger left at all.
-test('a recovered sync turn gets no Mayor wrap-up, and hands back to the integration queue', () => {
+// ran is followed by its own work item and never reaches this branch.)
+// Without that, the card said "bringing up to date with main" until an
+// unrelated trigger came by, and a proposal whose verdict carried onto the
+// merged head had no trigger left at all.
+test('a recovered sync turn says nothing in chat, and hands back to the integration queue', () => {
   assert.match(SERVER_SRC, /recoveryActiveTurn\.mode === 'sync'/,
     'sync mode is branched explicitly, not lumped in with build');
   const start = SERVER_SRC.indexOf("recoveryActiveTurn.mode === 'sync'");
   const branch = SERVER_SRC.slice(start, SERVER_SRC.indexOf('} else {', start));
   assert.match(branch, /Recovered an older release\\'s sync turn; asking the merge queue to look again/,
     'the sync branch is logged rather than surfaced in chat');
-  assert.doesNotMatch(branch, /wrapUpOutcome\s*=/, 'and sets no wrap-up outcome');
+  assert.doesNotMatch(branch, /INSERT INTO chat_session_messages/, 'and writes no chat row');
   assert.match(branch, /setBlockReasons\(pool, sessionId, \[\]\)/,
     "the dead pass's 'integrating' is taken back");
   assert.match(branch, /wantMerge\(\{ appId: session\.app_id, sessionId, reason: 'recovered-sync' \}\)/,
     'and the app\'s merge queue is asked so the merge attempt follows the sync');
-  assert.match(SERVER_SRC, /if \(wrapUpOutcome\) \{/,
-    'the wrap-up only runs for a branch that set an outcome');
 });
 
 // The whole point of #896: the restart stops being something the user
@@ -239,8 +196,6 @@ test('no user-facing recovery string names the restart', () => {
     .join('\n');
   const files = {
     'server.js': SERVER_SRC,
-    'src/services/recovery-pills.js': fs.readFileSync(
-      path.join(__dirname, '..', 'src', 'services', 'recovery-pills.js'), 'utf8'),
     'src/services/staging-recovery.js': fs.readFileSync(
       path.join(__dirname, '..', 'src', 'services', 'staging-recovery.js'), 'utf8'),
   };
@@ -251,160 +206,4 @@ test('no user-facing recovery string names the restart', () => {
         `${name} still ships the pre-#896 restart wording — chat rows must not mention it`);
     }
   }
-});
-
-test('the recovered scout tails carry spec_done / unrecoverable pills', () => {
-  assert.match(SERVER_SRC, /const specPills = recoveryPills\.buildRecoveryQuickReplies\('spec_done'\)/,
-    'a recovered scout turn that drafted a spec gets the spec pills');
-  assert.match(SERVER_SRC, /const noSpecPills = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/,
-    'a recovered scout turn with no spec text gets retry pills');
-  assert.match(SERVER_SRC, /recoveryPills\.SCOUT_NO_SPEC_BREADCRUMB/,
-    'the no-spec outcome is persisted, not emit-only (it used to vanish on reload)');
-});
-
-test('the failed-resume breadcrumbs carry retry pills', () => {
-  assert.match(SERVER_SRC, /const failedPills = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
-  assert.match(SERVER_SRC, /const goneP = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
-  assert.match(SERVER_SRC, /const landedPills = recoveryPills\.buildRecoveryQuickReplies\('code_done'\)/,
-    'a dead-worker tail whose commit landed gets code_done pills, not retry pills');
-});
-
-test('a cut dev chat turn repairs itself when its item resumes; no pass looks for one an older release cut', () => {
-  assert.equal(require('../src/services/turn-leftovers').backfillUnanswered, undefined);
-  assert.doesNotMatch(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-leftovers.js'), 'utf8'), /repairUnansweredTurn/);
-  // A classic turn is its item's, which repairs its own change when it
-  // resumes (services/turns.js resumeClassic).
-  assert.match(fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8'),
-    /await require\('\.\/turn-recovery'\)\.repairUnansweredTurn\(pool, sessionId\);/);
-});
-
-// ── 3. The unanswered-turn repair (turn-recovery.js repairUnansweredTurn) ──
-
-// Fake pool driven by a per-test script: the candidate sessions, the newest
-// user/assistant row per session, and the newest system row per session.
-function makeBackfillPool({ sessions = [], lastRows = {}, newestSystem = {} } = {}) {
-  const calls = [];
-  return {
-    calls,
-    sessions,
-    query: async (sql, params = []) => {
-      const text = String(sql);
-      calls.push({ sql: text, params });
-      if (/FROM chat_sessions/i.test(text) && /is_headless = FALSE/i.test(text)) {
-        return { rows: sessions };
-      }
-      if (/role IN \('user', 'assistant'\)/i.test(text)) {
-        const row = lastRows[params[0]];
-        return { rows: row ? [row] : [] };
-      }
-      if (/role = 'system'/i.test(text) && /SELECT content/i.test(text)) {
-        const row = newestSystem[params[0]];
-        return { rows: row ? [row] : [] };
-      }
-      // #3181: the stalled-turn notification reads the owner off the row.
-      if (/SET notify_on_done = FALSE[\s\S]*RETURNING user_id, app_id/i.test(text)) {
-        return { rows: [{ user_id: 9, app_id: 3 }], rowCount: 1 };
-      }
-      return { rows: [], rowCount: 0 };
-    },
-  };
-}
-
-function writes(pool) {
-  return pool.calls.filter((c) => /^\s*(INSERT|UPDATE)/i.test(c.sql.trim()));
-}
-
-test('repair: a row that already has pills is left alone', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 1, pr_number: 5, spec_md: 'x' }],
-    lastRows: { 1: { id: 10, role: 'assistant', content: 'done', metadata: { quickReplies: ['Make a tweak'] } } },
-  });
-  await restoreMissingQuickReplies();
-  assert.deepEqual(writes(backfillPool), [], 'no writes for an already-healthy session');
-  assert.deepEqual(broadcasts, []);
-});
-
-test('repair: a bare assistant row with a PR gets the code_done pills', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 2, pr_number: 41, spec_md: null }],
-    lastRows: { 2: { id: 20, role: 'assistant', content: "I'll have the agent do that.", metadata: {} } },
-  });
-  await restoreMissingQuickReplies();
-  const w = writes(backfillPool);
-  assert.equal(w.length, 1);
-  assert.match(w[0].sql, /UPDATE chat_session_messages/);
-  assert.match(w[0].sql, /'\{quickReplies\}'/);
-  assert.deepEqual(JSON.parse(w[0].params[0]),
-    recoveryPills.buildRecoveryQuickReplies('code_done'));
-  assert.equal(w[0].params[1], 20, 'patched the row the client actually reads');
-});
-
-test('repair: a spec but no PR gets the spec_done pills', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 3, pr_number: null, spec_md: '## User-facing changes\n\nx' }],
-    lastRows: { 3: { id: 30, role: 'assistant', content: 'Scouting.', metadata: {} } },
-  });
-  await restoreMissingQuickReplies();
-  assert.deepEqual(JSON.parse(writes(backfillPool)[0].params[0]),
-    recoveryPills.buildRecoveryQuickReplies('spec_done'));
-});
-
-test('repair: neither PR nor spec falls back to unknown_state', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 4, pr_number: null, spec_md: '   ' }],
-    lastRows: { 4: { id: 40, role: 'assistant', content: 'Hello.', metadata: {} } },
-  });
-  await restoreMissingQuickReplies();
-  assert.deepEqual(JSON.parse(writes(backfillPool)[0].params[0]),
-    recoveryPills.buildRecoveryQuickReplies('unknown_state'));
-});
-
-test('repair: a trailing user row gets the missed-reply breadcrumb + resend pill', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 5, pr_number: null, spec_md: null }],
-    lastRows: { 5: { id: 50, role: 'user', content: 'Make the leaderboard sort by score', metadata: {} } },
-    newestSystem: { 5: { content: 'Thinking about your request...' } },
-  });
-  await restoreMissingQuickReplies();
-  const w = writes(backfillPool).filter((c) => /chat_session_messages/.test(c.sql));
-  assert.equal(w.length, 1);
-  assert.match(w[0].sql, /INSERT INTO chat_session_messages/);
-  assert.equal(w[0].params[1], recoveryPills.UNANSWERED_BREADCRUMB);
-  // #3181: a turn that died before answering is a session that stopped
-  // before finishing, and its owner is told so, not left to find the row.
-  const stalled = backfillPool.calls.find((c) => /INSERT INTO notifications[\s\S]*'session_stalled'/.test(c.sql));
-  assert.ok(stalled, 'the owner gets a session_stalled notification');
-  assert.deepEqual(stalled.params, [9, 3, 5]);
-  assert.deepEqual(JSON.parse(w[0].params[2]).quickReplies,
-    ['Make the leaderboard sort by score', "What's the current state?"]);
-
-  const status = broadcasts.find((b) => b.event === 'status');
-  assert.ok(status, 'the breadcrumb is broadcast so an open tab repaints');
-  assert.equal(status.text, recoveryPills.UNANSWERED_BREADCRUMB);
-  assert.deepEqual(status.quickReplies,
-    ['Make the leaderboard sort by score', "What's the current state?"]);
-});
-
-test('repair: the missed-reply breadcrumb is not posted twice across boots', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 6, pr_number: null, spec_md: null }],
-    lastRows: { 6: { id: 60, role: 'user', content: 'Make it blue', metadata: {} } },
-    newestSystem: { 6: { content: recoveryPills.UNANSWERED_BREADCRUMB } },
-  });
-  await restoreMissingQuickReplies();
-  assert.deepEqual(writes(backfillPool), [], 'a second boot must not duplicate the breadcrumb');
-});
-
-test('repair: a question turn is skipped (answer chips take precedence)', async () => {
-  backfillPool = makeBackfillPool({
-    sessions: [{ id: 7, pr_number: null, spec_md: null }],
-    lastRows: {
-      7: {
-        id: 70, role: 'assistant', content: '1. Which header?',
-        metadata: { suggestions: [{ question: 'Which header?', answers: ['The top bar'] }] },
-      },
-    },
-  });
-  await restoreMissingQuickReplies();
-  assert.deepEqual(writes(backfillPool), []);
 });

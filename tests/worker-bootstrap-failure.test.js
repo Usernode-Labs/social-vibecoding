@@ -3,11 +3,10 @@
 // Three production sessions on 2026-09-02 died 212-252ms after their
 // container spawned, and every layer between git and the user threw the
 // reason away: worker-run.sh merged git's stderr into stdout and `die`d with
-// a fixed string, `_awaitWarmReady` turned that marker straight into
-// `new Error('clone failed')` with none of the preceding lines, and
-// `describeTurnError` had no branch for it. The container that still held
-// the answer in `docker logs` was reaped, unread, at the start of the next
-// attempt. Two users then spent real budget chasing a GitHub auth problem
+// a fixed string, and `_awaitWarmReady` turned that marker straight into
+// `new Error('clone failed')` with none of the preceding lines. The
+// container that still held the answer in `docker logs` was reaped, unread,
+// at the start of the next attempt. Two users then spent real budget chasing a GitHub auth problem
 // that does not exist on this path (the worker clones anonymously and holds
 // no credentials at all).
 //
@@ -151,7 +150,6 @@ test('a clone failure carries git\'s own words, the phase, and the log tail', as
     assert.equal(err.bootstrapPhase, 'clone', 'names how far bootstrap got');
     assert.equal(err.bootstrapContainerName, 'usernode-worker-1');
     assert.equal(err.bootstrapAttempts, 3, 'records how many attempts were spent');
-    assert.ok(worker.isBootstrapError(err));
   } finally { restore(); }
 });
 
@@ -254,7 +252,6 @@ test('a checkout failure is NOT retried — the branch will not fix itself', asy
     assert.match(err.message, /^checkout failed: /);
     assert.equal(spawns(), 1);
     assert.equal(err.bootstrapAttempts, 1);
-    assert.ok(worker.isBootstrapError(err));
     assert.ok(!worker.isRetryableBootstrapError(err));
   } finally { restore(); }
 });
@@ -266,26 +263,24 @@ test('a private repo is refused once, before any container is spawned', async ()
     assert.match(err.message, /repo is private/);
     assert.equal(spawns(), 0, 'never even started a container');
     assert.equal(calls.filter((c) => c.args?.[0] === 'run').length, 0);
-    // Deterministic, so it is not a bootstrap error for retry/copy purposes.
-    assert.ok(!worker.isBootstrapError(err));
+    // Deterministic, so it is not retried.
+    assert.ok(!worker.isRetryableBootstrapError(err));
   } finally { restore(); }
 });
 
 test('classification keys off the stable marker prefix, never git\'s wording', () => {
   const { worker, restore } = loadWorker();
   try {
-    const { isBootstrapError: isBoot, isRetryableBootstrapError: isRetry } = worker;
+    const { isRetryableBootstrapError: isRetry } = worker;
     // The whole point of slice 1 is that the text after the colon now VARIES.
-    assert.ok(isBoot(new Error('clone failed: fatal: could not read Username')));
-    assert.ok(isBoot(new Error('clone failed: fatal: Could not resolve host')));
+    assert.ok(isRetry(new Error('clone failed: fatal: could not read Username')));
+    assert.ok(isRetry(new Error('clone failed: fatal: Could not resolve host')));
     assert.ok(isRetry(new Error('clone failed: anything at all')));
-    assert.ok(isBoot(new Error('warm-ready timeout for usernode-worker-9')));
     assert.ok(isRetry(new Error('warm-ready timeout for usernode-worker-9')));
-    assert.ok(isBoot(new Error('warm wrapper exited before warm-ready (code=1)')));
     assert.ok(!isRetry(new Error('warm wrapper exited before warm-ready (code=1)')),
       'a wrapper that died structurally will die the same way again');
-    assert.ok(!isBoot(new Error('boom')));
-    assert.ok(!isBoot(null));
+    assert.ok(!isRetry(new Error('boom')));
+    assert.ok(!isRetry(null));
   } finally { restore(); }
 });
 
@@ -374,7 +369,6 @@ test('a Kubernetes warm-ready timeout gives up after three attempts', async () =
     const err = await expectReject(() => worker.ensureWorker(12, ENSURE_ARGS));
     assert.equal(calls.length, 3);
     assert.equal(err.bootstrapAttempts, 3);
-    assert.ok(worker.isBootstrapError(err));
   } finally { restore(); }
 });
 
@@ -384,7 +378,6 @@ test('a Kubernetes worker that cannot start at all is not retried', async () => 
     const err = await expectReject(() => worker.ensureWorker(13, ENSURE_ARGS));
     assert.equal(calls.length, 1);
     assert.equal(err.bootstrapReason, 'image_unavailable');
-    assert.ok(worker.isBootstrapError(err));
     assert.ok(!worker.isRetryableBootstrapError(err));
   } finally { restore(); }
 });

@@ -137,7 +137,9 @@ test('#6390: someone else\'s bot gets the greyed reading button, never Ask', () 
 test('#6532: a ready build waiting its turn says the server\'s Ready to build, never Building', () => {
   const { AppView } = makeAppView();
   const leadFor = (line, extra) => plain(AppView._requestStatusView(baseIssue({ standing: standing('building', { line, ...extra }) }))).lead;
-  assert.equal(leadFor({ code: 'queued', place: 1 }), 'Ready to build · Number 1 in line', 'next in line says so, as the progress card does');
+  // 13 Nov 2026: and whose line it is, and that it starts by itself.
+  assert.equal(leadFor({ code: 'queued', place: 1 }), 'Ready to build. Number 1 in Homeroom bot’s line; it starts by itself.', 'next in line says so');
+  assert.equal(leadFor({ code: 'queued' }), 'Ready to build. Waiting its turn in Homeroom bot’s line; it starts by itself.', 'with no place known');
   assert.equal(leadFor({ code: 'held_builds' }), 'Ready to build · Waiting for one of the project\'s builds to finish');
   assert.equal(leadFor({ code: 'held_waiting' }), 'Ready to build · Waiting for changes up for a vote to be decided');
   assert.equal(leadFor(null), 'Building.', 'a build that has really started says so');

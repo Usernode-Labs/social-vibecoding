@@ -140,19 +140,17 @@ async function run(pool, target, { renew = async () => {}, signal = null } = {})
     current = await check();
     const by = target.userId == null ? 'homeroom' : current.username;
     const text = `Stopped${by ? ` by @${by}` : ''} (forced).`;
-    const quickReplies = require('./recovery-pills').turnFallbackQuickReplies({ outcome: 'stopped' });
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        SELECT $1, 'system', $2, $3::jsonb WHERE NOT EXISTS
          (SELECT 1 FROM chat_session_messages WHERE session_id = $1 AND metadata->>'workerStopRequest' = $4)`,
-      [target.sessionId, text, JSON.stringify({ quickReplies, workerStopRequest: target.requestId }), target.requestId]);
+      [target.sessionId, text, JSON.stringify({ workerStopRequest: target.requestId }), target.requestId]);
     await checkpoint();
-    const bus = require('./session-bus'); const ws = require('./ws');
+    const ws = require('./ws');
     for (const [index, event] of [
-      { type: 'status', text, quickReplies }, { type: 'stopped', phase: null, by, forced: true }, { type: 'done' },
+      { type: 'status', text }, { type: 'stopped', phase: null, by, forced: true }, { type: 'done' },
     ].entries()) {
       const data = { ...event, _seq: `force-${target.requestId}-${index}` };
-      try { bus.publish(target.sessionId, data); } catch {}
       try { ws.broadcastGlobal({ ...data, sessionId: target.sessionId, event: event.type, type: 'session_event' }); } catch {}
     }
     log.info('worker-stop', 'Turn force-stopped', { sessionId: target.sessionId, removed, retained });

@@ -216,22 +216,22 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
-  assert.match(KANBAN, /sessionLink: false,/, 'and draws no session line under a column card');
-  assert.match(LIST_ROWS, /detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\}/);
+  assert.ok(!/sessionLink/.test(KANBAN + LIST_ROWS + FOLD), 'and no surface is asked for a session line under a card');
+  assert.match(LIST_ROWS, /detail=\{fold\.detail\} \/>/);
   // #1884 round two: "Open card" LEADS to the item's page on both surfaces,
   // so there is no mode to pass and no branch to take — one anchor, one
   // label, whichever screen the card was reached from.
   assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
   assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{t\('project:card\.fold\.openCard'\)\}<\/a>\s*: undefined;/);
   assert.equal(message('project:card.fold.openCard'), 'Open card');
-  // #1886: no page link under the sheet any more. The one line the sheet
-  // still draws is #1887's, on a card about the viewer's OWN session.
+  // #1886: no page link under the sheet any more. #1887's "Open session ›"
+  // line, on a card about the viewer's OWN session, went with the dev chat
+  // it opened: "Open card" leads to the same change page, so the sheet draws
+  // no line under it at all.
   assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
   assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
-  assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
-  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>\{t\('project:card\.fold\.openSession'\)\}<\/a>\s*<\/div>\s*\) : null\}/,
-    'the session link, on the Workshop, and nothing beside it');
-  assert.equal(message('project:card.fold.openSession'), 'Open session ›');
+  assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 0, 'no line under the sheet');
+  assert.ok(!/data-ws-open-session|sessionHref/.test(FOLD), 'and no session link anywhere on the card');
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.ok(!/\{'Open page ›'\}|'Close card' : 'Open card'/.test(unfolded),
     'and no second step: the pill is the page link on its first tap');
@@ -246,7 +246,7 @@ test('the board unfolds nothing in place: ?cards=open draws the fold’s open sh
   assert.match(KANBAN, /const host = hostRef\.current;\s*if \(!host \|\| !unfolded\) return;\s*callAppView\('_fillKudosHosts', host\);/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
-  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\} \/>/);
+  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // The Workshop's By category draws the board's rows (#4486), so it no
   // longer imports the fold's row at all; `openHref` rides the same import
@@ -1779,7 +1779,19 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 733 → 734: +1 (#6643): a change held for an admin says so on its card,
   // with the reason. No existing check opens that demo card's warning, and
   // a hold is a state no other route reaches. 734 leaves 146 slots.
-  checkCap.assertPinned(DAPP.tests.length, 734);
+  // 734 → 735: +1 (Admin › Onboarding flows): the new section's own route,
+  // which no existing check opens, drawn on its demo payload with its five
+  // views. 735 leaves 145 slots.
+  // 735 → 718: −17 (15 Nov 2026, agent chats, dev chats and headless runs
+  // retired) the checks of the agent session pane, the dev chat's spec
+  // viewer, chat sharing and the auto-solve work states went with them;
+  // three were re-pointed to the old addresses' new landings. 718 leaves 162 slots.
+  // 718 → 717: −1 (15 Nov 2026) Settings › Agent instructions & skills retired
+  // with the builds that copied those files into the worker. 717 leaves 163 slots.
+  // 717 → 715: −2 (15 Nov 2026) the restart-recovery and interrupted-reply
+  // pill fixtures (#786) went with the session Mayor's quick replies. 715
+  // leaves 165 slots.
+  checkCap.assertPinned(DAPP.tests.length, 715);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

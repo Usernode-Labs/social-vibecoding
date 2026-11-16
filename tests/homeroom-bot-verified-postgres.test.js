@@ -201,7 +201,8 @@ test('the verified-accounts rule against the full PostgreSQL schema', { timeout:
     const said = await dm.noteUserMessage(pool, {}, { user: ada, conversationId, message: hi.message, deps: { mayor } });
     const text = await conversations.getMessage(pool, ada, conversationId, said.messageId);
     assert.equal(text.content, dm.VERIFY_TEXT);
-    assert.equal(text.reply.id, hi.message.id);
+    // 14 Nov 2026: every message is in a thread; the reply is under theirs.
+    assert.equal(text.threadRootId, hi.message.id);
     const meta = text.metadata.homeroomBot;
     assert.deepEqual([meta.kind, meta.status, meta.signals], ['verify', 'open', ['phone', 'x', 'github']]);
     assert.deepEqual(meta.actions.map((a) => [a.id, a.label, a.type]), [['verify_account', 'Verify', 'open']]);

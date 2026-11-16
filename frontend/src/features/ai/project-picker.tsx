@@ -18,10 +18,12 @@
  * applies at once, so the lists change behind the panel as you go; Done
  * only closes. A project picked here joins the rail as a chip.
  *
- * From 768px it hangs under the More chip, right edges together, and closes
- * on a press outside it, Escape, or the page scrolling under it. On a phone
- * it is a sheet from the floor, handed to the native kit when there is one,
- * as the community switcher's is (features/workshop/community-switcher.tsx).
+ * From 768px it hangs under the More chip, right edges together, sliding
+ * right to stay 8px inside the window when the chip is near its left edge,
+ * and closes on a press outside it, Escape, or the page scrolling under it.
+ * On a phone it is a sheet from the floor, handed to the native kit when
+ * there is one, as the community switcher's is
+ * (features/workshop/community-switcher.tsx).
  *
  * Rendered only while open, into document.body: nothing here is in the
  * prerendered shell.
@@ -38,6 +40,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import type { ProjectTally } from './model';
+import { pickerMenuBox } from './picker-box';
 import { SmallTile } from './small-tile';
 
 interface PickerProps {
@@ -171,10 +174,10 @@ function PickerMenu({ anchor, ...props }: PickerProps & { anchor: DOMRect }): Re
       window.removeEventListener('resize', onResize);
     };
   }, []);
-  const style = {
-    top: `${Math.round(anchor.bottom + 8)}px`,
-    right: `${Math.max(8, Math.round(window.innerWidth - anchor.right))}px`,
-  };
+  // Right edges together when there is room; slid right to 8px inside the
+  // window when the chip sits near its left edge (#6675, ./picker-box.ts).
+  const box = pickerMenuBox(anchor, window.innerWidth);
+  const style = { top: `${box.top}px`, left: `${box.left}px` };
   return (
     <div
       ref={panel}

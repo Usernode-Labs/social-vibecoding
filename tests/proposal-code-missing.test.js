@@ -358,13 +358,11 @@ test('a change underway is read live before anything runs on it: gone, pushed ba
   assert.equal(await codeMissing.branchGone({ query: async () => { throw new Error('pool gone'); } }, change, { readRef }), null);
   assert.ok(warned.length >= 2, 'a failed read is logged');
 
-  // What the Mayor is told, and what the change says.
-  assert.match(codeMissing.dispatchRefusal(41), /^code_missing: change 41's code didn't come across/);
-  assert.match(codeMissing.dispatchRefusal(41), /Do not suggest retrying\. Offer to start a new change from the current version/);
+  // What the change says.
   assert.equal(codeMissing.BRANCH_GONE, "This change's code didn't come across when Homeroom moved off GitHub, so it can't be continued here. "
     + 'Nothing was changed. Start a new change from the current version (its plan comes with it), '
     + "or wait: Homeroom restores the code when GitHub's copy arrives.");
-  assert.doesNotMatch(codeMissing.BRANCH_GONE + codeMissing.dispatchRefusal(41), /—/);
+  assert.doesNotMatch(codeMissing.BRANCH_GONE, /—/);
 });
 
 // native-pulls / native-merge with their database stubbed: the app lookup
@@ -674,47 +672,21 @@ test('a promote of a change whose branch did not come across says so, before any
   assert.match(platform, /\['session_state_changed', 409\], \['code_missing', 409\],/);
 });
 
-test('a copy of an auto run, a CLI hand-off upload and a local agent\'s upload refuse with code_missing, not a fallback or a 503', () => {
-  const sessions = read('src/routes/sessions.js');
-  const clone = sessions.slice(sessions.indexOf("router.post('/api/sessions/:id/clone-headless'"));
-  const refusedAt = clone.indexOf('if (await codeMissing.branchGone(pool, src) === true) {');
-  assert.ok(refusedAt > 0, 'the copy reads the run\'s branch live');
-  for (const later of ['sessionLifecycle.freeUserSlot(', 'sessionLifecycle.claimGlobalSlot(', "op: 'branch.ensure'"]) {
-    assert.ok(refusedAt < clone.indexOf(later), `before ${later}: no slot, no branch off main`);
-  }
-  assert.match(clone.slice(refusedAt, refusedAt + 200), /return res\.status\(409\)\.json\(\{ error: codeMissing\.BRANCH_GONE, code: codeMissing\.CODE \}\);/);
-
-  // Both uploads are one conductor operation (`proposal.commit`), which
-  // answers each route's refusal; the routes answer what it says.
-  for (const rel of ['src/routes/proposal-handoff.js', 'src/routes/cli-agent.js']) {
-    assert.match(read(rel), /op: 'proposal\.commit'/, `${rel}: the upload is the conductor's`);
-  }
+test('a CLI hand-off upload refuses with code_missing, not a fallback or a 503', () => {
+  // The upload is one conductor operation (`proposal.commit`), which answers
+  // the route's refusal; the route answers what it says.
+  assert.match(read('src/routes/proposal-handoff.js'), /op: 'proposal\.commit'/, 'the upload is the conductor\'s');
   const op = read('src/services/proposal-commit-operation.js');
   const upload = op.slice(op.indexOf('github.createProposalCommit('));
   const refusal = op.slice(op.indexOf('async function hostRefusal('));
-  assert.ok(upload.includes('hostRefusal(pool, request, session, err)'), 'a host refusal is read for what it is');
+  assert.ok(upload.includes('hostRefusal(pool, session, err)'), 'a host refusal is read for what it is');
   const gone = refusal.indexOf('if (err.status === 404 && await codeMissing.branchGone(pool, session) === true) {');
   assert.ok(gone > 0, 'a 404 is read for what it is');
   assert.ok(gone < refusal.indexOf('githubBudget.githubUnavailableBody(err)'), 'before the 503');
   assert.match(refusal.slice(gone, gone + 220), /return \{ status: 409, error: codeMissing\.CODE, message: codeMissing\.BRANCH_GONE \};/);
 });
 
-test('the way on: start_change carries a change\'s plan to a new change with its own branch, never the old one', () => {
+test('a refusal\'s code beside its sentence reaches a connector\'s caller as that code', () => {
   const tools = read('src/services/mcp-tools.js');
-  const start = tools.slice(tools.indexOf("server.registerTool('start_change'"), tools.indexOf("server.registerTool('promote_change'"));
-  assert.match(start, /fromChangeId: z\.number\(\)\.int\(\)\.positive\(\)\.max\(2147483647\)\.optional\(\)/);
-  assert.match(start, /\.\.\.\(fromChangeId \? \{ fromChangeId \} : \{\}\),/);
-  // A refusal's code beside its sentence reaches the Mayor as that code.
   assert.match(tools, /const besideCode = !coded && typeof body\.code === 'string' && \/\^\[a-z_\]\+\$\/\.test\(body\.code\) \? body\.code : null;/);
-
-  const sessions = read('src/routes/sessions.js');
-  const route = sessions.slice(sessions.indexOf("router.post('/api/apps/:slug/sessions'"),
-    sessions.indexOf("router.post('/api/apps/:slug/issues/:number/headless-session'"));
-  const fromAt = route.indexOf('SELECT id, spec_md, spec_html FROM chat_sessions');
-  assert.ok(fromAt > 0 && fromAt < route.indexOf('agentSessions.prepareChangeStart('),
-    'read, and refused when it is not theirs, before the active change is parked');
-  assert.match(route, /WHERE id = \$1 AND app_id = \$2 AND user_id = \$3 AND is_headless = FALSE/, 'one of theirs, on this app');
-  assert.match(route, /VALUES \(\$1, \$2, NULL, 'active',/, 'a branch of its own, made from the current version at its first turn');
-  assert.match(route, /UPDATE chat_sessions SET spec_md = \$2, spec_html = \$3 WHERE id = \$1/);
-  assert.match(route, /INSERT INTO chat_session_specs \(session_id, version, content, content_html\)\s+SELECT \$1, version, content, content_html FROM chat_session_specs WHERE session_id = \$2/);
 });

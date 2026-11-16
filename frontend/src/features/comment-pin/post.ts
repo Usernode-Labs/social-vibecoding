@@ -78,10 +78,10 @@ export const MAX_PICTURES = 3;
 /** The server's own limit on pins per request (MAX_PINS_PER_ISSUE): the most comments one request takes. */
 export const MAX_COMMENTS = 8;
 
-/** `Change: #app/<slug>/dev/sessions/<id>`, once, when the pin was taken in a change's preview; else ''. */
+/** `Change: #app/<slug>/dev/proposals/<id>`, once, when the pin was taken in a change's preview; else ''. */
 export function changeLine(preview: number | null | undefined, slug: string | null | undefined): string {
   if (!preview || !slug) return '';
-  return `Change: #app/${slug}/dev/sessions/${preview}`;
+  return `Change: #app/${slug}/dev/proposals/${preview}`;
 }
 
 /** Several comments' words, numbered, a paragraph each; one comment's, as they are. */

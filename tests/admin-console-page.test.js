@@ -157,6 +157,8 @@ test('the console island imports every admin module, console first', () => {
     // estimates are kept honest against what changes actually cost.
     'admin-model-costs',
     'admin-node',
+    // Onboarding flows: every person as one thread, beside Journey.
+    'admin-onboarding-flows',
     'admin-overview', 'admin-push', 'admin-reports', 'admin-rollover',
     // Sign-in providers: Continue with Apple / Google, set up with each one's keys.
     'admin-sign-in',
@@ -220,7 +222,7 @@ test('the menu carries every section, grouped, with no external tools left', () 
     'overview', 'status', 'node', 'push', 'merges', 'rollover', 'staging-reap',
     'seasons', 'season-events', 'challenge-templates',
     'users', 'codes', 'limits', 'waitlist', 'onchain-accounts', 'user-activities',
-    'journey', 'analytics', 'estimator', 'gallery', 'features',
+    'journey', 'onboarding-flows', 'analytics', 'estimator', 'gallery', 'features',
     'campaigns', 'db-export', 'mail',
     'settings', 'app-version', 'sql-console', 'api-tester',
   ];

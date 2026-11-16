@@ -98,7 +98,8 @@ export function collect(offset = { x: 0, y: 0 }) {
     ['header-title', '#header-title'],
     ['bot-list', '#ai-screen .ai-drawer-list, #ai-screen [data-ai-list]'],
     ['bot-main', '#ai-main-pane'],
-    ['bot-main-head', '#ai-main-pane .ai-main-head'],
+    // 14 Nov 2026: the column's head is the thread's (or the new chat's) own; Main Chat's is gone.
+    ['bot-main-head', '#ai-main-pane .messages-thread-header'],
     ['bot-divider', '#ai-main-divider'],
     ['side-panel', '#platform-side-panel'],
     ['side-panel-head', '#platform-side-panel .side-panel-head'],

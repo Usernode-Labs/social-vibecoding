@@ -20,9 +20,9 @@
 // writes, as NOW() in its SQL or from `ctx.at`, is that instant on both,
 // never a read of either side's own clock.
 //
-// Reserved ids: 990840-990895, across every table here, beside the shots
-// session copies (990896-990899, shots-fixtures.js). tests/staging-demo-id-
-// ranges.test.js keeps the staging seeds and mocks out of the block.
+// Reserved ids: 990840-990895, across every table here.
+// tests/staging-demo-id-ranges.test.js keeps the staging seeds and mocks out
+// of the block.
 //
 // The states are written by the DEPLOYED platform's copy of this file, not
 // by either revision under test, so a state a proposal adds here reaches
@@ -34,11 +34,6 @@ const dbRetry = require('./db-retry');
 const shotsFixtures = require('./shots-fixtures');
 
 const IDS = Object.freeze({
-  runningSession: 990840,
-  stoppingSession: 990841,
-  previewSession: 990842,
-  previewChange: 990843,
-  listSessions: Object.freeze([990844, 990845, 990846, 990847, 990848]),
   proposal: 990849,
   onboardingTemplates: Object.freeze([990850, 990851, 990852]),
   alwaysOpenTemplate: 990853,
@@ -76,8 +71,7 @@ const FIXTURE_SEASON_ID = 900500;
 const FIXTURE_EVENT_ID = 900501;
 // The one of its three cards the organiser has not closed.
 const FIXTURE_EVENT_CHALLENGE_ID = 900507;
-// A real staging build's preview address (.invalid never resolves): the
-// same one the staging agent-build fixture uses.
+// A staging build's preview address (.invalid never resolves).
 const PREVIEW_URL = 'https://staging-fixture-preview.invalid';
 // Rows without a reserved id are told apart by these.
 const FIXTURE_MARK = 'shots-demo';
@@ -147,8 +141,6 @@ const LOW_ALLOWANCE = Object.freeze({ limitCents: 5000, leftCents: 400 });
 // three quarters done (#4727's case: the bar follows the slower half).
 const CHECKS_PART_WAY = Object.freeze({ ran: 620, expected: 840, unit: 19240 });
 
-const sessionPath = (id) => `/#messages/agent/${id}`;
-
 // ── Shape ────────────────────────────────────────────────────────────────
 
 async function columnsOf(client, tables) {
@@ -173,7 +165,6 @@ async function hasShape(client, needs) {
 
 // Every reserved id a state writes must be free on this side.
 const TAKEN_SQL = Object.freeze({
-  agent_sessions: 'SELECT COUNT(*)::int AS taken FROM agent_sessions WHERE id = ANY($1::bigint[])',
   chat_sessions: 'SELECT COUNT(*)::int AS taken FROM chat_sessions WHERE id = ANY($1::bigint[])',
   challenge_templates: 'SELECT COUNT(*)::int AS taken FROM challenge_templates WHERE id = ANY($1::bigint[])',
   challenges: 'SELECT COUNT(*)::int AS taken FROM challenges WHERE id = ANY($1::bigint[])',
@@ -185,11 +176,6 @@ async function idsFree(client, table, ids) {
   return rows[0].taken === 0;
 }
 
-const AGENT_SESSION_COLUMNS = ['id', 'user_id', 'title', 'title_source', 'status', 'focus_app_id',
-  'focus_context', 'active_change_id', 'last_activity_at', 'created_at'];
-const MESSAGE_COLUMNS = ['session_id', 'agent_session_id', 'role', 'content', 'metadata', 'created_at'];
-const CHANGE_COLUMNS = ['id', 'app_id', 'user_id', 'branch_name', 'session_title', 'status',
-  'agent_session_id', 'created_at', 'last_activity_at'];
 const WEEKLY_TEMPLATE_COLUMNS = ['id', 'category', 'goal', 'task', 'reward', 'description', 'metric_type',
   'metric_target', 'metric_label', 'illustration', 'created_at', 'updated_at'];
 const WEEKLY_CHALLENGE_COLUMNS = ['id', 'season_event_id', 'challenge_template_id', 'enabled', 'completed',
@@ -205,17 +191,6 @@ async function fixtureEventFound(client) {
 }
 
 // ── Writers ─────────────────────────────────────────────────────────────
-
-async function insertAgentSession(client, ctx, { id, title, minutesAgo }) {
-  await client.query(
-    `INSERT INTO agent_sessions
-       (id, user_id, title, title_source, status, focus_app_id, focus_context,
-        last_activity_at, created_at)
-     VALUES ($1, $2, $3::text, CASE WHEN $3::text IS NULL THEN 'auto' ELSE 'manual' END, 'open', $4,
-             '{}'::jsonb, NOW() - make_interval(mins => $5), NOW() - make_interval(mins => $5 + 20))`,
-    [id, ctx.member.id, title, ctx.appId, minutesAgo]
-  );
-}
 
 // A weekly challenge on the fixture event, in a week begun four days ago with
 // three left, which the "This week" header counts down ("3d left").
@@ -235,14 +210,6 @@ async function insertWeeklyChallenge(client, {
        (id, season_event_id, challenge_template_id, enabled, completed, display_order, schedule_start, schedule_end)
      VALUES ($1, $2, $3, TRUE, FALSE, $4, NOW() - INTERVAL '4 days', NOW() + INTERVAL '3 days')`,
     [challengeId, FIXTURE_EVENT_ID, templateId, order]
-  );
-}
-
-async function insertUserMessage(client, { agentSessionId, changeId = null, content, minutesAgo }) {
-  await client.query(
-    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
-     VALUES ($1, $2, 'user', $3, '{}'::jsonb, NOW() - make_interval(mins => $4))`,
-    [changeId, agentSessionId, content, minutesAgo]
   );
 }
 
@@ -338,17 +305,34 @@ async function roomToMake(client, ctx) {
   return rows.map((row) => Number(row.room));
 }
 
+// 14 Nov 2026: Main Chat is gone, and every message in the chat with the bot
+// is in a thread the Homeroom bot page lists. A state's messages are one
+// thread: its first message's row (private_threads), read up to `readTo`,
+// and where the thread opens. The columns a state names for it:
+const THREAD_COLUMNS = Object.freeze(['user_id', 'conversation_id', 'root_message_id', 'app_id', 'kind', 'state',
+  'last_read_message_id']);
+
+async function listThread(client, ctx, chat, { rootId, kind, appId = null, readTo }) {
+  await client.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state, last_read_message_id)
+     VALUES ($1, $2, $3, $4, $5, 'open', $6)`,
+    [ctx.member.id, chat.conversationId, rootId, appId, kind, readTo]
+  );
+  return `/#homeroom-bot/thread/${Number(rootId)}`;
+}
+
 // The bot's message to the member, and its record as news about one of
 // their requests (homeroom-bot-dm.js sendDm, then the record its sender
-// writes). Resolves the message's id.
+// writes). `threadRootId` is the thread it is a reply in. Resolves the
+// message's id.
 async function insertBotDm(client, ctx, chat, {
-  appId, issueNumber, kind, runId = null, content, key, metadata, minutesAgo,
+  appId, issueNumber, kind, runId = null, content, key, metadata, minutesAgo, threadRootId = null,
 }) {
   const sent = await client.query(
-    `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
-     VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(mins => $6))
+    `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at, thread_root_id)
+     VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - make_interval(mins => $6), $7)
      RETURNING id`,
-    [chat.conversationId, chat.botId, content, key, JSON.stringify({ homeroomBot: metadata }), minutesAgo]
+    [chat.conversationId, chat.botId, content, key, JSON.stringify({ homeroomBot: metadata }), minutesAgo, threadRootId]
   );
   const messageId = sent.rows[0].id;
   await client.query(
@@ -362,117 +346,6 @@ async function insertBotDm(client, ctx, chat, {
 // ── States ──────────────────────────────────────────────────────────────
 
 const STATES = [
-  {
-    // The Stop control and the stopping status exist only during a run, and
-    // these copies cannot start one ("LLM not configured"). Untitled, as a
-    // conversation is before its first reply: a working one draws a spinner
-    // in every list that shows it, and an untitled one stays out of the
-    // rail's Recents and the menu, which are on every screen. Messages lists
-    // it, and its own page is where the run is shown.
-    id: 'shots-demo-member-agent-runs-v1',
-    persona: 'member',
-    needs: {
-      agent_sessions: [...AGENT_SESSION_COLUMNS, 'active_turn'],
-      chat_session_messages: MESSAGE_COLUMNS,
-    },
-    free: (client) => idsFree(client, 'agent_sessions', [IDS.runningSession, IDS.stoppingSession]),
-    async install(client, ctx) {
-      for (const [id, stop] of [[IDS.runningSession, false], [IDS.stoppingSession, true]]) {
-        await insertAgentSession(client, ctx, { id, title: null, minutesAgo: 1 });
-        await insertUserMessage(client, {
-          agentSessionId: id, minutesAgo: 1,
-          content: 'Make the empty state on the dev board friendlier.',
-        });
-        await client.query(
-          `UPDATE agent_sessions SET active_turn = jsonb_build_object(
-             'id', $2::text, 'startedAt', NOW() - INTERVAL '40 seconds', 'phase', 'mayor')
-             || CASE WHEN $3 THEN jsonb_build_object(
-                  'stopRequestedAt', NOW() - INTERVAL '10 seconds', 'stopRequestedBy', $4::text)
-                ELSE '{}'::jsonb END
-           WHERE id = $1`,
-          [id, `shots-fixture-turn-${id}`, stop, ctx.member.username]
-        );
-      }
-      return {
-        shows: [
-          { state: 'An agent run in progress, in a conversation not yet named: the composer shows Stop (and Save draft once you type).',
-            path: sessionPath(IDS.runningSession) },
-          { state: 'An agent run whose Stop was pressed and is taking longer than expected (Retry stop), in a conversation not yet named.',
-            path: sessionPath(IDS.stoppingSession) },
-        ],
-      };
-    },
-  },
-  {
-    // A change of the member's whose staging preview has deployed: the
-    // preview card and its "Propose to group". The read-only admin's
-    // staging conversation has this card already; the member's copy does not.
-    id: 'shots-demo-member-change-preview-v1',
-    persona: 'member',
-    needs: {
-      agent_sessions: AGENT_SESSION_COLUMNS,
-      chat_sessions: [...CHANGE_COLUMNS, 'staging_url', 'check_state'],
-      chat_session_messages: MESSAGE_COLUMNS,
-    },
-    free: async (client) => await idsFree(client, 'agent_sessions', [IDS.previewSession])
-      && idsFree(client, 'chat_sessions', [IDS.previewChange]),
-    async install(client, ctx) {
-      await insertAgentSession(client, ctx, {
-        id: IDS.previewSession, title: '[shots fixture] A change with a deployed preview', minutesAgo: 3,
-      });
-      await client.query(
-        `INSERT INTO chat_sessions
-           (id, app_id, user_id, branch_name, session_title, status, agent_session_id,
-            staging_url, check_state, created_at, last_activity_at)
-         VALUES ($1, $2, $3, 'shots-fixture/member-preview', '[shots fixture] A change with a deployed preview',
-                 'active', $4, $5, 'passing', NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '3 minutes')`,
-        [IDS.previewChange, ctx.appId, ctx.member.id, IDS.previewSession, PREVIEW_URL]
-      );
-      await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1',
-        [IDS.previewSession, IDS.previewChange]);
-      await insertUserMessage(client, {
-        agentSessionId: IDS.previewSession, changeId: IDS.previewChange, minutesAgo: 10,
-        content: 'Add a short welcome line above the dev board.',
-      });
-      await client.query(
-        `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content, metadata, created_at)
-         VALUES ($1, $2, 'system', 'Staging deployed!', $3::jsonb, NOW() - INTERVAL '3 minutes')`,
-        [IDS.previewChange, IDS.previewSession, JSON.stringify({ stagingUrl: PREVIEW_URL, prNumber: null })]
-      );
-      return {
-        shows: [{
-          state: 'A change with a deployed preview: the preview card, Open preview and Propose to group (do not confirm the proposal).',
-          path: sessionPath(IDS.previewSession),
-        }],
-      };
-    },
-  },
-  {
-    // Enough titled sessions that the menu's Agent sessions list is cut off
-    // and offers "Show more" (it shows five).
-    id: 'shots-demo-member-agent-list-v1',
-    persona: 'member',
-    needs: { agent_sessions: AGENT_SESSION_COLUMNS },
-    free: (client) => idsFree(client, 'agent_sessions', IDS.listSessions),
-    async install(client, ctx) {
-      const titles = [
-        '[shots fixture] Tidy the settings page',
-        '[shots fixture] Sort the request list by votes',
-        '[shots fixture] A clearer empty inbox',
-        '[shots fixture] Bigger tap targets on the board',
-        '[shots fixture] Name the weekly digest',
-      ];
-      for (const [index, id] of IDS.listSessions.entries()) {
-        await insertAgentSession(client, ctx, { id, title: titles[index], minutesAgo: 30 + index * 15 });
-      }
-      return {
-        shows: [{
-          state: 'Six or more titled agent sessions, so the menu\'s Agent sessions list offers Show more.',
-          path: '/#messages',
-        }],
-      };
-    },
-  },
   {
     // A proposal up for a vote whose threshold has moved since voting opened
     // ("was N when voting opened"), with a vote of the member's cast on an
@@ -1022,7 +895,7 @@ const STATES = [
   {
     // A request whose change waits for approval (#4446): a change of the
     // member's up for a vote that names request #900017 as one it addresses
-    // (`linked_issues`, as the Mayor's addresses_issues writes it), so the
+    // (`linked_issues`, where a change's addressed requests are stored), so the
     // request's chip reads "Waiting for approval · you" and no Build it now
     // is offered beside it (app-view.js _issueWorkState and
     // _issueAwaitingApproval, read from routes/issues.js composeInProgress
@@ -1310,7 +1183,8 @@ const STATES = [
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
         'joined_at', 'last_read_message_id'],
       conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'idempotency_key', 'metadata',
-        'created_at'],
+        'created_at', 'thread_root_id'],
+      private_threads: THREAD_COLUMNS,
       homeroom_bot_requesters: ['app_id', 'issue_number', 'user_id', 'issue_title', 'first_version', 'asked_text',
         'created_at'],
       homeroom_bot_runs: ['id', 'app_id', 'issue_number', 'mode', 'verdict', 'determined', 'build_note',
@@ -1376,7 +1250,18 @@ const STATES = [
          RETURNING id`,
         [ctx.member.id, chat.conversationId, appId, `The plan for ${name}`]
       );
+      // The first version's thread, opened by the line that says its project
+      // is being set up (homeroom-bot-dm.js startFirstVersion); its plan and
+      // the thanks are replies in it.
+      const { rows: [opener] } = await client.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
+         VALUES ($1, $2, $3, 'shots-fixture-hrbot-first-version', $4::jsonb, NOW() - INTERVAL '40 minutes')
+         RETURNING id`,
+        [chat.conversationId, chat.botId, dm.firstVersionStartedText({ name }),
+          JSON.stringify({ homeroomBot: { kind: 'first_version_started', appSlug: FIRST_VERSION_SLUG, appName: name } })]
+      );
       const planMessage = await insertBotDm(client, ctx, chat, {
+        threadRootId: opener.id,
         appId, issueNumber: 1, kind: 'plan', runId: run.id, minutesAgo: 8, key: `hrbot-plan-${run.id}`,
         content: dm.planCardText({ appName: name, plan }),
         metadata: {
@@ -1387,6 +1272,7 @@ const STATES = [
       });
       await client.query('UPDATE bot_cards SET message_id = $2 WHERE id = $1', [action.id, planMessage]);
       const thanks = await insertBotDm(client, ctx, chat, {
+        threadRootId: opener.id,
         appId, issueNumber: 1, kind: 'activity', minutesAgo: 5, key: `hrbot-activity-run-${run.id}`,
         content: activity.thanksText(name),
         metadata: {
@@ -1401,10 +1287,11 @@ const STATES = [
         'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
         [chat.conversationId, ctx.member.id, thanks]
       );
+      const path = await listThread(client, ctx, chat, { rootId: opener.id, kind: 'first_version', appId, readTo: thanks });
       return {
         shows: [{
-          state: `Your chat with Homeroom bot: the plan for your new project ${name}, answered with Build it, and under it the bot's thanks for answering over the project's card, whose build line reads Building it. Nothing in it is unread.`,
-          path: `/#messages/${IDS.botConversation}`,
+          state: `Your thread with Homeroom bot named "${name}, first version", on the Homeroom bot page: the bot's line that it is setting ${name} up, the plan for it, answered with Build it, and under it the bot's thanks for answering over the project's card, whose build line reads Building it. Nothing in it is unread.`,
+          path,
         }],
       };
     },
@@ -1430,8 +1317,9 @@ const STATES = [
       conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
         'joined_at', 'last_read_message_id'],
-      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
         'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
       bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'details', 'status', 'source_issue_number', 'created_at'],
     },
@@ -1461,7 +1349,7 @@ const STATES = [
       const metadata = mayor.closeOfferMeta({ app, name, actionId: Number(action.id), issueNumber: number });
       const { rows: [offer] } = await client.query(
         `INSERT INTO conversation_messages
-           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+           (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
          VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-close-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
          RETURNING id`,
         [chat.conversationId, chat.botId, mayor.closeOfferText({ name, issueNumber: number, title, why }), ask.id,
@@ -1474,10 +1362,12 @@ const STATES = [
         'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
         [chat.conversationId, ctx.member.id, offer.id]
       );
+      // Their message is its own thread's first, and the offer its reply.
+      const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your chat with Homeroom bot, at the bottom: your message saying request #${number} is done, and the bot's offer quoting it to open a vote on closing it, with Propose to close and Keep it open, waiting for your answer. Nothing in it is unread. A tap on Propose to close cannot open the vote on these copies (the request is a staging mock GitHub does not have): the bot answers that it couldn't propose closing it just now.`,
-          path: `/#messages/${IDS.botConversation}`,
+          state: `Your thread with Homeroom bot that starts with your message saying request #${number} is done, on the Homeroom bot page: under it, the bot's offer to open a vote on closing it, with Propose to close and Keep it open, waiting for your answer. Nothing in it is unread. A tap on Propose to close cannot open the vote on these copies (the request is a staging mock GitHub does not have): the bot answers that it couldn't propose closing it just now.`,
+          path,
         }],
       };
     },
@@ -1502,8 +1392,9 @@ const STATES = [
       conversation_direct_pairs: ['conversation_id', 'user_low_id', 'user_high_id'],
       conversation_members: ['conversation_id', 'user_id', 'role', 'status', 'invited_by', 'responded_at',
         'joined_at', 'last_read_message_id'],
-      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'reply_to_id', 'idempotency_key',
+      conversation_messages: ['id', 'conversation_id', 'sender_id', 'content', 'thread_root_id', 'idempotency_key',
         'metadata', 'created_at'],
+      private_threads: THREAD_COLUMNS,
       bot_cards: ['id', 'user_id', 'conversation_id', 'message_id', 'app_id', 'kind', 'title',
         'details', 'status', 'created_at'],
       conversation_message_attachments: ['id', 'conversation_id', 'message_id', 'user_id', 'kind', 'filename',
@@ -1527,7 +1418,7 @@ const STATES = [
         related: [{ number: 6230, title: 'One detail column for plans and designs', relation: 'build_together', why: 'it is the same column' }],
         context: { saw: 'the insights page' },
         doneWhen: ['Insights show week by week, not only as a total', 'The same weeks are counted however the list is sorted'],
-        chatHref: '#homeroom-bot/main',
+        chatHref: '#homeroom-bot',
       };
       const { rows: [ask] } = await client.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, metadata, created_at)
@@ -1559,7 +1450,7 @@ const STATES = [
       ].join('\n');
       const { rows: [offer] } = await client.query(
         `INSERT INTO conversation_messages
-           (conversation_id, sender_id, content, reply_to_id, idempotency_key, metadata, created_at)
+           (conversation_id, sender_id, content, thread_root_id, idempotency_key, metadata, created_at)
          VALUES ($1, $2, $3, $4, 'shots-fixture-hrbot-file-offer', $5::jsonb, NOW() - INTERVAL '2 minutes')
          RETURNING id`,
         [chat.conversationId, chat.botId, content, ask.id, JSON.stringify({ homeroomBot: metadata })]
@@ -1590,10 +1481,12 @@ const STATES = [
         'UPDATE conversation_members SET last_read_message_id = $3 WHERE conversation_id = $1 AND user_id = $2',
         [chat.conversationId, ctx.member.id, offer.id]
       );
+      // Their message is its own thread's first, and the draft its reply.
+      const path = await listThread(client, ctx, chat, { rootId: ask.id, kind: 'idea', readTo: offer.id });
       return {
         shows: [{
-          state: `Your chat with Homeroom bot, at the bottom: your message asking for a request with the screenshot you attached under it, and the bot's reply quoting it with the drafted request under it, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
-          path: `/#messages/${IDS.botConversation}`,
+          state: `Your thread with Homeroom bot that starts with your message asking for a request, with the screenshot you attached under it, on the Homeroom bot page: under it, the bot's reply with the drafted request, ${name}, new request: ${title}, the same picture as a thumbnail, then Where (the insights page), Related (#6230 One detail column for plans and designs, build together) and Done when (two checks), and File it (filled) and Not now waiting for your answer. Nothing in it is unread. A tap on File it cannot file on these copies (a filing is a staging mock GitHub does not have): the bot answers that it couldn't file it just now.`,
+          path,
         }],
       };
     },
@@ -1856,13 +1749,12 @@ const STATES = [
     },
   },
   {
-    // A weekly building allowance nearly spent (#4784): the credits pill
-    // beside Send is red, and a new agent conversation shows the low-credits
-    // note above the send row. These copies spend nothing, so the shots of
-    // that change found a green pill (PR 4829, 2026-10-12). The full admin's,
-    // not the member's: the member is shot far more often, and on every one
-    // of their agent conversations and changes the pill would be red and the
-    // low-credits banner up. The allowance is set as an admin sets one
+    // A weekly building allowance nearly spent (#4784): Settings' AI credit
+    // line says what is left in red. These copies spend nothing, so the
+    // shots of that change found a full allowance (PR 4829, 2026-10-12). The
+    // full admin's, not the member's: the member is shot far more often, and
+    // theirs would read as nearly spent in every one of those shots. The
+    // allowance is set as an admin sets one
     // (users.weekly_limit_cents), so it reads the same whatever credit policy
     // a copy runs, and this week's spend is one day's row (limits.js
     // getWeeklyTotalsCents), on the pair's own date.
@@ -1892,8 +1784,8 @@ const STATES = [
       const dollars = (cents) => `$${(cents / 100).toFixed(2)}`;
       return {
         shows: [
-          { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: a new agent conversation, before its first message, has a red credits pill beside Send and the low-credits note above the send row.`,
-            path: '/#agent/new' },
+          { state: `Your weekly building allowance nearly spent, ${dollars(leftCents)} of ${dollars(limitCents)} left: Settings' AI credit line says what is left this week, in red.`,
+            path: '/#settings/api-key' },
         ],
       };
     },
@@ -1965,7 +1857,7 @@ const STATES = [
 // ── Context ─────────────────────────────────────────────────────────────
 
 // The personas, the platform app, and the member's membership of it, which a
-// genuine collaborator has (copyMemberAgentSession grants the same). `at` is
+// genuine collaborator has. `at` is
 // the pair's moment, for a state that works out a time in JavaScript.
 async function context(client, selfAppSlug, { grant = false, at = null } = {}) {
   const users = await client.query(

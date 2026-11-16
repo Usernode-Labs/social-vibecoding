@@ -2,9 +2,9 @@
 
 // `proposal.commit` (services/proposal-commit-operation.js) against the real
 // schema and kernel: a web runtime appends the request, a conductor runs it.
-// SEC-09: a local agent's commit, from a CLI hand-off's upload or a local
-// agent's build turn, is written on the conductor, never by the route's
-// process. What is pinned here is where claims and locks matter:
+// SEC-09: a commit a local coding agent made, a CLI hand-off's upload, is
+// written on the conductor, never by the route's process. What is pinned
+// here is where claims and locks matter:
 //
 //   - the commit, its record and the draft PR are steps, so a retry after a
 //     lost reply commits once and opens one PR;
@@ -15,8 +15,8 @@
 //     files kept, no lock held);
 //   - the hand-off's proposal lock orders the write after another writer's,
 //     and the head the route expected is read again under it;
-//   - a turn's lease and its requester's collab access are read again
-//     before its commit.
+//   - the hand-off is the only surface: a request naming another writes
+//     nothing.
 //
 // Only the code host and the preview machine's hand-off are faked.
 
@@ -34,7 +34,7 @@ const SHA = (c) => String(c).repeat(40).slice(0, 40);
 const BASE = SHA('0');
 const BASE_TREE = SHA('1');
 
-test('a local agent\'s commit is conductor work', { timeout: 120000 }, async (t) => {
+test('a CLI hand-off\'s commit is conductor work', { timeout: 120000 }, async (t) => {
   const admin = new Pool({ connectionString: process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres', connectionTimeoutMillis: 2000 });
   try { await admin.query('SELECT 1'); } catch (e) {
     await admin.end(); if (process.env.TEST_DATABASE_URL) throw e;
@@ -319,56 +319,21 @@ test('a local agent\'s commit is conductor work', { timeout: 120000 }, async (t)
     assert.equal(await kept(second.requestId), 0);
   });
 
-  await t.test('a build turn\'s commit becomes its head on the conductor; a lease or collab access lost before it writes nothing', async () => {
+  await t.test('the hand-off is the only surface: a request naming another is refused before any read or write', async () => {
+    const commitOperation = require('../src/services/proposal-commit-operation');
+    assert.deepEqual([...commitOperation.SURFACES], ['handoff']);
     const h = await handoff();
-    const turn = async (on = h) => {
-      const { rows: [lease] } = await pool.query(
-        `INSERT INTO session_agent_leases (session_id, user_id, label, expires_at)
-         VALUES ($1, $2, 'laptop', NOW() + INTERVAL '5 minutes') RETURNING id`, [on.sessionId, on.userId]);
-      const { rows: [tr] } = await pool.query(
-        `INSERT INTO local_agent_turns (session_id, lease_id, user_id, status, mode, prompt, base_sha, branch_name)
-         VALUES ($1, $2, $3, 'running', 'build', 'Add the button', $4, $5) RETURNING id`,
-        [on.sessionId, lease.id, on.userId, host.branches.get(on.branch).sha, on.branch]);
-      return { leaseId: String(lease.id), turnId: String(tr.id) };
-    };
-    const asTurn = (ids, n, on = h) => {
-      const p = upload(on, n, { expectedParent: host.branches.get(on.branch).sha });
-      return { ...p, input: { ...p.input, surface: 'turn', ...ids } };
-    };
-
-    const ids = await turn();
-    const { key, requestId } = await ask(asTurn(ids, 14));
-    await settle();
-    const done = (await instance(key)).data;
-    const head = host.branches.get(h.branch).sha;
-    assert.deepEqual(done, { ok: true, surface: 'turn', headSha: head, treeSha: SHA('f'), branch: h.branch, uploaded: true });
-    const { rows: [tr] } = await pool.query('SELECT head_sha, status FROM local_agent_turns WHERE id = $1', [ids.turnId]);
-    assert.deepEqual(tr, { head_sha: head, status: 'running' });
-    assert.equal(commits().at(-1).role, 'conductor');
-    assert.equal(await kept(requestId), 0);
-
-    // The lease is handed back after the route's check, before the conductor's.
     const before = host.calls.length;
-    const lost = await ask(asTurn(ids, 16));
-    await pool.query(`UPDATE session_agent_leases SET released_at = NOW(), release_reason = 'detached' WHERE id = $1`, [ids.leaseId]);
-    await settle();
-    assert.deepEqual((await instance(lost.key)).data, { ok: false, status: 409, error: 'lease_lost' });
+    const p = upload(h, 14);
+    const request = {
+      appId: p.appId, userId: p.userId, op: 'proposal.commit', requestId: randomUUID(),
+      input: { ...p.input, surface: 'turn', turnId: '1', leaseId: '1' },
+    };
+    const refused = (err) => err.permanent === true && /Unknown commit surface/.test(err.message);
+    await assert.rejects(commitOperation.authorize({ pool }, request, { id: h.userId }), refused);
+    await assert.rejects(commitOperation.run({ pool, config: {} }, request, { id: h.userId }, null), refused);
     assert.equal(host.calls.length, before, 'nothing reached the host');
-    const { rows: [after] } = await pool.query('SELECT head_sha FROM local_agent_turns WHERE id = $1', [ids.turnId]);
-    assert.equal(after.head_sha, head, 'the turn\'s head is unchanged');
-    assert.equal(await kept(lost.requestId), 0);
-
-    // On another change, its requester stops building there after the
-    // route's check.
-    const other = await handoff();
-    const next = await turn(other);
-    const removed = await ask(asTurn(next, 18, other));
-    await pool.query('DELETE FROM app_collaborators WHERE app_id = $1 AND user_id = $2', [other.appId, other.userId]);
-    await settle();
-    assert.deepEqual((await instance(removed.key)).data, { ok: false, status: 404, error: 'not_found' });
-    assert.equal(host.calls.length, before, 'nothing reached the host');
-    const { rows: [unmoved] } = await pool.query('SELECT head_sha FROM local_agent_turns WHERE id = $1', [next.turnId]);
-    assert.equal(unmoved.head_sha, null, 'the turn has no head');
-    assert.equal(await kept(removed.requestId), 0);
+    assert.equal((await row(h.sessionId)).handoff_uploaded_sha, null, 'nothing recorded');
+    assert.equal(await locksHeld(), 0);
   });
 });

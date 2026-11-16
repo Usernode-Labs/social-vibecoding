@@ -41,11 +41,6 @@ export interface RowFold {
    * it, which ~300px cannot hold (see fold.tsx).
    */
   detail?: DetailPlacement;
-  /**
-   * Whether the sheet draws #1887's "Open session ›" line under it. A column
-   * does not — there is no rule to style it with there (fold.tsx).
-   */
-  sessionLink?: boolean;
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
@@ -94,7 +89,7 @@ export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null
   switch (row.t) {
     case 'card':
       return fold
-        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} sessionLink={fold.sessionLink} />
+        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} />
         : <DevCard model={row.card} />;
     case 'divider':
       return (

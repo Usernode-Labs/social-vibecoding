@@ -667,14 +667,9 @@ test('an explicitly chosen agent beats sniffing the calling client', async () =>
 
 test('the browser flow round-trips its agent through client_id', async () => {
   // There is no `agent` column on external_agent_tasks, and #1049 did not
-  // add one: src/routes/dev-flow.js records the picked agent in client_id as
-  // 'usernode-web:<agent>', and normalizeAgent recovers it from that on a
-  // later read. This is what makes the walkthrough resumable — reload the
-  // page and the card still says "Building with Codex".
-  const ROUTE_SRC = fs.readFileSync(
-    path.join(__dirname, '../src/routes/dev-flow.js'), 'utf8'
-  );
-  assert.match(ROUTE_SRC, /usernode-web:/, 'the route stamps the agent into client_id');
+  // add one: a job the browser walkthrough prepared carries the picked agent
+  // in client_id as 'usernode-web:<agent>', and normalizeAgent recovers it
+  // from that on a later read.
   assert.equal(svc.normalizeAgent(null, 'usernode-web:claude-code'), 'claude-code');
   assert.equal(svc.normalizeAgent(null, 'usernode-web:codex'), 'codex');
 
@@ -2478,9 +2473,8 @@ test('only proposals actually up for a vote count, by either linkage', async () 
   // that as "in progress" and it is not yet a duplicate proposal. 'archived'
   // and 'merged' are over.
   assert.match(q.sql, /cs\.status IN \('promoted', 'merging'\)/);
-  // The Mayor's declared linkage, which is also what a connector submission
-  // records; and the dev chat started from the issue row before anything has
-  // been declared.
+  // The declared linkage, which is what a connector submission records; and
+  // a change started from the issue row before anything has been declared.
   // The job's requests go in as one array, so a job for several finds a
   // proposal for any of them.
   assert.match(q.sql, /cs\.linked_issues && \$2::int\[\]/);
@@ -2771,8 +2765,8 @@ test('the update work order says the same for a missing connector, in its own te
 });
 
 test('renderPreparedTask derives "started from the walkthrough" from client_id', async () => {
-  // The browser flow stamps `usernode-web:<agent>` into client_id
-  // (routes/dev-flow.js); that is the only record of where a job came from.
+  // A job the browser flow prepared carries `usernode-web:<agent>` in
+  // client_id; that is the only record of where a job came from.
   const row = {
     id: 77, fork_owner: 'someuser', fork_repo: 'recipe-box',
     branch_name: 'usernode/x', base_sha: BASE_SHA, issue_number: null, brief: 'x',
@@ -2887,7 +2881,7 @@ test('submit_work advertises every shape it accepts', () => {
   );
   const block = TOOLS_SRC.slice(
     TOOLS_SRC.indexOf("registerTool('submit_work'"),
-    TOOLS_SRC.indexOf("registerTool('start_platform_build'")
+    TOOLS_SRC.indexOf("registerTool('list_my_work_orders'")
   );
   assert.match(block, /a pushed branch, a patch, or an open PR/);
   assert.match(block, /NO GitHub write access is needed/);
@@ -4874,15 +4868,12 @@ test('the lease is a force-with-lease pinned to the commit the platform read', (
 
 
 // ── The stale-work-order fix ────────────────────────────────────────────
-//
-// Two readers, one row, and they want opposite things from an expired
-// reservation — the same split findOpenTaskBySession already documents.
 
-test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async () => {
+test('loadLatestOpenTaskForSlug still sees an expired row', async () => {
   const LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
 
-  // submitWork's `slug` + `branch` recovery: the default, and it must still
-  // see an expired row. That row is the only record of the base commit the
+  // submitWork's `slug` + `branch` recovery reads it, and it must still see
+  // an expired row. That row is the only record of the base commit the
   // pushed branch was cut from, and mirrorForkBranch runs its ancestry check
   // `if (baseSha)` — so filtering it here would drop base_mismatch protection
   // from exactly the long-running job most likely to need it.
@@ -4894,60 +4885,9 @@ test('loadLatestOpenTaskForSlug filters expiry only when the caller asks', async
     'recovery keeps seeing an expired task');
   assert.deepEqual(recovery[0].params, [3, 'recipe-box']);
 
-  // The walkthrough: opts in, because resumable is not the same as permanent.
-  const walkthrough = [];
-  await svc.loadLatestOpenTaskForSlug(
-    fakePool([[LOAD_SQL, [{ id: 7 }]]], walkthrough), 3, 'recipe-box', { unexpiredOnly: true }
-  );
-  assert.match(walkthrough[0].sql, /AND t\.expires_at > NOW\(\)/,
-    'an expired reservation stops pinning the launchpad');
-  // Same parameters either way: the filter is a literal, never interpolated
-  // user input.
-  assert.deepEqual(walkthrough[0].params, [3, 'recipe-box']);
-
-  // Still open to the caller's OWN rows for this app, both ways round.
-  for (const q of [recovery[0], walkthrough[0]]) {
-    assert.match(q.sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
-    assert.match(q.sql, /ORDER BY t\.id DESC LIMIT 1/);
-  }
-});
-
-test('discardTask abandons one open row of the caller\'s, for one app, and nothing else', async () => {
-  const queries = [];
-  const pool = fakePool([['UPDATE external_agent_tasks', [{ id: 4242 }]]], queries);
-  assert.equal(await svc.discardTask(pool, 3, 7, 4242), 4242);
-
-  const update = queries[0];
-  assert.match(update.sql, /SET status = 'abandoned'/,
-    "'abandoned' is the status the CHECK constraint already allows");
-  // Owner AND app AND still-open, all three: a replayed request must reach
-  // neither somebody else's reservation, nor one of the caller's own filed
-  // under a different app whose slug happens to be in the URL, nor reopen
-  // bookkeeping on one already submitted.
-  assert.match(update.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3 AND status = 'open'/);
-  assert.deepEqual(update.params, [4242, 3, 7]);
-
-  // Matching nothing is null, not a cheerful success — the route turns that
-  // into unknown_task rather than telling the user it put something away.
-  const q2 = [];
-  assert.equal(
-    await svc.discardTask(fakePool([['UPDATE external_agent_tasks', []]], q2), 3, 7, 4242),
-    null
-  );
-
-  // A junk id never reaches the database at all.
-  const q3 = [];
-  const junkPool = fakePool([['UPDATE external_agent_tasks', [{ id: 1 }]]], q3);
-  for (const bad of [0, -3, 1.5, NaN, null, undefined, '1; DROP TABLE apps']) {
-    assert.equal(await svc.discardTask(junkPool, 3, 7, bad), null, `${bad} is not a task id`);
-  }
-  assert.equal(q3.length, 0, 'no query is issued for any of them');
-
-  // A database that THROWS propagates. It used to be flattened to null, which
-  // the route answers as 404 and the client treats as success — so a transient
-  // pool error painted "Work order put away" over a write that never happened.
-  const throwing = { async query() { throw new Error('database is on fire'); } };
-  await assert.rejects(() => svc.discardTask(throwing, 3, 7, 4242), /database is on fire/);
+  // Still open to the caller's OWN rows for this app.
+  assert.match(recovery[0].sql, /t\.user_id = \$1 AND a\.slug = \$2 AND t\.status = 'open'/);
+  assert.match(recovery[0].sql, /ORDER BY t\.id DESC LIMIT 1/);
 });
 
 test('an EXPIRED reservation stops blocking the same brief for ever', async () => {
@@ -4993,82 +4933,10 @@ test('an EXPIRED reservation stops blocking the same brief for ever', async () =
 
 // ── Per-session work orders ─────────────────────────────────────────────
 //
-// The walkthrough used to resolve its task per (user, app), so one open work
-// order answered for every session: "New change" opened a fresh session
-// already showing an unrelated, often long-finished order.
-
-const SESSION_LOAD_SQL = 'FROM external_agent_tasks t JOIN apps a';
-
-test('loadOpenTaskForSession finds THIS session\'s task, not the app\'s newest', async () => {
-  const q = [];
-  const row = await svc.loadOpenTaskForSession(
-    fakePool([[SESSION_LOAD_SQL, [{ id: 7, origin_session_id: 990404 }]]], q),
-    3, 'recipe-box', 990404, { unexpiredOnly: true }
-  );
-  assert.equal(row.id, 7);
-  assert.equal(q.length, 1, 'one query: its own task was there, so no orphan scan');
-  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
-  assert.match(q[0].sql, /AND t\.expires_at > NOW\(\)/);
-  assert.deepEqual(q[0].params, [3, 'recipe-box', 990404]);
-
-  // Without unexpiredOnly it is the same lookup minus that predicate.
-  const q2 = [];
-  await svc.loadOpenTaskForSession(
-    fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q2), 3, 'recipe-box', 990404
-  );
-  assert.doesNotMatch(q2[0].sql, /expires_at/);
-  assert.match(q2[0].sql, /AND t\.origin_session_id = \$3/);
-});
-
-test('...and no session means no task, rather than the app\'s newest', async () => {
-  // The failure that would reintroduce the bug: falling back to the app-wide
-  // row here would make every session show every other session's order again.
-  for (const bad of [undefined, null, 0, -3, 1.5, NaN, 'abc', {}]) {
-    const q = [];
-    assert.equal(
-      await svc.loadOpenTaskForSession(fakePool([[SESSION_LOAD_SQL, [{ id: 7 }]]], q), 3, 'r', bad),
-      null,
-      `${JSON.stringify(bad)} is not a session`
-    );
-    assert.equal(q.length, 0, 'and no query is issued for it');
-  }
-});
-
-test('a work order belonging to no session is NOT handed to a new one', () => {
-  // The inverse of what this used to do, and the whole point of the change.
-  // Adopting the newest orphan turned one permanently stale launchpad into a
-  // QUEUE of them: every new change claimed the next one off the pile.
-  //
-  // The reasoning behind adoption was wrong twice. Factually, orphans were
-  // never invisible — listOpenWorkOrders filters on `session_id` (the shared
-  // column) and expiry, never on origin_session_id, so the Improve panel
-  // listed them throughout. Conceptually, a work order is one ATTEMPT at an
-  // issue, so an attempt whose session is gone is not a backlog item to hand
-  // out; it is over.
-  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/external-agent-tasks.js'), 'utf8');
-  const fn = svcSrc.slice(
-    svcSrc.indexOf('async function loadOpenTaskForSession('),
-    svcSrc.indexOf('async function abandonTasksForSession(')
-  );
-  assert.ok(fn.length > 0, 'the lookup is where this test thinks it is');
-  assert.ok(!/origin_session_id IS NULL/.test(fn), 'no orphan scan remains');
-  assert.ok(!/adoptTaskForSession/.test(fn), 'and nothing is claimed on a read');
-  assert.equal((fn.match(/await pool\.query\(/g) || []).length, 2,
-    'two literals: this session with and without the expiry filter, and nothing else');
-});
-
-test('...so a session with no work order of its own gets none', async () => {
-  const q = [];
-  assert.equal(
-    await svc.loadOpenTaskForSession(
-      fakePool([['FROM external_agent_tasks t JOIN apps a', []]], q),
-      3, 'recipe-box', 990404, { unexpiredOnly: true }
-    ),
-    null
-  );
-  assert.equal(q.length, 1, 'one query, and no second look for somebody else\'s order');
-  assert.match(q[0].sql, /AND t\.origin_session_id = \$3/);
-});
+// A work order the dev chat's walkthrough prepared remembers the session it
+// was prepared in (origin_session_id). The walkthrough and its per-session
+// lookup are retired with the dev chat; abandonTasksForSession, which ends
+// the open attempts a session made, is what reads the column now.
 
 test('archiving a session ends the attempt it was making', async () => {
   const q = [];

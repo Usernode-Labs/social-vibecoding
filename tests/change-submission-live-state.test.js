@@ -12,7 +12,7 @@ const session = (patch = {}) => ({
 });
 const ready = (patch = {}) => session({ proposal_state: 'ready', check_state: 'passing', ...patch });
 
-function fixture(current = session()) {
+function fixture() {
   const requests = [], notices = [];
   const c = {
     console, URLSearchParams, setTimeout, clearTimeout, setInterval, clearInterval,
@@ -22,8 +22,6 @@ function fixture(current = session()) {
     addEventListener() {}, dispatchEvent() {}, relTime: () => 'just now',
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options?.detail; } },
     PlatformUI: { toast: message => notices.push(message) },
-    DevChat: { currentSession: current, sessions: current ? [{ ...current }] : [],
-      _publishDevView() {}, _publishTranscript() {}, renderChatView() {} },
     fetch: async (url, options) => {
       requests.push({ url, options });
       return c.response();
@@ -46,29 +44,28 @@ function fixture(current = session()) {
   return { av, c, requests, notices, action, click };
 }
 
-test('the enabled detail button submits after live checks pass despite a stale checking workspace', async () => {
-  const { c, requests, action, click } = fixture();
+test('the enabled detail button submits once live checks pass, and the page takes the new state', async () => {
+  const { av, requests, action, click } = fixture();
   assert.equal(action(session()).disabled, false, 'checks still running do not hold it (#3043)');
   const button = action(ready());
   assert.equal(button.disabled, false);
-  assert.equal(c.DevChat.currentSession.proposal_state, 'checking');
   await click(button);
   assert.equal(requests.length, 1, 'the displayed ready action must send its submission without a reload');
   assert.equal(requests[0].url, '/api/sessions/123/promote');
   assert.equal(requests[0].options.method, 'POST');
-  assert.equal(c.DevChat.currentSession.status, 'promoted');
-  assert.equal(c.DevChat.currentSession.pr_number, 987);
-  assert.equal(c.DevChat.sessions[0].status, 'promoted');
+  assert.equal(av._changeItems.get(123).status, 'promoted');
+  assert.equal(av._changeItems.get(123).pr_number, 987);
 });
 
-test('a failed revision submits without replacing private workspace data (#3173)', async () => {
+test('a failed revision submits, and only its public lifecycle fields change (#3173)', async () => {
   const current = session({ check_state: 'failing', proposal_state: 'failed', privateWorkspace: 'preserve' });
-  const { c, requests, action, click } = fixture(current);
+  const { av, requests, action, click } = fixture();
   const button = action({ ...current });
   assert.equal(button.disabled, false, 'failing checks gate the merge, not the submission');
   await click(button);
   assert.equal(requests.length, 1);
-  assert.equal(c.DevChat.currentSession.privateWorkspace, 'preserve');
+  assert.equal(av._changeItems.get(123).status, 'promoted');
+  assert.equal(av._changeItems.get(123).privateWorkspace, 'preserve');
 });
 
 test('every displayed underway snapshot submits, exactly once (#3173)', async () => {
@@ -81,7 +78,7 @@ test('every displayed underway snapshot submits, exactly once (#3173)', async ()
     { status: 'paused', proposal_state: 'checking', check_state: 'pending' },
     { status: 'paused', proposal_state: 'deploying', check_state: 'passing', staging_url: null },
   ]) {
-    const { requests, action, click } = fixture(ready());
+    const { requests, action, click } = fixture();
     const button = action(ready(patch));
     assert.equal(button.disabled, false, JSON.stringify(patch));
     await click(button);
@@ -100,14 +97,14 @@ test('the action retains its displayed snapshot when another surface rebuilds th
   assert.equal(av._changeItems.get(123).status, 'promoted');
 });
 
-test('the detail and workspace share one request lock and completed actions cannot submit again', async () => {
-  const { av, c, requests, action, click } = fixture(ready());
+test('a change has one request lock, whatever snapshot asks, and completed actions cannot submit again', async () => {
+  const { av, c, requests, action, click } = fixture();
   let finish;
   c.response = () => new Promise(resolve => { finish = resolve; });
   const button = action(ready());
   const pending = click(button);
   await click(button);
-  await av.runChangeAction(123, 'promote', c.DevChat.currentSession);
+  await av.runChangeAction(123, 'promote', ready());
   assert.equal(requests.length, 1);
   assert.equal(action(ready()).label, 'Submitting…');
   finish({ ok: true, json: async () => ({ ok: true }) });
@@ -118,7 +115,7 @@ test('the detail and workspace share one request lock and completed actions cann
 });
 
 test('the pending submission carries busy so its button draws the spinner', async () => {
-  const { c, action, click } = fixture(ready());
+  const { c, action, click } = fixture();
   let finish;
   c.response = () => new Promise(resolve => { finish = resolve; });
   const atRest = action(ready());
@@ -148,7 +145,7 @@ test('failed submissions show feedback, release the lock and can be retried on t
     c.response = async () => ({ ok: true, json: async () => ({ ok: true }) });
     await click(button);
     assert.equal(requests.length, 2);
-    assert.equal(c.DevChat.currentSession.status, 'promoted');
+    assert.equal(av._changeItems.get(123).status, 'promoted');
   }
 });
 
@@ -158,28 +155,26 @@ test('finishing submission after navigation updates only the submitted session',
   c.response = () => new Promise(resolve => { finish = resolve; });
   const pending = click(action(ready()));
   const other = session({ id: 456, session_title: 'Other change' });
-  c.DevChat.currentSession = other;
   action(other);
   finish({ ok: true, json: async () => ({ ok: true, prNumber: 987 }) });
   await pending;
-  assert.equal(c.DevChat.currentSession, other);
   assert.equal(other.status, 'active');
   assert.equal(other.pr_number, undefined);
   assert.equal(av._changeItems.get(456).status, 'active');
-  assert.equal(c.DevChat.sessions[0].status, 'promoted');
+  assert.equal(av._changeItems.get(123).status, 'promoted');
 });
 
 test('an action cannot submit a different id from its bound session', async () => {
-  const { av, requests } = fixture(ready());
+  const { av, requests } = fixture();
   await av.runChangeAction(456, 'promote', ready());
   assert.equal(requests.length, 0);
 });
 
 test('a paused ready change submits directly without a resume request', async () => {
-  const { c, requests, action, click } = fixture(ready({ status: 'paused' }));
+  const { av, requests, action, click } = fixture();
   const button = action(ready({ status: 'paused' }));
   assert.equal(button.disabled, false);
   await click(button);
   assert.deepEqual(requests.map(r => r.url), ['/api/sessions/123/promote']);
-  assert.equal(c.DevChat.currentSession.status, 'promoted');
+  assert.equal(av._changeItems.get(123).status, 'promoted');
 });

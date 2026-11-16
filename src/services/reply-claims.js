@@ -220,13 +220,29 @@ const CLAIMS = Object.freeze([
     // exists only when an offer made one this turn, or when one is still open
     // in this conversation or thread.
     re: /\bFile it\b[^.!?\n]{0,80}\b(?:appear|show(?:s|n)? up|below|under (?:this|my|the|that) (?:message|reply))|\b(?:tap|press|click|hit|use)\s+(?:the\s+)?\**["“]?File it\b|\b(?:you(?:'ll| will| should)? see|there(?:'s| is| will be))\b[^.!?\n]{0,60}\bFile it\b|\bI(?:'ve| have)?(?: just| now)? (?:drafted|prepared|written up|put together)\b[^.!?\n]{0,60}\b(?:request|draft)\b|\b(?:draft|drafted request)\b[^.!?\n]{0,40}\b(?:below|under (?:this|my|the) (?:message|reply))\b/i,
-    turn: (t) => !!t.offer,
+    // #6682: only a draft offer has File it. A plan card (New request, Add to
+    // an existing request) and a new project's card (Make the project) do not.
+    turn: (t) => !!t.offer && t.offer.kind !== 'plan' && t.offer.kind !== 'project',
     standing: (s, m) => {
       if (s.openDraft) return true;
       if (s.earlier('drafted', m)) return true;
       return s.unsure('drafted') ? null : false;
     },
     said: 'says a drafted request with File it is under it',
+  },
+  {
+    // #6682: the wrong card described as the right one. A design thread's
+    // plan card files only the design; words saying it files some other
+    // request (or files on another project) are shown false and cut.
+    kind: 'plan_card_other',
+    proof: 'turn',
+    re: /\b(?:cards?|new request|file it|plans?|files?|posts?|opens?|makes?|taps?|press(?:es)?|clicks?|requests?)\b/i,
+    applies: (t) => t.offer?.kind === 'plan',
+    when: (sentence, t) => planCardOther(sentence, {
+      appName: t.offer?.app?.name, appSlug: t.offer?.app?.slug, title: t.designTitle,
+    }),
+    turn: () => false,
+    said: 'says the plan card files a request it does not file',
   },
   {
     kind: 'posted',
@@ -445,6 +461,34 @@ function statusOf(s, m, set, kind) {
 }
 
 // ── What a reply mentions ─────────────────────────────────────────────────
+
+/**
+ * Pure (#6682): does `sentence` say the card (or New request) files a request
+ * other than this design's plan? True when it describes the card's request in
+ * words of its own ("the drawing-rule request", "a request about drawing"),
+ * or names a project other than the card's as where it files. A sentence that
+ * names the design's own title is about this design, never another request.
+ */
+function planCardOther(sentence, { appName = '', appSlug = '', title = '' } = {}) {
+  const text = String(sentence || '');
+  if (!text) return false;
+  const design = squashWords(title);
+  if (design.length > 3 && squashWords(text).includes(design)) return false;
+  const subject = /\b(?:the|this|that)\s+(?:plan\s+)?card\b|\bnew request\b|\bthe button\b|\b(?:tap|tapping|press|pressing|click|clicking|hit|hitting)\b/i;
+  const verb = /\b(?:files?|filing|posts?|posting|opens?|opening|makes?|making|sends?|sending|puts?|putting|creates?|creating)\b/i;
+  if (!subject.test(text) || !verb.test(text)) return false;
+  // A request described by its own words: "the drawing-rule request", "a
+  // request about drawing". "the new request" and "the plan" are the card's.
+  if (/\bthe\s+(?:(?!new\b|plan\b|request\b)[\w'’&.-]+\s+){1,5}requests?\b/i.test(text)) return true;
+  if (/\ba request\s+(?:about|for|to|that)\b/i.test(text)) return true;
+  // Where it says it files: a project other than the card's.
+  const own = new Set([squashWords(appName), squashWords(appSlug)].filter(Boolean));
+  for (const m of text.matchAll(/\b(?:files?|posts?|opens?|makes?|sends?|puts?|creates?)\b[^.!?\n]{0,60}?\b(?:on|to)\s+(?:"([^"]{2,60})"|([A-Z][\w'’&.-]*(?:\s+[A-Z0-9][\w'’&.-]*){0,5}))/g)) {
+    const named = squashWords(m[1] || m[2]);
+    if (named && !own.has(named)) return true;
+  }
+  return false;
+}
 
 /**
  * #6566: the receipt a report's own reply may carry ("Filed as #6564 on
@@ -851,6 +895,7 @@ function check(found, { standing = null, turn = {} } = {}) {
     const claim = BY_KIND.get(m.kind);
     if (!claim) continue;
     if (claim.applies && !claim.applies(turn)) continue;
+    if (claim.when && !claim.when(m.sentence, turn)) continue;
     if (claim.turn(turn)) continue;
     if (claim.proof === 'records') {
       if (!standing) continue;
@@ -1340,6 +1385,7 @@ function cut(text, problems, ctx = null) {
     const named = requestNumbers(sentence);
     for (const { p, claim } of res) {
       if (!claim.re.test(sentence)) continue;
+      if (claim.when && !claim.when(sentence, ctx || {})) continue;
       const numbers = Array.isArray(p.numbers) ? p.numbers.map(Number) : [];
       if (p.all !== false || !numbers.length || named.some((n) => numbers.includes(n)) || !named.length) return true;
     }
@@ -1420,4 +1466,5 @@ module.exports = {
   unknownRequests,
   projectMentions,
   unknownProjects,
+  planCardOther,
 };

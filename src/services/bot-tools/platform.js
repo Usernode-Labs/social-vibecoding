@@ -15,8 +15,8 @@
 
 const { define } = require('./registry');
 
-// Main's reads (homeroom-bot-mayor.js PLATFORM_TOOLS): the agent-session
-// Mayor's connector reads, offered as they are.
+// Main's reads (homeroom-bot-mayor.js PLATFORM_TOOLS): the `agent_mayor`
+// audience's connector reads, offered as they are.
 const MAIN_READS = Object.freeze([
   'get_platform_conventions', 'list_apps', 'get_app', 'list_requests', 'get_request',
   'get_discussion', 'get_message', 'get_proposal', 'list_my_proposals', 'get_change', 'get_spec',

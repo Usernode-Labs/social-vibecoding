@@ -1203,7 +1203,7 @@ const GroupChat = {
   // transcript.tsx renders it and is the only writer below #gc-messages.
   //
   // `bodyHtml` stays markup: renderMessageBody runs the content through
-  // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
+  // PlatformMarkdown.render and a sanitizer, and a second copy of that pipeline
   // in React is exactly how the two drift apart.
   // The same "is this mine" rule `_messageView` stamps on each row.
   _isOwnMessage(msg) {
@@ -1429,7 +1429,20 @@ const GroupChat = {
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
       // #6533: what a change looks like, under Homeroom bot's reply in its thread.
       botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
+      // #6684: a note sent into a build from this request, under the reply
+      // that says so (homeroom-bot-voice.js say).
+      botBuildNote: GroupChat._botBuildNoteView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  // #6684: the build note card under Homeroom bot's reply on a request
+  // (homeroom-bot-voice.js say, services/homeroom-bot-steer.js), or null.
+  // The server writes it and every reader sees it; its redo buttons, if any,
+  // are the offer's (BotOfferButtons).
+  _botBuildNoteView(meta) {
+    const bot = meta && meta.homeroomBot;
+    const note = bot && bot.buildNote;
+    return note && typeof note === 'object' && !Array.isArray(note) ? note : null;
   },
 
   /** #6533: the pictures under a reply (homeroom-bot-voice.js say), or null. */
@@ -1589,6 +1602,8 @@ const GroupChat = {
     GroupChat._react()?.patchTranscriptMessage(Number(frame.id), {
       botOffer: view.botOffer,
       botSuggest: view.botSuggest,
+      // #6684: the build note card says where the note is now.
+      botBuildNote: view.botBuildNote,
       ...(frame.metadata.specShare ? { specShare: view.specShare } : {}),
     });
   },
@@ -1611,7 +1626,7 @@ const GroupChat = {
     const container = document.getElementById('gc-messages');
     if (!container) return;
     // (Re)establish the portal: #gc-messages is created fresh by
-    // AppView.renderDevChatTab on every tab switch, so the previous mount is
+    // AppView.renderGroupChatTab on every tab switch, so the previous mount is
     // pointing at a detached node by now.
     GroupChat._react()?.mountTranscript(container);
     // #4417 follow-up: a topic's channel says so when it is empty, as it did
@@ -3558,9 +3573,9 @@ const GroupChat = {
   },
 
   // The stages at which a card's request is still going (homeroom-bot-chat.js
-  // CARD_STAGES), or waiting on approval that may come in at any time, or on
-  // the project's first version going live.
-  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
+  // CARD_STAGES), or waiting on approval that may come in at any time, on
+  // the project's first version going live, or on its requester's own plan.
+  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'waiting_plan', 'building', 'checking', 'proposed', 'approved', 'fixing']),
 
   // Whether one card still has somewhere to go.
   _botCardGoing(card) {
@@ -3641,14 +3656,16 @@ const GroupChat = {
     } catch { /* it comes back on the next load, and can be dismissed again */ }
   },
 
-  // B9: the chat with Homeroom bot (See progress, Open chat). 16 Oct 2026
-  // (C4): See progress opens it at the request's own thread, its story.
+  // B9: Homeroom bot, from a request's card here (See progress, Open chat).
+  // 16 Oct 2026 (C4): See progress opens the request's own story: its plan's
+  // thread, else its page. 14 Nov 2026: Open chat, with no request, is a new
+  // chat with the bot set to this project (there is no Main Chat to open).
   openBotChat(issueNumber) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const n = Number(issueNumber);
     if (messages && n && GroupChat.appSlug && typeof messages.openBotRequest === 'function') messages.openBotRequest(GroupChat.appSlug, n);
-    else if (messages && typeof messages.openBot === 'function') messages.openBot();
-    else location.hash = '#messages';
+    else if (messages && typeof messages.openBot === 'function') messages.openBot(GroupChat.appSlug ? { type: 'app', appSlug: GroupChat.appSlug } : undefined);
+    else location.hash = '#homeroom-bot';
   },
 
   // Fix in place: the change a fix went to, on its page (See change).
@@ -3751,20 +3768,27 @@ const GroupChat = {
     // (#6103) — the same rule lib/timestamp.ts reads. The device default
     // stands where the runtime predates it, or where this file is evaluated
     // without one (a bare test sandbox).
-    const locale = typeof PlatformI18n !== 'undefined' && PlatformI18n.dateLocale
-      ? PlatformI18n.dateLocale() : undefined;
+    const i18n = typeof PlatformI18n !== 'undefined' ? PlatformI18n : null;
+    const locale = i18n && i18n.dateLocale ? i18n.dateLocale() : undefined;
+    // The zone the account picked (#6479), and the day an instant falls on
+    // in it; the device's own where none is picked or the runtime predates it.
+    const timeZone = i18n && i18n.timeZone ? i18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (x) => (i18n && i18n.zonedDay
+      ? i18n.zonedDay(x)
+      : { year: x.getFullYear(), month: x.getMonth() + 1, day: x.getDate() });
     // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
-    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    const time = d.toLocaleTimeString(locale, { ...zone, hour: 'numeric', minute: '2-digit' });
     const title = d.toLocaleString(locale, {
-      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
-    const sameDay = d.getFullYear() === today.getFullYear()
-      && d.getMonth() === today.getMonth()
-      && d.getDate() === today.getDate();
+    const a = dayOf(d);
+    const b = dayOf(today);
+    const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
     if (sameDay) return { text: time, title };
-    const date = d.toLocaleDateString(locale, d.getFullYear() === today.getFullYear()
-      ? { month: 'short', day: 'numeric' }
-      : { year: 'numeric', month: 'short', day: 'numeric' });
+    const date = d.toLocaleDateString(locale, a.year === b.year
+      ? { ...zone, month: 'short', day: 'numeric' }
+      : { ...zone, year: 'numeric', month: 'short', day: 'numeric' });
     return { text: `${date}, ${time}`, title };
   },
 
@@ -4116,8 +4140,7 @@ const GroupChat = {
 
   // ── #694: file attachments ──────────────────────────────────────────
   //
-  // Upload-before-send, ported from dev-chat (#450, public/js/dev-chat.js
-  // _setupAttachments and friends): each picked/pasted/dropped file is
+  // Upload-before-send (#450): each picked/pasted/dropped file is
   // validated client-side (mirroring src/services/attachments.js
   // validateChatUpload), POSTed as raw octet-stream to
   // /api/apps/:slug/chat-attachments, and parked in `pendingAttachments`
@@ -5020,19 +5043,12 @@ const GroupChat = {
   // `meta.title` is set by the share endpoint when the spec content starts
   // with an H1; older shares predate that field and fall back to
   // "Spec v<n>". The snippet is rendered as markdown so the preview matches
-  // what the user sees in the dev-chat spec viewer (shared markdown helper
-  // from DevChat).
-  //
-  // Reach DevChat via a bare reference and a `typeof` guard rather than
-  // `window.DevChat` — DevChat is declared with `const` at dev-chat.js's top
-  // level, which does NOT install it as a property on `window` (only `var` /
-  // function declarations do). It IS visible as a global identifier across
-  // <script> tags because both files share the same script scope, so a bare
-  // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things safe if
-  // dev-chat.js ever fails to load.
+  // what the user sees in the spec viewer (the platform's markdown renderer,
+  // PlatformMarkdown). The `typeof` guard keeps things safe if it ever fails
+  // to load.
   _specShareView(meta, msg) {
-    const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-      ? (str) => DevChat.renderMarkdown(str)
+    const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render
+      ? (str) => PlatformMarkdown.render(str)
       : null;
     // #1808: composed from `_stamp` rather than spelling its own options
     // table, which had no `year` — a spec built last June read "Jun 16,
@@ -5060,7 +5076,7 @@ const GroupChat = {
       botNote: ['building', 'waiting', 'replaced', 'stopped'].includes(meta.botNote) ? meta.botNote : null,
       waitingFor: meta.botNote === 'waiting' && typeof meta.waitingFor === 'string' && meta.waitingFor ? meta.waitingFor : null,
       // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
-      // no snippet, or when dev-chat.js is not loaded to render one.
+      // no snippet, or when the renderer is not loaded to render one.
       snippetHtml: meta.snippet && renderMd ? renderMd(meta.snippet) : null,
       // …and the raw text as the fallback, escaped by React as a text child.
       snippetText: meta.snippet && !renderMd ? String(meta.snippet) : null,
@@ -5584,7 +5600,7 @@ function renderRefChips(html) {
 }
 
 // #328: the authoritative renderer for a USER message body. Renders a safe
-// markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
+// markdown subset via the shared PlatformMarkdown.render (marked + DOMPurify,
 // strict allowlist, https-only links, raw HTML escaped) and then layers the
 // existing @mention + PR/issue-ref decoration on top. All three message
 // surfaces (main chat, thread replies, inline edit) funnel through here so
@@ -5601,16 +5617,16 @@ function renderRefChips(html) {
 // markdown source on the wire and in the DB — this is display-only.
 //
 // Falls back to the plain renderWithMentions path when the markdown libs /
-// DevChat aren't available (CDN blocked, native shell, the test sandbox).
+// PlatformMarkdown aren't available (CDN blocked, native shell, the test sandbox).
 function renderMessageBody(raw) {
   const text = raw == null ? '' : String(raw);
-  const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown;
+  const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render;
   if (!renderMd || typeof document === 'undefined' || !document.createElement) {
     return renderWithMentions(text);
   }
   let html;
   try {
-    html = DevChat.renderMarkdown(text, { breaks: true });
+    html = PlatformMarkdown.render(text, { breaks: true });
   } catch {
     return renderWithMentions(text);
   }
@@ -5766,7 +5782,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
 // here, and stays text. The guard comes out of every text node, display
 // only, so what reads (and copies) is what was typed, a code block's
 // `@scope/pkg` included. Takes and returns sanitized HTML (the output of
-// DevChat.renderMarkdown); app-view.js calls it for a request's body and its
+// PlatformMarkdown.render); app-view.js calls it for a request's body and its
 // GitHub comments.
 const GC_MENTION_GUARD = '@​';
 

@@ -15,8 +15,7 @@
 //      non-auth hash as a deep link and offers login first, and the
 //      reload-free finishLogin restores it before the authed boot.
 //   3. The shell (public/js/app.js + index.html) understands the
-//      /app/<slug>/full route: source guards in the style of
-//      tests/cc-progress-summary.test.js so the hash routing, the
+//      /app/<slug>/full route: source guards, so the hash routing, the
 //      chrome toggling, and the pill can't silently become dead code.
 //   4. The Caddyfile's wildcard site carries the 401-interception
 //      redirect ({applink} map output + handle_response).

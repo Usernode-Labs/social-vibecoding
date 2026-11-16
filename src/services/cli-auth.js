@@ -375,17 +375,6 @@ async function accountRecovery(client, {
       metadata: { reason: 'account_recovery' },
     });
   }
-  // #907: account recovery means "assume everything I had is compromised", so
-  // every machine that attached with one of those credentials is detached in
-  // the same transaction. Required for correctness, not just tidiness: a lease
-  // that outlived recovery would keep routing that session's coding turns to
-  // a machine the user no longer trusts.
-  // eslint-disable-next-line global-require
-  const localAgent = require('./local-agent');
-  const detached = await localAgent.releaseLeasesForTokens(
-    client, revoked.map((row) => row.id)
-  );
-
   const session = mintSession ? await mintSession(client) : null;
   return {
     found: true,
@@ -393,7 +382,6 @@ async function accountRecovery(client, {
     session,
     cancelled: cancelled.length,
     revoked: revoked.length,
-    detached,
   };
 }
 

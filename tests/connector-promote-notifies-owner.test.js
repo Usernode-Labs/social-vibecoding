@@ -4,8 +4,8 @@
 // when submit_work opens a proposal, because the proposer is an agent and the
 // person it works for may be nowhere near the screen. The other way an agent
 // puts work up for the vote is POST /api/sessions/:id/promote with its bearer
-// token: the local Homeroom CLI's proposal_promote, the connector's
-// promote_change and submit_work's `propose: true`. That route only ran the
+// token: the local Homeroom CLI's proposal_promote and the connector's
+// submit_work with `propose: true`. That route only ran the
 // pr_proposed fan-out, which leaves the proposer out by design, so work
 // submitted that way reached the vote without a word to its owner.
 //

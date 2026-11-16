@@ -216,7 +216,10 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     const answered = await dm.sendDm(pool, { bot, userId: maya.id, content: 'Hello!', replyToId: asked.message.id, moment: 'reply' });
     const said = await conversations.getMessage(pool, maya, opened.conversationId, answered.messageId);
     assert.deepEqual(said.sender, { id: bot.id, username: 'homeroom_bot', avatarUrl: null, bot: true, displayName: 'Homeroom bot' });
-    assert.equal(said.reply.sender.displayName, undefined, 'a person keeps their handle in a quote');
+    // 14 Nov 2026: every message is in a thread, so the bot's answer goes
+    // under what it answers and quotes nothing.
+    assert.equal(said.threadRootId, asked.message.id);
+    assert.equal(said.reply, null);
     const quoting = await conversations.sendMessage(pool, maya, opened.conversationId, { content: 'thanks', reply_to_id: answered.messageId });
     assert.equal(quoting.message.reply.sender.displayName, 'Homeroom bot', 'and the bot is named in one');
     const chat = await conversations.getConversation(pool, maya, opened.conversationId);
@@ -256,6 +259,15 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.deepEqual(meta.actions.map((a) => a.label), ['How long will this take?', 'What can I ask for?', 'How do I invite friends?']);
     const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [maya.id]);
     assert.deepEqual(hello, { kind: 'maker', message_id: msg.id });
+    // 14 Nov 2026: Main Chat is gone. The line that says the project is being
+    // set up, the maker's hello folded into it, opens the project's
+    // first-version thread, which the Homeroom bot page lists by its name.
+    const thread = async (messageId) => (await pool.query(
+      `SELECT p.kind, p.app_id, m.thread_root_id FROM conversation_messages m
+         LEFT JOIN private_threads p ON p.root_message_id = m.id AND p.user_id = $2 WHERE m.id = $1`, [messageId, maya.id])).rows[0];
+    assert.deepEqual(await thread(msg.id), { kind: 'first_version', app_id: plantPal.id, thread_root_id: null });
+    const listed = await require('../src/services/ai-work').privateFor(pool, { user: maya });
+    assert.equal(listed.find((p) => p.rootId === msg.id).title, 'Plant Pal, first version');
 
     // She taps one: her words, and the buttons give way everywhere.
     const tapped = await conversations.sendMessage(pool, maya, first.conversationId, { content: 'What can I ask for?' });
@@ -275,6 +287,10 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     );
     assert.match(second.content, /^\*\*Herbs\*\*\n\nThanks! I'm setting up Herbs now\./);
     assert.equal(second.metadata.homeroomBot.actions, undefined);
+    // Each project's first version has a thread of its own.
+    const { rows: firsts } = await pool.query(
+      `SELECT app_id FROM private_threads WHERE user_id = $1 AND kind = 'first_version' ORDER BY id`, [maya.id]);
+    assert.deepEqual(firsts.map((f) => f.app_id), [plantPal.id, herbs.id]);
   });
 
   // 5 Nov 2026 (docs/plans/bot-one-model.md, step 4): a request's card no
@@ -338,6 +354,11 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.deepEqual(msg.metadata.homeroomBot.actions.map((a) => a.label), ['What can I ask for?', 'How does the group decide?']);
     const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [tess.id]);
     assert.deepEqual(hello, { kind: 'joiner', message_id: sent.messageId });
+    // 14 Nov 2026: a hello is the first message of a thread of its own.
+    assert.deepEqual((await pool.query(
+      `SELECT p.kind, p.app_id, p.last_read_message_id, m.thread_root_id FROM private_threads p
+         JOIN conversation_messages m ON m.id = p.root_message_id WHERE p.root_message_id = $1 AND p.user_id = $2`,
+      [sent.messageId, tess.id])).rows, [{ kind: 'hello', app_id: supper.id, last_read_message_id: null, thread_root_id: null }]);
     assert.equal(await dm.greetJoiner(pool, { user: tess, app: herbs }), null, 'once, ever');
     await mode('off');
     // Redeeming a link is what greets them: owed in the redemption's own
@@ -365,6 +386,10 @@ test('B5: its name and its one hello, against the full PostgreSQL schema', { tim
     assert.deepEqual(msg.metadata.homeroomBot.actions.map((a) => a.label), dm.TOUR_PROMPTS);
     const { rows: [hello] } = await pool.query('SELECT kind, message_id FROM homeroom_bot_hellos WHERE user_id = $1', [nina.id]);
     assert.deepEqual(hello, { kind: 'tour', message_id: sent.messageId });
+    // 14 Nov 2026: a hello is the first message of a thread of its own, new to them.
+    assert.deepEqual((await pool.query(
+      'SELECT kind, state, last_read_message_id FROM private_threads WHERE root_message_id = $1 AND user_id = $2',
+      [sent.messageId, nina.id])).rows, [{ kind: 'hello', state: 'open', last_read_message_id: null }]);
     assert.equal(await dm.greetTourFinisher(pool, { userId: nina.id }), null, 'once, ever');
     // Somebody greeted another way (the joiner above) is not greeted again.
     const { rows: [tess] } = await pool.query("SELECT id FROM users WHERE username = 'tess'");

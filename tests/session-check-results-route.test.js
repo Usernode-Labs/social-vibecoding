@@ -139,7 +139,7 @@ test('shared and own demo details reuse list fixtures only in staging demo mode'
     const result = await get({ id: 42 }, 'details?demo=1', 990002);
     assert.equal(result.status, 200);
     assert.equal(result.body.session.id, 990002);
-    assert.equal(result.body.session.transcript_shared, true);
+    assert.ok(result.body.session.shared_at, 'the shared demo change');
     const own = await get({ id: 42 }, 'details?demo=1', 990101);
     assert.equal(own.status, 200);
     assert.equal(own.body.session.user_id, 42);

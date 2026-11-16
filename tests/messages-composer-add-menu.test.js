@@ -44,7 +44,14 @@ test('the trigger declares the menu it opens', () => {
   assert.match(COMPOSER, /aria-haspopup="menu"/);
   assert.match(COMPOSER, /aria-expanded=\{addOpen\}/);
   assert.match(COMPOSER, /role="menu"/);
-  assert.equal((COMPOSER.match(/role="menuitem"/g) || []).length, 2, 'two rows: attach, share');
+  // The composer holds a second menu now — the right-click format menu
+  // (#6653) — so this counts the "+" menu's own rows, between its card and
+  // the field below it.
+  const addMenu = COMPOSER.slice(
+    COMPOSER.indexOf('className="messages-composer-menu"'),
+    COMPOSER.indexOf('className="messages-composer-input"')
+  );
+  assert.equal((addMenu.match(/role="menuitem"/g) || []).length, 2, 'two rows: attach, share');
 });
 
 test('both old actions survive, now as named rows', () => {

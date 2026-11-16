@@ -3,7 +3,7 @@
  * (#4065).
  *
  * A browser's default for a file dropped on a page is to navigate to it, and
- * that takes whatever was typed with it: a draft beside an agent session's
+ * that takes whatever was typed with it: a draft beside a thread's
  * box, a reply under a page header. Every composer claims its own drop (see
  * features/attachments/file-drag.tsx); this is the floor under all of them.
  *

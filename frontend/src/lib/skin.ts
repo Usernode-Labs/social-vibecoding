@@ -28,7 +28,16 @@ export const FRAME_SKINS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'] as 
 export type FrameSkin = typeof FRAME_SKINS[number];
 export type Skin = 'standard' | 'brand' | FrameSkin;
 
-/** True for a look that draws a page in the frame; New look ('brand') keeps the standard pages. */
+/**
+ * Every look the Look menu offers after Standard, in its order: 'brand'
+ * ("Paper, simplified, with brand styling", which keeps the standard pages)
+ * and then the looks of the frame. It is the head's SKINS, and the option
+ * values of Settings › Experimental › Look and of the look picker.
+ */
+export const MENU_SKINS = ['brand', ...FRAME_SKINS] as const;
+export type MenuSkin = typeof MENU_SKINS[number];
+
+/** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */
 export function isFrameSkin(skin: Skin): skin is FrameSkin {
   return (FRAME_SKINS as readonly string[]).includes(skin);
 }
@@ -44,7 +53,7 @@ declare global {
   }
 }
 
-const SKINS: readonly Skin[] = ['standard', 'brand', ...FRAME_SKINS];
+const SKINS: readonly Skin[] = ['standard', ...MENU_SKINS];
 
 /** The device's look right now; 'standard' when the head module is absent. */
 export function currentSkin(): Skin {

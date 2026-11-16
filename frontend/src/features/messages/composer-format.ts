@@ -4,12 +4,13 @@
  * A message is stored as the text people type and drawn by the shared
  * markdown renderer, so a formatting button edits the message source: it
  * wraps the selection in the markers marked already understands (`**`, `_`,
- * `++`) or prefixes a line (`# `, `> `, `- `). Pure, so the same rules can be
- * read without a DOM: `composer.tsx` passes the textarea's value and
- * selection, and puts the returned selection back.
+ * `++`, `~~`), makes it a link (`[words](url)`), or prefixes a line
+ * (`# `, `> `, `- `). Pure, so the same rules can be read without a DOM:
+ * `composer.tsx` passes the textarea's value and selection, and puts the
+ * returned selection back.
  */
 
-export type FormatKind = 'bold' | 'italic' | 'underline' | 'heading' | 'quote' | 'bullet';
+export type FormatKind = 'bold' | 'italic' | 'underline' | 'strike' | 'heading' | 'quote' | 'bullet' | 'link';
 
 export interface FormatSelection {
   value: string;
@@ -20,10 +21,11 @@ export interface FormatSelection {
 /** The composer's own limit, so a press cannot grow a message past it. */
 const LIMIT = 8000;
 
-const MARKERS: Record<'bold' | 'italic' | 'underline', string> = {
+const MARKERS: Record<'bold' | 'italic' | 'underline' | 'strike', string> = {
   bold: '**',
   italic: '_',
   underline: '++',
+  strike: '~~',
 };
 
 /** A line's leading quote/list markers, which a heading sits after. */
@@ -71,6 +73,47 @@ function inline(value: string, start: number, end: number, marker: string): Form
   }
   const next = value.slice(0, coreStart) + marker + core + marker + value.slice(coreEnd);
   return finish(next, coreStart + marker.length, coreEnd + marker.length);
+}
+
+/**
+ * A web address for a link, or null when it cannot be one.
+ *
+ * People type `a.example/x` without a scheme, so https:// is added; only
+ * http(s) is accepted (a `javascript:` or `data:` address is refused), and a
+ * space or an empty field is not an address at all. Parentheses are escaped
+ * because they would end the link early in `[words](url)`.
+ */
+export function normalizeLinkUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(trimmed);
+  // `a.example:8080/x` looks like a scheme but is a host and port.
+  const named = !!scheme && !/^\d+(?:[/?#]|$)/.test(trimmed.slice(scheme[0].length));
+  const address = named ? trimmed : `https://${trimmed}`;
+  let parsed: URL;
+  try { parsed = new URL(address); } catch { return null; }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+  return address.replace(/\(/g, '%28').replace(/\)/g, '%29');
+}
+
+/**
+ * The selected words as a link to `url` (`[words](url)`), selecting the
+ * words; with nothing selected the address itself goes in at the caret.
+ */
+function link(value: string, start: number, end: number, url: string | null): FormatSelection {
+  if (url === null) return finish(value, start, end);
+  const selected = value.slice(start, end);
+  const lead = (selected.match(/^\s*/) || [''])[0].length;
+  const trail = (selected.match(/\s*$/) || [''])[0].length;
+  if (lead + trail >= selected.length) {
+    const next = value.slice(0, start) + url + value.slice(end);
+    return finish(next, start + url.length, start + url.length);
+  }
+  const coreStart = start + lead;
+  const coreEnd = end - trail;
+  const words = value.slice(coreStart, coreEnd).replace(/[[\]]/g, '\\$&');
+  const next = value.slice(0, coreStart) + `[${words}](${url})` + value.slice(coreEnd);
+  return finish(next, coreStart + 1, coreStart + 1 + words.length);
 }
 
 /** The block of whole lines the selection touches. */
@@ -139,12 +182,13 @@ function prefixLines(value: string, start: number, end: number, prefix: string):
  * The text after `kind` was applied to `value`'s selection, and the selection
  * to put back: the same words, with the markers around or before them.
  */
-export function applyFormat(value: string, start: number, end: number, kind: FormatKind): FormatSelection {
+export function applyFormat(value: string, start: number, end: number, kind: FormatKind, url: string | null = null): FormatSelection {
   const from = Math.max(0, Math.min(start, value.length));
   const to = Math.max(from, Math.min(end, value.length));
   if (kind === 'heading') return heading(value, from, to);
   if (kind === 'quote') return prefixLines(value, from, to, '> ');
   if (kind === 'bullet') return prefixLines(value, from, to, '- ');
+  if (kind === 'link') return link(value, from, to, url);
   return inline(value, from, to, MARKERS[kind]);
 }
 
@@ -152,7 +196,7 @@ export function applyFormat(value: string, start: number, end: number, kind: For
 // markers marked also reads (`~~`, a code span), and the line prefixes that
 // start a heading, a quote or a bullet. A draft with none of these is drawn
 // the same either way, so the composer keeps its preview away (Drea, #6035).
-const PAIR_MARKERS = [/\*\*[^\n]*\*\*/, /__[^\n]*__/, /\+\+[^\n]*\+\+/, /~~[^\n]*~~/, /`[^`\n]+`/];
+const PAIR_MARKERS = [/\*\*[^\n]*\*\*/, /__[^\n]*__/, /\+\+[^\n]*\+\+/, /~~[^\n]*~~/, /`[^`\n]+`/, /\[[^\]\n]+\]\([^)\s]+\)/];
 const EMPHASIS = /(?:^|[\s(])[_*][^\s_*][^\n]*[_*](?=$|[\s).,!?;:])/;
 const LINE_MARKERS = /(?:^|\n)[ \t]{0,3}(?:#{1,3}[ \t]|>[ \t]?|[-*+][ \t])/;
 

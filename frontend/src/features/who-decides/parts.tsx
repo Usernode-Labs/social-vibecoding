@@ -15,6 +15,7 @@ import {
 import { IconTile } from '@/components/ui/icon-tile';
 
 import { useMessages } from '../../lib/i18n/react';
+import { radioGroupKeys } from '../../lib/radio-group';
 import { swatchFor } from '../messages/format';
 import { PRESET_KEYS, playsOut, presetLine, presetName, type PresetKey } from './model';
 
@@ -72,14 +73,17 @@ export function PresetTiles({ picked, now, viewer, onPick, labelId }: {
   labelId?: string;
 }) {
   const t = useMessages('dialogs');
+  // One tab stop, and the arrow keys move the pick (#6510).
+  const keys = radioGroupKeys(PRESET_KEYS, picked, onPick);
   return (
-    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby={labelId} data-who-presets="">
+    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-labelledby={labelId} data-who-presets="" onKeyDown={keys.onKeyDown}>
       {PRESET_KEYS.map((key) => (
         <button
           key={key}
           type="button"
           role="radio"
           aria-checked={picked === key}
+          tabIndex={keys.tabIndex(key)}
           data-who-preset={key}
           onClick={() => onPick(key)}
           className={`${TILE} ${picked === key ? TILE_ON : TILE_OFF}`}

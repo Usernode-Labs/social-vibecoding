@@ -184,8 +184,8 @@ function stamp(builtAt: unknown): string {
 }
 
 function markdownBody(markdown: string): SpecPanelBody {
-  const devChat = typeof window !== 'undefined' ? (window as any).DevChat : null;
-  const render = devChat?.renderMarkdown;
+  const markdown_ = typeof window !== 'undefined' ? window.PlatformMarkdown : null;
+  const render = markdown_?.render;
   return render ? { kind: 'markdown', html: render(markdown) } : { kind: 'error', text: markdown };
 }
 
@@ -421,9 +421,10 @@ export function openDetail(input: {
       window.setTimeout(go, 32);
     }
   }
-  // #6248: a draft goes to the thread it was said in, or to Main.
+  // #6248: a draft goes to the thread it was said in (the page itself for
+  // one with no thread, which none has since Main Chat went).
   if (kind === 'draft' && typeof window !== 'undefined' && !/^#homeroom-bot(?:\/|$)/.test(window.location.hash)) {
-    window.location.hash = valid(ref.rootId) ? `homeroom-bot/thread/${ref.rootId}` : 'homeroom-bot/main';
+    window.location.hash = valid(ref.rootId) ? `homeroom-bot/thread/${ref.rootId}` : 'homeroom-bot';
   }
 }
 

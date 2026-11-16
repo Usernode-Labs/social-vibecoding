@@ -30,6 +30,7 @@
 
 import { eventBarStore } from './event-bar-store.js';
 import { t } from '../../lib/i18n/runtime';
+import { inZone } from '../../lib/time-zone';
 
 const TopochainEventContext = {
   _mounted: false,
@@ -342,7 +343,7 @@ const TopochainEventContext = {
         : (ev.is_active ? t('leaderboard:eventBar.status.active') : t('leaderboard:eventBar.status.past')));
     const fmt = (iso) => (iso
       ? new Date(iso).toLocaleDateString(undefined,
-        { year: 'numeric', month: 'short', day: 'numeric' })
+        inZone({ year: 'numeric', month: 'short', day: 'numeric' }))
       : '—');
     eventBarStore.set({
       hero: {

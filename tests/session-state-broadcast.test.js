@@ -13,8 +13,7 @@
 //      never said busy, once the work ends there. Every touch (they come
 //      only at a turn's or an operation's edges) is told, coalesced.
 //   4. SCOPING — a private session's state goes to its OWNER ONLY; a shared
-//      session (or a headless auto-run, which renders on everyone's board)
-//      fans out app-scoped. This is a privacy boundary, not a nicety: an
+//      session fans out app-scoped. This is a privacy boundary, not a nicety: an
 //      unscoped broadcast would tell every connected client that a private
 //      app has activity.
 //
@@ -36,10 +35,6 @@ function row(id, over = {}) {
     user_id: 42,
     status: 'active',
     shared: false,
-    is_headless: false,
-    headless_status: null,
-    headless_outcome: null,
-    headless_issue_number: null,
     app_slug: 'demo-app',
     ...over,
   };
@@ -183,40 +178,6 @@ test('phase and stopping ride along from the registered resolver', async () => {
   assert.equal(published[0].stopping, true);
 
   activeWorkers.delete(6);
-});
-
-test('a headless row carries its auto-run block and fans out app-scoped', async () => {
-  ROWS.set(7, row(7, {
-    is_headless: true,
-    headless_status: 'generating',
-    headless_issue_number: 901,
-  }));
-
-  sessionState.touch(7);
-  await settle();
-
-  assert.equal(published.length, 1);
-  assert.deepEqual(published[0].headless, {
-    status: 'generating', outcome: null, issueNumber: 901,
-  });
-  // A headless auto-run's card renders on everyone's board, so it is shared
-  // even though shared_at is NULL.
-  assert.equal(published[0].shared, true);
-
-  // Terminal transition: the row flips to ready and the notifier reports it
-  // (this is what flips the issue card without the retired 8s poll).
-  ROWS.set(7, row(7, {
-    is_headless: true,
-    headless_status: 'ready',
-    headless_outcome: 'spec',
-    headless_issue_number: 901,
-  }));
-  sessionState.touch(7);
-  await settle();
-
-  assert.equal(published.length, 2);
-  assert.equal(published[1].headless.status, 'ready');
-  assert.equal(published[1].headless.outcome, 'spec');
 });
 
 test('an explicitly shared session fans out app-scoped', async () => {

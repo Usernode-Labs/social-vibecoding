@@ -63,7 +63,7 @@ const net = require('node:net');
 const { execFileSync } = require('node:child_process');
 const {
   shouldRunBuild, routesPlatformAssets, platformAssetOrigin, isPlatformAssetPath,
-  createFrontProxy, untrackedFiles, excludeBuildOutputs,
+  createFrontProxy, untrackedFiles, excludeBuildOutputs, freePort,
 } = require('../worker/usernode-run-inloop');
 
 test('the launch runs the build production runs, unless deliberately skipped', () => {
@@ -134,6 +134,31 @@ function request(port, { method = 'GET', path: p = '/', headers = {}, body = nul
 function refused(port) {
   return assert.rejects(request(port), /ECONNREFUSED|ECONNRESET|EPIPE/);
 }
+
+// The kernel can hand the app's ephemeral probe the front port the test just
+// freed (the proxy has not bound it yet), which crashed the launch with
+// EADDRINUSE and made the end-to-end test flake on main.
+test('the app\'s internal port is never the front port', async () => {
+  const publicPort = 34429;
+  const answers = [publicPort, publicPort, 51234];
+  const probed = [];
+  const probe = async () => {
+    const port = answers[probed.length];
+    probed.push(port);
+    return port;
+  };
+  assert.equal(await freePort({ avoid: [publicPort], probe }), 51234);
+  assert.deepEqual(probed, [publicPort, publicPort, 51234], 'it asked again past the front port');
+
+  const always = async () => publicPort;
+  await assert.rejects(freePort({ avoid: [publicPort], probe: always }), /after 20 tries/);
+
+  // A probe that cannot listen rejects at once; retrying would hide a real error.
+  let calls = 0;
+  const failing = async () => { calls += 1; throw new Error('EADDRNOTAVAIL'); };
+  await assert.rejects(freePort({ avoid: [publicPort], probe: failing }), /EADDRNOTAVAIL/);
+  assert.equal(calls, 1);
+});
 
 test('the front proxy routes hosted assets to the platform and everything else to the app', async () => {
   const platformSeen = [];

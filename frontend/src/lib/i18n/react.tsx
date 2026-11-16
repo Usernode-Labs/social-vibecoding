@@ -1,15 +1,19 @@
-import { cloneElement, type ReactElement, type ReactNode } from 'react';
+import { cloneElement, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { getTimeZoneSnapshot, subscribeTimeZone } from '../time-zone';
 import { i18n, registerNamespace } from './runtime';
 
 /**
  * Subscribe only the React owner that renders the text; `Shell` itself stays
  * static. Returns the namespace's `t`, which re-renders this owner when the
- * language changes or its pack arrives.
+ * language changes or its pack arrives, and when the time zone changes.
  */
 export function useMessages(namespace = 'core') {
   registerNamespace(namespace);
+  // #6479: the owners that write text also write the times beside it, so a
+  // new time zone re-renders them as a new language does.
+  useSyncExternalStore(subscribeTimeZone, getTimeZoneSnapshot, getTimeZoneSnapshot);
   return useTranslation(namespace, { i18n }).t;
 }
 

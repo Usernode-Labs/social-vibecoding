@@ -62,13 +62,13 @@
 // same people can already read it through a work order or a dev session.
 // Files that hold secrets by convention (.env, keys) are never read.
 //
-// It can also read the platform the way the agent-session Mayor does: the
-// same connector read tools (get_request, get_discussion, list_requests,
+// It can also read the platform through the connector's `agent_mayor`
+// audience: the connector read tools (get_request, get_discussion, list_requests,
 // get_proposal, get_platform_conventions, …) through the Mayor's in-process
 // shim (mayor/mcp-shim.js) on a read-only grant minted for the person and
 // this one turn, so it sees exactly what they can see and can change
-// nothing through them. Its prompt carries the platform rules the Mayor's
-// does (the connector charter's shared sections).
+// nothing through them. Its prompt carries the platform rules (the
+// connector charter's shared sections).
 //
 // It never blocks the chat. routes/conversations.js calls this after the
 // person's message is saved and answered, and a person's turns run one
@@ -77,10 +77,10 @@
 // has used their week's building time can still talk to the bot. It stops
 // answering only while the bot is off, or past MAX_TURNS_PER_HOUR.
 //
-// Why not the Mayor of an agent session (services/mayor/)? That Mayor reads
-// the platform as its user does, and the bot's proposals are the BOT's:
-// every "my proposals" list leaves them out. What this needs is the bot's
-// own ledger, scoped to one person, which is a handful of queries here.
+// Why not the connector's reads alone? They read the platform as its user
+// does, and the bot's proposals are the BOT's: every "my proposals" list
+// leaves them out. What this needs is the bot's own ledger, scoped to one
+// person, which is a handful of queries here.
 
 // Its limits are its thread kind's (bot-profiles.js, step 5).
 const { CHAT_LIMITS } = require('./bot-profiles');
@@ -93,6 +93,8 @@ const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
 const turnEngine = require('./homeroom-bot-turn-engine');
+// A person's Stop of the turn (task 2148).
+const botStop = require('./homeroom-bot-stop');
 const { GITHUB_ISSUE_BODY_MAX } = require('./issue-body-limit');
 // The one reply checker every surface runs (Homeroom bot one model, step 2).
 const claims = require('./reply-claims');
@@ -204,8 +206,8 @@ const IMAGE_REPLAY_MESSAGES = 2;
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 
-// The agent-session Mayor's connector READS (mcp-audiences.js), offered as
-// they are. Its writes are not: from a DM, a request is filed only through
+// The `agent_mayor` audience's connector READS (mcp-audiences.js), offered
+// as they are. Its writes are not: from a DM, a request is filed only through
 // offer_request and the person's tap.
 const PLATFORM_TOOLS = Object.freeze([
   'get_platform_conventions', 'list_apps', 'get_app', 'list_requests', 'get_request',
@@ -404,11 +406,6 @@ const PLAIN_NOTE_NO_LATER = PLAIN_NOTE.replace(
   'If answering needs a lookup or an action, say plainly that you could not do it just now and that they can send\n'
     + 'it again. Never say you will come back to it: nothing asks you again.',
 );
-// B01: a new project's thread whose turn failed asks for what its first
-// screen needs, in the thread, so the conversation goes on there.
-const PROJECT_THREAD_TEXT = 'Let\'s shape it here. What should the first screen show, and who will use it? '
-  + 'Tell me in a line or two and I\'ll draw it.';
-
 // How many of one project's requests the bot reads at once (the setting,
 // else its default: homeroom-bot.js readsPerApp).
 function readsAtOnce(settings) {
@@ -438,8 +435,8 @@ function threadToolsOf(deps) { return deps?.threadTools || require('./homeroom-b
 // ── The prompt ────────────────────────────────────────────────────────────
 
 /**
- * The platform rules the agent-session Mayor reads (mcp-charter.js), less
- * the sections about its own change lifecycle, which this chat does not
+ * The platform rules the connector charter holds (mcp-charter.js), less
+ * the sections about a change's lifecycle, which this chat does not
  * have: what Homeroom is, the conventions, untrusted content, never claiming
  * a change has landed.
  */
@@ -452,14 +449,43 @@ function platformRules() {
     .join('\n\n');
 }
 
-// 1 Nov 2026: in a thread, a status question is about that thread. The
-// general rule (systemPrompt: "status?" is answered from my_work's
-// onYourPage) is for the main chat.
+// 1 Nov 2026: in a thread, a status question is about that thread. 14 Nov
+// 2026: every conversation is a thread now, so the general rule
+// (systemPrompt: "status?" is answered from my_work's onYourPage) is for a
+// thread in which nothing has been asked for yet, as it was for Main Chat:
+// "where do things stand?" as the first words of a new thread is about
+// everything.
 const THREAD_STATUS_LINES = Object.freeze([
   '- Here, "status?", "how is it going?" or "where are we?" means what they asked for in this thread: say what you',
   '  are doing for it right now, or that nothing is under way yet and what happens next. Do not list the rest of',
-  '  their page (my_work) unless they ask about everything.',
+  '  their page (my_work) unless they ask about everything, or nothing has been asked for in this thread yet.',
 ]);
+
+/**
+ * Pure (15 Nov 2026, #6683): what a turn written in a thread that holds a
+ * design is told about it (`thread.design`: design-threads.js designFor).
+ * The thread answers like any other; the screen itself is still the
+ * designer's, and draw_screen hands it over in this thread. Empty when the
+ * thread holds no design.
+ */
+function designThreadLines(design) {
+  if (!design) return [];
+  const of = design.app?.slug
+    ? `of the screen of project "${design.app.slug}"`
+    : design.surface === 'platform'
+      ? 'of a page of Homeroom itself'
+      : 'of a project that does not exist yet';
+  const version = Number(design.latest) > 0 ? ` Its newest version is version ${Number(design.latest)}.` : '';
+  return [
+    `- This thread holds a design, "${clip(design.title, 120)}", ${of}.${version} They talk about it here, and the`,
+    '  design is shown beside the thread with Open preview.',
+    '- To draw, change or redraw the screen, to compare its versions, or to post it as a plan, call draw_screen alone:',
+    '  the designer draws or changes it, saves the next version here and answers them itself.',
+    '- Anything else they ask, answer here as you would in any other thread, from the same tools, and a request may',
+    '  be offered on any project they can see: this thread is not limited to the design\'s project. Never say',
+    '  something cannot be done in this thread, and never tell them to do it themselves somewhere else.',
+  ];
+}
 
 /**
  * Pure (31 Oct 2026): what a turn written in a thread that is no request's
@@ -480,6 +506,9 @@ function otherThreadLines(thread) {
     // #6159: a private thread can be finished, by them or by you.
     '- When they ask you to close or finish this thread, call close_thread, then reply "Done. Reply here to pick it',
     '  up again." Never tell them to close it on their side: there is no such control.',
+    // #6683: a thread that holds a design answers like any other; only the
+    // screen itself is the designer's, and draw_screen hands it over.
+    ...designThreadLines(thread.design),
   ];
   const d = thread.draft;
   if (d?.kind === 'ask' && d.about) {
@@ -491,13 +520,38 @@ function otherThreadLines(thread) {
       '  you. What it is about is below. Answer about it, here, and never ask which request or change they mean.',
     );
   } else if (d?.kind === 'ask' && d.changeKind === 'project') {
-    // 1 Nov 2026 (C2.4): opened for a new project (start_project_thread).
+    // 1 Nov 2026 (C2.4): a thread the bot opened for a new project, from Main
+    // Chat, before 14 Nov 2026 (the tool that opened one is retired with Main).
     lines.push(
       '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
       '  for, then draw its first screen with draw_screen and design it with them here; from a design they like, you',
       '  offer to make the project. Nothing is made, filed or posted until they tap.',
       // #6523: its foot already has the door, so the flag is not needed here.
       '- New project is already at the foot of this thread, so do not call offer_new_project here.',
+    );
+  } else if (d?.kind === 'first_version') {
+    // 14 Nov 2026: a project's first version has one thread, opened by
+    // "I'm setting up X now", where its plan, its progress and its news go.
+    const name = d.appName || d.appSlug;
+    const records = d.issueNumber
+      ? `  progress, and from request_detail with project "${d.appSlug}" and number ${Number(d.issueNumber)}.`
+      : '  progress.';
+    lines.push(
+      `- It is the thread of the first version of ${name} (project "${d.appSlug}"): your plan for it, how its build is`,
+      '  going and its news are said here, so what they ask here is most likely about it. Answer about it from',
+      records,
+      '  Anything else they want is answered here too: a change is offered as a request (offer_request), as anywhere.',
+      '  Only a screen is not drawn here: when they ask to see how one could look, tell them to start a new thread',
+      '  (New thread on the Homeroom bot page) and ask there. Do not call draw_screen in this thread.',
+    );
+  } else if (d?.kind === 'earlier') {
+    // 14 Nov 2026: what was said in Main Chat before every conversation
+    // became a thread, kept as one thread they can still write in.
+    lines.push(
+      '- It is their Earlier chat thread: what you and they said before every conversation here became a thread of',
+      '  its own. They can still write here. Nothing in it is filed until you offer it: once what they want is clear',
+      '  enough to build, offer it as a request with offer_request. When, and only when, they bring an idea for a',
+      '  project of its own with no project yet, call offer_new_project so New project shows under your reply.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -632,6 +686,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  request, from the "id ..." in a picture\'s history line. Give context.request whenever they name a request',
     '  number, and ask which project when a bare number is ambiguous; put what they saw in context.saw. Propose one',
     '  to three doneWhen checks in their words, of what is true when it is done. They see all of it on the draft.',
+    '- Write every draft as a request in its own right, for somebody who has not seen this chat: what is',
+    '  asked, why it matters, how it fits what the project already does, and what is still undecided. When they',
+    '  rework an idea, offer the whole request again as it now stands. Never refer back to, contrast with, or say',
+    '  it replaces or revises an earlier draft: nobody else ever saw it.',
     '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
     '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
     '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
@@ -654,7 +712,7 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     // 1 Nov 2026 (threads, one loop): a screen is drawn, not picked.
     '- Draw a screen with them when they want to see how something could look, or to change how a screen looks or is',
     '  laid out (draw_screen): your designer draws it from their words, the project\'s code and any picture they sent, in',
-    '  a private thread (from Main Chat, a new one, which it says), and changes it at their word there. Call it alone,',
+    '  this thread, and changes it at their word here. Call it alone,',
     '  and do not reply: the designer answers them. When they have asked you to draw, render, show or mock up a',
     '  screen, call draw_screen in that turn: never answer with what you are about to do, and never ask whether to',
     '  start it. Put in only what they said of the app and the screen, never a screen they did not describe. When they',
@@ -697,10 +755,10 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '- Their weekly building time pays for your work on their requests, not for these answers (buildingTime in',
     '  my_work). Mention it only when they ask about it, or when my_work marks it low. Never name an amount of money.',
     '  When it is used up, their requests wait until Monday, and someone else in the project can ask you to start one.',
-    '- Homeroom tells them itself how each request is going: on its card in this chat and in the tray above it, and',
-    '  in its thread here. Each request\'s card is the first message of its own thread, where everything about it',
-    '  is said; the main chat shows the moments that need them (a question, a plan, a change to try, a stop, live).',
-    '  Those messages start with "[Homeroom posted this automatically]" in this conversation.',
+    '- Homeroom tells them itself how each request is going: on the request\'s own page, where everything about it',
+    '  is said, and in their bell at the moments that need them (a question, a plan, a change to try, a stop, live).',
+    '  A new project\'s first version has a thread of its own in this chat instead. Such messages start with',
+    '  "[Homeroom posted this automatically]" in this conversation.',
     '  Never write a message like them, and never start a reply with a note in brackets. A change that is',
     '  going live is "going live", not live yet: they get a message here when it is live.',
     ...(platform ? [
@@ -744,10 +802,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  nothing was done. When you cannot do something, say so plainly, and what they can do instead: leave it, vote',
     '  No on the change, comment on the request, or use Send feedback. When you have not started something you',
     '  can do, offer to do it instead of promising it.',
-    '- Decline, in one friendly sentence, anything sexual, violent, about gambling or otherwise not allowed on',
-    '  Homeroom (suggestive or mature themes, nudity, weapons, simulated gambling and loot boxes too: the',
-    '  platform\'s content rules), and anything that is not about their projects on Homeroom. Never offer or',
-    '  start a request for any of it; offer the closest version that keeps to the rules instead.',
+    '- Decline, in one friendly sentence, what the platform\'s content rules forbid (sexual content or nudity,',
+    '  realistic or graphic violence, real-money gambling and paid loot boxes), and anything that is not about',
+    '  their projects on Homeroom. Never offer or start a request for any of it; offer the closest version that',
+    '  keeps to the rules instead. Cartoon or fantasy combat and weapons in a game, pretend-currency card and',
+    '  casino games, and apps where people post and comment are allowed: never decline those.',
     '- Decline the same way anything the platform\'s data rules forbid: trackers, ads or outside scripts, health,',
     '  religion, sexuality, ethnicity, politics or biometric data, an app for children, collecting passwords or card',
     '  data, or a login of the app\'s own.',
@@ -875,7 +934,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_request',
-      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all.',
+      description: 'Offer to file a NEW request on one of their projects. They see the request under your reply with File it and Not now; nothing is filed unless they tap File it. Up to three offers under one reply; to file the same request on several projects, pass them all in projects: one card files them all. Each offer is a whole request on its own: an earlier offer they did not file was never seen by anyone else.',
       parameters: {
         type: 'object',
         properties: {
@@ -895,7 +954,7 @@ const TOOLS = [
           },
           named: { type: 'string', description: 'The project\'s name exactly as they wrote it, when they named one. A name that is not exactly the project\'s is asked about on the card ("Did you mean ...?").' },
           title: { type: 'string', description: 'A short title for the request, in their words.' },
-          details: { type: 'string', description: 'What they asked for, in their words, with anything they said that matters.' },
+          details: { type: 'string', description: 'The request on its own, for somebody who never saw this chat: what is asked and why it matters, in their words where they gave them, how it fits what the project already does, and what is still undecided. Never refer to, compare with, or say it replaces or revises an earlier draft.' },
           attachmentIds: {
             type: 'array', maxItems: 3,
             items: { type: 'string' },
@@ -935,7 +994,7 @@ const TOOLS = [
           doneWhen: {
             type: 'array', minItems: 1, maxItems: 3,
             items: { type: 'string' },
-            description: 'One to three short checks, in their words, of what is true when it is done.',
+            description: 'One to three short checks, in their words, of what is true when it is done. Each one reads on its own, never against an earlier draft.',
           },
         },
         required: ['title', 'details', 'doneWhen'],
@@ -1014,7 +1073,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'draw_screen',
-      description: 'Draw a screen with them, as a design: hands this turn to your designer, which draws it from their words, the project\'s code and any picture they sent, shows it small in a private thread with Open preview, and changes it at their word there. In a private thread it draws there; in Main Chat it first opens a new private thread for it and says so. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Call it alone, and do not reply: the designer answers them.',
+      description: 'Draw a screen with them, as a design: hands this turn to your designer, which draws it from their words, the project\'s code and any picture they sent, shows it small in this thread with Open preview, and changes it at their word here. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Call it alone, and do not reply: the designer answers them.',
       parameters: {
         type: 'object',
         properties: {
@@ -1031,7 +1090,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'close_thread',
-      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. It closes only the private thread you are in: never Main Chat, and never a request (a request closes by its group\'s vote, which offer_close_request offers). Takes no arguments. After it, reply "Done. Reply here to pick it up again."',
+      description: 'Mark this private thread done, when they ask you to close or finish it (#6159). It leaves their Homeroom bot page\'s lists; nothing in it is deleted, and anything they write in it brings it back. It closes only the private thread you are in: never a request (a request closes by its group\'s vote, which offer_close_request offers). Takes no arguments. After it, reply "Done. Reply here to pick it up again."',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },
@@ -1049,22 +1108,6 @@ const TOOLS = [
           number: { type: 'integer', description: 'With project: the request it is about, if one.' },
         },
         required: ['summary', 'details'],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'start_project_thread',
-      description: 'They want to make a NEW project (an app that does not exist yet) and you are in the main chat: open a '
-        + 'private thread for it, with only them, and carry on there. Main gets one line that links to it, and your reply '
-        + 'goes in the thread. There you shape the idea with them and draw its first screen; from a design they like, '
-        + 'the project is made. Not for a change to a project that exists. One per turn.',
-      parameters: {
-        type: 'object',
-        properties: { idea: { type: 'string', description: 'What the project is for, in a few of their own words.' } },
-        required: ['idea'],
         additionalProperties: false,
       },
     },
@@ -1717,13 +1760,13 @@ async function canFile(pool, app, user) {
 
 /**
  * #6159: close_thread. Marks the private thread this turn is in done
- * (private-threads.js markDone), for the person who asked. Refuses Main
- * Chat, a request's thread, and anything not theirs.
+ * (private-threads.js markDone), for the person who asked. Refuses a
+ * request's thread, and anything not theirs.
  */
 async function closeThread(pool, ctx) {
   if (ctx.deps?.threadRequest) return { ok: false, error: 'This is a request\'s thread. A request closes only by its group\'s vote (offer_close_request).' };
   const rootId = Number(ctx.deps?.threadRootId) || null;
-  if (!rootId) return { ok: false, error: 'Main Chat cannot be closed. Only a private thread can.' };
+  if (!rootId) return { ok: false, error: 'There is no private thread here to close.' };
   const went = await require('./private-threads').markDone(pool, { user: ctx.user, rootId, bot: ctx.bot, deps: ctx.deps || {} });
   if (!went.ok) return { ok: false, error: 'No such thread.' };
   ctx.closedThread = rootId;
@@ -2369,6 +2412,43 @@ function imagePart(picture) {
 }
 
 /**
+ * Pure: which of the attached `files` ({ id, message_id, kind }) a turn sends
+ * as pictures. Only for a model that can look (`imageInput`): the images on
+ * the newest IMAGE_REPLAY_MESSAGES of `theirs` (people's message ids, oldest
+ * first) and on `always` (the messages a turn answers, when they are not the
+ * newest: a project's thread), those first, then newest message first, as
+ * many as `takeImages` (the turn's allowance, mcp-shim.js) still allows. The
+ * one rule for the bot's own chat (historyMessages) and for the threads it
+ * answers in on a project (homeroom-bot-voice.js).
+ */
+function picturesToSend(files, { theirs = [], always = [], imageInput = false, takeImages = null } = {}) {
+  if (!imageInput) return [];
+  const first = new Set(always.map(Number));
+  const recent = new Set(theirs.slice(-IMAGE_REPLAY_MESSAGES).map(Number));
+  const rank = (f) => (first.has(Number(f.message_id)) ? 1 : 0);
+  const wanted = files
+    .filter((f) => f.kind === 'image' && (first.has(Number(f.message_id)) || recent.has(Number(f.message_id))))
+    .sort((a, b) => rank(b) - rank(a) || Number(b.message_id) - Number(a.message_id));
+  return takeImages ? takeImages({ images: wanted }).images : wanted;
+}
+
+/**
+ * Pure: one attached file as the model reads it under its message. `picture`
+ * is its bytes when they are sent with it. #6251: in the bot's own chat the
+ * id is on the line, so offer_request can name the pictures that belong with
+ * the request it drafts; a project's thread has no tool that takes one
+ * (`withId: false`).
+ */
+function attachedLine(f, { picture = null, imageInput = false, withId = true } = {}) {
+  const named = `${clip(f.filename, 120)}${withId ? ` (id ${f.id})` : ''}`;
+  if (picture) return `[Homeroom: they attached the picture ${named}, shown below.]`;
+  if (f.kind !== 'image') return `[Homeroom: they attached the file ${named}, which you cannot open.]`;
+  return imageInput
+    ? `[Homeroom: they attached the picture ${named}. Only the newest pictures are shown.]`
+    : `[Homeroom: they attached the picture ${named}, which you cannot see: your model reads text only.]`;
+}
+
+/**
  * The last messages of the DM, oldest first, as the model reads them.
  *
  * What the person attached is named on their message. For a model that can
@@ -2424,12 +2504,7 @@ async function historyMessages(pool, {
     : { rows: [] };
   // Which pictures are sent, newest messages first so the allowance goes to
   // what they just said, then read in one query.
-  const recent = new Set(theirs.slice(-IMAGE_REPLAY_MESSAGES));
-  const wanted = imageInput
-    ? files.filter((f) => f.kind === 'image' && recent.has(Number(f.message_id)))
-      .sort((a, b) => Number(b.message_id) - Number(a.message_id))
-    : [];
-  const kept = takeImages ? takeImages({ images: wanted }).images : wanted;
+  const kept = picturesToSend(files, { theirs, imageInput, takeImages });
   // WP1 (#10): what each of the bot's activity cards shows now, by message.
   // Its words say only that work began; the card itself follows it, and the
   // model never saw it ("Nothing broke" beside a card that read "Didn't
@@ -2477,16 +2552,8 @@ async function historyMessages(pool, {
     const parts = [];
     const lines = attached.map((f) => {
       const picture = shown.get(f.id);
-      // #6251: the id is on the line, so offer_request can name the ones
-      // that belong with the request it drafts.
-      if (picture) {
-        parts.push(imagePart(picture));
-        return `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), shown below.]`;
-      }
-      if (f.kind !== 'image') return `[Homeroom: they attached the file ${clip(f.filename, 120)} (id ${f.id}), which you cannot open.]`;
-      return imageInput
-        ? `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}). Only the newest pictures are shown.]`
-        : `[Homeroom: they attached the picture ${clip(f.filename, 120)} (id ${f.id}), which you cannot see: your model reads text only.]`;
+      if (picture) parts.push(imagePart(picture));
+      return attachedLine(f, { picture, imageInput });
     });
     const card = fromBot && kind === 'activity' ? cardNow.get(Number(m.id)) : null;
     if (card) lines.push(`[Homeroom: this activity card now reads "${card}".]`);
@@ -2803,11 +2870,27 @@ async function resolveCards(pool, user, cards) {
  * 1 Nov 2026 (threads, one loop): draw_screen, in offer_design's place. The
  * turn ends here and the designer takes it over (answer(): design-bot.js
  * draw), for `project` when it names one they may see: it draws in this
- * private thread, or opens one from Main Chat.
+ * thread the turn is in.
  */
 async function drawScreen(pool, ctx, args = {}) {
+  // A project's first-version thread is where its plan, its progress and its
+  // news are said, so no screen is drawn there: one is drawn in a thread of
+  // its own.
+  if (ctx.deps?.threadKind === 'first_version') {
+    return {
+      ok: false,
+      error: 'No screen is drawn in a first version\'s thread. Tell them to start a new thread on the Homeroom bot page '
+        + '(New thread) and ask for the screen there: you will draw it in that thread.',
+    };
+  }
+  // 15 Nov 2026 (#6683): a thread that holds a design (threadDesign) answers
+  // like any other, and this is how its screen is drawn: the designer makes
+  // the next version of THIS design. Its title is the design's, so what
+  // alone is enough, and a screen of another project is not drawn into it.
+  const design = ctx.deps?.threadDesign || null;
   const what = clip(String(args.what || '').trim(), 600);
-  const title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  let title = clip(String(args.title || '').replace(/\s+/g, ' ').trim(), 120);
+  if (!title && design?.title) title = clip(String(design.title).replace(/\s+/g, ' ').trim(), 120);
   if (!what || !title) return { ok: false, error: 'Say what to draw (what) and name the screen (title).' };
   let app = null;
   if (typeof args.project === 'string' && args.project.trim()) {
@@ -2815,56 +2898,17 @@ async function drawScreen(pool, ctx, args = {}) {
     if (!app || !(await canView(pool, app, ctx.user))) {
       return { ok: false, error: `There is no project called ${clip(args.project, 80)} that they can see. Ask which one, or leave project out.` };
     }
+    if (design?.app?.slug && app.slug !== design.app.slug) {
+      return {
+        ok: false,
+        error: `This thread's design is of ${design.app.name || design.app.slug}, so a screen of `
+          + `${app.name || app.slug} is not drawn into it. Say this thread's design is of its own project, and offer to `
+          + 'start that screen in a new thread (New thread on the Homeroom bot page) as a project\'s first screen.',
+      };
+    }
   }
   ctx.drawScreen = { app, title, brief: what };
   return { ok: true, note: 'Your designer draws it now and answers them itself. Call nothing else, and do not reply.' };
-}
-
-// 1 Nov 2026 (threads, one loop: C2.4): a new project's private thread.
-const MAX_PROJECT_IDEA = 160;
-
-/** Pure: Main's one line that a new project's thread hangs off. */
-function projectThreadLine(idea) {
-  const said = clip(String(idea || '').replace(/\s+/g, ' '), MAX_PROJECT_IDEA).replace(/[.!?…]+$/, '');
-  return said ? `New thread, for a new project: ${said}. Only you can see it.` : 'New thread, for a new project. Only you can see it.';
-}
-
-/**
- * start_project_thread (C2.4): from Main, a "+"-style private thread with no
- * project, for a new one: the bot's line in Main (metadata kind
- * 'opened_thread', changeKind 'project', quoting what they said), its row
- * (kind 'ask', no project), and this turn's reply goes in it (answer()).
- * The conversation goes on there, where the first screen is drawn and the
- * project made from it (design-bot.js offer_project). Never throws.
- */
-async function startProjectThread(pool, ctx, args = {}) {
-  if (ctx.projectThread) return { ok: true, note: 'The thread is open: your reply goes there.' };
-  if (ctx.deps.threadRequest || ctx.deps.threadRootId) {
-    return { ok: false, error: 'You are in a thread already: carry on here.' };
-  }
-  const idea = clip(String(args.idea || '').replace(/\s+/g, ' '), MAX_PROJECT_IDEA);
-  if (!idea) return { ok: false, error: 'Say in a few of their words what the project is for.' };
-  const dm = dmModule(ctx.deps);
-  const said = await dm.sendDm(pool, {
-    bot: ctx.bot, userId: ctx.user.id, content: projectThreadLine(idea),
-    idempotencyKey: `hrbot-mayor-project-${ctx.messageId}`, replyToId: ctx.messageId, threadRootId: false, moment: null,
-    metadata: { kind: 'opened_thread', changeKind: 'project', projectIdea: idea },
-  }).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'Could not open a new project\'s thread', { err: err.message });
-    return null;
-  });
-  if (!said?.messageId) return { ok: false, error: 'The thread could not be opened just now. Carry on here.' };
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, NULL, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-    [ctx.user.id, said.conversationId || ctx.conversationId, said.messageId],
-  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a new project\'s thread', { err: err.message }));
-  ctx.projectThread = { rootId: Number(said.messageId) };
-  return {
-    ok: true,
-    note: 'A private thread for the new project is open, linked from the main chat, and your reply goes in it: answer there, '
-      + 'and ask what its first screen should show, or draw it.',
-  };
 }
 
 // ── What a draft request carries besides its words (#6251) ────────────────
@@ -2997,14 +3041,17 @@ async function draftContext(pool, { app, value }) {
 
 /** The server's own part: the thread the message is in, and the bot message it quotes. */
 async function draftPlace(pool, { ctx }) {
-  const href = '#homeroom-bot/main';
+  // 14 Nov 2026: there is no Main Chat to link to; a place that cannot be
+  // read is the Homeroom bot page.
+  const href = '#homeroom-bot';
   try {
     const { rows: [own] } = await pool.query(
-      'SELECT thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
+      'SELECT id, thread_root_id, reply_to_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2',
       [ctx.messageId, ctx.conversationId],
     );
     if (!own) return { href, quoted: null };
-    const root = Number(own.thread_root_id) || null;
+    // A message in no other thread is its own thread's first.
+    const root = Number(own.thread_root_id) || Number(own.id) || null;
     let quoted = null;
     if (own.reply_to_id) {
       const { rows: [by] } = await pool.query(
@@ -3046,6 +3093,75 @@ function draftExtrasText(extras) {
   return lines.join('\n');
 }
 
+/**
+ * #6682: the offer_request tool, shared by the chat's turn and a design
+ * thread's (design-bot.js). `ctx` carries what a draft needs (user, bot,
+ * conversationId, messageId, appIds, deps); the offer lands in ctx.offer or
+ * ctx.moreOffers. Any project they can file on is offered, Homeroom's own
+ * included. Resolves { ok, note, shown, similarOpen? } or { ok: false, error }.
+ */
+async function checkRequestOffer(pool, ctx, args = {}) {
+  const { user, deps } = ctx;
+  if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
+  const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
+  const details = clip(args.details, MAX_DETAILS_CHARS);
+  if (title.length < 3) return { ok: false, error: 'The title is too short.' };
+  // #6251: what the draft carries besides its words, checked against
+  // this person's own chat and the project's open board.
+  const doneWhen = draftDoneWhen(args.doneWhen);
+  if (!doneWhen) {
+    return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
+  }
+  const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
+  if (!pictures.ok) return { ok: false, error: pictures.error };
+  const place = await draftPlace(pool, { ctx });
+  const baseExtras = {
+    attachmentIds: pictures.ids,
+    doneWhen,
+    chatHref: place.href,
+  };
+  // #6305: one request on several projects, filed from one card. Rows
+  // in the order they named them; each named row settled on the card.
+  if (Array.isArray(args.projects) && args.projects.length) {
+    const rows = await resolveRows(pool, { items: args.projects, user });
+    if (rows.length < 2) {
+      // Only one project came out of it: today's single-request card.
+      return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+    }
+    // Before drafting: read each app's code the way its first read
+    // would, so a row for an app that already does it says so.
+    const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
+    const already = exact.length
+      ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
+        user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
+        deps, ctx,
+      })
+      : {};
+    for (const row of exact) {
+      const found = already && already[row.slug];
+      if (found && found.done) {
+        row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
+        row.ticked = false;
+      }
+    }
+    ctx.card = {
+      type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
+    };
+    if (!addOffer(ctx, {
+      kind: 'file_many', rows, title, details, extras: baseExtras,
+      projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
+    })) return { ok: false, error: SAME_OFFER };
+    const shown = `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`;
+    return { ok: true, note: shown, shown };
+  }
+  return withNote(await offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures }));
+}
+
+/** The offer tool's answer, with the same words under `note` for a design turn. */
+function withNote(out) {
+  return out && out.ok && !out.note ? { ...out, note: out.shown } : out;
+}
+
 /** Run one tool call for this person. Never throws: errors are results. */
 async function runTool(pool, ctx, name, args) {
   const { user, settings, deps } = ctx;
@@ -3084,11 +3200,10 @@ async function runTool(pool, ctx, name, args) {
       case 'draw_screen': return await drawScreen(pool, ctx, args);
       case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
-      case 'start_project_thread': return await startProjectThread(pool, ctx, args);
       case 'offer_new_project': {
         // #6523: the New project button is the bot's to offer, in a private
-        // thread that is an idea for a project of its own. Never in Main.
-        if (!ctx.deps.threadRootId && !ctx.projectThread) return { ok: false, error: 'Only in a private thread with no project.' };
+        // thread that is an idea for a project of its own.
+        if (!ctx.deps.threadRootId) return { ok: false, error: 'Only in a private thread with no project.' };
         ctx.newProjectOffer = true;
         return { ok: true, note: 'New project shows under your reply.' };
       }
@@ -3135,63 +3250,7 @@ async function runTool(pool, ctx, name, args) {
       case 'revise_proposal': return await reviseProposal(pool, ctx, args);
       case 'withdraw_proposal': return await withdrawProposal(pool, ctx, args);
       case 'report_problem': return await reportProblem(pool, ctx, args);
-      case 'offer_request': {
-        if (!offerRoom(ctx)) return { ok: false, error: `${OFFERS_FULL}` };
-        const title = clip(withoutEmDashes(String(args.title || '').replace(/\s+/g, ' ')).replace(/:+$/, ''), MAX_TITLE_CHARS);
-        const details = clip(args.details, MAX_DETAILS_CHARS);
-        if (title.length < 3) return { ok: false, error: 'The title is too short.' };
-        // #6251: what the draft carries besides its words, checked against
-        // this person's own chat and the project's open board.
-        const doneWhen = draftDoneWhen(args.doneWhen);
-        if (!doneWhen) {
-          return { ok: false, error: 'Give one to three short Done when checks, in their words, of what will be true when it is done.' };
-        }
-        const pictures = await draftPictures(pool, { ids: args.attachmentIds, conversationId: ctx.conversationId, userId: user.id });
-        if (!pictures.ok) return { ok: false, error: pictures.error };
-        const place = await draftPlace(pool, { ctx });
-        const baseExtras = {
-          attachmentIds: pictures.ids,
-          doneWhen,
-          chatHref: place.href,
-        };
-        // #6305: one request on several projects, filed from one card. Rows
-        // in the order they named them; each named row settled on the card.
-        if (Array.isArray(args.projects) && args.projects.length) {
-          const rows = await resolveRows(pool, { items: args.projects, user });
-          if (rows.length < 2) {
-            // Only one project came out of it: today's single-request card.
-            return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
-          }
-          // Before drafting: read each app's code the way its first read
-          // would, so a row for an app that already does it says so.
-          const exact = rows.filter((r) => r.match === 'exact' && !r.disabled);
-          const already = exact.length
-            ? await require('./homeroom-bot-already-done').alreadyDoes(pool, {
-              user, apps: exact.map((r) => ({ slug: r.slug, name: r.name })), title, details,
-              deps, ctx,
-            })
-            : {};
-          for (const row of exact) {
-            const found = already && already[row.slug];
-            if (found && found.done) {
-              row.done = clip(withoutEmDashes(String(found.sentence || '').trim()), 140) || null;
-              row.ticked = false;
-            }
-          }
-          ctx.card = {
-            type: 'file_many', v: 1, state: 'open', forUserId: Number(user.id), title, details, rows,
-          };
-          if (!addOffer(ctx, {
-            kind: 'file_many', rows, title, details, extras: baseExtras,
-            projects: rows.filter((r) => r.match === 'exact').map((r) => r.slug),
-          })) return { ok: false, error: SAME_OFFER };
-          return {
-            ok: true,
-            shown: `One card under your reply, "New request on ${rows.length} projects", with a tick on each row and File on all. Nothing is filed until they tap it. ${rows.some((r) => r.match !== 'exact') ? 'A row whose name does not match says "Did you mean ...?" on the card; do not ask about names in your reply. ' : ''}${rows.some((r) => r.done) ? 'A row for an app that already does it says so and starts unticked. ' : ''}Answer once how it works, then stop explaining it.`,
-          };
-        }
-        return offerSingle(pool, { ctx, user, deps, args, title, details, extras: baseExtras, pictures });
-      }
+      case 'offer_request': return await checkRequestOffer(pool, ctx, args);
       case 'offer_move_request': return await offerMoveRequest(pool, ctx, args);
       case 'offer_copy_request': return await offerCopyRequest(pool, ctx, args);
       case 'offer_close_request': return await offerCloseRequest(pool, ctx, args);
@@ -3340,6 +3399,9 @@ function avoidProviders(before, err) {
 async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_ATTEMPTS, retryOutputTokens, ...rest }) {
   let overrides = {};
   for (let attempt = 1; ; attempt += 1) {
+    // A person's Stop (homeroom-bot-stop.js): nothing more is asked, a retry
+    // after its wait included.
+    botStop.check(t.signal);
     try {
       const res = await t.chat({
         apiKey: t.apiKey,
@@ -3366,6 +3428,8 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
         ...(Array.isArray(t.avoid) && t.avoid.length ? { ignoreProviders: t.avoid } : {}),
         // P1: streamed, so the answer shows as it is written (draftWriter).
         ...(typeof t.onDelta === 'function' ? { onDelta: t.onDelta } : {}),
+        // Their Stop cuts the request off (openrouter.js: code 'cancelled').
+        ...(t.signal ? { signal: t.signal } : {}),
         ...rest,
         ...overrides,
       });
@@ -3380,6 +3444,9 @@ async function askModel(t, { messages, tools, toolChoice, where, attempts = MAX_
       }
       return res;
     } catch (err) {
+      // Cut off by their Stop, or failed as they stopped: not the model's
+      // failure. It is not recorded as one and never asked again.
+      if (t.signal?.aborted) throw botStop.stopError();
       const code = codeOf(err);
       t.failures.push(`${where}:${code}${err?.status ? `:${err.status}` : ''}`);
       log.warn('homeroom-bot-mayor', 'A DM model request failed', {
@@ -3445,7 +3512,9 @@ async function plainAnswer(t, history, { later = true } = {}) {
           content: `${systemPrompt({
             username: t.user.username, perPerson: t.settings.perPerson, platform: false,
             // 31 Oct 2026: where they wrote it, as the rounds were told.
-            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId ? { draft: t.ctx.deps.threadDraft || null } : null,
+            // 15 Nov 2026 (#6683): and whether the thread holds a design.
+            thread: !t.ctx?.deps?.threadRequest && t.ctx?.deps?.threadRootId
+              ? { draft: t.ctx.deps.threadDraft || null, design: t.ctx.deps.threadDesign || null } : null,
           })}\n\n${later ? PLAIN_NOTE : PLAIN_NOTE_NO_LATER}${t.ctx?.owed ? `\n\n${t.ctx.owed}` : ''}`,
         },
         ...history.slice(-PLAIN_HISTORY).map(plainMessage),
@@ -3489,11 +3558,6 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: await claims.checkedNote(pool, ctx, done), cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
-  // B01 (audit 2 Nov 2026): a new project's thread opened before the model
-  // failed is answered there with the question its first screen needs, now.
-  // A plain answer knows nothing of the thread, and promised to "come back
-  // in a minute" from Main, a promise no later try kept.
-  if (ctx.projectThread) return { fallback: 'project', text: PROJECT_THREAD_TEXT, cards: [], defer: false };
   const fromRecords = await recordsAnswer(pool, ctx);
   if (fromRecords) return { fallback: 'records', ...fromRecords, defer: false };
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
@@ -3564,7 +3628,7 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
   if (!(await require('./homeroom-bot-verified').worksFor(dm, pool, settings, user))) return null;
   log.info('homeroom-bot-mayor', 'Asking a DM answer again', { userId: user.id, messageId: message.id, attempt });
   // 31 Oct 2026: a later try reads the thread the message was written in, as
-  // its first try did (answerUserMessage); it used to read the main chat.
+  // its first try did (answerUserMessage).
   const where = typeof dm.threadDeps === 'function'
     ? await dm.threadDeps(pool, { userId: user.id, conversationId, message }).catch(() => ({}))
     : {};
@@ -3581,6 +3645,8 @@ async function answerLater(pool, config, { bot, user, conversationId, message, d
     ? dm.whileTyping(pool, {
       botId: bot.id, conversationId, ws: deps.ws,
       threadRootId: Number(message.threadRootId ?? message.thread_root_id) || null,
+      // Task 2148: a later try can be stopped as the first one can.
+      answering: deps.stop ? message.id : null,
     }, run)
     : run();
 }
@@ -3603,6 +3669,25 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
     // cards, the offer) ended the turn with no answer at all, and nothing
     // recorded it. It is recorded and said, with its code.
     const code = codeOf(err);
+    // Task 2148: the person stopped this turn, and a step outside its rounds
+    // failed (or its one line could not be sent just now). Said as a stop,
+    // with what the turn had done, never as "I couldn't answer".
+    if (deps.stop?.signal?.aborted) {
+      if (!state.recorded) {
+        const t = state.turn;
+        await recordTurn(pool, {
+          userId: user.id, conversationId, messageId: message.id, model: t?.model, rounds: state.rounds, tools: state.tools,
+          inputTokens: t?.usage.inputTokens, outputTokens: t?.usage.outputTokens, costUsd: t?.usage.costUsd,
+          error: null, failures: t?.failures, fallback: 'stopped',
+        });
+      }
+      return say(botStop.stoppedText(deps.stop.did)).catch((sendErr) => {
+        // `strict`: nothing reached them, so the work is tried again, and
+        // says it then (answerOwed, stopped before the try began).
+        if (deps.strict) throw sendErr;
+        return null;
+      });
+    }
     log.warn('homeroom-bot-mayor', 'DM turn failed outside the model', {
       userId: user.id, messageId: message.id, code, err: clip(err?.message, 300),
     });
@@ -3649,16 +3734,9 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
     // reply carries `newProject` and the thread's foot shows New project.
     newProjectOffer: false,
+    // Their Stop (homeroom-bot-stop.js), for a tool that waits (look_into).
+    stopSignal: deps.stop?.signal || null,
   };
-  // B01, B07 (audit 2 Nov 2026): once start_project_thread opened a new
-  // project's thread, everything this turn says goes in it, whichever way
-  // it is said. A fallback answer used to land in Main beside the thread's
-  // line, as a second reply quoting the question again.
-  const sayOutside = say;
-  say = (content, extra = {}) => sayOutside(content, {
-    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
-    ...extra,
-  });
   // What one turn's model requests share (askModel). The route is OpenRouter's
   // session, which pins a provider: it is this turn's, not the person's, so
   // one that failed them is not the one every later turn of theirs is sent
@@ -3676,6 +3754,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // The providers that failed this turn, left out of its later requests
     // (avoidProviders); null once a request was refused as it was built.
     avoid: [],
+    // Their Stop: a request in flight is cut off, none is asked after it.
+    signal: deps.stop?.signal || null,
   };
   // #6346: a stand-in refused by its reply tool is recorded with the turn.
   ctx.failures = t.failures;
@@ -3698,6 +3778,28 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let error = null;
   let errorStatus = null;
   let history = [{ role: 'user', content: ctx.userText || '(attachment)' }];
+  // Task 2148: the person stopped this turn (homeroom-bot-stop.js). The
+  // reply it was writing is not sent, no fallback answers in its place, and
+  // one line says so where they wrote, with what the turn had already done
+  // that stays done. It is recorded as a turn that cost what it cost, with
+  // no error: the model did not fail. The line is sent as written, never
+  // through the reply checks, under the answer's own key, so a retry finds
+  // the message answered and no apology follows.
+  const stoppedNow = () => deps.stop?.signal?.aborted === true;
+  const sayStopped = async () => {
+    draft?.close({ clear: true });
+    await recordTurn(pool, {
+      userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
+      inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error: null,
+      failures: t.failures, fallback: 'stopped',
+    });
+    state.recorded = true;
+    await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a DM turn', category: 'homeroom-bot-mayor' });
+    log.info('homeroom-bot-mayor', 'A DM turn was stopped by the person', {
+      userId: user.id, messageId: message.id, rounds: turnRounds.rounds, did: deps.stop.did?.length ?? null,
+    });
+    return sayOutside(botStop.stoppedText(deps.stop.did));
+  };
   if (t.apiKey === undefined) {
     try {
       t.apiKey = await botKey(pool, config, bot.id);
@@ -3719,13 +3821,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       ? deps.seesImages
       : await modelSeesImages(pool, config, t.apiKey, t.model);
     const takeImages = require('./mayor/mcp-shim').turnImageBudget();
-    // The agent-session Mayor's read tools, on a read-only grant for this
+    // The `agent_mayor` audience's read tools, on a read-only grant for this
     // person and this turn. Without them the turn still runs on its own tools.
     let platform = null;
     try {
       const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
       platform = await open({
-        pool, config, userId: user.id, agentSessionId: null, ttlSeconds: PLATFORM_GRANT_SECONDS,
+        pool, config, userId: user.id, ttlSeconds: PLATFORM_GRANT_SECONDS,
         rateSubject: `hrbot-dm-${user.id}`,
         imageInput,
       });
@@ -3779,7 +3881,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           content: systemPrompt({
             username: user.username, perPerson: settings.perPerson, platform: platformTools.length > 0,
             request: deps.threadRequest || null,
-            thread: !deps.threadRequest && deps.threadRootId ? { draft: deps.threadDraft || null } : null,
+            // 15 Nov 2026 (#6683): a thread that holds a design is told so,
+            // and answers like any other (designThreadLines).
+            thread: !deps.threadRequest && deps.threadRootId
+              ? { draft: deps.threadDraft || null, design: deps.threadDesign || null } : null,
             extra: threadTools.promptLines(ctx),
           }),
         },
@@ -3817,6 +3922,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         // #3685: one failed request used to end the turn with "I couldn't
         // answer just now", whatever the round had already read.
         ask: (options) => askModel(t, options),
+        // Their Stop, looked at before each request and each call (the engine).
+        signal: t.signal,
         where: (n) => `r${n}`,
         // The turn ends with its reply, or with a screen handed to the designer.
         done: () => !!ctx.reply || !!ctx.drawScreen,
@@ -3889,6 +3996,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
           claims.noteTool(ctx, result);
           // P1: what it read, for the reply's "Looked at" line.
           noteLookup(ctx, name, args, result);
+          // What it did that stays done, for the line a Stop says.
+          await deps.stop?.note?.(name, args, result);
           return result;
         },
         afterCalls: ({ rounds }) => {
@@ -3943,6 +4052,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         try {
           await runRounds();
         } catch (err) {
+          if (botStop.isStop(err)) throw err;
           // The first answer, less what it should not have said, still goes.
           log.info('homeroom-bot-mayor', 'The second pass failed; sending the first answer, checked', { userId: user.id, code: codeOf(err) });
         }
@@ -3952,13 +4062,18 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     } catch (err) {
       error = codeOf(err);
       errorStatus = err?.status ?? null;
-      log.warn('homeroom-bot-mayor', 'DM turn failed', {
-        userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
-      });
+      if (!botStop.isStop(err)) {
+        log.warn('homeroom-bot-mayor', 'DM turn failed', {
+          userId: user.id, messageId: message.id, code: error, status: err?.status ?? null, err: clip(err?.message, 300),
+        });
+      }
     } finally {
       try { await platform?.close?.(); } catch {}
     }
   }
+  // Stopped during its rounds, or as they ended: the last safe point before
+  // anything is sent.
+  if (stoppedNow()) return sayStopped();
   // #6307: a paragraph said once, and the draft's own words left to the card
   // under the reply, before what it still claims is cut.
   let text = dropDraftEcho(dropRepeatedParagraphs(cleanReply(answerText(ctx.besides, ctx.reply?.text || finalText))), ctx.offer);
@@ -3991,6 +4106,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         : turnRounds.rounds >= MAX_ROUNDS && !ctx.reply ? 'no_reply' : 'empty_answer';
     }
     ({ text, cards, fallback, defer } = await fallbackAnswer(pool, t, { error, errorStatus, history }));
+    // Stopped while the fallback's one plain request ran: nothing it wrote is sent.
+    if (stoppedNow()) return sayStopped();
   }
   await recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
@@ -4010,13 +4127,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     if (deps.deferAttempt) return null;
   }
   if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return say(text);
-  // 1 Nov 2026: draw_screen. The designer draws it and answers, in this
-  // private thread or one it opens from Main Chat (design-bot.js draw).
+  // 1 Nov 2026: draw_screen. The designer draws it and answers, in the
+  // thread this turn is in (design-bot.js draw).
   if (ctx.drawScreen) {
-    // B01: drawn in the new project's thread when this turn opened one.
-    const where = ctx.projectThread ? { ...deps, threadRootId: ctx.projectThread.rootId, threadRequest: null } : deps;
     return (deps.designBot || require('./design-bot')).draw(pool, config, {
-      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps: where,
+      bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps,
     });
   }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
@@ -4068,8 +4183,6 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // Task 2020: the answer laid out, drawn in place of the words.
       ...(html ? { html } : {}),
     },
-    // C2.4: a new project's thread opened this turn: the answer is its first reply.
-    ...(ctx.projectThread ? { replyToId: null, threadRootId: ctx.projectThread.rootId } : {}),
   });
 }
 
@@ -4297,12 +4410,14 @@ function closeOfferMeta({ app, name, actionId, issueNumber }) {
   });
 }
 
-// #6019 follow-up: Main's line for a draft the bot opened a private thread
-// for, quoting what the person asked, and the thread's row
-// (private_threads, services/private-threads.js), which the AI tab lists
-// with a lock until the draft is filed, posted or put away. Resolves the
-// line ({ messageId, conversationId }), or null when it could not be sent,
-// and the draft is then said in Main as before.
+// #6019 follow-up: the line a private thread the bot opens for a draft starts
+// with, and the thread's row (private_threads, services/private-threads.js),
+// written with it, which the AI tab lists with a lock until the draft is
+// filed, posted or put away. 14 Nov 2026: every message is in a thread, so
+// a draft is said in the thread it was asked for in (offer); this is for a
+// message in none. Resolves the line ({ messageId, conversationId }), or
+// null when it could not be sent, and the draft is then said under the
+// message it answers.
 async function openDraftThread(pool, { bot, user, conversationId, message, kind, app, name, title = null, deps }) {
   const dm = dmModule(deps);
   // B19 (audit 2 Nov 2026): what the thread is named by, in the tab's list
@@ -4316,20 +4431,17 @@ async function openDraftThread(pool, { bot, user, conversationId, message, kind,
       ? `I drafted that to post on ${name}, in a thread only you can see. Nothing is posted until you post it.`
       : `I drafted it as a request on ${name}, in a thread only you can see. Nothing is filed until you file it.`,
     idempotencyKey: `hrbot-mayor-opened-${message.id}`,
+    // The thread's first message, its row written with it (sendDm `thread`),
+    // quoting what asked for the draft, which leads the thread's history.
     replyToId: message.id,
-    threadRootId: false,
+    thread: { kind: kind === 'post_reply' ? 'draft_reply' : 'draft_request', appId: app.id },
     moment: null,
     metadata: { kind: 'opened_draft', appSlug: app.slug, appName: name, draft: kind, ...(draftTitle ? { draftTitle } : {}) },
   }).catch((err) => {
-    log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it in Main)', { err: err.message });
+    log.warn('homeroom-bot-mayor', 'Could not open a draft\'s private thread (saying it under their message)', { err: err.message });
     return null;
   });
   if (!said?.messageId) return null;
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, $4, $5, 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-    [user.id, said.conversationId || conversationId, said.messageId, app.id, kind === 'post_reply' ? 'draft_reply' : 'draft_request'],
-  ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not record a draft\'s private thread', { err: err.message }));
   return said;
 }
 
@@ -4341,7 +4453,11 @@ async function notePrivateDraft(pool, { userId, messageId, state, ref = null }) 
   await pool.query(
     `UPDATE private_threads p SET state = $3, result_ref = COALESCE($4, p.result_ref), updated_at = NOW()
        FROM conversation_messages m
-      WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'`,
+      WHERE m.id = $1 AND p.root_message_id = m.thread_root_id AND p.user_id = $2 AND p.state = 'open'
+        -- 14 Nov 2026: a draft said in a thread that is not its own (the
+        -- bot's hello, a first version, Earlier chat, a note) leaves that
+        -- thread as it is: only the draft's card says where it went.
+        AND p.kind NOT IN ('hello', 'first_version', 'earlier', 'note')`,
     [Number(messageId), Number(userId), state, ref == null ? null : Number(ref)],
   ).catch((err) => log.warn('homeroom-bot-mayor', 'Could not note where a draft\'s private thread went', { err: err.message }));
 }
@@ -4444,15 +4560,14 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       ...(o.details ? ['', clip(o.details, 1200)] : []),
       ...(o.extras && draftExtrasText(o.extras) ? ['', draftExtrasText(o.extras)] : []),
     ].join('\n');
-  // #6019 follow-up (plan v3: "Drafts: the bot opens a locked thread and
-  // links it from Main"): a draft (a request to file, or words to post) is
-  // put in a private thread of its own, only the person's. Main says so,
-  // quoting what they asked, and the draft is the thread's first reply.
-  // Said in a thread already, it stays there.
+  // #6019 follow-up: a draft (a request to file, or words to post) is said
+  // in a private thread, only the person's. 14 Nov 2026: every message is in
+  // one, so it is said in the thread it was asked for in; a thread is opened
+  // for it only for a message in none.
   // B05 (audit 2 Nov 2026): a change to a plan is drafted where the plan
   // is, so its Post it is right under it, never one thread away.
   const draft = kind === 'file_request' || (post && o.title !== 'plan_change');
-  const opened = draft && !(message.threadRootId || message.thread_root_id)
+  const opened = draft && !(message.threadRootId || message.thread_root_id || deps?.threadRootId || deps?.threadRequest)
     ? await openDraftThread(pool, {
       bot, user, conversationId, message, kind, app: o.app, name, title: post ? o.details : o.title, deps,
     })
@@ -4464,8 +4579,8 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     idempotencyKey: `hrbot-mayor-${message.id}${keySuffix}`,
     // It quotes the message it answers, and that quote is where the
     // request's later news finds what it started from (#3707,
-    // homeroom-bot-dm.js requestStart); in a draft's thread, Main's line
-    // quotes it instead.
+    // homeroom-bot-dm.js requestStart); in a thread opened for the draft,
+    // the draft is its first reply.
     replyToId: opened ? null : message.id,
     ...(opened ? { threadRootId: opened.messageId } : {}),
     // The proposal it would withdraw, to open before deciding.
@@ -4583,7 +4698,7 @@ async function checkPlanOffer(pool, { user, design, args = {}, deps = {}, html =
     if (asked) {
       const named = await findApp(pool, asked);
       if (named && Number(named.id) !== Number(app.id)) {
-        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project.` };
+        return { ok: false, error: `This design is a screen of ${app.name || app.slug}, so it posts there. Offer it without project. To file an ordinary request there, use offer_request.` };
       }
     }
   }
@@ -4644,16 +4759,20 @@ function checkProjectOffer({ design, args = {} }) {
  * Pure: the line above a card, from the model's own words (sendDesignOffer).
  * Sentences naming a request other than the card's own (`issueNumber`) are
  * dropped whole, so a card's sentence can never name a request its button
- * does not post to; with no request, any sentence naming one is dropped. The
+ * does not post to; with no request, any sentence naming one is dropped. With
+ * `plan` ({ appName, appSlug, title }), a sentence saying the card files some
+ * other request (reply-claims.js planCardOther, #6682) is dropped too. The
  * sentences kept are rejoined, and `fallback` says it when none is left.
  */
-function cardSentence(text, { issueNumber = null, fallback = '' } = {}) {
+function cardSentence(text, { issueNumber = null, fallback = '', plan = null } = {}) {
   const own = Number(issueNumber) > 0 ? Number(issueNumber) : null;
   const keeps = (sentence) => {
     const named = [];
     for (const m of sentence.matchAll(/#\s?(\d+)/g)) named.push(Number(m[1]));
     for (const m of sentence.matchAll(/\brequests?\s+#?(\d+)/gi)) named.push(Number(m[1]));
-    return !named.length || (!!own && named.every((named_) => named_ === own));
+    if (named.length && !(own && named.every((named_) => named_ === own))) return false;
+    if (plan && claims.planCardOther(sentence, plan)) return false;
+    return true;
   };
   const kept = String(text || '')
     .split(/\n{2,}/)
@@ -4723,7 +4842,11 @@ async function sendDesignOffer(pool, { bot, user, conversationId, message, desig
       sourceIssueNumber: n, privateThreadId: design.threadId, designVersion: v,
     },
     content: [
-      cardSentence(text, { issueNumber: n, fallback }),
+      cardSentence(text, {
+        issueNumber: n,
+        fallback,
+        plan: { appName: name, appSlug: app.slug, title: design.title },
+      }),
       '',
       n ? `**${name}** · a plan on request #${n}: version ${v} of ${design.title}` : `**${name}** · a plan: version ${v} of ${design.title}`,
       ...(o.gap ? ['', `${o.gap.reason} I can write the rows into the screen first.`] : []),
@@ -4887,11 +5010,15 @@ async function decideTyped(pool, config, { bot, user, settings, conversationId, 
   }
   const action = open[0];
   if (decision.plain) {
+    // The bot's newest line in the thread they wrote in (14 Nov 2026: every
+    // message is in one; a message in no other is its own thread's first).
+    const inThread = Number(message.threadRootId ?? message.thread_root_id) || Number(message.id);
     const { rows: newest } = await pool.query(
       `SELECT id FROM conversation_messages
-        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL AND thread_root_id IS NULL
+        WHERE conversation_id = $1 AND sender_id = $2 AND id < $3 AND deleted_at IS NULL
+          AND (thread_root_id = $4 OR id = $4)
         ORDER BY id DESC LIMIT 1`,
-      [conversationId, bot.id, message.id],
+      [conversationId, bot.id, message.id, inThread],
     );
     if (Number(newest[0]?.id) !== Number(action.message_id)) return null;
   }
@@ -5287,7 +5414,7 @@ function requestBody({ details, username, extras = null, screenshotIds = [], dom
   if (extras.context?.quoted?.excerpt) where.push(`- Homeroom bot's message: "${extras.context.quoted.excerpt}"`);
   if (extras.context?.saw) where.push(`- ${extras.context.saw}`);
   if (where.length) sections.push(['**Where it happened**', ...where].join('\n'));
-  const href = extras.chatHref || '#homeroom-bot/main';
+  const href = extras.chatHref || '#homeroom-bot';
   const chatFooter = `Filed from ${username}'s [chat with Homeroom bot](${base}/${href}).`;
   const embed = Array.isArray(screenshotIds) && screenshotIds.length
     ? require('../routes/feedback').buildScreenshotsEmbed(screenshotIds, domain)
@@ -5729,9 +5856,8 @@ async function startRequest(pool, ctx, args) {
     [app.id, n],
   );
   // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
-  // a go-ahead cannot settle it (credentials, auth, billing, permissions,
-  // operator work outside the app, a non-append-only database change, or too
-  // big for one build). Queueing would only read it to the same answer.
+  // a go-ahead cannot settle it (operator work outside the app, or a
+  // non-append-only database change). Queueing would only read it to the same answer.
   if (lastLook[0]?.verdict === 'person' && lastLook[0].go_ahead_decides === false) {
     return {
       ok: false,
@@ -6624,15 +6750,19 @@ async function reportSubject(pool, ctx, args) {
   };
 }
 
-/** The DM's newest messages, oldest first, as a report quotes them. */
+/** The newest messages of the thread the report was asked for in, oldest first, as a report quotes them. */
 async function recentChat(pool, ctx) {
   if (!ctx.conversationId) return [];
+  // 14 Nov 2026: every message is in a thread, so the report quotes that
+  // thread, never a chat-wide stream.
+  const rootId = Number(ctx.deps?.threadRequest?.rootId || ctx.deps?.threadRootId) || null;
   const { rows } = await pool.query(
     `SELECT sender_id, content FROM conversation_messages
-      WHERE conversation_id = $1 AND deleted_at IS NULL AND moderation_hidden_at IS NULL AND thread_root_id IS NULL
+      WHERE conversation_id = $1 AND deleted_at IS NULL AND moderation_hidden_at IS NULL
+        AND (CASE WHEN $4::int IS NULL THEN thread_root_id IS NULL ELSE (thread_root_id = $4 OR id = $4) END)
         AND msg_type = 'message' AND ($2::int IS NULL OR id <= $2)
       ORDER BY id DESC LIMIT $3`,
-    [ctx.conversationId, ctx.messageId || null, REPORT_CHAT_MESSAGES],
+    [ctx.conversationId, ctx.messageId || null, REPORT_CHAT_MESSAGES, rootId],
   );
   return rows.reverse().map((m) => ({
     who: Number(m.sender_id) === Number(ctx.bot?.id) ? 'Homeroom bot' : ctx.user.username,
@@ -6798,9 +6928,8 @@ module.exports = {
   designPlanActions,
   answersFor,
   checkPlanOffer,
-  startProjectThread,
-  projectThreadLine,
   checkProjectOffer,
+  checkRequestOffer,
   cardSentence,
   sendDesignOffer,
   // #6427: an offer's card, and the line a database read in its thread puts on it.
@@ -6865,6 +6994,10 @@ module.exports = {
   changeRefs,
   listChangeFiles,
   historyMessages,
+  // A project's threads send people's pictures by the same rule (homeroom-bot-voice.js).
+  imagePart,
+  picturesToSend,
+  attachedLine,
   picturesMessage,
   withoutPictures,
   modelSeesImages,

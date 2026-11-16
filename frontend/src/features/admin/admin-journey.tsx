@@ -146,6 +146,8 @@ const JUI = Object.freeze({
   search: 'h-6 w-full sm:w-44 rounded-full border-0 bg-zinc-100 dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500',
   // Nine steps, then the onboard column, then days since.
   mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(11,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(11,minmax(0,1fr))_2.5rem]',
+  // The waiting cohort's five steps and the onboard column.
+  mileGridWaiting: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(6,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(6,minmax(0,1fr))_2.5rem]',
   // The invited cohort's six steps and the onboard column.
   mileGridInvited: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(7,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(7,minmax(0,1fr))_2.5rem]',
   // A column label is a button: tapping it says what the column counts.
@@ -396,6 +398,8 @@ type Cohorts = {
   otherWay: { people: number };
   // People invited by a member and not let in yet; absent from older servers.
   invited?: { people: number };
+  // People still on the waitlist; absent from older servers.
+  waiting?: { people: number };
 };
 type FirstMile = {
   cohort: string; people: MilePerson[];
@@ -403,6 +407,8 @@ type FirstMile = {
   sources?: SourceCount[];
   mail?: { tracked: number; opened: number; clicked: number } | NotRecorded;
   notRecorded?: Record<string, NotRecorded>;
+  // The waiting cohort only: everyone waiting, when the rows are fewer.
+  total?: number;
 };
 
 type Stages = {
@@ -663,6 +669,7 @@ const MILE_SHORT: Record<string, string> = {
   admitted: 'admit', mail_sent: 'mail', mail_page: 'page', code_asked: 'link', account: 'acct', access: 'in',
   opened: 'open', username: 'name', join: 'join', first_act: 'act',
   invite_opened: 'link', signed_up: 'acct', joined: 'join', let_in: 'in',
+  wl_joined: 'join', wl_confirmed: 'mail', wl_answered: 'more', wl_account: 'acct', wl_released: 'in',
 };
 
 const STEP_FILL: Record<string, string> = {
@@ -723,7 +730,19 @@ const INVITED_STEPS: Record<string, string> = {
   let_in: 'Let in',
 };
 const INVITED_KEYS = Object.keys(INVITED_STEPS);
-const STEP_NAMES: Record<string, string> = { ...MILE_STEPS, ...INVITED_STEPS };
+
+// The first mile of somebody still on the waitlist (journey.js
+// WAITING_MILE_STEPS): what they did while waiting, then the release they
+// are all waiting for.
+const WAITING_STEPS: Record<string, string> = {
+  wl_joined: 'Joined the waitlist',
+  wl_confirmed: 'Confirmed their address',
+  wl_answered: 'Answered the follow-up',
+  wl_account: 'Has an account',
+  wl_released: 'Let off the waitlist',
+};
+const WAITING_KEYS = Object.keys(WAITING_STEPS);
+const STEP_NAMES: Record<string, string> = { ...MILE_STEPS, ...INVITED_STEPS, ...WAITING_STEPS };
 
 // What each column counts, said where its label is tapped. Plain words and
 // the evidence behind each, because a three-letter label does not say that
@@ -735,6 +754,11 @@ const MILE_HELP: Record<string, string> = {
   signed_up: 'Made their account, or signed in to one, carrying the invite link.',
   joined: 'Joined the project the link was for. Not yet: queued, waiting for access.',
   let_in: 'Let in to all of Homeroom. Until then they use only the project they were invited to.',
+  wl_joined: 'Joined the waitlist: the page, a partner\u2019s form, the card in the app, or an account made while the waitlist was on.',
+  wl_confirmed: 'Followed the confirm link in the join mail, so the address is known to take mail. Not yet: nothing says it does.',
+  wl_answered: 'Answered \u201cWant in sooner?\u201d, the follow-up questions. No time is recorded for it.',
+  wl_account: 'Already has an account, waiting in the waiting room.',
+  wl_released: 'Let off the waitlist. Nobody in this cohort has been: the days count how long each has waited.',
   mail_sent: 'Our mail provider accepted the \u201cYou\u2019re in\u201d mail. Dark: opened. Light: sent, not opened. Striped: sent before tracking began on 7 Oct, so there is no record either way. The number over the bar is opened of tracked. An open is approximate, and no open is not proof it went unread.',
   code_asked: 'The mail\u2019s button was followed: its one-time sign-in link was used, or a sign-in code was asked for after the admit (the page asks for one when the link no longer works). A used link counts as a click on the mail even where opens are not tracked.',
   account: 'Account created and finished.',
@@ -858,10 +882,13 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
     return st && (st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
   }).length;
   const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way'
-    : cohort === 'invited' ? 'Invited, not let in yet' : `Admitted ${weekLabel(cohort)}`);
+    : cohort === 'invited' ? 'Invited, not let in yet'
+      : cohort === 'waiting' ? 'Still on the waitlist' : `Admitted ${weekLabel(cohort)}`);
   // Invited people's first mile is the invite's, not the admit mail's: its own
   // columns, under its own chip.
-  const keys = scope.cohort === 'invited' ? INVITED_KEYS : MILE_KEYS;
+  // People still waiting have had no admit: their columns are the waitlist's.
+  const keys = scope.cohort === 'invited' ? INVITED_KEYS : scope.cohort === 'waiting' ? WAITING_KEYS : MILE_KEYS;
+  const grid = scope.cohort === 'invited' ? JUI.mileGridInvited : scope.cohort === 'waiting' ? JUI.mileGridWaiting : JUI.mileGrid;
   const onboarded = people.filter((p) => p.onboard && p.onboard.complete).length;
   const nowMs = Date.now();
   // The mail bar in the three shades of its cells, and its count as opened
@@ -907,13 +934,15 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
       onOpen={(how) => setHelp({ id, how })} onClose={() => setHelp(null)} />
   );
   return (
-    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
+    <Card id="admin-journey-mile" title="First mile"
+      note={scope.cohort === 'waiting' ? 'joining to being let off · longest wait first'
+        : `admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
       {miles ? (n ? (
         <>
           {/* One grid for the staircase and every track, so each bar stands
               over its own column of cells. On a phone the name takes a row
               of its own and the nine columns keep the full width. */}
-          <div className={scope.cohort === 'invited' ? JUI.mileGridInvited : JUI.mileGrid}>
+          <div className={grid}>
             <span className="hidden sm:block" />
             {keys.map((key, i) => (key === 'mail_sent' && mailTracked ? (
               <div key={key} className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step={key}>
@@ -955,7 +984,9 @@ function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; sc
             <span />
             {groups.map((m) => (
               <div key={m.cohort} className="contents">
-                <span className={`col-span-full mt-2 ${JUI.label}`}>{label(m.cohort)} · {m.people.length}{cohortMail(m.people, nowMs)}</span>
+                <span className={`col-span-full mt-2 ${JUI.label}`}>
+                  {label(m.cohort)} · {m.people.length}{m.total && m.total > m.people.length ? ` of ${m.total}` : ''}{cohortMail(m.people, nowMs)}
+                </span>
                 {m.sources && m.sources.length ? (
                   <span className={`col-span-full ${JUI.fine}`} data-journey-mile-sources="">
                     {`Came from: ${m.sources.map((s) => `${sourceWords(s)} ${s.people}`).join(', ')}`}
@@ -2443,7 +2474,8 @@ function JourneySection() {
   const whoChips: Array<[string | null, string]> = [[null, 'Everyone'],
     ...(cohorts ? cohorts.cohorts.map((c) => [c.day, `${weekLabel(c.day)} · ${c.admitted}`] as [string, string]) : []),
     ...(cohorts ? [['other_way', `Another way · ${cohorts.otherWay.people}`] as [string, string]] : []),
-    ...(cohorts && cohorts.invited ? [['invited', `Invited, not let in · ${cohorts.invited.people}`] as [string, string]] : [])];
+    ...(cohorts && cohorts.invited ? [['invited', `Invited, not let in · ${cohorts.invited.people}`] as [string, string]] : []),
+    ...(cohorts && cohorts.waiting ? [['waiting', `On the waitlist · ${cohorts.waiting.people}`] as [string, string]] : [])];
 
   return (
     <div id="admin-journey" className="space-y-4">

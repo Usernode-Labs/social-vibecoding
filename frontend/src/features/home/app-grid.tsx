@@ -62,7 +62,7 @@ import { useCallback, useEffect, useRef } from 'react';
 
 import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
-import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
@@ -497,11 +497,7 @@ export function AppGrid() {
       ) : null}
       {state.emptyQuery !== null ? (
         <div className="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">
-          <RichMessage
-            id="home:grid.noMatches"
-            values={{ query: state.emptyQuery }}
-            components={[<span className="text-violet-700 dark:text-violet-400" />]}
-          />
+          {t('home:grid.noMatches', { query: state.emptyQuery })}
         </div>
       ) : null}
       {state.resultsHeading ? (

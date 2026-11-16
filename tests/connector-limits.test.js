@@ -135,47 +135,16 @@ test('a full admin gets the raised proposal ceiling through the connector too', 
   assert.match(full.message, new RegExp(`${caps.promotedSessions} changes waiting for approval`));
 });
 
-// ── The platform-build fallback ────────────────────────────────────────
-
-test('the fallback counts builds running, against the platform session cap', async () => {
-  const pool = poolCounting(0);
-  await limits.checkFallbackStart(pool, {}, ordinary);
-  assert.equal(pool.asked.length, 1, 'the per-day quota is gone; only in-flight is counted');
-  assert.match(pool.asked[0].sql, /headless_status = 'generating'/);
-
-  const caps = effectiveSessionCaps({}, ordinary);
-  const refused = await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, ordinary);
-  assert.equal(refused.code, 'at_capacity');
-  assert.match(refused.message, new RegExp(`${caps.activeSessions} Homeroom builds running`));
-  assert.doesNotMatch(refused.message, /24 hours|daily limit/);
-
-  // Same tiering as a dev session in the browser.
-  assert.equal(
-    await limits.checkFallbackStart(poolCounting(caps.activeSessions), {}, admin), null
-  );
-});
-
-test('the fallback ceiling comes from session-caps, not a literal', () => {
-  const block = SRC.slice(SRC.indexOf('async function checkFallbackStart'));
-  assert.match(block, /effectiveSessionCaps\(config, user\)/);
-  assert.match(block, /caps\.activeSessions/);
-});
-
 // ── Posture ────────────────────────────────────────────────────────────
 
-test('the browser walkthrough and the connector share ONE limiter', () => {
-  // "Prepare a work order for Claude Code" in the dev chat runs through the
-  // same prepareWork as the connector's prepare_work, and both inject THIS
-  // module as `limits`. That shared seam is what makes "the connector is
-  // never more limited than the browser" checkable rather than aspirational,
-  // so a cap can never be reintroduced on one surface alone.
-  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-  for (const rel of ['src/routes/dev-flow.js', 'src/services/mcp-tools.js']) {
-    const src = read(rel);
-    assert.match(src, /require\('\.[./]*(?:\.\.\/)?services\/connector-limits'\)|require\('\.\/connector-limits'\)/,
-      `${rel} resolves the caps from the shared module`);
-    assert.match(src, /limits: connectorLimits/, `${rel} injects it rather than its own numbers`);
-  }
+test('the connector resolves its caps from this one module, never numbers of its own', () => {
+  // prepare_work and submit_work run through external-agent-tasks, and the
+  // tool layer injects THIS module as `limits`. That seam is what keeps
+  // "the connector is never more limited than building on Homeroom itself"
+  // checkable rather than aspirational.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/mcp-tools.js'), 'utf8');
+  assert.match(src, /require\('\.\/connector-limits'\)/, 'the caps come from the shared module');
+  assert.match(src, /limits: connectorLimits/, 'injected rather than restated');
 });
 
 test('a cap that cannot be measured refuses rather than waves through', async () => {
@@ -184,5 +153,4 @@ test('a cap that cannot be measured refuses rather than waves through', async ()
   const down = { query: async () => { throw new Error('db down'); } };
   assert.equal((await limits.checkOpenWorkOrders(down, 7)).code, 'platform_unavailable');
   assert.equal((await limits.checkPromotedCap(down, {}, ordinary)).code, 'platform_unavailable');
-  assert.equal((await limits.checkFallbackStart(down, {}, ordinary)).code, 'platform_unavailable');
 });

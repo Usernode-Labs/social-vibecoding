@@ -122,7 +122,8 @@ test('a private thread is done, comes back, and finishes with its request', { ti
 
   await t.test('close_thread: only the private thread this turn is in', async () => {
     const ctx = (threadRootId, extra = {}) => ({ user: evan, bot, deps: { threadRootId, ...extra } });
-    assert.match((await mayor.closeThread(pool, ctx(null))).error, /Main Chat cannot be closed/);
+    // 14 Nov 2026: there is no Main Chat; a turn told of no thread closes nothing.
+    assert.match((await mayor.closeThread(pool, ctx(null))).error, /no private thread here to close/);
     assert.match((await mayor.closeThread(pool, ctx(filedRoot, { threadRequest: { rootId: 1 } }))).error, /request/);
     const inThread = ctx(filedRoot);
     const went = await mayor.closeThread(pool, inThread);

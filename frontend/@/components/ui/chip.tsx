@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '@/lib/utils';
@@ -104,5 +105,59 @@ export function ChipRail({ className, ...props }: React.ComponentProps<'div'>) {
       )}
       {...props}
     />
+  );
+}
+
+/**
+ * A chip rail that says there is more: the row scrolls as `ChipRail` does, and
+ * fades out toward whichever edge has chips past it rather than cutting the
+ * last one off against the edge (Evan, 30 Oct: wrapping to a second line read
+ * worse). The fade is a mask, so it fades to whatever it sits on, in either
+ * theme. Both edges false, as when every chip fits, sets no mask at all.
+ *
+ * Its user is Home's kind chips (features/home/communities-to-join.tsx). The
+ * base classes are `ChipRail`'s own; a caller passes the spacing its surface
+ * needs, since the rail sits in the page's gutter. The AI page's project
+ * chips (features/ai/lists.tsx) keep their own copy, inside a sheet, whose
+ * measurement `tests/rtl-geometry.test.js` pins.
+ */
+const FADE = 40;
+export function FadeRail({ className, children, style, ...props }: React.ComponentProps<'div'>) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [edges, setEdges] = useState({ start: false, end: false });
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const sync = () => {
+      // scrollLeft runs negative from the start in a right-to-left scroller.
+      const at = Math.abs(el.scrollLeft);
+      const start = at > 1;
+      const end = at + el.clientWidth < el.scrollWidth - 1;
+      setEdges((e) => (e.start === start && e.end === end ? e : { start, end }));
+    };
+    sync();
+    el.addEventListener('scroll', sync, { passive: true });
+    const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(sync);
+    ro?.observe(el);
+    return () => { el.removeEventListener('scroll', sync); ro?.disconnect(); };
+  }, []);
+  const mask = edges.start || edges.end
+    ? `linear-gradient(to right, ${edges.start ? 'transparent' : '#000'}, #000 ${FADE}px, #000 calc(100% - ${FADE}px), ${edges.end ? 'transparent' : '#000'})`
+    : undefined;
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        'flex gap-3 overflow-x-auto px-4 py-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+        className,
+      )}
+      // The first render has no mask, so a prerender and its hydration match.
+      style={mask ? { ...style, maskImage: mask, WebkitMaskImage: mask } : style}
+      data-fade-start={edges.start ? '' : undefined}
+      data-fade-end={edges.end ? '' : undefined}
+      {...props}
+    >
+      {children}
+    </div>
   );
 }

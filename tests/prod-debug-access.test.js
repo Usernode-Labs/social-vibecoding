@@ -281,30 +281,6 @@ test('promptBlock documents all four subcommands and the read-only contract', ()
   assert.doesNotMatch(block, /incl\. .*active_turn/);
 });
 
-test('mayorPromptBlock names the Mayor tool, dispatch direction, pages, and the read-only contract', () => {
-  const block = debugAccess.mayorPromptBlock();
-  // The Mayor's own inline tool and the agent-side CLI it should direct
-  // dispatches at.
-  assert.match(block, /get_prod_status/);
-  assert.match(block, /usernode-debug/);
-  assert.match(block, /dispatch/);
-  // The concrete production starting points a dispatch prompt should name.
-  assert.match(block, /merge_debug_runs/);
-  assert.match(block, /chat_sessions/);
-  // The admin surfaces worth pointing users at. #860 folded the standalone
-  // pages into the one #admin console, so these are section hashes now.
-  assert.match(block, /#admin\/merges/);
-  assert.match(block, /#admin\/status/);
-  assert.match(block, /#admin\/users/);
-  // The read-only + audit contract.
-  assert.match(block, /READ-ONLY/);
-  assert.match(block, /audit-logged/);
-  assert.match(block, /READABLE_COLUMNS/);
-  // Prompt-assembly contract: starts with the blank-line separator like
-  // getSelfHostedRefuseList, so concatenation renders cleanly.
-  assert.match(block, /^\n\n/);
-});
-
 // ── worker.buildTurnSecretEnv ──────────────────────────────────────────
 
 test('secret env: PROD_DEBUG_JWT present for build + scout when granted', () => {

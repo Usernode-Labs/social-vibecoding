@@ -53,7 +53,7 @@
  *
  * ./settings.js is the retired public/js/settings.js, moved into this bundle
  * unchanged apart from its bootstrap lines: it still publishes window.Settings
- * at module scope (app.js, app-view.js, dev-chat.js and credit-options.js all
+ * at module scope (app.js, app-view.js and credit-options.js all
  * call it unguarded) — taking over from ./facade.js, which published the
  * boot-time surface first — and its DOMContentLoaded handler is replaced by
  * the init() the panes call once they exist.
@@ -108,7 +108,7 @@ export function SettingsScreen() {
   const { Sections, failed } = useStoreState(settingsChunkStore) as SettingsChunkState;
 
   // refresh() reads /api/auth/me (joining the boot read) into Settings.state,
-  // which dev-chat and app-view consult for `hasApiKey` before this screen is
+  // which app-view consults for `hasApiKey` before this screen is
   // ever opened — so it runs at hydration, on every route, as before. At boot
   // window.Settings is the façade, whose refresh() is exactly that read and
   // nothing else; and this is also where the idle prefetch is armed.

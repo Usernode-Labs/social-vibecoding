@@ -217,9 +217,14 @@ test('preferences are account-scoped and never mutate device registrations', asy
 
   const defaults = serializePreferences();
   // 7 → 8 with #1374's app_alerts, 8 → 10 with WP-E's builds and
-  // invite_activity. Every category must serialize, or one silently loses its
-  // Settings row while still gating pushes.
-  assert.equal(defaults.length, 10);
+  // invite_activity; 10 → 9 offered when private plan sharing went with the
+  // dev chat (shared_work stays defined, unlisted: nothing sends it). Every
+  // listed category must serialize, or one silently loses its Settings row
+  // while still gating pushes.
+  assert.equal(defaults.length, 9);
+  assert.deepEqual(defaults.map((row) => row.key),
+    CATEGORY_DEFINITIONS.filter((category) => category.listed !== false).map((category) => category.key));
+  assert.ok(!defaults.some((row) => row.key === 'shared_work'), 'a category nothing sends is not offered');
   assert.ok(defaults.every((row) => typeof row.enabled === 'boolean'));
 });
 

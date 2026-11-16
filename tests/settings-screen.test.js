@@ -91,7 +91,6 @@ const kitSurfaceTs = read('frontend/src/lib/kit-surface.ts');
  */
 const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 const settingsCode = code(settingsJs);
-const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const platformUiJs = read('public/js/platform-ui.js');
 const cliAuthJs = read('src/routes/cli-auth.js');
 const manifest = JSON.parse(read('dapp.json'));
@@ -261,8 +260,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
   const byGroup = (key) => sections.find((s) => s.key === key).group;
   assert.deepEqual(['usage', 'openrouter', 'api-key'].map(byGroup),
     Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
-  assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
-    Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
+  assert.deepEqual(['connectors', 'cli'].map(byGroup),
+    Array(2).fill('settings:nav.group.integrations'), 'connectors and CLI are Integrations & automation');
   assert.deepEqual(['experimental'].map(byGroup),
     ['settings:nav.group.advanced'], 'Experimental is Advanced');
   assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
@@ -280,7 +279,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
     'password', 'delete-account', 'wallet', 'openrouter',
-    'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
+    'api-key', 'connectors', 'app-ai', 'app-permissions', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
 
@@ -294,6 +293,9 @@ test('the registry groups pages under six headings, Account first and Advanced l
   assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
   // #4311: "Where changes get built" is gone; nothing acted on its value.
   assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
+  // Agent instructions & skills is gone: no build copies the files into the
+  // worker any more, so the pane had nothing to configure.
+  assert.equal(byKey['agent-files'], undefined, 'the agent-files part is retired');
   // A page key that is also the key of a LATER part on that page would make
   // the page's own nav row resolve as a deep link to that part, opening the
   // page scrolled past everything above it.
@@ -519,13 +521,11 @@ test('every pre-existing settings control id survived the move', () => {
     'cp-current', 'cp-new', 'cp-confirm', 'cp-save', 'cp-wallet-save',
     'llm-grants-list', 'llm-grants-status',
     'cli-tokens-list', 'cli-tokens-more', 'cli-tokens-status',
-    'agent-files-input', 'agent-files-save', 'agent-files-cancel',
-    'agent-files-instructions-list', 'agent-files-skills-list',
     'wallet-link-btn', 'wallet-link-cancel', 'wallet-qr-canvas',
     'view-as-non-admin', 'dev-console-always-show',
-    'devchat-alerts-toggle', 'devchat-alerts-test',
+    'devchat-alerts-test',
     'settings-locale', 'settings-locale-status',
-    'ai-progress-estimate', 'settings-usernode-section', 'settings-logout',
+    'settings-usernode-section', 'settings-logout',
   ];
   for (const id of ids) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
@@ -545,11 +545,10 @@ test('the four formerly-anonymous section roots got stable ids', () => {
 test('no section container is ever innerHTML-written', () => {
   // Section BODIES may still repaint their own dynamic list hosts
   // (#cli-tokens-list) exactly as they did in the modal — those are built by
-  // settings.js and carry no init()-bound listeners. #llm-grants-list and the
-  // two #agent-files-*-list hosts are NOT among them any more: all three are
-  // React-owned end to end (frontend/src/features/settings/grants-list.tsx,
-  // agent-files-list.tsx) and settings.js publishes a view model to each,
-  // which the assertions below pin.
+  // settings.js and carry no init()-bound listeners. #llm-grants-list is NOT
+  // among them any more: it is React-owned end to end
+  // (frontend/src/features/settings/grants-list.tsx) and settings.js
+  // publishes a view model to it, which the assertions below pin.
   //
   // What must never happen is a write that replaces a WRAPPER or the container
   // holding them, which would detach every id-bound control at once.
@@ -572,12 +571,6 @@ test('no section container is ever innerHTML-written', () => {
     '#llm-grants-list is React-owned — settings.js publishes to grants-store instead');
   assert.match(settingsJs, /UsernodeReact\.settingsGrants/,
     'settings.js reaches the grants store through the published bridge');
-  for (const host of ['agent-files-instructions-list', 'agent-files-skills-list']) {
-    assert.doesNotMatch(settingsJs, new RegExp(host),
-      `#${host} is React-owned — settings.js publishes to agent-files-store instead`);
-  }
-  assert.match(settingsJs, /UsernodeReact\.settingsAgentFiles/,
-    'settings.js reaches the agent-files store through the published bridge');
 
   // #1191 slice 6, conversion 8: the two nav hosts are React now
   // (frontend/src/features/settings/settings-nav.tsx), so _renderNav pushes
@@ -1007,39 +1000,6 @@ test('close() tears down the two lifecycle timers', () => {
 
 // ── Other callers ──────────────────────────────────────────────────────
 
-test('the credits banner deep-links all three ways to keep building', () => {
-  // The banner used to offer BYOK alone and navigate itself. It now
-  // delegates to CreditOptions, which owns the same three routes the
-  // in-chat card and the Generate-proposal modal render — so the wiring
-  // assertion moved with it.
-  // The banner is a component since the four strips converted, so the wiring
-  // moved from `_wireCreditsBanner` in dev-chat.js to a ref in
-  // features/dev-chat/banners.tsx — one delegated click per mounted element,
-  // which is what `CreditOptions.wire` has always bound.
-  const bannersTsx = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'), 'utf8'
-  );
-  const fn = bannersTsx.slice(bannersTsx.indexOf('const wireRef'));
-  // #1049 added a second argument: the two hand-off routes are handled in
-  // place (they start the walkthrough in this chat) rather than navigated.
-  // #1348 added a third: "Change session type" opens the venue sheet here
-  // too, in blocked mode — the bar is two buttons now, and that is the one
-  // standing in for every venue the bar used to list.
-  assert.match(fn.slice(0, 800), /CO\?\.wire\?\.\(el, \{\s*\n?\s*onFlow:/,
-    'the shared module wires the banner');
-  assert.match(fn.slice(0, 800), /openVenueSheet\?\.\(button, \{ blocked: true \}\)/,
-    'and the venue door opens the sheet blocked, on the refusal banner');
-  assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
-    'no direct module call any more');
-
-  const creditOptions = read('public/js/credit-options.js');
-  assert.match(creditOptions, /window\.location\.hash = hash/,
-    'a real navigation, so back returns to the chat');
-  for (const hash of ['#settings/api-key', '#settings/cli', '#settings/connectors']) {
-    assert.ok(creditOptions.includes(`'${hash}'`), `offers ${hash}`);
-  }
-});
-
 test('the "Settings → Change password" prose is a real link', () => {
   assert.match(html, /href="#settings\/password"/,
     'the account-recovery help text links to the Password section');
@@ -1112,7 +1072,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  for (const key of ['password', 'language', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
+  for (const key of ['password', 'language', 'app-ai', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -1125,7 +1085,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   );
   // Data-dependent sections must go through their staging demo injection.
   for (const t of tests) {
-    if (/#settings\/(app-ai|agent-files)/.test(t.path)) {
+    if (/#settings\/app-ai/.test(t.path)) {
       assert.match(t.path, /demo=1/,
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }
@@ -1500,130 +1460,6 @@ test('only the newest usernode read attempt paints', () => {
     'each attempt is tagged');
   assert.match(section, /if \(token !== this\._usernodeRenderToken\) return;/,
     'a stale 12s read cannot overwrite a fresher result');
-});
-
-// ── #907: the "Local coding agent" block ───────────────────────────────────
-
-test('the local-agent block lives in Experimental and ships hidden', () => {
-  // Experimental, not the CLI section: this is a preview of the same feature
-  // the dev chat's "Run on" selector exposes, and a lease is not a credential
-  // — revoking a token is a security action, detaching a machine is a
-  // routing one, and putting them side by side would blur that.
-  const experimental = html.slice(
-    html.indexOf('data-settings-section="experimental"'),
-    html.indexOf('data-settings-section="experimental"') + 12000
-  );
-  assert.match(experimental, /id="settings-local-agents-section"/);
-  assert.match(experimental, /id="settings-local-agents-list"/);
-  assert.match(experimental, /id="settings-local-agents-status"/);
-  // Hidden by default and only revealed when the user actually has one,
-  // so it costs nothing for the overwhelming majority who never run the CLI.
-  assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
-  assert.match(experimental, /Local coding agent/);
-  // The copy has to answer "what still happens on Homeroom?", because
-  // "runs on your machine" otherwise reads as "Homeroom stops working".
-  assert.match(experimental, /Homeroom still opens the pull request/);
-});
-
-// The label is free text typed on someone's own laptop and arrives here
-// verbatim, so it must never reach an HTML string. It was hand-built with
-// `document.createElement` + `textContent` for that reason; #1191 made the
-// list React's, which gives the same guarantee by construction — a text child
-// is escaped, and there is no template to interpolate into.
-test('a machine label can never escape into markup', () => {
-  const hostile = '<img src=x onerror=alert(1)> "quoted" & \'apostrophe\'';
-  const html2 = renderComponent(
-    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
-    {
-      phase: 'ready',
-      agents: [{
-        leaseId: 'lease_1',
-        title: hostile,
-        where: hostile,
-        runtime: 'claude-code',
-        lastSeenAt: '2026-03-04T10:00:00Z',
-        detachable: true,
-      }],
-    },
-  );
-  assert.ok(!html2.includes('<img'), 'the tag never lands as markup');
-  assert.match(html2, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(html2, /&quot;quoted&quot;/);
-  assert.match(html2, /&#x27;apostrophe&#x27;/);
-  // …and the module has nothing left that builds DOM for this host.
-  const render = settingsJs.slice(
-    settingsJs.indexOf('_renderLocalAgentsSection()'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  // Comments first — the note beside the publish names the builder it replaced.
-  assert.ok(!/innerHTML/.test(code(render)), 'no innerHTML');
-  assert.ok(!/createElement\(/.test(code(render)), 'and no createElement either');
-  assert.match(render, /settingsLocalAgents/, 'it publishes instead');
-});
-
-test('the machine list hides itself when there is nothing to list', () => {
-  const render = settingsJs.slice(
-    settingsJs.indexOf('_renderLocalAgentsSection()'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  assert.match(render, /section\.classList\.toggle\('hidden', agents\.length === 0\)/);
-  // The status line starts hidden on every pass, so a stale error from a
-  // previous attempt cannot survive a successful one.
-  assert.match(render, /status\.classList\.add\('hidden'\);/);
-  assert.match(render, /status\.classList\.remove\('hidden'/);
-  // A read failure leaves `agents` empty, which hides the block rather than
-  // leaving a half-painted list up.
-  assert.match(render, /\} catch \{\}/);
-});
-
-test('the machine list reads the account route, not the CLI surface', () => {
-  assert.match(settingsJs, /\/api\/me\/local-agents/);
-  // Staging demo rows come from the same request-time ?demo=1 convention the
-  // token list uses, so a staging clone can review this block at all.
-  const render = settingsJs.slice(
-    settingsJs.indexOf('_renderLocalAgentsSection()'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
-  assert.match(render, /status\.textContent = tr\('settings:localAgents\.demoData'\)/);
-  assert.match(message('settings:localAgents.demoData'), /Demo data/);
-});
-
-test('detaching is confirmed, and an already-gone lease is not an error', () => {
-  const detach = settingsJs.slice(
-    settingsJs.indexOf('_detachLocalAgent('),
-    settingsJs.indexOf('_detachLocalAgent(') + 1800
-  );
-  assert.match(detach, /method: 'DELETE'/);
-  assert.match(detach, /204|404/);
-  assert.match(detach, /confirm/i);
-  // Demo rows have no Detach button at all — there is nothing to detach.
-  // The rule is one field on the view model now, and the component draws the
-  // button only for a row that carries it.
-  const view = settingsJs.slice(
-    settingsJs.indexOf('_localAgentView(agent) {'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  assert.match(view, /detachable: !agent\.demo && !!agent\.leaseId/);
-  const list = read('frontend/src/features/settings/local-agents-list.tsx');
-  assert.match(list, /agent\.detachable \? \(/);
-  const withoutLease = renderComponent(
-    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
-    {
-      phase: 'ready',
-      agents: [{
-        leaseId: null, title: 'staging demo', where: 'an app',
-        runtime: 'claude-code', lastSeenAt: '2026-03-04T10:00:00Z', detachable: false,
-      }],
-    },
-  );
-  assert.ok(!withoutLease.includes('Detach'), 'and a demo row draws none');
-});
-
-test('the Experimental toggle still gates the whole section', () => {
-  // The block is painted from _renderExperimentalSection, so it inherits the
-  // existing preview gate rather than inventing a second one.
-  assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });
 
 // ── "Homeroom app: connection" (the diagnostics panel) ─────────────────
@@ -2268,6 +2104,137 @@ test('camera, microphone and screen sharing carry a plain note; the other permis
   assert.doesNotMatch(screen, /everything|whole screen|all of your screen/i, 'the person picks what is shared');
 });
 
+// #6512 item 4: one step to take everything back from one app.
+test('an app with two or more active permissions offers Revoke all; one with fewer does not (#6512)', () => {
+  const html = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }, {
+      appId: 8, appName: 'One Thing', appSlug: 'one-thing',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }, {
+      appId: 9, appName: 'All Gone', appSlug: 'all-gone',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: true },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }],
+  });
+  const all = [...html.matchAll(/<button type="button" aria-label="([^"]*)" data-role="revoke-all"[^>]*>([^<]*)</g)].map((m) => [m[1], m[2]]);
+  assert.deepEqual(all, [['Revoke all permissions for Snap Cam', 'Revoke all']],
+    'only the app with two active permissions; with one, the row\'s own Revoke is the same act');
+  assert.ok(html.indexOf('data-role="revoke-all"') < html.indexOf('>Location<'), 'it sits on the app\'s name line, above its rows');
+  for (const name of ['Snap Cam', 'One Thing', 'All Gone']) assert.ok(html.includes(`>${name}</div>`), `${name} keeps its name line`);
+  const list = read('frontend/src/features/settings/app-permissions-list.tsx');
+  assert.match(list, /const active = app\.items\.filter\(\(item\) => !item\.revoked\)\.map\(\(item\) => item\.capability\);/);
+  assert.match(list, /_onPermissionRevokeAll\?\.\(app\.appId, active, target\)/, 'only the active ones are sent');
+});
+
+/**
+ * Run Settings._onPermissionRevokeAll with everything around it stubbed.
+ * `fail` names the capabilities whose DELETE the server refuses; `throws`
+ * the ones whose request never lands.
+ */
+async function runPermissionRevokeAll({ open = false, confirm = true, fail = [], throws = [], demo = false, capabilities = ['geolocation', 'camera', 'display-capture'] } = {}) {
+  const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
+  let live = open;
+  const target = {
+    slug: 'snap-cam',
+    name: 'Snap Cam',
+    isOpen: () => live,
+    close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
+  };
+  const ConfirmModal = { show: async (opts) => { calls.dialog = opts; return confirm; } };
+  const fetch = async (url, init) => {
+    calls.fetches.push([url, init && init.method]);
+    await new Promise((r) => setImmediate(r));
+    const capability = decodeURIComponent(url.split('/').pop());
+    if (throws.includes(capability)) throw new Error('offline');
+    const ok = !fail.includes(capability);
+    return { ok, json: async () => (ok ? {} : { error: 'nope' }) };
+  };
+  const window = { AppView: { forgetToken: (slug) => { calls.forgot.push(slug); calls.order.push('forget'); } } };
+  const tr = englishPlatformI18n().t;
+  const host = new Function('tr', 'ConfirmModal', 'fetch', 'window',
+    `return {${sliceMethod(settingsJs, '_onPermissionRevokeAll')}};`)(tr, ConfirmModal, fetch, window);
+  host._setAppPermissionsStatus = (text, kind) => calls.status.push([text, kind]);
+  host._isDemoGrant = () => demo;
+  host._renderAppPermissions = () => { calls.rendered += 1; };
+  await host._onPermissionRevokeAll(7, capabilities, target);
+  return calls;
+}
+
+test('Revoke all asks once, revokes each permission, and says what stays true elsewhere (#6512)', async () => {
+  const calls = await runPermissionRevokeAll();
+  assert.equal(calls.dialog.title, 'Revoke every permission for Snap Cam?');
+  assert.equal(calls.dialog.message, message('settings:appPermissions.revokeAll.confirmMessage'));
+  assert.equal(calls.dialog.confirmLabel, 'Revoke all');
+  assert.equal(calls.dialog.danger, true);
+  assert.deepEqual(calls.fetches, [
+    ['/api/me/permission-grants/7/geolocation', 'DELETE'],
+    ['/api/me/permission-grants/7/camera', 'DELETE'],
+    ['/api/me/permission-grants/7/display-capture', 'DELETE'],
+  ], 'the same endpoint a single revoke uses, once per permission');
+  assert.deepEqual(calls.forgot, ['snap-cam'], 'the cached grant set goes, once');
+  assert.equal(calls.closed, 0);
+  assert.deepEqual(calls.status, [[message('settings:appPermissions.status.revokedAll'), 'ok']]);
+  assert.equal(calls.rendered, 1);
+  // The same limits a single revoke states, in the plural.
+  for (const id of ['revokeAll.confirmMessage', 'revokeAll.confirmMessageOpen', 'status.revokedAll']) {
+    const text = message(`settings:appPermissions.${id}`);
+    assert.doesNotMatch(text, /next time|this device|immediately/, `${id} promises only what is true`);
+    assert.match(text, /On another device, opening the app again within a minute may bring them back until it is closed again\.$/, `${id} says what another device can still do`);
+  }
+
+  const cancelled = await runPermissionRevokeAll({ confirm: false });
+  assert.deepEqual(cancelled.fetches, [], 'Cancel revokes nothing');
+  const demo = await runPermissionRevokeAll({ demo: true });
+  assert.deepEqual(demo.fetches, [], 'the staging demo rows are not real grants');
+  assert.deepEqual(demo.status, [[message('settings:appPermissions.status.demoData'), 'info']]);
+  const none = await runPermissionRevokeAll({ capabilities: [] });
+  assert.equal(none.dialog, null, 'nothing to revoke asks nothing');
+});
+
+test('Revoke all closes an app open in this tab, and the dialog says so first (#6512)', async () => {
+  const calls = await runPermissionRevokeAll({ open: true });
+  assert.equal(calls.dialog.confirmLabel, 'Revoke all and close app');
+  assert.match(calls.dialog.message, /^Snap Cam is open in this tab, so revoking closes it now and anything not saved in it may be lost\./);
+  assert.equal(calls.closed, 1);
+  assert.deepEqual(calls.order, ['forget', 'close'], 'the cached grant set goes before the frame');
+  assert.deepEqual(calls.status, [['All revoked, and Snap Cam was closed in this tab.', 'ok']]);
+});
+
+test('Revoke all keeps going past a refusal and never claims more than it did (#6512)', async () => {
+  const partial = await runPermissionRevokeAll({ open: true, fail: ['camera'] });
+  assert.equal(partial.fetches.length, 3, 'a refusal does not stop the rest');
+  assert.deepEqual(partial.forgot, ['snap-cam']);
+  assert.equal(partial.closed, 1, 'the frame still holds what was revoked, so it goes');
+  assert.deepEqual(partial.status, [[message('settings:appPermissions.status.revokedSome'), 'error']]);
+  assert.equal(partial.rendered, 1, 'the list is drawn again, so the rows left with Revoke are the ones still allowed');
+
+  const dropped = await runPermissionRevokeAll({ throws: ['geolocation'] });
+  assert.equal(dropped.fetches.length, 3, 'nor does a request that never lands');
+  assert.deepEqual(dropped.status, [[message('settings:appPermissions.status.revokedSome'), 'error']]);
+
+  const refused = await runPermissionRevokeAll({ open: true, fail: ['geolocation', 'camera', 'display-capture'] });
+  assert.deepEqual(refused.forgot, [], 'nothing changed, so nothing is dropped');
+  assert.equal(refused.closed, 0, 'and the app stays open');
+  assert.deepEqual(refused.status, [['nope', 'error']]);
+  assert.equal(refused.rendered, 0);
+
+  const offline = await runPermissionRevokeAll({ throws: ['geolocation', 'camera', 'display-capture'] });
+  assert.deepEqual(offline.status, [['Network error: offline', 'error']]);
+});
+
 // #6512 item 9: a blocked app says when it was blocked.
 test('a blocked app shows when it was blocked, and a row without a stamp shows nothing (#6512)', () => {
   const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
@@ -2292,12 +2259,13 @@ test('a blocked app shows when it was blocked, and a row without a stamp shows n
  * whether the app is open in this tab; `openWhileDeleting` changes it while
  * the DELETE is out.
  */
-async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true } = {}) {
+async function runPermissionRevoke({ open = false, openWhileDeleting, confirm = true, ok = true, permission } = {}) {
   const calls = { dialog: null, fetches: [], status: [], rendered: 0, closed: 0, forgot: [], order: [] };
   let live = open;
   const target = {
     slug: 'snap-cam',
     name: 'Snap Cam',
+    ...(permission ? { permission } : {}),
     isOpen: () => live,
     close: () => { calls.closed += 1; calls.order.push('close'); live = false; },
   };
@@ -2391,6 +2359,73 @@ test('the Revoke button hands Settings a live question, not a snapshot, of wheth
   const live = read('frontend/src/features/app-frame/live-apps.tsx');
   assert.match(live, /export function isLiveApp\(slug: string\): boolean \{\s*return !!slug && liveAppSlugs\(appFrameStore\.get\(\)\)\.includes\(slug\);/,
     'open means the same frames the green dot reads: the mounted one and the kept ones');
+});
+
+// #6512 item 14: the page's row buttons all read "Revoke", "Re-enable" or
+// "Unblock". Each one's accessible name says what it acts on, and starts with
+// the word on the button so speech control still finds it by what is shown.
+test('every App permissions button and field is named for its app and permission (#6512)', async () => {
+  const device = renderComponent('frontend/src/features/settings/app-permissions-list.tsx', 'AppPermissionsListView', {
+    phase: 'ready',
+    apps: [{
+      appId: 7, appName: 'Snap Cam', appSlug: 'snap-cam',
+      items: [
+        { capability: 'camera', label: 'Camera', revoked: false },
+        { capability: 'geolocation', label: 'Location', revoked: false },
+        { capability: 'microphone', label: 'Microphone', revoked: true },
+      ],
+    }],
+  });
+  const named = (html) => [...html.matchAll(/<(?:button|input)[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(named(device), [
+    'Revoke all permissions for Snap Cam',
+    'Revoke Camera for Snap Cam',
+    'Revoke Location for Snap Cam',
+    'Re-enable Microphone for Snap Cam',
+  ], 'four buttons in one app, four different names');
+  assert.equal((device.match(/<button/g) || []).length, 4, 'no button is left with the bare word');
+
+  const ai = grantRows({
+    phase: 'ready',
+    grants: [grantView(), grantView({ appId: 12, appName: 'Old App', appSlug: 'old-app', revoked: true })],
+  });
+  assert.deepEqual(named(ai), [
+    'Cap for Demo App, in dollars a day',
+    'Revoke AI access for Demo App',
+    'Re-enable AI access for Old App',
+  ]);
+
+  const BLOCKED = 'frontend/src/features/settings/sections/blocked-apps.tsx';
+  const blocked = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: null, onUnblock: () => {},
+  });
+  assert.deepEqual(named(blocked), ['Unblock Noisy App']);
+  const busy = renderComponent(BLOCKED, 'BlockedAppRow', {
+    app: { slug: 'noisy', name: 'Noisy App' }, busy: 'noisy', onUnblock: () => {},
+  });
+  assert.deepEqual(named(busy), [], 'while it works the button says Unblocking, and the name must not hide that');
+
+  // The visible word leads each name (WCAG 2.5.3, Label in Name).
+  for (const [label, word] of [
+    ['appPermissions.revokeLabel', 'appPermissions.revoke'],
+    ['appPermissions.revokeAllLabel', 'appPermissions.revokeAll'],
+    ['appPermissions.reEnableLabel', 'appPermissions.reEnable'],
+    ['grants.revokeLabel', 'grants.revoke'],
+    ['grants.reenableLabel', 'grants.reenable'],
+    ['blockedApps.unblockLabel', 'blockedApps.unblock'],
+  ]) {
+    assert.ok(message(`settings:${label}`).startsWith(message(`settings:${word}`) + ' '), `${label} starts with the button's word`);
+  }
+  assert.ok(message('settings:grants.capFieldLabel').startsWith('Cap '), 'the cap field keeps its visible word');
+
+  // The confirmation names what is being revoked; a caller that cannot say
+  // (no label) still gets the plain question.
+  const asked = await runPermissionRevoke({ permission: 'Camera' });
+  assert.equal(asked.dialog.title, 'Revoke Camera for Snap Cam?');
+  const plain = await runPermissionRevoke();
+  assert.equal(plain.dialog.title, message('settings:appPermissions.revoke.confirmTitle'));
+  assert.match(read('frontend/src/features/settings/app-permissions-list.tsx'), /name: app\.appName,\s*permission: item\.label,/,
+    'the row hands Settings the label the title says');
 });
 
 test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {
@@ -2548,7 +2583,9 @@ const tr = englishPlatformI18n().t;
 const dotTextSrc = settingsJs.match(/\n  const dotText = \(parts\) => \{\n[\s\S]*?\n  \};\n/);
 assert.ok(dotTextSrc, 'settings.js defines dotText');
 const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
-const sliced = (...methods) => new Function('tr', 'dotText', `return ({${methods.join(',')}})`)(tr, dotText);
+// #6479: and the module's `inZone`, which adds the picked time zone; the
+// harness has none picked, so it hands the options back as they came.
+const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options);
 const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),

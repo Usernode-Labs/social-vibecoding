@@ -7,7 +7,8 @@
 // session cards, and the headless branch of an issue card. All four already
 // funnelled into swapToStagingForSession(id, url), so the differences were
 // wording and which of staging_url / can_preview / staging_building /
-// staging_error each consulted. This file pins the single truth table.
+// staging_error each consulted. This file pins the single truth table, for
+// the three left now that the headless run an issue card previewed is gone.
 //
 // The board renders it ICON-ONLY on purpose: a read-only viewer gets no vote
 // buttons, so the icon is the only visible "you can go and look at this" on
@@ -22,7 +23,7 @@ const path = require('path');
 const vm = require('node:vm');
 const { message } = require('./lib/platform-i18n');
 const {
-  hasAction, issueCardHtml, mySessionCardHtml, previewHtml, proposalCardHtml, sharedSessionCardHtml,
+  hasAction, mySessionCardHtml, previewHtml, proposalCardHtml, sharedSessionCardHtml,
 } = require('./lib/dev-card-html');
 
 const MERGE_STATUS_SRC = fs.readFileSync(
@@ -267,9 +268,10 @@ test('building (labelled): the Preview pill in its gray disabled form', () => {
     'both states are a .gc-vote-btn, so the band does not shift when it flips');
 });
 
-test('each kind gets its own wording, and all four call sites use this helper', () => {
+test('each kind gets its own wording, and all three call sites use this helper', () => {
   const AppView = makeAppView();
-  for (const kind of ['proposal', 'own-session', 'shared-session', 'issue-run']) {
+  assert.deepEqual(Object.keys(AppView.PREVIEW_TITLE_IDS).sort(), ['own-session', 'proposal', 'shared-session']);
+  for (const kind of ['proposal', 'own-session', 'shared-session']) {
     const html = previewHtml(AppView, { id: 1, staging_url: 'https://s' }, { kind, sessionId: 1 });
     assert.match(html, /title="[^"]+"/, `${kind} carries a tooltip`);
     const ids = AppView.PREVIEW_TITLE_IDS[kind];
@@ -286,11 +288,6 @@ test('each kind gets its own wording, and all four call sites use this helper', 
   // 3. shared session card
   assert.match(sharedSessionCardHtml(AppView, { id: 71, session_title: 'T', username: 'them', staging_url: 'https://s' }),
     /gc-vote-btn-preview/);
-  // 4. the issue card's headless run
-  assert.match(issueCardHtml(AppView, {
-    number: 5, title: 'x',
-    headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: 'https://s' },
-  }), /gc-vote-btn-preview/);
 });
 
 // ── A session shared with no pull request ─────────────────────────────
@@ -345,17 +342,6 @@ test('the owner of a share-only session gets the same affordance', () => {
   }), /gc-vote-btn-preview/);
 });
 
-test('an issue run with no preview (or a spec-only outcome) shows no affordance', () => {
-  const AppView = makeAppView();
-  assert.doesNotMatch(issueCardHtml(AppView, {
-    number: 5, title: 'x', headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
-  }), /gc-vote-btn-preview/);
-  assert.doesNotMatch(issueCardHtml(AppView, {
-    number: 5, title: 'x',
-    headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: null },
-  }), /gc-vote-btn-preview/);
-});
-
 test('on a board card the preview is a labelled pill at the ACTION BAND\u2019s right end, just before the hamburger', () => {
   // Round three moved the preview out of the rail's corner and made it a pill
   // with the eye AND the word: the 24px corner eye was the hardest thing on
@@ -368,10 +354,6 @@ test('on a board card the preview is a labelled pill at the ACTION BAND\u2019s r
   const AppView = makeAppView();
   const cards = {
     proposal: proposalCardHtml(AppView, PR({ staging_url: 'https://s' })),
-    issue: issueCardHtml(AppView, {
-      number: 5, title: 'x',
-      headless: { status: 'ready', outcome: 'code', sessionId: 90, stagingUrl: 'https://s' },
-    }),
     ownSession: mySessionCardHtml(AppView, { id: 51, session_title: 'M', pr_number: 9 }),
     sharedSession: sharedSessionCardHtml(AppView, {
       id: 71, session_title: 'T', username: 'them', staging_url: 'https://s',

@@ -435,7 +435,7 @@ test('the app frame is the SAME element and the SAME document across every state
     ['→ App', () => AppView.renderAppTab()],
     ['→ Dev again', async () => { try { await AppView.renderDevView('forum'); } catch { /* stubs */ } }],
     ['→ App again', () => AppView.renderAppTab()],
-    ['→ Dev sessions', async () => { try { await AppView.renderDevView('sessions'); } catch { /* stubs */ } }],
+    ['→ Dev chat', async () => { try { await AppView.renderDevView('chat'); } catch { /* stubs */ } }],
     ['→ App third time', () => AppView.renderAppTab()],
     // The surface flag, both values, and a redundant re-assert.
     ['surface → platform', () => AppView._setSurface('platform')],
@@ -446,7 +446,6 @@ test('the app frame is the SAME element and the SAME document across every state
       AppView._tokenFresh = { slug: SLUG, token: 'tok-1', at: Date.now() };
       return AppView.swapToStaging('https://preview.example', null, { verified: true });
     }],
-    ['staging docked', () => AppView._setStagingMode('docked')],
     ['staging preview close', () => AppView.closeStagingOverlay()],
     // Park/activate through the seam directly (what App.switchTab reaches).
     ['park', () => AppView._parkAppFrame()],

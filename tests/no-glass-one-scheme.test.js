@@ -131,15 +131,12 @@ test('a faked bar whose edge is a border redraws it above the layer', () => {
 });
 
 test('where nothing passes behind, the plain translucent fill is the glass', () => {
-  // The docked desktop rail has the page laid out beside it; the scrolled
-  // session header sits in flow beside its scroller. Only the fixed
-  // wallpaper is behind them, so their own
-  // translucent fills are exact, borders and shadows included.
+  // The docked desktop rail has the page laid out beside it. Only the fixed
+  // wallpaper is behind it, so its own translucent fill is exact, borders
+  // and shadows included.
   const desk = css.slice(css.indexOf('@media (min-width: 768px) {\n  .platform-tabs {\n    background-color: var(--dc-sheet-fill);'));
   assert.match(desk.slice(0, desk.indexOf('\n}') + 2), /clip-path: none;[\s\S]*?\.platform-tabs::before,\s*\.platform-parked::before \{ content: none; \}[\s\S]*?\.platform-parked \{ clip-path: none; \}/,
     'the docked rail draws its fill, not the fake, and the parked row inside it drops its layer');
-  assert.match(block('#dc-session-header.un-scrolled {'), /background-color: var\(--dc-strip-fill\);/);
-  assert.doesNotMatch(css, /#dc-session-header\.un-scrolled \{ background-color: var\(--dc-strip(-solid)?\); \}/);
   // The peeked rail floats over the page: solid, unclipped, shadow intact.
   const peek = block('.platform-tabs.platform-tabs-peek {');
   assert.match(peek, /background-color: var\(--dc-sheet-solid\);/);

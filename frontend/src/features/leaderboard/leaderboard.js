@@ -848,7 +848,9 @@ const Leaderboard = {
   _fmtDate(ts) {
     const d = new Date(ts);
     if (Number.isNaN(d.getTime())) return '';
-    return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+    // #6479: the day in the zone picked in Settings › Language, else the device's.
+    const timeZone = window.PlatformI18n?.timeZone?.();
+    return d.toLocaleDateString(undefined, { ...(timeZone ? { timeZone } : {}), year: 'numeric', month: 'short', day: 'numeric' });
   },
 
   // Rows that carry a slug route to that app's group chat — the PR card /
@@ -949,8 +951,8 @@ const Leaderboard = {
 // above returns a descriptor and React escapes the text when it renders it.
 // Nothing else read them — they were ambient window properties while this was
 // a classic script, but chunk F moved the file into the bundle, where a
-// module's identifiers are its own; the four scripts that still read
-// escapeHtml/escapeAttr ambiently (app-secrets.js, dev-chat.js,
+// module's identifiers are its own; the three scripts that still read
+// escapeHtml/escapeAttr ambiently (app-secrets.js,
 // home-panels.js, streaming-markdown.js) have been resolving to app-view.js's
 // and home.js's copies since then.
 

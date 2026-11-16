@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -59,7 +59,7 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
-import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
+import { askFix, useChecksExplanation } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { TopicPageContext } from './topic-store';
 import { ThreadItems, pageSlug } from './thread-items';
@@ -149,29 +149,23 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
 
 /**
  * The Testing card's Fix it, for the change's author, with the re-run beside
- * it (./failed-checks.ts askFix): the dev chat's own Fix it message, sent to
- * the change's build conversation in the author's name, without leaving the
- * page. A refusal ("still working", no credits) is said under the row.
+ * it (./failed-checks.ts askFix): the author's thread with Homeroom bot
+ * about the change.
  */
 function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): ReactNode {
   const t = useMessages('project');
-  const { asking, refused, tap } = useFixAsk(fix);
   return (
-    <>
-      <div className="dev-change-gate-fix">
-        <button
-          type="button"
-          className="gc-vote-btn gc-vote-btn-accent"
-          data-change-fix-checks={fix.changeId}
-          disabled={asking}
-          onClick={tap}
-        >
-          {asking ? t('project:topic.change.gate.fixAsking') : t('project:topic.change.gate.fix')}
-        </button>
-        {rerun}
-      </div>
-      {refused ? <p className="dev-change-gate-refused" role="alert">{refused}</p> : null}
-    </>
+    <div className="dev-change-gate-fix">
+      <button
+        type="button"
+        className="gc-vote-btn gc-vote-btn-accent"
+        data-change-fix-checks={fix.changeId}
+        onClick={() => askFix(fix)}
+      >
+        {t('project:topic.change.gate.fix')}
+      </button>
+      {rerun}
+    </div>
   );
 }
 
@@ -305,70 +299,61 @@ function VoteCloses({ closes, id }: { closes: ClosesRequest[]; id: number | null
  * The Testing card whose checks failed says what went wrong in plain words
  * over that line (`explain`: the model's sentence once read, the failure's
  * own words until then), and offers its author Fix it with the re-run
- * beside it (`fix`, `rerun`). From the tap until the build conversation's
- * turn ends it reads "Fixing", with a door into that conversation.
+ * beside it (`fix`, `rerun`).
  */
-export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
+export function GateCard({ which, g, action, rerun = null, id, closes = [], line = false }: {
   which: 'votes' | 'testing' | 'merge'; g: ChangeGateView; action: ReactNode; rerun?: ReactNode; id: number | null; closes?: ClosesRequest[];
+  /** #6615: one of the pair's one-line rows, drawn in the strip that floats under the sheet's header. */
+  line?: boolean;
 }): ReactNode {
   const t = useMessages('project');
   const open = () => (window as any).AppView?.openTechnicalDetails?.(id, 'checks');
-  const watch = () => (window as any).AppView?.openChangeWorkspace?.(id);
   // A merge of Homeroom itself: when its release comes, counted down here
   // rather than frozen when the page was read.
   const now = useReleaseNow(g.release);
   const release = g.release ? releaseSentence(g.release, now) : null;
   const explanation = useChecksExplanation(g.explain);
-  const fixing = useFixing(g.fix);
-  const shown: ChangeGateView = fixing ? {
-    ...g,
-    figure: t('project:topic.change.gate.fixing'),
-    tone: 'muted',
-    segments: [{ weight: 1, pct: 100, state: 'moving' }],
-    label: t('project:topic.change.gate.fixingLabel'),
-    note: [t('project:topic.change.gate.fixingNote')],
-    explain: null,
-    fix: null,
-    authorNote: null,
-    details: false,
-  } : g;
   // What went wrong, over the line: the lead ("One of this change's checks
   // failed on its preview.") and the sentence, as one paragraph in the
   // card's own ink. The page the failing check opened rides at its end,
   // when the change's preview can reopen it.
-  const why = shown.explain ? sentences([...shown.note, explanation || shown.explain.fallback]) : '';
-  const page = shown.explain?.page || null;
+  const why = g.explain ? sentences([...g.note, explanation || g.explain.fallback]) : '';
+  const page = g.explain?.page || null;
   const openPage = () => {
     if (page) (window as any).AppView?.ensureStaging?.(id, page.stagingUrl, { path: page.path }, {});
   };
   // The note's sentences arrive worded (AppView._changeThreadView); the door
   // into Details rides at the paragraph's end, in one message with them.
-  const lines = shown.explain
-    ? [shown.authorNote, shown.fix ? t('project:topic.change.gate.fixNote') : null]
-    : (release ? [...shown.note, t('project:topic.change.gate.release', { release })] : shown.note);
+  const lines = g.explain
+    ? [g.authorNote, g.fix ? t('project:topic.change.gate.fixNote') : null]
+    : (release ? [...g.note, t('project:topic.change.gate.release', { release })] : g.note);
   const note = sentences(lines);
   const door = <button type="button" className="dev-change-gate-link" onClick={open} />;
+  // #6615: the strip's rows carry `data-change-gate-line` instead of
+  // `data-change-gate`, so declared checks and `holdVotesInView` (which
+  // queries `[data-change-gate="votes"]`) see only the cards in the page's
+  // flow.
   return (
     <div
       className="dev-change-gate"
-      data-change-gate={which}
-      data-done={shown.done ? 'true' : 'false'}
-      data-tone={shown.tone}
-      data-change-fixing={fixing ? '' : undefined}
-      data-change-bot-fix={shown.botFix || undefined}
+      data-change-gate={line ? undefined : which}
+      data-change-gate-line={line ? which : undefined}
+      data-done={g.done ? 'true' : 'false'}
+      data-tone={g.tone}
+      data-change-bot-fix={g.botFix || undefined}
       role="group"
-      aria-label={shown.name}
+      aria-label={g.name}
     >
       <div className="dev-change-gate-main">
         <div className="dev-change-gate-head">
           <span className="dev-change-gate-name">
-            {shown.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
-            {shown.name}
+            {g.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
+            {g.name}
           </span>
-          <span className="dev-change-gate-figure">{shown.figure}</span>
+          <span className="dev-change-gate-figure">{g.figure}</span>
         </div>
-        <div className="dev-change-bar" role="img" aria-label={shown.label}>
-          {shown.segments.map((seg, i) => (
+        <div className="dev-change-bar" role="img" aria-label={g.label}>
+          {g.segments.map((seg, i) => (
             <span key={i} className="dev-change-bar-seg" style={{ flexGrow: seg.weight, flexBasis: 0 }}>
               <span className="dev-change-bar-fill" data-state={seg.state} style={{ width: `${Math.max(0, Math.min(100, seg.pct))}%` }} />
             </span>
@@ -377,9 +362,9 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
       </div>
       {action ? <div className="dev-change-gate-act">{action}</div> : null}
       {/* #3800: the vote's lines under the bar. */}
-      {shown.facts?.length ? (
+      {g.facts?.length ? (
         <div className="dev-change-gate-facts">
-          {shown.facts.map((fact) => (
+          {g.facts.map((fact) => (
             <p key={fact.key} data-change-vote-fact={fact.key} data-ask={fact.ask ? 'true' : undefined}>{fact.text}</p>
           ))}
         </div>
@@ -396,32 +381,24 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
           ) : null}
         </p>
       ) : null}
-      {shown.mainFailure?.href ? (
+      {g.mainFailure?.href ? (
         <p className="dev-change-gate-note">
-          <a className="dev-change-gate-link" href={shown.mainFailure.href} data-change-main-fix="">
-            {shown.mainFailure.label}
+          <a className="dev-change-gate-link" href={g.mainFailure.href} data-change-main-fix="">
+            {g.mainFailure.label}
           </a>
         </p>
       ) : null}
-      {shown.fix ? <FixRow fix={shown.fix} rerun={rerun} /> : null}
-      {shown.noteDetail ? (
+      {g.fix ? <FixRow fix={g.fix} rerun={rerun} /> : null}
+      {g.noteDetail ? (
         <details className="dev-change-gate-note" data-change-gate-explanation="">
-          <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500" title={shown.noteDetail}>
+          <summary className="cursor-pointer rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-violet-500" title={g.noteDetail}>
             {note}
           </summary>
-          <p className="mt-2">{shown.noteDetail}</p>
+          <p className="mt-2">{g.noteDetail}</p>
         </details>
-      ) : fixing && id ? (
-        <p className="dev-change-gate-note">
-          <RichMessage
-            id="project:topic.change.gate.noteWatch"
-            values={{ note }}
-            components={[<button type="button" className="dev-change-gate-link" data-change-fix-watch="" onClick={watch} />]}
-          />
-        </p>
-      ) : note || (shown.details && id) ? (
+      ) : note || (g.details && id) ? (
         <p className="dev-change-gate-note" data-change-release={release ? '' : undefined}>
-          {shown.details && id
+          {g.details && id
             ? (note
               ? <RichMessage id="project:topic.change.gate.noteSeeFailed" values={{ note }} components={[door]} />
               : <button type="button" className="dev-change-gate-link" onClick={open}>{t('project:topic.change.gate.seeFailed')}</button>)
@@ -430,7 +407,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [] }: {
       ) : null}
       {/* #6284: the stopped bot's Try again sits under what failed and the
           line saying it stopped, as Re-run checks does beside Fix it. */}
-      {shown.botFix === 'stopped' && !shown.fix && rerun ? (
+      {g.botFix === 'stopped' && !g.fix && rerun ? (
         <div className="dev-change-gate-fix">{rerun}</div>
       ) : null}
     </div>
@@ -461,7 +438,7 @@ const minutesBetween = (fromIso: string | null, toMs: number): number | null => 
  * or more turns amber and says how long and what to do; GitHub's checks
  * failing again is red, with no times and no button.
  */
-export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }): ReactNode {
+export function MergeCard({ g, id, line = false }: { g: ChangeMergeView; id: number | null; line?: boolean }): ReactNode {
   const t = useMessages('project');
   const wait = g.wait || null;
   const held = !!wait;
@@ -499,7 +476,7 @@ export function MergeCard({ g, id }: { g: ChangeMergeView; id: number | null }):
     tone: long ? 'warn' : g.tone,
     note,
   };
-  return <GateCard which="merge" g={shown} action={null} id={id} />;
+  return <GateCard which="merge" g={shown} action={null} id={id} line={line} />;
 }
 
 /**
@@ -645,16 +622,17 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
  * button, so there is one way to vote.
  *
  * 6 Nov 2026 (#6419): on the change's own page this same pair stays caught
- * under the sheet's header as the reader scrolls, instead of a second Votes
- * card appearing above the replies (#5725, removed). It is the pair, not the
- * Votes card alone, that sticks: a sticky box travels only within its
- * parent, and the Votes card's parent is this pair, exactly as tall as the
- * two cards. The pair's parent is the article's content column, which ends
- * with the change's own content, above the replies, so the pair lets go there
- * with no extra code, and the real Testing card rides under the Votes card,
- * so the checks' state is always in sight. The page that holds the pair
- * decides it: only the change's own article carries `dev-change-root`, so a
- * change section on a request's page draws the pair as before.
+ * under the sheet's header as the reader scrolls. #6615 (11 Nov 2026): the
+ * cards keep their full size where they are, and the one-line Votes and
+ * Testing rows float under the header in a strip drawn outside the page's
+ * flow, so nothing above or below the reader changes height when the strip
+ * appears or goes (the first version shrank the pair in place and gave the
+ * lost height back as a margin, which made the page jump while the change
+ * updated). The zero-height sticky holder travels within the article's
+ * content column, which ends with the change's own content, above the
+ * replies, so the strip lets go there. The page that holds the pair decides
+ * it: only the change's own article carries `dev-change-root`, so a change
+ * section on a request's page draws the pair as before, and never a strip.
  */
 export const ChangeGates = forwardRef<HTMLDivElement, {
   id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[];
@@ -667,10 +645,6 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   const mark = useRef<HTMLSpanElement>(null);
   const [stick, setStick] = useState(false);
   const [stuck, setStuck] = useState(false);
-  // What the pair gives up when it shrinks, kept as margin so the words under
-  // it do not jump up and the page's scroll height does not change.
-  const [give, setGive] = useState(0);
-  const full = useRef(0);
   const setPair = useCallback((node: HTMLDivElement | null) => {
     pair.current = node;
     if (typeof ref === 'function') ref(node);
@@ -685,7 +659,7 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   // Stuck is where the mark above the pair has left the top of the thread's
   // own scroller. The scroller is found from the mark itself, never by a
   // document-wide id: another pane can hold the same id (#4640). A browser
-  // without an observer leaves the pair at full size; it still sticks.
+  // without an observer leaves the pair at full size and draws no strip.
   useEffect(() => {
     if (!stick) return;
     const el = mark.current;
@@ -699,23 +673,26 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     io.observe(el);
     return () => io.disconnect();
   }, [id, stick]);
-  useLayoutEffect(() => {
-    if (!stick) return;
-    const el = pair.current;
-    if (!el) return;
-    if (!stuck) { full.current = el.offsetHeight; setGive(0); return; }
-    setGive(Math.max(0, full.current - el.offsetHeight));
-  }, [stuck, v.votes, v.testing, v.merge, stick]);
   return (
     <>
       {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
-      <div
-        ref={setPair}
-        className="dev-change-pair"
-        data-stick={stick ? '' : undefined}
-        data-stuck={stick && stuck ? '' : undefined}
-        style={stick && give ? { marginBlockEnd: give } : undefined}
-      >
+      {/* #6615: the one-line rows, out of the page's flow under the sheet's
+          header. The holder is always here while the page is a change's own,
+          so adding the strip to it never moves anything; its zero height
+          keeps the page's scroll height the same whether the strip shows or
+          not. */}
+      {stick ? (
+        <div className="dev-change-pair-float">
+          {stuck ? (
+            <div className="dev-change-pair" data-stuck="">
+              <GateCard line which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} />
+              <GateCard line which="testing" g={v.testing} action={null} id={id} />
+              {v.merge ? <MergeCard line g={v.merge} id={id} /> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      <div ref={setPair} className="dev-change-pair" data-stick={stick ? '' : undefined}>
         {frame && stick ? <TopicFrameLabel>{v.votes.name}</TopicFrameLabel> : null}
         <GateCard which="votes" g={v.votes} action={ballot ? null : voteAction} id={id} closes={closes} />
         {frame && stick ? <TopicFrameLabel>{v.testing.name}</TopicFrameLabel> : null}

@@ -147,13 +147,11 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
   // A design drawn from words, with no capture (C1 drafts these): its row,
   // its thread's line in Main, and version 1 by the bot.
   async function drawn(owner, title) {
-    const line = await dm.sendDm(pool, { bot, userId: owner.id, content: `New thread, about ${title}.`, threadRootId: false, moment: null,
-      metadata: { kind: 'opened_thread', changeKind: 'any' } });
+    // 14 Nov 2026: the line that opens a thread carries the thread's row (sendDm `thread`).
+    const line = await dm.sendDm(pool, { bot, userId: owner.id, content: `New thread, about ${title}.`, moment: null,
+      thread: { kind: 'design', appId: app.id }, metadata: { kind: 'opened_thread', changeKind: 'any' } });
     const { rows: [row] } = await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, $4, 'design', 'open') RETURNING id`,
-      [owner.id, line.conversationId, line.messageId, app.id],
-    );
+      'SELECT id FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [line.messageId, owner.id]);
     await pool.query(
       `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height) VALUES ($1, $2, 'app', NULL, 390, 844)`,
       [row.id, title],
@@ -165,13 +163,10 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
   // A design drawn from words for a screen that has no project yet (C1
   // drafts these): app_id NULL, surface 'new'.
   async function drawnNew(owner, title) {
-    const line = await dm.sendDm(pool, { bot, userId: owner.id, content: `New thread, about ${title}.`, threadRootId: false, moment: null,
-      metadata: { kind: 'opened_thread', changeKind: 'any' } });
+    const line = await dm.sendDm(pool, { bot, userId: owner.id, content: `New thread, about ${title}.`, moment: null,
+      thread: { kind: 'design' }, metadata: { kind: 'opened_thread', changeKind: 'any' } });
     const { rows: [row] } = await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, NULL, 'design', 'open') RETURNING id`,
-      [owner.id, line.conversationId, line.messageId],
-    );
+      'SELECT id FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [line.messageId, owner.id]);
     await pool.query(
       `INSERT INTO design_threads (private_thread_id, title, surface, route, width, height) VALUES ($1, $2, 'new', NULL, 390, 844)`,
       [row.id, title],
@@ -471,68 +466,59 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.ok(!page.items.some((i) => i.type === 'change' && i.id === plan.sessionId), 'her plan is the request\'s plan, never a change');
   });
 
-  await t.test('start_project_thread opens a thread for a new project, and the answer goes there', async () => {
+  // 14 Nov 2026: Main Chat is gone, and with it start_project_thread, the
+  // tool that opened a thread for a new project from Main. Every message is
+  // in a thread, so a new project starts in the one the person is in: the
+  // turn offers New project under its reply there, and answers there.
+  await t.test('a new project starts in the thread they are in: New project under the reply, nothing said outside it', async () => {
     const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
-    const message = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'I want an app to remind me to water plants' })).message;
+    // A New thread, as the "+" opens it, with their idea as its first words.
+    const plus = await require('../src/services/private-threads').startThread(pool, { user: ada, ungated: true, deps: { bot } });
+    const message = (await conversations.sendMessage(pool, ada, opened.conversationId, {
+      content: 'I want an app to remind me to water plants', thread_root_id: plus.rootId,
+    })).message;
     const settings = { ...(await homeroomBot.readSettings(pool)), mode: 'shadow' };
+    const where = await dm.threadDeps(pool, { userId: ada.id, conversationId: opened.conversationId, message });
+    assert.equal(where.threadRootId, plus.rootId);
+    assert.equal(require('../src/services/bot-profiles').kindInChat(where), 'private');
+    const seen = [];
     const sent = await mayor.runDmTurn(pool, config, {
       bot, user: ada, settings, conversationId: opened.conversationId, message,
       deps: {
-        apiKey: 'sk-test', seesImages: false, sleep: async () => {},
+        ...where, apiKey: 'sk-test', seesImages: false, sleep: async () => {},
         openMcp: async () => { throw new Error('no platform tools here'); },
         chat: scripted([
+          // The retired tool, should a model still name it, is refused; the turn goes on.
           [['start_project_thread', { idea: 'a plant watering reminder' }]],
-          [['reply', { text: 'Tell me what its first screen shows.' }]],
-        ]),
-      },
-    });
-    const { rows: [root] } = await pool.query(
-      `SELECT id, content, thread_root_id, reply_to_id, metadata FROM conversation_messages
-        WHERE conversation_id = $1 AND sender_id = $2 AND metadata->'homeroomBot'->>'changeKind' = 'project'`,
-      [opened.conversationId, bot.id],
-    );
-    assert.equal(root.content, 'New thread, for a new project: a plant watering reminder. Only you can see it.');
-    assert.equal(root.thread_root_id, null, 'one line in Main');
-    assert.equal(root.reply_to_id, message.id, 'quoting what she said');
-    assert.equal(root.metadata.homeroomBot.kind, 'opened_thread');
-    const { rows: [row] } = await pool.query('SELECT kind, state, app_id FROM private_threads WHERE root_message_id = $1', [root.id]);
-    assert.deepEqual(row, { kind: 'ask', state: 'open', app_id: null }, 'a thread with no project');
-    const { rows: [answer] } = await pool.query('SELECT content, thread_root_id FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.deepEqual(answer, { content: 'Tell me what its first screen shows.', thread_root_id: root.id }, 'the answer is the thread\'s first reply');
-    const next = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'a list of plants', thread_root_id: root.id })).message;
-    const where = await dm.messageThread(pool, { userId: ada.id, conversationId: opened.conversationId, message: next });
-    assert.equal(where.draft.changeKind, 'project', 'its turns know what it is for');
-    assert.match(mayor.systemPrompt({ username: 'dp_ada', thread: where }), /the private thread you opened for a NEW project/);
-  });
-
-  await t.test('B01: a turn that opened a project thread and then gave no answer asks its question in the thread, once', async () => {
-    const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
-    const message = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'Can you make us a chore chart for our flat?' })).message;
-    const settings = { ...(await homeroomBot.readSettings(pool)), mode: 'shadow' };
-    let later = 0;
-    const sent = await mayor.runDmTurn(pool, config, {
-      bot, user: ada, settings, conversationId: opened.conversationId, message,
-      deps: {
-        apiKey: 'sk-test', seesImages: false, sleep: async () => {},
-        onLater: () => { later += 1; },
-        openMcp: async () => { throw new Error('no platform tools here'); },
-        // The model opens the thread, then says nothing at all.
-        chat: scripted([[['start_project_thread', { idea: 'a chore chart for our flat' }]], []]),
+          [['offer_new_project', {}]],
+          [['reply', { text: 'That sounds like a project of its own. Tell me what its first screen shows.' }]],
+        ], seen),
       },
     });
     const { rows } = await pool.query(
-      `SELECT id, content, thread_root_id, reply_to_id FROM conversation_messages
+      `SELECT id, content, thread_root_id, metadata FROM conversation_messages
         WHERE conversation_id = $1 AND sender_id = $2 AND id > $3 ORDER BY id`,
       [opened.conversationId, bot.id, message.id],
     );
-    const inMain = rows.filter((r) => r.thread_root_id == null);
-    assert.equal(inMain.length, 1, 'Main gets the thread\'s one line and nothing else');
-    assert.match(inMain[0].content, /^New thread, for a new project: a chore chart for our flat/);
-    const answer = rows.find((r) => Number(r.id) === Number(sent.messageId));
-    assert.equal(Number(answer.thread_root_id), Number(inMain[0].id), 'the answer is in the new thread');
-    assert.equal(answer.reply_to_id, null, 'quoting nothing');
-    assert.match(answer.content, /What should the first screen show/);
-    assert.doesNotMatch(answer.content, /come back|in a minute/i, 'no promise for later');
-    assert.equal(later, 0, 'and no later try is owed');
+    assert.equal(rows.length, 1, 'one answer, and no line anywhere else');
+    assert.equal(Number(rows[0].id), Number(sent.messageId));
+    assert.equal(Number(rows[0].thread_root_id), Number(plus.rootId), 'in the thread they asked in');
+    assert.equal(rows[0].metadata.homeroomBot.newProject, true, 'New project shows under the reply');
+    const refused = JSON.stringify(seen.at(-1));
+    assert.match(refused, /Unknown tool start_project_thread/, 'the tool that opened one from Main is gone');
+    assert.ok(!mayor.TOOLS.some((t) => t.function.name === 'start_project_thread'));
+    // A thread the bot opened for a new project before keeps what it is for.
+    const { rows: [old] } = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, 'New thread, for a new project: a chore chart. Only you can see it.', $3) RETURNING id`,
+      [opened.conversationId, bot.id, JSON.stringify({ homeroomBot: { kind: 'opened_thread', changeKind: 'project', projectIdea: 'a chore chart' } })],
+    );
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state) VALUES ($1, $2, $3, 'ask', 'open')`,
+      [ada.id, opened.conversationId, old.id]);
+    const next = (await conversations.sendMessage(pool, ada, opened.conversationId, { content: 'a list of chores', thread_root_id: old.id })).message;
+    const there = await dm.messageThread(pool, { userId: ada.id, conversationId: opened.conversationId, message: next });
+    assert.equal(there.draft.changeKind, 'project', 'its turns know what it is for');
+    assert.match(mayor.systemPrompt({ username: 'dp_ada', thread: there }), /the private thread you opened for a NEW project/);
   });
 });

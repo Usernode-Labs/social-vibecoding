@@ -61,6 +61,9 @@ function catalogFixtures(curation = false) {
       id: 900003,
       slug: 'staging-demo-featured',
       name: 'Staging demo featured app',
+      // The sentence a card shows on one line (#6659): long enough to end in
+      // an ellipsis, with the whole of it on hover.
+      description: 'A bread helper: tell it your loaf and get exact dough weights and a bake schedule you can follow step by step',
       icon_emoji: '⭐',
       featured: true,
       featured_order: 1,
@@ -84,6 +87,7 @@ function catalogFixtures(curation = false) {
     {
       ...base, id: 900004, slug: 'staging-demo-featured-2',
       name: 'Staging demo featured 2', icon_emoji: '🎲',
+      description: 'A small game: clear falling blocks before they stack up',
       featured: true, featured_order: 2,
     },
     {
@@ -186,6 +190,11 @@ async function seedCatalog(pool, config = {}) {
       if (!app || app.created_by !== 900001 || app.self_hosted || app.repo_url || app.container_id || app.runtime_name) {
         throw new Error(`Staging catalog slug conflicts with an existing app: ${fixture.slug}`);
       }
+      // A fixture's sentence reaches the app already seeded too (#6659), never
+      // overwriting a description a deploy wrote.
+      if (fixture.description) await db.query(
+        `UPDATE apps SET manifest_snapshot = jsonb_set(COALESCE(manifest_snapshot, '{}'::jsonb), '{description}', to_jsonb($2::text))
+         WHERE id = $1 AND manifest_snapshot->>'description' IS NULL`, [app.id, fixture.description]);
       // Initialize assets and relationships once, preserving later moderation,
       // unfavorites, reactions and other actions when Preview is restarted.
       const initialized = await db.query(

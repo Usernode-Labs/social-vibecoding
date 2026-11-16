@@ -15,6 +15,9 @@
 
 function steerOf(ctx) { return ctx?.deps?.steer || require('../homeroom-bot-steer'); }
 function mayorOf(ctx) { return ctx?.deps?.mayor || require('../homeroom-bot-mayor'); }
+// #6684: the note's card is shaped by the service, which also sends notes
+// from a request's own discussion (noteFromRequest).
+const { cardOf, titleOf } = require('../homeroom-bot-steer');
 
 const PARAMS = Object.freeze({
   type: 'object',
@@ -76,29 +79,9 @@ async function resolve(pool, ctx, args, { running = false } = {}) {
     return { error: `You are not building ${name} request #${n} right now, so there is no build to send it to. If its change is up for a vote, revise_proposal changes it; otherwise comment_on_request adds it to the request. Nothing was sent.` };
   }
   if (running && !build.running) {
-    return { error: `Its build has not started yet, so there is nothing to stop: send the note with add_to_build and the build reads it as it works. Nothing was stopped.` };
+    return { error: 'Its build has not started yet, so there is nothing to stop: send the note with add_to_build and the build reads it as it works. Nothing was stopped.' };
   }
   return { app, n, name, build, gate, note };
-}
-
-function cardOf({ id, state, app, n, note, title = null }) {
-  return {
-    type: 'build_note', v: 1, state, noteId: id,
-    project: app.slug, projectName: app.name || app.slug, number: n, ...(title ? { title } : {}), note,
-  };
-}
-
-async function titleOf(pool, appId, n) {
-  try {
-    const { rows } = await pool.query(
-      `SELECT COALESCE((SELECT NULLIF(BTRIM(title), '') FROM issues WHERE app_id = $1 AND github_issue_number = $2 ORDER BY id DESC LIMIT 1),
-                       (SELECT NULLIF(BTRIM(issue_title), '') FROM homeroom_bot_requesters WHERE app_id = $1 AND issue_number = $2)) AS title`,
-      [Number(appId), Number(n)],
-    );
-    return rows[0]?.title ? String(rows[0].title).slice(0, 160) : null;
-  } catch {
-    return null;
-  }
 }
 
 async function addToBuild(pool, ctx, args) {

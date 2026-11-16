@@ -214,11 +214,6 @@ const EXEMPT = [
       + 'across its header and footer would be an invisible line',
   },
   {
-    file: 'public/js/session-options.js',
-    needles: ['border-b border-zinc-200 dark:border-zinc-700', 'border-t border-zinc-200 dark:border-zinc-700'],
-    why: 'same card, same surface — `dc-options-card` is `dark:bg-zinc-800`',
-  },
-  {
     file: 'frontend/src/features/settings/cli-setup-guide.tsx',
     needles: ['border-s border-zinc-200 dark:border-zinc-700'],
     why: 'not a separator: the Copy button’s inline-start edge CONTINUES the '

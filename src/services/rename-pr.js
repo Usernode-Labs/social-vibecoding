@@ -144,9 +144,8 @@ async function createManifestPR(config, pool, app, actor, opts) {
   // (anchors the stale-PR sweeper), emit pr_promoted, fan out
   // pr_proposed notifications.
   // #5379: a manifest PR is a settings proposal, not agent work — no agent
-  // chat backs it, so stamp `source = 'settings'` to keep it out of the
-  // agent-session lists (Messages › Agents, the bell's Agents tab, the
-  // Improve panel). It still goes to the vote and the project's board like
+  // conversation backs it, so stamp `source = 'settings'` to keep it out of
+  // the lists of a person's own work (the Improve panel). It still goes to the vote and the project's board like
   // every other proposal; the session-caps counting treats it as NULL does.
   // (JS comment, not `--` in the SQL: scripts/check-sql.js flattens queries
   // to one line and a line comment would eat the statement.)

@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: twenty-three mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: twenty-four mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,7 +108,7 @@ test('staging + ?demo=1: twenty-three mock rows prepend, and only the unread one
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 23, 'exactly twenty-three mock rows injected');
+    assert.equal(mocks.length, 24, 'exactly twenty-four mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
       [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed', 'build_live', 'build_ready',
@@ -159,7 +159,7 @@ test('staging + ?demo=1: twenty-three mock rows prepend, and only the unread one
     assert.match(conversationMock.conversationTitle, /^\[Mock\]/);
     assert.match(conversationMock.messageContent, /^\[Mock\]/);
     assert.ok(conversationMock.conversationId > 0, 'a routable conversation id');
-    // The unread rows feed the cog badge, and FIVE ship already read. They
+    // The unread rows feed the cog badge, and SIX ship already read. They
     // are the only thing a staging preview has behind the drawer's "See
     // older notifications" button: without one the button does not render at
     // all and the caught-up state is unreachable, so the two things a
@@ -167,22 +167,23 @@ test('staging + ?demo=1: twenty-three mock rows prepend, and only the unread one
     assert.equal(mocks.filter((n) => !n.readAt).length, 18,
       'eighteen unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
-    assert.equal(readMocks.length, 5, 'five already-read rows');
+    assert.equal(readMocks.length, 6, 'six already-read rows');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
       'and it is obviously fake, like the rest');
     // The four after 990206 are the older rows Unread shows once revealed,
     // one card per change in Today / Yesterday / Last 7 days / Older: a
     // change today, one request's two notifications yesterday (one card),
-    // 990206 three days ago, and a change twelve days ago.
-    assert.deepEqual(readMocks.map((n) => n.id), [990206, 990216, 990217, 990218, 990219]);
+    // 990206 three days ago, a change twelve days ago, and thirteen days ago
+    // the one the hold rules could not read in full.
+    assert.deepEqual(readMocks.map((n) => n.id), [990206, 990216, 990217, 990218, 990219, 990232]);
     const older = readMocks.slice(1);
     const hoursAgo = (n) => (Date.now() - Date.parse(n.createdAt)) / 3600000;
-    assert.deepEqual(older.map((n) => Math.round(hoursAgo(n))), [2, 26, 29, 288], 'newest first, across the sections');
+    assert.deepEqual(older.map((n) => Math.round(hoursAgo(n))), [2, 26, 29, 288, 312], 'newest first, across the sections');
     assert.deepEqual(older.filter((n) => n.detail === '990302').map((n) => n.id), [990217, 990218],
       'one request\'s story: its two notifications fold into one card');
     for (const n of older) {
       assert.ok(Date.parse(n.readAt) > Date.parse(n.createdAt), 'read after it arrived');
-      assert.match(n.prTitle || n.storyTitle, /^\[Mock\]/, 'obviously fake');
+      assert.match(n.prTitle || n.storyTitle || n.sessionTitle, /^\[Mock\]/, 'obviously fake');
       assert.equal(n.appId, 0, 'in the demo project');
     }
     assert.ok(
@@ -214,7 +215,7 @@ test('staging + ?demo=1: twenty-three mock rows prepend, and only the unread one
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // twenty-three would claim the read rows as unread — inflating the badge by one
+    // twenty-four would claim the read rows as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
     assert.equal(body.unread, 2 + 18);
@@ -267,7 +268,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 23);
+  assert.equal(rows.length, 24);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -313,7 +314,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   assert.ok(Date.parse(readRow.readAt) > Date.parse(readRow.createdAt),
     'read after it arrived');
   assert.ok(Date.parse(readRow.createdAt) < Date.now(), 'and it is genuinely older');
-  assert.equal(rows.filter((r) => r.readAt).length, 5, 'this one and the four older rows below');
+  assert.equal(rows.filter((r) => r.readAt).length, 6, 'this one and the five older rows below');
 
   // ...and the untitled one proves the branch-name fallback survives.
   const untitled = rows.find((r) => r.kind === 'session_done' && !r.sessionTitle);
