@@ -8,7 +8,8 @@
 //   - the hub's head names the project and who is around this week (and
 //     draws no chart), For you's Needs you counts the votes you owe, and a
 //     person who has not joined sees "Recently" (dev-board/workshop/);
-//   - a Mayor card refused for membership offers Join (features/agent-session);
+//   - a connector tool refused for membership keeps `join_required` and the
+//     app (services/mcp-tools.js), so its caller can offer Join;
 //   - a Homeroom line kept in #general is drawn as Homeroom's (Homeroom
 //     writes none into a channel now: tests/channel-activity.test.js);
 //   - Discover's rows open the hub, its controls sit over the list's card,
@@ -535,30 +536,11 @@ test('Make it public stays on Share it; who can see a project otherwise is the W
   assert.match(route, /await renamePr\.findVisibilityPr\(pool, app\.id\)/);
 });
 
-test('a Mayor card refused for membership offers Join, then asks the Mayor to try again', () => {
+test('a connector tool refused for membership keeps join_required and the app, so the caller can offer Join', () => {
   const tools = require('../src/services/mcp-tools');
   const refused = tools.platformError({ ok: false, status: 403, body: { code: 'join_required', error: 'Join Garden to take part.', app: { slug: 'garden', name: 'Garden' } } });
   assert.equal(refused.structuredContent.code, 'join_required');
-
-  const transcript = loadTsx('frontend/src/features/agent-session/transcript.ts');
-  const action = (status, result) => ({ id: 'a1', toolName: 'start_change', title: 'Start a change', status, result, expiresAt: '2099-01-01T00:00:00Z' });
-  const failed = action('failed', { ok: false, code: 'join_required', structured: { code: 'join_required', message: 'Join Garden to take part.', app: { slug: 'garden', name: 'Garden' } }, text: '' });
-  assert.deepEqual(transcript.joinFor(failed), { slug: 'garden', name: 'Garden' });
-  const card = { id: 'a1', toolName: 'start_change', title: 'Start a change', input: {}, expiresAt: '2099-01-01T00:00:00Z' };
-  assert.deepEqual(transcript.cardView(card, new Map([['a1', failed]])).join, { slug: 'garden', name: 'Garden' });
-  assert.equal(transcript.joinFor(action('failed', { ok: false, code: 'no_access', structured: { code: 'no_access' } })), null);
-  assert.equal(transcript.cardView(card, new Map([['a1', action('done', failed.result)]])).join, null, 'only a failed card asks');
-
-  const screen = read('frontend/src/features/agent-session/index.tsx');
-  const join = screen.slice(screen.indexOf('function JoinToRetry('), screen.indexOf('function Card('));
-  assert.match(join, /home\.setMembership\(join\.slug, true, undefined, \{ name: join\.name \}\)/, 'the one join path');
-  assert.match(join, /void sendAgentMessage\(t\('agent:session\.join\.joinedMessage', \{ community: join\.name, action: card\.title \}\)\);/);
-  assert.equal(message('agent:session.join.joinedMessage', { community: 'Notes', action: 'File a request' }),
-    'I joined Notes. Please try "File a request" again.');
-  assert.match(screen, /\{card\.status === 'failed' && card\.join \? \(\s*<JoinToRetry card=\{card\} join=\{card\.join\} \/>/);
-  // No prose from the Mayor under the Join button: the card asks.
-  const routes = read('src/routes/agent-sessions.js');
-  assert.match(routes, /const joinRequired = outcome && outcome\.result && outcome\.result\.code === 'join_required';\s*const followUp = joinRequired \? null : await startFollowUp\(/);
+  assert.deepEqual(refused.structuredContent.app, { slug: 'garden', name: 'Garden' });
 });
 
 test('a Homeroom line kept in #general, as the root of somebody\'s thread, is drawn as Homeroom\'s', () => {

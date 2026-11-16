@@ -105,7 +105,7 @@ export const REPLY_PURIFY = Object.freeze({
   RETURN_DOM_FRAGMENT: true,
 });
 
-/** Pure: an address a link in the fragment may keep: http(s), or a path on this site. The same rule as a link in the words (dev-chat.js). */
+/** Pure: an address a link in the fragment may keep: http(s), or a path on this site. The same rule as a link in the words (lib/platform-markdown.js). */
 export function linkable(href: string | null | undefined): boolean {
   const value = String(href || '').trim();
   return /^https?:\/\//i.test(value) || /^\/[^/]/.test(value);

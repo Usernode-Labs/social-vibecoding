@@ -205,7 +205,7 @@ test('Votes and Tested are small groups: each card\'s name is the label over it,
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   const P = 'html\\[data-skin\\]:where\\(:not\\(\\[data-skin="brand"\\]\\)\\) ';
   assert.match(hand, new RegExp(`${P}\\.dev-change-root \\.dev-change-pair:not\\(\\[data-stuck\\]\\) \\.dev-change-gate-name \\{ display: none; \\}`), 'the name inside is put away; the card keeps it as its accessible name');
-  assert.match(read(CHANGE), /role="group"\s+aria-label=\{shown\.name\}/);
+  assert.match(read(CHANGE), /role="group"\s+aria-label=\{g\.name\}/);
   assert.match(hand, new RegExp(`${P}\\.dev-change-root \\.dev-change-pair:not\\(\\[data-stuck\\]\\) \\.dev-change-gate\\[data-done="true"\\] \\.dev-change-gate-figure \\{ display: inline-flex; align-items: center; gap: 8px; color: var\\(--fr-ok\\); \\}`), 'done: green, with a check');
   assert.match(hand, new RegExp(`${P}\\.dev-change-root \\.dev-change-pair\\[data-stuck\\] > \\.fr-topiclabel \\{ display: none; \\}`), 'stuck under the head on a phone it is the standard compact pair');
 });

@@ -320,10 +320,6 @@ const COLUMNS = {
     file: 'public/js/group-chat.js',
     re: /attachScreenFx\(\s*'gc-thread',\s*container\.querySelector\('#gc-thread-scroll'\)/,
   },
-  'frontend/src/features/dev-chat/view.tsx': {
-    file: 'frontend/src/features/dev-chat/dev-chat.js',
-    re: /attachScreenFx\(\s*'dev-chat',\s*document\.getElementById\('dc-messages'\)/,
-  },
   'frontend/src/features/messages/index.tsx': { hook: true },
   // #6071 follow-up: a new thread with Homeroom bot, in a thread's place.
   'frontend/src/features/messages/new-thread.tsx': { hook: true },

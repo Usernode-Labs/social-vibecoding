@@ -22,7 +22,7 @@ const composer = read('frontend/src/features/messages/composer.tsx');
 const attachmentLimits = read('frontend/src/features/attachments/limits.ts');
 const row = read('frontend/src/features/messages/message-row.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
-const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+const platformMarkdown = read('frontend/src/lib/platform-markdown.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
@@ -86,11 +86,9 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox reads the address');
   // #2387: what follows the slug — a reply thread, a message link — rides
-  // along as a fourth argument (App._messagesExtras).
-  assert.match(messagesRoute, /if \(App\._appChatToHub\(parts\[2\], parts\.slice\(3\), hash\)\) return;\s*App\.navigateToMessages\(null, parts\[2\], null, App\._messagesExtras\(parts\.slice\(3\)\)\)/);
-  // #2813 added the agent thread as a third argument, last in precedence;
-  // #2387 the thread/link extras as a fourth.
-  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
+  // along as a third argument (App._messagesExtras).
+  assert.match(messagesRoute, /if \(App\._appChatToHub\(parts\[2\], parts\.slice\(3\), hash\)\) return;\s*App\.navigateToMessages\(null, parts\[2\], App\._messagesExtras\(parts\.slice\(3\)\)\)/);
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, extras\)/);
   // The hub's record still names the room at this address; the hub's own
   // Discussion row opens the project page's Discussion place, where the
   // room is drawn whole, and links nowhere else.
@@ -106,7 +104,7 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
-  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \|\| snap\.route\.agent \? 'hidden md:flex' : 'flex'/);
+  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \? 'hidden md:flex' : 'flex'/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {
@@ -469,12 +467,11 @@ test('blocking and access-revocation purge an active direct thread locally', () 
 });
 
 test('message Markdown delegates only to the established DOMPurify allowlist', () => {
-  assert.match(markdown, /window\.DevChat\.renderMarkdown\(content, \{ breaks: true \}\)/);
-  // `out`, because the sanitized html is cached before it is returned
-  // (tests/dev-chat-smoothness.test.js pins that it is byte-identical).
-  assert.match(devChat, /const out = DOMPurify\.sanitize\(html, \{/);
-  assert.match(devChat, /ALLOW_DATA_ATTR: false/);
-  assert.match(devChat, /ALLOWED_TAGS:/);
+  assert.match(markdown, /window\.PlatformMarkdown\.render\(content, \{ breaks: true \}\)/);
+  // `out`, because the sanitized html is cached before it is returned.
+  assert.match(platformMarkdown, /const out = DOMPurify\.sanitize\(html, \{/);
+  assert.match(platformMarkdown, /ALLOW_DATA_ATTR: false/);
+  assert.match(platformMarkdown, /ALLOWED_TAGS:/);
 });
 
 test('staging demo stays server-authored while the client forwards demo=1', () => {

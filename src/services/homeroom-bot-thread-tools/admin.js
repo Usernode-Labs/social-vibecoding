@@ -15,8 +15,8 @@
 //   reads   run at once, on a read grant minted for the call and revoked as
 //           soon as it returns;
 //   writes  never run from the model. The tool checks the input against the
-//           real tool's own schema, seals it exactly (services/confirmations,
-//           as the agent-session Mayor's cards do), and puts a confirm card
+//           real tool's own schema, seals it exactly (services/confirmations),
+//           and puts a confirm card
 //           under the reply: { type: 'confirm', tool, title, rows, state:
 //           'pending', expiresAt }. Only the admin's Confirm tap runs it
 //           (homeroom-bot-cards/confirm.js, confirmAction below): the row is
@@ -319,7 +319,7 @@ function opener(deps) {
 async function readNow(pool, ctx, name, args) {
   const started = Date.now();
   const shim = await opener(ctx.deps)({
-    pool, config: ctx.config, userId: Number(ctx.user.id), agentSessionId: null, scopes: [READ_SCOPE],
+    pool, config: ctx.config, userId: Number(ctx.user.id), scopes: [READ_SCOPE],
     ttlSeconds: GRANT_SECONDS, rateSubject: `hrbot-admin-${Number(ctx.user.id)}`, kind: 'bot_admin',
   });
   try {
@@ -381,8 +381,7 @@ async function prepare(pool, ctx, name, args) {
 //                  wrote. A new table or column stays unreadable until
 //                  someone reviews it onto that list.
 //   prod_status    the platform's health snapshot (services/status.js
-//                  gather()), as the agent-session Mayor's get_prod_status
-//                  had it, with the words people and agents wrote left out
+//                  gather()), with the words people and agents wrote left out
 //                  and contact details masked (statusForModel).
 //
 // The bot's model runs through OpenRouter, so whatever these return leaves
@@ -866,7 +865,7 @@ async function confirmAction(pool, config, { user, actionId, conversationId, bot
     if (!tool || !WRITES.includes(name)) throw new confirmations.ActionConfirmationError('invalid_action', 'That is not an admin action.');
     const { input } = confirmations.openAction(claimed.sealed_input, claimed.input_hash, config?.dataEncryptionKey);
     const shim = await opener(deps)({
-      pool, config, userId: Number(user.id), agentSessionId: null, scopes: [READ_SCOPE, WRITE_SCOPE],
+      pool, config, userId: Number(user.id), scopes: [READ_SCOPE, WRITE_SCOPE],
       ttlSeconds: GRANT_SECONDS, rateSubject: `hrbot-admin-${Number(user.id)}`, kind: 'bot_admin',
     });
     let result;

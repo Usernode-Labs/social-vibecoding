@@ -600,29 +600,8 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
           });
         }
       }
-      onProgress?.({ stage: 'inspect_shots_fixtures' });
-      const ready = await allSettledValues(['base', 'head'].map((side) =>
-        shotsFixtures.canCopyMemberAgentSession(fixtureInputs[side])));
-      // A fixture must exist on BOTH exact revisions. Never insert a state
-      // on only one side of a before/after comparison.
-      if (ready.every(Boolean)) {
-        onProgress?.({ stage: 'seed_shots_fixtures' });
-        const seeded = await allSettledValues(['base', 'head'].map((side) =>
-          shotsFixtures.copyMemberAgentSession({
-            ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
-          })));
-        fixtureProfiles.push(shotsFixtures.PROFILE);
-        availableFixtures.push(seeded[0]);
-        const adminSeeded = await allSettledValues(['base', 'head'].map((side) =>
-          shotsFixtures.copyFullAdminAgentSession({
-            ...fixtureInputs[side], selfAppSlug: config.selfAppSlug,
-          })));
-        fixtureProfiles.push(shotsFixtures.FULL_ADMIN_SESSION_PROFILE);
-        availableFixtures.push(adminSeeded[0]);
-      }
-      // The demo states (shots-demo-states.js) a screen needs and these
-      // copies cannot reach by themselves. Each goes in only where both
-      // revisions can hold it.
+      // The demo states (shots-demo-states.js) a screen needs. Each goes
+      // in only where both revisions can hold it.
       onProgress?.({ stage: 'seed_shots_demo_states' });
       const demoInputs = Object.fromEntries(['base', 'head'].map((side) =>
         [side, { ...fixtureInputs[side], selfAppSlug: config.selfAppSlug }]));

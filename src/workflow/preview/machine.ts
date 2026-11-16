@@ -710,7 +710,7 @@ function sameHead(s: Live, head: string): boolean {
 // an operation a live process holds): idle and pressure retirement wait.
 function worked(s: Live, f: Facts): boolean {
   const x = f.session;
-  if (x && (x.turnRunning || x.localTurnRunning || x.shotsRunning)) return true;
+  if (x && (x.turnRunning || x.shotsRunning)) return true;
   return s.data.operations.some((o) => f.alive.has(o.holder));
 }
 
@@ -990,7 +990,7 @@ function rawTransitions(deps: Deps): Record<string, Record<string, Entry>> {
       if (c !== true || e.payload.terminal) return c;
       if (['promoted', 'merging'].includes(f.session!.status)) return reject('under_review');
       const x = f.session!;
-      return x.turnRunning || x.localTurnRunning || x.shotsRunning ? reject('worked_on') : ok();
+      return x.turnRunning || x.shotsRunning ? reject('worked_on') : ok();
     },
     to: (s, e, f, ctx) => {
       const d = adopt(e, f, priorOf(s));
@@ -1766,7 +1766,7 @@ async function threadNote(tx: Tx, ctx: any, appId: number, sessionId: number, bo
   ctx.push(chatLine(row));
 }
 
-// Whether the dev chat's last line about the preview is a build still
+// Whether the change's last event-log line about the preview is a build still
 // running (the card a turn posts), with nothing after it that ended it.
 async function buildCardOpen(tx: Tx, sessionId: number): Promise<boolean> {
   const { rows: [last] } = await tx.query(
@@ -1798,7 +1798,7 @@ const WRITES = {
   pending: (tx: Tx, w: any) => rowStore.setChecksPending(tx, w.sessionId, w.head, w.phase, w.trigger),
 
   // An imported proposal's thread hears that its preview is being built
-  // (#866: it has no dev chat). Once per head: a rebuild of the same head
+  // (#866: nobody reads its own event log). Once per head: a rebuild of the same head
   // after a failure says nothing new.
   async buildStarted(tx: Tx, w: any, ctx: any) {
     const row = await proposalOf(tx, w.sessionId);
@@ -1815,10 +1815,9 @@ const WRITES = {
   },
 
   // The prepare's receipt, in one statement; then, for a proposal (not a
-  // preview with no checks), the line that says it is up: the dev chat's
-  // "Staging deployed!" (what a tab that watched it build already shows, and
-  // what closes a "Building staging preview..." card on a reload), or an
-  // imported proposal's thread note. A new attempt serves awake: its deploy
+  // preview with no checks), the line that says it is up: the event log's
+  // "Staging deployed!" (what closes a "Building staging preview..." line),
+  // or an imported proposal's thread note. A new attempt serves awake: its deploy
   // wrote one replica, so a sleep the preview was in has ended (#6157,
   // services/preview-sleep.js).
   async published(tx: Tx, w: any, ctx: any) {
@@ -1858,7 +1857,7 @@ const WRITES = {
   // (check_error_notified_at), unless the cause is infrastructure, the
   // author's thread line and notification.
   async prepareFailed(tx: Tx, w: any, ctx: any) {
-    // A "Building staging preview..." card a turn left open in the dev chat
+    // A "Building staging preview..." line a turn left open in the event log
     // is closed by its outcome, every time (the note below is once a streak).
     if (w.source !== 'imported' && await buildCardOpen(tx, w.sessionId)) {
       await tx.query(
@@ -1886,8 +1885,9 @@ const WRITES = {
     const body = w.sync
       ? `⚠️ Staging preview failed to start. ${w.aboutMain} Reason: ${w.detail}`
       : `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet.${w.aboutMain ? ` ${w.aboutMain}` : ''} Reason: ${w.detail}`;
-    // #866: a native proposal's dev chat shows its own messages; an imported
-    // one has none, so its note goes to the discussion thread its card links.
+    // #866: a native proposal's event log holds its own messages; nobody
+    // reads an imported one's, so its note goes to the discussion thread its
+    // card links.
     if (w.source === 'imported') {
       const { rows: [row] } = await tx.query(
         `INSERT INTO chat_messages (app_id, content, msg_type, metadata, thread_type, thread_ref)

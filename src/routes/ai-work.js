@@ -184,6 +184,9 @@ function aiWorkRoutes(config = {}) {
   // conversation and no user: whose chat is read is who is signed in.
   //   ?message=<id>                   the thread that message is in
   //   ?project=<slug>&firstVersion=1  that project's first-version thread
+  //   ?agentChat=<id>, ?devChat=<id>  the thread a retired agent chat or dev
+  //                                   chat of theirs was moved under
+  //                                   (services/old-chat-move.js)
   //   → { rootId: number | null, earlierRootId: number | null }
   // `rootId` is the thread's first message (the message's own id when it is
   // one), or null: a message that is not in their chat with the bot
@@ -203,12 +206,21 @@ function aiWorkRoutes(config = {}) {
           log.warn('ai-work', 'Staging bot DM fixture failed', { message: err.message });
         });
       }
-      const raw = typeof req.query.message === 'string' ? req.query.message : null;
-      const message = raw != null && /^[1-9][0-9]{0,9}$/.test(raw) ? Number(raw) : null;
-      if (raw != null && message == null) return res.status(400).json({ error: 'Invalid message' });
+      const idOf = (name) => {
+        const raw = typeof req.query[name] === 'string' ? req.query[name] : null;
+        if (raw == null) return { id: null, bad: false };
+        const id = /^[1-9][0-9]{0,9}$/.test(raw) ? Number(raw) : null;
+        return { id, bad: id == null };
+      };
+      const message = idOf('message');
+      if (message.bad) return res.status(400).json({ error: 'Invalid message' });
+      const agentChat = idOf('agentChat');
+      const devChat = idOf('devChat');
+      if (agentChat.bad || devChat.bad) return res.status(400).json({ error: 'Invalid conversation' });
       const project = typeof req.query.project === 'string' && req.query.project ? req.query.project.slice(0, 255) : null;
       return res.json(await require('../services/private-threads').whereFor(pool, {
-        user: req.user, message, project, firstVersion: req.query.firstVersion === '1',
+        user: req.user, message: message.id, agentChat: agentChat.id, devChat: devChat.id,
+        project, firstVersion: req.query.firstVersion === '1',
       }));
     } catch (err) {
       log.error('ai-work', 'Failed to read where something is in the chat with Homeroom bot', { message: err.message });

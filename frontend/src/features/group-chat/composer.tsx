@@ -152,11 +152,10 @@ function AttachError({ scope, text }: { scope: ComposerScope; text: string | nul
 }
 
 /**
- * The pending-upload strip is ../attachments/pending-strip.tsx's — the dev
- * chat draws the same one, and always did (the comment on `#gc-attachments`
- * has said "reuses the dev-chat dc-attach-* styles" since #694). What stays
- * here is which host it goes in and how a row is removed: the live entry holds
- * a File and an object URL, so it never leaves group-chat.js and the row
+ * The pending-upload strip is ../attachments/pending-strip.tsx's, drawn
+ * with the `dc-attach-*` styles. What stays here is which host it goes in
+ * and how a row is removed: the live entry holds a File and an object URL,
+ * so it never leaves group-chat.js and the row
  * reports its position instead.
  */
 function AttachStrip({ scope, items }: { scope: ComposerScope; items: PendingAttachmentView[] }) {

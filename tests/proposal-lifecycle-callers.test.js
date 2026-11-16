@@ -137,7 +137,7 @@ test('a promote GitHub has not answered yet (202) is waited on, never read as re
   assert.match(fn, /out\.status === 202\) out = await steps\.race\(require\('\.\.\/workflow\/platform\.ts'\)\.promoteSettled\(/);
   assert.match(read('src/routes/votes.js'), /req\.user\.is_synthetic \? \{ waitMs: 120000 \}/, 'the bot\'s own promote waits longer');
   const mcp = read('src/services/mcp-tools.js');
-  assert.equal((mcp.match(/status === 202 \? goingUpSentence\(/g) || []).length, 3, 'each connector tool that promotes says it is being put up');
+  assert.equal((mcp.match(/status === 202 \? goingUpSentence\(/g) || []).length, 1, 'the connector tool that promotes (submit_work) says it is being put up');
 });
 
 test('a move its caller waits on carries a deadline, and a resume not applied in time is not reported as done (review 4)', () => {

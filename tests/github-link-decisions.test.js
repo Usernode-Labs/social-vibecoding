@@ -15,8 +15,9 @@
 //     neutral code mark.
 //
 // This file pins the sites: the ⋯ rows, the meta-line numbers, the closes
-// pills, the version pill, the Details sheet, the dev chat's changes card,
-// the home menu's code row and the About pane's Code row.
+// pills, the version pill, the Details sheet, the home menu's code row and
+// the About pane's Code row. (The Explore seed and the dev chat's changes
+// card went with the dev chat.)
 //
 // Run with: node --test tests/github-link-decisions.test.js
 
@@ -207,14 +208,6 @@ test('the version pill: a change page opens in place, a commit on the git host i
   assert.match(github, new RegExp(`<a href="${GITHUB_PR}" target="_blank" rel="noopener"`));
 });
 
-test('the explore message names a native change by its page, and a GitHub PR as a PR link', () => {
-  const AppView = makeAppView();
-  assert.match(AppView._exploreSeed(PR({ pr_url: CHANGE_PAGE })), new RegExp(`\\nChange page: ${CHANGE_PAGE.replace(/[/.?#]/g, '\\$&')}\\n`));
-  assert.match(AppView._exploreSeed(PR({ pr_url: '/#app/notes-1a2b3c/dev/changes/7' })),
-    /\nChange page: https:\/\/onhomeroom\.com\/#app\/notes-1a2b3c\/dev\/changes\/7\n/);
-  assert.match(AppView._exploreSeed(PR({ pr_url: GITHUB_PR })), new RegExp(`\\nPR link: ${GITHUB_PR.replace(/[/.]/g, '\\$&')}\\n`));
-});
-
 test('the board\'s "More open requests" footer is GitHub\'s only', () => {
   const kanban = SRC.slice(SRC.indexOf('const issuesFooter = '), SRC.indexOf('const issuesFooter = ') + 300);
   assert.match(kanban, /meta\.truncatedList && meta\.repoUrl && AppView\._linkKind\(meta\.repoUrl\) === 'github'/);
@@ -239,13 +232,6 @@ test('the Details sheet: "Open on GitHub" for GitHub, "View code" for the git ho
   const own = render(CHANGE_PAGE);
   assert.match(own, /<span>PR#7<\/span>/);
   assert.doesNotMatch(own, /<a /);
-});
-
-test('the dev chat\'s changes card: a native change opens its page, a GitHub PR keeps "View on GitHub"', () => {
-  const SRC_TX = read('frontend/src/features/dev-chat/transcript.tsx');
-  assert.match(SRC_TX, /const prButton = prKind === 'github' \? t\('devchat:card\.changes\.viewOnGithub'\)\n\s+: prKind === 'code' \? t\('devchat:card\.changes\.viewCode'\)\n\s+: prKind === 'homeroom' \? t\('devchat:card\.changes\.openChange'\) : null;/);
-  assert.equal(message('devchat:card.changes.openChange'), 'Open change');
-  assert.doesNotMatch(message('devchat:card.changes.openChange'), /GitHub/);
 });
 
 test('the home menu: "View on GitHub" for a repository there, "View code" for the git host', () => {

@@ -24,8 +24,7 @@
 //   8. the server says where reading stopped;
 //   9. the conversation wires it in that order;
 //  10. Jump to latest alone (frontend/src/features/messages/jump-to-latest.tsx):
-//      a reply thread, the agent sessions (frontend/src/features/agent-session/
-//      index.tsx), and the group
+//      a reply thread, and the group
 //      chat's channel and threads (frontend/src/features/group-chat/
 //      general-chat.tsx, frontend/src/features/group-chat/thread-shell.tsx),
 //      whose rows and scrolling public/js/group-chat.js owns.
@@ -774,11 +773,4 @@ test('the group chat\'s channel and threads get it beside their scrollers, at th
   }
   const boxed = renderComponent('frontend/src/features/group-chat/thread-shell.tsx', 'ThreadShell', { ...props, fill: false });
   assert.doesNotMatch(boxed, /data-jump-latest/, 'the boxed layout is a small inline box: no floating control');
-});
-
-test('the agent sessions in Messages get the way down too, at their own allowance', () => {
-  const session = read('frontend/src/features/agent-session/index.tsx');
-  assert.match(session, /if \(el\) stick\.current = el\.scrollHeight - el\.scrollTop - el\.clientHeight < 80;/, 'an agent session follows within 80px');
-  assert.match(session, /<\/div>\s*\{\/\*[^]*?\*\/\}\s*<JumpToLatest scroller=\{scroll\} slack=\{80\} \/>\s*<Replies /,
-    'between the session\'s transcript and its suggested replies');
 });

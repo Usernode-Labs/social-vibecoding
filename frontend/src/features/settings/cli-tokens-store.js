@@ -49,7 +49,7 @@ export const cliTokensStore = createStore(INITIAL_CLI_TOKENS);
 
 /**
  * Published for settings.js, which is loaded before this bundle and cannot
- * import — the same seam `settingsGrants` and `settingsAgentFiles` use, and
+ * import — the same seam `settingsGrants` uses, and
  * published at module-evaluation time so the API exists long before the
  * section can be opened. The `typeof window` guard is not decoration: the SSG
  * prerender evaluates this whole module graph in Node.

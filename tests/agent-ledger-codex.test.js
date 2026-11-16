@@ -813,7 +813,6 @@ const {
   runCodexAttemptLoop,
   resumeRecoveredCodexFreshRetry,
   codexMaxTokensRetry,
-  codexProviderFailureText,
 } = require('../src/routes/sessions');
 const { settleRecoveredAgentAttempt } = require('../src/services/agent-turn');
 
@@ -1646,33 +1645,6 @@ test('codexMaxTokensRetry: only the max_tokens refusal, and never after a stop',
   assert.equal(codexMaxTokensRetry({
     ...refusal, providerRequest: { maxOutputTokens: 32000, limitSource: 'openrouter_in_flight_budget' },
   }), null, 'a temporary shared budget refusal needs settlement time, not an immediate smaller request');
-});
-
-test('codexProviderFailureText: the remedy follows whose key is paying', async () => {
-  const result = {
-    agentErrorCode: 'insufficient_credits_max_tokens',
-    requestedOutputTokens: 131072,
-    affordableOutputTokens: 21605,
-    agentError: MAX_TOKENS_REFUSAL,
-  };
-  const personalPool = { query: async () => ({ rows: [] }) };
-  assert.match(
-    await codexProviderFailureText(personalPool, 1, result),
-    /OpenRouter checked a limit of 131,072 tokens/,
-  );
-  const includedPool = { query: async () => ({ rows: [{ source: 'usernode_managed' }] }) };
-  assert.match(
-    await codexProviderFailureText(includedPool, 1, result),
-    /credit included with Homeroom/,
-  );
-  // A failed lookup must not tell the user the platform's key is at fault.
-  const brokenPool = { query: async () => { throw new Error('db down'); } };
-  assert.match(
-    await codexProviderFailureText(brokenPool, 1, result),
-    /your OpenRouter account balance/,
-  );
-  // An unclassified turn keeps whatever copy the caller already had.
-  assert.equal(await codexProviderFailureText(personalPool, 1, { exitCode: 1 }), null);
 });
 
 test('#3426: image input comes from OpenRouter\'s own model listing, and reaches the runtime metadata', () => {

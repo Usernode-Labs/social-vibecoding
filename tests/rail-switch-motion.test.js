@@ -190,9 +190,6 @@ test('no app\'s Workshop has a ✕ — only the running app does — and a chann
   App.currentTab = 'dev';
   App.currentSubTab = 'chat';
   assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#app/homeroom/dev/hub']);
-  // A change is still an agent conversation, a thread of Messages (#2770).
-  App.currentSubTab = 'sessions';
-  assert.deepEqual([...App._backSlotFor('app-view')], ['arrow', '#messages']);
 });
 
 // ── #2880, #2881: the Workshop tab into and out of an app's Workshop ─────

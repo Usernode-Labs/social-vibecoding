@@ -81,7 +81,7 @@ test('canonical conversation redirects preserve thread and message destinations'
           id: CONVERSATION, kind: 'group', title: 'Stored room', membershipStatus: 'member', members: [],
         } }) }) : fetch(url, init);
       const store = loadTsx('frontend/src/features/messages/store.ts');
-      store.route(910004, null, null, extras);
+      store.route(910004, null, extras);
       await settle();
       assert.equal(window.location.hash, `#messages/${CONVERSATION}${suffix}`);
       store.close();
@@ -110,17 +110,17 @@ test('legacy message and thread ids redirect to the stored rows returned by the 
       renderToHtml(createElement(() => { snap = store.useMessagesSnapshot(); return null; }));
       return snap;
     };
-    store.route(CONVERSATION, null, null, { threadRootId: 9100404 });
+    store.route(CONVERSATION, null, { threadRootId: 9100404 });
     await settle();
     assert.equal(window.location.hash, `#messages/${CONVERSATION}/thread/10`);
     // The shell router follows the canonical address.
-    store.route(CONVERSATION, null, null, { threadRootId: 10 });
+    store.route(CONVERSATION, null, { threadRootId: 10 });
     await settle();
     assert.equal(read().thread.rootId, 10);
     assert.equal(read().thread.root.id, 10);
     assert.equal(read().thread.messages[0].threadRootId, 10);
     store.close();
-    store.route(CONVERSATION, null, null, { focusMessageId: 9100202 });
+    store.route(CONVERSATION, null, { focusMessageId: 9100202 });
     await settle();
     assert.equal(window.location.hash, `#messages/${CONVERSATION}/m/5`);
     store.close();
@@ -141,7 +141,7 @@ test('a message link anchors the first read; later refreshes keep the reader\'s 
     };
     const reaction = { type: 'conversation_reaction_updated', conversationId: CONVERSATION, messageId: 4 };
 
-    store.route(CONVERSATION, null, null, { focusMessageId: 5 });
+    store.route(CONVERSATION, null, { focusMessageId: 5 });
     await settle();
     assert.deepEqual(reads, ['around=5'], 'the link opens on its message');
     assert.deepEqual(read().messages.map((m) => m.id), [3, 4, 5, 6, 7]);
@@ -167,7 +167,7 @@ test('a message link anchors the first read; later refreshes keep the reader\'s 
     // Leaving and following the same link again reads it afresh.
     store.close();
     reads.length = 0;
-    store.route(CONVERSATION, null, null, { focusMessageId: 5 });
+    store.route(CONVERSATION, null, { focusMessageId: 5 });
     await settle();
     assert.deepEqual(reads, ['around=5']);
   } finally {
@@ -223,7 +223,7 @@ test('#6148: a linked window reads one newer page per scroll to its foot, says w
       renderToHtml(createElement(() => { snap = store.useMessagesSnapshot(); return null; }));
       return snap;
     };
-    store.route(CONVERSATION, null, null, { focusMessageId: 5 });
+    store.route(CONVERSATION, null, { focusMessageId: 5 });
     await settle();
     assert.equal(read().nextAfter, 7);
 
@@ -275,7 +275,7 @@ test('#6148: a thread reads one earlier page per scroll to its top, and a failed
       renderToHtml(createElement(() => { snap = store.useMessagesSnapshot(); return null; }));
       return snap;
     };
-    store.route(CONVERSATION, null, null, { threadRootId: 10 });
+    store.route(CONVERSATION, null, { threadRootId: 10 });
     await settle();
     assert.deepEqual(read().thread.messages.map((m) => m.id), [21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
     assert.equal(read().thread.nextBefore, 21);

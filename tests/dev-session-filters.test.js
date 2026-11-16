@@ -136,15 +136,16 @@ test('the note names WHICH filters did not apply, and how many cards', () => {
   // The note is a `note` ListRow now (card/list-rows.tsx renders it); its
   // TEXT is what this file is about, so it reads the row's text.
   const note = (n) => (AppView._sessionFilterNoteRow(n) || { text: '' }).text;
-  assert.match(note(1), /The 1 session card below is not filtered by priority/);
+  assert.match(note(1), /The 1 such card below is not filtered by priority/);
 
   AppView._kanbanFilters = F({ priority: 'high', assignee: 'maya' });
   // #1404: a NAMED person now applies to a session, through its author, so
   // the note must no longer claim it does not. Only the Unassigned sentinel
   // is still inapplicable — a session is not an assignable board item.
-  assert.match(note(3), /The 3 session cards below are not filtered by priority/);
-  // Scoped to the VARIABLE half: the note's fixed preamble ("Dev sessions
-  // don't carry priority, category or assignee") names the word either way.
+  assert.match(note(3), /The 3 such cards below are not filtered by priority/);
+  // Scoped to the VARIABLE half: the note's fixed preamble ("Changes in
+  // progress don't carry priority, category or assignee") names the word
+  // either way.
   assert.doesNotMatch(note(3).split('not filtered by')[1], /assignee/);
 
   AppView._kanbanFilters = F({
@@ -203,7 +204,7 @@ test('an inapplicable filter keeps every session AND renders the note', () => {
   });
   assert.match(html, /Dark mode work/);
   assert.match(html, /Theirs/);
-  assert.match(html, /The 2 session cards below are not filtered by priority/);
+  assert.match(html, /The 2 such cards below are not filtered by priority/);
 });
 
 test('a named person keeps sessions by that author and drops other sessions', () => {
@@ -223,12 +224,12 @@ test('the note counts only the sessions that SURVIVED the text filter', () => {
   const html = board(AppView, F({ q: 'dark', priority: 'high' }), {
     mine: [SESS(), SESS({ id: 52, session_title: 'Unrelated refactor' })],
   });
-  assert.match(html, /The 1 session card below is not filtered by priority/);
+  assert.match(html, /The 1 such card below is not filtered by priority/);
   assert.doesNotMatch(html, /Unrelated refactor/);
 });
 
 test('no note on an unfiltered board', () => {
   const AppView = makeAppView();
   const html = board(AppView, F(), { mine: [SESS()] });
-  assert.doesNotMatch(html, /Dev sessions don't carry/);
+  assert.doesNotMatch(html, /Changes in progress don&#x27;t carry/);
 });

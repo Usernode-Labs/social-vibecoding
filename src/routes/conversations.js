@@ -1178,8 +1178,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // Saved drafts in the person's chat with Homeroom bot: the agent chats'
-  // list (routes/agent-session-drafts.js), which this reuses the limits of.
+  // Saved drafts in the person's chat with Homeroom bot.
   // While the bot works on their message the message box saves what they
   // type instead of sending it, and a draft is sent later by a tap, never on
   // its own (frontend/src/features/messages/bot-stop.ts). One list for the
@@ -1201,7 +1200,6 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   // - A browser's own request only: same-origin, and on no connector's list
   //   (services/cli-api-policy.js is fail-closed).
   const drafts = () => require('../services/conversation-drafts');
-  const draftLimits = () => require('./chat-drafts');
   // The caller's own chat with Homeroom bot, and the place in it the request
   // names: { id, threadRootId } (null for the chat itself), or null for
   // anything else, which every route answers as not found.
@@ -1220,7 +1218,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       const place = await botDraftPlace(req, req.query.threadRootId);
       if (!place) return sendNotFound(res);
       const list = await drafts().listDrafts(pool, { userId: req.user.id, conversationId: place.id, threadRootId: place.threadRootId });
-      return res.json({ drafts: list, max: draftLimits().MAX_DRAFTS });
+      return res.json({ drafts: list, max: drafts().MAX_DRAFTS });
     } catch (err) {
       log.error('conversations', 'listing saved drafts failed', { id: req.params.id, err: err.message, userId: req.user?.id });
       return res.status(500).json({ error: 'Internal server error' });
@@ -1228,7 +1226,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   router.post('/api/conversations/:id/bot-drafts', draftWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
-    const { MAX_DRAFTS, DRAFT_ID_RE, CAP_MESSAGE, clampSavedAt } = draftLimits();
+    const { MAX_DRAFTS, DRAFT_ID_RE, CAP_MESSAGE, clampSavedAt } = drafts();
     const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
     if (!text) return res.status(400).json({ error: 'Draft text required' });
     if (text.length > drafts().MAX_DRAFT_CHARS) {
@@ -1257,7 +1255,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   router.delete('/api/conversations/:id/bot-drafts/:draftId', draftWriteLimiter, sameOriginBrowserOnly, async (req, res) => {
-    const { MAX_DRAFTS, DRAFT_ID_RE } = draftLimits();
+    const { MAX_DRAFTS, DRAFT_ID_RE } = drafts();
     const draftId = String(req.params.draftId || '');
     if (!DRAFT_ID_RE.test(draftId)) return res.status(400).json({ error: 'Bad draft id' });
     try {

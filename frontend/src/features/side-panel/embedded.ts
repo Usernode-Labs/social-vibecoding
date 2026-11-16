@@ -31,9 +31,7 @@
  */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
-import { prepareAgentDraft } from '../agent-session/store';
 import { headerTitleStore } from '../header/header-title-store.js';
-import type { PanelHint } from './controller';
 import { panelHeadStore, type PanelHead } from './head-store';
 import { appTabSlug, embeddedAllows, isShellAddress, routeFromUrl, samePage } from './routes';
 
@@ -49,12 +47,10 @@ interface TopPanel {
   openApp?: (slug: string) => void;
   leave?: (route: string) => void;
   back?: () => void;
-  takeBootHint?: () => PanelHint | null;
 }
 
 type Win = Window & {
   App?: { _routeFromHash?: () => void; _currentRoute?: string | null };
-  AppView?: { _proposalHint?: boolean };
   UsernodeReact?: Record<string, unknown>;
   navigation?: { addEventListener?: (type: string, fn: (e: NavigateLike) => void) => void };
 };
@@ -71,7 +67,7 @@ interface NavigateLike {
 
 export interface EmbeddedRuntime {
   /** The top document sends the panel to `route` (open, Back, a page it was headed for). */
-  go(route: string, hint: PanelHint | null): void;
+  go(route: string): void;
   /** App.restoreFromHash asks: is `route` the top window's? If so it has gone there. */
   forward(route: string): boolean;
   /** An app's App tab, asked for in here: the running app beside the panel. */
@@ -272,25 +268,10 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
     schedule();
   });
 
-  // A hint rides with the navigation it was given for, and is in place
-  // before that page routes: New change's "what a proposal is", and what an
-  // unsent agent session is about (created from it on the first message).
-  function applyHint(hint: PanelHint | null): void {
-    if (!hint) return;
-    if (hint.proposalHint && win.AppView) win.AppView._proposalHint = true;
-    if (hint.agentHint !== undefined) prepareAgentDraft(hint.agentHint);
-  }
-
   // ── 2. Boot ────────────────────────────────────────────────────────────
-  // The first page is the frame's own address. A hint the top had for it (New
-  // change's one-shot "what a proposal is") has to be in place before the
-  // router runs, which is on DOMContentLoaded — after this module.
-  try {
-    applyHint(top()?.takeBootHint?.() || null);
-  } catch { /* no top panel: nothing to apply */ }
-
-  // `sv:authed` fires once, from the authed boot, right before its first
-  // restoreFromHash; the report goes a turn later, after that pass.
+  // The first page is the frame's own address. `sv:authed` fires once, from
+  // the authed boot, right before its first restoreFromHash; the report goes
+  // a turn later, after that pass.
   win.document.addEventListener('sv:authed', () => {
     win.setTimeout(() => {
       booted = true;
@@ -313,9 +294,8 @@ export function installEmbeddedRuntime(win: Win): EmbeddedRuntime | null {
   }
 
   const runtime: EmbeddedRuntime = {
-    go(next: string, hint: PanelHint | null) {
+    go(next: string) {
       fromTop = true;
-      applyHint(hint);
       const url = next.startsWith('app/')
         ? `/${next}${loc.search}`
         : `/${loc.search}#${next}`;

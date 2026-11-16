@@ -84,11 +84,10 @@ async function inProgressIssueNumbers(pool, appId) {
 
   // The automatic half. Same predicate as the Board's: active, promoted and
   // merging always count; paused ages out on last_activity_at; archived and
-  // merged exclude themselves. Headless runs are deliberately absent — they
-  // ship as their own field and are ORed by the client, not here. A person's
-  // posted plan (request-specs.js) is not work: a planning record with no
-  // branch never counts, the same rule as issue-proposal-ref.js
-  // (1 Nov 2026, #6385).
+  // merged exclude themselves. A headless row (an unattended run of the
+  // past, a bench preview) never counts. A person's posted plan
+  // (request-specs.js) is not work: a planning record with no branch never
+  // counts, the same rule as issue-proposal-ref.js (1 Nov 2026, #6385).
   const { rows: sessionRows } = await pool.query(
     `SELECT DISTINCT UNNEST(cs.linked_issues) AS n
        FROM chat_sessions cs

@@ -387,9 +387,14 @@
       "schemaSha256": "e236854d0d060d4c66b2d503372217ddb09cc2646ee879add12f4a4df9ec5570"
     },
     {
+      "id": "moved-chats",
+      "sha256": "c8c6b9518cd824e77b7f819f1e910533c4b725e0228e1995f6fa379b1cdccf81",
+      "schemaSha256": "61b3ca527e4f285f860e86637b0ae0b4b6da4c6f6d1740a034010389ec81e64b"
+    },
+    {
       "id": "home-activity-seen",
       "sha256": "dfc1467dab85ecaf5682a66c553795459d3f41fd2ebe2d14067fe65fa93a9058",
-      "schemaSha256": "f84e5a24a6b12cfb967f0ab09c8952a02bd468aa3858edd2f69e65977eeb8e3c"
+      "schemaSha256": "c259a72a86baa1a276aa8f0713f3fb2dba25b4edcf36f55986fd0a0b5bed5562"
     }
   ]
 }

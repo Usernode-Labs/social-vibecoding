@@ -1084,7 +1084,7 @@ async function restoreSessionBackend(pool, session, original) {
  * Is somebody else working on the proposal's session now, read from the
  * durable record of each kind of work (src/workflow/session-work.ts): a
  * turn whose record is not this look's own (`owner`: its work item), a
- * turn on a local agent, a before & after shots run (which holds the
+ * before & after shots run (which holds the
  * proposal from its first build, #4575), a sync with main, a durable build.
  * The same answer in every process and after a restart. A read that fails
  * says no: the turn's own start refuses a busy session as before.
@@ -1096,8 +1096,6 @@ async function sessionTakenElsewhere(pool, sessionId, owner = null) {
       `SELECT (cs.active_turn IS NOT NULL
                  AND NOT (cs.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM $2
                           AND cs.active_turn->'owner'->>'key' IS NOT DISTINCT FROM $3))
-              OR EXISTS (SELECT 1 FROM local_agent_turns t
-                          WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
               OR ${sw.shotsRunningSql('cs.id')}
               OR ${sw.operationsLiveSql('cs.id')}
               OR ${sw.syncWorkingSql('cs.id')}

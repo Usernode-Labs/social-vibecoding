@@ -1460,8 +1460,8 @@ function screenArgs(args) {
 // ── The project's board (#6260) ──────────────────────────────────────────
 
 /**
- * A project's open requests, or one of them, read on the agent-session
- * Mayor's read grant (mayor/mcp-shim.js): the same platform read the chat turn's
+ * A project's open requests, or one of them, read on Homeroom bot's
+ * read-only Mayor grant (mayor/mcp-shim.js): the same platform read a chat
  * turn gets. The project is this design's unless they name another, and only
  * a project they can see is read. `state` keeps the grant for the turn (its
  * `grant` is undefined until one is opened, null when none could be) so one
@@ -1497,7 +1497,7 @@ async function boardRead(pool, config, { user, project, args, name, deps = {}, s
     try {
       const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
       grant = await open({
-        pool, config, userId: user.id, agentSessionId: null, ttlSeconds: 300,
+        pool, config, userId: user.id, ttlSeconds: 300,
         rateSubject: `hrbot-design-${user.id}`, imageInput: false,
       });
     } catch (err) {

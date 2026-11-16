@@ -12,7 +12,6 @@
 //   5. Members are told when a project they joined while it was made opens
 //      (services/project-opened.js), and the email that stands in for a
 //      push: project_opened. The vote digest is not emailed (#5794).
-//   6. The agent session's browser prompt is explained first, once.
 //
 // Run with: node --test tests/notify-ask.test.js
 
@@ -22,7 +21,6 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
@@ -412,57 +410,6 @@ test('the vote digest is not emailed: it owes nothing, and nothing sends one', a
   assert.deepEqual(sent, [
     { userId: 8, kind: 'project_opened', appName: 'Run Club', appSlug: 'run-club' },
   ], 'only the project opening is sent; the digest owes no email');
-});
-
-// ── 6. The agent session's browser prompt ───────────────────────────────
-
-function bootDevAlerts({ permission = 'default', answer = true, native = false, stored = {} } = {}) {
-  const calls = { confirm: 0, request: 0 };
-  const sandbox = {
-    console: { log() {}, warn() {}, error() {} },
-    localStorage: {
-      getItem(k) { return Object.hasOwn(stored, k) ? stored[k] : null; },
-      setItem(k, v) { stored[k] = String(v); },
-    },
-    Notification: {
-      permission,
-      requestPermission() { calls.request += 1; return Promise.resolve('granted'); },
-    },
-    PlatformUI: { confirm() { calls.confirm += 1; return Promise.resolve(answer); } },
-    PlatformI18n: { t: (id) => id },
-    document: { visibilityState: 'visible', addEventListener() {} },
-    addEventListener() {},
-    usernode: native ? { isNative: true } : undefined,
-  };
-  sandbox.window = sandbox;
-  vm.createContext(sandbox);
-  vm.runInContext(read('public', 'js', 'dev-alerts.js'), sandbox);
-  return { DevAlerts: sandbox.DevAlerts, calls, stored };
-}
-
-test('the first send explains, and the browser prompt comes only after Notify me', async () => {
-  const yes = bootDevAlerts();
-  await yes.DevAlerts.offerNotifyPermission();
-  assert.equal(yes.calls.confirm, 1, 'the in-app question first');
-  assert.equal(yes.calls.request, 1, 'then the browser\'s prompt');
-  await yes.DevAlerts.offerNotifyPermission();
-  assert.equal(yes.calls.confirm, 1, 'once per device');
-
-  const no = bootDevAlerts({ answer: false });
-  await no.DevAlerts.offerNotifyPermission();
-  assert.equal(no.calls.request, 0, 'Not now asks the browser nothing');
-
-  const answered = bootDevAlerts({ permission: 'denied' });
-  await answered.DevAlerts.offerNotifyPermission();
-  assert.equal(answered.calls.confirm, 0, 'the browser was answered already');
-
-  const app = bootDevAlerts({ native: true });
-  await app.DevAlerts.offerNotifyPermission();
-  assert.equal(app.calls.confirm, 0, 'the Homeroom app has its own ask');
-
-  const chat = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  assert.match(chat, /DevAlerts\.offerNotifyPermission\(\)/);
-  assert.doesNotMatch(chat, /DevAlerts\.requestNotifyPermission\(\)/, 'never the bare prompt on a send');
 });
 
 // ── The Android bridge call ────────────────────────────────────────────

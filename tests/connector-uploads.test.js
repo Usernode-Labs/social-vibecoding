@@ -465,7 +465,7 @@ test('a wrong upload files nothing, and screenshots count together against the l
   } finally { c.restore(); }
 });
 
-test('only an external client is offered uploads; the Mayor is not, and is refused if it tries', async () => {
+test('only an external client is offered uploads; Homeroom bot\'s read grant sees no tool that takes one', async () => {
   const mayor = connector({ delegation: { kind: 'agent_mayor' } });
   const external = connector();
   try {
@@ -474,10 +474,9 @@ test('only an external client is offered uploads; the Mayor is not, and is refus
     assert.ok(external.specs.get('create_request').inputSchema.videoUploadId);
     assert.match(external.specs.get('create_request').description, /prepare_upload/);
     assert.equal(mayor.specs.get('prepare_upload'), undefined);
-    const own = mayor.specs.get('create_request');
-    assert.equal(own.inputSchema.videoUploadId, undefined);
-    const out = await mayor.handlers.get('create_request')({ slug: 'a', title: 'T', videoUploadId: 62 });
-    assert.equal(out.isError, true);
+    for (const name of ['create_request', 'post_spec', 'propose_featured_illustration']) {
+      assert.equal(mayor.specs.get(name), undefined, `${name} is not offered to it`);
+    }
     assert.equal(mayor.calls.length, 0);
   } finally { external.restore(); mayor.restore(); }
   assert.ok(tools.ACTING_TOOLS.includes('prepare_upload'));

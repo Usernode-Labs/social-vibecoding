@@ -11,11 +11,11 @@
  * (./request-head.tsx), which draws this under the request already open
  * (`startOpen`); folding it puts it away again (`onClose`).
  *
- * The hand-off status (GET /api/apps/:slug/dev-flow/status, the "Build with"
- * sheet's own) is read only once it is opened, never on load: it says
- * whether Homeroom can see the person's connector, and which fork to
- * preselect in Claude Code. Until it answers, or if it fails, the link
- * still works and leaves the repository to the person.
+ * The hand-off status (./handoff-status.ts, GET
+ * /api/apps/:slug/dev-flow/status) is read only once it is opened, never on
+ * load: it says whether Homeroom can see the person's connector, and which
+ * fork to preselect in Claude Code. Until it answers, or if it fails, the
+ * link still works and leaves the repository to the person.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -25,7 +25,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { CheckIcon } from '@/components/ui/icons';
 import { useMessages } from '../../../lib/i18n/react';
 import { claudeCodeLink, forkRepository } from '../../../lib/claude-code-link';
-import { handoffStatus, type HandoffStatus } from '../../agent-session/api';
+import { handoffStatus, type HandoffStatus } from './handoff-status';
 
 export function OwnAgentLink({ slug, number, initialStatus = null, startOpen = false, onClose }: {
   slug: string;
@@ -48,7 +48,7 @@ export function OwnAgentLink({ slug, number, initialStatus = null, startOpen = f
   useEffect(() => {
     if (!open || !slug) return undefined;
     let live = true;
-    handoffStatus(slug, null)
+    handoffStatus(slug)
       .then((next) => { if (live) setStatus(next); })
       .catch(() => { /* the link works without it */ });
     return () => { live = false; };

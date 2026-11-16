@@ -17,12 +17,11 @@
 // (HELPER_FALLBACK_MODEL), plus the key check in src/routes/auth.js — so
 // those are unaffected. PR titling moved to Sonnet 5.5 (llm.PR_METADATA_MODEL),
 // also called directly. Anyone who had it selected is coerced to DEFAULT_MODEL by
-// resolve() server-side and by DevChat._sanitizeStoredModel()
-// client-side.
+// resolve() server-side.
 //
 // `changeSize` (#800) — read it as "picker guidance"; the key name is
 // narrower than what it holds and was kept only to avoid churn across
-// models.js / dev-chat.js / app-view.js / tests. The copy describes the
+// models.js / app-view.js / tests. The copy describes the
 // KIND of work each model suits, not a size ladder:
 //   - Sonnet is the cheap option for one small, self-contained thing.
 //   - Opus is the general-purpose coding pick — the default for coding

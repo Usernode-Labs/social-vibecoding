@@ -16,8 +16,7 @@
 //   - a save and a delete are idempotent, and every write answers the list;
 //   - the person's own sockets are told, and only when something changed;
 //   - the rows leave with the conversation and with the person;
-//   - same-origin, rate-limited as the agent chats' drafts are, and on no
-//     connector's or CLI's list.
+//   - same-origin, rate-limited, and on no connector's or CLI's list.
 //
 // The message box's side is tests/messages-bot-drafts.test.js.
 //
@@ -329,7 +328,7 @@ test('saved drafts in the chat with Homeroom bot, against the full PostgreSQL sc
     assert.match(src, /pushToUser\(userId, \{\n\s+type: DRAFTS_CHANGED, conversationId, \.\.\.\(threadRootId \? \{ threadRootId \} : \{\}\),\n\s+\}, \{ actorUserId: userId \}\);/);
   });
 
-  await t.test('a browser\'s own request only, rate-limited as the agent chats\' drafts are, and on no connector\'s list', async () => {
+  await t.test('a browser\'s own request only, rate-limited, and on no connector\'s list', async () => {
     for (const site of ['cross-site', 'same-site']) {
       const headers = { 'sec-fetch-site': site };
       assert.equal((await call(ada, 'GET', `${adasChat}/bot-drafts`, null, headers)).status, 403, site);
@@ -343,10 +342,10 @@ test('saved drafts in the chat with Homeroom bot, against the full PostgreSQL sc
     assert.match(routes, /router\.get\('\/api\/conversations\/:id\/bot-drafts', sameOriginBrowserOnly, async/);
     assert.match(routes, /router\.post\('\/api\/conversations\/:id\/bot-drafts', draftWriteLimiter, sameOriginBrowserOnly, async/);
     assert.match(routes, /router\.delete\('\/api\/conversations\/:id\/bot-drafts\/:draftId', draftWriteLimiter, sameOriginBrowserOnly, async/);
-    // The agent chats' own limits, so the lists cannot drift apart; the
+    // The limits are the drafts service's own, read where they are kept; the
     // length is a message's.
-    assert.match(routes, /const draftLimits = \(\) => require\('\.\/chat-drafts'\);/);
-    assert.match(routes, /const \{ MAX_DRAFTS, DRAFT_ID_RE, CAP_MESSAGE, clampSavedAt \} = draftLimits\(\);/);
+    assert.match(routes, /const drafts = \(\) => require\('\.\.\/services\/conversation-drafts'\);/);
+    assert.match(routes, /const \{ MAX_DRAFTS, DRAFT_ID_RE, CAP_MESSAGE, clampSavedAt \} = drafts\(\);/);
     assert.equal(require('../src/services/conversation-drafts').MAX_DRAFT_CHARS, conversations.MAX_MESSAGE_LENGTH);
     assert.equal(conversations.MAX_MESSAGE_LENGTH, 8000);
     // The bot's account is resolved on the server, as Stop's is.

@@ -39,7 +39,6 @@ test('staging visual fixtures seed and serve keys without byte columns', { timeo
   const beforeEnv = process.env.USERNODE_ENV;
   t.after(() => { if (beforeEnv === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = beforeEnv; });
   const run = async (db) => {
-    await seeds.seedStagingTranscriptShowcase(db, { selfAppSlug: 'media-fixture' });
     await seeds.seedStagingVisuals(db);
     await seeds.seedStagingGalleryProposals(db);
   };
@@ -51,7 +50,7 @@ test('staging visual fixtures seed and serve keys without byte columns', { timeo
   process.env.USERNODE_ENV = 'staging';
   await run(pool);
   const { rows } = await pool.query('SELECT id, object_key, bytes, sha256, legacy_etag, content_type FROM session_visuals ORDER BY id');
-  assert.equal(rows.length, 31, 'seven transcript, eleven multi-route and thirteen gallery media');
+  assert.equal(rows.length, 24, 'eleven multi-route and thirteen gallery media');
   for (const row of rows) {
     const data = await media.bytes(store, row);
     assert.equal(data.length, row.bytes);

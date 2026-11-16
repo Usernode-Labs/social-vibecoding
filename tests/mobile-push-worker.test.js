@@ -20,7 +20,7 @@ function delivery(overrides = {}) {
     delivery_created_at: new Date(Date.now() - 1000),
     notification_id: 42,
     notification_user_id: 7,
-    kind: 'session_done',
+    kind: 'connector_submitted',
     read_at: null,
     push_category: 'developer_sessions',
     push_enabled: true,
@@ -115,8 +115,8 @@ test('eligible delivery sends one contextual bound message and marks it sent', a
   assert.equal(calls.sent[0].data.notification_id, '42');
   assert.equal(calls.sent[0].data.environment, 'production');
   assert.deepEqual(calls.sent[0].notification, {
-    title: 'Your build is ready · MyPage',
-    body: '"Fix login redirect loop" finished. Review it while it\'s fresh',
+    title: 'Your agent submitted "Fix login redirect loop" · MyPage',
+    body: 'It is waiting for approval, and it is being tested',
   });
 });
 

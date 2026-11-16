@@ -53,9 +53,6 @@ const { SAMPLE_NAMES } = require('../../worker/shots-samples');
 // alsoFor), in shots-demo-states.js's order. tests/shots-ready-states.test.js
 // keeps the two lists the same.
 const READY_STATES = Object.freeze([
-  ['shots-demo-member-agent-runs-v1', 'an agent run in progress, and one whose Stop is taking long', ['member']],
-  ['shots-demo-member-change-preview-v1', 'a change with a deployed preview (Propose to group)', ['member']],
-  ['shots-demo-member-agent-list-v1', 'enough agent sessions for the menu\'s Show more', ['member']],
   ['shots-demo-proposal-vote-states-v1', 'a proposal voted on at an earlier version, its threshold moved', ['member']],
   ['shots-demo-member-visibility-proposal-v1', 'a proposal of yours to make the app private', ['member']],
   ['shots-demo-homeroom-bot-verdict-v1', 'a live Homeroom bot verdict with its build', ['read_only_admin', 'full_admin']],
@@ -92,7 +89,7 @@ const READY_STATES = Object.freeze([
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-member-checks-part-way-v1', 'a change of yours whose checks are part-way through',
     ['member', 'read_only_admin', 'full_admin']],
-  ['shots-demo-full-admin-allowance-low-v1', 'a weekly building allowance nearly spent (a red credits pill)',
+  ['shots-demo-full-admin-allowance-low-v1', 'a weekly building allowance nearly spent (Settings says what is left, in red)',
     ['full_admin']],
   ['shots-demo-member-bot-rings-v1', 'Homeroom bot\'s needs-you rings in your bell', ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
@@ -118,11 +115,6 @@ const NEEDS = Object.freeze([
     needs: 'an answered first-version plan',
     test: /\b(?:answered (?:the |its |their |a )?plan|plan (?:was |is )?answered|thanks? (?:you )?for answering|first[- ]version'?s? plan)\b/i,
     states: ['shots-demo-member-first-version-thanks-v1'],
-  },
-  {
-    needs: 'an agent run in progress',
-    test: /\b(?:agent (?:run|turn)s? (?:in progress|running|under ?way)|while (?:the |an )?agent (?:is )?(?:runs|running|working)|retry stop)\b/i,
-    states: ['shots-demo-member-agent-runs-v1'],
   },
   // The changes that ended with no shots from 9 to 12 October 2026, in their
   // own words: PR 4825, 4736 and 4622, 4763, 4733, 4829.

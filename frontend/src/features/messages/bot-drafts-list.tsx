@@ -4,10 +4,9 @@ import type { SavedDraft } from './bot-drafts';
 
 /**
  * The saved drafts above the message box in the chat with Homeroom bot
- * (./bot-drafts.ts): the agent session's list, drawn as it is there
- * (features/agent-session/index.tsx SavedDrafts) so the two read as one
- * thing. Each draft can be sent once the bot is free, put back in the box
- * to reword, or deleted. Sending is always a tap here, never automatic.
+ * (./bot-drafts.ts). Each draft can be sent once the bot is free, put back
+ * in the box to reword, or deleted. Sending is always a tap here, never
+ * automatic.
  *
  * Nothing is drawn with no drafts, so the box does not move for a list that
  * is not there; and a first render has none (the list is read in an effect).

@@ -38,8 +38,8 @@ async function findAppByRepo(pool, owner, repo) {
 // is itself an app on self-hosted instances. Best-effort: a failure here
 // must never fail the request (the issue is already filed).
 //
-// Shared by the feedback routes (routes/feedback.js) and the
-// platform-issue draft confirm path (routes/sessions.js).
+// Shared by the feedback routes (routes/feedback.js) and a report filed
+// for a person (services/feedback-reports.js).
 async function announceIssueCreated(pool, owner, repo, rawIssue, app) {
   try {
     const target = app || await findAppByRepo(pool, owner, repo);

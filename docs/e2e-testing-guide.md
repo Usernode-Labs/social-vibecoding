@@ -59,7 +59,7 @@ worse than having neither.
 
 **Drivable unattended** (~80% of cases): every authenticated web flow via
 browser automation against production, every read-only API shape, the full
-dev loop (issue → session → PR → staging → checks → vote → merge → deploy),
+dev loop (issue → change → PR → staging → checks → vote → merge → deploy),
 app lifecycle, admin console, and most push *triggers*.
 
 **Needs a human, always:**
@@ -148,9 +148,6 @@ Kind-specific notes:
   must be clicked; a plain message does not fire them.
 - `check_failed` fires only on a staging **boot** failure (crash-loop), not
   on failing dapp tests, and lands ~4 minutes after the crash.
-- `spec_shared` is de-duplicated: re-sharing the same
-  `(session, version, recipient)` returns `alreadyShared: true` and creates
-  **no** notification. Use a fresh session for a repeat test.
 - `stale_pr` is a days-scale sweeper — not force-testable; leave it to its
   unit coverage.
 - Invite kinds land on the **invitee's** device, so testing them needs a
@@ -166,7 +163,7 @@ plus staging build) and creates real production state. Check
 `GET /api/budget` before starting; the daily allowance resets at 00:00 UTC.
 
 Everything created during a run should be **labelled and cleaned up**:
-throwaway apps deleted, sessions archived, governance proposals withdrawn,
+throwaway apps deleted, changes archived, governance proposals withdrawn,
 test conversations left, kudos retracted. Anything that cannot be undone —
 a merged change, an issue — should be a deliberate decision, stated to the
 user, not a side effect.

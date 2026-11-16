@@ -933,17 +933,23 @@ async function threadOfMessage(db, { userId, botId, messageId }) {
 
 /**
  * What GET /api/ai/where answers for `user`: { rootId, earlierRootId }.
- * `rootId` is the thread `message` is in, else (with `firstVersion`) the
- * first-version thread of `project`, else null; `earlierRootId` their
- * Earlier chat thread. Only ever their own chat with the bot.
+ * `rootId` is the thread `message` is in, else the thread their retired
+ * agent chat (`agentChat`) or dev chat (`devChat`) was moved under
+ * (old-chat-move.js), else (with `firstVersion`) the first-version thread of
+ * `project`, else null; `earlierRootId` their Earlier chat thread. Only ever
+ * their own chat with the bot.
  */
-async function whereFor(pool, { user, message = null, project = null, firstVersion = false, deps = {} }) {
+async function whereFor(pool, { user, message = null, agentChat = null, devChat = null, project = null, firstVersion = false, deps = {} }) {
   if (!user?.id) return { rootId: null, earlierRootId: null };
   const dm = deps.dm || require('./homeroom-bot-dm');
   const bot = deps.bot !== undefined ? deps.bot : await dm.botAccount(pool);
   let rootId = null;
   if (message != null && bot) rootId = await threadOfMessage(pool, { userId: user.id, botId: bot.id, messageId: message });
-  else if (firstVersion && project) rootId = await firstVersionRootFor(pool, { userId: user.id, slug: String(project) });
+  else if (agentChat != null || devChat != null) {
+    rootId = await (deps.oldChats || require('./old-chat-move')).whereMoved(pool, {
+      userId: user.id, source: agentChat != null ? 'agent' : 'session', id: agentChat != null ? agentChat : devChat,
+    });
+  } else if (firstVersion && project) rootId = await firstVersionRootFor(pool, { userId: user.id, slug: String(project) });
   return { rootId, earlierRootId: await earlierRootFor(pool, user.id) };
 }
 

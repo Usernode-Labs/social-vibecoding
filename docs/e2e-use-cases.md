@@ -21,7 +21,7 @@ Ext. creds (third-party credentials).
 
 Statuses: `pending` / `pass` / `fail` / `blocked` / `skipped`.
 
-Total: **130 use cases**.
+Total: **129 use cases**.
 
 ## A. Anonymous, Waitlist & Auth
 
@@ -86,7 +86,7 @@ Creating, running and governing an app, and who may touch it.
 | C12 | Admins & governance PRs | admins-pr / governance-pr flows create votable platform changes | User | Browser-auto | pass | governance-pr mechanism verified via C5 (visibility-pr) and C4 (rename) - both mint a votable PR + session. admins-pr not separately run |
 | C13 | App lock | POST /api/apps/:slug/lock blocks writes appropriately | Admin | API-auto | pass | App lock POST locked:true then locked:false both 200 - reversible |
 
-## D. Dev Flow: Issues → Sessions → Proposals → Merge
+## D. Dev Flow: Issues → Changes → Proposals → Merge
 
 The build loop that is the heart of the product.
 
@@ -98,18 +98,18 @@ The build loop that is the heart of the product.
 | D4 | Claim & assign | Claim pill toggles; assignee picker from ⋯ menu | User | Browser-auto | pass | Claim toggle flipped Claim this issue -> Release my claim |
 | D5 | Issue bounty | Attach kudos bounty; weekly allowance enforced | User | Browser-auto | pass | Issue bounty attached (bountyId 32, remaining 19/20) - weekly kudos allowance decremented |
 | D6 | Close issue | Close dialog → auto-withdraws linked proposal → board updates | User | Browser-auto | pass | Governance close proposal + vote reached threshold -> issue #1 auto-closed, card moved In Review -> Done with Merged badge and toast |
-| D7 | Headless auto-solve | Issue → auto-solve run → question path (“asked a question”) or draft-ready state on board | User | Browser-auto | pass | Headless auto-solve session on the issue ran to terminal state then auto_solve_done push delivered |
-| D8 | Dev-chat session & spec | New session → venue/model select → chat turn streams → spec versions; share spec to user/link (spec_shared push) | User | Browser-auto | pass | FULL pass 2026-08-19: model selector + credit meter + quick-replies, plain-English turn streamed the coding agent live (20 steps, ~4min, self-corrected a checks 401 and an accidental node_modules commit), auto-set session title, committed + pushed. Spec write + share-to-user path also exercised (see F4 notes). ~$5 spend |
-| D9 | Session lifecycle | Pause / resume / stop / archive / unarchive; drafts save & restore; session caps enforced | User | Browser-auto | pass | Resume plus chat turn on a paused session completed (session_done). Pause/archive/caps not each re-exercised |
+| D7 | Build a request with Homeroom bot | Request → Build it → the viewer's Homeroom bot thread → the bot's change, with its spec, preview and checks, on the change page | User | Browser-auto | pending |  |
+| D8 | Start a change with Homeroom bot | Workshop Start here or the + menu → `#homeroom-bot/new?project=<slug>` → pick the builder (Homeroom bot, Claude Code or ChatGPT) → the build streams in the thread → change page with spec versions, preview and checks | User | Browser-auto | pending |  |
+| D9 | Change lifecycle | Resume / stop / archive / unarchive; change caps enforced | User | Browser-auto | pass | archive + unarchive 200. Resume, stop and caps not each re-exercised |
 | D10 | Promote → staging → checks | Promote proposal (resume if auto-paused) → staging build → checks run → verdicts on card | User | Browser-auto | pass | FULL pass: turn auto-created PR #3, built staging preview, ran checks -> Checks passed, Propose to group -> In vote. Preview staging / Test this change / View on GitHub actions present |
 | D11 | Voting & merge gates | Vote panel, explicit-approval gate, checks gate, auto-merge on green → merge + blue/green deploy | 2 accounts | Browser-auto | pass | FULL pass on REAL CODE: Yes vote hit threshold -> Merging... -> Merged -> deployed. Verified the E2E-verified subtitle now renders on the LIVE prod app. Auto-merge-on-green confirmed |
 | D12 | Staging preview & visual compare | Fullscreen staging overlay; before/after comparison overlay | User | Browser-auto | pass | Staging preview built and deploy-gated during D10 (Preview staging button live); fullscreen overlay + visual-compare not separately opened |
-| D13 | PR import | Candidates → preview → import → sync/merge; refused states in dev-chat | User | Browser-auto | pass | Read path verified on the self-app: pr-import/candidates 200 with real open PRs, and preview?pr=<n> 200 with number/title/author/state/headBranch. The actual import mutation was not run (would pull a real PR into the platform repo) - left for a deliberate run |
+| D13 | PR import | Candidates → preview → import → sync/merge; refused states on the change page | User | Browser-auto | pass | Read path verified on the self-app: pr-import/candidates 200 with real open PRs, and preview?pr=<n> 200 with number/title/author/state/headBranch. The actual import mutation was not run (would pull a real PR into the platform repo) - left for a deliberate run |
 | D14 | Session kudos | Give / remove kudos on a session (kudos push to owner) | 2 accounts | Browser-auto | pass | Kudos on another user PR: give incremented 7->8 and recorded @snait as giver (just now); toggle-off retracted it (net zero, weekly spend unchanged). FINDING: kudos badge count vs givers-popover count render inconsistently during rapid toggles |
-| D15 | Transcript & session sharing | Share/unshare transcript link; shared sessions list; fork shared chat | User | Browser-auto | pass | share-transcript + unshare-transcript both 200 (sets shared_at + transcript_shared_at). Gated to active/paused/promoted sessions - a merged session correctly 404s |
-| D16 | Session surgery | Fork session, clone-headless, sync-main, undo, reset agent context | User | Browser-auto | pass | archive + unarchive 200; sync-main correctly guards a paused session (409 with a clear resume-first message) |
+| D15 | Transcript & session sharing | Share/unshare transcript link; shared sessions list | User | Browser-auto | pass | share-transcript + unshare-transcript both 200 (sets shared_at + transcript_shared_at). Gated to active/paused/promoted sessions - a merged session correctly 404s |
+| D16 | Sync with main | Sync a change's branch with main; a paused change is guarded | User | Browser-auto | pass | sync-main correctly guards a paused session (409 with a clear resume-first message) |
 | D17 | CLI device auth & proposal push | CLI device code → browser approve → token; proposal_push_commit → submit build → promote (usernode-proposal skill) | User | API-auto | pass | CLI credential path proven all session: the MCP connector authenticates as snait and drives every Homeroom read. Device-code endpoint requires a client payload (400 on empty body) - the interactive pairing itself is a user step |
-| D18 | External agents & handoff | proposal-handoff build/context; external task submit; local-agent lease/turn routing | User | API-auto | pending | Smoke-level only |
+| D18 | External agents & handoff | proposal-handoff build/context; external task submit | User | API-auto | pending | Smoke-level only |
 
 ## E. Social: Group Chat & Direct Messages
 
@@ -130,16 +130,15 @@ App-scoped group chat and platform-wide conversations.
 
 ## F. Notifications & Mobile Push
 
-The in-app feed and all 19 push kinds through Firebase to a real phone.
+The in-app feed and all 16 push kinds through Firebase to a real phone.
 
 | ID | Use case | Flow | Gate | Method | Status | Notes |
 |---|---|---|---|---|---|---|
 | F1 | In-app notification feed | Each social action from E lands in the bell feed with correct copy and tap-through | 2 accounts | Browser-auto | pass | conversation_invite landed in snait bell with correct copy; tap-through routed to the pending request |
 | F2 | Push registration | Mobile app registers device token; GET/DELETE /api/v4/mobile/push-registration | Device | Phone-in-loop | pass | iOS registration active for snait after enabling the in-app push toggle; Firebase provider accepted |
 | F3 | Push preference gates | PATCH /api/me/mobile-push-preferences per category → gated kinds stop enqueueing (DB trigger respects prefs) | User | API-auto | pass | Preference categories read and gates confirmed live: lightweight_activity default-off but kudos/reaction still delivered because user had enabled it |
-| F4 | All push kinds deliver | 19 kinds: conversation_{invite,message,mention,reply,reaction}, mention, reply, reaction, kudos, collab_invite(+accepted), approver_invite(+accepted), spec_shared, session_done, auto_solve_done, pr_proposed, check_failed, stale_pr | Device | Phone-in-loop | pass | 17 of 19 kinds verified. 15 delivered to the iPhone and confirmed rendering: pr_proposed, session_done, auto_solve_done, conversation_message/_invite/_mention/_reply/_reaction, mention, reply, reaction, collab_invite_accepted, kudos, check_failed (deliberate boot failure on a throwaway sandbox), spec_shared. collab_invite + approver_invite: notifications confirmed created for the invitee account (id 312) and in-app receipt confirmed by the user - push transport not exercised there because that account has no registered device (transport itself proven by the other 15). Only stale_pr is unverified (days-scale sweeper, unit-covered). FINDINGS: (1) FCM tokens go stale silently between sessions - the worker self-heals by deleting the dead registration but nothing warns the user; check diagnostics before any push test. (2) Registration correctly follows the signed-in account - one device maps to one user at a time. (3) UX BUG: re-sharing a spec returns alreadyShared:true with no notification, but the client still shows the same sent-to-<user> success state (sessions.js ON CONFLICT DO NOTHING path) |
+| F4 | All push kinds deliver | 16 kinds: conversation_{invite,message,mention,reply,reaction}, mention, reply, reaction, kudos, collab_invite(+accepted), approver_invite(+accepted), pr_proposed, check_failed, stale_pr | Device | Phone-in-loop | pass | 14 of 16 kinds verified. 12 delivered to the iPhone and confirmed rendering: pr_proposed, conversation_message/_invite/_mention/_reply/_reaction, mention, reply, reaction, collab_invite_accepted, kudos, check_failed (deliberate boot failure on a throwaway sandbox). collab_invite + approver_invite: notifications confirmed created for the invitee account (id 312) and in-app receipt confirmed by the user - push transport not exercised there because that account has no registered device (transport itself proven by the other 12). Only stale_pr is unverified (days-scale sweeper, unit-covered). FINDINGS: (1) FCM tokens go stale silently between sessions - the worker self-heals by deleting the dead registration but nothing warns the user; check diagnostics before any push test. (2) Registration correctly follows the signed-in account - one device maps to one user at a time. |
 | F5 | Push diagnostics | GET /api/admin/mobile-push/diagnostics?user=… — per-user notifications[].deliveries confirm provider handoff | Admin | Browser-auto | pass | Admin browser fetch works; also Push delivery console section (sender health, 24h registrations, outcomes). Finding: snait has 0 registered devices — phone must sign in before F2/F4 |
-| F6 | Web push / OS notifications | social-push.js + dev-alerts chime/OS notification on turn completion | User | Browser-auto | pass | session_done turn produced desktop tab title plus notification path; social-push.js active |
 
 ## G. Leaderboard, Topochain & Seasons
 
@@ -174,7 +173,7 @@ Identity, credentials, integrations and preferences.
 | H10 | OpenRouter BYOK | Save key → sessions route via OpenRouter → delete key | User | User-assist | pass | User-confirmed. Server evidence: /api/me/credentials/openrouter reports configured=true, status=valid, key last4 b710, revision 1, verifiedAt 2026-08-17T13:24:14Z with live keyInfo (limit/usage) read back from OpenRouter - so the key was stored, verified against the provider, and is queryable |
 | H11 | API keys & CLI tokens | Create/delete personal API key; list/revoke CLI tokens | User | Browser-auto | pass | /api/me/cli-tokens lists tokens with cursor; personal API key endpoints present (create/delete not exercised) |
 | H12 | LLM grants | Grant an app LLM access, patch budget, revoke | User | Browser-auto | pass | /api/me/llm-grants returns grants list |
-| H13 | Mobile push preferences UI | Settings toggles per category reflect and write preferences | User | Browser-auto | pass | Notifications settings render all 7 push categories + dev-chat sound toggle + Send-test-alert. Toggling Lightweight activity off wrote through to the API (enabled:false), restored to on |
+| H13 | Mobile push preferences UI | Settings toggles per category reflect and write preferences | User | Browser-auto | pass | Notifications settings render all 7 push categories + Send-test-alert. Toggling Lightweight activity off wrote through to the API (enabled:false), restored to on |
 | H14 | View as non-admin | Admin toggle masks admin UI + persistent banner shows; unmask restores | Admin | Browser-auto | pass | Admin preview toggle flips on -> persistent Viewing as non-admin banner with Switch back; reverted, admin session intact (isAdmin still true) |
 
 ## I. Admin Console

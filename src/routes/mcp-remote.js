@@ -87,7 +87,7 @@ function mcpConnectGate(config) {
     if (staging || !config.cliAuthEnabled) {
       // #2779: the one credential that survives here is a DELEGATED grant on
       // POST /mcp — minted in-process by this same deployment for its own
-      // agents, so a staging preview can exercise agent sessions. Decided on
+      // agents, so a staging preview can exercise them. Decided on
       // the method, the path and the bearer's shape alone; the handler still
       // refuses it unless it joins a live delegation.
       if (mcpOauth.isDelegatedMcpRequest(req.method, req.path, req.rawHeaders)) return next();
@@ -200,8 +200,7 @@ function bearerChallenge(config, res, error) {
 // delegation is live while it is neither revoked nor expired and, when it
 // names a change, while that change is still the user's and still open —
 // so pausing or archiving the change ends a worker's token on its next call
-// without anything having to revoke it. The same holds for the agent session
-// a Mayor's grant names: archiving it ends the grant.
+// without anything having to revoke it.
 const WORKER_LIVE_CHANGE_STATUSES = Object.freeze(['active', 'promoted']);
 const MAYOR_LIVE_CHANGE_STATUSES = Object.freeze(['active', 'paused', 'promoted', 'merging']);
 
@@ -214,12 +213,6 @@ function delegationRefusal(row) {
     if (row.d_app_id != null && row.change_app_id !== row.d_app_id) return 'revoked_token';
   }
   if (row.d_app_id != null && !row.app_slug) return 'revoked_token';
-  // #2779 step 3: a Mayor's grant serves one agent session, and ends when
-  // that session is archived or is not the grant user's.
-  if (row.d_agent_session_id != null
-      && (row.agent_session_user_id !== row.user_id || row.agent_session_status !== 'open')) {
-    return 'revoked_token';
-  }
   return null;
 }
 
@@ -228,20 +221,18 @@ async function authenticateConnector(pool, token) {
     `SELECT t.id, t.user_id, t.client_id, t.grant_id, t.scopes,
             t.expires_at, t.revoked_at, c.client_name,
             d.grant_id AS d_grant_id, d.kind AS d_kind,
-            d.agent_session_id AS d_agent_session_id, d.change_id AS d_change_id,
+            d.change_id AS d_change_id,
             d.app_id AS d_app_id, d.expires_at AS d_expires_at,
             d.revoked_at AS d_revoked_at,
             a.slug AS app_slug,
             cs.user_id AS change_user_id, cs.status AS change_status,
             cs.app_id AS change_app_id,
-            ags.user_id AS agent_session_user_id, ags.status AS agent_session_status,
             clock_timestamp() AS now
        FROM mcp_tokens t
        LEFT JOIN mcp_clients c ON c.client_id = t.client_id
        LEFT JOIN mcp_delegations d ON d.grant_id = t.grant_id
        LEFT JOIN apps a ON a.id = d.app_id
        LEFT JOIN chat_sessions cs ON cs.id = d.change_id
-       LEFT JOIN agent_sessions ags ON ags.id = d.agent_session_id
       WHERE t.token_hash = $1 AND t.kind = 'access'`,
     [mcpOauth.hashSecret(token)]
   );
@@ -269,7 +260,6 @@ async function authenticateConnector(pool, token) {
     ? {
       kind: row.d_kind,
       grantId: row.d_grant_id,
-      agentSessionId: row.d_agent_session_id ?? null,
       changeId: row.d_change_id ?? null,
       appId: row.d_app_id ?? null,
       appSlug: row.app_slug || null,

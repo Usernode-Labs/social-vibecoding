@@ -3,7 +3,6 @@
 // alone). Shared by the machines; SQL only.
 //
 //   a coding turn            chat_sessions.active_turn (its journal)
-//   a turn on a local agent  local_agent_turns, while live
 //   a shots run              the shots machine's instance (shotsRunningSql)
 //   a preview build or a     the preview machine's build or run item,
 //     checks run               while outstanding (alive while its lease is)
@@ -197,11 +196,11 @@ export function botLookingSql(sessionId: string): string {
 // The instance whose workflow turn is on the session `$1`, starting or
 // running, for a Stop (one row: machine, key), most specific first: the
 // record's owner, then, only while no turn record is on the session (a
-// workflow turn spinning up), a sync, a shots run, a durable build, the bot,
-// a person's own dev chat turn (the turn machine's, in its Mayor's phase).
-// A record that is not a workflow's held turn (a person's own, an orphan)
-// answers nothing here: that Stop is the person's turn's, on the old path,
-// and never ends a platform job that merely waits beside it.
+// workflow turn spinning up), a sync, a shots run, a durable build, the bot.
+// A record that is not a workflow's held turn (an orphan) answers nothing
+// here: that Stop takes the route's own path (routes/sessions.js
+// requestSessionStop), and never ends a platform job that merely waits
+// beside it.
 const NO_RECORD = `NOT EXISTS (SELECT 1 FROM chat_sessions nr WHERE nr.id = $1 AND nr.active_turn IS NOT NULL)`;
 export const TURN_OWNER_SQL = `
   SELECT owner_machine AS machine, owner_key AS key FROM (
@@ -219,30 +218,18 @@ export const TURN_OWNER_SQL = `
     SELECT 5, 'bot-request', bl.key FROM wf_instances bl
      WHERE bl.machine = 'bot-request' AND bl.state IN (${BOT_LOOKING_STATES.map((st) => `'${st}'`).join(', ')})
        AND (bl.data->'look'->>'sessionId')::int = $1
-    UNION ALL
-    -- A dev chat turn before its record: the turn hears its Stop from its
-    -- instance (services/turns.js watchClassicStop). A headless run between
-    -- its steps has no such ear: its Stop takes the person's own path.
-    SELECT 6, 'turn', t.key FROM wf_instances t
-     WHERE t.machine = 'turn' AND t.key = 'session:' || $1 AND t.state = 'running'
-       AND t.data->'running'->>'kind' = 'classic'
-       AND ${turnRunLiveSql('t')}
   ) o WHERE rank = 1 OR ${NO_RECORD} ORDER BY rank LIMIT 1`;
 
 // True while anything above works on the session `sessionId` (an SQL
-// expression over chat_sessions as `cs`): a coding turn, a turn on a local
-// agent, a shots run, a durable build, a person's turn its machine runs (the
-// dev chat's Mayor before it dispatches, a headless run between its steps:
-// src/workflow/turn/), or an old flow's recorded operation. `turns: false`
-// leaves the turn machine's instance out: what a person's turn asks of its
-// own change, which that instance is. `exceptHolder` leaves out the
+// expression over chat_sessions as `cs`): a coding turn, a shots run, a
+// durable build, a `recover` turn its machine runs (src/workflow/turn/), or
+// an old flow's recorded operation. `turns: false` leaves the turn machine's
+// instance out: what that machine asks of its own change. `exceptHolder` leaves out the
 // operations of one process: the reader's own, which it answers from memory.
 // The same in every process and after a restart (the Homeroom bot's voice
 // reads it to say whether a run is going on a change).
 export function workedOnSql({ turns = true, exceptHolder = null }: { turns?: boolean; exceptHolder?: string | null } = {}): string {
   return `(cs.active_turn IS NOT NULL
-           OR EXISTS (SELECT 1 FROM local_agent_turns t
-                       WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
            OR ${shotsRunningSql('cs.id')}
            OR ${operationsLiveSql('cs.id', null, [], exceptHolder)}
            OR ${buildHoldSql('cs')}

@@ -1,19 +1,21 @@
-// The recovered build tail ends a turn the way the live tail does.
+// The recovered build tail ends a turn the way the live tail did.
 //
 // A restart can land between any two steps of a build's tail, and recovery
-// (server.js finalizeRecoveredTurn) repeats whatever the live tail
-// (routes/sessions.js runClaudeCodeTool) had not finished. Neither tail
-// builds anything now: both retire a promoted proposal's votes, hand the
-// commit to the preview machine (services/preview-workflow.js revision) and
-// post a "Building staging preview..." card. Where the two must agree:
+// (services/turn-recovery.js finalizeRecoveredTurn) repeats whatever the
+// tail had not finished. It builds nothing: it retires a promoted
+// proposal's votes, hands the commit to the preview machine
+// (services/preview-workflow.js revision) and posts a "Building staging
+// preview..." card. Pinned:
 //
 //   (a) the votes are retired before the hand-off, since the proposal's
 //       reviewed head is the pin the machine checks a revision against;
 //   (b) the reset is posted in the proposal's own thread, once (a platform
 //       line names its thread or is not written);
-//   (c) the card is written under one receipt across the live and recovered
-//       tails, so a restart after the live card never posts a second one,
-//       and a failure card an earlier release's tail posted is honoured.
+//   (c) the card is written under the turn's one receipt
+//       (routes/sessions.js publishStagingOutcome), so a card already
+//       posted for the turn (by an earlier release's live tail, or an
+//       earlier recovery) is never posted again, and a failure card is
+//       honoured.
 //
 // Driven through the real finalizeRecoveredTurn with recording fakes, the
 // way tests/recovered-turn-push-heal.test.js drives it.
@@ -172,7 +174,7 @@ test('a promoted proposal\'s votes are retired before the commit goes to the pre
   assert.ok(retired < handed, 'the reviewed head moves before the machine checks the revision');
   assert.ok(handed < card, 'the card follows the hand-off');
   assert.deepEqual(log[handed].slice(1), [510, SHA, 'turn', 'boot-reconcile']);
-  assert.match(ret.summary, /The staging preview is building/);
+  assert.equal(ret, 'done');
   assert.equal(at((e) => e[0] === 'row' && /^Staging (deployed|build failed)/.test(e[1])), -1,
     'the tail no longer reports a build: the machine writes those rows itself');
 });
@@ -203,7 +205,7 @@ test('a restart after the live "Building staging preview..." card does not post 
   const activeTurn = { turnId: TURN_ID, phase: 'tail_pending', journal: '/j', tail: {} };
   const pool = makePool({ activeTurn });
 
-  // The live tail's card, written as runClaudeCodeTool writes it.
+  // The card a live tail wrote under the turn's receipt.
   const live = await sessionsRoutes.publishStagingOutcome({
     pool, sessionId: 510, turnId: TURN_ID, tailIdentity: { turnId: TURN_ID }, outcome: 'building',
     metadata: { changesReady: true, stagingBuild: 'running', prNumber: 7, prUrl: SESSION.pr_url },
@@ -237,6 +239,6 @@ test('a restart after an earlier release\'s failure card neither hands off nor p
   }));
   assert.equal(at((e) => e[0] === 'revision'), -1, 'a preview known to fail is not handed off again');
   assert.equal(log.filter((e) => e[0] === 'row' && /^Staging/.test(e[1])).length, 1);
-  assert.match(ret.summary, /Set the secret\./);
+  assert.equal(ret, 'done');
   assert.equal(at((e) => e[0] === 'retireVotes'), -1);
 });

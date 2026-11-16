@@ -172,17 +172,6 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   for (const f of ['grants-list.tsx', 'app-permissions-list.tsx', 'cli-tokens-list.tsx']) {
     has(`frontend/src/features/settings/${f}`, /bg-red-50 [^"]*touch-target-32"/, `Revoke in ${f}`);
   }
-  const files = read('frontend/src/features/settings/agent-files-list.tsx');
-  assert.equal((files.match(/font-medium touch-target-32"/g) || []).length, 2, 'agent files View and Delete');
-  // Each row's View and Delete name their file, and View says whether it is
-  // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
-  assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
-  assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
-  assert.match(files, /aria-label=\{open\s*\? t\('settings:agentFiles\.file\.hideName', \{ file: file\.name \}\)\s*: t\('settings:agentFiles\.file\.viewName', \{ file: file\.name \}\)\}/, 'agent files View names its file');
-  assert.equal(message('settings:agentFiles.file.viewName', { file: 'notes.md' }), 'View notes.md');
-  assert.equal(message('settings:agentFiles.file.hideName', { file: 'notes.md' }), 'Hide notes.md');
-  assert.match(files, /aria-label=\{t\('settings:agentFiles\.file\.deleteName', \{ file: file\.name \}\)\}/, 'agent files Delete names its file');
-  assert.equal(message('settings:agentFiles.file.deleteName', { file: 'notes.md' }), 'Delete notes.md');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {
@@ -192,11 +181,10 @@ test('Q19: where a slop cannot hang off the control, the control or its row grow
   const bandBody = CSS.slice(band, CSS.indexOf('\n}\n', band));
   assert.match(bandBody, /\.gc-card-actions > :is\(\.gc-vote-btn, \.dev-vote-btn\),[\s\S]*?\{ height: 32px; \}/);
   assert.match(bandBody, /\.gc-card-actions > \.dev-card-menu-btn \{ width: 32px; \}/);
-  // A <select> draws no ::after.
-  assert.match(CSS, /@media \(pointer: coarse\) \{\n  \.dc-model-select \{ min-height: 32px; \}\n\}/);
-  // The agent-session composer's shown-line picker (a span under a
-  // transparent select) is gone: its model pill is a 40px button.
-  assert.doesNotMatch(CSS, /span\.dc-model-select/);
+  // The dev chat composer's model <select> (a select draws no ::after, so it
+  // grew instead) is gone with the dev chat, and the agent-session
+  // composer's shown-line picker with the agent session.
+  assert.doesNotMatch(CSS, /\.dc-model-select/);
 });
 
 test('Q19: chip and Save slops never cover a neighbour\'s own box', () => {

@@ -71,11 +71,11 @@
      still is. */
   --accent-ink: #ffffff;
 
-  /* ── The dev chat's surface ladder ───────────────────────
+  /* ── The surface ladder ──────────────────────────────────
      Three steps, and the ONLY thing they guarantee is that each one is
      nearer the reader than the last: the strip sits on the page wallpaper,
-     the session sheet sits on the strip, and a card (your message, a coding
-     run) sits on the sheet.
+     the session sheet sits on the strip, and a card (a composer, the bot's
+     answer chips) sits on the sheet.
 
      They exist because --bg-secondary / --bg-primary could not express that
      in both themes. In light those two ascend (#f5f5f7 → #ffffff), which is
@@ -378,8 +378,8 @@ html.un-kb .platform-safe-sheet {
 
 /* Keyboard up: reserve its height on a COMPOSER COLUMN (#1937, #1491).
 
-   Four screens are built the same way — the topic thread, the general chat,
-   the dev chat and Messages. Each is a flex column holding a `flex-1`
+   Three screens are built the same way — the topic thread, the general chat
+   and Messages. Each is a flex column holding a `flex-1`
    scroller with the typing slot and composer pinned BELOW it as `shrink-0`
    siblings, OUTSIDE the scroller. That shape is deliberate (thread-shell.tsx
    explains it), and it is exactly what the kit's keyboard avoidance cannot
@@ -430,7 +430,7 @@ html.un-kb .platform-kb-column {
 
    `attachKeyboardAvoidance` ADDS `un-kb-avoid` to whatever scroller
    `attachScreenFx` hands it — the general chat's `#gc-messages`, the topic
-   thread's `#gc-thread-scroll`, the dev chat's `#dc-messages` — so on those
+   thread's `#gc-thread-scroll` — so on those
    screens the class is there at runtime whether or not any source file writes
    it. With the column reserving as well, the inset is counted twice, and the
    second one is the damaging one: a scroll container cannot shrink below its
@@ -548,7 +548,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    Fully React-owned (frontend/src/features/messages). Every rule is scoped
    to messages-* so the app group chat keeps its own contract.
 
-   DRAWN ON THE DEV SESSION'S LIFT LADDER — see `.dc-lift` and its two plane
+   DRAWN ON THE THREE-LAYER LIFT — see `.dc-lift` and its two plane
    classes further down. The wallpaper is the ground (this route is in the
    body:has(…) wallpaper list). `.messages-layout` is the frosted STRIP,
    carrying the screen's title, the New disc and the conversation rows drawn
@@ -611,8 +611,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   min-height: 0;
 }
 /* The sheet. Its top margin is what shows the strip's shoulder above it on
-   a phone — the same reading the dev session gives, where the session sheet
-   sits ON the strip rather than abutting it. */
+   a phone: the sheet sits ON the strip rather than abutting it. */
 .messages-thread-pane {
   /* #6254: the pane is the thread's drop zone, so its outline (which lies
      absolute over its parent) frames the whole thread. */
@@ -905,8 +904,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 
 /* The sheet's title row: who the conversation is with, its context line,
    and the actions as discs. No hairline under it — the transcript's first
-   day label is what separates it, the way the dev session's header sits
-   over its transcript. */
+   day label is what separates it. */
 .messages-thread-header {
   display: flex;
   align-items: center;
@@ -1232,28 +1230,49 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 /* ── The hover bar (#2387) ──────────────────────────────────────────────
    Every chat row's controls in one floating pill, Discord's shape: the three
    recent reactions, a divider, then the picker, Reply, Save and ⋯. It sits
-   on the row's top edge at the trailing side, half over the row above, so it
-   never covers the text it acts on. Hover-revealed on a pointer (and on
-   focus-within, for the keyboard); on a touch screen it is not drawn at all
-   and a long press opens the sheet (.msgx-sheet) instead. The shared parts
-   are the `.msgx-*` rules in the next section; this is where the Messages
-   row places it. */
+   on the row's top edge at the trailing side, over the name line and never
+   the words. A continuation row has no name line and its words start at the
+   row's top, so MessageActionBar raises the pill there just clear of that
+   first line (#6697, `--msgx-bar-lift`); where there is no room above the
+   row it adds `msgx-bar-below` and the pill sits just below the row instead.
+   Hover-revealed on a pointer (and on focus-within, for the keyboard); on a
+   touch screen it is not drawn at all and a long press opens the sheet
+   (.msgx-sheet) instead. The shared parts are the `.msgx-*` rules in the
+   next section; this is where the Messages row places it. */
 .messages-message-actions {
   position: absolute;
   z-index: 6;
-  top: -16px;
+  /* 16px: the bar's old place, its lower half over the row's name line. */
+  top: calc(-1 * var(--msgx-bar-lift, 16px));
   inset-inline-end: 16px;
   display: none;
 }
+/* A 6px bridge from the pill to the row, so crossing the gap with the
+   pointer keeps the bar open. Mirrored for the below placement. */
+.messages-message-actions::after,
+.gc-msg-actions::after {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  top: 100%;
+  height: 6px;
+}
+.messages-message-actions.msgx-bar-below::after,
+.gc-msg-actions.msgx-bar-below::after { top: auto; bottom: 100%; }
+.messages-message-actions.msgx-bar-below,
+.gc-msg-actions.msgx-bar-below { top: calc(100% + 4px); }
 .messages-message:hover .messages-message-actions,
 .messages-message:focus-within .messages-message-actions,
 .messages-message-actions.msgx-bar-open { display: flex; }
 /* Audit D13: on somebody else's bubble the bar is a child of its name line
    (message-row.tsx `barBesideHead`), which is as wide as the name and the
    time, so it hangs just past the time, centred on that line, beside the
-   message it acts on. */
+   message it acts on. It already sits beside the message rather than over
+   its words, so it keeps its own place and takes neither the bridge nor the
+   below placement. */
 .messages-message-head:has(> .messages-message-actions) { position: relative; }
 .messages-message-head > .messages-message-actions { top: -10px; inset-inline-end: auto; inset-inline-start: calc(100% + 8px); }
+.messages-message-head > .messages-message-actions::after { content: none; }
 
 /* The tray of a message still in flight keeps its place but draws nothing
    (#2907) — on touch it is a line of the row, and growing it only once the
@@ -1266,15 +1285,18 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-message-saved:not(.messages-message-bubble) { box-shadow: inset 3px 0 0 var(--accent); }
 
 /* The app chat's rows place the same bar (#2387): on the row's top edge,
-   trailing side, over the row above, revealed on hover and focus-within. The
-   row's own actions slot is in the header's flow, so the host takes no width
-   and the bar floats out of it. */
+   trailing side, over the name line and revealed on hover and focus-within;
+   a continuation row's pill is raised just clear of its first line, or put
+   below the row where there is no room above (#6697). The row's own actions
+   slot is in the header's flow, so the host takes no width and the bar
+   floats out of it. */
 .gc-msg { position: relative; }
 .gc-msg-bar-host { display: contents; }
 .gc-msg-actions {
   position: absolute;
   z-index: 6;
-  top: -16px;
+  /* The same `--msgx-bar-lift` as the Messages row above. */
+  top: calc(-1 * var(--msgx-bar-lift, 16px));
   inset-inline-end: 16px;
   display: none;
 }
@@ -1832,7 +1854,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 
 /* ── The composer ────────────────────────────────────────────────────────
    One white card at the foot of the sheet: bare glyphs, a borderless field
-   at reading size, and the round accent send disc the dev chat draws. The
+   at reading size, and a round accent send disc. The
    BAR around the card is the chat foot's (`.chat-composer-bar`, near the
    top of this file): no padding over the card, 12px each side and 8px
    under it, and the home-indicator inset (`platform-safe-bar`) under that,
@@ -1856,7 +1878,7 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
   box-shadow: var(--messages-disc-shadow);
   transition: box-shadow 150ms;
 }
-/* #1954: FOCUS LIVES ON THE CARD, as it does on the dev chat's `.dc-card`.
+/* #1954: FOCUS LIVES ON THE CARD.
    The textarea draws no box of its own (`outline: none`, transparent), so a
    caret was the only sign the field was live; the ring goes around the whole
    input box instead. `:focus-within` because the card is one control group —
@@ -1923,55 +1945,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-composer-card .messages-composer-input { outline: none; }
 .messages-composer-input::placeholder { color: var(--text-faint); }
 
-/* ── The agent session's composer (#2779 follow-up) ──────────────────────
-   The same rule as the card above, for features/agent-session's form: the
-   outline goes around the WHOLE composer card while anything in it has
-   focus (the field, the model pickers, the button), and the field inside
-   draws none of its own. The card keeps its 1px border, so the ring is that
-   border turned accent plus one more pixel outside it: two pixels, as on
-   Messages, with no shift in layout. */
-.agent-session-composer {
-  transition: border-color 150ms, box-shadow 150ms;
-}
-/* `form.` outranks the card's own `dark:border-zinc-700` (two classes, and
-   tailwind.css loads last), so the dark theme turns accent too. */
-form.agent-session-composer:focus-within {
-  border-color: var(--accent);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 0 0 1px var(--accent);
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-session-composer { transition: none; }
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .agent-session-composer { transition: none; }
-/* #2882's reset (WebKit's native textarea box and tap flash) and #2387's
-   Firefox fix: preflight's `:-moz-focusring { outline: auto }` loads later
-   at one class's specificity, so the second class here is what keeps Gecko
-   from drawing a ring around the field inside the card's. */
-.agent-session-composer .agent-session-composer-input {
-  outline: none;
-  -webkit-appearance: none;
-  appearance: none;
-  box-shadow: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* The Mayor at work (features/agent-session LiveTurn): three dots where its
-   reply will appear, rising in turn. Still dots under reduced motion. */
-.agent-session-typing-dot {
-  animation: agent-session-typing 1.2s ease-in-out infinite;
-}
-.agent-session-typing-dot:nth-child(2) { animation-delay: 0.15s; }
-.agent-session-typing-dot:nth-child(3) { animation-delay: 0.3s; }
-@keyframes agent-session-typing {
-  0%, 80%, 100% { opacity: 0.35; transform: translateY(0); }
-  40% { opacity: 1; transform: translateY(-3px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .agent-session-typing-dot { animation: none; opacity: 0.6; }
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .agent-session-typing-dot { animation: none; opacity: 0.6; }
 .messages-composer-action {
   display: inline-flex;
   align-items: center;
@@ -2300,8 +2273,6 @@ form.agent-session-composer:focus-within {
 .gc-composer-card,
 #gc-form,
 #gc-thread-form,
-.dc-card,
-.agent-session-composer,
 #feedback-form { position: relative; }
 #feedback-form > .attach-drop-overlay { inset: -6px; border-radius: 16px; }
 /* The boxed thread composer inside a board card has no card radius of its own. */
@@ -2559,8 +2530,8 @@ form.agent-session-composer:focus-within {
 .messages-jump-present:hover,
 .messages-jump-present:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
-/* 16 Oct 2026: the agent chats nobody used this week, and the archived
-   ones, behind a quiet link at the foot of Agents. Muted words in the
+/* 16 Oct 2026: the changes nobody touched this week behind a quiet link
+   at the foot of Agents. Muted words in the
    titles' column (16px of padding + the 44px avatar + the 14px gap), and no
    chevron: a chevron there matched the sections' own folds and read as a
    third heading. */
@@ -2617,34 +2588,6 @@ form.agent-session-composer:focus-within {
    the height of. */
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
-
-/* ── An agent thread, as a thread of this inbox (#2813) ─────────────────
-   An agent session is its own panel drawn on the conversation pane's
-   sheet, so the panel adds no plane of its own. A dev session is
-   DevChat's whole session view in a host, which draws its own sheet — the
-   same arrangement as a discussion above, so the host only has to fill the
-   pane. The bar above it carries what the pane adds: the session's own
-   full-window address, for the spec and preview at full width, and the
-   full-width toggle every discussion pane ends its header with. */
-.messages-thread-agent { overflow: hidden; }
-.messages-session-host { display: flex; flex-direction: column; min-height: 0; }
-.messages-session-host > * { flex: 1 1 auto; min-height: 0; }
-.messages-session-host[hidden] { display: none; }
-.messages-session-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  flex: 0 0 auto;
-  padding: 0 4px 6px;
-}
-.messages-session-full {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-muted);
-}
-.messages-session-full:hover { color: var(--text-primary); }
-.messages-inbox-session-active > a { background: var(--messages-selected); }
 /* #5378: A CHANGE IN FLIGHT TAKES THE INBOX'S OWN ROW GEOMETRY on the
    cards: a conversation row's 16px of padding and 14px gap around the 44px
    tile, so its tile shares the avatars' left edge and its title their 74px
@@ -3410,14 +3353,6 @@ html.un-ios.in-native-webview .work-cog-spinning,
 html.un-ios.in-native-webview .app-version-pill--stale .app-version-pill-dot {
   animation: none;
 }
-html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-active {
-  animation: none;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.38);
-}
-html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
-  animation: none;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.38);
-}
 
 /* Pressed-state opt-outs: the kit gives every button an instant
    scale-press, which reads wrong on dense strip controls that sit
@@ -3835,7 +3770,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    NOT the Communities Needs you feed (`[data-workshop-pane="needs"]`): it
    is fitted to the screen on purpose (#3516) and scrolls inside, like a
    project's Needs you and Discussion, which #3544 leaves fitted too. NOT the
-   chats (a Messages thread, an agent session): a transcript
+   chats (a Messages thread): a transcript
    opens on its newest line and stays there; it is not a page. A project
    page is #3544's rule. tests/page-overscroll.test.js holds App.SCREEN_IDS
    against the attribute, so a new screen root carries it or is named there
@@ -3975,21 +3910,13 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    the cleared bar, the launch cover, the landing root — follows through
    the same custom properties in both modes.
 
-   #agent-session-screen IS A ROOT TOO (#3082). An agent session is drawn on
-   the dev session's lift ladder, whose strip is translucent glass over the
-   body — so it has to be on this list or the glass frosts the bare
-   `bg-zinc-100` / `dark:bg-zinc-950` body instead of the wallpaper. On a
-   desktop the session usually shows inside #messages-screen (listed), which
-   hid the omission; the side panel beside an app is phone-width, swaps
-   `messages/agent/<id>` for `agent/<id>`, and so drew it gray.
-
-   #profile-proposals-screen IS ONE TOO (#3498). Profile's Your changes,
+   #profile-proposals-screen IS A ROOT TOO (#3498). Profile's Your changes,
    Your requests and Your votes are a drill-in off Me like Settings and the
    Leaderboard, drawn in the same plane cards, but the screen arrived after
    these lists and was on none of them: the page kept the gray body and the
    bar its zinc-200 surface. Every list here that names #workshop-screen,
    its React-owned sibling, names it as well. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -4027,7 +3954,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -4067,7 +3994,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4081,7 +4008,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4124,7 +4051,7 @@ html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -4154,7 +4081,6 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    notch in half. The frost IS the edge here. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
              #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
-             #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -4183,7 +4109,6 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    reaches past its box, so the clip cuts nothing. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
              #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
-             #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
@@ -4201,7 +4126,6 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    on the bar changes; only the strip does. */
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
              #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
-             #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: var(--dc-sheet-solid);
@@ -4231,7 +4155,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not
    bar stays where it sits in the flow; and it is already `relative z-10`,
    so it was a stacking context and a containing block before. */
 html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
-             #agent-session-screen, #profile-proposals-screen):not(.hidden)) #platform-header,
+             #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   position: sticky;
   top: 0;
@@ -4436,7 +4360,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -5762,7 +5686,7 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
    NEITHER SURFACE CARRIES PADDING ANY MORE. Gating it was only half the
    fix: on a platform surface the padding still sat on the OUTER box, so
    every Dev-mode surface was shrunk by the inset and the strip below it
-   was dead background — the dev-chat composer floated above an empty
+   was dead background — a composer floated above an empty
    band and the chat lost that height. The inset moved INWARD to the
    innermost thing that needs it (each scroller's content padding, each
    composer bar's own padding, via .platform-safe-scroll /
@@ -6017,142 +5941,7 @@ body:has(#platform-header.hidden) #app-frame-host {
   box-shadow: none;
 }
 
-/* ── Dev chat messages ─────────────────────────────────── */
-
-/* NO `scroll-behavior: smooth` on .dc-messages-container. It made every
-   programmatic write to the pane's scrollTop an animation, and the pane
-   follows its newest message by writing scrollTop as tokens stream in: each
-   write restarted the smooth scroll from wherever the last one had got to,
-   so the pane crept after the text instead of staying with it. The jumps
-   that are meant to glide ask for it themselves (scrollTo with
-   `behavior: 'smooth'`). */
-
-/* #1942: a new session's empty state, centred in the message pane. */
-.dc-empty-state {
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 32px 24px;
-  text-align: center;
-}
-.dc-empty-title { font-size: 20px; font-weight: 600; color: var(--text-primary); }
-
-/* #1905: on a brand-new session the composer comes up to meet the empty
-   state, the way a new conversation opens in Claude or ChatGPT: title,
-   line and input box as one group in the middle of the pane. Keyed on the
-   empty state being in the pane, so the first message sends the box back
-   to the bottom with no state of its own to clear. Tablet width and up
-   only: on a phone the box stays at the bottom, where the keyboard opens and the
-   thumb already is, and a mid-screen field would jump as the keyboard
-   pushes it. Its own breakpoint, deliberately not the Workshop's 700px:
-   tests/dev-workshop.test.js reads that block as the only one of its kind. */
-@media (min-width: 768px) {
-  .dc-chat-pane:has(#dc-empty-state) { justify-content: center; }
-  .dc-chat-pane:has(#dc-empty-state) > #dc-messages { flex: 0 0 auto; overflow: visible; }
-  .dc-chat-pane:has(#dc-empty-state) #dc-empty-state { min-height: 0; padding-bottom: 16px; }
-  .dc-chat-pane:has(#dc-empty-state) > #dc-composer-bar {
-    width: 100%;
-    max-width: 44rem;
-    align-self: center;
-  }
-}
-
-.dc-msg { padding: 8px 12px; max-width: 92%; }
-
-/* ONE bubble, not two.
-   Your turn is a card; the agent's is plain text on the ground. Both were
-   filled surfaces before — yours a solid --accent, the agent's --bubble-bg —
-   which made a two-party conversation two competing blocks of colour, and
-   put the transcript's loudest element on the half of it a reader already
-   wrote and does not need to re-read.
-
-   THE ACCENT FILL IS THE PART TO EXPLAIN, because it took real work to keep
-   legible and all of it is now retired. White on the accent is 3.93:1 at the
-   eyedropped #0a7cff, which is why --accent was darkened to #0a6ee0 in the
-   first place; the fill then needed --accent-ink for the body, a separate
-   inversion for the header, an opacity rule for the stamp that had to be
-   re-scoped off the role label after it took that label to 2.7:1, and two
-   more rules for links and for the header slots that declared colour inline.
-   Seven rules and three contrast incidents, to say "this one is yours" —
-   which side, shape and surface already say. (--accent-ink itself stays: it
-   is the token for near-black-on-light-accent and .messages-state button is
-   still a real fill.)
-
-   The agent's row loses its surface entirely. --bubble-bg existed only
-   because --bg-primary IS the page ground in dark, so a bubble drawn on it
-   vanished; with the session sheet as the ground and the agent's turn drawn
-   as plain text, there is nothing left to keep distinct, and the token has
-   no other reader. Plain text is also the honest shape: the agent's turn is
-   the body of the screen, not an aside in it.
-
-   The tail notch (`… 4px 12px`) is still gone: uniformly rounded, relying on
-   side and surface to say who is speaking. */
-/* YOUR TURN, TOLD APART FROM THE AGENT'S. Two cues, because each of them
-   alone had already failed once.
-
-   SURFACE. This was --dc-raised, which is the SAME token the coding-run
-   card, the PR card and the stopped card fill with. Your message and the
-   agent's cards were the identical grey, and the only thing separating them
-   was an alignment that (see below) was not visible either. It takes the
-   accent as a TINT now — 8% over the sheet, not the saturated fill that was
-   retired above for contrast: at this alpha the body text still reads
-   against the page's own ink and no inverted token is needed.
-
-   WIDTH. `.dc-msg` caps every row at 92%, which on a message of any real
-   length is indistinguishable from full width — so `margin-left: auto` had
-   nothing to push against and the right-alignment cue simply did not exist.
-   76% leaves a gutter down the left that no agent row ever crosses, because
-   the agent's cards are full-bleed with a 12px margin. The gutter is the
-   cue; the tint confirms it. */
-.dc-msg-user {
-  margin-inline-start: auto;
-  max-width: 76%;
-  background: var(--accent-tint);
-  border-radius: 1.25rem;
-  margin-bottom: 4px;
-}
-
-.dc-msg-assistant {
-  margin-inline-end: auto;
-  background: transparent;
-  border-radius: 1.25rem;
-  margin-bottom: 4px;
-}
-
-.dc-msg-header {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.dc-msg-content {
-  font-size: 13px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  word-break: break-word;
-}
-
-/* The stamp and the model name, on both rows. They used to be declared
-   INLINE, which beat every class rule and is why the accent fill's inversion
-   could not reach them; they are classes now and there is no inversion left
-   to reach. --text-muted at 9px is what makes the stamp an aside — the 0.72
-   opacity the fill needed is gone with the fill, and with it the incident
-   where it dimmed the role label to 2.7:1. */
-.dc-msg-meta {
-  color: var(--text-muted);
-  font-size: 9px;
-}
-.dc-msg-model {
-  color: var(--text-muted);
-}
-
-.dc-msg-content p, .dc-p { margin-top: 0.5em; }
+.dc-p { margin-top: 0.5em; }
 
 /* ── Markdown ──────────────────────────────────────────── */
 
@@ -6160,23 +5949,6 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-h3 { font-size: 17px; font-weight: 700; margin: 14px 0 4px; color: var(--text-primary); }
 .dc-h4 { font-size: 15px; font-weight: 600; margin: 12px 0 4px; color: var(--text-primary); }
 .dc-h5 { font-size: 13px; font-weight: 600; margin: 10px 0 3px; color: var(--text-secondary); text-transform: none; }
-
-.dc-msg-content a { color: var(--accent); text-decoration: underline; word-break: break-all; }
-.dc-msg-content a:hover { color: var(--accent-light); }
-/* #5728: a `#N` / `PR#N` chip in a reply (an agent session, a change's chat)
-   is the app chat's reference chip, not a markdown link: no underline until
-   it is hovered, and no breaking the number across lines. The issue ink is
-   the chip's own emerald, softened on the light sheet as Messages is; a PR
-   chip keeps the accent ink above, which is the blue it already wears. */
-.dc-msg-content a.gc-ref { text-decoration: none; word-break: normal; }
-.dc-msg-content a.gc-ref-issue { color: var(--state-ok); }
-html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 0.05); }
-@media (hover: hover) {
-  .dc-msg-content a.gc-ref:hover { text-decoration: underline; }
-}
-
-.dc-msg-content strong { font-weight: 600; color: var(--text-primary); }
-.dc-msg-content em { font-style: italic; color: var(--text-faint); }
 
 .dc-code-header {
   font-size: 11px;
@@ -6228,13 +6000,7 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 .dc-task-check { display: inline-block; width: 1em; color: var(--text-muted); font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 .dc-task-check.dc-task-checked { color: var(--accent); }
 
-/* Held-back trailing line of a live-streaming assistant bubble: the
-   still-being-typed final line, rendered as escaped plaintext until its
-   newline arrives (so a `- [ ]` fragment never momentarily parses as a
-   checkbox). Matches the surrounding prose and preserves leading spaces. */
-.dc-streaming-tail { display: block; white-space: pre-wrap; }
-
-/* Tables (F1): styled by class, not by .dc-msg-content ancestry, so they
+/* Tables (F1): styled by class, not by a container's ancestry, so they
    render identically in chat, the spec preview snippet, and the viewer. */
 /* #683: inline markdown images (issue-body screenshot embeds). #2349 keeps
    the compact preview but makes its original asset an obvious full-size
@@ -6264,61 +6030,6 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
   border-radius: 8px;
   margin: 4px 0 8px;
 }
-.dc-msg-content del { text-decoration: line-through; }
-.dc-msg-content hr { border: none; border-top: 1px solid var(--border-light); margin: 12px 0; }
-
-/* ── Status lines (deploying, building, etc.) ──────────── */
-
-.dc-status-log {
-  margin-bottom: 8px;
-  border-inline-start: 2px solid var(--border-light);
-  padding-inline-start: 8px;
-}
-
-/* #3415: 12px on each side is the inset .dc-msg and the transcript's cards
-   (.dc-pr-card, .dc-cc-attached, .dc-failure) already use, so a step's check
-   lines up with the reply label and card edges instead of touching the pane. */
-.dc-status-line {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding: 2px 12px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-/* #3559: a status row's sentence, and only its sentence (StatusLine in
-   frontend/src/features/dev-chat/transcript.tsx). It is a flex item, so it
-   was held at the width of its longest word: a step naming a link or a
-   branch pushed the row past the transcript's edge, and the transcript,
-   which scrolls, then slid sideways on a phone. `anywhere` lets the word
-   break inside the row, and lowers the item's min-content with it, which
-   `break-word` would not. The stamp and the clock beside it keep theirs. */
-.dc-status-text { min-width: 0; overflow-wrap: anywhere; }
-
-/* #2597: the venue caption under a running row's heading.
-   The heading says what is happening ("Coding agent is running"); this says
-   where, in the same muted second-line treatment .dc-cc-note already gives
-   the run card's guess and cohort hint.
-
-   .dc-status-line is a single centred flex ROW, and every other row in the
-   transcript depends on it staying one — so the wrap is opted into by the
-   captioned rows alone, and the caption claims a whole line by basis rather
-   than by leaving the flow. The 20px indent is the icon (14px) plus the
-   row's gap (6px), which lands it under the first letter of the heading.
-   Inside .dc-cc-attached-summary the summary is already a COLUMN, so the
-   caption is a row of it and neither rule applies. */
-.dc-status-venue {
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-muted);
-  min-width: 0;
-}
-.dc-status-line-captioned { flex-wrap: wrap; }
-.dc-status-line-captioned > .dc-status-venue {
-  flex: 0 0 100%;
-  padding-inline-start: 20px;
-}
 
 /* Explicit square box with centered glyph is required for the
    rotation animation to spin around the glyph's visual center. Without
@@ -6335,22 +6046,8 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
   transform-origin: 50% 50%;
 }
 
-.dc-cc-progress {
-  font-size: 11px;
-  color: var(--text-muted);
-  padding-block: 2px 2px; padding-inline: 22px 0;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  opacity: 0.7;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dc-status-spinning {
-  animation: dc-spin 1.5s linear infinite;
-  color: var(--accent);
-}
-
-/* Pure-CSS arc spinner used for "in-progress" status lines. The gear
+/* Pure-CSS arc spinner for anything in flight (a card's run, a change's
+   waiting step, the app's launch cover). The gear
    glyph is too rotationally symmetric to read as spinning; an arc with
    ~270° of border vs a transparent gap is unambiguous. Sized to align
    with the gear so layout doesn't shift when the line transitions from
@@ -6377,18 +6074,9 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dc-status-spinner-arc { animation: none; }
 
-/* Completed state — explicit green check so a glance at the chat tells
-   the user which steps finished. Kept at the same box dimensions as
-   the spinner so nothing shifts when a step transitions from active
-   → done. */
-.dc-status-check {
-  color: #10b981;
-  font-weight: 700;
-}
-
 /* ── Before / after captures ──────────────────────────────
-   AppView.visualsTilesHtml builds these as innerHTML into two hosts — the
-   dev chat's Changes-ready card and the board's proposal detail — so the
+   AppView.visualsTilesHtml builds these as innerHTML into the board's
+   proposal detail, so the
    media keeps its inline style and only the parts added here are classed.
 
    Three things the strip could not say before:
@@ -6441,1031 +6129,8 @@ html:not(.dark) .dc-msg-content a.gc-ref-issue { background: rgba(16, 185, 129, 
 .usn-visual-more-summary::after { content: ' \203A'; }
 .usn-visual-more[open] > .usn-visual-more-summary::after { content: ' \02C5'; }
 
-/* ── A failed turn ────────────────────────────────────────
-   A CARD, not a status row, because a failure is not a step in the ladder
-   above it — it is the end of that ladder. As a row it inherited both the
-   ladder's shape and the ladder's tick: `turnError` has been persisted by
-   routes/sessions.js since #894 and nothing read it, so every failed turn
-   came back green.
-
-   --state-blocked is the platform's "this blocks you" red — the same token
-   the board's checks-failing pill and the merge badges take, so a failure
-   reads the same here as it does anywhere else in the product. It is a
-   TINT plus a hairline rather than a fill: this sits inside a scrolling
-   transcript, and a saturated block at message width is a stop sign for
-   something the next message usually recovers from.
-
-   No action button. The producers that set `turnError` also send
-   `quickReplies: turnPills('failed')`, so the one-tap retry is already in
-   the pill bar over the composer, with every other suggested next message.
-   A second one here would be two controls for one act. */
-.dc-failure {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 8px 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--state-blocked);
-  background: var(--state-blocked-bg);
-  font-size: 13px;
-  line-height: 1.5;
-  color: var(--text-primary);
-}
-.dc-failure-icon {
-  flex: none;
-  color: var(--state-blocked);
-  font-weight: 700;
-  font-size: 14px;
-  line-height: 1.45;
-}
-.dc-failure-body { flex: 1; min-width: 0; }
-/* #3559: the body may shrink (min-width: 0) but its text did not follow it.
-   A failure that quotes a link, which a build error often does, ran past the
-   card and widened the whole transcript; `anywhere` breaks it in the card. */
-.dc-failure-text { display: block; min-width: 0; overflow-wrap: anywhere; }
-.dc-failure-text a { color: var(--accent); }
-
-/* THE STOP PAIR. Both are "the run did not finish", so both are this card
-   rather than the pipeline's ✓ row — but only one of them is a problem.
-
-   `stopping` is #937's escalation: a stop that is not landing. Red, and it
-   keeps the Force stop button, because that is the one state where the user
-   is stuck and needs the action. It used to be a status row, which meant the
-   escalation settled to a green tick the moment the turn went inactive.
-
-   `stopped` landed. The user asked for it, so it is NOT red — painting
-   someone's own decision as an error is the green tick's mistake in reverse.
-   The neutral surface with a hairline, one step up from the sheet, and the
-   landing in chips beside the sentence. */
-.dc-failure-stopped {
-  border-color: var(--border-light);
-  background: var(--dc-raised);
-}
-.dc-failure-stopped .dc-failure-icon {
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.75;
-}
-.dc-failure-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  min-width: 0;
-  margin-top: 6px;
-}
-.dc-failure-chips > * {
-  flex: none;
-  max-width: 100%;
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 2px 8px;
-  border-radius: 7px;
-  /* An inset: one step back DOWN from the card, exactly as the coding-run
-     card's chips do it. Same chip, so the two cards read as one language. */
-  background: var(--dc-sheet);
-  border: 1px solid var(--border-light);
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.dc-failure-chips > :empty { display: none; }
-
-/* ── PR card ────────────────────────────────────────────── */
-
-/* THE TRANSCRIPT'S CARDS READ THE LADDER, not --bg-secondary directly.
-   Same reason the message bubble does: that token is one step UP from
-   --bg-primary in light and, in dark, it is the session sheet's own value —
-   so a card painted with it sat flush on the sheet and disappeared. This
-   card is the one that matters most: it carries the before/after strip and
-   the Propose button. Its inner surfaces move with it, from --bg-primary
-   (which is now DARKER than the sheet in dark, a hole rather than an inset)
-   to --dc-sheet, one honest step back down. Light is unchanged: the ladder's
-   light values are the tokens these rules already used. */
-.dc-pr-card {
-  margin: 8px 12px;
-  padding: 12px;
-  /* A card in the language: an opaque surface with no hairline and the
-     language's corner. --bg-card is an accent TINT, which read as a
-     highlighted state once the accent turned blue; the neutral surface is
-     what the deck's embedded cards use. */
-  background: var(--dc-raised);
-  border: 1px solid transparent;
-  border-radius: 1rem;
-  transition: background 300ms;
-}
-
-.dc-pr-card-header { margin-bottom: 8px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-
-.dc-pr-link { font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
-.dc-pr-link:hover { color: var(--accent-light); text-decoration: underline; }
-
-.dc-pr-title { font-size: 13px; color: var(--text); font-weight: 500; }
-
-.dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-/* #3605: the lifecycle badge, once proposed, opens the vote page. The badge
-   keeps its own look; the wrapper only adds the link cues. */
-.dc-pr-status-link { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 9999px; }
-.dc-pr-status-link:hover .ms-badge { text-decoration: underline; }
-.dc-pr-status-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-
-/* #699: expandable report body on the platform-issue draft card. The
-   <summary> holds the 300-char preview plus a "Show full report" cue;
-   opening reveals the remainder so the text reads continuously (the cue
-   hides while open). Open state persists via data-persist-id — see
-   _applyDetailsPersistence in dev-chat.js. */
-.dc-pi-report { margin: 0 0 6px; }
-.dc-pi-report-summary {
-  cursor: pointer;
-  list-style: none;
-  font-size: 13px;
-  color: var(--text-muted);
-  white-space: pre-wrap;
-}
-.dc-pi-report-summary::-webkit-details-marker { display: none; }
-.dc-pi-report-cue {
-  color: var(--accent);
-  font-size: 12px;
-  user-select: none;
-  white-space: nowrap;
-}
-.dc-pi-report-cue:hover { color: var(--accent-light); }
-.dc-pi-report[open] .dc-pi-report-cue { display: none; }
-.dc-pi-report-rest {
-  font-size: 13px;
-  color: var(--text-muted);
-  white-space: pre-wrap;
-}
-
-.dc-pr-btn {
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  transition: background 150ms;
-}
-
-/* ── Out-of-credits card ────────────────────────────────────────────────
-   Rendered in the message stream in place of an assistant bubble when a
-   send is refused with code 'budget_exceeded'. Markup comes from
-   public/js/credit-options.js, which also builds the compact button row
-   inside the red #dc-credits-banner. Deliberately NOT red-alarm styled:
-   it is an offer of three ways forward, not an error. */
-.dc-credits-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--dc-raised);
-  padding: 12px 14px;
-  margin: 6px 0;
-}
-
-.dc-credits-card-lead {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-credits-card-detail {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-.dc-credits-card-intro {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 8px;
-}
-
-.dc-credits-options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.dc-credits-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--dc-sheet);
-}
-
-.dc-credits-option-text { flex: 1 1 220px; min-width: 0; }
-
-.dc-credits-option-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-credits-option-blurb {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: 1.4;
-}
-
-/* The per-option CTA. Shares .dc-pr-btn's geometry; the first option is
-   the primary route so every button reads equally actionable. */
-.dc-credits-go {
-  background: var(--accent);
-  color: white;
-  flex: 0 0 auto;
-}
-.dc-credits-go:hover { background: var(--accent-light); }
-
-/* #4378: an unverified account's "Verify my account", under its line. */
-.dc-credits-verify { margin-top: 8px; }
-
-/* The "Are you a developer?" half of the out-of-credits card (#1281).
-   The routes that need a terminal — the CLI lease and importing your own
-   pull request — live in here rather than in the flat list above, so the
-   ways anyone can follow are the ones met first. A plain <details>: the
-   disclosure is the browser's, not ours. Styled as a quiet footer to the
-   card, never as a fourth option, because it is a question about the
-   reader rather than another thing to click. */
-.dc-credits-dev {
-  margin-top: 10px;
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
-
-.dc-credits-dev-summary {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.dc-credits-dev-summary:hover { color: var(--text-primary); }
-
-.dc-credits-dev-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.4;
-}
-
-/* The expanded rows sit flush under the hint rather than repeating the
-   list's own top margin, which would read as a gap the closed state
-   doesn't have. */
-.dc-credits-dev .dc-credits-options { margin-top: 6px; }
-
-/* QA 2026-09-24 Q27: the credits banners fold to one line on a phone. The
-   lead stays; what follows it (`.dc-credits-banner-more`) and the button row
-   wait behind "Details" (dev-chat/banners.tsx), which is the whole strip's
-   height handed back to the conversation, and the banner's "Check API key"
-   no longer sits over the identical button on the transcript's card. The
-   toggle is phone-only: from 640px up the banner is the one-row strip it
-   always was. */
-.dc-credits-banner-toggle { display: none; }
-@media (max-width: 639.98px) {
-  #dc-credits-banner:not([data-credits-open]) :is(.dc-credits-banner-more, .dc-credits-banner-actions),
-  #dc-credits-low-banner:not([data-credits-open]) :is(.dc-credits-banner-more, .dc-credits-banner-actions) {
-    display: none;
-  }
-  .dc-credits-banner-toggle {
-    display: inline-flex; align-items: center; flex: none;
-    min-height: 28px; padding: 0 2px;
-    border: 0; background: none;
-    font: inherit; font-size: 12px; font-weight: 600;
-    text-decoration: underline; text-underline-offset: 2px;
-    cursor: pointer;
-  }
-}
-
-/* Banner variant: three small buttons inside the red exhausted banner.
-   The row wraps onto its own line under the message on a phone (the
-   banner itself is flex-wrap, and the message keeps a min-width), rather
-   than squeezing the text into a sliver and running the buttons off the
-   right edge. */
-.dc-credits-banner-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.dc-credits-banner-btn {
-  border-radius: 4px;
-  padding: 4px 8px;
-  font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  border: 1px solid rgb(252 165 165);
-  background: transparent;
-  color: rgb(153 27 27);
-  transition: background 150ms;
-}
-.dc-credits-banner-btn:hover { background: rgb(254 226 226); }
-.dc-credits-banner-btn-primary {
-  background: rgb(220 38 38);
-  border-color: rgb(220 38 38);
-  color: white;
-}
-.dc-credits-banner-btn-primary:hover { background: rgb(239 68 68); }
-
-.dark .dc-credits-banner-btn {
-  border-color: rgb(153 27 27);
-  color: rgb(254 202 202);
-}
-.dark .dc-credits-banner-btn:hover { background: rgb(69 10 10); }
-.dark .dc-credits-banner-btn-primary {
-  background: rgb(220 38 38);
-  border-color: rgb(220 38 38);
-  color: white;
-}
-
-/* ── Development-flow picker + walkthrough (#1049) ──────────────────────
-   Markup comes from public/js/dev-flow-select.js. Reuses the out-of-credits
-   card's geometry on purpose: both are "here are your routes forward"
-   cards in the message stream, and they render metres apart. */
-/* ── The launchpad (#1281) ───────────────────────────────────────────────
-   What a session shows instead of a composer when the work is happening
-   somewhere else. Markup comes from features/dev-chat/own-tools-guide.tsx
-   (own-tools-pr) and public/js/dev-flow-select.js (web hand-offs); dev-chat.js
-   renders whichever into #dc-launchpad-slot and hides
-   #dc-composer-controls beside it.
-
-   Deliberately quiet: a panel styled as an alert would read as something
-   having gone wrong rather than as the normal state of a hand-off. */
-
-/* #1348: PINNED TO THE TOP of the chat pane, above the message scroller
-   rather than in the composer's old place at the bottom.
-
-   `flex: none` is the pin — the slot keeps its own height and the
-   transcript below it takes what is left and scrolls. The cap reserves a
-   FIXED strip for the transcript rather than splitting the pane by
-   fraction: in a launchpad the card is the subject and the transcript is
-   reference, so the card should have everything it can use, and a
-   proportional cap (60%, say) would hold back half the pane from a
-   five-step walkthrough to show messages nobody came here to read. Past
-   the cap the card scrolls internally. The percentage resolves because
-   every ancestor up to .dc-session-body is a flex item with min-h-0, so
-   the pane's height is definite.
-
-   It carries its own padding now: it used to sit inside the bottom bar's
-   p-2 and has no wrapper of its own up here. */
-.dc-launchpad-slot {
-  flex: none;
-  max-height: calc(100% - 5rem);
-  overflow-y: auto;
-  padding: 0 8px;
-  border-bottom: 1px solid var(--border);
-}
-.dc-launchpad-slot:empty { display: none; }
-
-.dc-launchpad {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--dc-raised);
-  padding: 12px 14px;
-  margin: 6px 0;
-}
-
-.dc-launchpad-lead {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-launchpad-sub {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.45;
-}
-
-/* The resume banner (#1350). Two states, one box: "there is a branch with
-   work on it, the copy below continues it" and "there is nothing here
-   yet". Only the first is tinted with the accent, because only the first
-   carries a consequence for getting it wrong. */
-.dc-launchpad-resume {
-  margin-top: 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--dc-sheet);
-}
-
-.dc-launchpad-resume[data-launchpad-resume="continue"] {
-  border-color: var(--accent);
-}
-
-.dc-launchpad-resume-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-launchpad-resume[data-launchpad-resume="continue"] .dc-launchpad-resume-title {
-  color: var(--accent);
-}
-
-.dc-launchpad-resume-detail {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: 1.45;
-}
-
-.dc-launchpad-resume-detail code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  color: var(--text-primary);
-  word-break: break-all;
-}
-
-.dc-launchpad-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.dc-launchpad-step { display: flex; gap: 10px; align-items: flex-start; }
-
-/* The numeral. Fixed square so a two-column step body keeps its left edge
-   whatever the digit is. */
-.dc-launchpad-step-mark {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid var(--border);
-  background: var(--dc-sheet);
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-}
-
-.dc-launchpad-step-body { flex: 1 1 auto; min-width: 0; }
-
-.dc-launchpad-step-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-launchpad-step-detail {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: 1.45;
-}
-
-/* A copyable block: the text, then its own button. The <pre> scrolls
-   rather than stretching the panel — the "tell your agent" prefill is a
-   dozen lines and this sits above the home indicator on a phone. */
-.dc-launchpad-copy { margin-top: 6px; }
-
-.dc-launchpad-pre {
-  max-height: 168px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  background: var(--dc-sheet);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin: 0;
-  -webkit-user-select: text;
-  user-select: text;
-}
-
-.dc-launchpad-copy-btn,
-.dc-launchpad-btn {
-  margin-top: 6px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--dc-sheet);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  padding: 5px 10px;
-  cursor: pointer;
-}
-.dc-launchpad-copy-btn:hover,
-.dc-launchpad-btn:hover { border-color: var(--accent); color: var(--accent); }
-
-.dc-launchpad-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-
-/* The walkthrough's own brief field (#1281). It lives in the card rather
-   than in the composer, because a hand-off session hides the composer —
-   see the launchpad block above. Sized to three lines: enough to see a
-   sentence, small enough that the steps under it stay on screen. */
-.dc-flow-brief {
-  display: block;
-  width: 100%;
-  margin-top: 6px;
-  padding: 7px 9px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--dc-sheet);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 1.45;
-  resize: vertical;
-}
-.dc-flow-brief::placeholder { color: var(--text-muted); }
-.dc-flow-brief:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px rgba(10, 124, 255, 0.25);
-}
-.dc-flow-brief:disabled { opacity: 0.6; }
-
-/* ── The vendor toggle (#1281) ───────────────────────────────────────────
-   Claude / ChatGPT at the top of the type 2 launchpad. Two buttons rather
-   than a select so the current one is legible without opening anything,
-   which is the whole point of a toggle on a phone. The active one is
-   `disabled` — it is a statement, not an offer — so it must not be styled
-   as a dead control the way a disabled button normally is. */
-.dc-flow-vendors {
-  display: inline-flex;
-  margin-top: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.dc-flow-vendor {
-  font-size: 12px;
-  font-weight: 600;
-  padding: 4px 14px;
-  border: 0;
-  background: var(--dc-sheet);
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.dc-flow-vendor:hover:not(:disabled) { color: var(--text-primary); }
-
-.dc-flow-vendor-on,
-.dc-flow-vendor-on:disabled {
-  background: var(--accent);
-  color: #fff;
-  cursor: default;
-  opacity: 1;
-}
-
-.dc-flow-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--dc-raised);
-  padding: 12px 14px;
-  margin: 6px 0;
-}
-
-.dc-flow-card-lead {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-flow-card-detail,
-.dc-flow-card-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  line-height: 1.4;
-}
-
-.dc-flow-options {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.dc-flow-option {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--dc-sheet);
-}
-
-.dc-flow-option-text { flex: 1 1 220px; min-width: 0; }
-
-.dc-flow-option-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-flow-option-blurb {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: 1.4;
-}
-
-.dc-flow-go {
-  background: var(--accent);
-  color: white;
-  flex: 0 0 auto;
-}
-.dc-flow-go:hover { background: var(--accent-light); }
-
-.dc-flow-remember {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-
-.dc-flow-remember-hint {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-
-/* Walkthrough. Exactly one step is 'current' at a time — the numbered mark
-   carries that state so the card is scannable without reading it. */
-.dc-flow-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin-top: 10px;
-}
-
-.dc-flow-step {
-  display: flex;
-  gap: 10px;
-  padding: 8px 0;
-  border-top: 1px solid var(--border);
-}
-.dc-flow-step:first-child { border-top: none; }
-
-.dc-flow-step-mark {
-  flex: 0 0 auto;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 600;
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  background: var(--dc-sheet);
-}
-
-.dc-flow-step-body { flex: 1 1 auto; min-width: 0; }
-
-.dc-flow-step-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.dc-flow-step-detail {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-  line-height: 1.4;
-}
-
-/* The connector prerequisite on the hand-off step: set off from the
-   step's detail so it reads as "before you paste", with the one link
-   the person has to follow. */
-.dc-flow-step-note {
-  font-size: 12px;
-  color: var(--text-primary);
-  margin-top: 6px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--accent-tint);
-  line-height: 1.4;
-}
-.dc-flow-step-note a,
-.dc-flow-card-hint a,
-/* #2706: the hint's "show the steps" is a BUTTON — it opens the inline
-   connector card rather than navigating — but it is a link in the middle of
-   a sentence and has to read as one. `inherit` for font and size, because a
-   <button> takes neither from its parent. */
-.dc-flow-hint-link {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.dc-flow-hint-link {
-  background: none;
-  border: 0;
-  padding: 0;
-  font: inherit;
-  cursor: pointer;
-}
-
-.dc-flow-step-done .dc-flow-step-mark {
-  background: #059669;
-  border-color: #059669;
-  color: white;
-}
-.dc-flow-step-done .dc-flow-step-title { color: var(--text-muted); }
-
-.dc-flow-step-current .dc-flow-step-mark {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
-}
-
-.dc-flow-step-todo { opacity: 0.65; }
-
-.dc-flow-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-}
-
-.dc-flow-actions-footer { margin-top: 10px; }
-
-.dc-flow-action {
-  background: var(--dc-sheet);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-/* The href-bearing actions ("Fork on GitHub", "Open Claude Code") are real
-   anchors, not buttons — the scripted window.open they replaced never left
-   the page on mobile (#1312). Same box as the buttons beside them. */
-a.dc-flow-action {
-  display: inline-block;
-  text-decoration: none;
-  line-height: normal;
-}
-.dc-flow-action:hover { background: var(--bg-tertiary); }
-.dc-flow-action:disabled { opacity: 0.5; cursor: not-allowed; }
-
-.dc-flow-action-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: white;
-}
-.dc-flow-action-primary:hover { background: var(--accent-light); }
-
-.dc-flow-error {
-  font-size: 12px;
-  color: rgb(185 28 28);
-  margin-top: 6px;
-  line-height: 1.4;
-}
-.dark .dc-flow-error { color: rgb(252 165 165); }
-
-.dc-flow-notice {
-  font-size: 12px;
-  color: rgb(4 120 87);
-  margin-top: 6px;
-}
-.dark .dc-flow-notice { color: rgb(110 231 183); }
-
-.dc-flow-order { margin-top: 10px; }
-
-.dc-flow-order > summary {
-  font-size: 12px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.dc-flow-order-text {
-  margin-top: 6px;
-  max-height: 240px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-  background: var(--dc-sheet);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 10px;
-}
-
-/* Modal variant: the same three options rendered by the Generate-proposal
-   flow when the headless route refuses for the same reason. */
-.dc-credits-modal-card .dc-credits-card {
-  border: none;
-  background: transparent;
-  padding: 0;
-  margin: 0;
-}
-
-.dc-pr-btn-preview {
-  background: var(--dc-raised);
-  color: var(--accent);
-  border: 1px solid var(--border);
-}
-.dc-pr-btn-preview:hover { background: var(--bg-tertiary); }
-/* Merged sessions: the staging container is gone, so the preview link is
-   dead. Render it visibly inert (muted + not-allowed) instead of clickable. */
-.dc-pr-btn-preview:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  color: var(--text-muted);
-}
-.dc-pr-btn-preview:disabled:hover { background: var(--dc-raised); }
-
-.dc-pr-btn-promote { background: var(--accent); color: white; }
-.dc-pr-btn-promote:hover { background: var(--accent-light); }
-.dc-pr-btn-promote:disabled { background: #3f3f46; cursor: not-allowed; }
-/* #558: the shared arc spinner borders in var(--accent) (violet), which is
-   near-invisible on this filled violet/dark button while a proposal is in
-   flight. Scope a white spinner to this button only so the busy state reads
-   clearly; the shared class stays untouched everywhere else. */
-.dc-pr-btn-promote .dc-status-spinner-arc {
-  border-color: rgba(255, 255, 255, 0.85);
-  border-inline-end-color: transparent;
-}
-
-/* ── Q/A mode: suggested-answer chips (#32) ─────────────── */
-
-.dc-qa-chips { margin: 8px 0 2px; display: flex; flex-direction: column; gap: 8px; }
-
-.dc-qa-group-label { font-size: 11px; color: var(--text-muted); }
-
-.dc-qa-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
-
-.dc-qa-chip {
-  padding: 5px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  background: var(--dc-raised);
-  color: var(--accent);
-  border: 1px solid var(--border);
-  transition: background 150ms, border-color 150ms;
-  max-width: 100%;
-  text-align: start;
-}
-.dc-qa-chip:hover { background: var(--bg-tertiary); }
-/* THE TWO STATES SAY DIFFERENT THINGS AND MUST BOTH BE READABLE AT ONCE.
-   `-default` is what the model RECOMMENDS; `-selected` is what you CHOSE.
-   They are frequently different chips, and a reader comparing the two is
-   the whole reason the questionnaire shows both. So the recommendation is
-   an outline and the choice is a fill: one hollow, one solid, legible
-   side by side rather than two shades of the same idea. */
-.dc-qa-chip-default { border-color: var(--accent); }
-.dc-qa-chip-selected {
-  background: var(--text-primary);
-  border-color: var(--text-primary);
-  color: var(--bg-primary);
-}
-.dc-qa-chip-selected .dc-qa-chip-hint { opacity: 0.75; }
-.dc-qa-chip-selected:hover { opacity: 0.88; }
-
-/* The escape hatch — the last chip in the row, and the only one that does
-   not answer. Quieter than the answers on purpose: it is the way out, not
-   an option, and it must not look like a fifth thing the model suggested. */
-.dc-qa-escape { color: var(--text-muted); border-style: dashed; }
-.dc-qa-escape-open { border-style: solid; border-color: var(--accent); color: var(--accent); }
-
-/* …and the input it opens, scoped to its own group rather than sending the
-   reader to the composer. Uncontrolled, committing on blur/Enter — see
-   `_onQaTypedCommit`. */
-.dc-qa-typed {
-  display: block;
-  width: 100%;
-  margin-top: 6px;
-  padding: 7px 11px;
-  border-radius: 10px;
-  border: 1px solid var(--accent);
-  background: var(--dc-sheet);
-  color: var(--text-primary);
-  font: inherit;
-  font-size: 13px;
-}
-.dc-qa-typed:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-tint); }
-
-/* A QUANTITY, asked as one. */
-.dc-qa-number { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dc-qa-step {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--dc-raised);
-  color: var(--text-primary);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-}
-.dc-qa-step:hover { background: var(--bg-tertiary); }
-.dc-qa-number-field {
-  width: 6.5rem;
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--dc-sheet);
-  color: var(--text-primary);
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-  font-size: 13px;
-  text-align: center;
-}
-.dc-qa-number-field:focus { outline: none; border-color: var(--accent); }
-
-/* "suggested", in the model's own quiet voice.
-   NOT uppercased. It was, and the stepper's hint is the reason that had to
-   stop: `suggested 0.2 m` came out as "SUGGESTED 0.2 M", and a capital M is
-   not the symbol for a metre. A hint that renders the value it is hinting
-   at cannot own a transform that rewrites the value. Lowercase and muted is
-   also what the design asks for, so the correctness fix and the design agree. */
-.dc-qa-chip-hint {
-  font-size: 10px;
-  margin-inline-start: 6px;
-  opacity: 0.6;
-  font-weight: 400;
-}
-
-/* The stepper's hint is the same span, but it is NOT sitting inside a chip:
-   it takes the group's inherited ink at 0.6, and in dark that lands at about
-   a third of the page's contrast — legible in the light render and very
-   nearly not in the dark one. On the stepper it is the only thing naming the
-   default, so it gets its own ink rather than an inherited fade. */
-.dc-qa-number .dc-qa-chip-hint {
-  margin-inline-start: 2px;
-  opacity: 1;
-  color: var(--text-secondary);
-}
-
-.dc-qa-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 2px; }
-
-.dc-qa-send {
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  border: none;
-  background: var(--accent);
-  color: #fff;
-  transition: background 150ms;
-}
-.dc-qa-send:hover { background: var(--accent-light); }
-
-.dc-qa-defaults {
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  background: var(--dc-raised);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  transition: background 150ms;
-}
-.dc-qa-defaults:hover { background: var(--bg-tertiary); }
-
-/* ── Quick-reply pills above the composer (#285) ───────── */
-
-/* A single horizontally-scrollable row that never wraps, so it adds one
-   compact line of height and never pushes the text box down on mobile.
-   Empty by default (no quickReplies) — gains the -active modifier and its
-   bottom margin only when pills are present. */
-.dc-quick-replies {
-  display: none;
-}
-.dc-quick-replies.dc-quick-replies-active {
-  display: flex;
-  flex-wrap: nowrap;
-  gap: 6px;
-  margin-bottom: 6px;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none; /* Firefox: hide the scrollbar but stay scrollable */
-}
-.dc-quick-replies.dc-quick-replies-active::-webkit-scrollbar {
-  display: none; /* WebKit: hide the scrollbar */
-}
-
 /* A horizontal strip that scrolls without DRAWING a scrollbar over itself.
-   Generalised from `.dc-quick-replies` directly above, which has done exactly
-   this since it shipped; the app menu's tile strip is the second caller and
-   the reason it is a named class rather than a third copy.
+   The app menu's tile strip is the caller.
 
    IT IS A DESKTOP PROBLEM, not a phone one. Overlay scrollbars (iOS, Android,
    macOS with the default "when scrolling" setting) fade out and take no
@@ -7486,130 +6151,6 @@ a.dc-flow-action {
 .platform-no-scrollbar::-webkit-scrollbar {
   display: none; /* WebKit / Blink */
 }
-
-.dc-quick-pill {
-  flex: 0 0 auto;
-  min-height: 34px;
-  padding: 6px 14px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  background: var(--dc-raised);
-  color: var(--accent);
-  border: 1px solid var(--border);
-  transition: background 150ms, border-color 150ms;
-}
-.dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
-
-/* ── The composer's action row (#1353) ─────────────────── */
-
-/* The attach button and the pills, one line above the send row. The
-   button is a SIBLING of the scroller rather than a child: inside it,
-   it would scroll out of reach the moment there were more pills than
-   fit. It also owns the row's bottom margin, because the pills' own
-   only exists while there are pills — and the button is always there. */
-.dc-composer-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.dc-composer-actions .dc-quick-replies.dc-quick-replies-active {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin-bottom: 0;
-}
-
-/* ── Saved draft messages above the composer (#798) ────── */
-
-/* Hidden until at least one draft exists, so an empty list adds no
-   height to the composer block (same pattern as the pills / attach
-   strip above). Capped in height with its own scroller: a long list of
-   parked notes must never crowd out the text box on a phone. */
-.dc-drafts { display: none; }
-.dc-drafts.dc-drafts-active {
-  display: block;
-  margin-bottom: 6px;
-  max-height: 132px;
-  overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--dc-raised);
-  padding: 4px;
-}
-
-.dc-drafts-head {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 2px 4px 4px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-}
-.dc-drafts-hint {
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 400;
-  font-size: 10px;
-}
-
-.dc-draft-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-block: 4px 4px; padding-inline: 6px 4px;
-  border-radius: 6px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-}
-.dc-draft-row + .dc-draft-row { margin-top: 4px; }
-
-.dc-draft-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dc-draft-actions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: 0 0 auto;
-}
-
-.dc-draft-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  cursor: pointer;
-  background: var(--dc-raised);
-  color: var(--text-muted);
-  border: 1px solid var(--border);
-  transition: color 150ms, border-color 150ms, background 150ms;
-}
-.dc-draft-btn:hover:not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); }
-.dc-draft-send:hover:not(:disabled) { color: #10b981; border-color: #10b981; }
-.dc-draft-edit:hover:not(:disabled) { color: var(--accent); }
-.dc-draft-trash:hover:not(:disabled) { color: #ef4444; border-color: #ef4444; }
-.dc-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-/* The composer's own save icon lived here, a 34px bordered square beside the
-   Send button. It is the one circle's GREEN STATE now (.dc-circle-save):
-   while a turn runs, text in the box makes saving the only useful action, so
-   it takes the button rather than sitting next to it. The rows' own
-   .dc-draft-send above is a different control — it sends a saved draft. */
 
 /* ── File attachments (#450) ───────────────────────────── */
 
@@ -7748,164 +6289,6 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
 }
 .gc-att-action:hover { text-decoration: underline; }
 
-/* ── Claude Code log (collapsible) ─────────────────────── */
-
-.dc-cc-log {
-  margin: 6px 0;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
-}
-
-.dc-cc-log-toggle {
-  cursor: pointer;
-  padding: 4px 10px;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: var(--bg-code);
-  user-select: none;
-}
-.dc-cc-log-toggle:hover { color: var(--text-faint); }
-.dc-cc-log[open] .dc-cc-log-toggle { border-bottom: 1px solid var(--border); }
-
-.dc-cc-log-content {
-  padding: 8px 10px;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--text-faint);
-  background: var(--dc-sheet);
-  max-height: 300px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  margin: 0;
-}
-
-/* ── Claude Code "is running" — status line + inline log ─
-   The status line itself is the disclosure summary; the live log
-   streams inline below as plain monospaced text (no border, no
-   background). Open by default; click the summary to collapse. */
-
-/* THE RUN IS A CARD. It was a status line with a log hanging off it: the
-   summary ran on across three wrapped lines and the log bled to the pane's
-   edges with no boundary, so the thing a reader watches longest on this
-   screen was the one thing on it with no shape. The card gives the run an
-   edge, and the facts inside it become chips (see ProgressChips in
-   features/dev-chat/transcript.tsx).
-
-   The surface is --bg-secondary, not a hue. "A coding run is happening" is
-   not a state in the platform's vocabulary — --state-progress means
-   something is IN FLIGHT toward a merge, and a run is neither good news nor
-   bad. Tinting it would put a fifth colour on a screen whose colours already
-   mean one thing each; the card's own edge is what separates it. */
-.dc-cc-attached {
-  margin: 8px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: 12px;
-  background: var(--dc-raised);
-  overflow: hidden;
-}
-
-.dc-cc-attached-summary {
-  /* Reuse dc-status-line for icon/baseline, but make it the
-     <summary> of a <details> — suppress the native disclosure
-     marker (we already have the spinner / check glyph plus a
-     dedicated chevron span on the right). */
-  cursor: pointer;
-  list-style: none;
-  /* A COLUMN now: the head, the chip row and the note stack. It stays a
-     <summary> because a collapsed <details> renders nothing else. */
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 6px;
-  padding: 10px 12px;
-}
-.dc-cc-attached-summary::-webkit-details-marker { display: none; }
-.dc-cc-attached-summary::marker { display: none; }
-.dc-cc-attached-summary:hover { background: var(--dc-strip); }
-
-/* Row 1 — the glyph, the label, the chevron and the id/timestamp. */
-.dc-cc-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-/* Row 2 — the facts. They WRAP; the old inline run ellipsized instead, and
-   the 640px block used to hide the activity snippet outright. */
-.dc-cc-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  min-width: 0;
-}
-.dc-cc-chips > * {
-  flex: none;
-  max-width: 100%;
-  font-size: 11px;
-  line-height: 1.5;
-  padding: 2px 8px;
-  border-radius: 7px;
-  /* An inset: one step back DOWN from the card it sits on, which is the
-     sheet's own value. */
-  background: var(--dc-sheet);
-  border: 1px solid var(--border-light);
-  color: var(--text-secondary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* A chip with no value is still IN the DOM — the spans are addressed by
-   class from tests and declared checks, so they render empty rather than
-   disappearing. This is what keeps them from drawing an empty pill. */
-.dc-cc-chips > :empty { display: none; }
-
-/* Row 3 — the two sentences (the guess, the cohort hint), full width. */
-.dc-cc-note {
-  display: block;
-  min-width: 0;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--text-muted);
-}
-.dc-cc-note:empty { display: none; }
-
-/* Click affordance — sits to the right of "Claude Code is
-   running…" before the id/ts span. Two distinct glyphs (▸ when
-   the log is collapsed, ▾ when expanded) instead of rotating a
-   single triangle: rotation looks subtly off because the
-   triangle's bounding box flips between portrait and landscape
-   when turned 90°, dragging the visual center off the baseline. */
-.dc-cc-attached-chevron {
-  display: inline-block;
-  margin-inline-start: 6px;
-  font-size: 18px;
-  line-height: 1;
-  color: var(--text-muted);
-  transition: color 120ms ease;
-  /* Reserve a fixed-width slot so the timestamp doesn't shift
-     horizontally when the glyph changes. */
-  width: 18px;
-  text-align: center;
-}
-.dc-cc-attached-chevron::before { content: '\25B8'; /* ▸ */ }
-/* #1944: a descendant, not a child. The dev chat's card puts the chevron
-   inside its head row (`.dc-cc-head`, since the chips), while the shared
-   transcript page still draws it as the summary's own child. The
-   direct-child form matched only the second, so the dev chat's glyph sat
-   on ▸ whether the card was open or closed and the toggle looked dead. */
-.dc-cc-attached[open] > .dc-cc-attached-summary .dc-cc-attached-chevron::before {
-  content: '\25BE'; /* ▾ */
-}
-.dc-cc-attached-summary:hover .dc-cc-attached-chevron {
-  color: var(--text-faint);
-}
-
 /* Admin "View as non-admin" preview banner. The banner element is
    present in the DOM at all times (see public/index.html) but
    hidden by default; the body class set in app.js reveals it. Kept
@@ -7914,120 +6297,6 @@ button.gc-att-open:hover { color: var(--accent); text-decoration: underline; }
    mode without the visible reminder. */
 body.is-view-as-non-admin #view-as-non-admin-banner {
   display: flex;
-}
-
-.dc-cc-attached-log {
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-  font-size: 11px;
-  line-height: 1.5;
-  /* Slightly duller than --text-muted so it sits visually below the
-     status line without disappearing into the background. */
-  color: var(--text-faint);
-  /* Indent under the status icon so log lines align with the
-     status text, not the icon. 22px = icon width (14) + gap (6) +
-     2px breathing room. */
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 240px;
-  overflow-y: auto;
-  /* Inside the card now, as its own panel. The 22px indent that used to
-     align it under the status icon aligned it under nothing once the icon
-     moved into a header row. */
-  margin: 0 12px 12px;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: var(--dc-sheet);
-  border: 1px solid var(--border-light);
-}
-
-/* ── #50: progress indicator — elapsed ticker + live activity ──
-   .dc-status-elapsed shows a per-second ticking timer while a status
-   line is active and a static "(took Xm Ys)" once it finishes;
-   tabular-nums keeps the ticking digits from jittering the layout.
-   .dc-cc-current is the "what is it doing right now" snippet in the
-   running summary — ellipsized with a max-width so the right-aligned
-   id/timestamp span never shifts as the label changes. */
-.dc-status-elapsed {
-  color: var(--text-muted);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* The four fact spans take their box from `.dc-cc-chips > *`; what is left
-   here is each one's own voice. The `max-width: 40%` these carried is gone
-   with the inline row — a chip that wraps needs no share of one line. */
-.dc-cc-current {
-  font-family: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-  font-size: 10.5px;
-}
-
-
-/* #892: the DETERMINISTIC stage readout (Claude is working / Committing /
-   Pushing …). Styled like the step count — upright, not italic — because
-   unlike the AI guess beside it this is derived from markers the run
-   genuinely emitted and cannot be wrong. */
-
-/* #892: population context ("most runs finish in 2–10 min"). Extra-muted:
-   it is background information about how long runs take in general, not a
-   claim about this run, so it must not compete with the countdown. */
-.dc-cc-cohort {
-  display: block;
-  opacity: 0.75;
-}
-.dc-cc-cohort:not(:empty)::before { content: '\00b7\00a0'; }
-
-/* Experimental AI progress estimate (opt-in): italic and extra-muted so
-   the guess reads as tentative next to the honest timer/step count. */
-.dc-cc-estimate {
-  font-style: italic;
-}
-
-/* THE 640px BLOCK IS GONE, and its absence is the point.
-   It hid `.dc-cc-current` and `.dc-cc-cohort` outright and re-ordered the
-   estimate onto its own row, because four muted spans could not share one
-   inline line on a phone. Every one of those was a workaround for the
-   inline row: chips wrap by construction and the two sentences already have
-   a row of their own, so the narrow case now costs a line of height instead
-   of a fact. `.dc-cc-current` in particular — the answer to "what is it
-   doing right now" — used to vanish at exactly the width where the log
-   behind it is hardest to open. */
-
-/* Sibling of .dc-cc-attached-log for the post-turn ccOutput
-   markdown summary (rather than a monospaced live-log). Same
-   indent + muted color, but body font and a bit more room for
-   structured markdown elements (paragraphs, lists, code blocks).
-   #3559: it scrolls down, so it scrolled sideways too, and the agent's
-   summary is where a long path in backticks turns up: the block slid under
-   a finger on a phone. The log beside it breaks its words already; this
-   breaks the summary's inside the block, and a fenced code block, which
-   never wraps, still scrolls sideways inside its own box. */
-.dc-cc-attached-md {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-  max-height: 360px;
-  overflow-y: auto;
-  margin: 0 12px 12px;
-  padding: 9px 10px;
-  border-radius: 9px;
-  background: var(--dc-sheet);
-  border: 1px solid var(--border-light);
-}
-/* Tighten markdown spacing inside the muted summary block — the
-   default .dc-msg-content treatment is too generous for a summary
-   that sits under a status line. */
-.dc-cc-attached-md p { margin: 4px 0; }
-.dc-cc-attached-md ul, .dc-cc-attached-md ol { margin: 4px 0; padding-inline-start: 20px; }
-.dc-cc-attached-md li { margin: 2px 0; }
-.dc-cc-attached-md pre.dc-code-block {
-  margin: 6px 0;
-  font-size: 11px;
-}
-.dc-cc-attached-md code.dc-inline-code {
-  font-size: 11px;
 }
 
 /* ── Vote panel ─────────────────────────────────────────── */
@@ -8759,8 +7028,8 @@ span.gc-vote-btn-icon { cursor: default; }
 }
 /* #405: canonical merge-lifecycle badge/pill (see public/js/merge-status.js).
    `.ms-badge` is the text-style chip used in the feed card + home strip;
-   `.ms-pill` is the filled pill used in the dev session header. Tone classes
-   carry the colour and keep the four surfaces consistent. */
+   `.ms-pill` is the filled pill. Tone classes
+   carry the colour and keep the surfaces consistent. */
 .ms-badge {
   display: inline-flex;
   align-items: center;
@@ -8786,8 +7055,8 @@ span.gc-vote-btn-icon { cursor: default; }
   border: 1px solid transparent;
 }
 .ms-pill-neutral { color: var(--state-neutral); background: var(--state-neutral-bg); }
-/* #695: muted "+N" advisory suffix inside the in-vote pill (dev session
-   header) — non-approver votes recorded beside the approver-only tally. */
+/* #695: muted "+N" advisory suffix inside the in-vote pill —
+   non-approver votes recorded beside the approver-only tally. */
 .ms-advisory { opacity: 0.65; font-weight: 500; }
 .ms-pill-violet  { color: var(--state-progress); background: var(--state-progress-bg); }
 .ms-pill-amber   { color: var(--state-attention); background: var(--state-attention-bg); }
@@ -8992,9 +7261,9 @@ span.gc-vote-btn-icon { cursor: default; }
   white-space: pre-wrap;
 }
 
-/* #328: markdown-rendered message bodies. When DevChat.renderMarkdown is
+/* #328: markdown-rendered message bodies. When PlatformMarkdown.render is
    available, renderMessageBody produces block-level children (<p>/<ul>/<pre>
-   …) that manage their own spacing and carry the dev-chat `dc-*` classes.
+   …) that manage their own spacing and carry the renderer's `dc-*` classes.
    marked emits literal newlines between those block tags, so leave the
    container on pre-wrap and they'd render as extra blank lines — switch to
    normal whitespace whenever block markdown is present. The :has() guard
@@ -9027,7 +7296,7 @@ span.gc-vote-btn-icon { cursor: default; }
 /* #6308: a link typed into a message (a bare URL, a markdown link) is
    clickable but wore the body's own ink, so nothing said it could be
    followed. It wears the platform's link blue and an underline, the pair
-   Messages' markdown and the dev chat's replies already use. No `:hover`
+   Messages' markdown already uses. No `:hover`
    variant: the #2464 guard forbids any hover rule naming the inner message
    box, and Messages' own links have none either. The reference
    chips are not links in that sense: `#N` / `PR#N` keep their violet or
@@ -9277,8 +7546,8 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
    padding), because that screen is where the product already draws a
    conversation in bubbles — and the viewer's own message sits on the RIGHT
    (ChatMessageRow from="me": the row runs right to left, no avatar), in the
-   accent tint the dev chat gives your turns (.dc-msg-user) and the Messages
-   screen gives yours (.messages-message-self). The side says who is
+   accent tint the Messages screen gives yours
+   (.messages-message-self). The side says who is
    speaking. Only the general chat: a topic thread keeps its flat named rows
    and tints yours in place (`#dev-topic-thread .gc-msg-self` below). */
 .gc-bubble {
@@ -9289,8 +7558,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   /* The raised neutral surface, not the Messages screen's white: that
      screen's bubbles sit on a grey ground, and this transcript sits on the
      frosted sheet, where a white bubble is the sheet's own colour and
-     disappears. Same surface the dev chat's PR card and the dark-mode
-     Messages bubble already use. */
+     disappears. Same surface the dark-mode Messages bubble already uses. */
   background: var(--dc-raised);
   color: var(--text-primary);
 }
@@ -9775,287 +8043,6 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
   text-overflow: ellipsis;
 }
 
-/* ── Streaming spinner (bouncing dots) ─────────────────── */
-
-.dc-streaming-dots { display: flex; gap: 4px; padding: 4px 0; }
-.dc-streaming-dots span {
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--text-muted);
-  animation: dc-dot-bounce 1.4s ease-in-out infinite;
-}
-.dc-streaming-dots span:nth-child(2) { animation-delay: 0.16s; }
-.dc-streaming-dots span:nth-child(3) { animation-delay: 0.32s; }
-
-/* #990: the trailing activity indicator is the dots on a .dc-status-line row,
-   so it sits flush under the step ladder it belongs to instead of indented
-   like the retired standalone spinner. Only the doubled vertical padding
-   (2px from the row + 4px from the dots) needs trimming.
-
-   #1590: the TOP of that trimmed padding has to clear the bounce. A dot is
-   6px and dc-dot-bounce lifts it 6px, so 2px of headroom left it rising 4px
-   out of its own row and into the ladder line above — the overlap that was
-   reported. 6px is exactly the travel, so the dot lands flush with the row's
-   top edge at the peak and nothing crosses it. */
-.dc-activity-line { padding: 0 12px 4px; }
-.dc-activity-line .dc-streaming-dots { padding: 6px 0 2px; }
-.dc-activity-label { font-size: 11px; color: var(--text-muted); }
-
-@keyframes dc-dot-bounce {
-  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-  40% { transform: translateY(-6px); opacity: 1; }
-}
-
-/* ── The dev composer's one circle ──────────────────────── */
-
-/* Streamlined Concept. This was a 64x38 rectangle carrying the word "Send",
-   with a separate save icon beside it and a shortcut-hint line under the
-   pair. It is one 44px circle now, and which action it performs follows the
-   turn — see SendButtonView in features/dev-chat/composer-store.ts.
-
-   The SIZE is the point of keeping a fixed box: the label swaps between an
-   arrow, a floppy, a square and a spinner, and the row must not reflow under
-   it. 44px is also the platform's tap target, which the old 38px height was
-   under. */
-.dc-send-btn {
-  width: 44px;
-  height: 44px;
-  min-width: 0;
-  padding: 0;
-  border-radius: 9999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-/* Idle. A pale fill with a wider, fainter ring of the same hue — the halo is
-   what makes a low-contrast circle read as the row's one primary action
-   without shouting like a filled accent button would. */
-.dc-circle-send {
-  background: var(--accent-wash) !important;
-  color: var(--accent-wash-ink);
-  box-shadow: 0 0 0 6px rgba(31, 134, 255, 0.10);
-}
-.dc-circle-send:hover { background: var(--accent-light) !important; color: #fff; }
-
-/* A turn is running and there is text to park (#810's rule, moved onto the
-   button). Green because it is a SAVE, not a send and not an interrupt: the
-   same emerald the product already spends on "done" states. Filled rather
-   than washed, because unlike Send it is standing where the red Stop was and
-   has to read as a deliberate swap rather than a disabled Stop. */
-.dc-circle-save {
-  background: #10b981 !important;
-  color: #fff;
-  box-shadow: 0 0 0 6px rgba(16, 185, 129, 0.14);
-}
-.dc-circle-save:hover { background: #059669 !important; }
-
-/* ── The card ───────────────────────────────────────────── */
-
-/* One surface holding the field and one row of controls. It floats on the
-   pane's ground rather than sitting in a bordered bar, which is why the bar
-   around it drops its `border-t` and the card carries the elevation. */
-.dc-card {
-  /* The elevation is a variable so the focus rule below can add a ring to it
-     without restating it — two copies of a shadow list drift the first time
-     one of them is tuned. */
-  --dc-card-elevation: 0 1px 2px rgba(0, 0, 0, 0.05), 0 10px 28px -8px rgba(0, 0, 0, 0.14);
-  background: var(--dc-sheet);
-  border-radius: 1.5rem;
-  padding: 0.875rem 1rem 0.625rem;
-  box-shadow: var(--dc-card-elevation);
-  transition: box-shadow 120ms ease;
-}
-/* Dark mode gets a hairline instead of a shadow: a drop shadow on a dark
-   ground is invisible, so the card would lose its edge entirely.
-   `0 0 #0000` rather than `none`, because the focus rule appends to this
-   value and `none, <shadow>` is not a valid box-shadow list. */
-:root.dark .dc-card,
-.dark .dc-card {
-  --dc-card-elevation: 0 0 #0000;
-  background: var(--dc-raised);
-  border: 1px solid var(--border);
-}
-
-/* FOCUS LIVES ON THE CARD, not on the field.
-   The field draws no box of its own — see the `bare` ring in
-   @/components/ui/input.tsx — so the only edge that can carry a focus cue is
-   the one around everything, and a blinking caret is a thin cue on a surface
-   this wide.
-   `:focus-within` rather than `:focus`: the card is one control group, and
-   reaching the attach button or the model picker by keyboard is still "you
-   are in the composer". Those controls keep their own rings on top of this —
-   they have no caret, so the card's ring alone would not say which of them
-   is live. */
-.dc-card:focus-within {
-  box-shadow: var(--dc-card-elevation), 0 0 0 2px var(--accent);
-}
-@media (prefers-reduced-motion: reduce) {
-  .dc-card { transition: none; }
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .dc-card { transition: none; }
-
-.dc-card-row {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin-top: 0.75rem;
-}
-
-/* The row's bare glyph buttons — attach, and anything that joins it. No fill
-   and no border: the card is the box, and a bordered control inside it would
-   draw a second one. The 28px box keeps the glyphs on one baseline; the
-   first one pulls left so its optical edge lines up with the field's text
-   above it rather than its padding box. */
-.dc-row-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-.dc-card-row > .dc-row-btn:first-of-type { margin-inline-start: -4px; }
-
-/* The chat-model picker, stripped to its name plus a caret.
-
-   It is a <button> that opens the kit's menu now, not a <select>
-   (composer.tsx). `appearance: none` stays because a button has a native box
-   of its own to remove, and the caret has moved INSIDE the control — with no
-   native dropdown arrow to avoid duplicating, there was no longer a reason
-   for half of it to be unclickable. Hence the flex row here, which the
-   select could not have had. */
-.dc-model-select {
-  appearance: none;
-  -webkit-appearance: none;
-  display: block;
-  background: none;
-  border: 0;
-  padding-block: 0 0; padding-inline: 0 1.1rem;
-  max-width: min(100%, 16rem);
-  min-width: 0;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-  text-align: start;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* 32px tall on a touch screen (QA 2026-09-24 Q19). It was the height of its
-   13px line, 20px, and a <select> draws no ::after, so the `.un-touch-target`
-   slop has nothing to hang from; the control grows instead. It has no box of
-   its own to see (no fill, no border), so the only visible change is none:
-   the caret is centred on it by its inline-flex wrapper, and every row it sits
-   in is already taller than 32px. */
-@media (pointer: coarse) {
-  .dc-model-select { min-height: 32px; }
-}
-/* Shared with the proposal-workshop select, which uses this utility to keep
-   a long model name from widening its control. */
-.dc-model-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dc-model-caret {
-  position: absolute;
-  inset-inline-end: 0;
-  flex: none;
-  pointer-events: none;
-}
-/* The native select's arrow is replaced so it follows the tuned foreground
-   colour in both themes. */
-.dc-venue-detail-inline {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  color: var(--text-primary);
-}
-
-/* What still stacks above the card: the runner chip, the saved drafts, the
-   pending attachments, the attach error and the suggested replies. Each is
-   its own row on the pane's ground, so the card keeps one shape whatever is
-   in flight. */
-.dc-above-card:empty { display: none; }
-.dc-above-card { margin-bottom: 0.5rem; }
-
-/* The three busy surfaces carry their own ink now: the button renders with
-   `ink="none"` so that each state class owns both halves of its surface. */
-.dc-btn-streaming { background: var(--bg-tertiary) !important; color: var(--text-secondary); cursor: not-allowed; }
-.dc-btn-streaming:hover { background: var(--bg-tertiary) !important; }
-
-/* Stop-turn affordance (#28): red button with a square glyph, replaces
-   the emerald Send button while the turn is interruptible (mayor1 / cc
-   phases). Phase-2 falls back to the spinner state above. */
-.dc-btn-stop { background: #dc2626 !important; color: #fff; cursor: pointer; }
-.dc-btn-stop:hover { background: #b91c1c !important; }
-.dc-stop-icon {
-  width: 12px;
-  height: 12px;
-  background: #fff;
-  border-radius: 2px;
-  display: inline-block;
-}
-
-/* Stop requested, not yet landed (#889): the click has to acknowledge
-   itself immediately, and the red square is a lie once pressed — pressing
-   it again does nothing. Muted like the wrap-up spinner state (its closest
-   sibling) with an explicit label, so the button reads as "working on it"
-   rather than "still needs pressing". */
-.dc-btn-stopping {
-  background: var(--bg-tertiary) !important;
-  color: var(--text-secondary);
-  cursor: not-allowed;
-  gap: 6px;
-}
-/* The circle has no room for a word beside the spinner. The label survives
-   in the button's `aria-label` and `title`, which is where a 44px control
-   has to carry it. */
-.dc-btn-stopping .dc-btn-stopping-label { display: none; }
-.dc-btn-stopping:hover { background: var(--bg-tertiary) !important; }
-/* A touch smaller than the button's own text-sm so the widest state of
-   this button stays close to the Send/Stop width and the composer beside
-   it barely moves. */
-.dc-btn-stopping-label { color: var(--text-secondary); font-size: 12px; }
-
-/* Force stop (#937): the escape hatch offered inside the stopping status
-   row once an ordinary stop has been pending ~40s and clearly isn't
-   landing. Red like .dc-btn-stop — this is the same destructive intent,
-   escalated — but sized for a transcript row rather than the composer,
-   and it sits before the row's timestamp span (which claims margin-left:
-   auto), so a plain inline-block with a little breathing room is enough. */
-.dc-force-stop-btn {
-  background: #dc2626;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 2px 8px;
-  margin-inline-start: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-.dc-force-stop-btn:hover { background: #b91c1c; }
-.dc-force-stop-btn:disabled {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  cursor: not-allowed;
-}
-
-.dc-send-spinner {
-  width: 16px; height: 16px;
-  border: 2px solid var(--border);
-  border-top-color: var(--text-faint);
-  border-radius: 50%;
-  animation: dc-spin 0.7s linear infinite;
-}
-
 @keyframes dc-spin { to { transform: rotate(360deg); } }
 
 /* ── Header cog ("your work" drawer button) ─────────────── */
@@ -10074,267 +8061,6 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
 }
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .work-cog-spinning { animation: none; }
-
-/* ── Textarea auto-resize ──────────────────────────────── */
-
-.dc-textarea { max-height: 120px; overflow-y: auto; line-height: 1.5; }
-
-/* ── Cross-app active sessions panel ───────────────────── */
-/*
- * Sits at the very top of the dev-chat tab's meta block. Shows
- * every session that's currently running CC, even from other
- * apps the user owns. Same iOS-cell visual language as the
- * per-app session list below it: row layout, hover surface,
- * chevron at the end. The pulsing emerald dot is the live
- * indicator — it intentionally mirrors the "active" status
- * color used in the per-app list, so a glance ties the two
- * views together.
- */
-
-.dc-active-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-  font-size: 13px;
-  color: var(--text-primary);
-}
-
-.dc-active-item:hover,
-.dc-active-item:focus-visible {
-  background: var(--bg-card);
-  outline: none;
-}
-
-/* Dot color follows the existing per-app list convention:
- *   - .dc-active-dot-active   → emerald (status='active')
- *   - .dc-active-dot-promoted → violet  (status='promoted')
- * The .dc-active-dot-busy modifier layers a pulse animation on top
- * to flag "CC is mid-turn right now" without changing the base
- * lifecycle color. That way an open session is always green —
- * pulsing if running, solid if idle — and a merged session is
- * always violet.
- */
-.dc-active-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-}
-
-.dc-active-dot-active {
-  background: rgb(16 185 129); /* emerald-500 */
-}
-.dc-active-dot-promoted {
-  background: rgb(139 92 246); /* violet-500 */
-}
-.dc-active-dot-paused {
-  background: var(--text-faint); /* zinc-400-ish */
-  opacity: 0.7;
-}
-
-.dc-active-dot-busy.dc-active-dot-active {
-  animation: dc-active-pulse-emerald 1.6s ease-out infinite;
-}
-.dc-active-dot-busy.dc-active-dot-promoted {
-  animation: dc-active-pulse-violet 1.6s ease-out infinite;
-}
-
-@keyframes dc-active-pulse-emerald {
-  0%   { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-}
-@keyframes dc-active-pulse-violet {
-  0%   { box-shadow: 0 0 0 0 rgba(31, 134, 255, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(31, 134, 255, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(31, 134, 255, 0); }
-}
-
-/* Primary action button (Pause/Resume). Tinted by intent —
- * Pause is a quiet zinc fade (it's the common case so it doesn't
- * need to shout), Resume is emerald (matches the active-dot color
- * the user is restoring it back to). */
-.dc-active-action {
-  flex: 0 0 auto;
-  font-size: 11px;
-  background: transparent;
-  border: 1px solid transparent;
-  padding: 2px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
-}
-.dc-active-action-pause {
-  color: var(--text-secondary);
-  border-color: var(--border-light);
-}
-.dc-active-action-pause:hover,
-.dc-active-action-pause:focus-visible {
-  color: var(--text-primary);
-  background: var(--bg-tertiary);
-  outline: none;
-}
-.dc-active-action-resume {
-  color: rgb(16 185 129); /* emerald-500 */
-  border-color: rgba(16, 185, 129, 0.4);
-}
-.dc-active-action-resume:hover,
-.dc-active-action-resume:focus-visible {
-  background: rgba(16, 185, 129, 0.1);
-  outline: none;
-}
-.dc-active-action:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Archive control — same ghost-button pattern, deliberately
- * quieter than Pause/Resume so the destructive action sits in the
- * background unless the user actively reaches for it. */
-.dc-active-archive {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--text-faint);
-  background: transparent;
-  border: none;
-  padding: 2px 6px;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: color 120ms ease, background 120ms ease;
-}
-.dc-active-archive:hover,
-.dc-active-archive:focus-visible {
-  color: rgb(239 68 68); /* red-500 */
-  background: rgba(239, 68, 68, 0.08);
-  outline: none;
-}
-.dc-active-archive:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.dc-active-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Pill that names the originating app, only shown when the row
- * belongs to a different app than the one the user is currently
- * viewing. Same-app rows skip it to reduce visual noise. */
-.dc-active-app {
-  flex: 0 0 auto;
-  max-width: 40%;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: 11px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.dc-active-chevron {
-  width: 14px;
-  height: 14px;
-  color: var(--text-faint);
-  flex: 0 0 auto;
-}
-
-/* ── Inline spec preview card (in chat timeline) ──────── */
-
-.dc-spec-preview-card {
-  margin: 4px 12px 8px;
-  padding: 10px 12px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-inline-start: 3px solid rgb(139 92 246); /* violet-500 */
-  border-radius: 6px;
-  background: var(--bg-secondary, #18181b);
-  cursor: pointer;
-  transition: border-color 120ms ease, background 120ms ease;
-}
-
-.dc-spec-preview-card:hover,
-.dc-spec-preview-card:focus-visible {
-  border-color: rgb(139 92 246);
-  background: rgba(31, 134, 255, 0.06);
-  outline: none;
-}
-
-.dc-spec-preview-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.dc-spec-preview-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-primary, #e4e4e7);
-}
-
-.dc-spec-preview-cta {
-  margin-inline-start: auto;
-  font-size: 11px;
-  color: rgb(139 92 246);
-}
-
-.dc-spec-preview-snippet {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--text-secondary, #a1a1aa);
-  max-height: 6em;
-  overflow: hidden;
-  position: relative;
-  word-break: break-word;
-}
-
-/* Soft fade at the bottom so the truncation reads as "more below"
-   instead of an abrupt slice through a sentence. The gradient
-   matches the card background; on hover the card tint kicks in
-   underneath, which is fine — the fade still reads as a fade. */
-.dc-spec-preview-snippet::after {
-  content: '';
-  position: absolute;
-  inset-inline-start: 0;
-  inset-inline-end: 0;
-  bottom: 0;
-  height: 1.5em;
-  background: linear-gradient(to bottom, transparent, var(--bg-secondary, #18181b));
-  pointer-events: none;
-}
-
-/* Tighten markdown spacing inside the snippet — renderMarkdown's
-   default margins (geared toward chat bubbles) are too loose for a
-   4-line clipped preview. */
-.dc-spec-preview-snippet > :first-child { margin-top: 0; }
-.dc-spec-preview-snippet > :last-child  { margin-bottom: 0; }
-.dc-spec-preview-snippet .dc-h3,
-.dc-spec-preview-snippet .dc-h4,
-.dc-spec-preview-snippet .dc-h5,
-.dc-spec-preview-snippet .dc-p,
-.dc-spec-preview-snippet .dc-ul,
-.dc-spec-preview-snippet .dc-ol {
-  margin: 2px 0;
-}
-.dc-spec-preview-snippet .dc-h3 { font-size: 13px; }
-.dc-spec-preview-snippet .dc-h4 { font-size: 12px; }
-.dc-spec-preview-snippet .dc-h5 { font-size: 12px; }
-.dc-spec-preview-snippet .dc-code-block,
-.dc-spec-preview-snippet .dc-code-header { display: none; }
-
-/* ── Spec viewer (read-only, side panel / modal) ──────── */
-
-.dc-session-body { /* row layout for chat + viewer */
-  flex-direction: row;
-}
 
 /* ── Settings on the ladder ─────────────────────────────────────────────
    #settings-screen is the strip and #settings-section-content the sheet
@@ -10729,12 +8455,12 @@ html.un-kb #settings-content-col > .settings-sheet {
   .gc-send::after { content: ''; position: absolute; inset: -4px; }
 }
 
-/* ── The dev chat's three-layer lift ──────────────────────
+/* ── The three-layer lift ─────────────────────────────────
    The move a running app already makes, repeated once per layer. A
    running app's sheet (#app-frame-host) rounds its TOP two corners over
    the platform header's ground, so the header shows through a notch at
-   each shoulder. Here the session strip does that over the page
-   wallpaper, and the session sheet does it again over the strip: three
+   each shoulder. Here the strip does that over the page
+   wallpaper, and the sheet does it again over the strip: three
    surfaces, each one revealing a shoulder of the one above it.
 
    The geometry is #app-frame-host's, to the token — a 28px top radius, a
@@ -10792,18 +8518,6 @@ html.un-kb #settings-content-col > .settings-sheet {
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
 }
-/* #1943: the session strip keeps THIS surface when the chat scrolls.
-   attachScreenFx (dev-chat.js) makes #dc-session-header a
-   `.platform-chat-header`, and the kit adds `.un-scrolled` once the
-   transcript moves; `.platform-chat-header.un-scrolled` (near the top of
-   this file) is more specific than `.dc-lift-strip` and repainted the strip
-   with the nav-bar white — the bar visibly turned white on scroll. The id
-   outranks it; the hairline it adds is the scroll cue and stays. */
-#dc-session-header.un-scrolled {
-  background-color: var(--dc-strip-fill);
-  backdrop-filter: var(--dc-frost);
-  -webkit-backdrop-filter: var(--dc-frost);
-}
 /* NO BLUR, SAME FILL. The planes used to fall back to the opaque --dc-strip /
    --dc-sheet wherever the filter was off (unsupported browsers, then the iOS
    app), on the argument that the fill alone shows the star and the washes
@@ -10811,8 +8525,7 @@ html.un-kb #settings-content-col > .settings-sheet {
    white on those, warm glass everywhere else. The washes are soft shapes
    either way, and measured against the glass the fill alone lands within a
    few points of it, so every platform now draws the fill and nothing else
-   (see --dc-frost). That includes the scrolled session header: it sits in
-   flow above #dc-messages, so the transcript never passes behind it. */
+   (see --dc-frost). */
 
 /* Mounted panes retain their DOM and state, but stop painting after exit.
    The separate overlay-scrim paint layer cuts out the rounded surface. It is
@@ -11287,206 +9000,9 @@ html.un-kb .un-modal {
   translate: 0 var(--platform-vv-top, 0px);
 }
 
-/* THE OVERLAP MUST BE A FULL RADIUS, and it has to come from whatever is
-   directly above the sheet.
-
-   The sheet's arc reaches 28px down before it meets the sheet's own left
-   and right edges. If the layer above stops at the sheet's top edge, the
-   page wallpaper reappears through those 28px of shoulder and the effect
-   inverts — the sheet reads as a hole in the page rather than as a card
-   on the strip. So the layer above extends one full radius DOWN BEHIND
-   the sheet, as surface that exists only to be covered and to show
-   through the shoulders.
-
-   IT IS A PSEUDO-ELEMENT, not padding plus a negative margin. Padding
-   would have to be re-derived for every element that can occupy this slot
-   (the strip and five banner shells, each with its own vertical padding),
-   and a negative margin would drag the next sibling up with it. This
-   takes no layout at all, and `background-color: inherit` means the
-   shoulders show whichever surface is actually being sat on — the strip's
-   grey normally, a banner's tint when a banner is up.
-
-   TWO SELECTORS, BECAUSE THE HOST IS NOT ALWAYS THE STRIP. #dc-banners is
-   `display: contents` (see view.tsx), so a sync / credits / new-change
-   banner paints as a flex child of #dc-view and stands between the strip
-   and the sheet whenever one is up.
-
-   `:has(+ .dc-session-body)` cannot express that, and silently: an element
-   with `display: contents` generates no box, but it is STILL A SIBLING —
-   the property changes box generation, not the DOM. So #dc-banners itself
-   matched that selector in both states, its ::after inherited the host's
-   transparent background, and the extension never painted at all. Hence
-   the two real hosts, named:
-
-     - the strip, when #dc-banners is empty (which is the ordinary case), and
-     - the LAST banner inside it, when it is not.
-
-   A banner needs `position: relative` for the same reason both lift layers
-   do: the sheet has to paint over the overhang, and positioned siblings
-   paint after unpositioned ones. */
-#dc-view > #dc-banners > * { position: relative; }
-/* …AND THE LAST ONE DROPS ITS OWN BOTTOM EDGE, for the same reason the
-   strip did when it became a lift layer. A banner shell carries `border-b`
-   (see features/dev-chat/banners.tsx) to divide itself from the transcript
-   below. The sheet draws its own `border-top` now, so that hairline became a
-   SECOND rule at the same y — and, unlike the sheet's, one that does not
-   follow the 28px arc, so it ran straight out across both shoulders and
-   read as an amber box drawn around the banner. Worst in dark, where
-   `dark:border-amber-900/50` on the near-black ground is the brightest
-   thing on that line. Borders BETWEEN stacked banners are untouched; only
-   the one that now abuts the sheet goes.
-
-   `border-bottom-width`, not a colour override, so the sheet meets the
-   banner with no seam at all. It beats Tailwind's `.border-b` on
-   specificity (two ids and a pseudo-class against one class), which is what
-   it takes here — /css/tailwind.css is linked AFTER this file, so an
-   equal-specificity rule would lose on source order. */
-#dc-view > #dc-banners > :last-child { border-bottom-width: 0; }
-#dc-view > #dc-session-header:has(+ #dc-banners:empty)::after,
-#dc-view > #dc-banners > :last-child::after {
-  content: '';
-  position: absolute;
-  inset-inline-start: 0;
-  inset-inline-end: 0;
-  top: 100%;
-  height: 1.75rem;
-  background-color: inherit;
-}
-
-.dc-chat-pane {
-  min-width: 0; /* allow flex shrink so the chat pane truncates rather than overflows when the viewer is open */
-}
-
-.dc-spec-viewer {
-  display: none;
-  flex-direction: column;
-  background: var(--bg-primary, #0b0b0e);
-  color: var(--text-primary, #e4e4e7);
-}
-
-/* Wide viewports: side panel beside the chat. The width is set
-   inline by JS (persisted from the previous drag) but clamped here
-   so any stale localStorage value can't strand the chat at < 320px
-   wide.
-   320px LESS THAN THE ROW, NOT THE WINDOW (1 November 2026). The chat
-   and this pane share `.dc-session-body`, and the row is narrower than
-   the window by the sidebar, its gutters and the Duo's column: at
-   1280px with the rail docked the row is at most 1020px, so
-   `100vw - 320px` (960px) let a stale width leave the chat under 60px.
-   A percentage of the row is the drag's own ceiling
-   (DevChat._initSpecResizer: the row's width less 320). */
-.dc-spec-viewer.dc-spec-viewer-open {
-  display: flex;
-  width: 480px;
-  min-width: 280px;
-  max-width: calc(100% - 320px);
-  flex-shrink: 0;
-}
-
-/* Narrow viewports: fullscreen modal that floats over the chat. The
-   inline `width` set by JS from the previous side-panel drag is
-   overridden by `width: auto` so the modal still fills the screen.
-
-   `inset: 0` means this panel covers the WHOLE screen — it escapes
-   #app-view and the platform header alike — so it owns both insets
-   itself. padding-top keeps the header row (version picker, the two
-   Share buttons, ✕) out from under the status bar and the notch; the
-   bottom half is carried by .dc-spec-viewer-body-wrap /
-   .dc-spec-viewer-build-hint below, which need it in the side-panel
-   layout too. */
-@media (max-width: 1023px) {
-  .dc-spec-viewer.dc-spec-viewer-open {
-    position: fixed;
-    inset: 0;
-    padding-top: var(--platform-safe-top);
-    width: auto !important;
-    max-width: none;
-    z-index: 50;
-  }
-}
-
-/* Draggable divider between chat and viewer. Hidden by default,
-   only visible on wide viewports when the viewer is open. */
-.dc-spec-resizer {
-  display: none;
-  width: 4px;
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: var(--border, rgba(255,255,255,0.12));
-  transition: background 120ms ease;
-  touch-action: none;
-}
-
-.dc-spec-resizer:hover,
-.dc-spec-resizer-active {
-  background: rgb(139 92 246);
-}
-
-@media (min-width: 1024px) {
-  .dc-spec-resizer-open { display: block; }
-}
-
-/* ── Staging preview side panel (#771) ────────────────────────────
-   #dc-staging-panel is an EMPTY placeholder flex sibling of the chat
-   pane: it only reserves layout space beside the chat. The preview
-   itself stays in the fixed #staging-overlay, geometry-synced onto
-   this slot by AppView.rebindStagingDock — mounting the iframe inside
-   the re-rendered chat DOM would reload it on every renderChatView.
-   Desktop-only: below 1024px the slot renders nothing and the preview
-   uses the fullscreen overlay instead (AppView flips the mode via a
-   matchMedia listener). */
-.dc-staging-panel { display: none; }
-
-@media (min-width: 1024px) {
-  /* 320px less than the row, as the spec viewer above. */
-  .dc-staging-panel.dc-staging-panel-open {
-    display: block;
-    width: 480px;
-    min-width: 320px;
-    max-width: calc(100% - 320px);
-    flex-shrink: 0;
-  }
-}
-
-/* Draggable divider between chat and the docked staging preview —
-   same behaviour as the spec-viewer resizer above. */
-.dc-staging-resizer {
-  display: none;
-  width: 4px;
-  flex-shrink: 0;
-  cursor: col-resize;
-  background: var(--border, rgba(255,255,255,0.12));
-  transition: background 120ms ease;
-  touch-action: none;
-}
-
-.dc-staging-resizer:hover,
-.dc-staging-resizer-active {
-  background: rgb(139 92 246);
-}
-
-@media (min-width: 1024px) {
-  .dc-staging-resizer-open { display: block; }
-}
-
-/* Docked mode for the staging overlay (#771): the same fixed element,
-   pinned over the placeholder slot instead of the whole screen. The
-   inline top/left/width/height come from the geometry sync
-   (AppView._syncStagingDockGeometry). Drops below platform modals /
-   popovers (z-30 vs the fullscreen z-40) since it no longer needs to
-   cover the app header. */
-#staging-overlay.staging-overlay-docked {
-  inset: auto;
-  z-index: 30;
-  border-inline-start: 1px solid var(--border, rgba(255,255,255,0.12));
-}
-
-/* Fullscreen, the overlay is `inset: 0` — it covers the status bar, so
-   its own chrome bar has to clear the notch. Docked, it is pinned over
-   the in-page slot by the geometry sync and needs no inset at all,
-   hence the :not(). Under-chrome is excluded for the same reason docked
-   is: the platform header is above it and already holds the notch. */
-#staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+/* The overlay is `inset: 0` — it covers the status bar, so its own chrome
+   bar has to clear the notch. */
+#staging-overlay .staging-chrome-bar {
   padding-top: calc(0.5rem + var(--platform-safe-top));
 }
 
@@ -11502,136 +9018,16 @@ html.un-kb .un-modal {
    critical <style> values (frontend/src/head.html): keep them in step.
    Only in the app (.in-native-webview): a browser's or an installed web
    app's status bar is not drawn from this theme. */
-html.in-native-webview:not(.native-status-bar-tone) #staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+html.in-native-webview:not(.native-status-bar-tone) #staging-overlay .staging-chrome-bar {
   background-image: linear-gradient(#f4f2e4 var(--platform-safe-top), transparent var(--platform-safe-top));
 }
-html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay:not(.staging-overlay-docked):not(.staging-overlay-under-chrome) .staging-chrome-bar {
+html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay .staging-chrome-bar {
   background-image: linear-gradient(#0b0d1b var(--platform-safe-top), transparent var(--platform-safe-top));
-}
-
-/* ── A session's preview sits UNDER that session's own bars ───────────
-   The Streamlined Concept board's APP PREVIEW frame keeps the header and
-   the session strip on screen and puts the preview below them, which is
-   also what makes the strip's doing<->seeing switch a real toggle rather
-   than a one-way door: the pencil segment has to be reachable from here.
-
-   `top` is set by the component, which measures the strip's bottom edge;
-   this rule owns everything that does not need a number. The z-index pair
-   is deliberate and deliberately LOW: the chrome goes to 30 rather than the
-   overlay to something below 0, and 30 is under the sheets' 40/50 so a
-   Notifications or Messages backdrop still dims the header the way it dims
-   everything else. */
-#staging-overlay.staging-overlay-under-chrome {
-  z-index: 20;
-}
-body:has(#staging-overlay.staging-overlay-under-chrome) #platform-header,
-body:has(#staging-overlay.staging-overlay-under-chrome) #dc-session-header {
-  position: relative;
-  z-index: 30;
-}
-
-/* Same call the docked mode makes, for the same reason: "Back to session"
-   is meaningless beside a session that never left the screen. The strip's
-   pencil segment is the way back.
-
-   THE `:has()` IS A SAFETY NET, NOT A REFINEMENT. Under-chrome hides this
-   button AND leaves .staging-dock-only hidden, so the ONLY way out of the
-   preview is the pencil in #dc-session-header. If that strip is not on
-   screen there is no way out at all — which is exactly what happened while
-   the under-chrome class was gated on `previewActive` alone, a flag
-   ensureStaging publishes for every preview and not only a session's
-   (features/staging/staging-overlay.tsx now gates on the route too).
-   Hiding the last exit is worth making structurally impossible rather than
-   conditional on two owners agreeing: no strip, no hide. */
-body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #staging-back {
-  display: none;
-}
-
-/* Docked chrome: "Back to session" makes no sense beside the still-
-   visible session — the ×-close (.staging-dock-only) replaces it. */
-#staging-overlay.staging-overlay-docked #staging-back { display: none; }
-.staging-dock-only { display: none; }
-#staging-overlay.staging-overlay-docked .staging-dock-only { display: inline-flex; }
-
-/* The docked header is narrow — let the url label give way first. */
-#staging-overlay.staging-overlay-docked #staging-url-label { min-width: 0; }
-
-/* The "How to test" panel's sm:w-96 cap can exceed a 320px panel. */
-#staging-overlay.staging-overlay-docked #staging-testing-panel { max-width: calc(100% - 16px); }
-
-.dc-spec-viewer-header {
-  display: flex;
-  align-items: center;
-  /* Wrap so the share buttons drop to a second line on narrow (phone)
-     widths instead of overflowing horizontally and shoving the close
-     button off-screen. Harmless on the wide side-panel layout where the
-     row already fits. (#86 spec-viewer header overflow fix) */
-  flex-wrap: wrap;
-  gap: 8px;
-  row-gap: 6px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border, rgba(255,255,255,0.12));
-  flex-shrink: 0;
-}
-
-.dc-spec-viewer-close {
-  /* margin-left:auto pins the close to the trailing edge of the first
-     row so it stays top-right no matter what else wraps; flex-shrink:0
-     guarantees it is never compressed or displaced off-screen. */
-  margin-inline-start: auto;
-  flex-shrink: 0;
-  font-size: 20px;
-  line-height: 1;
-  /* ~44px tap target for thumbs; padding keeps the glyph visually small. */
-  width: 44px;
-  height: 44px;
-  padding: 8px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-secondary, #a1a1aa);
-  cursor: pointer;
-}
-
-.dc-spec-viewer-close:hover {
-  color: var(--text-primary, #e4e4e7);
-  background: var(--bg-secondary, #18181b);
-}
-
-/* Let the version dropdown shrink and ellipsise rather than forcing the
-   header wide — a <select> won't shrink below its content's intrinsic
-   width without min-width:0. Long labels (vN (latest) · date · PR #N)
-   get a trailing "…" instead of overflowing the row. */
-#dc-spec-viewer-version {
-  min-width: 0;
-  flex: 0 1 auto;
-  max-width: 220px;
-  text-overflow: ellipsis;
-}
-
-.dc-spec-viewer-body-wrap {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px;
-}
-
-/* The bottom inset belongs to whichever of these two is LAST — the
-   build hint is conditional (only a non-empty latest version renders
-   it, see _renderSpecViewer), so both need a rule and neither may
-   double up. `:last-child` is what picks the right one: with the footer
-   present the scroller keeps its plain 12px and the footer's own
-   background fills the strip; with no footer the scroller carries it.
-   Unconditional, not inside the fullscreen media query: since #app-view
-   stopped padding, the side-panel layout reaches the true bottom edge
-   too. */
-.dc-spec-viewer-body-wrap:last-child {
-  padding-bottom: calc(12px + var(--platform-safe-bottom));
 }
 
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the
-   single untabbed body (see public/js/spec-sections.js). */
+   single untabbed body. */
 .dc-spec-viewer-preamble {
   margin-bottom: 12px;
 }
@@ -11669,142 +9065,6 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   font-size: 12px;
   font-style: italic;
   color: var(--text-secondary, #a1a1aa);
-}
-
-/* Footer bar reminding the user that a spec is a plan, not a built
-   change — they still need to ask the AI in chat to build it. Only
-   rendered while viewing a non-empty draft (see _renderSpecViewer). */
-.dc-spec-viewer-build-hint {
-  flex-shrink: 0;
-  /* Last element in the panel when it renders, so it owns the bottom
-     inset — and it has a background of its own, which is what makes the
-     strip read as an extension of the footer rather than a gap. */
-  padding: 8px 12px calc(8px + var(--platform-safe-bottom));
-  font-size: 12px;
-  line-height: 1.4;
-  color: var(--text-secondary, #a1a1aa);
-  border-top: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-}
-
-.dc-spec-viewer-body {
-  font-size: 13px;
-  line-height: 1.55;
-  word-break: break-word;
-  color: var(--text-primary, #e4e4e7);
-}
-
-.dc-spec-viewer-body > :first-child { margin-top: 0; }
-.dc-spec-viewer-body > :last-child  { margin-bottom: 0; }
-.dc-spec-viewer-body .dc-h3 { margin: 16px 0 6px; }
-.dc-spec-viewer-body .dc-h4 { margin: 14px 0 5px; }
-.dc-spec-viewer-body .dc-h5 { margin: 12px 0 4px; }
-.dc-spec-viewer-body .dc-p,
-.dc-spec-viewer-body .dc-ul,
-.dc-spec-viewer-body .dc-ol { margin: 6px 0; }
-.dc-spec-viewer-body .dc-blockquote {
-  margin: 8px 0;
-  padding: 4px 10px;
-  border-inline-start: 3px solid var(--border, rgba(255,255,255,0.18));
-  color: var(--text-secondary, #a1a1aa);
-}
-
-.dc-spec-action-btn {
-  font-size: 12px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
-  cursor: pointer;
-  transition: background 120ms ease, border-color 120ms ease;
-}
-
-.dc-spec-action-btn:hover:not(:disabled) {
-  border-color: rgb(139 92 246);
-}
-
-.dc-spec-action-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* (#1012) The copy button's label swaps to "Copied!" / "Copy failed" for
-   1.5s. Reserve the wider label's width so the flash can't reflow — or
-   re-wrap, on a phone-width header — the row around it. */
-.dc-spec-copy-btn {
-  min-width: 108px;
-  text-align: center;
-}
-
-/* (#86) "Share to user" popover, anchored under the spec-viewer header. */
-.dc-spec-viewer-header {
-  position: relative;
-}
-
-.dc-spec-share-pop {
-  position: absolute;
-  top: 100%;
-  inset-inline-end: 12px;
-  z-index: 30;
-  width: 240px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  border-radius: 8px;
-  background: var(--bg-primary, #09090b);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-}
-
-.dc-spec-share-pop.hidden {
-  display: none;
-}
-
-.dc-spec-share-input {
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border, rgba(255,255,255,0.12));
-  background: var(--bg-secondary, #18181b);
-  color: var(--text-primary, #e4e4e7);
-  outline: none;
-}
-
-.dc-spec-share-input:focus {
-  border-color: rgb(139 92 246);
-}
-
-.dc-spec-share-suggestions {
-  display: flex;
-  flex-direction: column;
-  max-height: 160px;
-  overflow-y: auto;
-}
-
-.dc-spec-share-sug {
-  font-size: 12px;
-  text-align: start;
-  padding: 5px 8px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-primary, #e4e4e7);
-  cursor: pointer;
-}
-
-.dc-spec-share-sug:hover {
-  background: var(--bg-secondary, #18181b);
-}
-
-.dc-spec-share-error {
-  font-size: 11px;
-  color: rgb(248 113 113);
-}
-
-.dc-spec-share-error.hidden {
-  display: none;
 }
 
 /* ── Group-chat spec_share card ────────────────────────── */
@@ -11910,8 +9170,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 }
 .gc-spec-pr:hover { text-decoration: underline; }
 
-/* Group-chat spec side-panel. Mirrors the dev-chat spec viewer
-   (.dc-spec-viewer): the slot is rendered as a sibling of the chat
+/* Group-chat spec side-panel: the slot is rendered as a sibling of the chat
    pane inside the gc-tab-body flex row, so it occupies space within
    the chat tab — never covering the app header or the vote/issue
    panel that sits above the row.
@@ -11938,8 +9197,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
    styled by the drag handler (persisted to localStorage); CSS clamps
    so a stale value can't strand the chat too narrow: 320px less than
    the `.gc-tab-body` row it shares with the chat (the drag's own
-   ceiling), not less than the window (1 November 2026; see
-   `.dc-spec-viewer-open`). */
+   ceiling), not less than the window (1 November 2026). */
 .gc-spec-side-panel.gc-spec-side-panel-open {
   display: flex;
   width: min(560px, 50vw);
@@ -11993,8 +9251,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 
 /* Draggable divider between chat pane and spec panel. Hidden by
    default, only visible when the panel is open AND the viewport is
-   wide enough for side-panel layout. Same shape as the dev-chat
-   spec-resizer for visual consistency. */
+   wide enough for side-panel layout. */
 .gc-spec-resizer {
   display: none;
   width: 4px;
@@ -12050,8 +9307,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
 }
 .gc-spec-panel-close:hover { color: var(--text-primary, #e4e4e7); }
 
-/* (#1012) "Copy markdown" in the shared-spec panel header. Matches
-   .dc-spec-action-btn so the two spec surfaces read as one family; the
+/* (#1012) "Copy markdown" in the shared-spec panel header; the
    min-width reserves room for the "Copy failed" label flash. */
 .gc-spec-panel-copy {
   font-size: 12px;
@@ -12083,7 +9339,7 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   color: var(--text-primary, #e4e4e7);
 }
 
-/* Markdown styling — same spacing as the dev-chat spec viewer. */
+/* Markdown styling. */
 .gc-spec-panel-body > :first-child { margin-top: 0; }
 .gc-spec-panel-body > :last-child  { margin-bottom: 0; }
 .gc-spec-panel-body .dc-h3 { margin: 16px 0 6px; }
@@ -12104,44 +9360,25 @@ body:has(#dc-session-header) #staging-overlay.staging-overlay-under-chrome #stag
   font-style: italic;
 }
 
-/* ── Keyboard shortcut hints ───────────────────────────── */
-
-.dc-kbd {
-  /* --bg-tertiary and the primary ink: --bg-secondary IS the card in dark
-     (#1c1c1e both) and the chip's inherited muted ink measured 1.9:1 on it. A
-     keycap has to read as a key. */
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  padding: 0 4px;
-  font-size: 10px;
-  font-family: 'JetBrains Mono', 'Fira Code', monospace;
-}
-
 /* ── Scrollbar styling ─────────────────────────────────── */
 
-.dc-messages-container::-webkit-scrollbar,
 #gc-messages::-webkit-scrollbar,
 #app-list::-webkit-scrollbar,
 #home-screen::-webkit-scrollbar { width: 6px; }
 
-.dc-messages-container::-webkit-scrollbar-track,
 #gc-messages::-webkit-scrollbar-track,
 #app-list::-webkit-scrollbar-track,
 #home-screen::-webkit-scrollbar-track { background: transparent; }
 
-.dc-messages-container::-webkit-scrollbar-thumb,
 #gc-messages::-webkit-scrollbar-thumb,
 #app-list::-webkit-scrollbar-thumb,
 #home-screen::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
-.dc-messages-container::-webkit-scrollbar-thumb:hover,
 #gc-messages::-webkit-scrollbar-thumb:hover,
 #app-list::-webkit-scrollbar-thumb:hover,
 #home-screen::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
-.dc-messages-container, #gc-messages, #app-list, #home-screen {
+#gc-messages, #app-list, #home-screen {
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
@@ -13465,119 +10702,6 @@ button.attr-chip { cursor: pointer; }
   .dev-kanban-col.dev-kanban-col-active { display: block; }
 }
 
-/* ── Shared dev-chat transcript (read-only) ─────────────────────────────
-   The "Dev chat" section on a shared session's / a proposal's topic page,
-   painted by public/js/session-transcript.js. It reuses the dev chat's
-   dc-* message and status classes so a shared transcript reads like the
-   real chat; everything here is the read-only frame around them.
-
-   Deliberately no composer/send styling exists for this surface — there
-   is no composer to style (see the renderer's rule 2). */
-
-.st-section {
-  margin-top: 8px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-card-alt);
-  overflow: hidden;
-}
-
-/* #2605: the dev session page in its READ-ONLY form. The Build door sends a
-   reader who does not own the session here, and what they get is the
-   published chat on the session's own page rather than a sheet folded under
-   a card's discussion. `#dev-section` is a fixed, overflow-hidden flex
-   column, so this — its only child — owns the scroll. */
-.dev-session-read {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 12px 12px 0;
-}
-.dev-session-read > .st-section { margin-top: 0; }
-.dev-session-read-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-}
-
-.st-section-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 8px 10px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  text-align: start;
-}
-.st-section-head:hover { background: var(--bg-code); color: var(--text-primary); }
-
-/* Two glyphs rather than a rotated one, matching .dc-cc-attached-chevron's
-   reasoning (a rotated triangle's bounding box flips and drags its visual
-   center off the baseline). */
-.st-caret { font-size: 16px; line-height: 1; color: var(--text-muted); width: 14px; text-align: center; }
-.st-caret::before { content: '\25B8'; /* ▸ */ }
-/* The section is a div + button (not a <details>), so aria-expanded on the
-   header — which _toggleTranscript keeps in sync — is what flips the glyph. */
-.st-section-head[aria-expanded="true"] .st-caret::before { content: '\25BE'; /* ▾ */ }
-
-.st-readonly-tag {
-  margin-inline-start: auto;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.st-body { padding: 4px 10px 10px; }
-.st-body[hidden] { display: none; }
-
-.st-timeline { display: flex; flex-direction: column; }
-
-/* Messages sit full-width here (no 92% inset): the topic page column is
-   already narrower than the dev-chat pane, and the alignment asymmetry is
-   what distinguishes the two speakers. */
-.st-msg { max-width: 100%; }
-.st-msg-who { color: var(--text-secondary); font-weight: 600; }
-.st-msg-when { color: var(--text-muted); font-size: 10px; }
-
-.st-agent-details { margin-block: 2px 2px; margin-inline: 2px 0; }
-.st-agent-body { padding-block: 2px 4px; padding-inline: 8px 0; border-inline-start: 1px solid var(--border-light); margin-inline-start: 6px; }
-.st-cc-summary { font-size: 12px; color: var(--text-secondary); padding-block: 2px 0; padding-inline: 14px 0; }
-
-.st-spec-card {
-  border: 1px solid var(--border-light);
-  border-radius: 8px;
-  padding: 6px 8px;
-  margin-block: 4px 4px; margin-inline: 22px 0;
-  background: var(--bg-card);
-}
-.st-spec-head { font-size: 0.9375rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
-.st-spec-snippet { font-size: 12px; color: var(--text-secondary); }
-
-/* Attachment chips are inert here — names only, no bytes (the sanitiser
-   strips the ids). Cursor stays default so they don't read as links. */
-.st-att-chip { cursor: default; }
-.st-att-chip:hover { border-color: var(--border); }
-
-.st-truncated,
-.st-empty,
-.st-error {
-  font-size: 11px;
-  color: var(--text-muted);
-  font-style: italic;
-  padding: 4px 0;
-}
-
 /* ────────────────────────────────────────────────────────────────────────
    Admin console — folded-in section styles (#860)
 
@@ -13999,56 +11123,6 @@ html.dark #admin-onboarding-flows {
 :where(html[data-motion="reduce"]) #app-iframe,
 :where(html[data-motion="reduce"]) #app-viewer-frame { transition: none; }
 
-/* ── Dev-chat "Run on" runner controls (#907) ─────────────────────────────
-   The selector + chip that appear in the composer's status row when a
-   local coding agent has attached to this session. Painted by
-   DevChat._renderRunnerControls(); the host span is always in the markup
-   and is empty (and therefore invisible, no gap, no min-height) for every
-   session that has never had a machine attached. */
-.dc-runner {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-.dc-runner:empty { display: none; }
-
-/* Green so it reads as "connected", not as a warning: a turn running on
-   the user's own machine is the state they asked for. */
-.dc-runner-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  max-width: 220px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 2px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(34, 197, 94, 0.35);
-  background: rgba(34, 197, 94, 0.12);
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.4;
-}
-.dc-runner-chip::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #22c55e;
-  flex: none;
-}
-
-/* The machine has gone. Same shape, drained of colour, and the dot stops
-   claiming something live is happening. */
-.dc-runner-chip-past {
-  border-color: var(--border);
-  background: var(--bg-code);
-  color: var(--text-muted);
-}
-.dc-runner-chip-past::before { background: var(--text-faint); }
-
 /* ── Offline mode: the visible state (#1021) ──────────────────────────
    `body.is-offline` is toggled by Offline._set() and is the single hook
    for every offline affordance. Before this, the only signal was an
@@ -14224,186 +11298,6 @@ body.is-offline [data-offline-disabled] {
   opacity: 0.45;
   pointer-events: none;
   cursor: not-allowed;
-}
-
-/* ── The venue selector in the session header (#1348) ─────────────────
-   Where this session is built, stated and changed from the top right of
-   the session area. It began (#1086) as a caption above the composer —
-   "Building in X" with a "Change how this is built" link — which put it in
-   the same strip as the meter, the runner and the budget menu and made it
-   read as one more piece of composer furniture. In the header it is where
-   a "what kind of session is this?" control is looked for, and it is
-   outside the launchpad swap (#1281) that hides the composer entirely for
-   the three hand-off venues.
-
-   Quiet, not loud: a bordered chip in muted text, the venue name carrying
-   the only emphasis. It shares the header with the session title, so it
-   caps its own width and truncates rather than pushing the title out. */
-.dc-venue-select {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  gap: 0.25rem;
-  max-width: min(45%, 14rem);
-  padding: 0.1rem 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 0.375rem;
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 11px;
-  line-height: 1.5;
-  cursor: pointer;
-}
-
-.dc-venue-select:hover {
-  border-color: var(--accent-light);
-  color: var(--text-primary);
-}
-
-.dc-venue-select:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(31, 134, 255, 0.35);
-}
-
-/* Mid-turn the venue cannot change — the running turn is already in one.
-   Keep the control's shape and contrast instead of fading it into an inert
-   dropdown: the lock and status below explain why it cannot be opened. */
-.dc-venue-select:disabled {
-  background: var(--dc-raised);
-  color: var(--text-muted);
-  cursor: not-allowed;
-}
-
-.dc-venue-select:disabled:hover {
-  border-color: var(--border);
-  color: var(--text-muted);
-}
-
-.dc-venue-select:disabled .dc-venue-name {
-  color: var(--text-muted);
-}
-
-/* On a phone the header already carries the back arrow, the title, the PR
-   pill and the status pill, and 45% of 390px is more than the venue needs.
-   10.5rem is not an aesthetic round number: it is the narrowest width at
-   which the two "Your computer · …" venues are still told apart — below it
-   both ellipsize to the same string, and the control stops answering the
-   question it exists to answer.
-
-   #1941: the second term is the strip's SECOND LINE. Below `sm` the strip
-   wraps, and this control shares its line with the mode switch (7.5rem
-   with its label) and the ⋯ (1.75rem), plus the two gaps between them
-   (1rem): 10.25rem. A flex line is composed from hypothetical sizes, so a
-   control that would only fit by shrinking does not shrink, it wraps — and
-   the ⋯ would start a THIRD line. At 375px `100% - 10.5rem` is 11.4rem and
-   the first term wins; the cap only bites below about 350px, where it
-   trades a little of the venue's name for keeping the strip at two lines
-   on the narrowest phones. */
-@media (max-width: 30rem) {
-  .dc-venue-select {
-    max-width: min(10.5rem, calc(100% - 10.5rem));
-  }
-}
-
-/* The venue's own name is the part worth reading; it is also the part
-   that has to give way when the header is narrow. */
-.dc-venue-name {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-primary);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dc-venue-caret {
-  flex: none;
-  font-size: 9px;
-  line-height: 1;
-  opacity: 0.7;
-}
-
-/* Below Tailwind's sm the session name may take two lines, so a long name
-   has room beside the provider and the PR link without a very long title
-   consuming the chat. (#1940 put those controls back inline at every width;
-   the full branch name stays on the title's tooltip.)
-
-   #1941: THE STRIP IS TWO LINES ON A PHONE, and this basis is what breaks
-   it. The strip wraps below `sm` (view.tsx). The title's hypothetical size
-   is `100% - 4rem` — the strip's width less room for the PR number beside
-   it — so the name and the PR number fill the first line and the first
-   control that does not fit, the venue, starts the second. With `flex-1`'s
-   zero basis every child fit on one line and the title took the leftovers,
-   which at 375px were none: the venue (10.5rem), the mode switch and the ⋯
-   are wider than the strip between them.
-
-   The second line's own cap is on `.dc-venue-select` below (the 30rem
-   rule): wrapping is decided on hypothetical sizes, so a control that
-   would only fit by shrinking does not shrink — it wraps. */
-@media (max-width: 639px) {
-  #dc-session-header > .dc-session-title {
-    white-space: normal;
-    overflow-wrap: anywhere;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    flex-basis: calc(100% - 4rem);
-  }
-}
-
-.dc-venue-busy {
-  display: inline-flex;
-  align-items: center;
-  flex: none;
-  gap: 0.15rem;
-  color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.dc-venue-busy-icon {
-  width: 0.7rem;
-  height: 0.7rem;
-  flex: none;
-}
-
-/* The slot above the composer, which now carries the fallback sentence
-   and nothing else — empty on every session that got the venue it asked
-   for, and collapsed rather than left as a gap above the composer. */
-.dc-venue-slot {
-  padding: 0.25rem 0.1rem 0.35rem;
-}
-
-.dc-venue-slot:empty {
-  display: none;
-}
-
-/* "Your OpenRouter key is not set, so this turn ran on Homeroom · Claude"
-   — the one place a venue the user did not choose is confessed. A whole
-   sentence, so it lives above the composer where it can wrap, rather than
-   in the header control that names the venue. */
-.dc-venue-note {
-  color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-/* The grouped model/key selector. Both in-chat providers render it in the
-   card; the other four venues have nothing to choose here. */
-.dc-venue-detail {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0 0.1rem 0.25rem;
-}
-
-/* It shares the card row with the runner and meter, so it brings no padding
-   of its own. */
-.dc-venue-detail-inline {
-  padding: 0;
 }
 
 /* The session-card chip on the dev feed (#1087 card actions row). Names
@@ -14686,7 +11580,7 @@ body.is-offline [data-offline-disabled] {
 }
 .dev-feed-msg-time { color: var(--text-muted); white-space: nowrap; }
 .dev-feed-msg-text { color: var(--text-primary); }
-/* The reply box: a 36px white pill field and the dev session's send disc
+/* The reply box: a 36px white pill field and a send disc
    (36px, filled accent, up-arrow), the pair every composer on the platform
    now shares. The field's own utilities (input.tsx `activityReply`) draw a
    bordered r16 box; this is the widget-language reading of the same field,
@@ -15354,19 +12248,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   column-gap: 8px;
   align-self: flex-start;
 }
-.dev-change-overview {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px 12px 24px;
-}
-.dev-change-workspace {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-}
-.dev-change-overview[hidden], .dev-change-workspace[hidden] { display: none; }
 .dev-change-issues {
   margin: 8px 4px 12px;
   padding: 12px 14px;
@@ -15380,34 +12261,6 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
    scrolled it sideways. Only the wrap for stray long tokens stays. */
 .dev-change-issues { min-width: 0; }
 .dev-change-issues a { min-width: 0; overflow-wrap: anywhere; }
-.dev-change-overview .dev-topic { width: 100%; }
-/* The Discussion sheet (topic/conversation.tsx), and nothing under it. The
-   tabs went first — Activity was three timestamps the card's meta line
-   carries — and the Build sheet followed (#2605): the "Open build" /
-   "Continue building" / "Read the build" pill leaves this page for the
-   change's own dev session. */
-.dev-conversation { min-width: 0; scroll-margin-top: 12px; }
-.dev-conversation-audience { margin: 0 4px 8px; }
-.dev-conversation-chat { height: clamp(300px, 50dvh, 540px); }
-/* The thread's scroller wears `overscroll-contain` for the full-height
-   thread screens, where the page behind it must not move. Here the thread is
-   one sheet in a scrolling page, and the utility trapped the wheel: a reader
-   whose pointer rested on the Discussion could not scroll the page even with
-   the thread at its end. Let the scroll chain to the page. */
-.dev-conversation-chat #gc-thread-scroll { overscroll-behavior: auto; }
-.dev-conversation .dev-thread { border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.dev-conversation .dev-thread::before, .dev-conversation .dev-thread::after { content: none; }
-#dev-topic-thread .dev-conversation #gc-thread-messages {
-  margin: 0;
-  padding: 0;
-  max-width: none;
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-#dev-topic-thread .dev-conversation #gc-thread-messages::before { content: none; }
 .dev-topic-sheet {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -15919,7 +12772,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ledger-explain { grid-column: 1 / -1; margin: 2px 0 8px; font-size: 12.5px; }
 .dev-ledger-explain-text { margin: 2px 0 0; line-height: 1.45; color: var(--text-primary); }
 .dev-ledger-explain-source { margin-top: 2px; font-size: 11px; color: var(--text-muted); }
-.dev-ledger-fix-refused { flex-basis: 100%; font-size: 12px; color: var(--state-blocked); }
 .dev-ledger-check-glyph { flex: none; }
 .dev-ledger-check-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dev-ledger-check-path { flex: none; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-muted); }
@@ -16341,7 +13193,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    words. The ledger's review line rendered outside the ledger, so it takes
    the note's size and its own top margin rather than the row grid's. */
 .dev-topic-roster { margin-top: 10px; font-size: 13px; line-height: 1.5; }
-.dev-topic-transcript .st-section { margin: 0; }
 
 /* ── Discussion ──
    The app's own thread — `#gc-thread-messages`, the group chat's transcript
@@ -17201,7 +14052,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-change-pair[data-stuck] { gap: 4px; padding-block: 8px; background-color: var(--dc-sheet-solid); }
 .dev-change-pair[data-stuck] .dev-change-gate { padding: 8px 12px; }
 .dev-change-pair[data-stuck] :is(.dev-change-bar, .dev-change-gate-facts, .dev-change-gate-note,
-  .dev-change-gate-why, .dev-change-gate-fix, .dev-change-gate-refused) { display: none; }
+  .dev-change-gate-why, .dev-change-gate-fix) { display: none; }
 .dev-change-pair[data-stuck] [data-change-gate-line="testing"] .dev-change-gate-act { display: none; }
 .dev-change-gate {
   min-width: 0;
@@ -17265,7 +14116,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 14px;
   font-weight: 600;
 }
-.dev-change-gate-refused { grid-column: 1 / -1; margin: 6px 0 0; font-size: 13px; line-height: 1.4; color: var(--state-blocked); }
 @media (prefers-reduced-motion: reduce) {
   .dev-change-bar-fill { transition: none; }
 }
@@ -20549,10 +17399,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
      pan-y themselves, so a sideways drag on them is the drawer's. */
   .messages-layout.messages-drawer .messages-list-scroll,
   .messages-layout.messages-drawer .messages-thread-scroll { touch-action: pan-y; }
-  /* An agent session's bar names it in the pane, over its pills; on the
-     drawer the header does (messages/index.tsx agentThreadWords), so the
-     pane leaves its own copy out, as a conversation's sheet does. */
-  .messages-layout.messages-drawer [data-agent-session-bar] > div:first-child:not([data-agent-session-pills]) { display: none; }
   .messages-layout.messages-drawer > .messages-list-pane {
     position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;
     will-change: transform;
@@ -21284,9 +18130,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab^="c:"] {
 /* Reduce motion setting (#6510): the same, when Settings asks for it. */
 :where(html[data-motion="reduce"]) .dev-ws-ask-pending { animation: none; }
 .dev-ws-ask-failed { color: var(--state-blocked); background: var(--state-blocked-bg); }
-/* THE COMPOSER is the dev session's (`.dc-card`), padded evenly so its
-   resting line sits on its own middle — `.dc-card`'s 14-over-10 is for a
-   tall field with controls under it. */
+/* THE COMPOSER is a card padded evenly, so its resting line sits on its
+   own middle. */
 .dev-ws-ask-composer { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; flex: none; }
 .dev-ws-ask-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .dev-ws-ask-line > .dev-ws-ask-input { flex: 1 1 auto; }
@@ -22702,8 +19547,6 @@ button.dev-fold-mark:focus-visible { outline: 2px solid var(--accent); outline-o
    reader can see where the item ends. Not the comment threads: the sheet
    already carries both, above and below this block. */
 .dev-ws-open-btn { white-space: nowrap; text-decoration: none; }
-/* The "Open session" link under a card about the viewer's own session (#1887). */
-.dev-ws-sheet-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; }
 .dev-ws-more { font-size: 13px; color: var(--text-muted); padding: 2px 10px; }
 .dev-ws-theme-more { font-size: 13px; color: var(--text-muted); padding: 4px 10px 0; }
 /* The row's vote button, at the right end of its last line (.dev-ws-row-band). */
@@ -23163,7 +20006,6 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
 .platform-parked::before,
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
              #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
-             #agent-session-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header::before,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
 html[data-browser-scroller] #landing-header::before {
@@ -23997,8 +20839,8 @@ html[data-side-strip="left"] #notifications-sheet {
 
   /* THE STRIP'S GROUND UNDER A SHEET (Evan, 24 Oct 2026). On Home, Discover
      and You the screen is the bare wallpaper, which is the body's own
-     ground and runs under the strip already. Messages, Settings and the
-     agent chats stand on a sheet over it instead, the `.dc-lift-strip`
+     ground and runs under the strip already. Messages and Settings stand
+     on a sheet over it instead, the `.dc-lift-strip`
      plane, and the plane stops at the strip with the body behind it, so the
      strip read as a band of a different colour. (A project's pages and
      Messages' drawer run their sheet under the strip themselves; see the
@@ -24017,7 +20859,7 @@ html[data-side-strip="left"] #notifications-sheet {
      tabs and the back button. Over the ground it slides under the strip
      instead, as off a phone's edge. Under the header (z-index 10), over
      the screens. */
-  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen, #agent-session-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+  html[data-side-strip] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
     position: fixed;
     z-index: 9;
     top: calc(var(--browser-banner-h, 0px) + var(--platform-header-h) + var(--platform-safe-top, 0px) - 0.5rem);
@@ -24029,7 +20871,7 @@ html[data-side-strip="left"] #notifications-sheet {
     clip-path: inset(0 round 0 1.75rem 0 0);
     pointer-events: none;
   }
-  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen, #agent-session-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
+  html[data-side-strip="left"] body:has(:is(#messages-screen, #settings-screen):not(.hidden) .dc-lift-strip:not(.messages-drawer)) .platform-side-strip-ground {
     left: 0;
     right: auto;
     border-top-right-radius: 0;
@@ -24801,17 +21643,12 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
      "the app is the whole window" means, and the rail is hidden there anyway
      so the token would be 0 even if it were listed.
 
-     #agent-session-screen was absent by omission (QA 2026-09-24 Q23): it
-     arrived after this list, drew from the window's left edge, and its app
-     and change chips, the reply suggestions and the start of the composer sat
-     under the rail where they could not be clicked.
-
-     #profile-proposals-screen likewise (#3498): Your requests and Your votes
+     #profile-proposals-screen is listed (#3498): Your requests and Your votes
      centred in the whole window, so from a laptop width down their cards
      began under the rail. */
   :is(#home-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
-      #agent-session-screen, #profile-proposals-screen) {
+      #profile-proposals-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
        The rail's hairline was the content's left margin, so a card began
        where the rail ended and the page had air on the right and none on the
@@ -25705,8 +22542,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 }
 
 /* ── Messages is one inbox, and says which kind each row is (#2718) ──
-   frontend/src/features/messages/inbox.ts carries the argument: people, app
-   discussions and agent chats in one list, ordered on one clock, told apart
+   frontend/src/features/messages/inbox.ts carries the argument: people, the
+   Homeroom bot and changes in flight in one list, ordered on one clock, told apart
    by a mark rather than by three sidebars — which is what Slack and Teams do
    with a channel, a DM and a bot thread. What lives here is the filter row
    and the two shapes the list grew. */
@@ -25933,14 +22770,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   justify-content: center;
   font-size: 18px;
   font-weight: 700;
-}
-/* An agent chat has no artwork of its own — it is a thread with the thing
-   that builds, not with an app — so it wears the accent tint and the same
-   sparkle the Improve panel's own chat rows use. */
-.messages-inbox-agent-tile {
-  background: var(--brand-tint);
-  color: var(--brand-ink);
-  border: 1px solid var(--brand-line);
 }
 /* A change in flight (16 Oct 2026): an agent's pencil on a tint of its
    project's colour (--change-ink, lib/community-color.ts), in the place of
@@ -28284,7 +25113,7 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [da
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > [data-settings-section] { max-width: none; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content .ui-secblurb { margin: 0 0 8px; line-height: 1.45; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-section-content :is(.ui-secblurb, .ui-note) + .ui-cap { margin-top: 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="agent-files"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
+html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content > :is([data-settings-section="linked-accounts"], [data-settings-section="phones"], [data-settings-section="language"], [data-settings-section="tour"], [data-settings-section="guide"], [data-settings-section="about"], [data-settings-section="experimental"], [data-settings-section="wallet"], [data-settings-section="usernode"]) > div:first-child > .ui-sechead:first-child { display: none; }
 /* A part's own blocks were ruled off from one another (`mt-6 pt-6
    border-t`): the kit stacks them, no hairline. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-section-content [data-settings-section] .border-t.pt-6 { margin-top: 24px; padding-top: 0; border-top: 0; }
@@ -28380,8 +25209,8 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-about-legal { margin-
    second class, and is left to it.) */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .hidden:not([class*=":block"], [class*=":flex"], [class*=":inline"], [class*=":grid"]) { display: none; }
 /* A LIST OF SMALL CARDS (the app permissions, the grants, the CLI's
-   credentials, the agent files, the local agents, the apps set
-   differently): one card, one row each, the name at the row's size. */
+   credentials, the apps set differently): one card, one row each, the name
+   at the row's size. */
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-card > .ui-mini { border-radius: 0; background: none; padding: 12px 16px; font-size: 13px; color: var(--fr-mut); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-card > .ui-mini + .ui-mini { border-top: 1px solid var(--fr-line2); }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-root .ui-mini .font-medium:not(button, a, .font-mono) { font-size: 15px; font-weight: 650; color: var(--fr-ink); }
@@ -28433,12 +25262,11 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
   html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-mobile-menu-host .settings-menu-row { gap: 12px; padding-inline: 16px; }
 }
 /* ONE CARD OF SEVERAL PARTS (OpenRouter, s61: `.ui-onecard`, a neutral
-   wrapper). The included key, the personal key and the model block stand in
-   it one under another; each keeps its own node, id and `hidden`, and only
-   its own card's paint is put away. The personal key's label is a field's
-   label inside the card. */
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root :is(.ui-onecard, .ui-filecard) > .ui-card, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard .ui-keyrow { margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard > .ui-card.ui-fields { padding-top: 4px; }
+   wrapper). The included key and the personal key stand in it one under
+   another; each keeps its own node, id and `hidden`, and only its own card's
+   paint is put away. The personal key's label is a field's label inside the
+   card. */
+html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard > .ui-card, html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard .ui-keyrow { margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; overflow: visible; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-openrouter-personal-controls { padding: 12px 16px 16px; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root #settings-openrouter-personal-controls > label { display: block; padding: 0 0 8px; font-size: 13px; font-weight: 650; line-height: 1.45; }
 /* A KEY is a field with its button beside it (the two keys, `.ui-keyrow`):
@@ -28447,18 +25275,6 @@ html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-onecard .ui-keyrow { padding: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-keyrow > div { padding: 0; border: 0; }
 html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-keyrow > div:first-child { flex: 1 1 220px; min-width: 0; }
-/* A KIND OF AGENT FILE is one card (s63: `.ui-filecard`): its name, then
-   its empty line or its files, with Upload at the end of the first row.
-   The grid places the button; nothing is moved. A kind with no line under
-   its name (while the files load or fail) is still a card. */
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard > div:first-child { display: contents; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard h4 { grid-column: 1; margin: 0; padding-block: 12px; padding-inline-start: 16px; font-size: 15px; font-weight: 650; line-height: 1.45; color: var(--fr-ink); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard [data-agent-files-upload] { grid-column: 2; grid-row: 1 / span 2; margin-inline-end: 16px; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard > .ui-card { grid-column: 1; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard > .ui-card > p { margin-top: -10px; padding: 0; padding-inline-start: 16px; padding-block-end: 12px; line-height: 1.45; }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard:has(.ui-mini) > .ui-card { grid-column: 1 / -1; border-top: 1px solid var(--fr-line2); }
-html[data-skin]:where(:not([data-skin="brand"])) #settings-screen #settings-root .ui-filecard:has(.ui-mini) [data-agent-files-upload] { grid-row: 1; }
 /* INSIDE A TOOL'S GUIDED SET-UP (s62: what a tool's card opens). The
    product's own nodes, which settings.js writes into by id, in the kit's
    type and tokens: the steps' numbers the kit's lead tile at 24px (the
@@ -31651,7 +28467,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-section-head,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-thread-kicker,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .msgx-picker-head,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dc-drafts-head,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-topic-h,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-topic-sub,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-details-sub,
@@ -31660,8 +28475,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-lane-title,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .community-switcher-title,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .community-switcher-section,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .shots-noticed-head,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .st-spec-head {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .shots-noticed-head {
   text-transform: none;
   letter-spacing: 0;
 }

@@ -2,27 +2,22 @@
  * The pending-upload strip above a composer — the chips and thumbnails for
  * files that are staged but not yet sent.
  *
- * ── Why this is its own feature ───────────────────────────────────────
+ * ── What the caller keeps ─────────────────────────────────────────────
  *
- * It is drawn in TWO places, and it always was: the dev chat's composer
- * (`#dc-attachments`) and the group chat's (`#gc-attachments` /
- * `#gc-thread-attachments`). The group chat's own comment said so — "reuses
- * the dev-chat dc-attach-* styles" — and the two renderers were the same
- * markup written out twice, in modules that cannot import each other.
+ * It is drawn by the group chat's composer (`#gc-attachments` /
+ * `#gc-thread-attachments`), in the `dc-attach-*` styles. Two things stay
+ * with the caller, and neither reaches the markup:
  *
- * They differ in exactly two ways, and neither reaches the markup:
- *
- *   * WHICH badge a kind gets. The dev chat has a `zip` kind that carries an
- *     entry count ("ZIP · 214 files"); the group chat has `markdown` and
- *     `html`. Both compute the label in their own module and hand it over as
- *     a string, so the chip does not know the difference.
- *   * HOW a row is removed. Each module holds its own pending list — with the
+ *   * WHICH badge a kind gets. The group chat has `markdown` and `html`; it
+ *     computes the label in its own module and hands it over as a string,
+ *     so the chip does not know the kinds.
+ *   * HOW a row is removed. The module holds its own pending list — with the
  *     File and the object URL that must be revoked — so the row reports an
  *     INDEX and the module does the rest.
  *
  * ── An upload in flight offers no remove control ──────────────────────
  *
- * Deliberately, in both: cancelling mid-PUT would leave a half-written row
+ * Deliberately: cancelling mid-PUT would leave a half-written row
  * for the 24h orphan sweep to find anyway, and a control that sometimes works
  * is worse than an honest "…".
  */
@@ -36,7 +31,7 @@ export interface PendingAttachmentView {
   /** The file has no name; `name` is a stand-in label. */
   unnamed?: boolean;
   kind: string;
-  /** MD / HTML / BIN / ZIP · N files, or null where the kind carries no tag. */
+  /** MD / HTML / BIN, or null where the kind carries no tag. */
   badge: string | null;
   /** Pre-formatted by the module: "2 KB", "3.0 MB". */
   size: string;
@@ -86,15 +81,7 @@ function Row({
   );
 }
 
-/**
- * The rows alone, for a caller whose strip ELEMENT is not React's.
- *
- * The dev chat's `#dc-attachments` is written by `renderChatView`'s template
- * and portalled into, so the element and its `dc-attach-strip-active` class
- * stay that module's — the same host-is-mine, children-are-React's split the
- * group chat's floating menus use. The group chat's own strip is part of a
- * React tree, so it takes `<PendingStrip>` below and gets the element too.
- */
+/** The rows alone; `<PendingStrip>` below wraps them in the strip's element. */
 export function PendingStripRows({ items, onRemove }: PendingStripProps) {
   return (
     <>

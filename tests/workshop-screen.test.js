@@ -707,21 +707,11 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
     'the lander publishes no arrow of its own');
   assert.match(appViewJs, /App\.setBackIcon\?\.\('none'\);/,
     'and the sub-view reset is an empty slot, not the house');
-  // The reset still sits ABOVE the branches, so the session's own ← survives
-  // it and nothing else inherits that arrow. #2770 moved its destination: a
-  // change is an agent conversation, so it hangs off Messages, not the board.
-  const reset = appViewJs.indexOf("App.setBackIcon?.('none');");
-  const session = appViewJs.indexOf("if (subTab === 'sessions' && ref) {");
-  assert.ok(reset > 0 && session > reset,
-    'the reset leads, so every sub-view that wants a slot claims it after');
-  const sessionBranch = appViewJs.slice(session, appViewJs.indexOf('\n    }', session));
-  assert.match(sessionBranch, /App\.setBackIcon\?\.\('arrow', '#messages'\);/,
-    'and a session leads with a real ← up to Messages (#2770)');
   // The ✕ is the app TAB's alone (on a phone, or with the rail not kept
   // beside it), and it lands wherever the visit began.
   assert.match(read('public/js/app.js'), /return \['close', App\._closeAppHref\(\)\];/);
   // An arrow WITH an href is what turns the phone's back gesture on — still
-  // true, and still what the session sub-view relies on.
+  // true for every screen that publishes one.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
     /mode === 'arrow' && !!href/);
 });
@@ -745,11 +735,10 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   // …except on a desktop, where the rail stays beside it by default (#3319,
   // tests/nav-rail-pinned.test.js).
   assert.match(body, /!!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
-  // The Workshop tab is lit, so the rail knows where you are — except on the
-  // app's DISCUSSION, which is a row in the Messages inbox and lights that
-  // instead (#2718 review).
-  // (A thread opened from the Homeroom bot tab's page lights that tab: App._isBotTopic.)
-  assert.match(body, /\? \(App\._isMessagesThread\(\) \? 'messages' : App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
+  // The Workshop tab is lit, so the rail knows where you are — except on a
+  // thread opened from the Homeroom bot tab's page, which lights that tab
+  // (App._isBotTopic).
+  assert.match(body, /\? \(App\._isBotTopic\(\) \? 'ai' : 'workshop'\)/,
     'and the Workshop tab is lit, so the rail knows where you are');
 
   // A TAB HOP inside the app crosses that line without a screen reveal, so

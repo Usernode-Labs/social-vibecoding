@@ -113,16 +113,17 @@ test('eligibility is DERIVED from the read-only naming contract', () => {
   // extra edit, and a tool renamed to something that acts stops carrying it
   // in the same edit that renames it.
   for (const name of ['get_app', 'get_proposal', 'get_request', 'list_apps',
-                      'list_requests', 'get_platform_build',
+                      'list_requests',
                       'get_platform_conventions', 'list_my_proposals', 'whoami']) {
     assert.equal(tools.isHintEligibleTool(name), true, `${name} is a read`);
   }
   for (const name of tools.ACTING_TOOLS) {
     assert.equal(tools.isHintEligibleTool(name), false, `${name} acts`);
   }
-  // answer_questions is a write that is deliberately NOT in ACTING_TOOLS, so
-  // assert it separately or it slips through both lists.
-  assert.equal(tools.isHintEligibleTool('answer_questions'), false);
+  // claim_request and release_request are writes that are NOT in
+  // ACTING_TOOLS, so assert them separately or they slip through both lists.
+  assert.equal(tools.isHintEligibleTool('claim_request'), false);
+  assert.equal(tools.isHintEligibleTool('release_request'), false);
   assert.equal(tools.isHintEligibleTool(''), false);
   assert.equal(tools.isHintEligibleTool(undefined), false);
 });
@@ -141,7 +142,7 @@ test('every read tool returns through readResult and no others do', () => {
     'get_featured_illustration', 'get_homeroom_bot',
     'get_journey_cohorts', 'get_journey_first_mile', 'get_journey_flows', 'get_journey_person', 'get_journey_readings',
     'get_message',
-    'get_platform_build', 'get_platform_conventions', 'get_proposal', 'get_recent_shots',
+    'get_platform_conventions', 'get_proposal', 'get_recent_shots',
     'get_request', 'get_run_report', 'get_shots_eval', 'get_shots_eval_pair', 'get_shots_eval_shots', 'get_spec', 'get_spec_format', 'list_apps', 'list_bench_context_packs', 'list_bench_grading_queue', 'list_bench_runs',
     'list_bench_suites', 'list_bench_trials', 'list_bot_configs',
     'list_challenge_events', 'list_challenge_templates', 'list_featured_apps', 'list_my_proposals',
@@ -153,7 +154,7 @@ test('every read tool returns through readResult and no others do', () => {
   }
 
   // And the acting tools' handlers still return plain results.
-  for (const name of [...tools.ACTING_TOOLS, 'answer_questions']) {
+  for (const name of [...tools.ACTING_TOOLS, 'claim_request', 'release_request']) {
     const idx = TOOLS_SRC.indexOf(`server.registerTool('${name}'`);
     assert.ok(idx > 0, `${name} is registered`);
     const next = TOOLS_SRC.indexOf('server.registerTool(', idx + 10);

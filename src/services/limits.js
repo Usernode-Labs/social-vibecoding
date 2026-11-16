@@ -767,8 +767,8 @@ async function loadUserApiKey(pool, userId, dataKey) {
   return null;
 }
 
-// #212: decide who pays for the next billable unit (a chat turn, a
-// headless phase, a sync run). LIMIT-FIRST: the shared daily allowance
+// #212: decide who pays for the next billable unit (a chat turn, a sync
+// run). LIMIT-FIRST: the shared daily allowance
 // is consumed while it has headroom; the user's own BYOK key (#30)
 // takes over only once the budget — their per-user cap OR the global
 // cap — is exhausted. Returns exactly one of:

@@ -1,9 +1,8 @@
 'use strict';
 
-// The agent-session Mayor's platform tools (#2779, spec: docs/agent-sessions.md,
-// "How the Mayor calls it").
+// The Homeroom bot's platform tools (#2779).
 //
-// The Mayor uses the same tool registry an external chat product does —
+// The bot uses the same tool registry an external chat product does —
 // services/mcp-tools.js registerTools — rather than a second set of tool
 // definitions. It reaches it in-process: an McpServer and an MCP client joined
 // by the SDK's in-memory transport, the server built for a DELEGATED grant
@@ -15,15 +14,15 @@
 //   * the tool list is the `agent_mayor` audience's, decided by the grant's
 //     kind (services/mcp-audiences.js);
 //   * every tool's loopback call carries the grant's own token through the
-//     ordinary bearer chain, which applies the Mayor's route allowlist, the
-//     grant's binding and its liveness (routes/cli-auth.js);
+//     ordinary bearer chain, which applies the grant's route allowlist, its
+//     binding and its liveness (routes/cli-auth.js);
 //   * a read grant cannot write: the routes refuse a non-GET without the
 //     write scope, and the write scope is only ever minted for an action the
 //     user confirmed.
 //
 // The two edge duties the /mcp endpoint performs and an in-process call would
 // skip are repeated here: a `token_used` audit row per call, and a rate bucket
-// per agent session.
+// per caller (`rateSubject`).
 //
 // Tool calls go through `client.request` with CallToolResultSchema rather than
 // `client.callTool`: the SDK client checks a result's structuredContent against
@@ -129,16 +128,14 @@ async function openMayorMcp({
   pool,
   config,
   userId,
-  agentSessionId,
   scopes = [READ_SCOPE],
   appId = null,
   changeId = null,
   ttlSeconds = undefined,
   baseUrl = null,
-  // The rate bucket's key. An agent session's own id by default; a caller
-  // with no session (the Homeroom bot's DM, #3624) names one per person, so
-  // two people never share a bucket.
-  rateSubject = null,
+  // The rate bucket's key: the caller names one per person (the Homeroom
+  // bot's DM, #3624) or per place, so two people never share a bucket.
+  rateSubject,
   // Whether the model this turn talks to can look at pictures. Only then do
   // the tools fetch any (get_request's screenshots): for a text-only model
   // they would be megabytes moved to be thrown away.
@@ -150,7 +147,7 @@ async function openMayorMcp({
 }) {
   const grantKind = kind === 'bot_admin' ? 'bot_admin' : 'agent_mayor';
   const issued = await mcpOauth.issueDelegatedAccess(pool, {
-    userId, kind: grantKind, agentSessionId, appId, changeId, scopes, ttlSeconds,
+    userId, kind: grantKind, appId, changeId, scopes, ttlSeconds,
   });
   let server = null;
   let client = null;
@@ -210,7 +207,7 @@ async function openMayorMcp({
       try {
         bucket = await consumeSharedTokenBucket(pool, {
           namespace: 'agent-mayor-mcp',
-          subject: String(rateSubject ?? agentSessionId),
+          subject: String(rateSubject),
           ratePerMinute: SESSION_RATE_PER_MINUTE,
           capacity: SESSION_RATE_PER_MINUTE,
         });

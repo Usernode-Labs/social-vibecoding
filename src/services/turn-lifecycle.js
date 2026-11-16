@@ -465,74 +465,6 @@ async function clearCleanupPending(db, {
   throw err;
 }
 
-// Atomically publish a recovered headless terminal state and hand the turn to
-// cleanup. This closes the crash window where headless_status became terminal
-// while active_turn still said tail_pending, a combination the boot query
-// could neither resume nor clear safely.
-async function markHeadlessTerminal(db, {
-  sessionId,
-  turnId = null,
-  journal = null,
-  status,
-  outcome = null,
-}) {
-  if (!['ready', 'failed'].includes(status)) {
-    throw new Error('turn-lifecycle: invalid headless terminal status');
-  }
-  const ident = identitySql(turnId, journal, 2);
-  const patch = {
-    phase: PHASE_CLEANUP_PENDING,
-    cleanupPendingAt: new Date().toISOString(),
-    lifecycleUpdatedAt: new Date().toISOString(),
-  };
-  const phases = [
-    PHASE_DISPATCH_PENDING,
-    PHASE_EXECUTING,
-    PHASE_TAIL_PENDING,
-    PHASE_CLEANUP_PENDING,
-    'tail',
-    'retry_pending',
-    'retry_dispatch_pending',
-  ];
-  const { rows, rowCount } = await db.query(
-    `UPDATE chat_sessions
-        SET headless_status = $4,
-            headless_outcome = COALESCE($5, headless_outcome),
-            headless_step = NULL,
-            headless_turn_id = NULL,
-            last_activity_at = NOW(),
-            active_turn = active_turn || $3::jsonb
-      WHERE id = $1
-        AND active_turn IS NOT NULL
-        AND ${ident.sql}
-        AND COALESCE(active_turn->>'phase', '${PHASE_EXECUTING}') = ANY($6::text[])
-      RETURNING active_turn`,
-    [sessionId, ident.value, JSON.stringify(patch), status, outcome, phases],
-  );
-  if ((rowCount ?? rows?.length ?? 0) === 1) {
-    return parseActiveTurn(rows[0]?.active_turn) || patch;
-  }
-
-  const current = await loadActiveTurn(db, sessionId);
-  if (!current) {
-    const err = new Error('turn-lifecycle: headless terminal turn is missing');
-    err.code = 'stale_turn_owner';
-    throw err;
-  }
-  const sameIdentity = turnId
-    ? String(current.turnId || '') === String(turnId)
-    : String(current.journal || '') === String(journal || '');
-  if (!sameIdentity) {
-    const err = new Error('turn-lifecycle: stale headless terminal owner');
-    err.code = 'stale_turn_owner';
-    err.currentTurnId = turnIdentity(current);
-    throw err;
-  }
-  const err = new Error(`turn-lifecycle: invalid headless terminal transition from ${phaseOf(current)}`);
-  err.code = 'invalid_turn_transition';
-  throw err;
-}
-
 // #1378: durable record that the user asked THIS turn to stop.
 //
 // The in-memory stop handle (services/stop-registry) is the fast path, but
@@ -643,7 +575,6 @@ module.exports = {
   noteRestart,
   stampTurn,
   clearCleanupPending,
-  markHeadlessTerminal,
   markStopRequested,
   stopRequestOf,
   turnOwner,

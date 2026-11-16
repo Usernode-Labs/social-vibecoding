@@ -131,33 +131,6 @@ test('in a message that names its project, #N is a link to that project\'s reque
   assert.doesNotMatch(html(none), /<a href="#app/);
 });
 
-test('#5728: linkRefsInHtml chips a rendered reply when it names its project, and changes nothing when it does not', () => {
-  const { makeHtmlDocument } = require('./lib/html-dom');
-  const { linkRefsInHtml } = loadTsx(CHANNELS);
-
-  assert.equal(linkRefsInHtml('<p>see #34</p>', null), '<p>see #34</p>', 'no project: untouched');
-  assert.equal(linkRefsInHtml('<p>see #34</p>', ''), '<p>see #34</p>', 'no project: untouched');
-  assert.equal(linkRefsInHtml('', 'goal-champions'), '', 'nothing to decorate');
-  // Off a browser there is no document to parse with, and nothing to change.
-  assert.equal(linkRefsInHtml('<p>see #34</p>', 'goal-champions'), '<p>see #34</p>');
-
-  globalThis.document = makeHtmlDocument();
-  globalThis.window = { App: { user: { username: 'Ada' } } };
-  try {
-    assert.equal(linkRefsInHtml('<p>see #34 and PR #118, and <code>#3</code>, and <a href="https://x.test/">#5</a></p>', 'goal-champions'),
-      '<p>see <a href="#app/goal-champions/dev/issues/34" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="34">#34</a> and '
-      + '<a href="#app/goal-champions/dev/changes/118" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="118">PR#118</a>, and '
-      + '<code>#3</code>, and <a href="https://x.test/">#5</a></p>',
-      'a request opens its board page, a PR its proposal page; code and links keep their text');
-    assert.match(linkRefsInHtml('<p>ping @ada</p>', 'goal-champions'),
-      /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/ada" data-mention="ada">@ada<\/a>/,
-      'the reader\'s own mention wears the shared decoration');
-  } finally {
-    delete globalThis.document;
-    delete globalThis.window;
-  }
-});
-
 test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {
   const { decorateRefs, personHref } = loadTsx(CHANNELS);
   assert.equal(personHref('ada'), '#leaderboard/users/ada', 'the address a project\'s contributors open');

@@ -135,7 +135,6 @@ test('CLI bearer middleware authenticates generic user APIs and skips other name
             is_admin: false,
             admin_readonly: false,
             app_quota: 3,
-            ai_progress_estimate: false,
             locale: null,
           }],
         };
@@ -184,7 +183,6 @@ test('CLI bearer middleware authenticates generic user APIs and skips other name
         adminReadonly: false,
         canAdminWrite: false,
         appQuota: 3,
-        aiProgressEstimate: false,
         locale: null,
       },
       body: { prompt: 'build it' },

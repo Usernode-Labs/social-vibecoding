@@ -12,7 +12,7 @@
 //   2. TAPPING THE TAB INSIDE AN APP'S WORKSHOP POPS TO THE SELECTOR, and the
 //      selector is then what the tab returns to.
 //   3. ONLY WORKSHOP ROUTES ARE REMEMBERED: not the running app (the parked
-//      strip's), not the discussion or a change (Messages threads).
+//      strip's).
 //   4. A GONE APP OR CARD FALLS BACK TO THE SELECTOR QUIETLY.
 //   5. PERSISTED LIKE THE PARKED APP, and forgotten by the same sweep.
 
@@ -175,14 +175,12 @@ test('on the selector the tab stays put', async () => {
   assert.equal(r.App.resumeWorkshopView(), false);
 });
 
-test('the running app and a change are not Workshop views; the discussion is its project page', async () => {
+test('the running app is not a Workshop view; the discussion is its project page', async () => {
   // On a phone, where the running app covers the bar. (On a desktop the rail
   // stays beside it and the tab follows it: the next test.)
   const r = router({ phone: true });
   await r.App.navigateToApp(WHITEBOARD.slug, 'app');
   assert.equal(r.storage.has(KEY), false, 'the running app is the parked strip\'s');
-  await r.App.switchTab('dev', 42, 'sessions');
-  assert.equal(r.storage.has(KEY), false, 'a change is a Messages thread');
   // #3653: the app's discussion is its project page's Discussion tab, so
   // asking for it is the project page, which the Workshop tab reopens.
   await r.App.switchTab('dev', null, 'chat');

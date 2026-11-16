@@ -11,16 +11,15 @@ import { cn } from '@/lib/utils';
  * Stock shadcn's Switch renders a `<button role="switch">` with a span thumb
  * and holds its state in React. Every switch on this screen is read and
  * written by settings.js through `.checked` on the element it finds by id
- * (#devchat-alerts-toggle, #dev-console-always-show, #ai-progress-estimate,
- * #view-as-non-admin) or by `[data-mobile-push-category] input`, and the
- * `un-switch` styling is a stylesheet the whole app already ships. Swapping
- * the element would break both at once and restyle four controls, which is
- * three more visual changes than chunk D is allowed to make.
+ * (#dev-console-always-show, #view-as-non-admin) or by
+ * `[data-mobile-push-category] input`, and the `un-switch` styling is a
+ * stylesheet the whole app already ships. Swapping the element would break
+ * both at once and restyle every switch.
  *
  * So the primitive is what the shell already writes — the class string, in one
- * place, instead of five copies — and the state stays where it is.
+ * place, instead of a copy per switch — and the state stays where it is.
  *
- * SwitchRow is the enclosing `<label>` those four switches share: a full-width
+ * SwitchRow is the enclosing `<label>` those two switches share: a full-width
  * click target with the switch first and its caption after. The mobile-push
  * rows in the alerts section are a DIFFERENT shape (caption block first,
  * switch right-aligned and top-aligned) and stay written out where they are.

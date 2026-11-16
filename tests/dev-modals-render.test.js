@@ -1,20 +1,22 @@
-// The Dev screen's three body-mounted modals, end to end: the view model
+// The app-allowance consent dialog, end to end: the view model
 // public/js/app-view.js builds, and the markup
-// frontend/src/features/dev-board/modals/ renders from it.
+// frontend/src/features/dev-board/modals/llm-consent-modal.tsx renders from
+// it, plus the relay that opens it (`handleLlmBridgeMessage`).
 //
 // ── What this file is for ──────────────────────────────────────────────
 //
-// These were the last three `innerHTML` strings on the Dev screen, and each
-// was a hand-transcribed copy of the same dialog: a scrim, a centring
-// wrapper, a white/zinc-900 card and a two-button footer. Nothing asserted
-// on their markup at all — the only coverage was three source greps for copy
-// — so a conversion could have dropped a whole branch (the amber
-// no-payer box, the BYOK opt-in, the OpenRouter wording) and every gate
+// It was one of the Dev screen's last three `innerHTML` strings (with the
+// Generate-proposal and credit-options dialogs, both retired with the dev
+// chat's headless run), each a hand-transcribed copy of the same dialog: a
+// scrim, a centring wrapper, a white/zinc-900 card and a two-button footer.
+// Nothing asserted on its markup at all, so a conversion could have dropped
+// a whole branch (the amber no-payer box, the BYOK opt-in) and every gate
 // would have stayed green.
 //
-// The harness stubs `window.UsernodeReact.devBoard`, captures what each
-// `_show*Modal` publishes, and renders it through the real component. Both
-// halves are production code, composed exactly as they are at runtime.
+// The harness stubs `window.UsernodeReact.devBoard`, captures what
+// `showLlmConsentModal` publishes, and renders it through the real
+// component. Both halves are production code, composed exactly as they are
+// at runtime.
 //
 // Run with: node --test tests/dev-modals-render.test.js
 
@@ -58,21 +60,7 @@ function makeAppView(opts) {
     escapeAttr: (s) => String(s == null ? '' : s),
     App: { user: { id: 1, canAdminWrite: !!o.admin } },
     PlatformUI: { toast: (t) => { sandbox.__toast = t; } },
-    CreditOptions: {
-      cardHtml: () => '<div class="dc-credits-card">routes</div>',
-      wire: (root, hooks) => { sandbox.__wired = { root, hooks }; },
-    },
     Settings: { state: { hasApiKey: false } },
-    BuildVenues: o.venue === false ? undefined
-      : { venue: () => ({ label: 'Homeroom', blurb: 'Runs on the platform.' }) },
-    DevChat: {
-      modelOptionText: (m) => `${m.id} — 40-60%`,
-      modelNoteText: (m) => `${m.id} does medium changes`,
-      MODEL_GUIDANCE_TOOLTIP: 'How to read these',
-      _openRouterModelOptionLabel: (m) => `${m.id} (openrouter)${m.isRecommended ? ' · Recommended' : ''}`,
-      _openRouterModelCostSummary: (m) => `${m.id} costs $1/Mtok`,
-      _openRouterModelCompatibilitySummary: () => 'Tool use supported',
-    },
     document: {
       _byId: {},
       getElementById(id) { return this._byId[id] || null; },
@@ -90,8 +78,6 @@ function makeAppView(opts) {
   };
   sandbox.UsernodeReact = {
     devBoard: {
-      mountAutoSessionModal: (host, view) => published.push({ kind: 'auto', host, view }),
-      mountCreditOptionsModal: (host, view) => published.push({ kind: 'credits', host, view }),
       mountLlmConsentModal: (host, view) => published.push({ kind: 'consent', host, view }),
       unmount: () => {},
     },
@@ -107,206 +93,11 @@ function makeAppView(opts) {
 /** The last published view, brought across the vm boundary as plain data. */
 const lastView = (published) => JSON.parse(JSON.stringify(published[published.length - 1].view));
 
-const autoHtml = (view) => {
-  const m = mod();
-  m.autoSessionModalStore.set({ view });
-  return renderToHtml(createElement(m.AutoSessionModal));
-};
-const pickerHtml = (view, selectedId = view.preselect) => {
-  const m = mod();
-  return renderToHtml(createElement(m.AutoSessionModelPicker, {
-    view,
-    selectedId,
-    onBack: () => {},
-    onCancel: () => {},
-    onUse: () => {},
-  }));
-};
-const creditsHtml = (view) => {
-  const m = mod();
-  m.creditOptionsModalStore.set({ view });
-  return renderToHtml(createElement(m.CreditOptionsModal));
-};
 const consentHtml = (view) => {
   const m = mod();
   m.llmConsentModalStore.set({ view });
   return renderToHtml(createElement(m.LlmConsentModal));
 };
-
-const MODELS = [
-  { id: 'opus', label: 'Opus', changeSize: { short: 'general coding work' } },
-  { id: 'sonnet', label: 'Sonnet', changeSize: { short: 'simple, small changes' } },
-];
-
-// ── Generate proposal ───────────────────────────────────────────────────
-
-test('the Generate-proposal dialog is a short summary of the issue, model and billing', () => {
-  const { AppView, published } = makeAppView();
-  AppView._showAutoSessionModal(42, MODELS, 'sonnet');
-  const view = lastView(published);
-  assert.equal(view.issueNumber, 42);
-  assert.equal(view.preselect, 'sonnet');
-  // #1873: the platform is Homeroom. The credits are the platform's, not the
-  // block-producing node's, so this line is brand and was renamed with the
-  // rest of the user-facing copy (tests/platform-brand-strings.test.js).
-  assert.equal(view.billingNote, 'Uses your available Homeroom credits.');
-  assert.deepEqual(view.options.map((o) => o.id), ['opus', 'sonnet']);
-
-  const html = autoHtml(view);
-  assert.match(html, /Generate proposal for issue #42\?/);
-  assert.match(html, /inspect the issue and repository, then create a proposal for review/);
-  assert.match(html, />Sonnet</);
-  assert.match(html, /simple, small changes/);
-  assert.match(html, /Uses your available Homeroom credits/);
-  assert.match(html, />Change model</);
-  assert.doesNotMatch(html, /Experimental|Building in|billed to you/);
-  assert.doesNotMatch(html, /<select|type="search"|Favorites|Refresh/,
-    'the catalog controls stay out of the normal confirmation');
-});
-
-test('the OpenRouter summary is concise and accurately names a managed or personal payer', () => {
-  const { AppView, published } = makeAppView();
-  const models = [{
-    id: 'z-ai/glm-5.3-flash',
-    name: 'GLM 5.3 Flash',
-    provider: 'z-ai',
-    costTier: 'low',
-    isRecommended: true,
-    isFavorite: true,
-  }];
-  AppView._showAutoSessionModal(42, models, models[0].id, {
-    provider: 'openrouter', openrouterCredentialSource: 'usernode_managed',
-  });
-  const view = lastView(published);
-  assert.equal(view.options[0].name, 'GLM 5.3 Flash');
-  assert.equal(view.options[0].summary, 'Recommended · Low cost');
-  assert.equal(view.options[0].isRecommended, true);
-  assert.equal(Object.hasOwn(view.options[0], 'isFavorite'), false,
-    'favorites are not part of this dialog');
-  assert.equal(view.billingNote, 'Uses your included OpenRouter credits.');
-  assert.equal(view.personalOpenRouterKey, false);
-  const html = autoHtml(view);
-  assert.match(html, /Uses your included OpenRouter credits/);
-  assert.doesNotMatch(html, /OpenRouter model|\$1\/Mtok|unverified|Experimental/);
-  assert.doesNotMatch(pickerHtml(view), /Using your own OpenRouter key|Review privacy settings/,
-    'company keys do not show personal-account guidance');
-
-  const personal = makeAppView();
-  personal.AppView._showAutoSessionModal(42, models, models[0].id, {
-    provider: 'openrouter', openrouterCredentialSource: 'personal',
-  });
-  const personalView = lastView(personal.published);
-  assert.equal(personalView.billingNote, 'Uses your OpenRouter account.');
-  assert.equal(personalView.personalOpenRouterKey, true);
-  const personalPicker = pickerHtml(personalView);
-  assert.match(personalPicker, /Using your own OpenRouter key/);
-  assert.match(personalPicker, /Model availability follows your OpenRouter privacy settings/);
-  assert.match(personalPicker, /href="https:\/\/openrouter\.ai\/settings\/privacy"/);
-  assert.match(personalPicker, /Review privacy settings/);
-});
-
-test('the model chooser starts with recommendations and search uses the full catalog', () => {
-  const { AppView, published } = makeAppView();
-  const models = [
-    {
-      id: 'z-ai/glm-5.3-flash',
-      name: 'GLM 5.3 Flash',
-      provider: 'z-ai',
-      costTier: 'low',
-      isRecommended: true,
-    },
-    {
-      id: 'openai/gpt-6-astra',
-      name: 'GPT-6 Astra',
-      provider: 'openai',
-      canonicalSlug: 'openai/gpt-6-astra',
-      costTier: 'high',
-      isFavorite: false,
-    },
-  ];
-  AppView._showAutoSessionModal(42, models, models[0].id, {
-    provider: 'openrouter',
-  });
-  const view = lastView(published);
-
-  assert.equal(view.openRouter, true);
-  assert.equal(view.options[0].isRecommended, true);
-  assert.match(view.options[1].searchText, /GPT-6 Astra openai\/gpt-6-astra openai/);
-
-  const initial = mod().proposalModelMatches(view.options, '', view.preselect, true);
-  assert.deepEqual(initial.map((option) => option.id), ['z-ai/glm-5.3-flash'],
-    'an empty search is the recommended shortlist');
-  const searched = mod().proposalModelMatches(view.options, 'gpt', view.preselect, true);
-  assert.deepEqual(searched.map((option) => option.id), ['openai/gpt-6-astra'],
-    'typing searches non-recommended, non-favorite models in the full catalog');
-
-  const html = pickerHtml(view);
-  assert.match(html, /Choose a model/);
-  assert.match(html, /placeholder="Search all available models…"/);
-  assert.match(html, /GLM 5\.3 Flash/);
-  assert.doesNotMatch(html, /GPT-6 Astra/, 'the broad catalog stays behind search');
-  assert.doesNotMatch(html, /Favorites|Refresh|\$0\.07|unverified/);
-});
-
-test('a saved non-recommended model remains visible before searching', () => {
-  const options = [
-    { id: 'recommended', name: 'Recommended', summary: 'Recommended', searchText: 'recommended', isRecommended: true },
-    { id: 'current', name: 'Current', summary: 'High cost', searchText: 'current' },
-    { id: 'hidden', name: 'Hidden', summary: 'Low cost', searchText: 'hidden' },
-  ];
-  assert.deepEqual(
-    mod().proposalModelMatches(options, '', 'current', true).map((option) => option.id),
-    ['recommended', 'current'],
-  );
-});
-
-test('the dialog resolves through the named calls its buttons dispatch', async () => {
-  const { AppView } = makeAppView();
-  const pending = AppView._showAutoSessionModal(42, MODELS, 'sonnet');
-  AppView._autoSessionConfirm('opus');
-  assert.equal(await pending, 'opus');
-
-  const second = AppView._showAutoSessionModal(42, MODELS, 'sonnet');
-  AppView._autoSessionCancel();
-  assert.equal(await second, null, 'cancel resolves null, as backdrop and Esc do');
-});
-
-test('the footer is the widget language: a filled neutral beside the primary', () => {
-  const { AppView, published } = makeAppView();
-  AppView._showAutoSessionModal(42, MODELS, 'opus');
-  const html = autoHtml(lastView(published));
-  // The secondary used to be `border border-zinc-300 …` — an outlined
-  // control on a floating card, which the language never draws.
-  assert.match(html, /data-role="cancel"[^>]*class="[^"]*bg-zinc-100 hover:bg-zinc-200/);
-  assert.doesNotMatch(html, /data-role="cancel"[^>]*class="[^"]*border-zinc-300/);
-  assert.match(html, /data-role="confirm"[^>]*class="[^"]*bg-violet-600/);
-});
-
-// ── Out of credits ──────────────────────────────────────────────────────
-
-test("the credits modal hosts CreditOptions' own card and wires it after mounting", () => {
-  const { AppView, published, sandbox } = makeAppView();
-  AppView._showCreditOptionsModal('out of credits', {});
-  const view = lastView(published);
-  assert.match(view.cardHtml, /dc-credits-card/);
-  assert.ok(sandbox.__wired, 'CreditOptions.wire ran');
-  assert.equal(sandbox.__wired.root, published[published.length - 1].host,
-    'wired to the same scrim the card was mounted into');
-
-  const html = creditsHtml(view);
-  assert.match(html, /dc-credits-modal-card/, 'the shared card class the dev chat also uses');
-  assert.match(html, /routes/, "the other module's markup is rendered, not reimplemented");
-  assert.match(html, /data-credits-close/);
-  assert.match(html, /Not now/);
-});
-
-test('no CreditOptions module falls back to a toast rather than an empty scrim', () => {
-  const { AppView, published, sandbox } = makeAppView();
-  sandbox.CreditOptions = undefined;
-  AppView._showCreditOptionsModal('out of credits', {});
-  assert.equal(published.length, 0);
-  assert.equal(sandbox.__toast, 'out of credits');
-});
 
 // ── App LLM consent ─────────────────────────────────────────────────────
 

@@ -8,9 +8,9 @@
 // The proxy router is loaded fresh per test (its budget caches are
 // module-level) against require.cache stubs: auth injects a fixed
 // workerSession, anthropic-stream's forwardCall is captured instead of
-// hitting the network, and the worker registry / ws / session-bus are
-// recording fakes. The REAL limits module runs against a mock pool so
-// the cap/spend SQL shapes stay covered.
+// hitting the network, and the worker registry and ws are recording
+// fakes. The REAL limits module runs against a mock pool so the cap/spend
+// SQL shapes stay covered.
 //
 // Run with: node --test tests/anthropic-proxy-switchover.test.js
 
@@ -139,7 +139,6 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
     stream: require.resolve('../src/services/anthropic-stream'),
     worker: require.resolve('../src/services/worker'),
     ws: require.resolve('../src/services/ws'),
-    bus: require.resolve('../src/services/session-bus'),
     proxy: require.resolve('../src/routes/anthropic-proxy'),
   };
 
@@ -149,7 +148,6 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
     switchMarks: 0,     // markTurnByokSwitched invocations
     alreadySwitched: false,
     broadcasts: [],
-    busEvents: [],
   };
 
   const originals = [
@@ -182,11 +180,6 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
     })],
     [paths.ws, stubModule(paths.ws, {
       broadcastGlobal: (ev) => state.broadcasts.push(ev),
-    })],
-    [paths.bus, stubModule(paths.bus, {
-      publish: (sessionId, ev) => state.busEvents.push({ sessionId, ev }),
-      subscribe: () => () => {},
-      clearSession: () => {},
     })],
   ];
   delete require.cache[paths.proxy];
@@ -253,7 +246,7 @@ test('user cap exhausted + key on file → forwards on the USER key, notice once
     assert.equal(p.state.forwards[0].shouldKill, null, 'BYOK calls carry no budget kill');
     // The switched call's observed cost lands in the per-turn tally.
     assert.deepEqual(p.state.byokSpend, [{ sessionId: SESSION_ID, cents: 5 }]);
-    // One-time notice: persisted system row + WS broadcast + bus publish,
+    // One-time notice: persisted system row + WS broadcast,
     // gated behind the day claim (#1088).
     assert.equal(pool.claims.length, 1, 'the day claim is attempted once per turn');
     assert.equal(pool.claims[0].userId, USER_ID, 'the claim is scoped to the user');
@@ -265,9 +258,6 @@ test('user cap exhausted + key on file → forwards on the USER key, notice once
     assert.equal(pool.notices[0].sessionId, SESSION_ID);
     assert.equal(p.state.broadcasts.length, 1);
     assert.equal(p.state.broadcasts[0].event, 'billing_switched');
-    assert.equal(p.state.busEvents.length, 1);
-    assert.equal(p.state.busEvents[0].ev.type, 'billing_switched');
-    assert.ok(p.state.busEvents[0].ev._seq, 'bus events must carry a _seq to survive publish');
 
     // Second switched call in the same turn: forwards again, NO second notice.
     const r2 = await p.call();
@@ -303,7 +293,6 @@ test('LATER turn, same UTC day → still switches keys, but does NOT re-notify',
     assert.equal(pool.claims.length, 2, 'the new turn does attempt the claim');
     assert.equal(pool.notices.length, 1, 'but no second chat row');
     assert.equal(p.state.broadcasts.length, 1, 'no second WS broadcast');
-    assert.equal(p.state.busEvents.length, 1, 'no second bus event');
   } finally {
     p.restore();
   }

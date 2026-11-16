@@ -92,7 +92,7 @@ import './features/dev-board/mount';
 // The group chat transcript's mount (#1191). Same shape and same reason as the
 // Dev board's above: public/js/group-chat.js is a classic script that cannot
 // import from this bundle, and #gc-messages is created at runtime by
-// AppView.renderDevChatTab — so the API has to exist before anything can reach
+// AppView.renderGroupChatTab — so the API has to exist before anything can reach
 // the chat tab, which means at module-evaluation time rather than from an
 // island's effect.
 import './features/group-chat/mount';
@@ -188,20 +188,16 @@ import './lib/file-drop-guard';
 // bridge's message from inside an app); the comment itself
 // (features/comment-pin/) loads on the first C.
 import './features/improve/suggest-shortcut';
-// #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
-// verbatim. Imported HERE rather than from a Shell island for the same reason
-// as the dev board above — #dc-view is written into an empty #app-content at
-// runtime, so there is no island to hang it off — and importing it at the
-// browser entry (never from Shell.tsx) keeps its 8,800 lines out of the
-// prerender graph entirely. Its `window.DevChat` publication and its
-// visibility/focus/pagehide listeners are guarded anyway.
-import './features/dev-chat/mount';
+// The Markdown renderer and the model list every screen shares. Side-effect
+// modules: they publish window.PlatformMarkdown and window.PlatformModels,
+// which classic scripts read at call time.
+import './lib/platform-markdown.js';
+import './lib/platform-models.js';
 // #6354: publishes window.UsernodeReact.designCapture, the serializer
 // Homeroom's own capture job runs in the page to copy one of its pages for a
 // design. Imported for the side effect, at module scope, so the bridge is in
 // place before the job's short wait ends.
 import './features/design/capture';
-import './features/dev-chat/dev-chat.js';
 
 // #2563: the first-run "Choose your username" gate. Imported at the BROWSER
 // entry rather than from a Shell island for two reasons — it renders nothing

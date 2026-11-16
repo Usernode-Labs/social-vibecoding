@@ -1,21 +1,18 @@
 // What the user is TOLD when a turn's tail is interrupted.
 //
-// Three surfaces, one rule: never ask someone to redo work that already
+// Two surfaces, one rule: never ask someone to redo work that already
 // landed, and never leave a minutes-long repair silent.
 //
-//   1. recovery-pills — the new wording, and its own matcher (the boot
-//      backfill has to recognise a row it wrote without knowing which PR
-//      number shaped it).
-//   2. server.js adoption — the tail-aware branches. A running container
-//      with a held record resumes; a DEAD container with a held record
-//      whose commit was pushed reports what landed and heals the preview,
-//      instead of "That coding turn didn't finish — send your request
-//      again" (which is what sent session 2954's owner into a duplicate
-//      10-minute build).
-//   3. the client — a persisted "Building staging preview..." row keeps its
-//      spinner while it is the transcript's last word. The rebuild itself is
-//      the preview machine's (src/workflow/preview/), which writes the
-//      preview's outcome rows; those are tested with the machine.
+//   1. the code-landed breadcrumb (buildCodeLandedBreadcrumb in
+//      services/turn-recovery.js) — the wording.
+//   2. turn recovery's adoption — the tail-aware branches. A running
+//      container with a held record resumes; a DEAD container with a held
+//      record whose commit was pushed reports what landed and heals the
+//      preview, instead of "That coding turn didn't finish — send your
+//      request again" (which is what sent session 2954's owner into a
+//      duplicate 10-minute build). The rebuild itself is the preview
+//      machine's (src/workflow/preview/), which writes the preview's outcome
+//      rows; those are tested with the machine.
 //
 // Run with: node --test tests/tail-recovery-narration.test.js
 
@@ -28,12 +25,20 @@ const path = require('path');
 // (services/turn-recovery.js).
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '../src/services/turn-recovery.js'), 'utf8');
-const recoveryPills = require('../src/services/recovery-pills');
+
+// buildCodeLandedBreadcrumb is module-private, so it is evaluated out of the
+// shipped source rather than mirrored here.
+const buildCodeLandedBreadcrumb = (() => {
+  const m = SERVER_SRC.match(/function buildCodeLandedBreadcrumb\([\s\S]*?\n\}/);
+  assert.ok(m, 'buildCodeLandedBreadcrumb found in services/turn-recovery.js');
+  // eslint-disable-next-line no-new-func
+  return new Function(`${m[0]}\nreturn buildCodeLandedBreadcrumb;`)();
+})();
 
 // ── 1. The breadcrumb wording ───────────────────────────────────────────
 
 test('buildCodeLandedBreadcrumb reports what landed and never asks for a resend', () => {
-  const withPr = recoveryPills.buildCodeLandedBreadcrumb({ prNumber: 922 });
+  const withPr = buildCodeLandedBreadcrumb({ prNumber: 922 });
   assert.equal(withPr, 'Your changes are committed and pushed to PR #922. Rebuilding the preview now.');
   // The whole point: no "send your request again".
   assert.ok(!/again/i.test(withPr));
@@ -43,44 +48,14 @@ test('buildCodeLandedBreadcrumb reports what landed and never asks for a resend'
 
   // A tail can die after the push but before the PR exists; naming a PR
   // that isn't there would be worse than staying vague.
-  const noPr = recoveryPills.buildCodeLandedBreadcrumb({});
+  const noPr = buildCodeLandedBreadcrumb({});
   assert.equal(noPr, 'Your changes are committed and pushed to your branch. Rebuilding the preview now.');
 
   // Only promise a rebuild when one is actually starting (the watchdog
   // reap doesn't start one — the heal sweep owns that, on its own clock).
-  const notRebuilding = recoveryPills.buildCodeLandedBreadcrumb({ prNumber: 7, rebuildingPreview: false });
+  const notRebuilding = buildCodeLandedBreadcrumb({ prNumber: 7, rebuildingPreview: false });
   assert.equal(notRebuilding, 'Your changes are committed and pushed to PR #7.');
   assert.ok(!/rebuilding/.test(notRebuilding));
-});
-
-test('isCodeLandedBreadcrumb recognises every wording the builder produces', () => {
-  for (const opts of [
-    { prNumber: 922 }, { prNumber: 1 }, {},
-    { prNumber: 922, rebuildingPreview: false }, { rebuildingPreview: false },
-  ]) {
-    const text = recoveryPills.buildCodeLandedBreadcrumb(opts);
-    assert.ok(recoveryPills.isCodeLandedBreadcrumb(text),
-      `must match its own output: ${text}`);
-  }
-  // And nothing else — an over-broad matcher would make the boot backfill
-  // treat an unrelated row as its own and skip a needed breadcrumb.
-  assert.equal(recoveryPills.isCodeLandedBreadcrumb(recoveryPills.TURN_UNFINISHED_BREADCRUMB), false);
-  assert.equal(recoveryPills.isCodeLandedBreadcrumb(recoveryPills.UNANSWERED_BREADCRUMB), false);
-  assert.equal(recoveryPills.isCodeLandedBreadcrumb('Building staging preview...'), false);
-  assert.equal(recoveryPills.isCodeLandedBreadcrumb(null), false);
-  assert.equal(recoveryPills.isCodeLandedBreadcrumb(undefined), false);
-});
-
-test('the code-landed row pairs with code_done pills, which stay sanitizer-clean', () => {
-  const pills = recoveryPills.buildRecoveryQuickReplies('code_done');
-  assert.deepEqual(pills, ['Propose it to the group', 'Make a tweak', 'What did it change?']);
-  // Same contract every set in this module satisfies: <= 3 entries,
-  // <= 80 chars, no dupes (routes/sessions.js sanitizeQuickReplies).
-  assert.ok(pills.length <= recoveryPills.QR_MAX_REPLIES);
-  for (const p of pills) assert.ok(p.length <= recoveryPills.QR_MAX_REPLY_LEN);
-  assert.equal(new Set(pills.map((p) => p.toLowerCase())).size, pills.length);
-  // "Try that again" belongs to the unrecoverable set, not this one.
-  assert.ok(!pills.some((p) => /again/i.test(p)));
 });
 
 // ── 2. Adoption branches ────────────────────────────────────────────────
@@ -109,14 +84,14 @@ test('a dead worker with a landed tail reports the commit and heals the preview'
   // "Landed" is decided from the record's own seed milestones — the worker
   // is gone, so there is nothing else to ask.
   assert.match(branch, /const codeLanded = !!goneTail\.sha && goneTail\.pushOk === true;/);
-  assert.match(branch, /recoveryPills\.buildCodeLandedBreadcrumb\(\{/);
+  assert.match(branch, /buildCodeLandedBreadcrumb\(\{/);
   assert.match(branch, /recoveredReason: 'tail_worker_gone'/,
     'distinguishable from a mid-exec worker_gone in SQL');
   // The preview is the only missing artefact, and rebuildSessionStaging is
   // the shared path that also re-runs the proposal checks.
   assert.match(branch, /stagingRecovery\.rebuildSessionStaging\(\{[\s\S]{0,160}reason: 'tail_worker_gone'/);
   // It must NOT fall through into the resend breadcrumb below.
-  assert.match(branch, /return;\s*\n\s*\}\s*\n\s*\/\/ #786: pills on the breadcrumb/);
+  assert.match(branch, /return;\s*\n\s*\}\s*\n\s*await pool\.query\([\s\S]{0,200}TURN_UNFINISHED_BREADCRUMB,/);
 });
 
 test('a successful mid-exec replay stamps tail_pending before the tail writes milestones', () => {
@@ -176,7 +151,7 @@ test('the warm-idle branch narrates a dangling tail instead of returning silentl
   // ...and any completion artefact means the tail finished after all.
   assert.match(SERVER_SRC,
     /meta\.ccOutput \|\| meta\.stagingUrl \|\| meta\.changesReady[\s\S]{0,120}return null;/);
-  // An assistant row after the status row is the Mayor's wrap-up — also
+  // An assistant row after the status row is the turn's reply — also
   // proof the tail completed.
   assert.match(SERVER_SRC, /if \(!row \|\| row\.role !== 'system'\) return null;/);
 });
@@ -189,43 +164,9 @@ test('the dangling-tail fallback picks its wording from the session row', () => 
   // No milestone map here (that's the whole reason this path exists), so
   // pr_number is the evidence: a PR cannot exist without a successful push.
   assert.match(fn, /const landed = !!session\.pr_number;/);
-  assert.match(fn, /landed \? 'code_done' : 'unrecoverable'/);
   assert.match(fn, /recoveredReason: 'dangling_tail'/);
   // The card must stop reading as in-flight.
   assert.match(fn, /appendTerminalProgressLine\(pool, sessionId, '\[interrupted\]'\)/);
   // Don't promise a rebuild without starting one.
   assert.match(fn, /if \(!landed\) return;[\s\S]{0,400}rebuildSessionStaging/);
-});
-
-// ── 3. The client honours the hint ──────────────────────────────────────
-
-const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
-);
-
-test('a persisted running-rebuild row re-spins on load, but only while trailing', () => {
-  assert.match(DEV_CHAT_SRC, /if \(m\.metadata\.stagingBuild\) m\.stagingBuild = m\.metadata\.stagingBuild;/,
-    'the hint survives rehydration');
-  assert.match(DEV_CHAT_SRC, /DevChat\._activateTrailingStagingBuild\(\);/,
-    'and is applied after the history map');
-
-  const fn = DEV_CHAT_SRC.slice(
-    DEV_CHAT_SRC.indexOf('_activateTrailingStagingBuild() {'),
-    DEV_CHAT_SRC.indexOf('_deactivateLastStatus() {')
-  );
-  // A finished rebuild has a row after it — re-spinning that would claim
-  // work that is over.
-  assert.match(fn, /if \(m\.ccOutput \|\| m\.stagingUrl \|\| m\.changesReady \|\| m\.stagingFailed\) return;/);
-  assert.match(fn, /if \(m\.stagingBuild === 'running'\) \{ m\._active = true; return; \}/);
-  assert.match(fn, /if \(m\.role === 'user' \|\| m\.role === 'assistant'\) return;/,
-    'a later user/assistant turn ends the search');
-});
-
-test('every live status channel carries the rebuild hint onto the row', () => {
-  const APP_SRC = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
-  // POST-SSE + resumable (dev-chat.js) and WebSocket (app.js): all three
-  // push status rows, and all three must keep the flag so a re-render after
-  // the row was pushed doesn't drop the spinner.
-  assert.equal((DEV_CHAT_SRC.match(/stagingBuild: data\.stagingBuild/g) || []).length, 2);
-  assert.equal((APP_SRC.match(/stagingBuild: data\.stagingBuild/g) || []).length, 1);
 });

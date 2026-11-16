@@ -33,8 +33,8 @@
  * `data-improve-row` and the `href` shape are what dapp.json's declared checks
  * select on, and `data-session-unread` is the notifications store's live hook —
  * all three are carried through untouched. The destination still arrives on the
- * row as `href` rather than being built here from an id (#1417): a session's id
- * addresses a session page, a work order's addresses nothing the browser can
+ * row as `href` rather than being built here from an id (#1417): a change's id
+ * addresses its page, a work order's addresses nothing the browser can
  * open, and a component that assumed the first would send every task row to a
  * 404.
  *
@@ -71,8 +71,6 @@ export type SessionRowView = {
   /** Waiting on the user — see awaitsInput in ./improve-controller.js (#1959). */
   awaitingInput: boolean;
   lastActivityAt?: string | null;
-  /** #2779: the agent session a change was started from; Messages lists it there. */
-  agentSessionId?: number | null;
   /** #6042: the change's own lifecycle (`chat_sessions.status`) — promoted is
    *  up for vote, merging is merging, merged is live. Absent on older
    *  payloads and on work orders, which have no proposal behind them. */
@@ -121,10 +119,8 @@ export type SessionRowView = {
  *
  * The working row used to say "in progress" by PULSING its tile badge, which
  * was the one in-progress cue on the platform that was not the arc every other
- * surface draws: the dev screen's own session list (features/dev-chat/
- * session-list.tsx), a proposal running its checks, "Preview building…" on a
- * board card, "Proposing…" in a transcript, the merge-status badges, the
- * app-launch cover. All of those are `.dc-status-spinner-arc`, so this is now
+ * surface draws: a proposal running its checks, "Preview building…" on a
+ * board card, the merge-status badges, the app-launch cover. All of those are `.dc-status-spinner-arc`, so this is now
  * too — and the reporter of #1597 read the difference exactly that way.
  *
  * The badge KEPT its amber and LOST its animation. Both halves were
@@ -281,11 +277,10 @@ function stateOf(session: SessionRowView): {
  * both themes and every state; `border-e-transparent` puts the gap back, since
  * `border-current` would otherwise fill it in and draw a closed ring.
  *
- * Scoped HERE rather than added to app.css on purpose. `.dc-pr-btn-promote
- * .dc-status-spinner-arc` (public/css/app.css) is the precedent for recolouring
- * the shared arc for one surface — "the shared class stays untouched everywhere
- * else" — and this panel is a fully React-owned island, so its override belongs
- * in its own class run. The compiled child selector outspecifies the base class
+ * Scoped HERE rather than added to app.css on purpose. Recolouring the shared
+ * arc for one surface leaves the shared class untouched everywhere else, and
+ * this panel is a fully React-owned island, so its override belongs in its
+ * own class run. The compiled child selector outspecifies the base class
  * and tailwind.css loads after app.css, so it wins on both counts.
  */
 const PILL_BASE =

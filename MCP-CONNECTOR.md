@@ -150,8 +150,8 @@ either surface explaining why. The setting looked broken.
 
 The reasoning behind it does not apply to this connector. Nothing the connector
 exposes writes to an app — one exception, demo mode, is taken up at the end of
-this section. Every acting call files a *request* — a proposal, an
-issue, a build — and the platform merges none of it without a group vote:
+this section. Every acting call files a *request* — a proposal or an
+issue — and the platform merges none of it without a group vote:
 
 | Tool | What it actually does |
 |---|---|
@@ -161,24 +161,12 @@ issue, a build — and the platform merges none of it without a group vote:
 | `create_app` | Makes a new project for the caller alone, spending one of their app slots; invites nobody and touches no other project, and what is built in it goes to its own vote (#6026) |
 | `prepare_work` | Claims the request on the app's board; mints a work order |
 | `close_work_order` | Puts away one of the user's own unsubmitted work orders, freeing its slot; touches no branch, proposal or vote |
-| `start_platform_build` | Spends the user's daily Homeroom credits |
-| `submit_platform_build` | Puts that build to a group vote |
 | `recheck_change` | Re-runs a proposal's checks on the commit it already has; no code or vote moves |
 | `demo_mode`, `demo_propose`, `demo_promote`, `demo_vote`, `demo_reset` | Demo mode — the exception, below |
-
-Four more acting tools, `start_change`, `promote_change`, `sync_change` and
-`withdraw_change`, exist only for the Mayor of an agent session inside Homeroom
-(#2779). An external client never sees them. The Mayor runs each one only after
-the user confirms it on a card.
 
 The vote is the confirmation, and it is a better one than a prompt clicked
 through mid-loop by the one person already driving the agent. A per-call prompt
 bought a click, not a decision.
-
-`start_platform_build` is the one whose old justification was not about
-write-visibility at all — it spends a daily credit allowance. That allowance is
-capped by `connectorLimits` on the server, which is where a spending limit
-belongs; it does not need a second gate in the client.
 
 These tools are still named as a group, in `ACTING_TOOLS`. That list no longer
 controls prompting — it decides which tools stay out of the setup hint and out

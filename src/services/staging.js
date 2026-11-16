@@ -20,7 +20,7 @@ const { getPool } = require('../db/pool');
 const repoRef = require('./repo-ref');
 
 // Custom error thrown by both staging + prod build paths when the cloned
-// repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller, dev-chat
+// repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller,
 // retries) inspect `.missingSecrets` to render a tailored "fix this"
 // toast instead of a generic "build failed".
 class MissingSecretsError extends Error {
@@ -1153,7 +1153,7 @@ async function rebuildProductionInner(config, app, options = {}) {
 
     // Clear any stale last_failure (#416): every successful deploy
     // funnels through here, so this is the single reset chokepoint for
-    // the rebuild paths (dev-chat merge, drift poller, /redeploy).
+    // the rebuild paths (a merge, the drift poller, /redeploy).
     await prodPool.query(
       `UPDATE apps SET last_failure = NULL, container_id = $1, image_ref = $2,
          build_ref = $3, runtime_kind = $4, runtime_name = $5 WHERE id = $6`,

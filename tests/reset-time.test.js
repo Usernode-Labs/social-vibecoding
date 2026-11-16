@@ -106,7 +106,7 @@ test('localizeResetText rewrites the server spellings and nothing else', () => {
   });
 });
 
-test('the shared credit sentence goes through it, with the UTC instant for title', () => {
+test('the shared credit sentence goes through it', () => {
   const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
   const prev = globalThis.window;
   globalThis.window = { ResetTime: RT };
@@ -117,10 +117,6 @@ test('the shared credit sentence goes through it, with the UTC instant for title
       const weekly = { capWindow: 'weekly', resetsAt: at };
       assert.equal(norm(CO.resetSentence(weekly, now)),
         'Free credits reset Sunday at 8:00 PM, about 3h from now.');
-      assert.equal(norm(CO.resetTitle(weekly, now)), 'Mon, Oct 5, 00:00 UTC');
-      assert.equal(CO.resetTitle({ level: 'locked' }), null, 'no reset to name when locked');
-      const card = norm(CO.cardHtml({ error: 'Weekly limit reached ($50.00). Resets Monday 00:00 UTC.' }));
-      assert.doesNotMatch(card, /00:00 UTC/, 'the card rewords the server sentence too');
     });
   } finally {
     if (had) globalThis.window = prev; else delete globalThis.window;
@@ -136,10 +132,8 @@ test('no user-visible copy still spells the reset in UTC alone', () => {
     'frontend/src/features/leaderboard/leaderboard.js',
     'frontend/src/features/dialogs/feedback-controller.js',
     'frontend/src/features/header/ai-credit.js',
-    'frontend/src/features/dev-chat/dev-chat.js',
     'frontend/src/features/settings/settings.js',
     'public/js/credit-options.js',
-    'public/js/build-venues.js',
     'public/js/merge-status.js',
     'public/js/app-view.js',
   ]) {

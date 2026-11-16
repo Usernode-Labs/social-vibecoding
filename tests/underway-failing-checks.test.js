@@ -6,14 +6,12 @@
 //
 // Both were true, and the first is the sharper one. The card could already
 // say "Checks failing · 3" — MergeStatus.lifecycle counts the blocking rows
-// for the pill — but nothing in the UI named the three. Meanwhile
-// buildFailingChecksBlock has been injecting the full list, with names, paths
-// and reasons, into the CODING AGENT's prompt. The agent knew; the person
-// watching the card did not.
+// for the pill — but nothing in the UI named the three, while the coding
+// agent's prompt was handed the full list, with names, paths and reasons.
+// The agent knew; the person watching the card did not.
 //
-// So the two callers derive from one function, summarizeFailingChecks. An
-// agent and a human reading different answers about the same run is the
-// failure that shape exists to prevent.
+// So the card renders the rows summarizeFailingChecks derives, the same
+// function a fix turn's prompt reads (services/unit-suite-row.js).
 //
 // Run with: node --test tests/underway-failing-checks.test.js
 
@@ -24,7 +22,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
-const { summarizeFailingChecks, buildFailingChecksBlock } = require('../src/routes/sessions');
+const { summarizeFailingChecks } = require('../src/routes/sessions');
 
 const results = (n, extra = {}) => Array.from({ length: n }, (_, i) => ({
   name: `check ${i + 1}`,
@@ -81,18 +79,6 @@ test('#1766: the payload is bounded, because test_results holds a row per declar
   assert.ok(wide.rows[0].name.length <= 160);
   assert.ok(wide.rows[0].reason.length <= 300);
   assert.ok(wide.rows[0].path.length <= 160);
-});
-
-test("#1766: the agent's prompt block is built from the same rows", () => {
-  // If these drift, the agent and the human are told different things about
-  // one run, which is worse than the gap this closes.
-  const block = buildFailingChecksBlock('failing', [
-    { name: 'the named check', status: 'fail', failureReason: 'did not finish', path: '/x' },
-  ]);
-  assert.match(block, /the named check/);
-  assert.match(block, /did not finish/);
-  assert.match(block, /BLOCKING/);
-  assert.equal(buildFailingChecksBlock('passing', results(3)), '', 'still silent when passing');
 });
 
 test('#1766: the endpoint sends the summary and never the raw column', () => {

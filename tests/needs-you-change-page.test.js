@@ -541,7 +541,7 @@ const FAILED = {
 const unescape = (html) => html.replace(/&#x27;/g, '\'').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
 
 test('a failed run says what went wrong in plain words, and offers its author Fix it beside a quieter re-run', () => {
-  // The change's author, on a change built in an agent session.
+  // The change's author.
   const own = context({ id: 7, username: 'maya' });
   const card = plain(own._changeTestingView(FAILED));
   assert.deepEqual([card.figure, card.tone], ['Found a problem', 'bad']);
@@ -552,13 +552,9 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
     fallback: 'The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don\'t remember.',
     page: null,
   });
-  // What the dev chat's own Fix it card sends: the blocking failures, each
-  // with what it reported, and the conversation it goes to.
-  assert.deepEqual(card.fix, {
-    agentSessionId: 55, changeId: 4090, prNumber: 12, total: 1,
-    checks: [{ name: 'Repo unit suite (npm test) passes', reason: UNIT_ROW.failureReason }],
-    at: '2026-09-18T12:00:00Z',
-  });
+  // What Fix it opens: the author's thread with Homeroom bot about this
+  // change, named by its id, its pull request and its title.
+  assert.deepEqual(card.fix, { changeId: 4090, prNumber: 12, title: 'Authenticate previews' });
   assert.equal(card.authorNote, null);
   assert.deepEqual(card.actions.map((a) => [a.key, a.cls]), [['recheck', 'gc-vote-btn']], 'the re-run is the quieter button');
 
@@ -569,7 +565,7 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
   assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
   assert.match(testing, /<div class="dev-change-gate-fix"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><\/div>/);
-  assert.match(testing, /<p class="dev-change-gate-note">Fix it asks the agent that built this change to fix what failed, using your credits\. You can stay on this page: the checks run again by themselves when it’s done\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
+  assert.match(testing, /<p class="dev-change-gate-note">Fix it opens your chat with Homeroom bot about this change, where you can ask it to fix what failed\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
 
   // Details › Checks: the app's own tests by what they are, the test that
   // failed with its message and place, the output once, behind its fold.
@@ -700,12 +696,8 @@ test('a failed run, read by anybody else: the same words, who has to fix it, and
   assert.match(testing, /data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message/);
   assert.match(testing, /<p class="dev-change-gate-note">maya made this change and needs to fix this before it can go live\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.ok(!testing.includes('data-change-fix-checks') && !testing.includes('dev-change-gate-fix'));
-  // Its author, on a change with no conversation to ask: the re-run, as before.
+  // Its author, on a change no longer open to work: no Fix it.
   const own = context({ id: 7, username: 'maya' });
-  const bare = plain(own._changeTestingView({ ...FAILED, agent_session_id: null }));
-  assert.equal(bare.fix, null);
-  assert.deepEqual(bare.actions.map((a) => a.cls), ['gc-vote-btn gc-vote-btn-accent']);
-  // A change no longer open to work offers no Fix it.
   assert.equal(own._changeTestingView({ ...FAILED, status: 'merged' }).fix, null);
 });
 
@@ -769,18 +761,14 @@ test('a failing test’s line and message are read off its excerpt', () => {
   assert.equal(av._isUnitSuiteRow({ name: 'Home loads', path: '/' }), false);
 });
 
-test('Fix it from the page sends the dev chat’s own message, lets the stream go, and polls nothing', () => {
+test('Fix it from the page opens the author\'s thread with Homeroom bot about the change', () => {
   const src = read('frontend/src/features/dev-board/topic/failed-checks.ts');
-  assert.match(src, /const message = fixChecksMessage\(\{/);
-  assert.match(src, /await sendTurnInBackground\(fix\.agentSessionId, message, clientMessageId\);/);
-  assert.match(src, /const sessions = useAgentSessions\(\);/, 'the turn\'s end is read off the conversation list');
-  assert.doesNotMatch(src, /\/api\/agent-sessions\/\$\{/, 'reading the conversation would mark it seen');
+  assert.match(src, /export function askFix\(fix: FixChecksView\): void \{\s*\(window as any\)\.AppView\?\.askBotForChanges\?\.\(fix\.changeId, fix\.title \?\? null, fix\.prNumber\);\s*\}/);
   assert.match(src, /fetch\(`\/api\/sessions\/\$\{ex\.id\}\/checks-explanation\?lang=\$\{encodeURIComponent\(language\)\}\$\{demoQS\(\)\}`/);
-  const api = read('frontend/src/features/agent-session/api.ts');
-  assert.match(api, /export async function sendTurnInBackground\([\s\S]*?if \(!response\.ok\) await json\(response, t\('agent:session\.error\.turnRefused'\)\);\n {2}controller\.abort\(\);\n\}/);
+  assert.match(read('public/js/app-view.js'), /\n  async askBotForChanges\(|\n  askBotForChanges\(/, 'the opener the button calls exists');
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(head, /const explanation = useChecksExplanation\(g\.explain\);\n {2}const fixing = useFixing\(g\.fix\);/);
-  assert.match(head, /id="project:topic\.change\.gate\.noteWatch"/);
+  assert.match(head, /const explanation = useChecksExplanation\(g\.explain\);/);
+  assert.match(head, /onClick=\{\(\) => askFix\(fix\)\}/);
 });
 
 test('the steps sheet is the strip expanded: its headline and count, one short step per gate in the gate’s order', () => {
@@ -1027,10 +1015,8 @@ test('before review the page is the same shape: not up for a vote yet, and the s
   // The one Submit for review is the Votes card's button; the step does not repeat it.
   assert.equal((html.match(/>Submit for review</g) || []).length, 1);
   assert.match(page.slice(page.indexOf('data-change-gate="votes"')), /^[^]*?data-act="runChangeAction">Submit for review</);
-  // The Build door is a ⋯ row.
-  const menu = av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label);
-  assert.ok(menu.includes('Continue building'));
   // The spec stands in for the technical half, behind the ⋯ row.
+  const menu = av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label);
   assert.ok(menu.includes('Details'));
 });
 

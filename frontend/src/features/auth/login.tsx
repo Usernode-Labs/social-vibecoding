@@ -1951,8 +1951,8 @@ export function LoginScreen() {
                 {/*
                     The instruction line steps aside while the sent
                     confirmation is up, so the message reads from exactly one
-                    place — the success box below the field (dev-chat request:
-                    it appeared to render twice).
+                    place — the success box below the field (it appeared to
+                    render twice).
                 */}
                 <p className={hiddenFirst(!!emailResetStatus, P)}>
                   {t('auth:login.emailReset.lead')}

@@ -1936,8 +1936,8 @@ function newWatchState() {
     ahead: 0,
     // #8: how many commits the branch is behind origin/main, parsed from
     // run-cc.sh's __USERNODE_RESULT__ line. Persisted to
-    // chat_sessions.behind_main on every turn so the dev-chat banner
-    // and merge-time block always reflect the latest state.
+    // chat_sessions.behind_main on every turn so the change's "Behind main"
+    // pill and merge-time block always reflect the latest state.
     behind: 0,
     sha: null,
     pushOk: false,
@@ -2332,9 +2332,8 @@ function buildTurnResumeFallbackPromptScript(prompt, targetPath = TURN_RESUME_FA
 }
 
 // Materialize the dispatch prompt into the warm worker's CC volume ahead
-// of the detached exec. Unlike syncUserAgentFiles this file is required:
-// a failure here fails the turn (before active_turn is persisted, so
-// there is nothing to clean up).
+// of the detached exec. This file is required: a failure here fails the
+// turn (before active_turn is persisted, so there is nothing to clean up).
 async function writeTurnPrompt(sessionId, prompt, targetPath = TURN_PROMPT_PATH) {
   const meta = _registryGet(sessionId);
   if (!meta) {
@@ -2618,31 +2617,6 @@ async function noteTailMilestone(sessionId, milestones, { turnId = null, journal
   }
 }
 
-// Mark a completed missing-thread attempt as prepared for the one allowed
-// live retry. Preparation remains a tail_pending state: only the atomic
-// startCodexAttempt transaction may advance the durable record back to
-// dispatch_pending with attempt two's ledger identity.
-async function markTurnRetryPending(sessionId, {
-  turnUuid, logicalTurnId, attemptNumber = 1,
-} = {}) {
-  const pool = _getPoolSafe();
-  if (!pool) throw new Error('markTurnRetryPending: database pool unavailable');
-  await turnLifecycle.transitionTurn(pool, {
-    sessionId,
-    turnId: logicalTurnId,
-    turnUuid,
-    from: [turnLifecycle.PHASE_TAIL_PENDING, 'tail', 'retry_pending'],
-    to: turnLifecycle.PHASE_TAIL_PENDING,
-    patch: {
-      retryFresh: true,
-      logicalTurnId,
-      attemptNumber,
-      retryPreparedAt: new Date().toISOString(),
-    },
-  });
-  return true;
-}
-
 // End of the whole turn (exec + tail): drop the durable record and the
 // journal it pointed at. This is what execInWorker's `finally` does for
 // callers that DON'T hold the record; holders call it themselves when
@@ -2856,8 +2830,7 @@ function _registryUpsert(sessionId, patch, noteUse = true) {
 // gate logic on "a CC turn is in progress for this session". The
 // container-status check predates `keep cc warm between calls` and now
 // over-reports busy for the entire warm-idle window (~10 min until the
-// sweeper evicts), which strands the dev-chat UI in stop-sign mode if
-// the POST SSE drops before delivering its `done` event.
+// sweeper evicts), which would report a finished turn as still running.
 function isInFlight(sessionId) {
   return _warmRegistry.get(sessionId)?.inFlight === true;
 }
@@ -2911,24 +2884,6 @@ const BOOTSTRAP_LOG_TAIL = 50;
 const BOOTSTRAP_MAX_ATTEMPTS = 3;
 const BOOTSTRAP_RETRY_BASE_MS = 500;
 
-// Stable, machine-matchable prefixes. `die` in worker-run.sh emits
-// "clone failed: <git stderr>" / "checkout failed: <git stderr>" and
-// _awaitWarmReady rejects with "warm-ready timeout for <name>" or
-// "warm wrapper exited before warm-ready (code=N)".
-//
-// Classification is by PREFIX and never by the text after the colon: that
-// text is exactly what this change lets vary, so matching on it would tie
-// the retry policy to git's wording.
-const BOOTSTRAP_ERROR_PREFIXES = Object.freeze([
-  'clone failed',
-  'checkout failed',
-  'warm-ready timeout',
-  'warm wrapper exited before warm-ready',
-  // Kubernetes only: the kubelet could not start the worker container at
-  // all. Carries a typed `bootstrapReason` (see kubernetes-worker-bootstrap).
-  'worker could not start',
-]);
-
 // Only the two failure modes with a plausible transient cause. A private
 // or missing repo, and a checkout that git refused, are deterministic —
 // retrying them just spends another container slot to be told the same
@@ -2943,13 +2898,6 @@ const BOOTSTRAP_RETRYABLE_PREFIXES = Object.freeze([
 function _messageHasPrefix(err, prefixes) {
   const msg = String((err && err.message) || '');
   return prefixes.some((prefix) => msg.startsWith(prefix));
-}
-
-// True for any failure raised between `docker run` and warm-ready — i.e.
-// the coding agent never started and no code was touched. Exported so the
-// route layer can say that honestly instead of surfacing the raw string.
-function isBootstrapError(err) {
-  return err?.bootstrapFailed === true || _messageHasPrefix(err, BOOTSTRAP_ERROR_PREFIXES);
 }
 
 function isRetryableBootstrapError(err) {
@@ -3060,8 +3008,8 @@ async function _bootstrapWarmContainer(sessionId, {
   const privacy = await _checkRepoPublicWithRetry(repoOwner, repoName);
   if (!privacy.ok && privacy.code === 'rate_limited') {
     // GitHub refused the check because Homeroom's hourly budget is used up.
-    // This message reaches people as it is (a dev chat's turn error, a
-    // before/after shots card), so it says that in plain words and when the
+    // This message reaches people as it is (a turn's error, a before/after
+    // shots card), so it says that in plain words and when the
     // budget resets, rather than "Cannot bootstrap worker ... API rate limit
     // exceeded for user ID ...".
     const err = new Error(
@@ -3224,8 +3172,7 @@ async function _bootstrapWarmContainer(sessionId, {
 
       // Wait for the wrapper to reach `__USERNODE_PHASE__ warm-ready`.
       // Bootstrap progress (clone/checkout) flows through onProgress so the
-      // dev-chat UI sees [clone] / [checkout] phase ticks just like the
-      // legacy single-shot path used to surface them.
+      // progress log sees [clone] / [checkout] phase ticks.
       //
       // Attempts after the first get half the warm-ready budget, so three
       // attempts cap at 2x the old single-attempt wall clock rather than 3x.
@@ -3563,8 +3510,8 @@ async function ensureWorkerClaimed(sessionId, containerName, {
 // Run one CC turn inside an already-warm container, detached: the exec
 // is dispatched with `docker exec -d`, its output lands in a journal
 // file in the CC volume, and we follow the journal through the shared
-// `parseLine` state machine. The dev-chat UI sees identical progress
-// markers to the old attached transport — but the turn itself survives
+// `parseLine` state machine. The progress log sees identical markers to
+// the old attached transport — but the turn itself survives
 // a platform restart (boot adoption resumes it via the
 // chat_sessions.active_turn record + resumeTurnFromJournal).
 //
@@ -3622,8 +3569,8 @@ async function execInWorker(sessionId, {
   // commits and pushes nothing, as the Codex runner always does. Only the
   // Claude Code runner reads it (DISCARD_FAILED_TURN, run-cc.sh), and only
   // for an OpenRouter turn: the Homeroom bot asks for it, because what it
-  // pushes is what it proposes, or a revision of a proposal up for a vote. A
-  // person's dev chat keeps a failed turn's work, as it always has.
+  // pushes is what it proposes, or a revision of a proposal up for a vote.
+  // Any other turn keeps its work when it fails, as it always has.
   discardFailedTurn = false,
   // The stop guard: a Claude Code Stop hook (worker/build-stop-hook.js) that
   // sends the agent back to work, twice at most, when it tries to end a turn
@@ -3777,8 +3724,8 @@ async function execInWorker(sessionId, {
   // spinning up. Historically the dispatch upsert below cleared
   // `stopRequestedAt` — it could not tell a previous turn's leftover from
   // a stop aimed at THIS turn seconds ago — so a stop clicked during
-  // ensureWorker/syncUserAgentFiles was erased by the very dispatch it was
-  // meant to prevent, and the agent ran to completion (production session
+  // ensureWorker was erased by the very dispatch it was meant to prevent,
+  // and the agent ran to completion (production session
   // 2974: 17m51s of agent time after the click). The flag is now cleared
   // only at a real new-turn boundary via clearPendingStop(), so reading it
   // here is authoritative.
@@ -5098,35 +5045,6 @@ async function stopOwnedTurn(pool, { sessionId, machine, key, kinds = [], workKe
   return { stopped: killed === 'stopped', reason: killed, turnId, released: !!release };
 }
 
-// #460: materialize the dispatching user's personal agent files into the
-// warm worker's CC volume before a build/scout turn. Wipe-and-rewrite of
-// two managed paths — ~/.claude/CLAUDE.md (user-level memory Claude Code
-// loads natively) and ~/.claude/skills/ (personal skills) — so deletions
-// in Settings take effect on the next dispatch. Both live OUTSIDE the
-// repo checkout, so run-cc.sh's `git add -A` can never commit them.
-//
-// The script travels on the exec child's STDIN (contents base64-inlined
-// within it), never as a CLI arg, so user file contents don't show up in
-// `ps` or `docker inspect`. Callers treat failures as non-fatal: the
-// dispatch proceeds without personal files rather than failing the turn.
-async function syncUserAgentFiles(sessionId, files) {
-  const meta = _registryGet(sessionId);
-  if (!meta) {
-    throw new Error(`syncUserAgentFiles: no warm worker registered for session ${sessionId}`);
-  }
-  const { buildSyncShellScript } = require('./user-agent-files');
-  if (usesKubernetesWorkers()) {
-    await execWorkerCommand(meta.containerName, ['sh', '-s'], buildSyncShellScript(files || []));
-  } else {
-    await docker.execShellStdin(meta.containerName, buildSyncShellScript(files || []), {
-      timeoutMs: 20000, label: 'syncUserAgentFiles',
-    });
-  }
-  log.info('worker', 'Personal agent files synced', {
-    sessionId, count: (files || []).length,
-  });
-}
-
 // Boot-time resume: pick an in-flight (or finished-while-we-were-down)
 // turn back up from its journal. The caller (server.js adoption) owns
 // post-turn processing and clearing chat_sessions.active_turn; this
@@ -6311,8 +6229,8 @@ async function execPushFromWorker(sessionId, branchName, { expectedRepoUrl, expe
 }
 
 /**
- * #1376: turn an execPushFromWorker rejection into something a dev-chat
- * reader can act on. The old copy was one fixed sentence ending "Retry
+ * #1376: turn an execPushFromWorker rejection into something a reader can
+ * act on. The old copy was one fixed sentence ending "Retry
  * your request to re-push" — which for a `bad_branch` session is advice
  * that can only ever fail again, and which hid the actual reason in a
  * platform WARN line nobody outside the container ever sees.
@@ -6347,10 +6265,6 @@ module.exports = {
   ensureWorkerImage,
   // long-lived API
   ensureWorker,
-  // Cold-bootstrap failure classification. The route layer uses
-  // isBootstrapError to tell "the coding agent never started" apart from
-  // "the coding agent ran and failed" — the two need very different copy.
-  isBootstrapError,
   isRetryableBootstrapError,
   isTransientStartError,
   _setGithubStartRetryDelaysForTests,
@@ -6362,7 +6276,6 @@ module.exports = {
   clearPendingStop,
   noteStopPending,
   getPendingStop,
-  syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
   releaseSkippedDispatch,
@@ -6370,7 +6283,6 @@ module.exports = {
   TURN_PHASE_TAIL,
   markTurnTail,
   noteTailMilestone,
-  markTurnRetryPending,
   finishTurn,
   isTailPhase,
   evictWorker,

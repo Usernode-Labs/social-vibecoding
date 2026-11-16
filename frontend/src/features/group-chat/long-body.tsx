@@ -16,9 +16,8 @@
  *
  * ── Why a height, and not `line-clamp` ──────────────────────────────────
  *
- * The comment fold (../dev-board/comment-clamp.tsx) and the agent chat's
- * (../agent-session/user-message.tsx) clamp by lines, which suits plain
- * text. A thread body is rendered markdown: headings, lists, code blocks and
+ * The comment fold (../dev-board/comment-clamp.tsx) clamps by lines, which
+ * suits plain text. A thread body is rendered markdown: headings, lists, code blocks and
  * pictures (the comment that prompted this carried a whole plan with its
  * screenshots). `-webkit-line-clamp` counts only lines of text, so a body of
  * ten lines and five screenshots would "fit" at several screens tall. A

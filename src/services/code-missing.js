@@ -310,30 +310,6 @@ async function branchGone(pool, session, { waitMs = LIVE_WAIT_MS, readRef = null
   }
 }
 
-/**
- * What the Mayor is handed when a dispatch on change `changeId` is refused
- * because its branch is gone: nothing ran, so no retry, and the way on.
- */
-function dispatchRefusal(changeId) {
-  const id = Number(changeId);
-  return `${CODE}: change ${id}'s code didn't come across when Homeroom moved off GitHub (its branch is not on `
-    + 'Homeroom\'s git host), so the coding agent cannot work on it. Nothing ran and nothing was changed. '
-    + 'Do not suggest retrying. Offer to start a new change from the current version, carrying this change\'s '
-    + `plan (start_change with fromChangeId ${id}), or to wait: Homeroom restores the code when GitHub's copy arrives.`;
-}
-
-/** The change's one status row saying so, for a refusal that has no stream of its own to say it on. */
-async function noteRefused(pool, sessionId) {
-  try {
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3)`,
-      [Number(sessionId), BRANCH_GONE, JSON.stringify({ codeMissing: true, error: BRANCH_GONE })]
-    );
-  } catch (err) {
-    log.warn('code-missing', 'Could not write the change\'s code-missing row', { sessionId: Number(sessionId), err: err.message });
-  }
-}
-
 function _resetForTests() {
   _branches.clear();
 }
@@ -360,7 +336,5 @@ module.exports = {
   missingIds,
   forSession,
   branchGone,
-  dispatchRefusal,
-  noteRefused,
   _resetForTests,
 };

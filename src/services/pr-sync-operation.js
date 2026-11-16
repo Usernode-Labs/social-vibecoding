@@ -25,10 +25,8 @@
 //   title    the change's name (PATCH /api/sessions/:id/title); waited for
 //   create   the pull request of a change that has none (openMissingPr):
 //            a preview rebuilt for a change whose turn never opened it
-//            (`from: 'staging'`, services/staging-recovery.js) and a clone of
-//            an unattended run that carries its code (`from: 'clone'`,
-//            POST /api/sessions/:id/clone-headless). Appended, as nobody
-//            waits on it, and tried again while the host fails; one already
+//            (`from: 'staging'`, services/staging-recovery.js). Appended,
+//            as nobody waits on it, and tried again while the host fails; one already
 //            open for the branch is adopted, so a retry never opens two.
 //
 // The waited writes answer a host failure as their routes always did (a
@@ -38,13 +36,12 @@
 const github = require('./github');
 const repoRef = require('./repo-ref');
 const appAccess = require('./app-access');
-const communities = require('./communities');
 const log = require('./logger');
 const { permanent } = require('../workflow/work-errors.ts');
 
 const OP = 'pr.sync';
 const WRITES = new Set(['summary', 'issues', 'title', 'create']);
-const CREATE_FROM = new Set(['staging', 'clone']);
+const CREATE_FROM = new Set(['staging']);
 const OPEN_STATUSES = ['active', 'paused', 'promoted', 'merging'];
 
 function proposalUpdate() { return require('./proposal-update'); }
@@ -109,7 +106,7 @@ const MAY = new Map([
   ['issues', (s, user, input) => own(s, user) || (input.admin === true && user.canAdminWrite)],
   ['title', (s, user) => own(s, user) && !s.is_headless && s.source !== 'imported' && OPEN_STATUSES.includes(s.status)],
   // A rebuild is the owner's, or any member's for a change up for a vote or
-  // shared (routes/sessions.js mayOpenPreview); a clone is its new owner's.
+  // shared (routes/sessions.js mayOpenPreview).
   ['create', (s, user, input) => s.source !== 'imported' && !s.is_headless && OPEN_STATUSES.includes(s.status)
     && (own(s, user) || (input.from === 'staging'
       && (s.status === 'promoted' || s.status === 'merging' || !!s.shared_at)))],
@@ -121,10 +118,6 @@ async function authorize({ pool }, request, user) {
   if (!session || Number(session.app_id) !== Number(request.appId)) return { status: 404, error: 'Session not found' };
   const { rows: [app] } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
   if (!app || !(await appAccess.checkAppAccess(pool, app, user, 'collab'))) return { status: 404, error: 'Session not found' };
-  if (write === 'create' && request.input.from === 'clone') {
-    const join = await communities.appNeedsJoin(pool, app.slug, user);
-    if (join) return { status: 403, ...join };
-  }
   if (!MAY.get(write)(session, user, request.input)) return { status: 404, error: 'Session not found' };
   return null;
 }
@@ -182,7 +175,7 @@ async function syncTitle(pool, sessionId) {
 // before writing the number down), is adopted, and applyPrMetadata then
 // brings its title and body up to date. Run in place where the credential
 // is, and by this operation's `create`. Returns applyPrMetadata's answer.
-async function openMissingPr({ config, pool, session, owner, repo, from, username: asked = null }) {
+async function openMissingPr({ config, pool, session, owner, repo, from }) {
   if (!owner || !repo || session.pr_number) return null;
   const pm = prMetadata();
   const broadcast = from === 'staging'
@@ -205,17 +198,7 @@ async function openMissingPr({ config, pool, session, owner, repo, from, usernam
       WHERE cs.id = $1`,
     [session.id]
   );
-  const username = asked || ctx?.username || session.username || 'someone';
-  if (from === 'clone') {
-    // An unattended run's code under a person's name: reviewable at once,
-    // on the deterministic draft, under the name the clone inherited.
-    return pm.applyPrMetadata({
-      pool, session, repoOwner: owner, repoName: repo,
-      userMessage: '', ccSummary: '', username,
-      userId: session.user_id, allowModelGeneration: false,
-      preferredTitle: session.session_title || null,
-    });
-  }
+  const username = ctx?.username || session.username || 'someone';
   let apiKey = null;
   let allowModelGeneration = false;
   try {

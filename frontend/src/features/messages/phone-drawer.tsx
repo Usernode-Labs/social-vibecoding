@@ -15,11 +15,8 @@
  * it opens the list, through `open()` as the arrow does: the levels are
  * addresses, and the panes slide on from wherever the finger left them.
  *
- * An agent chat and an agent session are the second level too, named in the
- * header by the screen (`agentWords`).
- *
- * Nothing changes at 768px and up, nor on a phone for a dev session, a
- * channel or a reply thread: the drawer does not hold those routes, and the
+ * Nothing changes at 768px and up, nor on a phone for a channel or a reply
+ * thread: the drawer does not hold those routes, and the
  * panes keep the classes and the layout they had.
  */
 
@@ -47,7 +44,6 @@ export interface DrawerRoute {
   open: boolean;
   conversationId: number | null;
   appSlug: string | null;
-  agent: unknown;
   threadRootId: number | null;
   embedded?: boolean;
 }
@@ -79,8 +75,6 @@ export function useMessagesDrawer(
   route: DrawerRoute,
   active: ConversationDetail | null,
   names: (conversation: ConversationDetail) => { title: string; sub: string },
-  /** The header's words for the open agent chat or agent session, if one is open. */
-  agentWords: { title: string; sub: string } | null = null,
 ): MessagesDrawer {
   const phone = usePhone();
   const on = messagesDrawerApplies({
@@ -88,18 +82,16 @@ export function useMessagesDrawer(
     open: route.open,
     conversationId: route.conversationId,
     appSlug: route.appSlug,
-    agent: route.agent,
     threadRootId: route.threadRootId,
     embedded: route.embedded,
     activeKind: active && active.id === route.conversationId ? active.kind : null,
     bot: !!(active && active.id === route.conversationId && active.homeroomBot),
   });
-  const level: 0 | 1 = route.conversationId || route.agent ? 1 : 0;
-  const agentOpen = on && level === 1 && !!route.agent;
+  const level: 0 | 1 = route.conversationId ? 1 : 0;
   // The conversation on show, which the header names.
   const showing = on && level === 1 && !!active && active.id === route.conversationId && active.kind !== 'channel'
     ? active : null;
-  const words = agentOpen ? (agentWords || { title: '', sub: '' }) : showing ? names(showing) : { title: '', sub: '' };
+  const words = showing ? names(showing) : { title: '', sub: '' };
   useIsomorphicLayoutEffect(() => {
     publishMessagesDrawer({ on, level, title: words.title, sub: words.sub });
   }, [on, level, words.title, words.sub]);
@@ -205,8 +197,8 @@ export function useMessagesDrawer(
     placed.current = level;
   }, [on, level]);
   // Again whenever the layout's width changes. Not only a window's resize:
-  // a route that lands straight on a conversation or an agent (a link, a
-  // reload, `#agent/new`) is placed before the screen is shown, at no width,
+  // a route that lands straight on a conversation (a link, a reload) is
+  // placed before the screen is shown, at no width,
   // and the list stayed in view behind the pane.
   useEffect(() => {
     if (!on) return undefined;

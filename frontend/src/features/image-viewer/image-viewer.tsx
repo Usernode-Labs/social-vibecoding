@@ -74,7 +74,7 @@ export function openInViewer(event: ReactMouseEvent<HTMLAnchorElement>, open: ()
  * ── A request's screenshots (#3908) ───────────────────────────────────
  *
  * An issue's body and its GitHub comments are markdown the module renders
- * (`DevChat.renderMarkdown` with `images: true`), and every picture in them
+ * (`PlatformMarkdown.render` with `images: true`), and every picture in them
  * comes out as `<a class="dc-inline-img-link" href=… target="_blank">` around
  * its `<img>`: the file's own link, which is what a chat thumbnail was before
  * #3286, and which lost the page the same way ("screenshots from issues open
@@ -95,7 +95,7 @@ export function openInViewer(event: ReactMouseEvent<HTMLAnchorElement>, open: ()
  * opens it in a new tab.
  */
 
-/** The picture link `DevChat.renderMarkdown` wraps an inline image in. */
+/** The picture link `PlatformMarkdown.render` wraps an inline image in. */
 export const INLINE_IMAGE_LINK = 'a.dc-inline-img-link';
 
 export interface InlineImage {

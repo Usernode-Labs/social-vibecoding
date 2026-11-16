@@ -178,16 +178,6 @@ test('each kind renders its own title and body from send-time context', () => {
     ['approver_invite_accepted', CONTEXT,
       '@alice can approve changes now · MyPage',
       'They can try changes and vote on them from now on'],
-    ['spec_shared', { ...CONTEXT, detail: '3' },
-      '@alice shared "Fix login redirect loop" with you · MyPage',
-      'Plan v3. Take a look and leave feedback'],
-    ['session_done', CONTEXT,
-      'Your build is ready · MyPage',
-      '"Fix login redirect loop" finished. Review it while it\'s fresh'],
-    // #3181: the turn stopped before finishing. Where, then what to do.
-    ['session_stalled', CONTEXT,
-      'Your session on MyPage stopped before finishing',
-      'Open "Fix login redirect loop" to continue'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
       '@alice would love your eyes on this'],
@@ -224,27 +214,6 @@ test('each kind renders its own title and body from send-time context', () => {
   for (const [kind, context, title, body] of cases) {
     const message = buildMessage({ ...INPUT, kind, context });
     assert.deepEqual(message.notification, { title, body }, kind);
-  }
-});
-
-test('auto-solve outcomes surface urgency in the title, next step in the body', () => {
-  const cases = [
-    ['spec', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      'Plan ready. Review it in the app'],
-    ['code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      "Code ready. Review and promote when you're happy"],
-    ['spec_code', 'Auto-solve finished "Fix login redirect loop" · MyPage',
-      "Plan and code ready. Review and promote when you're happy"],
-    ['question', 'Auto-solve is waiting on you · MyPage',
-      '"Fix login redirect loop" needs an answer before it can continue'],
-    ['failed', 'Auto-solve hit a wall · MyPage',
-      '"Fix login redirect loop" failed. Open the log to see what happened'],
-  ];
-  for (const [detail, title, body] of cases) {
-    const message = buildMessage({
-      ...INPUT, kind: 'auto_solve_done', context: { ...CONTEXT, detail },
-    });
-    assert.deepEqual(message.notification, { title, body }, detail);
   }
 });
 
@@ -325,8 +294,8 @@ test('titles and bodies are sanitized, collapsed, and truncated', () => {
   });
   assert.ok(embedded.notification.title.includes('…'));
   assert.ok(embedded.notification.title.length <= 80);
-  // Title-embedded labels get a tighter cap than body embeds, so the app
-  // suffix survives instead of being eaten by the 80-char truncation.
+  // Title-embedded labels are capped, so the app suffix survives instead of
+  // being eaten by the 80-char truncation.
   assert.ok(embedded.notification.title.endsWith(' · MyPage'));
 });
 
@@ -337,18 +306,9 @@ test('missing context degrades to the generic notification, never a throw', () =
       title: 'Homeroom', body: 'You have new activity',
     });
   }
-  // System kinds keep their kind-specific title even without app/session data.
-  assert.deepEqual(
-    buildMessage({ ...INPUT, kind: 'session_done', context: {} }).notification,
-    { title: 'Your build is ready' }
-  );
-  // #3181: a stalled session still says what happened and what to do.
-  assert.deepEqual(
-    buildMessage({ ...INPUT, kind: 'session_stalled', context: {} }).notification,
-    { title: 'Your session stopped before finishing', body: 'Open it to continue' }
-  );
-  // The new system-owned kinds can still identify the event without an
-  // actor, app or proposal label, so they never regress to generic activity.
+  // System-owned kinds keep their kind-specific copy: they can identify the
+  // event without an actor, app or proposal label, so they never regress to
+  // generic activity.
   assert.deepEqual(
     buildMessage({ ...INPUT, kind: 'pr_merged', context: {} }).notification,
     { title: 'Your change is live', body: 'The vote carried. Your change is live' }

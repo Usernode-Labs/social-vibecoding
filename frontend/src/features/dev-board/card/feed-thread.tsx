@@ -152,8 +152,8 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
  * that make #1584 visible are executable in isolation: the controlled value
  * grows a textarea, and an always-present arrow sends it. Plain Enter is not
  * intercepted — it adds a line; submission belongs to the adjacent arrow and,
- * since #2145, to ⌘/Ctrl+Enter, the chord the dev chat, Close issue and Send
- * feedback already answer to.
+ * since #2145, to ⌘/Ctrl+Enter, the chord Close issue and Send feedback
+ * already answer to.
  *
  * Typing `@` opens the people list (./mention-typeahead.tsx), and `PR#` or a
  * bare `#` the pull-request and issue list (./ref-typeahead.tsx): the group
@@ -224,7 +224,7 @@ export function FeedReplyComposer({
           if (!posting && draft.trim()) void onSubmit();
         }}
       />
-      {/* The dev session's send disc: a 36px filled accent circle with the
+      {/* The send disc: a 36px filled accent circle with the
           up-arrow (app.css `.dev-feed-send`), so every "send" on the platform
           is the same object. */}
       <Button

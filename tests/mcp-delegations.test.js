@@ -1,9 +1,9 @@
 'use strict';
 
 // Delegated connector grants (#2779): the platform's own agents reach the
-// connector's tools on the user's behalf. The Mayor of an agent session holds
-// an `agent_mayor` grant, and the coding agent in a change's worker holds a
-// `worker_read` grant.
+// connector's tools on the user's behalf. Homeroom bot, reading for the
+// person it answers, holds an `agent_mayor` grant, and the coding agent in a
+// change's worker holds a `worker_read` grant.
 //
 // What this file pins, because each is the kind of thing that keeps "working"
 // while being wrong:
@@ -14,7 +14,7 @@
 //   2. a token's SHAPE and its grant must agree, and liveness (revoked,
 //      expired, the change closed or moved) is checked on every request;
 //   3. each kind reaches only its own routes, and a bound grant only its own
-//      app (and a Mayor's one-action grant only its own change);
+//      app (and an `agent_mayor` grant bound to a change only that change);
 //   4. a delegated grant is the ONE connector credential that works where the
 //      consent surface is off (a staging preview), and only on POST /mcp and
 //      the loopback API chain;
@@ -83,11 +83,11 @@ test('a grant is normalized narrower than any caller asks', () => {
     'a long ask is clamped to the kind\'s ceiling');
 
   const mayor = mcpOauth.normalizeDelegation({
-    userId: 7, kind: 'agent_mayor', agentSessionId: 4, scopes: [READ_SCOPE, WRITE_SCOPE], ttlSeconds: 1,
+    userId: 7, kind: 'agent_mayor', scopes: [READ_SCOPE, WRITE_SCOPE], ttlSeconds: 1,
   });
   assert.deepEqual(mayor.scopes, [READ_SCOPE, WRITE_SCOPE]);
   assert.equal(mayor.ttlSeconds, 30, 'and a tiny one is raised to a usable floor');
-  assert.ok(constants.DELEGATION_MAX_TTL_SECONDS.agent_mayor <= 15 * 60, 'a Mayor grant lasts one turn');
+  assert.ok(constants.DELEGATION_MAX_TTL_SECONDS.agent_mayor <= 15 * 60, 'a Homeroom bot grant lasts one turn');
 
   const refused = [
     [{ userId: 7, kind: 'worker_read', appId: 3 }, /bound to one change/],
@@ -122,7 +122,8 @@ test('issueDelegatedAccess writes a delegation, one access row and an audit row 
   assert.equal(statements[0], 'BEGIN');
   assert.equal(statements.at(-1), 'COMMIT');
   const delegation = pool.calls.find((c) => /INSERT INTO mcp_delegations/.test(c.sql));
-  assert.deepEqual(delegation.params.slice(1, 6), [7, 'worker_read', null, 50, 3]);
+  assert.deepEqual(delegation.params.slice(1, 5), [7, 'worker_read', 50, 3]);
+  assert.doesNotMatch(delegation.sql, /agent_session_id/, 'a grant names no agent session');
   const tokens = pool.calls.filter((c) => /INSERT INTO mcp_tokens/.test(c.sql));
   assert.equal(tokens.length, 1, 'one access row');
   assert.match(tokens[0].sql, /'access'/);
@@ -165,11 +166,10 @@ function tokenRow(overrides = {}) {
   return {
     id: 91, user_id: 7, client_id: 'homeroom:worker_read', grant_id: GRANT,
     scopes: [READ_SCOPE], expires_at: FUTURE(), revoked_at: null, client_name: null,
-    d_grant_id: GRANT, d_kind: 'worker_read', d_agent_session_id: null,
+    d_grant_id: GRANT, d_kind: 'worker_read',
     d_change_id: 50, d_app_id: 3, d_expires_at: FUTURE(), d_revoked_at: null,
     app_slug: 'recipe-box',
     change_user_id: 7, change_status: 'active', change_app_id: 3,
-    agent_session_user_id: null, agent_session_status: null,
     now: new Date(),
     ...overrides,
   };
@@ -196,7 +196,7 @@ test('a live delegated token authenticates as its user and carries its delegatio
   assert.deepEqual(
     { ...auth.delegation, expiresAt: undefined },
     {
-      kind: 'worker_read', grantId: GRANT, agentSessionId: null, changeId: 50,
+      kind: 'worker_read', grantId: GRANT, changeId: 50,
       appId: 3, appSlug: 'recipe-box', expiresAt: undefined,
     }
   );
@@ -249,25 +249,20 @@ test('liveness is checked on every request, with no hook having to run', async (
     const auth = await authenticateConnector(authPool(tokenRow(overrides)), token);
     assert.equal(auth.error, error, why);
   }
-  // A Mayor's grant serves one agent session, and ends with it (#2779 step 3).
-  const mayor = { d_kind: 'agent_mayor', d_change_id: null, d_app_id: null, app_slug: null, d_agent_session_id: 4 };
-  for (const [overrides, error, why] of [
-    [{ agent_session_user_id: 7, agent_session_status: 'open' }, undefined, 'an open session of the user\'s'],
-    [{ agent_session_user_id: 7, agent_session_status: 'archived' }, 'revoked_token', 'an archived session'],
-    [{ agent_session_user_id: 8, agent_session_status: 'open' }, 'revoked_token', 'somebody else\'s session'],
-    [{ agent_session_user_id: null, agent_session_status: null }, 'revoked_token', 'a session that is gone'],
-  ]) {
-    const auth = await authenticateConnector(authPool(tokenRow({ ...mayor, ...overrides })), token);
-    assert.equal(auth.error, error, why);
-  }
+  // A Homeroom bot grant bound to nothing is live on its own row and dates.
+  const unbound = await authenticateConnector(authPool(tokenRow({
+    d_kind: 'agent_mayor', d_change_id: null, d_app_id: null, app_slug: null,
+    change_user_id: null, change_status: null, change_app_id: null,
+  })), token);
+  assert.equal(unbound.error, undefined, 'an unbound grant');
 
-  // A Mayor's grant bound to a change survives the states the Mayor still
-  // acts on, where a worker's would not.
+  // One bound to a change survives the states a change is still read in,
+  // where a worker's would not.
   for (const status of ['active', 'paused', 'promoted', 'merging']) {
     const auth = await authenticateConnector(
       authPool(tokenRow({ d_kind: 'agent_mayor', change_status: status })), token
     );
-    assert.equal(auth.error, undefined, `a Mayor grant on a ${status} change is live`);
+    assert.equal(auth.error, undefined, `a Homeroom bot grant on a ${status} change is live`);
   }
 });
 
@@ -292,17 +287,34 @@ test('each kind reaches only its own routes, never the external list or the CLI 
     assert.equal(route.method, 'GET', `${route.pattern} is a read`);
   }
 
-  // The Mayor has the change lifecycle the external list does not …
+  // Homeroom bot reads too: what its thirteen tools need, each a route the
+  // external list already carries.
+  assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/apps'), true);
+  assert.equal(policy.isDelegatedApiRequest('agent_mayor', 'GET', '/api/sessions/50/status'), true);
+  assert.equal(policy.AGENT_MAYOR_ALLOWED_ROUTES.length, 12);
+  for (const route of policy.AGENT_MAYOR_ALLOWED_ROUTES) {
+    assert.equal(route.method, 'GET', `${route.pattern} is a read`);
+    const target = route.pattern.replace(/:[a-z]+/g, '5');
+    assert.equal(policy.isConnectorApiRequest('GET', target), true, `external too: GET ${route.pattern}`);
+  }
+  // No connector credential starts, syncs or withdraws a change on Homeroom.
   for (const [method, target] of [
     ['POST', '/api/apps/recipe-box/sessions'],
     ['POST', '/api/sessions/50/sync-main'],
     ['POST', '/api/sessions/50/archive'],
   ]) {
-    assert.equal(policy.isDelegatedApiRequest('agent_mayor', method, target), true, `mayor: ${method} ${target}`);
+    assert.equal(policy.isDelegatedApiRequest('agent_mayor', method, target), false, `mayor never: ${method} ${target}`);
     assert.equal(policy.isConnectorApiRequest(method, target), false, `external never: ${method} ${target}`);
   }
-  // … and still nothing that votes, merges, or reaches secrets and settings.
+  // Nothing that files, claims, promotes, votes, merges, or reaches secrets
+  // and settings.
   for (const [method, target] of [
+    ['POST', '/api/apps/recipe-box/issues'],
+    ['POST', '/api/apps/recipe-box/messages'],
+    ['POST', '/api/apps/recipe-box/github-issues/12/claim'],
+    ['PATCH', '/api/sessions/50/linked-issues'],
+    ['POST', '/api/sessions/50/promote'],
+    ['POST', '/api/sessions/50/recheck'],
     ['POST', '/api/sessions/50/vote'],
     ['POST', '/api/sessions/50/admin-merge'],
     ['POST', '/api/sessions/50/unarchive'],
@@ -404,21 +416,23 @@ test('a worker grant is held to its app and to reads', async () => {
   });
 });
 
-test('a Mayor grant bound to one change touches only that change', async () => {
+test('a Homeroom bot grant bound to one change reads only that change', async () => {
   const row = tokenRow({
     d_kind: 'agent_mayor', client_id: 'homeroom:agent_mayor', scopes: [READ_SCOPE, WRITE_SCOPE],
   });
   await withChain({ row, sessionApps: { 50: 3, 51: 3 } }, async (call) => {
     const token = mcpOauth.makeDelegatedAccessToken();
-    const own = await call('POST', '/api/sessions/50/promote', token);
+    const own = await call('GET', '/api/sessions/50', token);
     assert.equal(own.status, 200);
     assert.equal(own.body.kind, 'agent_mayor');
-    assert.equal((await call('POST', '/api/sessions/51/promote', token)).status, 403, 'a sibling change');
-    assert.equal((await call('POST', '/api/sessions/50/vote', token)).status, 403, 'a route off the Mayor list');
+    assert.equal((await call('GET', '/api/sessions/51', token)).status, 403, 'a sibling change');
+    assert.equal((await call('POST', '/api/sessions/50/promote', token)).status, 403,
+      'a write is on no Homeroom bot route, whatever scope the grant carries');
+    assert.equal((await call('POST', '/api/sessions/50/vote', token)).status, 403, 'a route off its list');
   });
 });
 
-test('an unbound Mayor read grant reads across apps but cannot write', async () => {
+test('an unbound Homeroom bot grant reads across apps but cannot write', async () => {
   const row = tokenRow({
     d_kind: 'agent_mayor', client_id: 'homeroom:agent_mayor', d_change_id: null, d_app_id: null,
     app_slug: null, change_user_id: null, change_status: null, change_app_id: null,
@@ -428,11 +442,11 @@ test('an unbound Mayor read grant reads across apps but cannot write', async () 
     assert.equal((await call('GET', '/api/apps', token)).status, 200);
     assert.equal((await call('GET', '/api/sessions/60', token)).status, 200);
     assert.equal((await call('POST', '/api/apps/recipe-box/sessions', token)).status, 403,
-      'a write needs the write scope, which only a confirmed action carries');
+      'no write is on its route list');
   });
 });
 
-test('in production the external chain is unchanged and still refuses the Mayor-only routes', async () => {
+test('in production the external chain is unchanged and still refuses the routes that move a change on Homeroom', async () => {
   const row = tokenRow({
     client_id: 'svmc_x', client_name: 'Claude', d_grant_id: null, d_kind: null,
     d_change_id: null, d_app_id: null, d_expires_at: null, app_slug: null,

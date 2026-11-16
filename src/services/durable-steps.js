@@ -8,8 +8,8 @@
 // where they live, and a work handler gets them as `ctx.steps()`
 // (src/workflow/kernel/steps.ts, which says what each step does). `durable`
 // here is the same thing for a handler that builds them from its context
-// itself (services/build-runs.js). Code not run by the kernel (tests, a
-// person's own dev chat) gets the inert context, `none()`: every step simply
+// itself (services/build-runs.js). Code not run by the kernel (tests)
+// gets the inert context, `none()`: every step simply
 // runs, nothing is kept, nothing fences.
 
 const log = require('./logger');

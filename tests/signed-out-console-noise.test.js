@@ -1,13 +1,14 @@
 // QA 2026-09-24 Q35: the signed-out landing and the waiting room ask no
 // member-only API.
 //
-// The shell is one document for everyone, so stores mounted on every page
-// fetched `/api/models` and `/api/agent-sessions` (and, until it was
-// removed, Global Chat's bootstrap) for signed-out visitors (four 401s, each a red
+// The shell is one document for everyone, so modules loaded on every page
+// fetched `/api/models` (and, until they were removed, the agent sessions
+// list and Global Chat's bootstrap) for signed-out visitors (each 401 a red
 // "Failed to load resource" line on every anonymous screen) and for
-// waiting-room accounts (403s). They now wait for a viewer the endpoints
-// answer (frontend/src/lib/platform-viewer.ts) and load on `sv:authed`, the
-// authed boot's once-per-document event, when there was none at mount.
+// waiting-room accounts (403s). The model list (frontend/src/lib/
+// platform-models.js) now waits for a viewer the endpoint answers (the test
+// frontend/src/lib/platform-viewer.ts makes) and loads on `sv:authed`, the
+// authed boot's once-per-document event, when there was none at load.
 //
 // Run with: node --test tests/signed-out-console-noise.test.js
 
@@ -15,9 +16,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { loadTsx } = require('./lib/render-tsx');
+const vm = require('node:vm');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const MODELS_SRC = read('frontend/src/lib/platform-models.js');
+
+// platform-models.js is a classic script: evaluated as the shell evaluates
+// it, against this world's window, document and fetch.
+function loadModels() {
+  vm.runInNewContext(MODELS_SRC, {
+    window: globalThis.window, document: globalThis.document, fetch: globalThis.fetch,
+  });
+}
 
 function world(user) {
   const listeners = {};
@@ -51,30 +61,24 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 test('signed out: no member request, and the load runs once the authed shell boots', async () => {
   const w = world(null);
   try {
-    const agent = loadTsx('frontend/src/features/agent-session/store.ts');
-    await agent.loadAgentSessions();
-    await agent.loadAgentSessions(); // a second caller (recents, the app sheet)
-    await agent.loadModelCatalog();
+    loadModels();
     await settle();
     assert.deepEqual(w.requests, [], 'nothing asked for a signed-out document');
-    assert.equal((w.listeners['sv:authed'] || []).length, 2, 'one deferred load per load, not one per caller');
+    assert.equal((w.listeners['sv:authed'] || []).length, 1, 'one deferred load');
 
     // A reload-free sign-in: App.user lands, then sv:authed fires.
     w.win.App.user = { id: 1, username: 'ada', hasPlatformAccess: true };
     w.authed();
     await settle();
     await settle();
-    assert.ok(w.requests.includes('/api/agent-sessions'));
-    assert.ok(w.requests.includes('/api/models'));
+    assert.deepEqual(w.requests, ['/api/models']);
   } finally { cleanup(); }
 });
 
 test('the waiting room: an account without platform access asks nothing', async () => {
   const w = world({ id: 2, username: 'queued', hasPlatformAccess: false });
   try {
-    const agent = loadTsx('frontend/src/features/agent-session/store.ts');
-    await agent.loadAgentSessions();
-    await agent.loadModelCatalog();
+    loadModels();
     // sv:authed does not fire for a waiting-room session, and if it did the
     // gate would still hold.
     w.authed();
@@ -88,16 +92,15 @@ test('a member loads straight away, as before', async () => {
   // so an older cached user without the field is never locked out.
   const w = world({ id: 3, username: 'member' });
   try {
-    const agent = loadTsx('frontend/src/features/agent-session/store.ts');
-    await agent.loadAgentSessions();
+    loadModels();
     await settle();
-    assert.ok(w.requests.includes('/api/agent-sessions'));
+    assert.deepEqual(w.requests, ['/api/models']);
   } finally { cleanup(); }
 });
 
-test('DevChat asks for /api/models only for such a viewer, else on sv:authed', () => {
-  const src = read('frontend/src/features/dev-chat/dev-chat.js');
+test('the model list asks for /api/models only for such a viewer, else on sv:authed', () => {
+  const src = MODELS_SRC;
   assert.match(src, /const hasPlatformViewer = \(\) => !!\(window\.App && window\.App\.user\s+&& window\.App\.user\.hasPlatformAccess !== false\);/);
-  assert.match(src, /if \(hasPlatformViewer\(\)\) DevChat\.loadModels\(\);\s+else if \(typeof document !== 'undefined'\) \{\s+document\.addEventListener\('sv:authed'/);
-  assert.doesNotMatch(src, /\n  DevChat\.loadModels\(\);\n\}/, 'no unconditional boot fetch');
+  assert.match(src, /if \(hasPlatformViewer\(\)\) PlatformModels\.load\(\);\s+else if \(typeof document !== 'undefined'\) \{\s+document\.addEventListener\('sv:authed'/);
+  assert.doesNotMatch(src, /\n  PlatformModels\.load\(\);\n\}/, 'no unconditional boot fetch');
 });
