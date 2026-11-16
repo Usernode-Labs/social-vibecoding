@@ -589,8 +589,8 @@ export function useSpecFrames(ref: RefObject<HTMLElement | null>, html: string):
   useEffect(() => fitSpecFrames(ref.current), [ref, html]);
 }
 
-// The legacy controllers (dev-chat.js, group-chat.js) reach this by name, the
-// way they reach every React seam.
+// The legacy controller (group-chat.js) reaches this by name, the
+// way it reaches every React seam.
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});

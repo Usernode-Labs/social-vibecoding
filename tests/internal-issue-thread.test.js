@@ -193,20 +193,22 @@ test('an unauthenticated request reads nothing', async (t) => {
   assert.equal(calls.length, 0);
 });
 
-test('the issues-read token cannot authorize the platform-issue write route', async (t) => {
+test('the issues-read token cannot authorize a write route', async (t) => {
   const calls = installPool();
   const baseUrl = await startServer(t);
   const token = platformJwt.signIssuesReadToken({ sessionId: SESSION_ID });
 
+  // The worker's visible-changes declaration: a write its build holds a
+  // token for, and the read token must not.
   const res = await fetch(
-    `${baseUrl}/api/internal/sessions/${SESSION_ID}/platform-issue`,
+    `${baseUrl}/api/internal/sessions/${SESSION_ID}/visible-changes`,
     {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ title: 'must not write', body: 'read scope only' }),
+      body: JSON.stringify({ version: 1, impact: 'none' }),
     },
   );
   assert.equal(res.status, 401);

@@ -994,8 +994,8 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             the box is empty, Send's place is Stop (./bot-stop.ts): the same
             disc, a filled square, and its press is the only way to stop.
             With words typed it is Stop and, beside it, "Save draft": words,
-            not a round button in Send's place, which read as Send (the agent
-            session's composer). Enter in the box saves then, sends
+            not a round button in Send's place, which read as Send. Enter in
+            the box saves then, sends
             otherwise, and never stops; an empty box sends nothing. */}
         {sendKind === 'send' ? (
           <button type="button" onMouseDown={(event) => event.preventDefault()} onClick={submit} disabled={dictating || !!uploading || (!value.trim() && !attachments.length && !object)} className="messages-send" aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined}><ArrowUpIcon aria-hidden="true" /></button>
@@ -1012,7 +1012,7 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
             variant="unstyled"
             ink="solid"
             disabledStyle="dim"
-            // The agent session's pill. On a phone the row is this box's
+            // A pill of words. On a phone the row is this box's
             // one 36px line and the field shares it, so the pill is the
             // row's height and its words alone.
             className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3 text-sm font-semibold hover:bg-emerald-700 md:h-10 md:px-3.5"

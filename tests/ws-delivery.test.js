@@ -107,22 +107,6 @@ test('a single oversized frame is refused before a query', async () => {
   assert.deepEqual(f.refused, ['overflow']);
 });
 
-test('an unwatch during the query wins for a watcher, while the owner still receives', async () => {
-  let resume;
-  const waiting = new Promise(resolve => { resume = resolve; });
-  const f = fixture(async inputs => { await waiting; return allow(inputs).map((r, n) => ({ ...r, session_owner: n === 1 })); });
-  const watcher = client(), owner = client();
-  watcher.watching = new Set([12]); owner.watching = new Set([12]);
-  const scope = { sessionId: 12, watching: true };
-  f.gate.enqueue(watcher, 'watcher frame', scope);
-  f.gate.enqueue(owner, 'owner frame', scope);
-  await turn();
-  watcher.watching.clear(); owner.watching.clear();
-  resume();
-  await turn();
-  assert.deepEqual(f.sent.map(([, json]) => json), ['owner frame']);
-});
-
 test('a staging descriptor is never authority in production', async () => {
   const f = fixture(allow), c = client();
   c.auth = { kind: 'staging', token: 'fake-jwt' };

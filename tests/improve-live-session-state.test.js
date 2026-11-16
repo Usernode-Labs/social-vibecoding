@@ -221,14 +221,12 @@ test('the row reads the shared accessor rather than the payload alone', () => {
   assert.doesNotMatch(body, /busy: isBusy\(session\)/,
     'the payload flag is the FALLBACK, inside liveBusy, not the answer');
   assert.match(CONTROLLER, /live\.isBusy\(session\.id, fallback\)/,
-    'the same accessor the dev screen list and the board cards use');
+    'the same accessor the board cards use');
   // And the seed no longer trusts a field the endpoint never sent.
   assert.doesNotMatch(CONTROLLER, /seed\(sessions, data\.issuedAt\)/);
   assert.match(CONTROLLER, /seed\(sessions, issuedAt\)/);
   assert.match(CONTROLLER, /const issuedAt = Date\.now\(\);[\s\S]{0,400}?fetch\(`\/api\/me\/active-sessions/,
-    'stamped before the request goes out, as DevChat.loadActiveSessions does');
-  assert.match(body, /: `#app\/\$\{session\.app_slug\}\/dev\/proposals\/\$\{session\.id\}`/,
-    'the row opens the full change page rather than dropping directly into chat');
-  // #2779: except a change an agent session started, which opens that conversation.
-  assert.match(body, /href: session\.agent_session_id\s*\? `#messages\/agent\/\$\{session\.agent_session_id\}`/);
+    'stamped before the request goes out');
+  assert.match(body, /href: `#app\/\$\{session\.app_slug\}\/dev\/proposals\/\$\{session\.id\}`,/,
+    'the row opens the full change page');
 });

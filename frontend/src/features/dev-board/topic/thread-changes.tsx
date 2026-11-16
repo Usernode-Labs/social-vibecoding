@@ -233,8 +233,8 @@ function useProposeChange(item: ThreadItem, onDone?: () => void): ProposeState {
  * Each change's own page read, and the view its page builds from it, in the
  * order given. Null until it is read. One hook for the list, so the count of
  * changes can move without moving the hooks. 1 Nov 2026: a change still
- * being built is read too, for its ⋯ (its page's rows, the Build door among
- * them); it draws its cards once it is up for a vote.
+ * being built is read too, for its ⋯ (its page's rows); it draws its cards
+ * once it is up for a vote.
  */
 function useChangeViews(items: ThreadItem[], tick = 0): Array<ChangeView | null> {
   const [rows, setRows] = useState<Record<number, any>>({});

@@ -37,16 +37,10 @@ into it. The list below is the state after the widget-library run (#1120);
 `scripts/audit-react-ownership.mjs` carries the converse — every host React
 now reconciles — and is the thing to update when one moves across.
 
-- `#dc-view` — the Dev chat's host ELEMENT, created at runtime by
-  `public/js/app-view.js`'s `renderDevChatTab`, so it cannot be converted
-  independently. Everything INSIDE it is React's, `#dc-spec-viewer` included;
-  the only host below it still on this list is `#dc-staging-panel`, which is a
-  slot rather than a container (see the Dev chat entry under "Converted").
-  `#app-content` itself is no longer on this list: all four Dev sub-views mount
-  a React frame into it.
-- `#dc-staging-panel` — a SLOT, not a container: the docked staging preview is
-  an overlay positioned over its rect and a `ResizeObserver` watches it, so it
-  renders empty and stays empty. It is the one `except` left on `#dc-view`.
+- `#app-content` is not on this list: every Dev sub-view (the board, the
+  topic and the project channel, which `public/js/app-view.js`'s
+  `renderGroupChatTab` draws into `#dev-chat-body`) mounts a React frame into
+  it.
 - nothing on the Leaderboard screen. See the note under "Converted".
 - nothing on the Dev screen but `showLaunchCoverShot`'s launch cover, which
   is deliberate — see "Large" below.
@@ -411,8 +405,8 @@ Two traps in writing that browser sweep, both of which hid a real failure:
    | **the list feed, every card in it** | `#dev-feed` |
    | **the kanban board, its columns and tabs** | `#dev-kanban-board` |
    | **the opened topic's head — the card AND its body** | `#gc-thread-head` |
-   | **the Generate-proposal dialog** | `#auto-session-modal` |
-   | **the out-of-credits dialog** | `#credit-options-modal` |
+   | **the Generate-proposal dialog** (removed with the auto run) | `#auto-session-modal` |
+   | **the out-of-credits dialog** (removed) | `#credit-options-modal` |
    | **the app-AI consent dialog** | `#llm-consent-modal` |
    | **the App tab's five placeholder states** | `#app-content` (App tab) |
 
@@ -558,8 +552,9 @@ Two traps in writing that browser sweep, both of which hid a real failure:
 
    **What stayed another owner's**, and why each is not a regression:
 
-   - an issue's body and a proposal's summary — `DevChat.renderMarkdown`'s
-     output, sanitised where it is built, rendered through
+   - an issue's body and a proposal's summary — `PlatformMarkdown.render`'s
+     output (`frontend/src/lib/platform-markdown.js`), sanitised where it is
+     built, rendered through
      `dangerouslySetInnerHTML` from a string the model carries.
    - the before/after tiles — `AppView.visualsTilesHtml`, which four other
      surfaces still call, so it stays a string builder.
@@ -637,11 +632,14 @@ Two traps in writing that browser sweep, both of which hid a real failure:
 
    What is LEFT on this screen is `showLaunchCoverShot` — deliberately, it is
    the one launch surface with no app behind it and `_launchCoverHtml` has
-   four other callers — and `renderDevChatTab`'s `#dc-view`, which belongs to
-   the Dev chat below.
+   four other callers.
 
-2. **Dev chat — `frontend/src/features/dev-chat/dev-chat.js`, about 9,700
-   lines. Started at the composer, finished at the screen.** It is DONE:
+2. **Dev chat — retired.** The per-change dev chat
+   (`frontend/src/features/dev-chat/`, `#dc-view`) and the agent chats were
+   removed from the platform, so nothing of either is left to convert, and the
+   ownership audit has no entry for them. What follows is the record of the
+   dev chat's conversion (about 9,700 lines, started at the composer, finished
+   at the screen), kept for its lessons:
 
    | converted | host |
    | --- | --- |

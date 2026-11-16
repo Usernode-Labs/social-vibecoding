@@ -303,13 +303,8 @@ test('input is every prompt token, counted once: the cache counts are parts of i
   assert.match(sql, /cache_write_input_tokens::float8 \/ NULLIF\(input_tokens, 0\)/);
 });
 
-test('the picker and the console are told the profile’s cached parts', async () => {
+test('the console is told the profile’s cached parts', async () => {
   const pool = poolFor([[/FROM agent_turns/, [{ changes: '0' }]]]);
-  const picker = await modelCosts.pickerPayload(pool);
-  assert.deepEqual(picker.typicalChange, {
-    inputTokens: 2_500_000, cachedInputTokens: 2_375_000, cacheWriteInputTokens: 125_000,
-    outputTokens: 120_000, source: 'documented_constant',
-  });
   const admin = await modelCosts.adminPayload(pool, { days: 30 });
   assert.equal(admin.typicalChange.cachedInputTokens, 2_375_000);
   assert.equal(admin.typicalChange.cacheWriteInputTokens, 125_000);
@@ -318,8 +313,6 @@ test('the picker and the console are told the profile’s cached parts', async (
   const src = read('frontend/src/features/admin/admin-model-costs.tsx');
   assert.match(src, /% of it cache reads/);
   assert.match(src, /Cache reads and writes are priced at the model’s own cache rates where it publishes them/);
-  // The route's fallback is the same constant, cached parts and all.
-  assert.match(read('src/routes/chat.js'), /res\.json\(\{ typicalChange: modelCosts\.TYPICAL_CHANGE, models: \{\} \}\)/);
 });
 
 // ── 3. Observed spend is per CHANGE ─────────────────────────────────────
@@ -486,18 +479,21 @@ test('an override replaces the shown estimate and clears back to the derived one
   await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5-5', cents: 250, actorId: 1 });
   assert.deepEqual(await modelCosts.readOverrides(pool), { 'claude-opus-5-5': 250 });
 
-  const picker = await modelCosts.pickerPayload(pool);
-  assert.equal(picker.models['claude-opus-5-5'].estimateCents, 250,
+  const row = (payload, id) => payload.rows.find((r) => r.modelId === id);
+  const admin = await modelCosts.adminPayload(pool, { days: 30 });
+  assert.equal(row(admin, 'claude-opus-5-5').shownCents, 250,
     'the override the admin typed, not the derived 1240');
-  assert.equal(picker.models['claude-opus-5-5'].estimateSource, 'override');
-  assert.equal(picker.models['claude-sonnet-5-5'].estimateSource, 'pricing',
+  assert.equal(row(admin, 'claude-opus-5-5').overrideCents, 250);
+  assert.equal(row(admin, 'claude-sonnet-5-5').overrideCents, null,
     'the models nobody overrode keep their derived figure');
-  assert.equal(picker.typicalChange.source, 'documented_constant');
+  assert.equal(row(admin, 'claude-sonnet-5-5').shownCents, row(admin, 'claude-sonnet-5-5').derivedCents);
+  assert.equal(admin.typicalChange.source, 'documented_constant');
 
   await modelCosts.writeOverride(pool, { modelId: 'claude-opus-5-5', cents: null, actorId: 1 });
   assert.deepEqual(await modelCosts.readOverrides(pool), {});
-  const cleared = await modelCosts.pickerPayload(pool);
-  assert.equal(cleared.models['claude-opus-5-5'].estimateSource, 'pricing');
+  const cleared = await modelCosts.adminPayload(pool, { days: 30 });
+  assert.equal(row(cleared, 'claude-opus-5-5').overrideCents, null);
+  assert.equal(row(cleared, 'claude-opus-5-5').shownCents, row(cleared, 'claude-opus-5-5').derivedCents);
 
   // Garbage in the setting is ignored rather than rendered.
   stored = '{"good/model": 10, "bad/model": "nope", "": 5}';
@@ -545,84 +541,11 @@ test('the Model costs section is registered, routed and audited', () => {
 // The figure is per TYPICAL CHANGE, not per message, per hour or per
 // month, and "$1.55" beside a model name invites all three readings. The
 // product decision for #2570 is that the amount only ever reaches a person
-// inside the phrase "about $X for a typical change" — on the picker option,
-// on the line under the picker, and in the admin console's save
-// confirmation. The admin TABLE may hold bare numbers, because its column
-// headers carry the unit instead.
-//
-// dev-chat.js is a plain browser script, so this loads it the way
-// model-selector-ui.test.js does: into a vm, reading DevChat back out.
+// inside the phrase "about $X for a typical change", as the admin console's
+// save confirmation says it. The admin TABLE may hold bare numbers, because
+// its column headers carry the unit instead.
 
-test('a cost only ever reaches a person as "about $X for a typical change"', () => {
-  const vm = require('node:vm');
-  const sandbox = { console, fetch: () => Promise.reject(new Error('no network')) };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  // dev-chat.js wires a few listeners at load. None of them is what this
-  // test reads, so the stubs only have to exist.
-  sandbox.document = { addEventListener() {}, getElementById: () => null };
-  sandbox.addEventListener = () => {};
-  sandbox.navigator = {};
-  sandbox.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
-  sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
-  vm.createContext(sandbox);
-  vm.runInContext(
-    `${read('frontend/src/features/dev-chat/dev-chat.js')}\n;globalThis.__DevChat = DevChat;`,
-    sandbox,
-  );
-  const DevChat = sandbox.__DevChat;
-
-  // The one place the amount is formatted. A curated row carries its own
-  // estimate; the client never re-derives one it was given.
-  DevChat._modelNotes = {
-    typicalChange: { inputTokens: 2_500_000, outputTokens: 120_000, source: 'documented_constant' },
-    models: { 'z-ai/glm-5.3-flash': { note: 'quick, cheap changes', estimateCents: 40 } },
-  };
-
-  const cost = DevChat._modelCostNote('z-ai/glm-5.3-flash', null);
-  assert.equal(cost.compact, 'quick, cheap changes · about $0.40 for a typical change');
-  assert.equal(cost.full, 'quick, cheap changes · about $0.40 for a typical change (estimate)');
-  // The prefixed picker value resolves to the same row, so an option and
-  // the line beneath it cannot disagree.
-  assert.equal(DevChat._modelCostNote('openrouter:z-ai/glm-5.3-flash', null).compact, cost.compact);
-
-  // Neither display string may carry an amount that is not inside the
-  // phrase. `estimate` holds the bare figure on purpose, for arithmetic.
-  for (const text of [cost.compact, cost.full]) {
-    for (const match of text.match(/\$[0-9.]+|<\$[0-9.]+/g) || []) {
-      assert.match(text, new RegExp(`about ${match.replace(/[$.]/g, '\\$&')} for a typical change`),
-        `"${text}" shows an amount outside the phrase`);
-    }
-  }
-  assert.equal(cost.estimate, '$0.40');
-
-  // A model nobody published a price for says what it is good for and
-  // stops there, rather than reading as free.
-  DevChat._modelNotes.models['no-price/model'] = { note: 'experimental', estimateCents: null };
-  const priceless = DevChat._modelCostNote('no-price/model', null);
-  assert.equal(priceless.compact, 'experimental');
-  assert.doesNotMatch(priceless.full, /\$/);
-
-  // Under a cent is "<$0.01", still inside the phrase.
-  DevChat._modelNotes.models['tiny/model'] = { note: 'trivial edits', estimateCents: 0.4 };
-  assert.equal(DevChat._modelCostNote('tiny/model', null).compact,
-    'trivial edits · about <$0.01 for a typical change');
-
-  // A model the platform does not curate is priced here, from the viewer's
-  // catalog, with the server's arithmetic: its cached share at the cache
-  // rates the catalog lists, at the prompt rate without them.
-  DevChat._modelNotes.typicalChange = { ...modelCosts.TYPICAL_CHANGE };
-  const sonnetOnOpenRouter = {
-    inputPricePerMillion: 2, outputPricePerMillion: 10,
-    cacheReadPricePerMillion: 0.2, cacheWritePricePerMillion: 2.5,
-  };
-  assert.equal(DevChat._modelCostNote('anthropic/claude-sonnet-5.5', sonnetOnOpenRouter).estimate,
-    `$${(modelCosts.estimateCents(sonnetOnOpenRouter) / 100).toFixed(2)}`);
-  assert.equal(DevChat._modelCostNote('anthropic/claude-sonnet-5.5', sonnetOnOpenRouter).estimate, '$1.99');
-  assert.equal(DevChat._modelCostNote('plain/model', { inputPricePerMillion: 2, outputPricePerMillion: 10 }).estimate,
-    '$6.20', 'no cache prices in the catalog: every input token at the prompt rate');
-
-  // The admin table's cells are bare, so its headers carry the unit.
+test('the console states the unit: in its table headers, and as the phrase when it saves', () => {
   const admin = read('frontend/src/features/admin/admin-model-costs.tsx');
   // And the profile it prints reads as millions: a typical change is 2.5M
   // input tokens, which "2500k" is a worse way to say.
@@ -633,35 +556,8 @@ test('a cost only ever reaches a person as "about $X for a typical change"', () 
     'Observed median, per typical change']) {
     assert.ok(admin.includes(header), `the table header "${header}" states its unit`);
   }
-  assert.match(admin, /the picker now says about \$\{money\(cents\)\} for a typical change/,
+  assert.match(admin, /the estimate is now about \$\{money\(cents\)\} for a typical change/,
     'the save confirmation uses the phrase too');
-});
-
-test('the agent-session picker prices a catalog model the way the server does', () => {
-  const { loadTsx } = require('./lib/render-tsx');
-  const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
-  const profile = { ...modelCosts.TYPICAL_CHANGE };
-  const models = [
-    { id: 'z-ai/glm-5.3-flash', ...modelCosts.publishedPricing('z-ai/glm-5.3-flash') },
-    { id: 'anthropic/claude-opus-5.5', ...modelCosts.publishedPricing('claude-opus-5-5') },
-    { id: 'plain/model', inputPricePerMillion: 1, outputPricePerMillion: 4 },
-    { id: 'write/only', inputPricePerMillion: 1, outputPricePerMillion: 4, cacheWritePricePerMillion: 1.25 },
-  ];
-  for (const model of models) {
-    assert.equal(choice.typicalChangeCents(profile, model), modelCosts.estimateCents(model, profile), model.id);
-  }
-  // An older server's profile has no cached parts: the prompt-rate figure.
-  assert.equal(choice.typicalChangeCents({ inputTokens: 2_500_000, outputTokens: 120_000 }, models[1]), 1240);
-  assert.equal(choice.typicalChangeCents(profile, { id: 'x', inputPricePerMillion: null, outputPricePerMillion: 1 }), null);
-
-  // The catalog the picker reads carries the cache prices the shared
-  // catalog keeps off its own JSON, and api.ts keeps the profile's parts.
-  const routes = read('src/routes/credentials.js');
-  assert.match(routes, /cacheReadPricePerMillion: model\.cacheReadPricePerMillion/);
-  assert.match(routes, /cacheWritePricePerMillion: model\.cacheWritePricePerMillion/);
-  const api = read('frontend/src/features/agent-session/api.ts');
-  assert.match(api, /cachedInputTokens: cached/);
-  assert.match(api, /cacheWriteInputTokens: written/);
 });
 
 test('the observed unit matches the estimate’s unit', async () => {

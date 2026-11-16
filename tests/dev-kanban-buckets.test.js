@@ -1,10 +1,10 @@
 // Kanban view-mode: AppView._bucketDevItems() sorts the cached dev data
 // into the four lifecycle columns shown on the board:
 //
-//   issues     — open GitHub issues with no work under way (headless none/
-//                failed/absent, no claim, no live session, no proposal)
-//   inProgress — open issues with work under way: a generating/ready
-//                headless run, a claim/live session, or an open proposal
+//   issues     — open GitHub issues with no work under way (no claim, no
+//                live session, no proposal)
+//   inProgress — open issues with work under way: a claim or live session,
+//                or an open proposal
 //   inReview   — promoted PR proposals + governance proposals
 //   done       — merged proposals
 //
@@ -73,7 +73,7 @@ const at = (h) => `2026-06-01T${String(h).padStart(2, '0')}:00:00Z`;
 
 const issue = (over) => ({
   number: over.number, title: `Issue ${over.number}`,
-  updatedAt: at(1), lastMessageAt: at(1), headless: null,
+  updatedAt: at(1), lastMessageAt: at(1),
   ...over,
 });
 const prop = (over) => ({
@@ -103,23 +103,6 @@ const sharedSess = (over) => ({
   ...over,
 });
 
-test('headless none/failed/absent → Issues; generating/ready → In progress', () => {
-  const AppView = makeAppView();
-  const b = AppView._bucketDevItems({
-    issues: [
-      issue({ number: 1, headless: null }),
-      issue({ number: 2, headless: { status: 'failed' } }),
-      issue({ number: 3, headless: { status: 'generating' } }),
-      issue({ number: 4, headless: { status: 'ready' } }),
-    ],
-    proposals: [],
-    gov: [],
-    merged: [],
-  });
-  assert.deepEqual(numbersOf(b.issues).sort(), [1, 2]);
-  assert.deepEqual(inProgOf(b.inProgress).sort(), ['issue:3', 'issue:4']);
-});
-
 // #1251: an issue an open promoted proposal addresses stays ON the board,
 // in the In progress column. It used to be dropped from both issue columns
 // — which made it visible in the list feed (which never deduped) and
@@ -129,9 +112,9 @@ test('issues linked to an open promoted proposal go to In progress, not off the 
   const b = AppView._bucketDevItems({
     issues: [
       // 10 carries no in-progress signal of its own — only the proposal.
-      issue({ number: 10, headless: null }),
-      issue({ number: 11, headless: { status: 'ready' } }),
-      issue({ number: 12, headless: null }),
+      issue({ number: 10 }),
+      issue({ number: 11, in_progress: { count: 1, users: ['them'], claims: [] } }),
+      issue({ number: 12 }),
     ],
     proposals: [prop({ id: 100, linked_issues: [10, 11] })],
     gov: [],
@@ -153,10 +136,10 @@ test('issues linked to an open promoted proposal go to In progress, not off the 
 test('no visible issue is dropped from the board', () => {
   const AppView = makeAppView();
   const issues = [
-    issue({ number: 20, headless: null }),
-    issue({ number: 21, headless: { status: 'generating' } }),
+    issue({ number: 20 }),
+    issue({ number: 21, in_progress: { count: 0, users: [], claims: [{ username: 'them', mine: false }] } }),
     issue({ number: 22, in_progress: { count: 1, users: ['them'], claims: [] } }),
-    issue({ number: 23, headless: null }),
+    issue({ number: 23 }),
   ];
   const b = AppView._bucketDevItems({
     issues,
@@ -173,7 +156,7 @@ test('no visible issue is dropped from the board', () => {
 test('In progress: own sessions pinned first, issues middle, shared sessions last', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
-    issues: [issue({ number: 3, headless: { status: 'generating' } })],
+    issues: [issue({ number: 3, in_progress: { count: 1, users: ['them'], claims: [] } })],
     proposals: [],
     gov: [],
     merged: [],
@@ -198,7 +181,7 @@ test('In progress: own sessions pinned first, issues middle, shared sessions las
 test('sessions never leak into the other columns', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
-    issues: [issue({ number: 1, headless: null })],
+    issues: [issue({ number: 1 })],
     proposals: [prop({ id: 100 })],
     gov: [],
     merged: [{ id: 200, created_at: at(2), last_message_at: at(2) }],
@@ -248,7 +231,7 @@ test('a proposal patched to merged is not in In review; merging and promoted sti
 test('a merged proposal no longer holds its linked issue in Underway', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({
-    issues: [issue({ number: 10, headless: null })],
+    issues: [issue({ number: 10 })],
     proposals: [prop({ id: 100, status: 'merged', linked_issues: [10] })],
     gov: [],
     merged: [],
@@ -347,7 +330,7 @@ test('Done interleaves applied close-issue rows with merged PRs by completion', 
 // _issueInProgress stayed byte-identical, so these two tests are the guard
 // against a later "tidy-up" folding the new state list into the predicate.
 
-test('all seven work states land the issue in the same Underway bucket', () => {
+test('every work state a person makes lands the issue in the same Underway bucket', () => {
   const AppView = makeAppView();
   const sess = (over) => ({
     sessionId: 1, username: 'erin', mine: false, status: 'active',
@@ -358,9 +341,6 @@ test('all seven work states land the issue in the same Underway bucket', () => {
     working: { in_progress: { count: 1, users: ['erin'], claims: [], sessions: [sess()] } },
     paused: { in_progress: { count: 1, users: ['erin'], claims: [], sessions: [sess({ status: 'paused' })] } },
     claimed: { in_progress: { count: 0, users: [], claims: [{ username: 'erin', mine: false }], sessions: [] } },
-    auto_solving: { headless: { status: 'generating' } },
-    answer_needed: { headless: { status: 'ready', outcome: 'question' } },
-    draft_ready: { headless: { status: 'ready', outcome: 'spec' } },
   };
   for (const [key, fields] of Object.entries(cases)) {
     const b = AppView._bucketDevItems({
@@ -375,7 +355,7 @@ test('all seven work states land the issue in the same Underway bucket', () => {
 
 test('the new sessions[]/peopleTotal fields never move a card by themselves', () => {
   const AppView = makeAppView();
-  // No in_progress payload and no headless run: still the Issues column.
+  // No in_progress payload: still the Issues column.
   const b = AppView._bucketDevItems({
     issues: [issue({ number: 1, in_progress: null })], proposals: [], gov: [], merged: [],
   });

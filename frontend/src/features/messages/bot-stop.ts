@@ -11,11 +11,10 @@ import type { Typist } from './store';
  * (api.stopBotAnswer); until the bot's typing clears there, or
  * STOPPING_MAX_MS pass, the button is a disabled "Stopping".
  *
- * SAVED DRAFTS (the agent chats' rule, features/agent-session/index.tsx):
- * with words in the box while the bot works there, Send's place is "Save
- * draft", beside Stop. What is typed then is saved, not sent, and sent later
- * by a tap on its row in the list above the box, never on its own
- * (./bot-drafts.ts). Enter saves in that state too; no key presses Stop. A
+ * SAVED DRAFTS: with words in the box while the bot works there, Send's
+ * place is "Save draft", beside Stop. What is typed then is saved, not sent,
+ * and sent later by a tap on its row in the list above the box, never on
+ * its own (./bot-drafts.ts). Enter saves in that state too; no key presses Stop. A
  * draft is words only, so a box holding only a file or an attached item
  * keeps Send, as it had before there were drafts.
  *

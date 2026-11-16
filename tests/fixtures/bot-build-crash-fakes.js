@@ -559,7 +559,6 @@ module.exports = function install(world) {
     async clearDetachedCapture(containerName, id) { await pool.query('DELETE FROM crash_world_captures WHERE id = $1', [id]); },
     async stopDetachedCapture(containerName, id) { await pool.query(`UPDATE crash_world_captures SET state = 'gone' WHERE id = $1`, [id]); },
     touchWorker() {},
-    async syncUserAgentFiles() {},
     getTurnByokCents: () => 0,
     noteTurnByokSpend() {},
     markTurnByokSwitched() {},

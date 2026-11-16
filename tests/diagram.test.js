@@ -141,7 +141,7 @@ test('a hosted build declares its diagram beside its visible changes, on its own
   assert.match(route, /Number\(req\.workerSession\.sessionId\) !== sessionId/, 'its own session only');
   assert.match(route, /parseDiagram\(req\.body\?\.diagram, \{ impact: rows\[0\]\.impact \|\| null \}\)/, 'Mermaid only beside impact "none"');
   assert.match(route, /code: 'invalid_diagram'/);
-  // Asked for by both build prompts, never drawn by the bot on its own.
-  assert.match(read('src/routes/sessions.js'), /also call declare_diagram once with that kind/);
+  // Asked for by Homeroom bot's build prompt (the session Mayor's, which
+  // asked too, is retired), never drawn by the bot on its own.
   assert.match(read('src/services/homeroom-bot-live.js'), /'declare_diagram once with that kind \(rename, flow, changes or numbers\)/);
 });

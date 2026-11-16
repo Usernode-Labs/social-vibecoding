@@ -16,7 +16,7 @@
  * draws THAT, so a request the other person answered a moment ago lands on
  * the true state rather than an error. The menus go through PlatformUI.menu —
  * a bottom sheet on touch, an anchored popover on desktop — the shell's one
- * menu idiom (see features/dev-chat/session-header.tsx); a page without the
+ * menu idiom; a page without the
  * kit falls back to a confirm.
  *
  * The widget language's filled pills: accent for the one act the state asks

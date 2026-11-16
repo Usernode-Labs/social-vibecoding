@@ -12,7 +12,7 @@
  * publish. The parts that move while the pane is open (the staged reply, the
  * uploads, the error line, the typing text) go through ./composer-store.ts.
  *
- * ── The layout mirrors the dev-chat session view ──────────────────────
+ * ── The layout ────────────────────────────────────────────────────────
  *
  * A flex row holding the chat pane on the left and a slot for the spec side
  * panel on the right. The slot lives empty in the DOM so re-rendering this tab

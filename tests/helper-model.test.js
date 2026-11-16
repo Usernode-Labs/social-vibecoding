@@ -24,6 +24,11 @@ const llmTelemetry = require('../src/services/llm-telemetry');
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
+// The helper most of these drive: a new project's one-line "What is it?"
+// (generateShortDescription), a small answer with a system message, a schema
+// and no validate of its own.
+const describe = () => llm.generateShortDescription({ name: 'Plant club', brief: 'Remind us to water the plants' });
+
 function fakeOpenRouter(reply) {
   const calls = [];
   return {
@@ -42,7 +47,7 @@ function fakeOpenRouter(reply) {
   };
 }
 
-function stubClient(text = '{"title":"From Haiku"}') {
+function stubClient(text = '{"description":"From Haiku"}') {
   const calls = [];
   return {
     calls,
@@ -74,9 +79,9 @@ async function withHelpers({ reply, key = 'sk-or-bot', haikuText, model } = {}, 
 }
 
 test('GLM answers: the forced tool carries the helper schema, and Haiku is never asked', async () => {
-  await withHelpers({ reply: { title: 'Plant watering reminders' } }, async ({ openrouter, client, events }) => {
-    const out = await llm.generateSessionTitle({ requests: ['Remind us to water the plants'] });
-    assert.equal(out.title, 'Plant watering reminders');
+  await withHelpers({ reply: { description: 'A plant helper: see who watered last' } }, async ({ openrouter, client, events }) => {
+    const out = await describe();
+    assert.equal(out.description, 'A plant helper: see who watered last');
     assert.equal(out.model, 'z-ai/glm-5.3-flash');
     assert.equal(out.usage.cost_usd, 0.00012, 'OpenRouter\'s own figure rides along');
     assert.equal(client.calls.length, 0);
@@ -86,20 +91,20 @@ test('GLM answers: the forced tool carries the helper schema, and Haiku is never
     assert.equal(sent.apiKey, 'sk-or-bot');
     assert.equal(sent.baseUrl, 'https://or.test/api/v1');
     assert.equal(sent.reasoning, 'low');
-    assert.equal(sent.timeoutMs, llm.HELPER_TIME_LIMIT_MS.session_title);
+    assert.equal(sent.timeoutMs, llm.HELPER_TIME_LIMIT_MS.short_description);
     assert.deepEqual(sent.toolChoice, { type: 'function', function: { name: 'answer' } });
     // #3772: not even `false`, which would route GLM 5.3 Flash to the one
     // provider that takes parallel_tool_calls.
     assert.equal(sent.parallelToolCalls, null);
     assert.equal('parallel_tool_calls' in require('../src/services/openrouter').buildRequest(sent), false);
-    assert.deepEqual(sent.tools[0].function.parameters, llm.SESSION_TITLE_SCHEMA);
+    assert.deepEqual(sent.tools[0].function.parameters, llm.SHORT_DESCRIPTION_SCHEMA);
     assert.equal(sent.messages[0].role, 'system');
     assert.equal(sent.messages[1].role, 'user');
-    assert.equal(sent.maxOutputTokens, 64 + 1500, 'the Haiku ceiling plus room to think');
+    assert.equal(sent.maxOutputTokens, 80 + 1500, 'the Haiku ceiling plus room to think');
 
     assert.equal(events.length, 1);
     assert.equal(events[0].provider, 'openrouter');
-    assert.equal(events[0].component, 'session_title');
+    assert.equal(events[0].component, 'short_description');
     assert.equal(events[0].requested_model, 'z-ai/glm-5.3-flash');
     assert.equal(events[0].outcome, 'success');
     assert.equal(events[0].cost_source, 'provider_reported');
@@ -110,13 +115,13 @@ test('GLM answers: the forced tool carries the helper schema, and Haiku is never
 test('GLM late or failing: Haiku answers as attempt 2 of the same call', async () => {
   const late = Object.assign(new Error('timed out'), { code: 'timeout' });
   await withHelpers({ reply: late }, async ({ client, events }) => {
-    const out = await llm.generateSessionTitle({ requests: ['Remind us to water the plants'] });
-    assert.equal(out.title, 'From Haiku');
+    const out = await describe();
+    assert.equal(out.description, 'From Haiku');
     assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(client.calls[0].model, 'claude-haiku-5-5');
-    assert.equal(client.calls[0].max_tokens, 64, 'Haiku is asked for the same ceiling as before');
+    assert.equal(client.calls[0].max_tokens, 80, 'Haiku is asked for the same ceiling as before');
     assert.deepEqual(client.calls[0].thinking, { type: 'disabled' },
-      'Haiku 5.5 thinks by default; off, so the 64 tokens are all answer');
+      'Haiku 5.5 thinks by default; off, so the 80 tokens are all answer');
     assert.equal(events.length, 2);
     const [glm, haiku] = events;
     assert.equal(glm.outcome, 'error');
@@ -127,7 +132,7 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
   });
   // An answer with no usable tool call is not an answer.
   await withHelpers({ reply: null }, async ({ client, events }) => {
-    const out = await llm.generateSessionTitle({ requests: ['x'] });
+    const out = await describe();
     assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(client.calls.length, 1);
     assert.equal(events[0].outcome, 'error');
@@ -135,15 +140,15 @@ test('GLM late or failing: Haiku answers as attempt 2 of the same call', async (
 });
 
 test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude model', async () => {
-  const params = { max_tokens: 64, messages: [{ role: 'user', content: 'x' }] };
-  const defaults = { backend: 'helper', component: 'session_title' };
-  await withHelpers({ reply: { title: 'GLM' } }, async ({ openrouter, client }) => {
+  const params = { max_tokens: 80, messages: [{ role: 'user', content: 'x' }] };
+  const defaults = { backend: 'helper', component: 'short_description' };
+  await withHelpers({ reply: { description: 'GLM' } }, async ({ openrouter, client }) => {
     const byok = await llm.helperMessage({
-      helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, apiKey: 'sk-ant-own', defaults,
+      helper: 'short_description', activeClient: client, params, schema: llm.SHORT_DESCRIPTION_SCHEMA, apiKey: 'sk-ant-own', defaults,
     });
     assert.equal(byok.model, 'claude-haiku-5-5');
     const named = await llm.helperMessage({
-      helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults, model: 'claude-sonnet-5-5',
+      helper: 'short_description', activeClient: client, params, schema: llm.SHORT_DESCRIPTION_SCHEMA, defaults, model: 'claude-sonnet-5-5',
     });
     assert.deepEqual(client.calls[0].thinking, { type: 'disabled' }, 'BYOK Haiku is asked with thinking off too');
     assert.equal(named.model, 'claude-sonnet-5-5');
@@ -155,7 +160,7 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
     process.env.HELPER_MODEL = 'haiku';
     try {
       assert.equal(llm.helperRoute(), 'haiku');
-      const off = await llm.generateSessionTitle({ requests: ['x'] });
+      const off = await describe();
       assert.equal(off.model, 'claude-haiku-5-5');
       assert.equal(openrouter.calls.length, 0);
     } finally {
@@ -163,8 +168,8 @@ test('never GLM: a BYOK key, HELPER_MODEL=haiku, no bot key, a named Claude mode
     }
     assert.equal(llm.helperRoute(), 'glm', 'glm unless the switch says haiku');
   });
-  await withHelpers({ reply: { title: 'GLM' }, key: null }, async ({ openrouter, events }) => {
-    const out = await llm.generateSessionTitle({ requests: ['x'] });
+  await withHelpers({ reply: { description: 'GLM' }, key: null }, async ({ openrouter, events }) => {
+    const out = await describe();
     assert.equal(out.model, 'claude-haiku-5-5');
     assert.equal(openrouter.calls.length, 0);
     assert.equal(events.length, 1);
@@ -177,7 +182,11 @@ test('a call the caller cancelled is not asked again of Haiku', async () => {
   const cancelled = (input) => { ctrl.abort(); throw Object.assign(new Error('cancelled'), { code: 'cancelled' }); };
   await withHelpers({ reply: cancelled }, async ({ client }) => {
     await assert.rejects(
-      () => llm.generateQuickReplies({ rules: '', context: 'c', signal: ctrl.signal }),
+      () => llm.helperMessage({
+        helper: 'short_description', activeClient: client, signal: ctrl.signal,
+        params: { max_tokens: 80, messages: [{ role: 'user', content: 'x' }] },
+        schema: llm.SHORT_DESCRIPTION_SCHEMA, defaults: { backend: 'helper', component: 'short_description' },
+      }),
       (err) => err.name === 'AbortError',
     );
     assert.equal(client.calls.length, 0);
@@ -197,11 +206,6 @@ test('structured helpers read GLM\'s answer with their existing parse', async ()
     const out = await llm.readChatAsk({ text: 'Can it remind us on Sundays?' });
     assert.equal(out.kind, 'change');
     assert.equal(out.title, 'Add a Sunday watering reminder');
-  });
-  await withHelpers({ reply: { estimate: 'maybe halfway', remaining_seconds: 240 } }, async () => {
-    const out = await llm.estimateRunProgress({ userRequest: 'x', progressTail: ['Reading a.js'], elapsedMs: 60000 });
-    assert.equal(out.remainingSeconds, 240);
-    assert.equal(out.model, 'z-ai/glm-5.3-flash');
   });
   await withHelpers({ reply: { verdict: 'pass', category: '', file: '', reason: 'Nothing against the rules.' } }, async ({ openrouter }) => {
     const out = await llm.reviewContentRules({ system: 's', diff: 'd', telemetryContext: { component: 'content_review' } });
@@ -338,9 +342,9 @@ test('the plan at Make it: GLM may write about 1,000 tokens, so a runaway fails 
     assert.equal(out.model, 'claude-haiku-5-5', 'a runaway still goes to Haiku');
     assert.equal(client.calls[0].max_tokens, 2000, 'Haiku keeps the plan\'s own ceiling');
   });
-  await withHelpers({ reply: { title: 'x' } }, async ({ openrouter }) => {
-    await llm.generateSessionTitle({ requests: ['x'] });
-    assert.equal(openrouter.calls[0].maxOutputTokens, 64 + 1500, 'a helper with no limit of its own is as it was');
+  await withHelpers({ reply: { description: 'x' } }, async ({ openrouter }) => {
+    await describe();
+    assert.equal(openrouter.calls[0].maxOutputTokens, 80 + 1500, 'a helper with no limit of its own is as it was');
   });
 });
 
@@ -375,10 +379,10 @@ test('the plan at Make it: a near-empty tool call gives way to the plan written 
 });
 
 test('a helper with no validate never takes JSON from the text: nothing would check it', async () => {
-  const reply = glmReply({ toolCalls: [], content: '{"title":"From the text"}' });
-  await withHelpers({ reply, haikuText: '{"title":"From Haiku"}' }, async ({ client }) => {
-    const out = await llm.generateSessionTitle({ requests: ['x'] });
-    assert.equal(out.title, 'From Haiku');
+  const reply = glmReply({ toolCalls: [], content: '{"description":"From the text"}' });
+  await withHelpers({ reply, haikuText: '{"description":"From Haiku"}' }, async ({ client }) => {
+    const out = await describe();
+    assert.equal(out.description, 'From Haiku');
     assert.equal(client.calls.length, 1);
   });
   assert.deepEqual(llm.helperTextAnswer('no json'), null);
@@ -402,19 +406,19 @@ test('the routed host is recorded on each GLM attempt, answered or failed (run f
 });
 
 test('a validate that throws refuses the answer; a helper with no validate takes any object, as before', async () => {
-  const params = { max_tokens: 64, messages: [{ role: 'user', content: 'x' }] };
-  const defaults = { backend: 'helper', component: 'session_title' };
-  await withHelpers({ reply: { title: 'GLM' } }, async ({ client }) => {
+  const params = { max_tokens: 80, messages: [{ role: 'user', content: 'x' }] };
+  const defaults = { backend: 'helper', component: 'short_description' };
+  await withHelpers({ reply: { description: 'GLM' } }, async ({ client }) => {
     const thrown = await llm.helperMessage({
-      helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults,
+      helper: 'short_description', activeClient: client, params, schema: llm.SHORT_DESCRIPTION_SCHEMA, defaults,
       validate: () => { throw new Error('bad'); },
     });
     assert.equal(thrown.model, 'claude-haiku-5-5');
     const taken = await llm.helperMessage({
-      helper: 'session_title', activeClient: client, params, schema: llm.SESSION_TITLE_SCHEMA, defaults,
+      helper: 'short_description', activeClient: client, params, schema: llm.SHORT_DESCRIPTION_SCHEMA, defaults,
     });
     assert.equal(taken.model, 'z-ai/glm-5.3-flash');
-    assert.deepEqual(taken.answer, { title: 'GLM' });
+    assert.deepEqual(taken.answer, { description: 'GLM' });
     assert.equal(client.calls.length, 1);
   });
 });
@@ -524,8 +528,6 @@ test('every helper the switch names goes through the path, and telemetry knows e
   assert.match(entry.description, /haiku: Haiku 5\.5 only/);
   assert.equal(require('../src/services/app-sketch').SKETCH_MODEL, llm.HELPER_MODEL);
   assert.equal(require('../src/services/topochain/challenge-grader').GRADE_MODEL, llm.HELPER_MODEL);
-  assert.match(read('src/services/mayor/pills.js'), /qrWithTimeout\(\(signal\) => llm\.generateQuickReplies\(\{[\s\S]*?signal,/,
-    'the pills budget cancels the GLM attempt too');
 });
 
 // ── The helper model as an admin setting ────────────────────────────────
@@ -593,19 +595,19 @@ test('a helper model other than GLM is asked by name, with its thinking off, and
   const reply = (input) => ({
     servedModel: input.model,
     finishReason: 'tool_calls',
-    toolCalls: [{ type: 'function', function: { name: 'answer', arguments: JSON.stringify({ title: 'Plant watering reminders' }) } }],
+    toolCalls: [{ type: 'function', function: { name: 'answer', arguments: JSON.stringify({ description: 'A plant helper: see who watered last' }) } }],
     usage: { inputTokens: 400, outputTokens: 40, reasoningTokens: 0, costUsd: 0.00006 },
   });
   await withHelpers({ reply, model: DS }, async ({ openrouter, client, events }) => {
-    const out = await llm.generateSessionTitle({ requests: ['Remind us to water the plants'] });
-    assert.equal(out.title, 'Plant watering reminders');
+    const out = await describe();
+    assert.equal(out.description, 'A plant helper: see who watered last');
     assert.equal(out.model, DS);
     assert.equal(client.calls.length, 0);
     const sent = openrouter.calls[0];
     assert.equal(sent.model, DS);
     assert.equal(sent.reasoning, 'none');
-    assert.equal(sent.maxOutputTokens, 64 + 1500, 'the same ceiling as GLM\'s');
-    assert.equal(sent.timeoutMs, llm.HELPER_TIME_LIMIT_MS.session_title, 'and the same time limit');
+    assert.equal(sent.maxOutputTokens, 80 + 1500, 'the same ceiling as GLM\'s');
+    assert.equal(sent.timeoutMs, llm.HELPER_TIME_LIMIT_MS.short_description, 'and the same time limit');
     assert.equal(events[0].requested_model, DS);
     assert.equal(events[0].reasoning_effort, 'none');
   });
@@ -618,13 +620,13 @@ test('a helper model other than GLM is asked by name, with its thinking off, and
 });
 
 test('a caller that names another model, or HELPER_MODEL=haiku, still never reaches the helper model', async () => {
-  await withHelpers({ reply: { title: 'x' }, model: DS }, async ({ openrouter, client }) => {
+  await withHelpers({ reply: { description: 'x' }, model: DS }, async ({ openrouter, client }) => {
     await llm.generateFirstVersionPlan({ system: 's', user: 'u', schema: { type: 'object' }, model: 'claude-sonnet-5-5' }).catch(() => {});
     assert.equal(client.calls[0].model, 'claude-sonnet-5-5');
     const prev = process.env.HELPER_MODEL;
     process.env.HELPER_MODEL = 'haiku';
     try {
-      await llm.generateSessionTitle({ requests: ['a'] });
+      await describe();
     } finally {
       if (prev === undefined) delete process.env.HELPER_MODEL; else process.env.HELPER_MODEL = prev;
     }

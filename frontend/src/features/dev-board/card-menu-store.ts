@@ -7,7 +7,7 @@
  * `document.body`, places it against the trigger, owns the dismissers, and —
  * the interesting part — RE-ANCHORS it after a board repaint. Every repaint
  * replaces `#dev-body`, and the board repaints on its own schedule (the
- * session poll, the headless poll, every websocket push), so the menu survives
+ * session poll, every websocket push), so the menu survives
  * by finding its successor trigger by key and re-filling its rows in place.
  * That is why the rows are a publish and not a re-mount: the click listener is
  * bound ONCE on the host, and it has to keep working across every refresh.

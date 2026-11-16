@@ -184,8 +184,8 @@ function stamp(builtAt: unknown): string {
 }
 
 function markdownBody(markdown: string): SpecPanelBody {
-  const devChat = typeof window !== 'undefined' ? (window as any).DevChat : null;
-  const render = devChat?.renderMarkdown;
+  const markdown_ = typeof window !== 'undefined' ? window.PlatformMarkdown : null;
+  const render = markdown_?.render;
   return render ? { kind: 'markdown', html: render(markdown) } : { kind: 'error', text: markdown };
 }
 

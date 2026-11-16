@@ -361,10 +361,9 @@ TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 # A scout is read-only by contract: it reads the repository and writes the
 # spec as its final message. run-cc.sh enforces that with
 # --disallowed-tools; Codex runs danger-full-access inside this container
-# (see SANDBOX_MODE above) and has no equivalent switch. Now that OpenRouter
-# sessions scout through the Mayor (#2810), whatever a scout edits,
-# creates or commits is put back before the next build's `git add -A` could
-# publish it. Files that were already untracked before the scout are kept.
+# (see SANDBOX_MODE above) and has no equivalent switch. So whatever a
+# scout edits, creates or commits is put back before the next build's
+# `git add -A` could publish it. Files that were already untracked before the scout are kept.
 SCOUT_BASE_SHA=""
 SCOUT_PRE_UNTRACKED=""
 if [ "$MODE" = "scout" ] && git rev-parse --verify HEAD >/dev/null 2>&1; then

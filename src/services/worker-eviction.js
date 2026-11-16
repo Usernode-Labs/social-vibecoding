@@ -14,8 +14,8 @@
 //      evicted only after a full idle window from here;
 //   2. a worker whose change is gone is destroyed;
 //   3. a worker idle past the window, whose change nothing works on
-//      (session-work.ts workedOnSql: a turn, a local agent's, a shots run, a
-//      durable build, a sync, the bot's look, a recorded operation), is
+//      (session-work.ts workedOnSql: a turn, a shots run, a durable build,
+//      a sync, the bot's look, a recorded operation), is
 //      evicted, under its session's WORKER_EVICTION_LOCK, only if nobody
 //      used it since it was read (its time compared whole, as
 //      text: a JavaScript Date drops the microseconds) and nothing works on

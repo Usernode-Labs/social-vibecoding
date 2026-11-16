@@ -1,17 +1,15 @@
 'use strict';
 
-// A coding record nothing carries any more, taken to an end now that no
-// leader recovers it: one whose work item settled without releasing it (its
-// release failed: services/turns.js releaseLeftRecord), the leader's orphan
-// sweep and watchdog's case.
+// A coding record nothing carries any more, taken to an end: one whose
+// work item settled without releasing it.
 //
-// Every turn belongs to the turn machine (src/workflow/turn/): its work item
-// owns its conversation's claim, its coding run's record and its local
-// agent's turn, and carries them on when its process goes. What is left is
-// a record whose item ended without letting it go. A pass, every minute (the
-// `turn-leftovers` clock), asks a `recover` turn on its change, which runs
-// the adoption the leader ran (turn-recovery.js adoptOrphanWorker), again a
-// while after the last ask, a bounded number of times (RECORD_RETRY).
+// Every coding run belongs to the work that dispatched it, whose item owns
+// its record and carries it on when its process goes. What is left is a
+// record whose item ended without letting it go. A pass, every minute (the
+// `turn-leftovers` clock), asks a `recover` turn on its change
+// (src/workflow/turn/), which runs the adoption (turn-recovery.js
+// adoptOrphanWorker), again a while after the last ask, a bounded number of
+// times (RECORD_RETRY).
 
 const { workflowTurnHeldSql, buildHoldSql, turnRunLiveSql } = require('../workflow/session-work.ts');
 
@@ -36,8 +34,8 @@ const RECORDS_SQL = `
    WHERE cs.active_turn IS NOT NULL
      -- No work item holds it: none owns it, or the one that did has settled.
      AND NOT ${workflowTurnHeldSql('cs.active_turn')}
-     -- What other work carries: a headless run (its turn's item carries it
-     -- on from the change's row), a durable build, a shots agent's turn.
+     -- What other work carries: a durable build, a shots agent's turn. A
+     -- headless run's record is not recovered: nothing builds on it.
      AND cs.is_headless IS NOT TRUE
      AND NOT ${buildHoldSql('cs')}
      AND NOT EXISTS (SELECT 1 FROM wf_instances w
@@ -62,8 +60,7 @@ const RECORDS_SQL = `
 // settled without ending it (a result the kernel refused, a transition that
 // failed), so nothing will ever end it and it holds its change until
 // MAX_TURN_MS. Only one quiet for as long as a record is one: a turn that has
-// just started writes its item in the same transaction as `running`. Both a
-// conversation's and a change's instance, by key.
+// just started writes its item in the same transaction as `running`.
 const ORPHAN_TURNS_SQL = `
   SELECT t.key, t.data->'running'->>'turnId' AS turn_id
     FROM wf_instances t

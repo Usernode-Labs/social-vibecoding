@@ -5,8 +5,8 @@
 // chat_sessions.active_turn points at it, so boot adoption replays it.
 //
 // The second half is the TAIL: heal the push, open/update the PR, hand the
-// staging preview to the preview machine, post the agent's summary card,
-// re-issue the Mayor's wrap-up. That stretch used to be MINUTES long — it
+// staging preview to the preview machine, post the agent's summary card.
+// That stretch used to be MINUTES long — it
 // built the preview inline, and a self-app build spends ~4:45 just cloning
 // the platform database — and it ran with active_turn already cleared,
 // because execInWorker's `finally` dropped the record the moment the
@@ -15,8 +15,8 @@
 // Production consequence (session 2954): an unrelated proposal merged to
 // main, the self-app deploy replaced the platform process mid-preview-build,
 // and boot adoption saw a running container with no exec and no record. It
-// took the "warm-idle, nothing to do" branch, and the dev chat kept
-// "Building staging preview..." as its last word forever — no card, no
+// took the "warm-idle, nothing to do" branch, and the change's transcript
+// kept "Building staging preview..." as its last word forever — no card, no
 // summary, no error, no spinner. The owner eventually typed "continue",
 // which bought a second full build turn for a commit that was already
 // pushed.
@@ -30,6 +30,7 @@
 //   4. finalizeRecoveredTurn honours those milestones, so a resumed tail
 //      doesn't re-post cards or re-fire events, and a preview the machine
 //      already serves for the commit is announced as up, not as building.
+//      The sync turn holds its record the same way, through durable-turn.
 //
 // Run with: node --test tests/turn-tail-lifecycle.test.js
 
@@ -209,32 +210,6 @@ test('noteTailMilestone merges one key and cannot revive a released record', asy
   } finally { restore(); }
 });
 
-test('markTurnRetryPending keeps the durable phase in tail_pending', async () => {
-  const { worker, queries, getActiveTurn, restore } = loadWorker({
-    initialActiveTurn: {
-      turnId: 'logical-1', phase: 'tail_pending', backend: 'codex_openrouter',
-      turnUuid: 'attempt-1', logicalTurnId: 'logical-1', attemptNumber: 1,
-      journal: '/home/node/.claude/turn-777.log', tail: {},
-    },
-  });
-  try {
-    await worker.markTurnRetryPending(2954, {
-      turnUuid: 'attempt-1', logicalTurnId: 'logical-1', attemptNumber: 1,
-    });
-    assert.equal(queries.length, 1);
-    const { sql, params } = queries[0];
-    assert.match(sql, /active_turn = active_turn \|\| \$3::jsonb/);
-    assert.match(sql, /active_turn->>'turnId' = \$2/);
-    assert.match(sql, /active_turn->>'turnUuid' = \$4/);
-    const patch = JSON.parse(params[2]);
-    assert.equal(patch.phase, 'tail_pending');
-    assert.equal(patch.retryFresh, true);
-    assert.equal(patch.logicalTurnId, 'logical-1');
-    assert.equal(params[3], 'attempt-1');
-    assert.equal(getActiveTurn().phase, 'tail_pending');
-  } finally { restore(); }
-});
-
 test('finishTurn removes shared files while cleanup ownership still blocks dispatch', async () => {
   const { worker, execs, queries, events, restore } = loadWorker();
   try {
@@ -391,46 +366,9 @@ test('execInWorker keeps the journal and the record when holdTurnRecord is set',
   assert.match(WORKER_SRC, /sha: execState\.sha \|\| null, pushOk: execState\.pushOk === true/);
 });
 
-// ── 3. Both dispatch tools opt in and release ───────────────────────────
+// ── 3. The sync turn holds its record through its outcome ──────────────
 
-// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
-const SESSIONS_SRC = ['../src/services/mayor/turn.js', '../src/routes/sessions.js']
-  .map((rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8')).join('\n');
-
-test('build and scout keep one owner through their complete tail', () => {
-  const holds = SESSIONS_SRC.match(/holdTurnRecord: true/g) || [];
-  assert.equal(holds.length, 2,
-    'only the live build and scout dispatches hold their tail record');
-
-  const deferredCallers = SESSIONS_SRC.match(/deferTurnCleanup: true/g) || [];
-  assert.equal(deferredCallers.length, 3,
-    'Mayor-dispatched build/scout and the direct OpenRouter path retain ownership through their wrap-up');
-
-  const localCleanupGates = SESSIONS_SRC.match(
-    /if \(durableTailComplete && durableTurnId && \(!deferTurnCleanup \|\| headless\)\)/g
-  ) || [];
-  assert.equal(localCleanupGates.length, 2,
-    'headless/local tails clean up only after every required tool-side effect');
-  assert.match(SESSIONS_SRC,
-    /wrapUpPosted: true[\s\S]{0,500}worker\.finishTurn\(session\.id, \{ turnId: toolResult\.turnId \}\)/,
-    'interactive cleanup happens only after the durable phase-2 milestone');
-
-  // Markerless retries release attempt one, while a missing-thread retry
-  // marks its existing tail before the atomic attempt-two registration.
-  // Both callback copies check the
-  // user stop before and after the awaited transition, and only then clear
-  // the prior attempt's pending-stop marker.
-  const retryCallbacks = SESSIONS_SRC.match(/prepareRetry: async \(retry\) => \{/g) || [];
-  assert.equal(retryCallbacks.length, 2, 'both dispatch tools use stop-aware retry preparation');
-  const durableFresh = SESSIONS_SRC.match(/await worker\.markTurnRetryPending\(session\.id,/g) || [];
-  assert.equal(durableFresh.length, 2, 'both prepare the one live same-process fresh retry');
-  const stopChecks = SESSIONS_SRC.match(/if \(stopPendingFor\(stopHandle\)\) return false;/g) || [];
-  assert.equal(stopChecks.length, 4, 'each retry boundary checks for a stop on both sides of its await');
-
-  assert.match(SESSIONS_SRC,
-    /if \(!durableTailComplete\) \{[\s\S]{0,200}retaining durable turn for recovery/,
-    'a thrown tool-side tail retains its exact durable owner');
-
+test('the sync turn holds its record until its outcome is recorded', () => {
   // The sync is the proposal machine's work (branch.sync): its turn runs
   // through durable-turn.runTurn, which holds the record (what dispatch is
   // handed) so a restart follows the turn the worker still runs, and
@@ -442,84 +380,13 @@ test('build and scout keep one owner through their complete tail', () => {
   assert.match(SYNC_SRC, /\.\.\.\(extra\.holdTurnRecord \? \{ holdTurnRecord: true \} : \{\}\)/, 'held only as durable-turn asks');
 });
 
-test('every non-idempotent tail step stamps a milestone', () => {
-  // The preview is no longer one of them: the tail hands the commit to the
-  // preview machine, which answers a second hand-off of the same head with
-  // 'same_head' instead of building it again.
-  for (const key of [
-    'prOpenedEventRecorded', 'votesResetFor',
-    'completionRowPosted', 'wrapUpPosted',
-  ]) {
-    assert.match(SESSIONS_SRC, new RegExp(`noteTailMilestone\\([\\s\\S]{0,200}${key}`),
-      `${key} must be stamped when that step lands`);
-  }
-  const explicitLiveOwners = SESSIONS_SRC.match(
-    /noteTailMilestone\([\s\S]{0,240}?\{ turnId: durableTurnId \}[\s\S]{0,20}?\);/g
-  ) || [];
-  assert.equal(explicitLiveOwners.length, 3,
-    'every live build-tail milestone carries the exact logical owner');
-});
-
 // ── 4. finalizeRecoveredTurn skips what already landed ──────────────────
 
 const SERVER_SRC = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
   // With what a turn's recovery runs, moved out of server.js unchanged
   // (services/turn-recovery.js).
   + fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'), 'utf8');
-
-test('live retained turns are handed to whoever carries them on', async () => {
-  const { scheduleRetainedInteractiveTurn } = require('../src/routes/sessions');
-  const activeTurn = {
-    turnId: '11111111-1111-4111-8111-111111111111',
-    phase: 'tail_pending',
-  };
-  const scheduled = [];
-  const pool = {
-    query: async () => ({ rows: [{ active_turn: activeTurn }], rowCount: 1 }),
-  };
-
-  assert.equal(await scheduleRetainedInteractiveTurn({
-    pool,
-    sessionId: 42,
-    scheduleInteractiveRecovery: async (sessionId) => {
-      scheduled.push(sessionId);
-      return true;
-    },
-  }), true);
-  assert.deepEqual(scheduled, [42]);
-
-  // With nobody to schedule it with (a route), the record is retained for
-  // the turn-leftovers clock, which asks a recover turn for it once no work
-  // item holds it (services/turn-leftovers.js); a turn's own item passes its
-  // own (services/turns.js ITEM_CARRIES_ON).
-  assert.equal(await scheduleRetainedInteractiveTurn({ pool, sessionId: 42 }), true);
-  assert.match(SERVER_SRC, /app\.use\(sessionRoutes\(config\)\);/, 'no in-process scheduler is handed to the routes');
-  assert.match(SESSIONS_SRC,
-    /catch \(err\) \{[\s\S]{0,500}?scheduleRetainedInteractiveTurn\(\{/,
-    'the live request catch schedules any retained durable owner');
-});
-
-test('a failed retained-turn read schedules conservatively while no record is a no-op', async () => {
-  const { scheduleRetainedInteractiveTurn } = require('../src/routes/sessions');
-  let calls = 0;
-  const scheduleInteractiveRecovery = async () => { calls += 1; return true; };
-
-  const absent = await scheduleRetainedInteractiveTurn({
-    pool: { query: async () => ({ rows: [{ active_turn: null }] }) },
-    sessionId: 43,
-    scheduleInteractiveRecovery,
-  });
-  assert.equal(absent, false);
-  assert.equal(calls, 0);
-
-  const uncertain = await scheduleRetainedInteractiveTurn({
-    pool: { query: async () => { throw new Error('database unavailable'); } },
-    sessionId: 44,
-    scheduleInteractiveRecovery,
-  });
-  assert.equal(uncertain, true);
-  assert.equal(calls, 1, 'an outage cannot be interpreted as proof that ownership vanished');
-});
+const SESSIONS_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
 
 test('restart cleanup retries derive their action from the durable phase', () => {
   assert.match(SERVER_SRC,
@@ -529,28 +396,18 @@ test('restart cleanup retries derive their action from the durable phase', () =>
     /Recovered tail failed; retaining durable turn for replay/,
     'a failed recovered tail is never erased by its finally block');
 
-  assert.match(SESSIONS_SRC,
-    /failHeadlessRun\([\s\S]{0,350}requireDurableTurnCleanup\([\s\S]{0,200}cleanupArgs\(recoveryActiveTurn\)/,
-    'the produced-nothing headless exit validates exact-owner cleanup');
-  assert.match(SESSIONS_SRC,
-    /Release the durable record and its journal only after every recovered[\s\S]{0,300}requireDurableTurnCleanup/,
-    'the successful headless exit validates cleanup after its full tail');
-
-  // A retry reads the durable phase again: the adoption and a resumed
-  // headless run each derive cleanup from the record as it stands.
+  // A retry reads the durable phase again: the adoption derives cleanup
+  // from the record as it stands.
   assert.match(SERVER_SRC,
     /const recoveryAction = turnLifecycle\.recoveryAction\(session\.active_turn\);[\s\S]{0,1200}if \(recoveryAction === 'cleanup'\) \{[\s\S]{0,200}worker\.finishTurn/,
     'the adoption reloads cleanup_pending instead of capturing cleanupOnly');
-  assert.match(SESSIONS_SRC,
-    /const initialRecoveryAction = turnLifecycle\.recoveryAction\(session\.active_turn\);[\s\S]{0,600}if \(initialRecoveryAction === 'cleanup'\) \{[\s\S]{0,200}worker\.finishTurn/,
-    'a resumed headless run derives cleanup without replaying the tail');
   // A record left in cleanup_pending that no work item holds is a recover
   // turn's (turn-leftovers.js: no phase filter), not a boot scan's.
   assert.doesNotMatch(SERVER_SRC, /reconcilePendingTurnCleanup/);
 });
 
 test('finalizeRecoveredTurn takes an alreadyDone map and defaults to empty', () => {
-  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,[\s\S]{0,300}?localAgentLabel = null,\s*\}\) \{/,
+  assert.match(SERVER_SRC, /startedAtMs, alreadyDone = null,\s*activeTurn = null,\s*\}\) \{/,
     'optional, so a genuine mid-exec recovery is unaffected');
   assert.match(SERVER_SRC,
     /const done = alreadyDone && typeof alreadyDone === 'object' \? alreadyDone : \{\};/);
@@ -559,10 +416,6 @@ test('finalizeRecoveredTurn takes an alreadyDone map and defaults to empty', () 
 test('a resumed tail does not duplicate the completion card or the PR event', () => {
   assert.match(SERVER_SRC, /if \(done\.completionRowPosted\) \{/,
     'the agent summary card is posted at most once');
-  // ...but the summary still reaches the Mayor wrap-up, or the recovered
-  // turn would be narrated blind.
-  assert.match(SERVER_SRC,
-    /if \(done\.completionRowPosted\) \{[\s\S]{0,400}summaryParts\.unshift\(`What the agent did/);
   assert.match(SERVER_SRC,
     /const prAnnounced = !!done\.prNumber \|\| !!done\.prOpenedEventRecorded;/);
   assert.match(SERVER_SRC, /wasNewPR && !prAnnounced/,
@@ -596,13 +449,11 @@ test('a resumed tail hands its commit to the preview machine, and joins a previe
     'one receipt key for the live and the recovered card');
 });
 
-test('resumeDetachedTurnInner threads the map through and skips a posted wrap-up', () => {
+test('resumeDetachedTurnInner threads the map through', () => {
   assert.match(SERVER_SRC,
     /let tailDone = \(activeTurn && typeof activeTurn\.tail === 'object' && activeTurn\.tail\) \|\| \{\};/);
   assert.match(SERVER_SRC, /alreadyDone: tailDone,/,
     'finalizeRecoveredTurn receives it');
-  assert.match(SERVER_SRC, /if \(wrapUpOutcome && tailDone\.wrapUpPosted\) \{/,
-    'no second assistant reply describing the same build');
   // Operators need to tell "the agent was still typing" from "the platform
   // side was cut off" — they look identical in the logs otherwise.
   assert.match(SERVER_SRC, /phase: activeTurn\.phase \|\| 'exec',/);

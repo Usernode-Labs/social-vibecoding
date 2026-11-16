@@ -38,23 +38,26 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'shared_work',
     label: 'Shared work',
-    description: 'Plans that someone privately shares with you.',
+    description: 'Plans that someone privately shared with you.',
     defaultEnabled: true,
+    // spec_shared is not created any more: private plan sharing went with the
+    // dev chat. The category stays defined, so the mapping matches the seed in
+    // db/schema.sql and a saved choice still reads, but it is not offered:
+    // a switch for something nothing sends would only mislead.
+    listed: false,
     kinds: Object.freeze(['spec_shared']),
   }),
   Object.freeze({
     key: 'developer_sessions',
-    label: 'Agent sessions',
-    description: 'Agent sessions and unattended runs that finish while you are away.',
+    label: 'Your coding agent',
+    description: 'When a coding agent you connected to Homeroom puts up its work or is waiting on you. Test alerts use this switch too.',
     defaultEnabled: true,
-    // #1405's two join this category rather than getting one of their own:
-    // both are "a coding session did something while you were away", which is
-    // exactly what this category's own description already promises. A
-    // connector user who wants session pushes wants these; one who turned them
-    // off does not, and should not have to find a second switch.
-    // #3181: session_stalled is the other half of session_done (the turn
-    // stopped before finishing), so it rides the same switch, beside it.
-    // Kept in lockstep with the seed in db/schema.sql.
+    // Settings > Alerts names it "Your coding agent". What it sends now:
+    // work a connected agent put up (connector_submitted), an agent waiting
+    // on you (agent_awaiting_input), and the test alert. session_done,
+    // session_stalled and auto_solve_done are no longer created; they stay
+    // listed so the mapping matches the seed in db/schema.sql, which still
+    // holds their rows. Kept in lockstep with that seed.
     kinds: Object.freeze([
       'session_done', 'session_stalled', 'auto_solve_done', 'connector_submitted',
       'agent_awaiting_input', 'test_alert',
@@ -200,7 +203,7 @@ function isKindEnabled(kind, overrides = {}) {
 }
 
 function serializePreferences(overrides = {}) {
-  return CATEGORY_DEFINITIONS.map((category) => ({
+  return CATEGORY_DEFINITIONS.filter((category) => category.listed !== false).map((category) => ({
     key: category.key,
     label: category.label,
     description: category.description,

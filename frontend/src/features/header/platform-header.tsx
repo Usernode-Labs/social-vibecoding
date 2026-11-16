@@ -82,19 +82,6 @@ import '../improve/improve-status.js';
 import '../notifications/mount';
 import { LookPicker } from '../frame/look-picker';
 
-// THE SESSION LIFECYCLE PILL MOVED INTO THE CHIP.
-//
-// It used to render here, in the bar's left seat beside the back arrow, as
-// `function SessionStatusPill()` wrapping a #header-status-pill span. On a new
-// change that left the top of the screen reading as one grey word — "Draft" —
-// with nothing naming the app being changed, because #1431 also left the chip
-// empty on this route.
-//
-// Both halves are fixed in one place instead: the chip renders on session
-// routes now, and the pill is its subtitle. Same store, same component, same
-// #header-status-pill id and still inside #platform-header — see
-// ./header-title.tsx.
-
 // LIGHT-MODE SURFACES ARE zinc-50, NOT zinc-100. tailwind.config.js overrides
 // the ramp, and `zinc-100` there is #eaeaea — byte-identical to the light page
 // ground these controls sit on, so every one of these discs was invisible in
@@ -140,8 +127,7 @@ function homeHref(): string {
  * These are the screens whose parent is another screen, and the answer is a
  * pure function of the route. Publishing it would mean an imperative call per
  * sub-view hop — and sub-view hops never pass `App._showOnlyScreen`, the usual
- * single owner of the back-slot reset, which is precisely how the session's
- * arrow used to linger on the Board.
+ * single owner of the back-slot reset.
  *
  * ── The ladder ─────────────────────────────────────────────────────────
  *
@@ -168,11 +154,6 @@ function homeHref(): string {
  *                         PlatformHeader. It was a chevron here, and before
  *                         that a full-width "← Back" bar in the page one row
  *                         under it; one control, in one place, either way.
- *   A dev session      →  wherever it was opened from — see `sessionOrigin`
- *                         in ../improve/improve-store.js — falling back to
- *                         Messages on a cold deep link, because a change is
- *                         an agent conversation and that is its inbox
- *                         (#2770; it was the board before).
  *
  * ── "The board" is TWO screens, and back has to pick ───────────────────
  *
@@ -183,8 +164,7 @@ function homeHref(): string {
  * layout, rewrote their stored preference to kanban as it went. `boardView`
  * (published with the route by `Improve.setTab`) names the layout that was on
  * screen when the sub-view was entered, and `boardHref` turns it into the
- * matching address for a topic's in-pane chip and for a session's captured
- * origin alike.
+ * matching address for a topic's in-pane chip.
  *
  * ── Every app's Workshop is the platform's own now ──────────────────────
  *
@@ -197,13 +177,8 @@ function appRouteUpHref(
   slug: string | null,
   tab: string | null,
   subTab: string | null,
-  sessionOrigin: string | null,
 ): string | null {
   if (!slug || tab !== 'dev') return null;
-  // #2770: a session with no captured origin is a thread of Messages — a
-  // change is an agent conversation, listed under Messages → Agents — so its
-  // level up is that inbox rather than the board it used to fall back to.
-  if (subTab === 'sessions') return sessionOrigin || '#messages';
   // The app's discussion is a thread of Messages too (#2718 review, #2763).
   if (subTab === 'chat') return '#messages';
   // A topic (subTab 'topic') falls through on purpose (#2916): its level up
@@ -222,17 +197,15 @@ export function useBackSlot() {
   // publishes here rather than writing `hidden` into React-owned DOM.
   const { mode: backMode, href: backHref } = useStoreState(backButtonStore);
   // …and INSIDE AN APP the slot is derived from the ROUTE, not from the
-  // imperative call. <HeaderTitle/> already gates on exactly this
-  // condition — it is what swaps the chip's subtitle for the lifecycle pill —
-  // so leaving the back slot to an ordering-dependent setBackIcon() call was
-  // the odd one out, and it is the one that kept coming up hidden on staging
+  // imperative call: leaving the back slot to an ordering-dependent
+  // setBackIcon() call is the one that kept coming up hidden on staging
   // while the rest were right. Components agreeing by construction beats call
   // sites agreeing by convention.
   const {
     slug: backSlug, tab: backTab, subTab: backSubTab,
-    sessionOrigin, boardView, topicOrigin,
+    boardView, topicOrigin,
   } = useStoreState(improveStore);
-  const routeUp = appRouteUpHref(backSlug, backTab, backSubTab, sessionOrigin);
+  const routeUp = appRouteUpHref(backSlug, backTab, backSubTab);
   // #2916: on a Workshop topic the back control is the "‹ Workshop" chip at
   // the top of the pane, so this bar draws NONE there, whatever the last
   // setBackIcon() published. Forced from the same function the chip renders
@@ -390,10 +363,7 @@ export function PlatformHeader() {
           It was `rounded-b-lg` + `-mb-1` (8px over 4px) until #1571, which
           asked for a corner that reads as INTENDED rather than as a
           rendering artifact — doubling it is the whole of that half of the
-          request. Keep the two in step: the overlap is half the radius, and
-          features/dev-chat/view.tsx's #dc-session-header carries the same
-          radius token because it is the second bar on that screen
-          (tests/dev-chat-view.test.js pins them to each other).
+          request. Keep the two in step: the overlap is half the radius.
 
           WHAT THIS CORNER CANNOT REACH, and what does instead: the notch is
           cut out of the BAR, so it needs the bar to have a surface. On the
@@ -735,15 +705,6 @@ export function PlatformHeader() {
               the way out of a look as well as the way in. */}
           <LookPicker variant="shell" />
           {/*
-              The experimental chat toggle rode here, between Improve and the
-              bell, as a pill flipping `Chat` / `Classic`. It went to the
-              Improve panel as an entry point — it STARTS something, and the
-              return trip already had two owners inside the chat screen — and
-              from there to the Messages inbox, which is where the chats it
-              starts are listed and resumed (`#messages-new-agent`, gated on
-              the same two flags as the rows). The panel retired with it
-              already gone (#2718 review).
-
               NO DISC AT REST (#2798): the bell sits on the bar with no fill,
               and the periwinkle tint the other header controls wear shows
               only on hover. Same for #sidebar-toggle; the back button and

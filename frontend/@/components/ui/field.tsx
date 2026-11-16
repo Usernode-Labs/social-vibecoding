@@ -4,8 +4,8 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 /**
- * The three pieces of form furniture the settings screen repeats in every
- * section. Not shadcn components — shadcn has no equivalent of any of them —
+ * The two pieces of form furniture the settings screen repeats in every
+ * section. Not shadcn components — shadcn has no equivalent of either —
  * but the same authoring rules apply: `cssVariables: false`, complete literal
  * class names, and nothing the shell does not already write.
  *
@@ -14,8 +14,6 @@ import { cn } from '@/lib/utils';
  *   StatusLine      the "settings.js writes the result of your last action
  *                   here" node. Fourteen of them, all shipping `hidden`, all
  *                   revealed and filled by id.
- *   Field           a `<label>` that WRAPS its control, as the two fields in
- *                   #agent-files-form's inline card do.
  */
 
 export interface SectionHeadingProps {
@@ -95,35 +93,4 @@ function StatusLine({
   );
 }
 
-export interface FieldProps extends React.LabelHTMLAttributes<HTMLLabelElement> {
-  /** The label text, rendered before the control. */
-  label: React.ReactNode;
-  /**
-   * Ship `hidden` on the label itself, appended AFTER `cn`.
-   *
-   * #agent-files-desc-wrap is the deliberate display-utility conflict alert.tsx
-   * warns about: it is written `block … hidden`, both the base's `block` and
-   * the trailing `hidden` in one string, and tailwind-merge treats them as one
-   * group — so passing `hidden` through className collapses the pair and drops
-   * `block`. Appending it outside the merge keeps the rendered attribute
-   * exactly as the hand-written shell wrote it. (The pair is redundant CSS
-   * either way: Tailwind emits `hidden` after `block`, so `hidden` wins. It is
-   * reproduced rather than tidied because chunk D changes no bytes.)
-   */
-  startHidden?: boolean;
-}
-
-// `{...props}` is spread BEFORE className: the one Field with an id
-// (#agent-files-desc-wrap) writes `id` ahead of `class`. Label, in label.tsx,
-// does the reverse — its hand-written strings write `class` ahead of `for`.
-function Field({ className, label, children, startHidden, ...props }: FieldProps) {
-  const base = cn('block text-zinc-600 dark:text-zinc-400', className);
-  return (
-    <label {...props} className={startHidden ? `${base} hidden` : base}>
-      {label}
-      {children}
-    </label>
-  );
-}
-
-export { Field, SectionHeading, StatusLine, statusLineVariants };
+export { SectionHeading, StatusLine, statusLineVariants };

@@ -1918,7 +1918,7 @@ async function openPlatform(pool, cfg, { app, speaker, deps = {} }) {
   try {
     const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
     return await open({
-      pool, config: cfg, userId: speaker.id, agentSessionId: null, appId: app.id, ttlSeconds: 300,
+      pool, config: cfg, userId: speaker.id, appId: app.id, ttlSeconds: 300,
       rateSubject: `hrbot-voice-${app.id}`, imageInput: false,
     });
   } catch (err) {

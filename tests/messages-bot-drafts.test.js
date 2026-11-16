@@ -1,7 +1,6 @@
 'use strict';
 
-// Saved drafts in the chat with Homeroom bot: the list the agent chats have
-// (features/agent-session/index.tsx SavedDrafts, store.ts "Saved drafts"),
+// Saved drafts in the chat with Homeroom bot: the list the agent chats had,
 // for the person's own chat with the bot and its threads
 // (frontend/src/features/messages/bot-drafts.ts, bot-drafts-list.tsx,
 // composer.tsx).
@@ -21,7 +20,7 @@
 //      and writes to one list go in order.
 //   5. Sending a draft is always a tap, never automatic.
 //   6. The requests, and the event from the person's other devices.
-//   7. The words are the agent chats', with the bot's name.
+//   7. The words, with the bot's name, as whole catalog entries.
 //
 // The server's part is tests/messages-bot-drafts-postgres.test.js.
 
@@ -39,7 +38,6 @@ const COMPOSER = read('frontend/src/features/messages/composer.tsx');
 const DRAFTS = read('frontend/src/features/messages/bot-drafts.ts');
 const LIST = read('frontend/src/features/messages/bot-drafts-list.tsx');
 const STORE = read('frontend/src/features/messages/store.ts');
-const AGENT = read('frontend/src/features/agent-session/index.tsx');
 
 const rule = loadTsx('frontend/src/features/messages/bot-stop.ts');
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -71,7 +69,7 @@ test('the box\'s state: not working, working and empty, working with words, stop
 
 // ── 2. The box ───────────────────────────────────────────────────────────
 
-test('with words while the bot works, Send\'s place is Stop and a worded "Save draft", as the agent session draws it', () => {
+test('with words while the bot works, Send\'s place is Stop and a worded "Save draft"', () => {
   // One button in Send's place when it is Send; otherwise Stop, and beside
   // it the pill when there are words.
   const place = COMPOSER.slice(COMPOSER.indexOf("{sendKind === 'send' ? ("), COMPOSER.indexOf('{error ? <p role="alert"'));
@@ -79,20 +77,17 @@ test('with words while the bot works, Send\'s place is Stop and a worded "Save d
   const pill = place.slice(place.indexOf('<Button'));
   assert.match(pill, /type="button"\n\s+data-bot-save-draft=""\n\s+disabled=\{dictating \|\| !!uploading\}\n\s+onMouseDown=\{\(event\) => event\.preventDefault\(\)\}\n\s+onClick=\{submit\}/,
     'held by what holds Send, and the press keeps the field focused');
-  // The agent session's pill: green, with the save glyph and the words.
-  const agentPill = /className="(inline-flex h-10 shrink-0 items-center justify-center gap-1\.5 rounded-full bg-emerald-600 px-3\.5 text-sm font-semibold hover:bg-emerald-700)"/.exec(AGENT)[1];
+  // A green pill with the save glyph and the words. On a phone the row is
+  // this box's 36px line, so the pill is that height with a little less
+  // padding, and 40px from 768px.
   const ours = /className="(inline-flex h-9 shrink-0 [^"]*)"\n\s+aria-label=\{t\('messages:composer\.saveAsDraft'\)\}/.exec(pill)[1];
-  const classes = (list) => list.split(' ').sort();
-  // The same classes; on a phone the row is this box's 36px line, so the
-  // pill is that height with a little less padding, and 40px from 768px.
-  assert.deepEqual(classes(ours.replace('h-9 ', 'h-10 ').replace(' px-3 ', ' px-3.5 ').replace(' md:h-10 md:px-3.5', '')), classes(agentPill));
+  assert.equal(ours, 'inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-full bg-emerald-600 px-3 text-sm font-semibold hover:bg-emerald-700 md:h-10 md:px-3.5');
   assert.match(pill, /variant="unstyled"\n\s+ink="solid"/);
   assert.match(pill, /title=\{enterKey \? t\('messages:composer\.saveTitleShortcut'\) : t\('messages:composer\.saveTitle'\)\}/);
   assert.match(pill, /<SaveDraftIcon width=\{18\} height=\{18\} className="hidden md:block" aria-hidden="true" \/>\n\s+<span>\{t\('messages:composer\.saveDraft'\)\}<\/span>/,
     'words, not a round button in Send\'s place');
   // Said in words above what is typed, the moment it applies.
   assert.match(COMPOSER, /\{sendKind === 'save' \? \(\n\s+<p className="px-2 pb-1 text-\[13px\] text-zinc-600 dark:text-zinc-300" data-bot-save-note="">\n\s+<RichMessage id="messages:composer\.saveNote" components=\{\[<span className="font-semibold" \/>\]\} \/>/);
-  assert.match(AGENT, /<p className="px-2 text-\[13px\] text-zinc-600 dark:text-zinc-300" data-agent-session-save-note>/, 'the agent session\'s own note, in the same type');
 });
 
 test('Enter and Cmd/Ctrl + Enter save in that state, and no key presses Stop', () => {
@@ -175,8 +170,8 @@ test('while the bot works there, sending is locked and says when it unlocks; edi
   assert.match(COMPOSER, /\{botChat \? <BotSavedDrafts drafts=\{savedDrafts\} busy=\{!!answering\} held=\{dictating \|\| !!uploading\} onSend=\{sendSavedDraft\} onEdit=\{editSavedDraft\} onDelete=\{\(draft\) => deleteBotDraft\(conversationId, threadRootId, draft\.id\)\} \/> : null\}/);
 });
 
-test('it is the agent session\'s list, not a third look', () => {
-  // The same boxes: the list, its heading line, a row, a row's button.
+test('the list draws its boxes in Tailwind, in the platform\'s palette', () => {
+  // The boxes: the list, its heading line, a row, a row's button.
   const boxes = [
     'mb-2 max-h-40 overflow-y-auto rounded-2xl bg-zinc-100 p-1.5 dark:bg-zinc-800/70',
     'flex flex-wrap items-baseline gap-x-1.5 px-2 pb-1 text-[11px] text-zinc-500 dark:text-zinc-400',
@@ -187,8 +182,7 @@ test('it is the agent session\'s list, not a third look', () => {
     'DraftSendIcon width={16} height={16}', 'DraftEditIcon width={16} height={16}', 'DraftTrashIcon width={16} height={16}',
   ];
   for (const box of boxes) {
-    assert.ok(AGENT.includes(box), `the agent session draws ${box}`);
-    assert.ok(LIST.includes(box), `and so does this list: ${box}`);
+    assert.ok(LIST.includes(box), `the list draws ${box}`);
   }
   // Tailwind only: no class of the dev chat's list, and nothing new in app.css.
   assert.doesNotMatch(LIST, /dc-drafts/);
@@ -516,40 +510,35 @@ test('the requests: the place\'s list read fresh, a save with its id, a delete b
 
 // ── 7. The words ─────────────────────────────────────────────────────────
 
-test('the words are the agent chats\', with the bot\'s name, as whole catalog entries', () => {
-  const agent = JSON.parse(read('frontend/locales/en/agent.json'));
+test('the words, with the bot\'s name, as whole catalog entries', () => {
   const messages = JSON.parse(read('frontend/locales/en/messages.json'));
-  // The agent session's sentence, with "the agent" as "Homeroom bot" and
-  // this catalog's apostrophe.
-  const ours = (text) => text.replace(/\bThe agent\b|\bthe agent\b/g, 'Homeroom bot').replace(/'/g, '’');
+  // The agent chats' sentences, with "the agent" as "Homeroom bot" and this
+  // catalog's apostrophe.
   const same = {
-    'composer.saveDraft': 'session.composer.saveDraft',
-    'composer.saveAsDraft': 'session.composer.saveAsDraft',
-    'composer.saveNote': 'session.composer.saveNote',
-    'drafts.label': 'session.drafts.label',
-    'drafts.heading_one': 'session.drafts.heading_one',
-    'drafts.heading_other': 'session.drafts.heading_other',
-    'drafts.locked': 'session.drafts.locked',
-    'drafts.ready': 'session.drafts.ready',
-    'drafts.send': 'session.drafts.send',
-    'drafts.sendBusyTitle': 'session.drafts.sendBusyTitle',
-    'drafts.sendTitle': 'session.drafts.sendTitle',
-    'drafts.edit': 'session.drafts.edit',
-    'drafts.editTitle': 'session.drafts.editTitle',
-    'drafts.delete': 'session.drafts.delete',
-    'drafts.full_one': 'session.drafts.full_one',
-    'drafts.full_other': 'session.drafts.full_other',
-    'drafts.saved': 'session.drafts.saved',
-    'drafts.keptTyped': 'session.drafts.keptTyped',
-    'drafts.saveFailed': 'session.error.draftSaveFailed',
-    'drafts.deleteFailed': 'session.error.draftDeleteFailed',
+    'composer.saveDraft': 'Save draft',
+    'composer.saveAsDraft': 'Save as draft',
+    'drafts.label': 'Saved drafts',
+    'drafts.heading_one': '<0>Saved drafts ({{count}})</0><1>· on all your devices</1>',
+    'drafts.heading_other': '<0>Saved drafts ({{count}})</0><1>· on all your devices</1>',
+    'drafts.ready': 'Ready to send',
+    'drafts.send': 'Send this draft',
+    'drafts.sendBusyTitle': 'Homeroom bot is still working. You can send this when it finishes',
+    'drafts.sendTitle': 'Send this draft now',
+    'drafts.edit': 'Edit this draft',
+    'drafts.editTitle': 'Put this draft back in the box to edit',
+    'drafts.delete': 'Delete this draft',
+    'drafts.full_one': 'That’s {{count}} saved draft. Send or delete one first',
+    'drafts.full_other': 'That’s {{count}} saved drafts. Send or delete one first',
+    'drafts.saved': 'Draft saved. Send it whenever you’re ready',
+    'drafts.keptTyped': 'Kept what you had typed as another draft',
+    'drafts.deleted': 'Draft deleted',
+    'drafts.saveFailed': 'Could not save that draft.',
+    'drafts.deleteFailed': 'Could not delete that draft.',
   };
-  for (const [id, theirs] of Object.entries(same)) {
-    assert.equal(messages[id].text, ours(agent[theirs].text), id);
+  for (const [id, text] of Object.entries(same)) {
+    assert.equal(messages[id].text, text, id);
   }
-  // The dev chat's toast for a delete, which the agent session lacks.
-  assert.equal(messages['drafts.deleted'].text, JSON.parse(read('frontend/locales/en/devchat.json'))['drafts.toast.deleted'].text);
-  // Enter saves here, where the agent chats save on Ctrl/Cmd + Enter.
+  // Enter saves here, where the agent chats saved on Ctrl/Cmd + Enter.
   assert.equal(message('messages:composer.saveTitle'), 'Save this as a draft. It stays here until you send it');
   assert.equal(message('messages:composer.saveTitleShortcut'), 'Save this as a draft (Enter). It stays here until you send it');
   assert.equal(message('messages:composer.saveNote'), 'Homeroom bot is still working, so this will be <0>saved as a draft, not sent</0>. Send it from your drafts when it finishes.');

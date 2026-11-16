@@ -66,14 +66,13 @@ test('permanent recovery errors persist quarantine while transient errors only r
 });
 
 test('who tries a retained recovery again is the turn\'s work item, not a timer in one process', () => {
-  // services/turns.js: a coding run's recovery and a headless run are tried
-  // again inside their item, bounded (RECOVERY_RETRY), and a give-up is
-  // recorded as it was (recordGaveUp, whose signal files a request).
+  // services/turns.js: a coding run's recovery is tried again inside its
+  // item, bounded (RECOVERY_RETRY), and a give-up is recorded as it was
+  // (recordGaveUp, whose signal files a request).
   assert.deepEqual(Object.keys(recoveryRetry).sort(), [
     'isDurableTurnCleanupError', 'recordGaveUp', 'requireDurableTurnCleanup',
     'retainOrQuarantineRecoveryError', 'shouldRetryRecoveryError',
   ]);
   const turns = require('fs').readFileSync(require('path').join(__dirname, '..', 'src', 'services', 'turns.js'), 'utf8');
   assert.match(turns, /recordGaveUp\(\{ pool, key: `interactive:\$\{Number\(sessionId\)\}`, err, failures: tried \}\)/);
-  assert.match(turns, /recordGaveUp\(\{ pool, key: `headless:\$\{Number\(sessionId\)\}`, err, failures: tried \}\)/);
 });

@@ -4,12 +4,12 @@
  *
  * ── Every composer already took a drop; none of them showed it ────────
  *
- * The group chat, the dev chat, the agent session and "Suggest an
+ * The group chat and "Suggest an
  * improvement" each attach a dropped file through their own upload path, and
  * those paths stay theirs. What they lacked is the outline Messages draws
  * while a file is held over its box (`.messages-drop-overlay`), so a person
  * could not tell where letting go would land. This module is that outline and
- * the state behind it, shared, so the five drop zones look the same.
+ * the state behind it, shared, so the drop zones look the same.
  *
  * ── A depth count, not `currentTarget === target` ──────────────────────
  *
@@ -22,12 +22,11 @@
  * Only a drag carrying FILES counts: text or a link dragged into the field
  * keeps the browser's own behaviour (it is inserted where it lands).
  *
- * ── The classic scripts reach it through the bridge ────────────────────
+ * ── The classic script reaches it through the bridge ───────────────────
  *
- * public/js/group-chat.js and dev-chat.js (a moved classic script, still
- * evaluated as one in its tests) cannot import, so the tracker and the
- * summary are published on `window.UsernodeReact.fileDrag`. They publish a
- * `dragging` flag into their composer stores and the React composer draws
+ * public/js/group-chat.js cannot import, so the tracker and the
+ * summary are published on `window.UsernodeReact.fileDrag`. It publishes a
+ * `dragging` flag into its composer store and the React composer draws
  * the zone: the module writes no markup.
  */
 

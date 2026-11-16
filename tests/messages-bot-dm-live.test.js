@@ -839,7 +839,7 @@ test('#6674: opening a thread asks about that thread, apart from the conversatio
   h.api.getConversation = async () => BOT_DM;
   h.server.botWorking = { typing: true, doing: { kind: 'request', number: 12 }, answering: null, botId: BOT.id };
   await openDm(h);
-  h.store.messagesController.route(42, null, null, { threadRootId: 1 });
+  h.store.messagesController.route(42, null, { threadRootId: 1 });
   await h.flush();
   assert.deepEqual(h.server.botWorkingReads.at(-1), [42, 1], 'the thread on screen was asked about');
   assert.deepEqual(h.store.typingUsers(42, 1)[0].doing, { kind: 'request', number: 12 }, 'the card in that thread');

@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/chat';
 import {
   ArrowsPointingInIcon, ArrowsPointingOutIcon, ChatIcon, ChevronDownIcon, ChevronLeftIcon, EllipsisHorizontalIcon, LockIcon, PencilSparklesIcon,
-  PlusIcon, SearchIcon, SparklesIcon, UserGroupIcon, XIcon,
+  PlusIcon, SearchIcon, UserGroupIcon, XIcon,
 } from '@/components/ui/icons';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
@@ -28,7 +28,7 @@ import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { agoStamp, timeOfDay } from '../../lib/timestamp';
 import { getTimeZone, inZone, zonedDay } from '../../lib/time-zone';
 import { useStoreState } from '../../lib/use-store-state';
-import { useVisibility, useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import * as api from './api';
 import { BotActivitySync, isActivityMessage, isMovedActivity } from './bot-activity';
 import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from './bot-plan';
@@ -64,10 +64,8 @@ import {
   firstUnreadId, jumpLabel, lineTopIn, messageRow, newMessagesLabel, openingScrollTop, useLineHold, useUnreadAffordances,
 } from './unread-anchor';
 import {
-  agentThreadAddress,
   closeThread,
   embed,
-  fullScreenAddress,
   initializeMessagesStore,
   finishDirectBlock,
   jumpToPresent,
@@ -78,7 +76,6 @@ import {
   loadReplyThread,
   messagesController,
   open as openConversation,
-  openAgentThread,
   renameConversation,
   openThread,
   release,
@@ -106,23 +103,6 @@ import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view'
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
-import { AgentSessionPanel } from '../agent-session';
-import { useSidePaneBeside } from '../agent-session/spec-layout';
-import { agentActivity } from '../agent-session/activity';
-import { AgentActivityIcon } from '../agent-session/activity-mark';
-import {
-  deactivateAgentSession,
-  getAgentSessionState,
-  loadAgentSessions,
-  openAgentSession,
-  startAgentSession,
-  useAgentChatsShown,
-  useAgentSessionSelector,
-  useAgentSessions,
-} from '../agent-session/store';
-import { listArchivedSessions } from '../agent-session/api';
-import type { AgentSession as MayorSession } from '../agent-session/api';
-import { changeRowWords } from '../agent-session/transcript';
 import { isFrameSkin, useLiveSkin, useSkin } from '../../lib/skin';
 import { useFramePage } from '../frame/frame-page-store';
 import { Av as KitAv, Lead as KitLead } from '@/components/ui/kit';
@@ -134,12 +114,12 @@ import { notificationsStore } from '../notifications/notifications-store.js';
 import { SessionRow, sessionRowState, type SessionRowView } from '../improve/session-row';
 import { INBOX_QUERY_MAX, INBOX_SECTIONS, agentAsksForYou, buildInbox, savedInboxQuery, shownInSection, type AppDiscussion, type InboxSection } from './inbox';
 import { useSidebarRows } from '../nav/sidebar-rows';
-import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage, MessagesAgentThread } from './types';
+import type { ConversationDetail, ConversationMessage, ConversationSummary, DiscussionMessage } from './types';
 
 /*
  * ── The screen, in the widget language ─────────────────────────────────
  *
- * Messages is drawn on the dev session's LIFT LADDER (`.dc-lift` and its two
+ * Messages is drawn on the LIFT LADDER (`.dc-lift` and its two
  * plane classes in app.css). The wallpaper is the ground. `.messages-layout`
  * is the frosted STRIP: it carries the screen's title, the New disc and the
  * conversation rows, drawn straight on it. The open conversation is the
@@ -428,14 +408,8 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
 });
 
 /**
- * A change in flight, as a row of this inbox (#2770, #2772).
- *
- * ── A change IS an agent conversation ─────────────────────────────────
- *
- * A dev session is the viewer talking to the agent that builds, which is
- * what an agent session is too — so it is listed under Agents beside them,
- * and New change lands on one. A change somebody had just started was once
- * findable from the Workshop and the bell's Agents tab but not from here.
+ * A change in flight, as a row of this inbox (#2770, #2772), listed under
+ * Agents.
  *
  * ── The same row, from the same list ──────────────────────────────────
  *
@@ -447,41 +421,19 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
  *
  * ── Where the row goes ────────────────────────────────────────────────
  *
- * The session itself, the conversation, rather than the change's card page
- * the bell links. Since #2813 that is `#messages/session/<slug>/<id>`: on a
- * desktop the session opens in the pane beside this list. On a phone the
- * router swaps that address for `#app/<slug>/dev/sessions/<id>`, the
- * full-screen session, which lights the Messages tab and hangs its chevron
- * off this inbox. The router records that (`Improve.enterSessionFrom`) as
- * it swaps, because the route being left is not an app route and the
- * Improve store cannot tell. A work order has no conversation here, so it
- * keeps its own destination.
+ * Where the store's row goes: the change's own page, as the bell links it,
+ * and a work order's own destination. Never a pane of this screen.
  */
-function inboxSessionView(session: SessionRowView): SessionRowView {
-  if (session.kind !== 'session' || !session.appSlug) return session;
-  return {
-    ...session,
-    // #2813: the inbox's own address for the session, so on a desktop it
-    // opens in the pane beside this list. On a phone the router swaps it for
-    // `#app/<slug>/dev/sessions/<id>` — and records `Improve.enterSessionFrom`
-    // there, which this row's click used to — so the session is still the
-    // full-screen conversation it was, with its chevron back to this inbox.
-    href: agentThreadAddress({ kind: 'session', slug: session.appSlug, id: session.id }),
-  };
-}
-
-const AgentSessionRow = memo(function AgentSessionRow({ session, active, rowKey }: {
+const ChangeRow = memo(function ChangeRow({ session, rowKey }: {
   session: SessionRowView;
-  active: boolean;
   /** #6508: the inbox entry's key (see ConversationRow). */
   rowKey?: string;
 }) {
   return (
     <div
-      className={`messages-inbox-session ${active ? 'messages-inbox-session-active' : ''}`}
+      className="messages-inbox-session"
       data-inbox-session={session.key}
       data-inbox-row={rowKey}
-      aria-current={active ? 'page' : undefined}
     >
       <SessionRow session={session} showApp onNavigate={() => {}} tile={<ChangeTile session={session} />} />
     </div>
@@ -509,16 +461,11 @@ function ChangeTile({ session }: { session: SessionRowView }) {
 }
 
 /**
- * What the "+" can start, in the order the popover lists them: the agent,
- * then people. #5380 renamed the agent row to "Agent chat" and took Homeroom
- * bot out: the menu starts new conversations, and the bot's one conversation
- * is reached from the top of Agents.
+ * What the "+" can start, in the order the popover lists them: the
+ * conversations with people. A new chat with Homeroom bot starts on its own
+ * tab.
  */
 const NEW_CHOICES = [
-  // #2779: a conversation with the Mayor that works on any app, so there is
-  // no app to pick first. It replaced "Agent chat", which asked which app and
-  // opened a classic dev session there; those are no longer created.
-  { key: 'agent', label: 'messages:inbox.new.agent.label', hint: 'messages:inbox.new.agent.hint' },
   { key: 'direct', label: 'messages:inbox.new.direct.label', hint: 'messages:inbox.new.direct.hint' },
   { key: 'group', label: 'messages:inbox.new.group.label', hint: 'messages:inbox.new.group.hint' },
 ] as const;
@@ -526,8 +473,7 @@ type NewChoice = typeof NEW_CHOICES[number]['key'];
 
 function startNew(choice: NewChoice) {
   // DM and group are the create dialog, opened on the matching tab.
-  if (choice === 'agent') void startAgentSession({ entry: 'messages' });
-  else openDialog('messagesCreate', choice);
+  openDialog('messagesCreate', choice);
 }
 
 /**
@@ -538,7 +484,7 @@ function startNew(choice: NewChoice) {
  * home is — lib/anchor-popover.ts and lib/popover-dismiss.ts are that code,
  * shared — and portalled to
  * the body so the list's own scroller cannot clip it. On touch it is the
- * kit's action sheet instead, which is what a three-row menu is on a phone.
+ * kit's action sheet instead, which is what a short menu is on a phone.
  *
  * Nothing is rendered until the button is pressed, so the prerendered
  * document holds the button alone and hydration has nothing to disagree
@@ -616,7 +562,6 @@ function NewMessageButton() {
             >
               {item.key === 'direct' ? <ChatIcon aria-hidden="true" /> : null}
               {item.key === 'group' ? <UserGroupIcon aria-hidden="true" /> : null}
-              {item.key === 'agent' ? <SparklesIcon aria-hidden="true" /> : null}
               <span className="min-w-0">
                 <span className="messages-new-option-label">{t(item.label)}</span>
                 <span className="messages-new-option-hint">{t(item.hint)}</span>
@@ -735,9 +680,9 @@ function ConversationRowSkeleton() {
 }
 
 /**
- * #6508: the selector for one row's key. A key is built from a numeric id, an
- * agent-session key or a Mayor session's id (./inbox.ts), and an agent
- * session's key can hold characters a selector would read as syntax, so it is
+ * #6508: the selector for one row's key. A key is built from a numeric id or
+ * a change's key (./inbox.ts), and a change's key can hold characters a
+ * selector would read as syntax, so it is
  * escaped where `CSS.escape` exists (every browser that draws the shell) and
  * quoted with its own quotes and backslashes escaped where it does not.
  */
@@ -799,7 +744,7 @@ function ConversationList({ drawer = false }: {
   // once, and the rows follow in a render React can interrupt with the next
   // one, so typing a word into a long inbox does not wait on it per letter.
   const deferredQuery = useDeferredValue(query);
-  // The viewer's changes in flight (#2770) — see AgentSessionRow. AFTER
+  // The viewer's changes in flight (#2770) — see ChangeRow. AFTER
   // MOUNT ONLY: app.js can have filled the Improve store before this island
   // hydrates, and rows the prerendered document did not have are a hydration
   // mismatch on every route. The first client render therefore matches the
@@ -813,60 +758,17 @@ function ConversationList({ drawer = false }: {
   const { sessionUnreadIds } = useStoreState(notificationsStore) as { sessionUnreadIds: number[] };
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
-  // A change started from an agent session (#2779) is that conversation's:
-  // its row below says where it stands, so it is not listed twice.
-  // Memoised on the store's own arrays: inboxSessionView builds a new row
-  // object, and a new object per render is a memo()'d row drawn again.
+  // Memoised on the store's own arrays: a new array per render is every
+  // memo()'d row drawn again.
   const sessions = useMemo<SessionRowView[]>(() => (mounted
     ? [...(improve.sessions || []), ...(improve.otherSessions || [])]
-      .filter((row) => !row.agentSessionId)
-      .map(inboxSessionView)
     : []), [mounted, improve.sessions, improve.otherSessions]);
-  // Agent sessions (#2779), from their own store and, like the sessions
-  // above, only after mount. Listed whatever the flag says: turning it off
-  // never hides a conversation that already exists. The list alone: a reply
-  // streaming into the open conversation does not redraw the inbox.
-  const mayorSessions = useAgentSessions();
-  useEffect(() => { void loadAgentSessions(); }, []);
-  const mayors = useMemo<MayorSession[]>(() => (mounted ? mayorSessions : []), [mounted, mayorSessions]);
-  // #4729: the mark menu's agent rows left for this list, and with them the
-  // only route to an archived agent chat closed — an archived session was in
-  // no list at all. "Show archived" at the foot of the Agents list opens the
-  // group of them, read from the same route the open list reads with
-  // ?status=archived and re-read on each open, so a session archived or
-  // unarchived meanwhile is current. After mount (like the rows above) and
-  // only for somebody who has had an agent session, so a newcomer's list
-  // carries no quiet tail that would always be empty; a query hides it,
-  // because search covers the open chats only.
-  const agentChatsShown = useAgentChatsShown();
-  const [archivedOpen, setArchivedOpen] = useState(false);
-  const [archived, setArchived] = useState<MayorSession[] | null>(null);
-  const [archivedError, setArchivedError] = useState('');
-  const readArchived = useCallback(() => {
-    setArchivedError('');
-    listArchivedSessions()
-      .then((sessions) => setArchived(sessions))
-      .catch((err) => setArchivedError(
-        err instanceof Error && err.message ? err.message : translate('agent:session.error.listFailed'),
-      ));
-  }, []);
-  useEffect(() => {
-    if (archivedOpen) readArchived();
-  }, [archivedOpen, readArchived]);
-  // The side pane open BESIDE an agent session's chat (#2779 follow-up), a
-  // spec or a preview, takes this column's width while it is open: at 1280
-  // the thread pane alone is too narrow for two readable columns. Closing it
-  // brings the list back. False until mounted, like everything above
-  // (../agent-session/spec-layout).
-  const specBeside = useSidePaneBeside('messages');
   // Built once per change to what it is built from, not once per keystroke
   // in the search box or per publish of a store this list does not draw.
   const inbox = useMemo(() => buildInbox({
     conversations: snap.conversations,
     sessions,
-    mayors,
-  }), [snap.conversations, sessions, mayors]);
-  const byMayor = useMemo(() => new Map(mayors.map((item) => [String(item.id), item])), [mayors]);
+  }), [snap.conversations, sessions]);
   const byConversation = useMemo(() => new Map(snap.conversations.map((item) => [String(item.id), item])), [snap.conversations]);
   const bySession = useMemo(() => new Map(sessions.map((item) => [item.key, item])), [sessions]);
 
@@ -885,31 +787,19 @@ function ConversationList({ drawer = false }: {
       const c = bySession.get(entry.key.slice('session:'.length));
       return !!c && (inboxMatches(c.title, q) || inboxMatches(c.appName, q));
     }
-    if (entry.kind === 'mayor') {
-      const m = byMayor.get(entry.key.slice('mayor:'.length));
-      return !!m && (inboxMatches(m.title, q) || inboxMatches(m.focusApp?.name, q)
-        || inboxMatches(m.activeChange?.title, q));
-    }
     return false;
   };
   const searching = !!q;
   const found = inbox.filter(matches);
-  // The row that is open, so a section showing its newest few keeps it.
-  const open = snap.route.agent;
-  const isOpen = (entry: { kind: string; key: string }) => {
-    if (entry.kind === 'person') return snap.route.conversationId === Number(entry.key.slice('person:'.length));
-    if (entry.kind === 'session') {
-      const session = bySession.get(entry.key.slice('session:'.length));
-      return !!session && open?.kind === 'session' && open.id === session.id;
-    }
-    if (entry.kind === 'mayor') return open?.kind === 'agent' && String(open.id) === entry.key.slice('mayor:'.length);
-    return false;
-  };
-  const openKey = found.find(isOpen)?.key || null;
-  // An agent row that asks for you is never behind "Show N more": a change
-  // waiting on you ("Needs you") or an agent at work.
-  // (./inbox.ts asksForYou, #5693).
-  const asksForYou = (entry: { kind: string; key: string }) => agentAsksForYou(entry, bySession, byMayor);
+  // The conversation that is open. A change's row opens its page, never a
+  // pane here, so it is never the open one.
+  const isOpen = (entry: { kind: string; key: string }) => (
+    entry.kind === 'person' && snap.route.conversationId === Number(entry.key.slice('person:'.length))
+  );
+  // An agent row that asks for you is never behind "N older changes": a
+  // change waiting on you ("Needs you") or an agent at work.
+  // (./inbox.ts agentAsksForYou, #5693).
+  const asksForYou = (entry: { kind: string; key: string }) => agentAsksForYou(entry, bySession);
 
   // 16 Oct 2026: what the Homeroom bot's row says. What waits on you and
   // what it is doing ("1 needs you · 2 in progress", ./bot-strip.tsx
@@ -932,8 +822,7 @@ function ConversationList({ drawer = false }: {
   // people you have not read. A zero says nothing. Unread is new to read,
   // grey like every unread count since #18 (19 Oct 2026 polish board); the
   // accent is for what waits on you.
-  const working = mayors.filter((item) => item.busy).length
-    + sessions.filter((item) => item.busy).length;
+  const working = sessions.filter((item) => item.busy).length;
   const unreadFromPeople = snap.conversations
     .filter((item) => !item.homeroomBot && item.kind !== 'channel')
     .reduce((sum, item) => sum + Math.max(0, Number(item.unreadCount) || 0), 0);
@@ -941,16 +830,9 @@ function ConversationList({ drawer = false }: {
     agents: { text: working ? t('messages:inbox.section.working', { count: working }) : null, ask: false },
     people: { text: unreadFromPeople ? t('messages:inbox.section.unread', { count: unreadFromPeople }) : null, ask: false },
   };
-  // Agents shows its week until "N older chats" (./inbox.ts
+  // Agents shows its week until "N older changes" (./inbox.ts
   // shownInSection). Not remembered: the next visit starts on the week.
   const [agentsExpanded, setAgentsExpanded] = useState(false);
-
-  // #4729: the archived agent chats fold behind a link at the Agents
-  // section's foot, in the "N older chats" shape. Opening it re-reads the
-  // archived list each time, so a session archived or unarchived since the
-  // last look shows where it now belongs; a query hides the toggle, because
-  // search covers the open chats only.
-  const showArchivedToggle = mounted && !!agentChatsShown && !snap.folded.includes('agents') && !searching;
 
   // #6508: the list keeps its place while it updates live (./list-place.ts).
   // The row at the top of what the reader sees is noted on every scroll, and
@@ -976,10 +858,10 @@ function ConversationList({ drawer = false }: {
     }
     anchor.current = firstRowInView(rows, 0);
   }, []);
-  // The reader changing the list (a search, a fold, older or archived chats,
-  // the other tab under a look) drops the held place: that is them moving the
-  // list, not it moving itself.
-  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${archivedOpen}\u0000${frame ? frameTab : ''}`;
+  // The reader changing the list (a search, a fold, older changes, the other
+  // tab under a look) drops the held place: that is them moving the list,
+  // not it moving itself.
+  const listShape = `${deferredQuery}\u0000${snap.folded.join(',')}\u0000${agentsExpanded}\u0000${frame ? frameTab : ''}`;
   const lastShape = useRef(listShape);
   useIsomorphicLayoutEffect(() => {
     if (lastShape.current === listShape) return;
@@ -995,8 +877,8 @@ function ConversationList({ drawer = false }: {
     const el = scrollRef.current;
     const saved = anchor.current;
     // A list the layout has taken off screen (the phone's drawer behind an
-    // open conversation, the column beside a spec pane) measures every row at
-    // zero; correcting there would move it while nobody can see it.
+    // open conversation) measures every row at zero; correcting there would
+    // move it while nobody can see it.
     if (!el || !saved || !el.clientHeight) return;
     const box = el.getBoundingClientRect();
     let row: Element | null = null;
@@ -1008,53 +890,8 @@ function ConversationList({ drawer = false }: {
     if (delta) el.scrollTop += delta;
   }, [orderKey]);
 
-  const archivedToggle = showArchivedToggle ? (
-    <button
-      key="show-archived"
-      type="button"
-      id="messages-show-archived"
-      className="messages-inbox-older"
-      aria-expanded={archivedOpen}
-      onClick={() => setArchivedOpen(!archivedOpen)}
-    >
-      {archivedOpen ? t('messages:inbox.archived.hide') : t('messages:inbox.archived.show')}
-    </button>
-  ) : null;
-
   if (frame) {
     const me = Number(window.App?.user?.id);
-    // One agent chat as the kit's row, saying what MayorSessionRow says:
-    // the project and where its change stands on the line, the time at the
-    // row's end, and what it is doing in words for a screen reader.
-    const mayorRow = (m: MayorSession, key: string, active: boolean): FrameInboxRow => {
-      const thread: MessagesAgentThread = { kind: 'agent', id: m.id };
-      const href = agentThreadAddress(thread);
-      const change = m.activeChange;
-      const at = m.lastActivityAt || m.createdAt || null;
-      const when = at ? agoStamp(at) : null;
-      const mark = agentActivity(m);
-      const status = change
-        ? dotText([
-          change.title || (change.prNumber ? t('messages:agent.row.prNumber', { number: change.prNumber }) : t('messages:agent.row.changeId', { id: change.id })),
-          changeRowWords(change),
-        ])
-        : t('messages:agent.row.noChange');
-      return {
-        key,
-        lead: <KitLead icon="spark" tone={mark === 'done' ? 'ok' : undefined} />,
-        title: m.title || t('messages:agent.row.newSession'),
-        said: mark ? t(ACTIVITY_SAID[mark]) : null,
-        line: m.busy ? t('messages:agent.row.working') : dotText([m.focusApp?.name, status]),
-        time: when?.text || null,
-        timeTitle: when?.title || null,
-        active,
-        href,
-        onClick: (event) => {
-          if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-          if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
-        },
-      };
-    };
     const frameRow = (entry: { kind: string; key: string }): FrameInboxRow | null => {
       const active = isOpen(entry);
       if (entry.kind === 'person') {
@@ -1099,10 +936,6 @@ function ConversationList({ drawer = false }: {
           },
         };
       }
-      if (entry.kind === 'mayor') {
-        const m = byMayor.get(entry.key.slice('mayor:'.length));
-        return m ? mayorRow(m, entry.key, active) : null;
-      }
       if (entry.kind === 'session') {
         const sn = bySession.get(entry.key.slice('session:'.length));
         if (!sn) return null;
@@ -1132,14 +965,10 @@ function ConversationList({ drawer = false }: {
     // list's own rule (./inbox.ts shownInSection), People shows every row.
     const peopleEntries = found.filter((entry) => entry.section === 'people');
     const agentEntries = found.filter((entry) => entry.section === 'agents');
-    const fold = shownInSection('agents', agentEntries, { expanded: agentsExpanded, searching, openKey, keep: asksForYou });
-    // "Show archived" is reached past the open chats, as on the standard
-    // list: once "N older chats" has shown the rest. The standard toggle's
-    // rule but for the fold of the section, which a tab does not have.
-    const archive = mounted && !!agentChatsShown && !searching && (!fold.older || agentsExpanded);
+    const fold = shownInSection('agents', agentEntries, { expanded: agentsExpanded, searching, keep: asksForYou });
     return (
       <section
-        className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`}
+        className={`messages-list-pane ${drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`}
         aria-label={t('core:tabs.messages')}
         data-frame-list=""
         // Under a look the pane itself scrolls: it keeps its place across a
@@ -1154,13 +983,6 @@ function ConversationList({ drawer = false }: {
           olderRows={rowsOf(fold.olderShown)}
           olderOpen={agentsExpanded}
           onOlder={() => setAgentsExpanded(!agentsExpanded)}
-          archive={archive ? {
-            open: archivedOpen,
-            onToggle: () => setArchivedOpen(!archivedOpen),
-            rows: archived ? archived.map((session) => mayorRow(session, `archived:${session.id}`, open?.kind === 'agent' && open.id === session.id)) : null,
-            error: archivedError,
-            onRetry: readArchived,
-          } : null}
           unread={unreadFromPeople}
           working={asides.agents.text}
           tab={frameTab}
@@ -1180,7 +1002,7 @@ function ConversationList({ drawer = false }: {
             searched: searching ? deferredQuery.trim() : null,
           }}
         />
-        {/* New message is the product's three choices in the kit's sheet
+        {/* New message is the product's choices in the kit's sheet
             (./frame-new.tsx). The sheet goes first, so the focus it hands
             back lands before the product's dialog takes it. */}
         {frameNew ? (
@@ -1196,7 +1018,7 @@ function ConversationList({ drawer = false }: {
   }
 
   return (
-    <section className={`messages-list-pane ${specBeside ? 'hidden' : drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug || snap.route.agent ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
+    <section className={`messages-list-pane ${drawer ? 'flex' : snap.route.conversationId || snap.route.appSlug ? 'hidden md:flex' : 'flex'}`} aria-label={t('messages:inbox.listName')}>
       {/* THE SCREEN NAMES ITSELF ONCE (#2718 review). An <h2> reading
           "Messages" sat here, under a bar already reading Messages — two
           titles, one word, an inch apart. The bar is the title now, which is
@@ -1254,26 +1076,23 @@ function ConversationList({ drawer = false }: {
         {!snap.loadingList && !snap.error && snap.listLoaded && inbox.length && !found.length
           ? <div id="messages-search-empty" className="messages-state"><p>{t('messages:inbox.searchEmpty', { query: deferredQuery.trim() })}</p></div>
           : null}
-        {/* TWO SECTIONS, EACH HEADED (16 Oct 2026): Agents, the Homeroom
-            bot's chat first, then People (./inbox.ts). Each section's rows
+        {/* TWO SECTIONS, EACH HEADED (16 Oct 2026): Agents, then People
+            (./inbox.ts). Each section's rows
             sit in a card under its heading, the grouped list's label-over-
             card shape; on a desktop the column draws them as the Communities
             column draws its places (app.css). Agents folds from its heading,
-            which keeps its count folded, and keeps the bot's row; a search
+            which keeps its count folded, and keeps a pinned row; a search
             opens it. Agents shows at most five from its week, and the rest
-            behind "N older chats": a quiet link in the titles' column,
+            behind "N older changes": a quiet link in the titles' column,
             not a chevron, so it never reads as a third heading. Pressed, it
-            stays where it is and the older chats open below it. */}
+            stays where it is and the older changes open below it. */}
         {INBOX_SECTIONS.map((section) => {
           const entries = found.filter((entry) => entry.section === section);
           const folded = !searching && FOLDABLE.includes(section) && snap.folded.includes(section);
           const { shown, older, olderShown } = shownInSection(section, entries, {
-            expanded: agentsExpanded, searching, folded, openKey, keep: asksForYou,
+            expanded: agentsExpanded, searching, folded, keep: asksForYou,
           });
-          // The archived chats are reached past the open ones: under all of
-          // them, once "N older chats" has shown the rest below it.
-          const archive = section === 'agents' && showArchivedToggle && (!older || agentsExpanded);
-          if (!entries.length && !archive) return null;
+          if (!entries.length) return null;
           const more = older > 0 ? (
             <button
               key="agents-older"
@@ -1289,38 +1108,12 @@ function ConversationList({ drawer = false }: {
           return (
             <Fragment key={section}>
               <SectionHead section={section} folded={folded} aside={asides[section].text} ask={asides[section].ask} />
-              {shown.length || more || archive ? (
+              {shown.length || more ? (
                 <div className="messages-section-card" data-inbox-card={section}>
                   {shown.map(inboxRow)}
                   {more}
                   {olderShown.map(inboxRow)}
-                  {archive ? archivedToggle : null}
                 </div>
-              ) : null}
-              {archive && archivedOpen ? (
-                <>
-                  <h3 className="messages-section-head" data-inbox-section="archived">{t('messages:inbox.archived.heading')}</h3>
-                  {archivedError ? (
-                    <div className="messages-state messages-state-error">
-                      <p>{archivedError}</p>
-                      <button type="button" onClick={readArchived}>{t('core:common.tryAgain')}</button>
-                    </div>
-                  ) : !archived ? (
-                    <div className="messages-state"><span className="messages-spinner" aria-hidden="true" /></div>
-                  ) : !archived.length ? (
-                    <div className="messages-state"><p>{t('messages:inbox.archived.empty')}</p></div>
-                  ) : (
-                    <div className="messages-section-card" data-inbox-card="archived">
-                      {archived.map((session) => (
-                        <MayorSessionRow
-                          key={session.id}
-                          session={session}
-                          active={open?.kind === 'agent' && open.id === session.id}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </>
               ) : null}
             </Fragment>
           );
@@ -1348,13 +1141,7 @@ function ConversationList({ drawer = false }: {
     if (entry.kind === 'session') {
       const session = bySession.get(entry.key.slice('session:'.length));
       return session
-        ? <AgentSessionRow key={entry.key} session={session} active={open?.kind === 'session' && open.id === session.id} rowKey={entry.key} />
-        : null;
-    }
-    if (entry.kind === 'mayor') {
-      const session = byMayor.get(entry.key.slice('mayor:'.length));
-      return session
-        ? <MayorSessionRow key={entry.key} session={session} active={open?.kind === 'agent' && open.id === session.id} rowKey={entry.key} />
+        ? <ChangeRow key={entry.key} session={session} rowKey={entry.key} />
         : null;
     }
     return null;
@@ -1410,10 +1197,8 @@ function InvitationBanner() {
  *
  * ONE CONTROL, ONE PLACE, EVERY PANE. It sits at the right of the header,
  * just before ⋯ where a pane has one — where a video player or a document
- * editor puts its full-screen control — on a conversation, #general, an
- * app's channel, an agent chat and both kinds of session alike. The agent
- * panels are drawn by their own features, so they take it as `headerAction`
- * rather than importing this store.
+ * editor puts its full-screen control — on a conversation, #general and an
+ * app's channel alike.
  *
  * The glyph is the verb a press performs: arrows out while the list is
  * shown, arrows in once it is hidden. A phone shows one pane at a time
@@ -1425,13 +1210,7 @@ function InvitationBanner() {
 function FullWidthToggle() {
   const t = useMessages('messages');
   const snap = useMessagesSnapshot();
-  // A Mayor session's side pane (its spec or a preview) open beside its chat
-  // has already moved the list aside (ConversationList), so here the control
-  // would do nothing. It is not drawn, as app.css does for an open reply
-  // thread below 1600px.
-  const specBeside = useSidePaneBeside('messages');
   const collapsed = snap.listCollapsed;
-  if (specBeside) return null;
   // A channel is always full width (see the layout's note), so a toggle for
   // a list it never shows would do nothing.
   if (snap.route.appSlug || (snap.active?.kind === 'channel' && snap.active.id === snap.route.conversationId)) return null;
@@ -1496,33 +1275,6 @@ export function threadWords(active: ConversationDetail): { title: string; sub: s
     title: active.kind === 'direct' && person ? senderName(person, { bare: true }) : channel ? `#${active.channelKey || active.title}` : active.title,
     sub: botDm ? translate('messages:header.subtitle.homeroomBot') : subtitle,
   };
-}
-
-/**
- * What an open agent session is called and what it is, for the phone's
- * header to say (./phone-drawer.tsx; Evan, 18 Oct 2026), in the words its own
- * pane uses: its title and kind line, as its bar names it in the pane
- * (agent-session/index.tsx SessionBar, whose copy app.css leaves out on the
- * drawer). Read in the language on show by whoever renders it.
- */
-export function agentThreadWords(agent: MessagesAgentThread, seen: { title: string; app: string }): { title: string; sub: string } {
-  return {
-    title: seen.title || translate('agent:session.bar.newSession'),
-    sub: seen.app ? translate('agent:session.bar.kindStartedFrom', { app: seen.app }) : translate('agent:session.bar.kind'),
-  };
-}
-
-/** `agentThreadWords` for the open agent session, from the store its pane draws from; null for anything else. */
-function useAgentThreadWords(agent: MessagesAgentThread | null): { title: string; sub: string } | null {
-  // Subscribed, so the words re-read in the language on show.
-  useMessages('messages');
-  useMessages('agent');
-  const sessionId = agent?.kind === 'agent' ? agent.id : null;
-  const mine = (current: { id: number | null }) => sessionId != null && (sessionId === 'new' ? current.id === null : current.id === sessionId);
-  const sessionTitle = useAgentSessionSelector((current) => (mine(current) ? current.session?.title || '' : ''));
-  const sessionApp = useAgentSessionSelector((current) => (mine(current) ? (current.session || current.draft)?.focusApp?.name || '' : ''));
-  if (!agent || agent.kind === 'session') return null;
-  return agentThreadWords(agent, { title: sessionTitle, app: sessionApp });
 }
 
 function ThreadHeader() {
@@ -1736,8 +1488,8 @@ export function dayLabel(message: ConversationMessage, now: Date = new Date(Date
  * public/js/group-chat.js and features/group-chat/. That is one surface
  * with one owner, and re-implementing it here would be a second copy of a
  * thing that is loaded, merged and invalidated elsewhere — the same reason
- * the agent chats are read from their own store rather than copied into
- * this one. So this renders a HOST and asks the owner to fill it.
+ * the changes in flight are read from the Improve store rather than copied
+ * into this one. So this renders a HOST and asks the owner to fill it.
  *
  * ── The app travels with the mount ────────────────────────────────────
  *
@@ -1868,210 +1620,6 @@ function AppDiscussionThread({ slug }: { slug: string }) {
 }
 
 /**
- * An agent session (#2779), as a thread of this inbox (#2813).
- *
- * ── Rendered, not mounted ─────────────────────────────────────────────
- *
- * Unlike an app's discussion and a dev session, an agent session is React
- * already: features/agent-session is a store and a component tree, so the
- * pane draws the SAME panel its own screen draws, reading the same store,
- * told it is drawn here (`host: 'messages'`).
- *
- * Leaving the pane deactivates it exactly as leaving its screen does, but
- * only if the pane still owns it (following a `#agent/<id>` link from here
- * reopens the store for the screen before this unmounts, and that open is
- * not this pane's to undo), and only if it is still THIS conversation: an
- * unsent one (`new`) becomes its session on the first message, and the
- * thread for that address takes over a store that is already showing it.
- */
-function MayorSessionThread({ id }: { id: number | 'new' }) {
-  const t = useMessages('messages');
-  useEffect(() => {
-    void openAgentSession({ id, host: 'messages' });
-    return () => {
-      const current = getAgentSessionState();
-      const same = id === 'new' ? current.id === null : current.id === id;
-      if (current.open && current.host === 'messages' && same) deactivateAgentSession();
-    };
-  }, [id]);
-  // A screen swap can close the conversation under this pane after the pane
-  // took it (a desktop's transition out of #agent/<id> into Messages closes
-  // the conversation's own screen last): the pane would draw a conversation
-  // nobody holds open, which nothing updates. While Messages is on screen
-  // and nothing holds it, the pane takes it back.
-  const shown = useVisibility('messages-screen', false);
-  const held = useAgentSessionSelector((s) => s.open);
-  useEffect(() => {
-    if (shown && !held) void openAgentSession({ id, host: 'messages' });
-  }, [shown, held, id]);
-  return (
-    <section
-      className="flex messages-thread-pane dc-lift dc-lift-session messages-thread-agent"
-      aria-label={t('messages:agent.sessionName')}
-      data-agent-session-thread={id}
-    >
-      <AgentSessionPanel embedded headerAction={<FullWidthToggle />} />
-    </section>
-  );
-}
-
-/**
- * One agent session's row (#2779): its title, the app it is about, and
- * where its active change stands. A link to the inbox's own address for it,
- * which a phone's router swaps for the conversation's screen.
- */
-/** What a session is doing, as its row says it to a screen reader after the title. */
-const ACTIVITY_SAID: Record<'working' | 'done', string> = {
-  working: 'messages:agent.row.activity.working',
-  done: 'messages:agent.row.activity.done',
-};
-
-const MayorSessionRow = memo(function MayorSessionRow({ session, active, rowKey }: {
-  session: MayorSession;
-  active: boolean;
-  /** #6508: the inbox entry's key (see ConversationRow); the archived list passes none. */
-  rowKey?: string;
-}) {
-  const t = useMessages('messages');
-  // Subscribed: changeRowWords reads where the change stands from the agent catalog.
-  useMessages('agent');
-  const at = session.lastActivityAt || session.createdAt || null;
-  const activity = at ? agoStamp(at) : null;
-  const thread: MessagesAgentThread = { kind: 'agent', id: session.id };
-  const href = agentThreadAddress(thread);
-  const change = session.activeChange;
-  const mark = agentActivity(session);
-  // A merge of Homeroom itself says when the platform's next release
-  // carries it ("Goes live in about 8 minutes"), where any other change
-  // going live says "Going live" (changeRowWords).
-  const status = change
-    ? dotText([
-      change.title || (change.prNumber ? t('messages:agent.row.prNumber', { number: change.prNumber }) : t('messages:agent.row.changeId', { id: change.id })),
-      changeRowWords(change),
-    ])
-    : t('messages:agent.row.noChange');
-  return (
-    <a
-      href={href}
-      data-inbox-agent-session={session.id}
-      data-inbox-row={rowKey}
-      className={`messages-conversation-row ${active ? 'messages-conversation-active' : ''}`}
-      aria-current={active ? 'page' : undefined}
-      onClick={(event) => {
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
-        if (window.location.hash === href) { event.preventDefault(); openAgentThread(thread); }
-      }}
-    >
-      {/* #3076: working, the spinner takes the sparkle's place in the tile;
-          finished unseen, the green dot does. The tile is aria-hidden, so
-          the state is said in words beside the name. */}
-      <span className="messages-inbox-tile messages-inbox-agent-tile" aria-hidden="true">
-        {mark
-          ? <AgentActivityIcon activity={mark} className="w-5 h-5" />
-          : <SparklesIcon className="w-5 h-5" />}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="messages-row-line">
-          <span className="messages-row-name">{session.title || t('messages:agent.row.newSession')}</span>
-          {mark ? <span className="sr-only">{t(ACTIVITY_SAID[mark])}</span> : null}
-          {activity
-            ? <time className="messages-row-time" dateTime={at || undefined} title={activity.title}>{activity.text}</time>
-            : null}
-        </div>
-        <div className="messages-row-line">
-          <span className="messages-row-preview">
-            {session.busy ? t('messages:agent.row.working') : dotText([session.focusApp?.name, status])}
-          </span>
-        </div>
-      </div>
-    </a>
-  );
-});
-
-/**
- * An app's dev session, as a thread of this inbox (#2813).
- *
- * ── Mounted, like a discussion ────────────────────────────────────────
- *
- * The session view — transcript, composer, header, venue, drafts, the spec
- * and staging panes — is DevChat's (features/dev-chat/dev-chat.js), one
- * surface with fixed ids and one owner. So the pane renders a HOST and asks
- * AppView to fill it (`AppView.mountSessionInHost`), the same arrangement
- * `AppDiscussionThread` makes with the group chat. The host's class string is
- * constant and React renders nothing inside it: its whole subtree is
- * DevChat's, which is the one-owner rule satisfied at this boundary.
- *
- * ── The side panes stay inside ────────────────────────────────────────
- *
- * The spec viewer and the staging preview are slots INSIDE the session view,
- * so they open inside this pane, docked beside the transcript, exactly as
- * they do in the app view. A viewer who wants the whole window for them has
- * the "Open full view" link in the pane's head, which is the session's own
- * address in the app.
- *
- * ── It says when it cannot open ───────────────────────────────────────
- *
- * The app view's fallback is its Board, which is not on this screen. A
- * session this viewer cannot open — and that has no published chat to read
- * instead — says so here, with the full-view link to try the app itself.
- */
-function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
-  const t = useMessages('messages');
-  const host = useRef<HTMLDivElement | null>(null);
-  const [phase, setPhase] = useState<'loading' | 'ready' | 'unavailable'>('loading');
-  const full = fullScreenAddress({ kind: 'session', slug, id });
-
-  useEffect(() => {
-    const el = host.current;
-    if (!el) return undefined;
-    const view = (window as any).AppView;
-    let live = true;
-    setPhase('loading');
-    // A macrotask later, for the reason AppDiscussionThread gives: the
-    // session view is published into portals inside flushSync, which cannot
-    // flush while React is still committing this effect.
-    const timer = window.setTimeout(() => {
-      if (!live || !view?.mountSessionInHost) return;
-      Promise.resolve(view.mountSessionInHost(el, { slug, sessionId: id }))
-        .then((result: string) => {
-          if (!live || result === 'stale') return;
-          setPhase(result === 'ready' ? 'ready' : 'unavailable');
-        })
-        .catch(() => { if (live) setPhase('unavailable'); });
-    }, 0);
-    return () => {
-      live = false;
-      window.clearTimeout(timer);
-      view?.unmountSessionHost?.(el);
-    };
-  }, [slug, id]);
-
-  return (
-    <section
-      className="flex messages-thread-pane messages-thread-session"
-      aria-label={t('messages:agent.sessionName')}
-      data-agent-session={`${slug}/${id}`}
-    >
-      <div className="messages-session-bar">
-        <a className="messages-session-full" href={full}>{t('messages:agent.session.openFull')}</a>
-        <FullWidthToggle />
-      </div>
-      {phase === 'unavailable' ? (
-        <div className="messages-state messages-state-error">
-          <p>{t('messages:agent.session.unavailable')}</p>
-          <a href={full}>{t('messages:agent.session.openInApp')}</a>
-        </div>
-      ) : null}
-      {phase === 'loading' ? (
-        <div className="messages-state"><span className="messages-spinner" />{t('messages:agent.session.loading')}</div>
-      ) : null}
-      <div ref={host} className="messages-session-host flex-1 min-h-0" hidden={phase === 'unavailable'} />
-    </section>
-  );
-}
-
-
-/**
  * The open conversation. `embedded` is the copy a community's page mounts
  * (#3494, EmbeddedConversation below): the same thread, drawn without this
  * screen's header because the page's own header and tabs already name it.
@@ -2085,7 +1633,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
   // #3571: the kit's keyboard avoidance on this column's scroller, as the
-  // channel, its threads and a dev session get theirs from attachScreenFx.
+  // channel and its threads get theirs from attachScreenFx.
   // Its settled pin puts back the pan iOS makes on the tap, which otherwise
   // left the composer (lifted by `platform-kb-column`) above the screen.
   useComposerKeyboard(scroller);
@@ -2288,11 +1836,6 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
     return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2></section>;
   }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
-  if (snap.route.agent?.kind === 'agent') return <MayorSessionThread key={`agent/${snap.route.agent.id}`} id={snap.route.agent.id} />;
-  if (snap.route.agent?.kind === 'session') {
-    const { slug, id } = snap.route.agent;
-    return <AgentSessionThread key={`${slug}/${id}`} slug={slug} id={id} />;
-  }
   if (!conversationId) return <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>{t('messages:thread.empty.title')}</h2><p>{t('messages:thread.empty.body')}</p></section>;
   // The kind is on the SECTION — `messages-thread-direct`, `-group` or
   // `-channel` — so the scroller's class string below stays the one the
@@ -2550,7 +2093,7 @@ function ReplyRowSkeleton() {
 }
 
 // #5691: the divider between a chat and its open thread. The width is this
-// device's own — a key of its own, not a change session's side pane's — kept
+// device's own, under a key of its own, kept
 // between the thread's floor and the room the chat has to keep.
 const REPLY_WIDTH_KEY = 'messages-reply-width-v1';
 const REPLY_MIN_WIDTH = 320;
@@ -3307,13 +2850,11 @@ export function MessagesScreen() {
     // the bar and puts the chevron back to the list. Without them, opening a
     // discussion kept the previous thread's name.
     [snap.active?.title, snap.route.open, snap.route.conversationId,
-      snap.route.appSlug, snap.route.agent, snap.discussionContext?.name, snap.route.threadRootId]);
-  // #2387: full width applies to any open discussion — a conversation, an
-  // app channel, or an agent thread (every one carries the toggle). With
-  // nothing open the list is there: it is the only thing to show. Reply
-  // threads hang off conversations and channels alone.
+      snap.route.appSlug, snap.discussionContext?.name, snap.route.threadRootId]);
+  // #2387: full width applies to any open discussion — a conversation or an
+  // app channel (each carries the toggle). With nothing open the list is
+  // there: it is the only thing to show.
   const chatOpen = !!(snap.route.conversationId || snap.route.appSlug);
-  const discussionOpen = chatOpen || !!snap.route.agent;
   // A CHANNEL OPENS FULL WIDTH. It is its community's room, reached from the
   // community's hub, and the list beside it is people and agents — a column
   // of other things beside a room that is not in it. So there is no list
@@ -3321,10 +2862,8 @@ export function MessagesScreen() {
   const channelOpen = !!snap.route.appSlug
     || (!!snap.route.conversationId && snap.active?.id === snap.route.conversationId && snap.active?.kind === 'channel');
   // THE PHONE'S DRAWER (./phone-drawer.tsx): the list, the whole screen, and
-  // a conversation with people sliding in over it; an agent chat or an agent
-  // session takes the conversation's place.
-  const agentWords = useAgentThreadWords(snap.route.agent);
-  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords, agentWords);
+  // a conversation with people sliding in over it.
+  const drawer = useMessagesDrawer(layoutRef, snap.route, snap.active, threadWords);
   const drawerClass = drawer.on ? ` messages-drawer${drawer.level === 0 ? ' messages-drawer-alone' : ''}` : '';
   // Under one of the frame's looks the phone's bar is the kit's: in a
   // conversation it says Messages, and its arrow goes back to the list.
@@ -3337,7 +2876,7 @@ export function MessagesScreen() {
   // Messages and drew one pane at a time; on 7 Nov 2026 the sidebar kept its
   // nesting for communities alone, so the list is the inbox's own again.)
   const sidebarRows = useSidebarRows();
-  const railClass = sidebarRows && !drawer.on && !discussionOpen ? ' messages-list-page' : '';
+  const railClass = sidebarRows && !drawer.on && !chatOpen ? ' messages-list-page' : '';
   // #6071: a design thread draws its preview in the conversation's place
   // (./design-pane.tsx); on a phone the preview and the thread take turns.
   const designRootId = snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? snap.route.threadRootId : null;
@@ -3348,7 +2887,7 @@ export function MessagesScreen() {
   const designClass = designOpen ? ` messages-has-design messages-design-view-${designView}` : '';
   // #6071 follow-up: a blank thread from Homeroom bot's "+", in the thread's place.
   const blankThread = useNewThread(snap.route.conversationId) && !snap.route.threadRootId && !snap.route.embedded;
-  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && discussionOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && (snap.route.threadRootId || blankThread) ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}${designClass}`;
+  const layout = `messages-layout dc-lift dc-lift-strip${(snap.listCollapsed && chatOpen) || channelOpen ? ' messages-list-collapsed' : ''}${chatOpen && (snap.route.threadRootId || blankThread) ? ' messages-has-reply-thread' : ''}${railClass}${drawerClass}${designClass}`;
   // No background of its own: the route paints the wallpaper (the
   // body:has(#messages-screen) rules in app.css), and the two frosted planes
   // need a transparent ancestor chain to have anything to blur.

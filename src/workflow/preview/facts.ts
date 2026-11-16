@@ -35,7 +35,6 @@ export interface Session {
   testing: { md: string | null; path: string | null };
   // Old flows working on it, from their own durable records.
   turnRunning: boolean;         // active_turn: a coding turn's journal
-  localTurnRunning: boolean;    // local_agent_turns: a turn on the author's machine
   shotsRunning: boolean;        // the shots machine has a run under way
   // When somebody last used the session (a tab's heartbeat writes it every
   // minute): the idle rule reads it when its deadline comes.
@@ -96,8 +95,6 @@ export async function readFacts(tx: Tx, sessionId: number,
             cs.staging_url, cs.staging_container_id, cs.staging_image_ref, cs.staging_build_ref,
             cs.staging_runtime_kind, cs.staging_runtime_name, cs.staging_commit_sha, cs.last_activity_at,
             cs.active_turn IS NOT NULL AS turn_running,
-            EXISTS (SELECT 1 FROM local_agent_turns t
-                     WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running')) AS local_turn_running,
             ${shotsRunningSql('cs.id')} AS shots_running,
             a.slug AS app_slug, a.self_hosted, a.repo_url
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id WHERE cs.id = $1`, [sessionId]);
@@ -124,7 +121,7 @@ export async function readFacts(tx: Tx, sessionId: number,
       checks: { commitSha: sha(r.checks_commit_sha), state: r.check_state ?? null },
       unitFreshSha: sha(r.unit_suite_fresh_sha),
       testing: { md: r.testing_md ?? null, path: r.testing_path ?? null },
-      turnRunning: !!r.turn_running, localTurnRunning: !!r.local_turn_running, shotsRunning: !!r.shots_running,
+      turnRunning: !!r.turn_running, shotsRunning: !!r.shots_running,
       lastActivityAt: r.last_activity_at ? new Date(r.last_activity_at).toISOString() : null,
     },
     app: { id: r.app_id, slug: r.app_slug, selfHosted: !!r.self_hosted, repoUrl: r.repo_url ?? null },

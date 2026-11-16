@@ -966,12 +966,11 @@ export async function stopWorkflowTurn(p: { sessionId: number; by: string | null
   return { status: outcome.status === 'pending' ? 202 : 200, body: { ok: true, stopped: true, stopping: true, phase: null, machine: owner.machine } };
 }
 
-// ── People's turns (turn/) ─────────────────────────────────────────────
+// ── Recover turns (turn/) ──────────────────────────────────────────────
 
-// A person's turn asked for on `key` (`agent:<id>`, `session:<id>`), in the
-// route's own transaction (`db`), with what makes it owed: the person's
-// message and the conversation's claim. `input` is what the turn's work
-// needs (JSON; never a key or a secret: those are read when it runs).
+// A `recover` turn asked for on `key` (`session:<id>`), for a coding record
+// nothing carries (services/turn-leftovers.js). `input` is what the turn's
+// work needs (JSON; never a key or a secret: those are read when it runs).
 export async function askTurn(db: Queryable, p: {
   key: string; turnId: string; kind: string; input: Record<string, unknown>; appId?: number | null;
 }): Promise<void> {
@@ -989,14 +988,6 @@ export async function endOrphanTurn(db: Queryable, p: { key: string; turnId: str
   await appendEvent(db, TURN, p.key,
     { type: 'Tick', payload: { turnId: p.turnId } as any },
     { requestKey: `orphan:${p.key}:${p.turnId}`, source: sys('turn-leftovers') });
-}
-
-// A person's Stop of the turn running on `key`: the machine stops its coding
-// agent by its journal; the turn hears it from its claim (stamped first).
-export async function stopTurn(p: { key: string; by: string | null }): Promise<void> {
-  if (!runtime) throw new Error('The workflow runtime is not running in this process');
-  await runtime.append(TURN, p.key, { type: 'StopRequested', payload: { by: p.by ?? null } as any },
-    { requestKey: `stop:${p.key}:${randomUUID()}`, source: { kind: 'route', name: 'stop' }, actor: p.by ?? undefined });
 }
 
 // ── The Homeroom bot's replies (bot-voice, bot-dm) ─────────────────────

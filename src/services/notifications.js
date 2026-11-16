@@ -7,16 +7,14 @@
 // `detail` carries the emoji), 'stale_pr' (a promoted PR going quiet),
 // 'pr_proposed' (a PR was promoted for voting — fanned out to the app's
 // active users + creator + favoriters so they come vote; self-app PRs
-// go to creator + favoriters only), 'session_done'
-// (#161 — a dev-session turn finished after its owner left),
-// 'session_stalled' (#3181 — a dev-session turn ended without finishing:
-// an error, a timeout or a lost worker, or a system pause mid-turn),
-// 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
-// holds the outcome: spec | code | spec_code (#170) | question | failed)
+// go to creator + favoriters only)
 // and 'spec_shared' (#86 — someone privately shared a spec version with
 // you; `detail` carries the version number as a string). Actionable managed
 // OpenRouter failures use openrouter_key_review; openrouter_key_created is a
 // historical render-only kind now that successful issuance is routine.
+// 'spec_shared', 'session_done', 'session_stalled' and 'auto_solve_done'
+// (`detail` holds a run's outcome) are historical render-only kinds too:
+// nothing creates them any more, and a row of one opens its change's page.
 // #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
 // or replied in (chat_message_id is the reply; its thread_ref the root).
 // #4535 adds 'issue_thread_reply': a message in a request's discussion
@@ -1102,8 +1100,8 @@ function createStalePrNotification(pool, { userId, appId, sessionId, detail = nu
 
 // #237: staging preview failed to boot, so proposal checks can't run and the
 // PR is merge-blocked. Addressed to the proposal owner (system-generated, so
-// source_user_id is NULL). Same unread-dedup as session_done — at most one
-// unread 'check_failed' per (user, session) — so the per-streak nudge can't
+// source_user_id is NULL). At most one unread 'check_failed' per
+// (user, session) — so the per-streak nudge can't
 // pile up if the owner hasn't looked yet. The streak gate in
 // staging-recovery.recordStagingBootFailure already limits this to once per
 // failure streak; the dedup is belt-and-suspenders against re-fires.
@@ -1115,54 +1113,6 @@ function createStalePrNotification(pool, { userId, appId, sessionId, detail = nu
 function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
   return changeNotifications.createCheckFailedNotification(pool, { userId, appId, sessionId },
     notificationPreferences.allowsKind);
-}
-
-// #161: dev-session completion notification (kind='session_done').
-// Fired by the chat handler's done hook when the session owner armed
-// notify_on_done (they left mid-turn), and unconditionally by
-// server.js's resumeDetachedTurn (the pre-restart SSE is guaranteed
-// dead, so nobody was watching). System-generated, so source_user_id
-// is null. Unread dedup: at most one unread session_done per
-// (user, session) — multiple completions while away collapse into the
-// row the user hasn't seen yet (atomic via INSERT … WHERE NOT EXISTS,
-// same pattern as createPrProposedNotifications).
-async function createSessionDoneNotification(pool, { userId, appId, sessionId }) {
-  if (!userId || !sessionId) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT $1, $2, $3, NULL, 'session_done'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'session_done' AND n.read_at IS NULL
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [userId, appId, sessionId]
-  );
-  return rows;
-}
-
-// #3181: the other way a dev-session turn ends (kind='session_stalled'). A
-// turn that died on an error, a timeout or a lost worker, or a session the
-// platform paused in the middle of one, used to end in silence: nothing said
-// the work had stopped, and the owner found out when they next looked. The
-// caller decides what counts as stalled; a stop the user pressed never does.
-// Same shape and same unread dedup as session_done: at most one unread
-// session_stalled per (user, session).
-async function createSessionStalledNotification(pool, { userId, appId, sessionId }) {
-  if (!userId || !sessionId) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT $1, $2, $3, NULL, 'session_stalled'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'session_stalled' AND n.read_at IS NULL
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [userId, appId, sessionId]
-  );
-  return rows;
 }
 
 // #1405 path A: a connector session put work somewhere (kind=
@@ -1211,48 +1161,6 @@ async function createAgentAwaitingInputNotification(pool, { userId, appId }) {
      VALUES ($1, $2, NULL, NULL, 'agent_awaiting_input')
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [userId, appId || null]
-  );
-  return rows;
-}
-
-// #161: headless auto-solve completion (kind='auto_solve_done').
-// Always created at runHeadlessSessionInner's terminal writes (no arming —
-// starting an auto-solve opts you into its completion notification).
-// `detail` carries the outcome: 'spec' | 'code' | 'spec_code' (#170) |
-// 'question' | 'failed'.
-// Same unread dedup as session_done so a resume re-fire can't double up.
-async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId, detail }) {
-  if (!userId || !sessionId) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT $1, $2, $3, NULL, 'auto_solve_done', $4
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'auto_solve_done' AND n.read_at IS NULL
-      )
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [userId, appId, sessionId, (detail || '').slice(0, 32) || null]
-  );
-  return rows;
-}
-
-// #86: private spec share (kind='spec_shared'). Fired by the
-// share-user endpoint after a NEW chat_session_spec_user_shares row is
-// inserted (the endpoint skips this entirely on a duplicate share, so
-// a recipient is pinged at most once per spec version). `session_id`
-// points at the dev session — listForUser/hydrateAndPush already join
-// chat_sessions, so prTitle/branchName ride along for the row label.
-// `detail` carries the spec version as a string (same generic-detail
-// pattern as 'reaction') so the click handler can open the exact
-// version in the read-only spec panel.
-async function createSpecSharedNotification(pool, { recipientId, appId, sessionId, sharerId, version }) {
-  if (!recipientId || !sessionId || version == null) return [];
-  const { rows } = await pool.query(
-    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     VALUES ($1, $2, $3, $4, 'spec_shared', $5)
-     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
-    [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
   );
   return rows;
 }
@@ -1377,7 +1285,6 @@ const HYDRATE_SELECT_SQL = `SELECT n.id, n.kind, n.user_id,
             ${STORY_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             -- #3228: the inviter's note, read off the recipient's still-pending
@@ -1865,7 +1772,6 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             ${STORY_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             -- #3228: the inviter's note, read off the recipient's still-pending
@@ -1928,7 +1834,6 @@ async function getForUser(pool, userId, id) {
             ${STORY_COLUMNS_SQL},
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             -- #3228: the inviter's note, read off the recipient's still-pending
@@ -2069,15 +1974,10 @@ const ACTION_COMPLETIONS = {
     kinds: ['mention', 'reply', 'reaction', 'thread_reply', 'issue_thread_reply', 'change_thread_reply'],
     scope: 'app_id',
   },
-  // #161: opening a dev session is the canonical "user saw it" signal —
-  // it resolves that session's completion notification even when the
-  // user navigated there on their own. Triggered in GET /api/sessions/:id.
-  // #3181: opening it also answers "it stopped before finishing".
+  // #161: opening a change resolves the completion notifications older
+  // turns left on it (no longer created), even when the user navigated
+  // there on their own. Triggered in GET /api/sessions/:id.
   session_opened: { kinds: ['session_done', 'session_stalled'], scope: 'session_id' },
-  // #161: cloning a ready auto-solve session resolves its completion
-  // notification. Triggered in POST /api/sessions/:id/clone-headless,
-  // scoped to the SOURCE (headless) session id.
-  headless_cloned: { kinds: ['auto_solve_done'], scope: 'session_id' },
   // #2847: opening a proposal card, or touching anything on it, answers the
   // "New proposal" nudge the same way a vote does — the viewer has seen it.
   // Only pr_proposed: revision_recheck asks for a re-vote and stale_pr is the
@@ -2111,24 +2011,6 @@ async function markReadForAction(pool, userId, action, scopeId) {
         SET read_at = NOW()
       WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`,
     [userId, scopeId, def.kinds]
-  );
-  return rowCount || 0;
-}
-
-// #2779: an agent session's changes finish into the bell as session_done
-// rows, and they are worked on in the conversation, not on a dev chat of
-// their own — so opening the conversation is the "user saw it" signal for
-// every one of them, the way opening a dev session is for its own. #3181: a
-// change that stopped before finishing is answered the same way.
-async function markReadForAgentSession(pool, userId, agentSessionId) {
-  if (!userId || !agentSessionId) return 0;
-  const { rowCount } = await pool.query(
-    `UPDATE notifications n
-        SET read_at = NOW()
-       FROM chat_sessions cs
-      WHERE n.user_id = $1 AND n.kind IN ('session_done', 'session_stalled') AND n.read_at IS NULL
-        AND n.session_id = cs.id AND cs.agent_session_id = $2`,
-    [userId, agentSessionId]
   );
   return rowCount || 0;
 }
@@ -2520,9 +2402,6 @@ function serialize(row) {
     // session has neither a session title nor a PR title yet.
     headlessIssueNumber: isConversation ? null : row.headless_issue_number,
     branchName: isConversation ? null : row.branch_name,
-    // #2779: the agent session a change was started from, so its completion
-    // opens the conversation it is worked on in.
-    agentSessionId: isConversation ? null : (row.agent_session_id || null),
     sourceUsername: row.source_username,
     detail: row.detail,
     // #1688: the line the voter left with their vote, read LIVE off their
@@ -2585,12 +2464,8 @@ module.exports = {
   createPlatformLimitNotifications,
   createPlatformIncidentNotifications,
   createCheckFailedNotification,
-  createSessionDoneNotification,
-  createSessionStalledNotification,
-  createAutoSolveDoneNotification,
   createConnectorSubmittedNotification,
   createAgentAwaitingInputNotification,
-  createSpecSharedNotification,
   createManagedOpenRouterReviewNotifications,
   notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
@@ -2628,7 +2503,6 @@ module.exports = {
   DECIDED_ASK_KINDS,
   MERGED_HIDDEN_KINDS,
   markReadForAction,
-  markReadForAgentSession,
   markReadForApp,
   markReadForNoApp,
   markReadForConversation,

@@ -3,8 +3,9 @@
 // #3296: an OpenRouter model can run in Claude Code instead of Codex. The
 // backend id stays `codex_openrouter` (the OpenRouter venue: key, ledger,
 // catalog); the harness is the per-model choice of CLI inside it. These pin
-// the map, the runtime context, the ledger's usage accounting, and the
-// worker's env and journal parsing for the Claude harness.
+// the map, the runtime context, the ledger's usage accounting, the worker's
+// env and journal parsing for the Claude harness, and the settings copy,
+// which never names Codex.
 //
 // Run with: node --test tests/openrouter-harness.test.js
 
@@ -609,11 +610,12 @@ test('the dispatch records the harness so a restart replays the right parser', (
   const src = fs.readFileSync(path.join(ROOT, 'src', 'services', 'worker.js'), 'utf8');
   assert.match(src, /harness: resolvedHarness \|\| undefined,/);
   assert.match(src, /state\.agentHarness = recoveredBackend\.harness;/);
-  const sessions = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8');
-  assert.match(sessions, /agentHarness: activeTurn\.harness \|\| null,/);
-  // In the dev chat, its scout and build opt in to the per-model harness (the
-  // Homeroom bot's turns do too: tests/homeroom-bot-claude-harness.test.js).
-  assert.equal((sessions.match(/harness: 'auto',/g) || []).length, 2);
+  // A turn a restart caught is replayed with the harness its dispatch
+  // recorded: by the boot's recovery and by a turn followed to its end.
+  for (const file of ['turn-recovery.js', 'durable-turn.js']) {
+    const replay = fs.readFileSync(path.join(ROOT, 'src', 'services', file), 'utf8');
+    assert.match(replay, /agentHarness: activeTurn\.harness \|\| null,/, file);
+  }
   const ledger = fs.readFileSync(path.join(ROOT, 'src', 'services', 'agent-turn.js'), 'utf8');
   assert.match(ledger, /harness: registry\.resolveOpenRouterHarness\(ctx\.agentHarness\),\n\s+turnUuid: turnId,/);
 });
@@ -633,32 +635,31 @@ test('stop and liveness probes see the Claude-over-OpenRouter adapter', () => {
 function renderedOpenRouterCopy() {
   const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   const start = settings.indexOf('_normalizeOpenRouterCopy() {');
-  const body = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
+  const body = settings.slice(start, settings.indexOf('_setOrStatus(text, kind)', start));
   const pick = (re) => { const m = re.exec(body); assert.ok(m, String(re)); return m[1]; };
-  // The heading is the product's name, written out. The description and the
-  // label are catalog messages: what the screen shows is their English.
+  // The heading is the product's name, written out. The description is a
+  // catalog message: what the screen shows is its English.
   const { message: english } = require('./lib/platform-i18n');
   return {
     heading: pick(/heading\.textContent = '([^']*)'/),
     intro: english(pick(/intro\.textContent = tr\('(settings:openrouter\.intro)'\)/)),
-    label: english(pick(/modelLabel\.textContent = tr\('(settings:openrouter\.model\.label)'\)/)),
   };
 }
 
-test('the OpenRouter settings copy people see names the models that run in Claude Code', () => {
+test('the OpenRouter settings copy people see does not name Codex', () => {
   const copy = renderedOpenRouterCopy();
-  assert.match(copy.intro, /Models marked Claude Code in the model list run in Claude Code\./);
-  // Which CLI runs the rest is not a product choice, so it stays unnamed.
-  assert.doesNotMatch(`${copy.heading} ${copy.intro} ${copy.label}`, /Codex/);
+  assert.equal(copy.heading, 'OpenRouter');
+  // Which CLI runs a model is not a product choice, so it stays unnamed.
+  assert.doesNotMatch(`${copy.heading} ${copy.intro}`, /Codex/);
 });
 
 test('the static OpenRouter settings markup says exactly what the runtime copy says', () => {
-  // Both sides read the description and the label from the catalog now, so
-  // "exactly the same" is the same message id on each side; the heading is
-  // the product's name, written out in both.
+  // Both sides read the description from the catalog, so "exactly the same"
+  // is the same message id on each side; the heading is the product's name,
+  // written out in both.
   const settings = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'settings', 'settings.js'), 'utf8');
   const start = settings.indexOf('_normalizeOpenRouterCopy() {');
-  const runtime = settings.slice(start, settings.indexOf('_formatOpenRouterPrice(value)', start));
+  const runtime = settings.slice(start, settings.indexOf('_setOrStatus(text, kind)', start));
   const runtimeId = (node) => {
     const m = new RegExp(`${node}\\.textContent = \\w+\\('(settings:[\\w.]+)'\\)`).exec(runtime);
     assert.ok(m, `${node} is written from a catalog message`);
@@ -671,36 +672,8 @@ test('the static OpenRouter settings markup says exactly what the runtime copy s
   assert.ok(section, 'the OpenRouter SectionHeading is where this test expects it');
   assert.equal(section[1], runtimeHeading[1]);
   assert.equal(section[2], runtimeId('intro'));
-  const label = /<Label[^>]*htmlFor="settings-openrouter-model">\s*\{t\('(settings:[\w.]+)'\)\}\s*<\/Label>/.exec(tsx);
-  assert.ok(label, 'the model picker label is where this test expects it');
-  assert.equal(label[1], runtimeId('modelLabel'));
   const { message } = require('./lib/platform-i18n');
-  assert.match(message(section[2]), /^Use any compatible model for all chat and coding in an OpenRouter session\./);
-  assert.equal(message(label[1]), 'OpenRouter model');
-});
-
-test('the transcript and the log name the CLI that actually ran', () => {
-  const transcript = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'transcript.ts'), 'utf8');
-  assert.match(transcript, /meta\.agentBackend === 'codex_openrouter' && meta\.agentHarness !== 'claude' \? 'Codex' : 'Claude Code'/);
-  const app = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
-  assert.match(app, /data\.agentBackend === 'codex_openrouter' && data\.agentHarness !== 'claude'\n\s+\? 'Codex log'/);
-  const sessions = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'sessions.js'), 'utf8');
-  assert.match(sessions, /\.\.\.\(harness === 'claude' \? \{ agentHarness: harness \} : \{\}\),/);
-});
-
-test('pickers mark the Claude Code models and keep their thinking level', () => {
-  const credentials = fs.readFileSync(path.join(ROOT, 'src', 'routes', 'credentials.js'), 'utf8');
-  assert.match(credentials, /harness: registry\.openRouterHarnessForModel\(model\.id, config\),/);
-  for (const file of ['frontend/src/features/dev-chat/dev-chat.js', 'frontend/src/features/settings/settings.js']) {
-    assert.match(fs.readFileSync(path.join(ROOT, file), 'utf8'),
-      /if \(model\?\.harness === 'claude'\) badges\.push\('Claude Code'\);/, file);
-  }
-  const choice = fs.readFileSync(path.join(ROOT, 'frontend', 'src', 'features', 'agent-session', 'model-choice.ts'), 'utf8');
-  assert.match(choice, /return !model \|\| model\.supportsReasoning !== false;/);
-  assert.ok(!/harness !== 'claude'/.test(choice), 'no model loses its thinking level for running in Claude Code');
-  assert.match(choice, /OPENROUTER_CLAUDE_TITLE = 'agent:session\.model\.title\.openRouterClaudeCode'/);
-  assert.equal(require('./lib/platform-i18n').message('agent:session.model.title.openRouterClaudeCode'),
-    'Runs on your OpenRouter key, in Claude Code');
+  assert.match(message(section[2]), /^Voice input uses this key: when you press Speak, it turns what you say into text\./);
 });
 
 // Run four (13 Oct 2026): a 33-minute first version kept only counts, and its

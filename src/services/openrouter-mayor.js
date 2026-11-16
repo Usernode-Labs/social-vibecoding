@@ -1,37 +1,19 @@
 'use strict';
 
-// The Mayor for OpenRouter sessions (#2809, #2810).
+// A chat-model client on OpenRouter's Chat Completions API, with the
+// `streamChat` / `estimateCostCents` / `isEnabled` surface of services/llm.js.
 //
-// An OpenRouter session used to be a "direct" path: the user's message went
-// straight to the coding agent and its last message became the reply. That
-// kept the session on one provider, but it also dropped everything the
-// Mayor does around a coding run on a Claude session: the one-line plan
-// before the agent starts, the plain-English wrap-up after it, the scout
-// that writes and revises the SPEC DOC, the clarifying questions and the
-// quick-reply pills.
-//
-// This module gives those sessions the SAME Mayor loop the Claude path runs
-// (routes/sessions.js), on the session's own OpenRouter model and the user's
-// own OpenRouter key. The session therefore stays single-provider: no
-// Anthropic key is read and no Anthropic billing path is resolved.
-//
-// The route drives the Mayor through `llm.streamChat`, whose request and
-// result are Anthropic Messages shapes (content blocks, tool_use /
-// tool_result, input_schema tools). `createClient` returns an object with
-// the same `streamChat` / `estimateCostCents` / `isEnabled` surface, so the
-// route swaps the client and leaves its conversation bookkeeping alone. The
-// translation to OpenRouter's Chat Completions API happens here and is pure,
-// so it is tested without a network.
+// A caller drives it through `streamChat`, whose request and result are
+// Anthropic Messages shapes (content blocks, tool_use / tool_result,
+// input_schema tools). `createClient` returns an object with that surface;
+// the translation to OpenRouter's Chat Completions API happens here and is
+// pure, so it is tested without a network. The Homeroom bot's reviewer reads
+// a change through it (services/bot-review.js).
 //
 // The request is non-streaming on purpose, as the shared transport's is
 // (services/openrouter.js): an atomic response lets OpenRouter
 // fail over to another provider before any partial tool call is exposed.
-// The Mayor's replies are 1-4 sentences, so the whole reply arriving at once
-// costs the reader very little.
 
-const credentialStore = require('./credential-store');
-const agentModels = require('./agent-models');
-const managedOpenRouter = require('./openrouter-managed-keys');
 const { platformHeaders } = require('./openrouter-client');
 const llmTelemetry = require('./llm-telemetry');
 const { withoutDocuments } = require('./attachments');
@@ -625,64 +607,12 @@ function createClient({
     model: boundModel,
     modelLabel: modelLabel(boundModel),
     reasoningEffort,
-    // Read by the agent-session Mayor to decide whether the platform tools
-    // fetch a request's screenshots for this model at all.
+    // Whether the platform tools fetch a request's screenshots for this
+    // model at all.
     imageInput,
     isEnabled: () => true,
     streamChat,
     estimateCostCents: (usage) => estimateCostCents(usage, catalogModel),
-  };
-}
-
-// Everything the chat route needs to run an OpenRouter session's Mayor, or
-// `{ error }` when it cannot, in which case the route keeps the direct path.
-// Reads the same credential the coding turn will use, so the Mayor and the
-// agent are always paid for by the same key.
-// `sessionKey` names the conversation to OpenRouter when it is not a change:
-// an agent session passes `homeroom-agent-<id>` (#2779). A change keeps the
-// `homeroom-session-<id>` it has always sent.
-async function resolveForSession({ pool, config = {}, session, userId, fetchImpl, sessionKey = null }) {
-  if (!config.openrouterSessionMayorEnabled) return { error: 'disabled' };
-  if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
-  const model = bareModelId(session?.agent_model || await require('./default-model').effective(pool, config));
-  if (!model) return { error: 'model_required' };
-  const meta = await credentialStore.readMetadata({
-    pool, userId, provider: 'openrouter', purpose: 'coding_agent',
-  });
-  if (!meta || meta.status !== 'valid') return { error: 'credential_required' };
-  let apiKey = null;
-  try {
-    apiKey = await credentialStore.readSecret({
-      pool, userId, provider: 'openrouter', purpose: 'coding_agent',
-      dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
-    });
-  } catch {
-    return { error: 'credential_required' };
-  }
-  if (!apiKey) return { error: 'credential_required' };
-  const catalogModel = await agentModels.resolveModelPricing({
-    pool, userId, credentialRevision: meta.revision, apiKey, modelId: model, config,
-  });
-  // The Mayor IS a tool loop. A model the catalog says cannot call tools
-  // keeps the direct path, where the coding agent handles the message alone.
-  if (catalogModel && catalogModel.supportsTools === false) return { error: 'model_without_tools' };
-  const usesIncludedKey = meta.metadata?.source === managedOpenRouter.MANAGED_SOURCE;
-  const client = createClient({
-    apiKey,
-    apiBase: config.openrouterApiBase,
-    origin: config.openrouterOrigin,
-    model,
-    catalogModel,
-    sessionId: sessionKey || (session?.id != null ? `homeroom-session-${session.id}` : null),
-    billingPath: usesIncludedKey ? 'platform' : 'openrouter_byok',
-    providerShortlist: config.openrouterProviderShortlists?.[model] || null,
-    fetchImpl,
-  });
-  return {
-    client,
-    model,
-    modelLabel: client.modelLabel,
-    usesIncludedKey,
   };
 }
 
@@ -702,5 +632,4 @@ module.exports = {
   fromChatCompletion,
   estimateCostCents,
   createClient,
-  resolveForSession,
 };

@@ -367,12 +367,6 @@ test('the conversation composer and the New thread box share the rule, and say i
   const body = hook.slice(hook.indexOf('export function useEnterSends('));
   assert.match(body, /const \[sends, setSends\] = useState\(false\);\n\s+useEffect\(\(\) => \{\n\s+const read = \(\) => setSends\(!isTouchInput\(\)\);\n\s+read\(\);/);
   assert.match(body, /addEventListener\('change', read\);\n\s+return \(\) => watched\.removeEventListener\('change', read\);/, 'a keyboard attached later is noticed');
-
-  // The Workshop's coding-agent chats keep their own rule: Enter is a new
-  // line, and Ctrl/Cmd + Enter sends or saves a draft while the agent works.
-  assert.match(read('frontend/src/features/agent-session/index.tsx'), /if \(event\.key === 'Enter' && \(event\.metaKey \|\| event\.ctrlKey\) && !event\.nativeEvent\.isComposing\) \{/);
-  assert.doesNotMatch(read('frontend/src/features/agent-session/index.tsx'), /enter-sends/);
-  assert.doesNotMatch(read('frontend/src/features/dev-chat/dev-chat.js'), /enter-sends/);
 });
 
 // ── Q18: Skip to navigation ───────────────────────────────────────────────

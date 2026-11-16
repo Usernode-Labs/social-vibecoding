@@ -1,15 +1,14 @@
-// Tests for #183 — restart recovery must leave headless auto sessions to
-// resumeHeadlessRuns for ALL container states:
+// Restart recovery of a coding worker nothing carries any more
+// (services/turn-recovery.js adoptOrphanWorker, finalizeRecoveredTurn):
 //
-//   1. adoptOrphanWorker with an EXITED headless worker container returns
-//      without scraping logs, without clearing active_turn (the journal
-//      pointer the cc_running resume needs), without posting the "please
-//      retry" message, and without destroying the container.
-//   2. adoptOrphanWorker with a RUNNING headless container still registers
-//      it warm (pre-existing behavior, now hoisted above the state branch).
-//   3. finalizeRecoveredTurn no-ops on a headless session row even when the
-//      recovered result pushed a commit — no PR metadata, no staging build,
-//      no system message (the belt-and-braces guard for future transports).
+//   1. a gone Codex worker terminalizes its ledger attempt before the
+//      durable cleanup clears the turn's only recovery pointer, and keeps
+//      ownership when the ledger cannot be reached;
+//   2. a recovered turn that committed nothing still writes the
+//      outcome-aware completion card (#896);
+//   3. on Kubernetes, a worker whose state cannot be read keeps its state
+//      for a retry without falling back to Docker, and a missing worker
+//      never enters legacy log recovery.
 //
 // server.js only boots when run as the entry point (require.main guard),
 // so requiring it here exposes the two recovery internals without starting
@@ -99,11 +98,11 @@ function makeStaging() {
   };
 }
 
-const HEADLESS_SESSION = {
-  id: 42, status: 'active', is_headless: true, user_id: 1, app_id: 1,
+const SESSION = {
+  id: 42, status: 'active', is_headless: false, user_id: 1, app_id: 1,
   username: 'alice', app_slug: 'my-app', app_name: 'My App',
   repo_url: 'https://github.com/owner/repo',
-  branch_name: 'dev/auto-issue-5-1700000000000',
+  branch_name: 'dev/alice-1700000000000',
   active_turn: { mode: 'build', journal: '/turns/turn-1.jsonl' },
   cc_session_id: 'cc-1',
 };
@@ -126,8 +125,7 @@ test('gone Codex worker terminalizes its attempt before durable cleanup', async 
     tail: {},
   };
   const pool = makePool({
-    ...HEADLESS_SESSION,
-    is_headless: false,
+    ...SESSION,
     active_turn: activeTurn,
   });
   try {
@@ -167,9 +165,8 @@ test('gone Codex worker retains ownership when ledger terminalization is transie
     tail: {},
   };
   const pool = makePool({
-    ...HEADLESS_SESSION,
+    ...SESSION,
     id: 43,
-    is_headless: false,
     active_turn: activeTurn,
   });
   try {
@@ -188,82 +185,15 @@ test('gone Codex worker retains ownership when ledger terminalization is transie
   }
 });
 
-// ── 1. exited headless container is left alone ──────────────────────────
-
-test('adoptOrphanWorker leaves an exited headless container to resumeHeadlessRuns', async () => {
-  const pool = makePool({ ...HEADLESS_SESSION });
-  const staging = makeStaging();
-  const broadcasts = [];
-
-  await adoptOrphanWorker(
-    { name: 'usernode-worker-42', sessionId: 42, state: 'exited' },
-    {
-      config: {}, pool, staging, ghub: {},
-      broadcastGlobal: (msg) => broadcasts.push(msg),
-    }
-  );
-
-  // No scrape, no active_turn clear, no container touch — the journal
-  // pointer survives for resumeHeadlessRuns' cc_running step.
-  assert.deepEqual(workerCalls, []);
-  // No "please retry" message and no recovered-turn tail ran.
-  assert.ok(!pool.calls.some((c) => /INSERT INTO chat_session_messages/i.test(c.sql)));
-  assert.equal(staging.calls.length, 0);
-  assert.equal(broadcasts.length, 0);
-});
-
-// ── 2. running headless container is still adopted warm ─────────────────
-
-test('adoptOrphanWorker registers a running headless container warm and stops there', async () => {
-  const pool = makePool({ ...HEADLESS_SESSION });
-  const staging = makeStaging();
-
-  await adoptOrphanWorker(
-    { name: 'usernode-worker-42', sessionId: 42, state: 'running' },
-    { config: {}, pool, staging, ghub: {}, broadcastGlobal: () => {} }
-  );
-
-  assert.deepEqual(workerCalls, [['adoptWarmWorker', 42, 'usernode-worker-42']]);
-  assert.equal(staging.calls.length, 0);
-  assert.ok(!pool.calls.some((c) => /INSERT INTO chat_session_messages/i.test(c.sql)));
-});
-
-// ── 3. finalizeRecoveredTurn guard ──────────────────────────────────────
-
-test('finalizeRecoveredTurn no-ops on headless sessions even when the turn pushed a commit', async () => {
+test('finalizeRecoveredTurn writes the completion card for a turn that committed nothing', async () => {
   const pool = makePool(null);
   const staging = makeStaging();
   const emits = [];
 
-  await finalizeRecoveredTurn({
-    config: {}, pool, staging,
-    session: { ...HEADLESS_SESSION },
-    sessionId: 42,
-    result: { ahead: 1, sha: 'abcdef1234567890', lastResultText: 'done', sessionId: 'cc-2' },
-    repoOwner: 'owner', repoName: 'repo',
-    emit: (event, data) => emits.push({ event, data }),
-    containerName: 'usernode-worker-42',
-    keepWorker: true,
-  });
-
-  // Nothing happened: no PR tail, no staging, no messages, no broadcasts,
-  // not even the cc_session_id persist — resumeHeadlessRuns owns the row.
-  assert.equal(pool.calls.length, 0);
-  assert.equal(staging.calls.length, 0);
-  assert.deepEqual(emits, []);
-  assert.deepEqual(workerCalls, []);
-});
-
-test('finalizeRecoveredTurn still runs the tail for non-headless sessions (guard is scoped)', async () => {
-  const pool = makePool(null);
-  const staging = makeStaging();
-  const emits = [];
-
-  // No changes pushed → the early no-changes return; proves the function
-  // proceeds past the headless guard for ordinary sessions.
+  // No changes pushed → the early no-changes return.
   const ret = await finalizeRecoveredTurn({
     config: {}, pool, staging,
-    session: { ...HEADLESS_SESSION, is_headless: false },
+    session: { ...SESSION },
     sessionId: 42,
     result: { ahead: 0, sha: null, lastResultText: 'Nothing needed changing.' },
     repoOwner: 'owner', repoName: 'repo',
@@ -279,7 +209,7 @@ test('finalizeRecoveredTurn still runs the tail for non-headless sessions (guard
   assert.equal(emits[0].event, 'status');
   assert.equal(emits[0].data.text, 'Claude Code made no changes');
   assert.equal(emits[0].data.ccOutcome, 'no_changes');
-  assert.match(ret.summary, /finished without committing any changes/);
+  assert.equal(ret, 'done');
 });
 
 
@@ -290,7 +220,7 @@ for (const scenario of ['probe-failure', 'not-ready', 'api-failure']) {
     runtimeState = scenario === 'not-ready' ? 'created' : scenario === 'api-failure' ? new Error('API unavailable') : 'running';
     t.after(() => { kubernetesMode = false; executing = false; runtimeState = 'running'; });
     workerCalls.length = 0;
-    const pool = makePool({ ...HEADLESS_SESSION, is_headless: false, active_turn: null });
+    const pool = makePool({ ...SESSION, active_turn: null });
     const deps = { config: {}, pool, staging: makeStaging(), ghub: {}, broadcastGlobal: () => {} };
     const orphan = { name: 'sv-worker-s42', sessionId: 42, state: 'created' };
     await assert.rejects(adoptOrphanWorker(orphan, deps), error => error.retainActiveTurn && error.retryWorkerRecovery);
@@ -309,7 +239,7 @@ test('a missing Kubernetes worker never enters legacy log recovery', async (t) =
   kubernetesMode = true; runtimeState = 'not_found';
   t.after(() => { kubernetesMode = false; runtimeState = 'running'; });
   workerCalls.length = 0;
-  const pool = makePool({ ...HEADLESS_SESSION, is_headless: false, active_turn: null });
+  const pool = makePool({ ...SESSION, active_turn: null });
   await adoptOrphanWorker({ name: 'sv-worker-s42', sessionId: 42, state: 'created' },
     { config: {}, pool, staging: makeStaging(), ghub: {}, broadcastGlobal: () => {} });
   assert.ok(!workerCalls.some(c => c[0] === 'watchWorker'));

@@ -18,8 +18,8 @@
 //   1. The admin's setting, when one is stored.
 //   2. OPENROUTER_DEFAULT_CODEX_MODEL, else src/config.js's fallback.
 //
-// What follows it: a new agent chat for an account that never picked a
-// model (routes/sessions.js; provisioning stores "follow the default",
+// What follows it: a coding turn on a change that names no model
+// (services/agent-turn.js; provisioning stores "follow the default",
 // services/openrouter-managed-keys.js), the model catalog's recommended
 // model (services/agent-models.js), the bot's stages that have no model of
 // their own and its voice in DMs and chats (services/homeroom-bot.js

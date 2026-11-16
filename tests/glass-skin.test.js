@@ -229,7 +229,7 @@ test('Settings › Experimental offers every look in one menu, shipped hidden, a
     'Standard, then brand, then the five in the tour\'s order, each by its name');
   assert.doesNotMatch(html, /new-look-enabled/, 'the New look switch is gone: its look is the menu\'s');
   assert.doesNotMatch(experimentalSrc(), /settings:experimental\.newLook\./, 'and so are its words');
-  assert.ok(html.indexOf('id="settings-look"') < html.indexOf('id="settings-local-agents-section"'));
+  assert.doesNotMatch(html, /settings-local-agents-section/, 'the Local coding agent list it sat above is retired');
   assert.doesNotMatch(html, /glass-look-enabled/, 'the one-look switch is gone');
 });
 

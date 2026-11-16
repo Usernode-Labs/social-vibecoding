@@ -951,8 +951,8 @@ const Leaderboard = {
 // above returns a descriptor and React escapes the text when it renders it.
 // Nothing else read them — they were ambient window properties while this was
 // a classic script, but chunk F moved the file into the bundle, where a
-// module's identifiers are its own; the four scripts that still read
-// escapeHtml/escapeAttr ambiently (app-secrets.js, dev-chat.js,
+// module's identifiers are its own; the three scripts that still read
+// escapeHtml/escapeAttr ambiently (app-secrets.js,
 // home-panels.js, streaming-markdown.js) have been resolving to app-view.js's
 // and home.js's copies since then.
 

@@ -149,7 +149,7 @@ test('the row keeps its reason when it only passed because of a retry', () => {
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
-    `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
+    `${read('public/js/merge-status.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   assert.equal(
@@ -192,7 +192,7 @@ test('the unit suite\'s failure excerpts reach the verdict row and are drawn und
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
-    `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
+    `${read('public/js/merge-status.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
   const v = sandbox.__AppView._checksVerdictView({
     check_state: 'failing',

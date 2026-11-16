@@ -377,7 +377,7 @@ test('until its connector is there, the steps to add it take the thread\'s place
   assert.match(css, /\.messages-reply-pane\[data-bot-new-thread-setup\] > \.messages-thread-scroll,\n\.messages-reply-pane\[data-bot-new-thread-setup\] > \.messages-composer \{ display: none; \}/);
   const walkthrough = read(BUILDER);
   assert.match(walkthrough, /import \{ ChatgptSetupSteps, ClaudeSetupSteps \} from '\.\.\/settings\/connector-setup-steps';/);
-  assert.match(walkthrough, /import \{ ConnectorUrl \} from '\.\.\/dev-chat\/connector-setup-inline';/);
+  assert.match(walkthrough, /import \{ ConnectorUrl \} from '\.\.\/settings\/connector-url';/);
 });
 
 // 14 Nov 2026: a door can name a project the person is not in (a public

@@ -461,18 +461,12 @@ test('current WebSocket authority against the full PostgreSQL schema', {
     assert.equal(member.frames.filter(m => m.type.startsWith('conversation_')).length, 0);
   });
 
-  await t.test('demotion removes existing admin watches and admin-only delivery', async () => {
+  await t.test('demotion removes admin-only delivery', async () => {
     const f = await fixture();
     const sock = await open(1, f.admin.token);
-    sock.send(JSON.stringify({ type: 'watch_session', sessionId: f.sessionId }));
-    await waitFor(() => sock.frames.some(frame => frame.type === 'session_watch' && frame.watching), { label: 'admin watch accepted' });
-    const relay = label => {
-      instances[1].ws._onBusMessage({ kind: 'session', routing: { sessionId: f.sessionId, userId: f.owner.id, appId: f.appId },
-        data: { type: 'session_event', sessionId: f.sessionId, event: 'cc_progress', label } });
-      instances[1].ws._onBusMessage({ kind: 'admins', data: event(label) });
-    };
+    const relay = label => instances[1].ws._onBusMessage({ kind: 'admins', data: event(label) });
     relay('admin-before');
-    await waitFor(() => frames(sock, 'admin-before').length === 2, { label: 'admin positive controls' });
+    await waitFor(() => frames(sock, 'admin-before').length === 1, { label: 'admin positive control' });
     await pool.query('UPDATE users SET is_admin = FALSE WHERE id = $1', [f.admin.id]);
     relay('admin-after');
     // A control frame on the same socket after the demoted payload: one FIFO

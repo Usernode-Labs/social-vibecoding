@@ -242,9 +242,9 @@ test('pill: the block reason for an imported proposal carries the same remedy', 
   const fork = AppView.blockReasons(forkProposal({ merge_conflict_state: 'failed' }));
   assert.equal(fork[0].key, 'conflict_failed');
   assert.match(fork[0].detail, /cannot write to/);
-  // A native row keeps the sentence the pill has always carried.
+  // A native row sends its creator to the change's page, where Sync with main is.
   const native = AppView.blockReasons(baseProposal({ merge_conflict_state: 'conflict' }));
-  assert.match(native[0].detail, /Its creator needs to bring it up to date from their agent session/);
+  assert.match(native[0].detail, /Its creator needs to bring it up to date from the change’s page \("Sync with main"\)\./);
 });
 
 test("detail: a 'conflict' snapshot with the resolver in flight renders nothing (progress badge covers it)", () => {

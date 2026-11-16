@@ -215,13 +215,21 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
     const branch = (b, extra = {}) => ask({ ...p, op: 'branch.ensure', input: { purpose: 'proposal-start', branch: b, baseSha: base, ...extra } });
     const ok = await branch(`dev/cli-u${p.userId}-req-1`);
     const theirs = await branch(`dev/cli-u${p.userId + 1}-req-1`);
-    const main = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'headless', branch: 'main' } });
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [p.appId, p.userId]);
+    const main = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'session', branch: 'main', sessionId: s.id } });
+    // A purpose this build does not serve (the retired unattended run's) is
+    // refused outright, whatever the branch.
+    const retired = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'headless', branch: 'dev/mine-0' } });
     host.branches.set(`dev/cli-u${p.userId}-req-2`, 'd'.repeat(40));
     const conflict = await branch(`dev/cli-u${p.userId}-req-2`);
     await settle();
     assert.equal((await instance(ok.key)).data.ok, true);
     assert.equal((await instance(theirs.key)).data.status, 400);
     assert.equal((await instance(main.key)).data.status, 400);
+    const refused = await instance(retired.key);
+    assert.equal(refused.state, 'failed', JSON.stringify(refused));
+    assert.match(refused.data.error.message, /Unknown branch purpose/);
     const c = (await instance(conflict.key)).data;
     assert.equal(c.status, 409); assert.equal(c.error, 'branch_conflict');
     assert.equal(host.branches.get(`dev/cli-u${p.userId}-req-2`), 'd'.repeat(40), 'the existing ref is never moved');
@@ -256,7 +264,9 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
       if (!failed) { failed = true; throw new Error('host timeout'); }
       return read(...args);
     });
-    const { key } = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'headless', branch: 'dev/auto-issue-1-x-1' } });
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [p.appId, p.userId]);
+    const { key } = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'session', branch: 'dev/mine-2', sessionId: s.id } });
     process.env.PROCESS_ROLE = 'conductor';
     try { await conductor.drain(); await conductor.runServices(); } finally { process.env.PROCESS_ROLE = 'web'; }
     assert.equal(failed, true, 'the first attempt failed on its read, before any write');
@@ -276,8 +286,10 @@ test('privileged operations are conductor work', { timeout: 90000 }, async (t) =
     const older = Object.fromEntries(Object.entries(services).filter(([kind]) => kind !== workKind('branch.ensure')));
     const old = createRuntime({ pool, machines: [machine], services: older, slots: 1 });
     host.branches.set('main', 'f'.repeat(40));
+    const { rows: [s] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [p.appId, p.userId]);
     try {
-      const { key } = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'headless', branch: 'dev/auto-issue-2-y-1' } });
+      const { key } = await ask({ ...p, op: 'branch.ensure', input: { purpose: 'session', branch: 'dev/mine-3', sessionId: s.id } });
       process.env.PROCESS_ROLE = 'conductor';
       try { await old.drain(); await old.runServices(); } finally { process.env.PROCESS_ROLE = 'web'; }
       assert.equal((await instance(key)).state, 'queued', 'not claimed, not failed');

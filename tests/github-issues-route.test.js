@@ -223,17 +223,15 @@ test('per-issue chatCount counts only human messages (msg_type=message)', async 
   }
 });
 
-// ── #227: staging-mock synthetic headless state ─────────────────────────
+// ── Staging mocks ───────────────────────────────────────────────────────
 //
-// The feed sorts auto-solve issues above plain ones, so the staging
-// mocks need headless state for the ordering to be reviewable in a
-// preview. The route attaches synthetic state to [Mock] 900003
-// ('generating') and 900005 ('ready'/spec) in staging only, and never
-// clobbers a real headless row. IS_STAGING is a module-level const read
-// at require time, so the staging tests re-require the route module
-// under USERNODE_ENV=staging — the collaborator stubs at the top of
-// this file are patched onto the modules' exports, so a fresh require
-// still picks them up.
+// In staging, ?demo=1 appends [Mock] requests so a preview has every card
+// state to review. (#227's synthetic headless state on 900003/900005 went
+// with the headless run.) IS_STAGING is a module-level const read at
+// require time, so the staging tests re-require the route module under
+// USERNODE_ENV=staging — the collaborator stubs at the top of this file
+// are patched onto the modules' exports, so a fresh require still picks
+// them up.
 
 function stagingIssueRoutes() {
   const prevEnv = process.env.USERNODE_ENV;
@@ -258,39 +256,41 @@ function startStagingServer() {
   });
 }
 
-test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/900016 only', async () => {
+test('staging ?demo=1 appends its mock requests, and no row carries a headless run', async () => {
   const server = await startStagingServer();
   try {
     const port = server.address().port;
     const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
     assert.strictEqual(res.status, 200);
     const body = await res.json();
-    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 21 appended mocks (900008 joined in #556, 900009 in
+    // 5 live issues + 19 appended mocks (900008 joined in #556, 900009 in
     // #617, 900010 in #683, 900011/900012 in #1010 as the targets of the
     // applying / retry-pending mock close proposals, 900013 with the
     // card-as-pointer revision — the deliberately BARE row, which the
     // staging attribute-enrichment block leaves alone so the 'no grey
-    // placeholder chips' rule is reviewable — and 900014/900015/900016 in
-    // #1112 to make the paused / answer-needed / draft-ready work states
-    // independently reviewable, and 900017 in #1251 — the untouched row
-    // mock proposal 9000013 links to, so "an issue with an open proposal
-    // is still on the board" is reviewable without any other work state
-    // muddying it, and 900018 for the request the Homeroom bot is building,
-    // which carries a synthetic `bot` and nothing else, and 9103 for #6213,
-    // the request the bot handed back to a person whose discussion carries
-    // the seeded note and its suggested replies, and 9107 for #6264, the
-    // request whose discussion carries the bot's promise to tell someone
-    // when the update was in and the line it posted when it was, and 9112
-    // for #6399, the request whose hand-back reason a later release lifted,
-    // and 9114/9115 for #6211, the pair whose discussions show the overlap
-    // note, its three choices and the line saying what was chosen, and 9116
-    // for #6581, the request whose build failed twice with a reply under the
-    // first failure note).
+    // placeholder chips' rule is reviewable — and 900014 in #1112 to make
+    // the paused work state independently reviewable (900015/900016, the
+    // answer-needed and draft-ready states, went with the headless run they
+    // showed), and 900017 in #1251 — the untouched row mock proposal
+    // 9000013 links to, so "an issue with an open proposal is still on the
+    // board" is reviewable without any other work state muddying it, and
+    // 900018 for the request the Homeroom bot is building, which carries a
+    // synthetic `bot` and nothing else, and 9103 for #6213, the request the
+    // bot handed back to a person whose discussion carries the seeded note
+    // and its suggested replies, and 9107 for #6264, the request whose
+    // discussion carries the bot's promise to tell someone when the update
+    // was in and the line it posted when it was, and 9112 for #6399, the
+    // request whose hand-back reason a later release lifted, and 9114/9115
+    // for #6211, the pair whose discussions show the overlap note, its three
+    // choices and the line saying what was chosen, and 9116 for #6581, the
+    // request whose build failed twice with a reply under the first failure
+    // note).
     // #6503: the similar-title fixture adds one ordinary request.
-    assert.strictEqual(body.issues.length, 30);
+    assert.strictEqual(body.issues.length, 28);
     assert.strictEqual(body.issues.find((i) => i.number === 900001).similar.number, 9006503);
+    assert.ok(!body.issues.some((i) => i.number === 900015 || i.number === 900016),
+      'the headless work-state mocks are gone');
 
     // #6399: and opened by its address, as the shots do, the request whose
     // hand-back reason a later release lifted is there without ?demo=1.
@@ -301,41 +301,9 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005/900015/
       'Staging demo: a request handed back over a plan the bot could not read',
     );
 
-    const generating = byNumber.get(900003).headless;
-    assert.ok(generating, '900003 carries synthetic headless state');
-    assert.strictEqual(generating.status, 'generating');
-    assert.strictEqual(generating.outcome, null);
-    assert.strictEqual(generating.sessionId, 900003);
-    assert.strictEqual(generating.username, 'staging-tester');
-    assert.strictEqual(generating.mySessionId, null);
-    assert.strictEqual(generating.stagingUrl, null);
-
-    const ready = byNumber.get(900005).headless;
-    assert.ok(ready, '900005 carries synthetic headless state');
-    assert.strictEqual(ready.status, 'ready');
-    assert.strictEqual(ready.outcome, 'spec');
-    assert.strictEqual(ready.sessionId, 900005);
-
-    // #1112: 900015 is the run that came back with a QUESTION rather than a
-    // draft — the board's `answer_needed` state, which needs its own seed
-    // because `ready` alone reads as "draft ready to review".
-    const asked = byNumber.get(900015).headless;
-    assert.ok(asked, '900015 carries synthetic headless state');
-    assert.strictEqual(asked.status, 'ready');
-    assert.strictEqual(asked.outcome, 'question');
-    assert.strictEqual(asked.sessionId, 900015);
-
-    // #1112: the finished draft has a dedicated number that no persisted
-    // staging fixture uses, so its `draft_ready` check cannot be shadowed.
-    const draft = byNumber.get(900016).headless;
-    assert.ok(draft, '900016 carries synthetic headless state');
-    assert.strictEqual(draft.status, 'ready');
-    assert.strictEqual(draft.outcome, 'spec');
-    assert.strictEqual(draft.sessionId, 900016);
-
-    // The other mocks — and the live issues — stay plain.
-    for (const n of [900001, 900002, 900004, 900006, 900014, 900018, 1, 2, 3, 4, 5]) {
-      assert.strictEqual(byNumber.get(n).headless, null, `#${n} has no headless`);
+    // The headless run is retired: no row, mock or live, carries one.
+    for (const issue of body.issues) {
+      assert.ok(!('headless' in issue), `#${issue.number} carries no headless field`);
     }
   } finally {
     server.close();
@@ -419,7 +387,7 @@ test('#17: staging gives mock 900018, and only it, a synthetic bot build; produc
     assert.strictEqual(bot.what, 'building');
     assert.ok(Date.parse(bot.since) < Date.now(), 'started a while ago');
     assert.strictEqual(byNumber.get(900018).in_progress, null, 'and nothing else marks it');
-    assert.strictEqual(byNumber.get(900018).headless, null);
+    assert.ok(!('headless' in byNumber.get(900018)));
     for (const [n, issue] of byNumber) {
       if (n !== 900018) assert.strictEqual(issue.bot, null, `#${n} has no bot work`);
     }
@@ -461,44 +429,6 @@ test('#4530: the bot\'s demo door draws one request it waits on an answer for; n
     assert.ok((await res.json()).issues.every((i) => i.botAwaits === null), 'production synthesizes nothing');
   } finally {
     prod.close();
-  }
-});
-
-test('staging does not clobber a real headless row on a mock number', async () => {
-  poolQueryHandler = async (sql) => {
-    const s = String(sql);
-    if (/is_headless = TRUE/.test(s)) {
-      return {
-        rows: [{
-          n: 900003, id: 555, headless_status: 'ready',
-          headless_outcome: 'code', staging_url: null, pr_number: null,
-          username: 'realuser',
-        }],
-      };
-    }
-    return { rows: [] };
-  };
-  const server = await startStagingServer();
-  try {
-    const port = server.address().port;
-    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`);
-    assert.strictEqual(res.status, 200);
-    const body = await res.json();
-    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
-
-    // The real chat_sessions row wins over the synthetic one…
-    const real = byNumber.get(900003).headless;
-    assert.strictEqual(real.sessionId, 555);
-    assert.strictEqual(real.status, 'ready');
-    assert.strictEqual(real.outcome, 'code');
-    assert.strictEqual(real.username, 'realuser');
-
-    // …while the untouched mock still gets its synthetic state.
-    assert.strictEqual(byNumber.get(900005).headless.status, 'ready');
-    assert.strictEqual(byNumber.get(900005).headless.sessionId, 900005);
-  } finally {
-    poolQueryHandler = async () => ({ rows: [] });
-    server.close();
   }
 });
 
@@ -628,10 +558,10 @@ test('production never synthesizes a Create-PR session', async () => {
   }
 });
 
-test('production never synthesizes headless state', async () => {
+test('production never appends mock requests', async () => {
   // The module-level routes were required with no USERNODE_ENV, i.e.
-  // production-shaped: ?demo=1 is a no-op (no mocks appended) and no
-  // issue gets a synthetic headless field.
+  // production-shaped: ?demo=1 is a no-op (no mocks appended), and no row
+  // carries a headless field (the headless run is retired).
   const server = await startServer();
   try {
     const port = server.address().port;
@@ -641,7 +571,7 @@ test('production never synthesizes headless state', async () => {
     assert.strictEqual(body.issues.length, 5);
     for (const issue of body.issues) {
       assert.ok(issue.number < 900000, 'no mock rows outside staging');
-      assert.strictEqual(issue.headless, null);
+      assert.ok(!('headless' in issue));
     }
   } finally {
     server.close();
@@ -1365,13 +1295,6 @@ test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/9000
     const pausedAgeDays = (Date.now() - Date.parse(p14.sessions[0].lastActivityAt)) / 86400000;
     assert.ok(pausedAgeDays > 4.9 && pausedAgeDays < 5.1, `paused ~5 days ago, got ${pausedAgeDays}`);
 
-    // #1112 900015: a finished auto-solve run asking a question → the
-    // `answer_needed` state. It rides on `headless`, not `in_progress`.
-    const h15 = byNumber.get(900015).headless;
-    assert.strictEqual(h15.status, 'ready');
-    assert.strictEqual(h15.outcome, 'question');
-    assert.strictEqual(byNumber.get(900015).in_progress, null);
-
     // 900004: two claims incl. the VIEWER's own (mine → Clear button state).
     const p4 = byNumber.get(900004).in_progress;
     assert.strictEqual(p4.mine, true);
@@ -1499,7 +1422,7 @@ test('single-issue endpoint returns a CLOSED issue in the list row shape', async
     assert.strictEqual(issue.my_bounty, true);
     assert.strictEqual(issue.chatCount, 3);
     assert.strictEqual(issue.lastMessageAt, '2026-06-10T00:00:00Z');
-    assert.strictEqual(issue.headless, null);
+    assert.ok(!('headless' in issue), 'no headless run rides on a row any more');
     assert.strictEqual(issue.in_progress, null);
     assert.ok(issue.priority && 'top' in issue.priority, 'attribute summary rides along');
   } finally {

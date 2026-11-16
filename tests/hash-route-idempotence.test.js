@@ -42,7 +42,6 @@ const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
 const appJs = read('public/js/app.js');
 const appView = read('public/js/app-view.js');
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
-const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
 const captureJs = read('capture/capture.js');
 const manifest = JSON.parse(read('dapp.json'));
 
@@ -164,82 +163,10 @@ test('the NAVIGATION-driving shot stays once per document', () => {
     'but the routed path does not repeat it');
 });
 
-test('dev chat\'s shot latches key on the address, not on the document', () => {
-  assert.match(devChat, /_shotOptionsHash: null,/, 'the options sheet keys on a hash');
-  assert.match(devChat, /_shotVenueSheetHash: null,/, 'so does the venue sheet');
-  assert.doesNotMatch(devChat, /_shotOptionsDone|_shotVenueSheetDone/,
-    'the once-per-document booleans are gone');
-  const venue = body(devChat, '  _maybeOpenShotVenueSheet(');
-  assert.match(venue, /if \(DevChat\._shotVenueSheetHash === addr\) \{ DevChat\._tickShotHold\(\); return; \}/,
-    'a second render at the same address asks the live hold to re-assert, not to re-arm');
-  assert.match(venue, /DevChat\._shotVenueSheetHash = addr;/);
-  const options = body(devChat, '  _maybeOpenShotOptions(');
-  assert.match(options, /if \(DevChat\._shotOptionsHash === addr\) \{\s*if \(restore\) DevChat\._tickShotHold\(\);\s*return;\s*\}/,
-    'an explicit restore re-asserts at the same address instead of re-arming');
-  assert.match(options, /DevChat\._shotOptionsHash = addr;/);
-  // Both read the address through the same defensive accessor the `?shot=`
-  // reads already use — the composer's unit tests evaluate this module in a
-  // sandbox with a document but no `location`.
-  assert.match(body(devChat, '  _addressKey() {'), /try \{ return location\.hash; \} catch \{ return ''; \}/);
-  for (const fn of [venue, options]) {
-    assert.match(fn, /const addr = DevChat\._addressKey\(\);/);
-  }
-});
-
-// The other half of "the shot belongs to the address": the surface also has
-// to be UP WHEN THE PAGE IS JUDGED, which one open cannot promise in either
-// direction. Too early: `?shot=session-options-instructions` had one chance
-// at one animation frame — the composer button had to be laid out and
-// session-options.js published by then — and a miss stamped the latch anyway,
-// so the card never appeared (#1055). Too late: the first fix stopped at the
-// first success, and on a `?demo=1` page the credits card lands ~1.5s after
-// that, re-renders the transcript, auto-scrolls it, and the kit dismisses the
-// popover on the scroll — which is how nine venue/options checks regressed.
-// So it is HELD: re-asserted for a bounded window, then let go.
-test('a shot surface is held up for a bounded window, not opened once', () => {
-  const tick = body(devChat, '  _tickShotHold() {');
-  assert.match(tick, /if \(DevChat\._addressKey\(\) !== hold\.addr \|\| Date\.now\(\) >= hold\.until\) \{/,
-    'a hold that outlived its address or its window releases instead of opening the wrong thing');
-  assert.match(tick, /hold\.timer = setTimeout\(DevChat\._tickShotHold, SHOT_HOLD_RETRY_MS\);/,
-    'and it keeps asking until one of those two bounds stops it');
-  assert.match(tick, /if \(hold\.spec\.showing\(\) \|\| !hold\.spec\.ready\(\)\) return;/,
-    'already-up is left alone; not-laid-out-yet is a wait, not a failure');
-  assert.match(devChat, /const SHOT_HOLD_MS = \d+;/, 'both bounds are named constants');
-  assert.match(devChat, /const SHOT_HOLD_RETRY_MS = \d+;/);
-
-  // Readiness is the anchor being laid out AND its module published — the
-  // two things the #1055 one-frame race lost to.
-  for (const opener of ['  _maybeOpenShotVenueSheet(', '  _maybeOpenShotOptions(']) {
-    assert.match(body(devChat, opener), /offsetParent !== null && window\.(BuildVenues|SessionOptions)/,
-      `${opener.trim()} waits for both`);
-  }
-
-  // A capture navigates, settles and scrolls; it never clicks. A HUMAN who
-  // lands on one of these URLs does, and must not have a surface put back
-  // under them — so a trusted gesture ends the hold.
-  const hold = body(devChat, '  _holdShotSurface(');
-  assert.match(hold, /e\.isTrusted/, 'a real gesture releases the hold');
-  assert.match(hold, /addEventListener\('pointerdown', hold\.onUserInput, true\)/);
-  assert.match(hold, /addEventListener\('keydown', hold\.onUserInput, true\)/);
-  assert.match(body(devChat, '  _releaseShotHold() {'), /removeEventListener\('pointerdown'/,
-    'and releasing takes the listeners back off');
-
-  // "Up" is read off the DOCUMENT, never off a handle: the kit owns the
-  // teardown, and with a kit present openInstructions hands its panel to the
-  // modal shell and never attaches the overlay it built.
-  const showing = body(devChat, '  _shotOptionsShowing(');
-  assert.match(showing, /getElementById\('dc-options-commands'\)/,
-    "the instructions card's own <pre> — the element the #1055 check asserts");
-  assert.match(showing, /pre\.isConnected/);
-  // The venue sheet is a kit surface rather than a card of ours, so it is
-  // read off the document. (The "⋯" menu was the other one; #1353 retired
-  // the button, and the card and the sheet are what is left.)
-  assert.match(body(devChat, '  _shotSurfaceShowing() {'), /querySelector\('\.un-popover, \.un-action-sheet'\)/,
-    'which is the popover on desktop and the action sheet on touch');
-});
-
-// The dev board's ⋯ shot is the same contract on the other side of the
-// shell: `.dev-card-menu` is position:fixed and dismisses on any scroll by
+// The dev board's ⋯ shot is held the same way: the surface has to be UP WHEN
+// THE PAGE IS JUDGED, which one open cannot promise (the dev chat's shot
+// surfaces, which this file pinned too, went with the dev chat).
+// `.dev-card-menu` is position:fixed and dismisses on any scroll by
 // design (initCardMenus), and a column that finishes loading late scrolls the
 // board — so stopping at the first success leaves the check judging a bare
 // board. It is re-asserted for its window too.
@@ -257,23 +184,6 @@ test('the dev board card-menu shot is re-asserted, not stopped at the first open
   assert.match(fn, /addEventListener\('pointerdown', onUserInput, true\)/);
   assert.match(fn, /removeEventListener\('keydown', onUserInput, true\)/,
     'and done() takes the listeners back off');
-});
-
-test('a dev chat ?shot= cohort is sibling fragments of one document', () => {
-  // This read the ?shot=venue-sheet cohort until #3976 retired it with the
-  // classic dev chat's venue sheet (classic sessions are read-only). The
-  // spec viewer's is the dev chat cohort left with that shape, and it rides
-  // the same per-fragment latch.
-  const paths = (manifest.tests || []).map((t) => t.path);
-  const spec = paths.filter((p) => p.startsWith('/?shot=spec-viewer#'));
-  assert.ok(spec.length >= 2,
-    `several checks share the ?shot=spec-viewer document (${spec.length})`);
-  // Same search, several fragments — exactly the shape the runner reaches by
-  // writing location.hash, and the shape the old boolean latch broke: the
-  // first session's panel opened and none of the others did.
-  const frags = new Set(spec.map((p) => p.slice(p.indexOf('#'))));
-  assert.ok(frags.size > 1,
-    `they address several sessions from that one document (${frags.size})`);
 });
 
 // ─── The capture-side belt and braces stays ──────────────────────────────

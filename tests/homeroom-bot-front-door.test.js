@@ -11,7 +11,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { message } = require('./lib/platform-i18n');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -51,17 +50,20 @@ test('#5757: a request to Homeroom itself is handed to Homeroom bot, with its co
 
 test('B8: the doors that open the chat with Homeroom bot, and what they are called', () => {
   // The mark menu's Build it now row left with its Agent chats section
-  // (#4729); building it yourself is Messages' "+" Agent chat choice.
+  // (#4729); building it is the hub's ⋯ Build it now, which opens a new chat
+  // with Homeroom bot about the project.
   assert.doesNotMatch(read('frontend/src/features/app-context/app-context-sheet.tsx'), /improve-row-new-session|app-menu-sessions/);
-  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
   const row = read('frontend/src/features/dev-board/actions-row.tsx');
   assert.ok(row.indexOf('data-plus="issue"') < row.indexOf('data-plus="new-change"'), 'Suggest an improvement leads the hub\'s ⋯');
   assert.match(row, /title=\{t\('project:menu\.build\.title'\)\}\s+sub=\{t\('project:menu\.build\.sub'\)\}/);
   assert.deepEqual(['title', 'sub'].map((part) => require('./lib/platform-i18n').message(`project:menu.build.${part}`)),
     ['Build it now', 'With a coding agent, then ask for approval']);
-  // The tour no longer sends a newcomer to the menu's Build it now: that
-  // row shows only once they have had an agent session (first-session
-  // run-through, 5 Oct 2026). The hub's ⋯ still offers it, above.
+  assert.match(row, /data-plus="new-change"[\s\S]{0,300}?onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); void Improve\.startSession\(\); \}\}/);
+  assert.match(read('frontend/src/features/improve/improve-controller.js'),
+    /startSession\(\) \{[\s\S]{0,200}?`#homeroom-bot\/new\?project=\$\{encodeURIComponent\(slug\)\}`\s*: '#homeroom-bot\/new';/);
+  // The tour no longer sends a newcomer to the menu's Build it now
+  // (first-session run-through, 5 Oct 2026). The hub's ⋯ still offers it,
+  // above.
   assert.match(read('frontend/src/features/home/tour/tour-steps.ts'), /body: 'onboarding:tour\.step\.menuActions\.body',/);
   assert.equal(require('./lib/platform-i18n').message('onboarding:tour.step.menuActions.body'),
     'Change something in any of your apps or in Homeroom itself. Start building it or share a request for someone in the community to pick up.');

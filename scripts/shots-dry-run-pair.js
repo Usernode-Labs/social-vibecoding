@@ -10,8 +10,8 @@
 // `up` builds each exact revision's platform image once (from a detached
 // worktree), restores one dump of the local dev database into two shots
 // databases, runs both images on usernode-net with a credential-free env,
-// applies the per-side fixtures (full-admin identity, member agent-session
-// copy, no app cap), mints the three persona tokens, signs each persona in on
+// applies the per-side fixtures (full-admin identity, no app cap), mints
+// the three persona tokens, signs each persona in on
 // both origins and saves its storage state. Before is served at
 // http://127.0.0.1:4101 and after at http://localhost:4102: different hosts,
 // so their session cookies never overwrite each other. It then prints the
@@ -256,15 +256,6 @@ async function up(options) {
   const admins = [];
   for (const side of ['base', 'head']) admins.push(await fixtures.ensureFullAdminIdentity(input(side)));
   availableFixtures.push(admins[0]);
-  const ready = await Promise.all(['base', 'head'].map((side) => fixtures.canCopyMemberAgentSession(input(side))));
-  if (ready.every(Boolean)) {
-    const seeded = [];
-    for (const side of ['base', 'head']) seeded.push(await fixtures.copyMemberAgentSession({ ...input(side), selfAppSlug: SLUG }));
-    availableFixtures.push(seeded[0]);
-    const adminSeeded = [];
-    for (const side of ['base', 'head']) adminSeeded.push(await fixtures.copyFullAdminAgentSession({ ...input(side), selfAppSlug: SLUG }));
-    availableFixtures.push(adminSeeded[0]);
-  }
 
   // Persona tokens minted with the pair's own iframe key, exchanged for a
   // session on both origins exactly as the worker's bootstrap does.

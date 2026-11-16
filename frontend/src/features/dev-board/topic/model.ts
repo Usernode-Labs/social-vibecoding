@@ -348,13 +348,6 @@ export interface RosterView {
   earlier?: string | null;
 }
 
-/** The shared-chat section: a disclosure whose BODY is another module's. */
-export interface TranscriptSection {
-  id: number;
-  label: string;
-  expanded: boolean;
-}
-
 /** A compact issue reference used by the change detail and its issue picker. */
 export interface IssueLink {
   n: number;
@@ -634,11 +627,6 @@ export interface RequestStatusView {
    * offers "Build it with your own Claude Code" under the card.
    */
   ownAgent?: boolean;
-  /**
-   * 1 Nov 2026: the one action is "Work on this with Homeroom bot", so the
-   * page's ⋯ offers "Build it in an agent session" (what Build it now was).
-   */
-  agentSession?: boolean;
 }
 
 /** #4455: one part of a Votes or Testing card's bar. */
@@ -674,22 +662,15 @@ export interface ChecksExplainView {
 }
 
 /**
- * Fix it from the change's page (./failed-checks.ts): what the dev chat's
- * own Fix it card would send (../../agent-session/fix-checks.ts), and the
- * build conversation it goes to. Only for the change's author, on a change
- * built in an agent session that is still open to more work
- * (app-view.js `_fixChecksView`).
+ * Fix it from the change's page (./failed-checks.ts): the change whose
+ * thread with Homeroom bot it opens. Only for the change's author, on a
+ * change still open to more work (app-view.js `_fixChecksView`).
  */
 export interface FixChecksView {
-  agentSessionId: number;
   changeId: number;
   prNumber: number | null;
-  /** How many blocking checks failed in all. */
-  total: number;
-  /** The first few, each with what it reported. */
-  checks: Array<{ name: string; reason: string }>;
-  /** The run: its checks_checked_at. A new run is a new Fix it. */
-  at: string;
+  /** The change's title, for a thread started about it. */
+  title?: string | null;
 }
 
 /** #4455: the Votes card or the Testing card under a change's summary. */
@@ -876,15 +857,6 @@ export interface TopicBody {
   workspace?: number | null;
   discussion?: string | null;
   /**
-   * The Build door: the pill on the card ("Continue building", "Open
-   * build", "Read the build"). It NAVIGATES (#2605), to the change's own
-   * dev session page — the owner's live workspace, or, for a reader, the
-   * read-only chat its owner published. There is no sheet on this page any
-   * more. Null for a private change somebody else is reading, and for an
-   * imported one, which has no session behind it.
-   */
-  build?: { kind: 'owner' | 'published'; label: string } | null;
-  /**
    * The before & after shots, as "What changes for you" reads it: the claims as
    * bullets and the run's state as one strip. A verified run keeps the
    * before/after card in `actions.visuals` instead, which leads with the
@@ -979,8 +951,8 @@ export interface TopicBody {
    *
    * The open flag lives in app-view.js (`_proposalBodyOpen`), not in
    * component state: the head repaints on every checks poll and WS event,
-   * and the same rule the before/after visuals and the transcript section
-   * follow keeps the disclosure from collapsing under the reader.
+   * and the same rule the before/after visuals follow keeps the disclosure
+   * from collapsing under the reader.
    */
   proposalBody?: { id: number | null; open: boolean; html: string } | null;
   /**
@@ -1001,5 +973,4 @@ export interface TopicBody {
    * governance topic has no ledger, so it hangs here.
    */
   roster?: RosterView | null;
-  transcript?: TranscriptSection | null;
 }

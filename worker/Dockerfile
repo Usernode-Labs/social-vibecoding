@@ -20,8 +20,6 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
   && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \
   && npm cache clean --force
 
-# unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
-# user-attached reference zips inside this disposable container.
 # python3/make/g++ are node-gyp's toolchain: native npm deps (bcrypt et al)
 # normally install a prebuilt binding, but node-pre-gyp falls back to
 # building from source whenever the prebuilt download misses (new node ABI,
@@ -273,23 +271,6 @@ COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # untruncated body via `usernode-issues <number>` — in both build and
 # scout modes. Authenticates with the read-only ISSUES_JWT, never WORKER_JWT.
 COPY usernode-issues /usr/local/bin/usernode-issues
-# usernode-attachments is read-only like usernode-issues (same ISSUES_JWT
-# auth, works in scout + build): it lists the session's user-attached
-# dev-chat files, downloads one into the container so Claude Code can
-# Read it (images/binaries — text files are already inlined in the
-# prompt), or downloads + extracts a zip attachment via --unzip so the
-# agent can browse a whole reference project. See src/routes/internal.js
-# attachments routes (#450).
-COPY usernode-attachments /usr/local/bin/usernode-attachments
-# usernode-report-platform-issue is the worker's escalation valve: a
-# build-turn write path (WORKER_JWT) that DRAFTS a
-# platform-repo issue when the agent hits a blocker it can't fix in this
-# app's repo (shared bridge, native WebView, staging pipeline, checks
-# gate). Human-gated: the draft renders as a confirm/dismiss card in the
-# dev chat and nothing reaches GitHub until a user taps confirm.
-# Platform-side dedup + rate limit bound the spam. See
-# src/routes/internal.js + src/routes/sessions.js (confirm route).
-COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
 # usernode-run-checks runs declared dapp.json assertions against the in-loop
 # app before commit. A manifest can configure a loopback-only fixture login
 # for protected routes. It drives the pinned Chromium and writes nothing
@@ -334,8 +315,6 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/write-shots-mcp-config.js \
               /usr/local/bin/homeroom-read-mcp.js \
               /usr/local/bin/usernode-issues \
-              /usr/local/bin/usernode-attachments \
-              /usr/local/bin/usernode-report-platform-issue \
               /usr/local/bin/usernode-run-checks \
               /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \

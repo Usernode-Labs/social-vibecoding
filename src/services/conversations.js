@@ -677,6 +677,10 @@ const PLUS_THREAD_REPLY = `EXISTS (SELECT 1 FROM conversation_messages plus_root
           WHERE plus_root.id = m.thread_root_id
             AND plus_root.metadata->'homeroomBot'->>'kind' = 'opened_thread'
             AND plus_root.reply_to_id IS NULL)`;
+// 15 Nov 2026: a message copied from a retired agent chat or dev chat
+// (services/old-chat-move.js). It is old, whatever its id says, so the list's
+// latest message is never one of them.
+const MOVED_CHAT = `(m.metadata ? 'movedChat')`;
 const MAIN_STREAM_ROW = `(m.thread_root_id IS NULL OR (
           m.deleted_at IS NULL
           AND NOT EXISTS (SELECT 1 FROM conversation_messages hidden_root
@@ -1091,7 +1095,7 @@ async function conversationRow(db, user, conversationId) {
             AND ((peer_user.is_synthetic IS TRUE AND peer_user.username = 'homeroom_bot')
                  OR ((m.thread_root_id IS NULL OR (${ALSO_IN_CHAT} AND NOT ${PLUS_THREAD_REPLY}))
                      AND NOT ${PLUS_THREAD_OPENER}))
-            AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS}
+            AND m.deleted_at IS NULL AND NOT ${REQUEST_NEWS} AND NOT ${MOVED_CHAT}
             AND NOT EXISTS (SELECT 1 FROM user_blocks b
                              WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
           ORDER BY id DESC LIMIT 1
@@ -2681,6 +2685,7 @@ module.exports = {
   REQUEST_NEWS_KINDS,
   ALSO_IN_CHAT,
   REQUEST_NEWS,
+  MOVED_CHAT,
   PLUS_THREAD_OPENER,
   PLUS_THREAD_REPLY,
   BOT_METADATA_KEY,

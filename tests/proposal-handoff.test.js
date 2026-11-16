@@ -2018,3 +2018,16 @@ test('a build reads the uploaded branch and moves nothing: a branch elsewhere is
     assert.deepEqual(state.github.at(-1).slice(0, 4), ['read', 'acme', 'demo', 'dev/cli-u7-feature-0001']);
   } finally { restore(); }
 });
+
+test('the hand-off pipeline is one shared module, and it leaves imported proposals out of its ownership checks', () => {
+  // The staging build and the proposal checks an upload gets are the ones
+  // this module starts. A caller that grew its own copy would drift from it.
+  const pipeline = fs.readFileSync(require.resolve('../src/services/handoff-pipeline.js'), 'utf8');
+  for (const fn of ['hasInFlightHandoffPipeline', 'beginHandoffPipeline', 'startHandoffPipeline']) {
+    assert.match(pipeline, new RegExp(`\\b${fn}\\b`), `the pipeline exports ${fn}`);
+  }
+  const route = fs.readFileSync(require.resolve('../src/routes/proposal-handoff.js'), 'utf8');
+  assert.match(route, /require\('\.\.\/services\/handoff-pipeline'\)/,
+    'the route consumes the module, and keeps no copy');
+  assert.match(pipeline, /source IS DISTINCT FROM 'imported'/);
+});

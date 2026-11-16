@@ -6,16 +6,16 @@
 // The reported failure: Homeroom version-swaps mid-turn, the new process
 // picks the running agent back up through resumeDetachedTurn, and the user
 // still sees a red Stop square. Pressing it did nothing, because the stop
-// handle POST /stop looks up is only ever created by POST /chat — the
-// recovery path registered none. Two halves are covered here:
+// handle POST /stop looks up was only ever created by the turn that started
+// it — the recovery path registered none. Two halves are covered here:
 //
 //   1. Recovery REGISTERS a handle (phase 'cc', so the in-container kill is
 //      armed) for the duration of the tail, and clears it after.
 //   2. When that handle is stopped — by a click during the tail, or by a
 //      durable stamp written before the cutover — the turn terminalizes as
-//      a stop: the "Stopped by @user." row with stopped pills, active_turn
-//      cleared, `stopped` + `done` on BOTH event channels, and none of the
-//      interrupted-turn narration or the retry paths.
+//      a stop: the "Stopped by @user." row, active_turn cleared, `stopped`
+//      + `done` on the global broadcast, and none of the interrupted-turn
+//      narration or the retry paths.
 //
 // server.js only boots under the require.main guard, so requiring it here
 // exposes resumeDetachedTurnInner without starting servers. worker, ws and
@@ -33,8 +33,6 @@ process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
 require('./platform-keys').setPlatformKeys();
-
-const recoveryPills = require('../src/services/recovery-pills');
 
 // ── worker stub ─────────────────────────────────────────────────────────
 // resumeTurnFromJournal is the seam the tests drive: it stands in for the
@@ -60,7 +58,7 @@ require.cache[workerPath].exports = {
   workerContainerName: (id) => `usernode-worker-${id}`,
 };
 
-// ── ws stub — one of the two channels the recovery `send` fans out over ──
+// ── ws stub — the channel the recovery `send` fans out over ──
 const broadcasts = [];
 const wsPath = require.resolve('../src/services/ws');
 const realWs = require(wsPath);
@@ -88,9 +86,6 @@ try {
 }
 
 const stopRegistry = require('../src/services/stop-registry');
-const sessionBus = require('../src/services/session-bus');
-// Its streams kept in this process: no database here (services/session-bus.js).
-sessionBus.init({ memory: true });
 const sessionsRoutes = require('../src/routes/sessions');
 
 // ── fixtures ────────────────────────────────────────────────────────────
@@ -142,7 +137,7 @@ function emitted(kind) {
 }
 
 // Build + register the handle with the REAL factory, so these tests exercise
-// the production `send` (both channels, `_seq` and all) rather than a
+// the production `send` (its broadcast, `_seq` and all) rather than a
 // stand-in that could drift from it.
 function makeHandle(turn) {
   const handle = buildRecoveryStopHandle({
@@ -220,10 +215,10 @@ test('recovery registers a stop handle for the adopted turn, in phase cc', async
 
   assert.ok(seen, 'a stop handle was registered while the tail ran');
   assert.equal(seen.phase, 'cc',
-    "phase must be 'cc' — stopPolicy.killsWorkerInPhase gates the in-container kill on it");
+    "phase must be 'cc', the journal tail's: the stop drives the in-container kill for it");
   assert.equal(seen.workerName, `usernode-worker-${SESSION.id}`);
   assert.equal(seen.stopped, false);
-  assert.ok(seen.hasAbort, 'an AbortController is present for the wrap-up stream');
+  assert.ok(seen.hasAbort, 'an AbortController is present for the stop to cancel');
   assert.ok(seen.hasSend, 'the handle can announce to the session');
 });
 
@@ -243,34 +238,9 @@ test('buildRecoveryStopHandle seeds a durable stop stamp so a pre-cutover click 
   assert.equal(makeHandle(activeTurn()).stopped, false);
 });
 
-test('the adopted run is relayed to the conversations that dispatched it, all but its end', async () => {
-  const agentTurn = require('../src/services/mayor/agent-turn');
-  const relayed = [];
-  const unsubscribe = sessionBus.subscribe(agentTurn.busKey(3), (event) => relayed.push(event));
-  try {
-    const handle = buildRecoveryStopHandle({
-      sessionId: SESSION.id,
-      containerName: `usernode-worker-${SESSION.id}`,
-      activeTurn: activeTurn(),
-      broadcastGlobal: (msg) => broadcasts.push(msg),
-      relayTo: [3],
-    });
-    handle.send('cc_progress', { text: '$ npm test' });
-    handle.send('stopped', { by: 'alice' });
-    handle.send('done', {});
-    await sessionBus.settle();
-    assert.deepEqual(relayed.map((e) => [e.type, e.changeId, e.agentSessionId, e.text]),
-      [['cc_progress', SESSION.id, 3, '$ npm test']],
-      'the conversation\'s own end comes from handBackAfterRecovery');
-    assert.equal(emitted('done').length, 1, 'the change still hears every event');
-  } finally {
-    unsubscribe();
-  }
-});
-
 // ── 2. a stop during the tail terminalizes the turn as a stop ───────────
 
-test('a stop landing during the tail persists "Stopped by @user." with stopped pills', async () => {
+test('a stop landing during the tail persists "Stopped by @user."', async () => {
   const pool = makePool();
   const turn = activeTurn();
   const handle = makeHandle(turn);
@@ -288,25 +258,16 @@ test('a stop landing during the tail persists "Stopped by @user." with stopped p
   assert.ok(stopRow, `a stop row was persisted (got: ${rows.map((r) => r.content).join(' | ')})`);
   assert.match(stopRow.content, /Stopped by @alice\./);
   assert.equal(stopRow.metadata.stopped, true);
-  assert.deepEqual(
-    stopRow.metadata.quickReplies,
-    recoveryPills.turnFallbackQuickReplies({ outcome: 'stopped' }),
-    'the stopped pills match the live stop path exactly',
-  );
 });
 
 test('a stopped recovery clears active_turn and emits stopped + done', async () => {
   const pool = makePool();
   const turn = activeTurn();
-  const busEvents = [];
-  const unsub = sessionBus.subscribe(SESSION.id, (e) => busEvents.push(e));
 
   const handle = makeHandle(turn);
   journalTail = async () => { handle.stopped = true; handle.stoppedBy = 'alice'; return killedResult(); };
 
   await resumeDetachedTurnInner({ ...baseArgs(pool, turn), stopHandle: handle });
-  await sessionBus.settle();
-  if (typeof unsub === 'function') unsub();
 
   assert.equal(finishTurnCalls.length, 1, 'the durable turn record was released');
   assert.equal(finishTurnCalls[0].sessionId, SESSION.id);
@@ -314,12 +275,6 @@ test('a stopped recovery clears active_turn and emits stopped + done', async () 
   assert.equal(emitted('stopped').length, 1, 'stopped went out on the global broadcast');
   assert.equal(emitted('done').length, 1, 'done went out on the global broadcast');
   assert.equal(emitted('stopped')[0].by, 'alice');
-
-  // Both channels: a tab reconnected over GET /events replays from the bus,
-  // and the escalation ladder is driven by exactly these two events.
-  const busTypes = busEvents.map((e) => e.type);
-  assert.ok(busTypes.includes('stopped'), `sessionBus saw stopped (got ${busTypes.join(',')})`);
-  assert.ok(busTypes.includes('done'), `sessionBus saw done (got ${busTypes.join(',')})`);
 });
 
 test('a stopped recovery does NOT narrate an interruption or take the retry paths', async () => {
@@ -351,7 +306,8 @@ test('a stopped recovery does NOT narrate an interruption or take the retry path
     `no interrupted-turn breadcrumb was written (got: ${narrated})`,
   );
   // Exactly one terminal row — the stop — not a stop AND a failure story.
-  const terminal = rows.filter((r) => r.metadata && r.metadata.quickReplies);
+  // Every row recovery writes is tagged `recovered` for SQL audit (#896).
+  const terminal = rows.filter((r) => r.metadata && r.metadata.recovered);
   assert.equal(terminal.length, 1, `one terminal row, got ${terminal.length}: ${narrated}`);
 });
 

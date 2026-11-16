@@ -283,10 +283,9 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   const html = cardHtml(model);
   assert.match(html, /gc-card-actions/, 'shared action row present');
   // The state-driven primary for a never-started issue. 1 Nov 2026: work on
-  // it with Homeroom bot; Build it now is the ⋯'s first row, as an agent session.
+  // it with Homeroom bot.
   assert.ok(hasAction(model, 'workOnIssueWithBot', 5), 'the primary is wired');
   assert.match(html, />Work on this with Homeroom bot</);
-  assert.equal(menuLabels(AppView, html)[0], 'Build it in an agent session');
   // …plus the promoted claim toggle. The card reserves an action band on
   // every row now, and this issue card had one button to put in it; claiming
   // is what a reader does with an issue before writing any code, and the
@@ -294,9 +293,6 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.ok(hasAction(model, 'markIssueInProgress', 5), 'the claim toggle is wired');
   assert.match(html, />Claim it</);
   assertCardActionContract(AppView, html, { primary: 2, menu: true, previewIcon: false });
-  // Generating a headless proposal spends the viewer's credits, so it is a
-  // chosen ⋯ action rather than the card's most prominent button.
-  assert.ok(!menuHas(AppView, html, /^Generate proposal$/), 'AI building is in the Start work chooser');
   assert.ok(menuHas(AppView, html, /Pledge kudos/), 'Pledge kudos in ⋯');
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
   assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
@@ -336,62 +332,6 @@ test('issue card (read-only): no claim pill at all', () => {
   assert.doesNotMatch(html, /markIssueInProgress|clearIssueClaim/,
     'no claim affordance for a read-only viewer');
   AppView.appData = null;
-});
-
-test('issue card: a ready headless run IS the primary, replacing Start work', () => {
-  const AppView = makeAppView(ME);
-  const model = AppView._issueCardModel(baseIssue({
-    headless: { status: 'ready', outcome: 'spec', sessionId: 90 },
-  }));
-  const html = cardHtml(model);
-  assert.ok(hasAction(model, 'startFromAutoSession', 90), 'contextual ready run is the primary');
-  // #2779: it starts an agent session on the request (the run is no longer
-  // cloned into a classic dev chat), and its title says what the run did.
-  assert.match(html, />Start work</, 'and it reads as starting work');
-  assert.match(html, /An auto-solve run finished here \(it drafted a plan\)/);
-  assert.ok(!hasAction(model, 'chooseIssueWork'), 'Start work is superseded, not stacked beside it');
-  // Two primaries: the state-driven one, plus the promoted claim toggle.
-  assertCardActionContract(AppView, html, { primary: 2, menu: true });
-  assert.ok(menuHas(AppView, html, /Pledge kudos/), 'kudos still reachable, from ⋯');
-});
-
-test('issue card: a question outcome folds TWO competing pills into one primary', () => {
-  const AppView = makeAppView(ME);
-  const model = AppView._issueCardModel(baseIssue({
-    headless: { status: 'ready', outcome: 'question', sessionId: 91 },
-  }));
-  const html = cardHtml(model);
-  // Previously this row rendered the clone action AND a second "Generate
-  // proposal" pill side by side. Now: one "Answer & regenerate" primary,
-  // with the re-run in ⋯.
-  assert.match(html, /Answer &amp; regenerate/, 'single folded primary');
-  // Two pills in the band, but only ONE of them is about the headless run: the
-  // fold is still a fold. The second is the promoted claim toggle.
-  assertCardActionContract(AppView, html, { primary: 2, menu: true });
-  assert.ok(menuHas(AppView, html, /^Start more work$/), 're-run reachable from ⋯');
-});
-
-test('issue card: a run the viewer already cloned offers no competing re-run', () => {
-  const AppView = makeAppView(ME);
-  const model = AppView._issueCardModel(baseIssue({
-    headless: { status: 'ready', outcome: 'question', sessionId: 91, mySessionId: 92 },
-  }));
-  const html = cardHtml(model);
-  assert.ok(hasAction(model, 'goToAutoSessionClone', 92));
-  assert.match(html, />Go to session</);
-  assert.ok(!menuHas(AppView, html, /^Generate proposal$/),
-    'no re-run beside "Go to session" — the proposal already exists (#150)');
-});
-
-test('issue card: a generating run disables the primary and hides Generate', () => {
-  const AppView = makeAppView(ME);
-  const model = AppView._issueCardModel(baseIssue({
-    headless: { status: 'generating', sessionId: 93 },
-  }));
-  const html = cardHtml(model);
-  // Homeroom's words: a change, never a proposal.
-  assert.match(html, /disabled[^>]*>Drafting a change…/);
-  assert.ok(!menuHas(AppView, html, /^Generate proposal$/), 'nothing to generate while one runs');
 });
 
 test('issue card: read-only viewer gets no primary, keeps a read-safe ⋯', () => {
@@ -495,31 +435,26 @@ test('proposal card (admin, not author): Admin merge / kudos stay in ⋯, Explor
   assert.ok(menuHas(AppView, html, /Explore in a coding agent/), 'Explore in ⋯');
 });
 
-test('proposal card (author): Open session + Withdraw move to ⋯', () => {
+test('proposal card (author): Withdraw moves to ⋯', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal({ user_id: ME }));
   const html = cardHtml(model);
-  assert.ok(menuHas(AppView, html, /Open session/), 'Open session in ⋯');
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
   assert.ok(!menuHas(AppView, html, /Explore in a coding agent/),
-    'owners reach the Mayor via Open session, so no Explore row on their own PR');
+    'no Explore row on their own PR');
   assertCardActionContract(AppView, html, { primary: 1, menu: true });
 });
 
-// #1045 was about the owner of an IMPORTED proposal: there is no in-app
-// session behind it, so "Open session" must not render — and precisely
-// because of that, Explore DOES reach this card. "An owner reaches the Mayor
-// from their own session" (#313/#827) has no session to point at here, so
-// without it the owner of a PR they imported gets no AI affordance at all.
+// #1045 was about the owner of an IMPORTED proposal, who had no in-app
+// session behind it and so, without Explore, no AI affordance at all.
 // _showExplorePill is the shared predicate: not-mine OR mine-but-imported.
 // WHERE it is offered is a separate question, and since #1787 round four the
 // answer on a card is ⋯ rather than the face.
-test('proposal card (author of an imported PR): Withdraw and Explore in ⋯, no session', () => {
+test('proposal card (author of an imported PR): Withdraw and Explore in ⋯', () => {
   const AppView = makeAppView(ME);
   const model = AppView._proposalCardModel(baseProposal({ user_id: ME, source: 'imported' }));
   const html = cardHtml(model);
   assert.ok(menuHas(AppView, html, /Withdraw/), 'Withdraw in ⋯');
-  assert.ok(!menuHas(AppView, html, /Open session/), 'no dev session behind an imported PR');
   assert.ok(menuHas(AppView, html, /Explore in a coding agent/),
     'Explore in ⋯ — the owner\'s only AI affordance (#1045)');
   assert.ok(!html.includes('gc-explore-chat-btn'), 'one action, one place: not also a face pill');
@@ -742,20 +677,18 @@ test('a rejected vote re-arms from the epoch the server named', async () => {
 
 // ── B8: Homeroom bot's door on a request, and on a change it built ───────
 
-test('B8: where Homeroom bot builds, asking it is the card\'s act, and building it yourself is the ≡\'s first row', () => {
+test('B8: where Homeroom bot builds, asking it is the card\'s act', () => {
   const AppView = makeAppView(ME);
   AppView._ghIssuesMeta = { homeroomBot: { typicalMinutes: 7 } };
   const model = AppView._issueCardModel(baseIssue());
   const html = cardHtml(model);
   assert.ok(hasAction(model, 'askBotToBuild', 5), 'the bot button is wired');
   assert.match(html, />Ask Homeroom bot to build this</);
-  assert.equal(menuLabels(AppView, html)[0], 'Build it now', 'the same launcher, first in ≡');
-  assert.ok(menuHas(AppView, html, /^Build it now$/));
   // On the request's own page, its hint is the line under it.
   const head = AppView._issueCardModel(baseIssue(), { noNav: true });
   assert.ok(head.extra.some((e) => e.key === 'bot-door' && e.text === 'Usually ready to try in about 7 minutes.'));
   // While the bot is on it there is nothing to start: the asker can follow
-  // it, everybody else reads who asked; and no Build it now.
+  // it, everybody else reads who asked.
   const mineOn = AppView._issueCardModel(baseIssue({ bot: { what: 'building', since: null, askedBy: 'maya', mine: true } }));
   // #6401: the label names the card it lands on — the bot's progress card.
   assert.ok(hasAction(mineOn, 'openBotChatFromRequest', 5, 'progress'), 'See progress, at the progress card');
@@ -763,16 +696,14 @@ test('B8: where Homeroom bot builds, asking it is the card\'s act, and building 
   const theirs = AppView._issueCardModel(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } }));
   const theirsHtml = cardHtml(theirs);
   assert.match(theirsHtml, />Homeroom bot is on it</);
-  assert.ok(!menuHas(AppView, theirsHtml, /^Build it now$/), 'never built twice');
   const note = AppView._issueWorkState(baseIssue({ bot: { what: 'queued', since: null, askedBy: 'maya', mine: false } })).note;
   assert.match(note, /^maya asked Homeroom bot to build this\. It starts as soon as a builder is free/);
   // Where it does not build, working on it with the bot is the card's act
-  // (1 Nov 2026), and building it yourself the ≡'s first row.
+  // (1 Nov 2026).
   const plain = makeAppView(ME);
   const plainModel = plain._issueCardModel(baseIssue());
   assert.ok(hasAction(plainModel, 'workOnIssueWithBot', 5));
   assert.match(cardHtml(plainModel), />Work on this with Homeroom bot</);
-  assert.equal(menuLabels(plain, cardHtml(plainModel))[0], 'Build it in an agent session');
 });
 
 // #4530: Ask Homeroom bot to build this, pressed after its question, read
@@ -788,7 +719,6 @@ test('#4530: while Homeroom bot waits on an answer, the card answers it instead 
   assert.ok(hasAction(model, 'answerBotOnRequest', 5, 41, 0), 'from the board: open the request and reply to its note');
   assert.match(html, />Answer Homeroom bot(?:'|&#x27;)s question</);
   assert.doesNotMatch(html, /Ask Homeroom bot to build this/);
-  assert.equal(menuLabels(AppView, html)[0], 'Build it now', 'building it yourself is still the first row of its ≡');
   // On the request's own page, the reply is right there, and the line under
   // it says what the bot is waiting for instead of how long it takes.
   const head = AppView._issueCardModel(waiting, { noNav: true });
@@ -824,7 +754,6 @@ test('#4663: once a change waits for approval, the bot door offers nothing to as
   const html = cardHtml(model);
   assert.ok(!hasAction(model, 'askBotToBuild', 5), 'no ask button while its change waits');
   assert.doesNotMatch(html, /Ask Homeroom bot to build this/);
-  assert.ok(!menuHas(AppView, html, /^Build it now$/), 'the ≡ keeps its own awaiting-approval rule');
   // On the request's own page, the hint that promised a build goes too.
   const head = AppView._issueCardModel(built, { noNav: true });
   assert.ok(!head.extra.some((e) => e.key === 'bot-door'), 'no "Usually ready…" hint for a build already made');

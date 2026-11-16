@@ -112,7 +112,7 @@ test('the pages: the inbox\'s list beside a conversation, the list as the page w
   // 7 Nov 2026: with the sidebar's nest under Messages gone, an open
   // conversation has the list beside it again; with none open the list is
   // the page (All messages).
-  assert.match(inbox, /const railClass = sidebarRows && !drawer\.on && !discussionOpen \? ' messages-list-page' : '';/);
+  assert.match(inbox, /const railClass = sidebarRows && !drawer\.on && !chatOpen \? ' messages-list-page' : '';/);
   assert.doesNotMatch(inbox, /messages-list-in-rail/);
   const store = read('frontend/src/features/messages/store.ts');
   // One pane at a time is a phone's alone: from 768px the list sits beside

@@ -55,10 +55,6 @@ function sessionRow(over = {}) {
   return {
     id: 1,
     status: 'active',
-    is_headless: false,
-    headless_status: null,
-    headless_outcome: null,
-    headless_issue_number: null,
     shared: false,
     app_id: 3,
     user_id: VIEWER.id,
@@ -68,7 +64,7 @@ function sessionRow(over = {}) {
 }
 
 // The route runs two distinct queries: the viewer's own rows, then (only
-// with ?app=) that app's shared + headless rows. Route by the WHERE clause.
+// with ?app=) that app's shared rows. Route by the WHERE clause.
 function routeQueries({ mine = [], appRows = [] } = {}) {
   poolQueryHandler = async (sql) => {
     if (sql.includes('cs.user_id = $1')) return { rows: mine };
@@ -209,59 +205,11 @@ test('?app includes another user\'s SHARED busy session once view access passes'
     const { body } = await get(server, '/api/me/session-state?app=demo-app');
     assert.deepStrictEqual(body.sessions.map((s) => s.id), [22]);
     const appQ = capturedQueries.find((q) => q.sql.includes('cs.app_id = $1'));
-    assert.ok(appQ.sql.includes('cs.shared_at IS NOT NULL OR cs.is_headless = TRUE'),
-      'only explicitly-shared rows and group-visible auto-runs are eligible');
+    assert.ok(appQ.sql.includes('AND cs.shared_at IS NOT NULL'),
+      'only explicitly-shared rows are eligible');
   } finally {
     appAccess.getAppForUser = orig;
     activeWorkers.delete(22);
-    server.close();
-  }
-});
-
-test('a generating auto-run is non-idle even with no worker in flight', async () => {
-  // The auto-run's liveness lives in the row, not in any in-memory registry,
-  // so this is the case that would silently drop out if the endpoint keyed
-  // on `busy` alone — and every issue card's spinner would clear.
-  routeQueries({
-    mine: [],
-    appRows: [sessionRow({
-      id: 23, user_id: 999, is_headless: true,
-      headless_status: 'generating', headless_issue_number: 900003,
-    })],
-  });
-
-  const orig = appAccess.getAppForUser;
-  appAccess.getAppForUser = async () => ({ id: 3, slug: 'demo-app' });
-  const server = await startServer();
-  try {
-    const { body } = await get(server, '/api/me/session-state?app=demo-app');
-    assert.deepStrictEqual(body.sessions.map((s) => s.id), [23]);
-    assert.strictEqual(body.sessions[0].busy, false);
-    assert.deepStrictEqual(body.sessions[0].headless, {
-      status: 'generating', outcome: null, issueNumber: 900003,
-    });
-  } finally {
-    appAccess.getAppForUser = orig;
-    server.close();
-  }
-});
-
-test('a finished auto-run is idle and drops out', async () => {
-  routeQueries({
-    mine: [],
-    appRows: [sessionRow({
-      id: 24, user_id: 999, is_headless: true,
-      headless_status: 'ready', headless_outcome: 'spec', headless_issue_number: 900003,
-    })],
-  });
-  const orig = appAccess.getAppForUser;
-  appAccess.getAppForUser = async () => ({ id: 3, slug: 'demo-app' });
-  const server = await startServer();
-  try {
-    const { body } = await get(server, '/api/me/session-state?app=demo-app');
-    assert.deepStrictEqual(body.sessions, []);
-  } finally {
-    appAccess.getAppForUser = orig;
     server.close();
   }
 });
@@ -296,7 +244,7 @@ test('the payload is ids-plus-flags only — no titles or PR metadata', async ()
     // mark's working indicator counts the viewer's own sessions by it.
     assert.deepStrictEqual(
       Object.keys(body.sessions[0]).sort(),
-      ['appSlug', 'busy', 'headless', 'id', 'phase', 'status', 'stopping', 'userId']
+      ['appSlug', 'busy', 'id', 'phase', 'status', 'stopping', 'userId']
     );
   } finally {
     activeWorkers.delete(26);
@@ -330,13 +278,10 @@ test('?demo=1 in staging keeps the mock spinners alive through a reconcile', asy
   try {
     const { body } = await get(server, '/api/me/session-state?demo=1');
     const ids = body.sessions.map((s) => s.id).sort((a, b) => a - b);
-    assert.deepStrictEqual(ids, [990001, 990102, 990301]);
+    assert.deepStrictEqual(ids, [990001, 990102]);
     assert.ok(body.sessions.every((s) => s.appSlug === 'usernode'));
-    // The busy own-session card, the busy shared card, and the generating
-    // auto-run on mock issue 900003.
-    const headless = body.sessions.find((s) => s.headless);
-    assert.strictEqual(headless.headless.status, 'generating');
-    assert.strictEqual(headless.headless.issueNumber, 900003);
+    // The busy own-session card and the busy shared card.
+    assert.ok(body.sessions.every((s) => s.busy === true));
   } finally {
     process.env.USERNODE_ENV = prev;
     server.close();

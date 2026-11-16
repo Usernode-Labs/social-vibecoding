@@ -560,7 +560,7 @@ test('the cross-cutting rule lives in the charter, where it is not truncated', (
   assert.ok(section, 'the charter carries the whole rule');
   assert.match(section.text, /share: true/);
   assert.match(section.text, /IN-PROGRESS/);
-  assert.match(section.text, /active-session cap/, 'including what it costs');
+  assert.match(section.text, /counts against the user's cap on active sessions/, 'including what it costs');
   // Charter-only: it must NOT be in the always-delivered instructions, which
   // the client cuts at 2048 with no ellipsis.
   assert.ok(!section.brief, 'no brief — this binds a reader several calls in');

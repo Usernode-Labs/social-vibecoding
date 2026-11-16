@@ -705,9 +705,7 @@ async function getBlobContent(owner, repo, sha) {
 }
 
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
-// branch — used by the headless-session clone flow (#155), which branches a
-// user's new dev branch off the auto session's branch so any pushed commits
-// carry over.
+// branch.
 async function createBranch(owner, repo, branchName, fromBranch = 'main') {
   require('./code-host-write').requireCodeHostWrite('github.createBranch');
   if (onGitHost(owner)) return hostedGit().createBranch(owner, repo, branchName, fromBranch);
@@ -1582,8 +1580,7 @@ async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
 // List the file paths changed between two refs ("main...branch-name").
 // Used by the visuals capture heuristic (src/services/visuals.js) to decide
 // whether a commit range plausibly touches the UI. Uses the compare API
-// (not pulls.listFiles) so it works on the headless path, where no PR
-// exists yet. The compare endpoint returns at most 300 files per page —
+// (not pulls.listFiles) so it works where no PR exists yet. The compare endpoint returns at most 300 files per page —
 // plenty for a "does anything frontend-ish appear?" check.
 async function listChangedFiles(owner, repo, basehead) {
   if (onGitHost(owner)) return hostedGit().listChangedFiles(owner, repo, basehead);

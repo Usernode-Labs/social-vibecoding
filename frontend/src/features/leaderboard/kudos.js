@@ -581,8 +581,8 @@ const Kudos = {
 // app-view.js and home.js each declare their own). Inside the bundle a
 // module's identifiers are its own, which is strictly better — this file now
 // provably calls THESE bodies. Nothing regressed by dropping out of the chain:
-// the four scripts that read escapeHtml/escapeAttr ambiently (app-secrets.js,
-// dev-chat.js, home-panels.js, streaming-markdown.js) were resolving to
+// the three scripts that read escapeHtml/escapeAttr ambiently (app-secrets.js,
+// home-panels.js, streaming-markdown.js) were resolving to
 // app-view.js's and home.js's copies, both of which load later and are still
 // classic scripts.
 function escapeHtml(str) {

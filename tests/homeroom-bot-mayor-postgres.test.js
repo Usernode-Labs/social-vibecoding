@@ -434,8 +434,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await turn('what does my sort request say?', chat);
     const offered = seen[0].tools.map((tool) => tool.function.name);
     assert.ok(offered.includes('get_request'));
-    assert.ok(!offered.includes('create_request'), 'a write of the Mayor\'s is never offered here');
-    assert.deepEqual(platformCalls[0].opened.agentSessionId, null);
+    assert.ok(!offered.includes('create_request'), 'a write is never offered here');
+    assert.equal('agentSessionId' in platformCalls[0].opened, false, 'the grant names no agent session');
     assert.equal(platformCalls[0].opened.rateSubject, `hrbot-dm-${ada.id}`);
     assert.equal(platformCalls[0].opened.userId, ada.id, 'the grant is the person\'s: it sees what they see');
     assert.deepEqual(platformCalls[1], { name: 'get_request', args: { slug: 'seed-swap', number: 3 } });

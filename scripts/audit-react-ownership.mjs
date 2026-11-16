@@ -105,7 +105,6 @@ const CHROME = process.env.CHROME_PATH
  * un-converted section's own `innerHTML` would report as a violation.
  */
 const OWNED = [
-  { sel: '#dc-launchpad-slot [data-launchpad="own-tools-pr"]' }, // #1891: shared React guide
   { sel: '[data-account-email-form]', when: '#settings/email' },
   // `#home-grid-overlay` is appended into this host by home.js during a drag,
   // which this sweep never performs and so never sees. It is a deliberate
@@ -199,11 +198,6 @@ const OWNED = [
   // sweep a closed sheet on every route and report nothing.
   { sel: '#notifications-sheet', when: '#notifications' }, // features/notifications/notifications-sheet.tsx
   { sel: '#messages-sheet', when: '#messages' },           // features/messages/index.tsx
-  // An agent session (#2779, features/agent-session/index.tsx). The phone
-  // screen is React's end to end; the same panel mounted in the Messages
-  // pane is covered by the #messages-sheet entry above, and the deep link
-  // below puts a seeded conversation (src/db/migrate.js, id 990801) in it.
-  { sel: '#agent-session-screen', when: '#agent/' },
   // The AI tab's own page (#6019 follow-up, features/ai/index.tsx).
   { sel: '#ai-screen', when: '#ai' },
 
@@ -265,18 +259,13 @@ const OWNED = [
     except: ['#gc-thread-messages', '[data-kudos-host]'],
   },
   // The opened topic's head — the card and everything under it
-  // (features/dev-board/topic/topic-head.tsx). Two seams inside it stay
-  // legacy-FILLED, each rendered once, empty, with a constant className:
-  // `[data-transcript-body]` (public/js/session-transcript.js writes the
-  // chat and its Fork button) and `[data-kudos-host]` in the detail action
-  // row. Swept on the topic route.
+  // (features/dev-board/topic/topic-head.tsx). One seam inside it stays
+  // legacy-FILLED, rendered once, empty, with a constant className:
+  // `[data-kudos-host]` in the detail action row. Swept on the topic route.
   {
     sel: '#gc-thread-head',
     except: [
-      '[data-transcript-body]', '[data-kudos-host]',
-      // The change card's tabs give the existing chat controllers their
-      // own empty hosts. Their React subtrees are audited separately below.
-      '[data-change-discussion]', '[data-change-workspace]',
+      '[data-kudos-host]',
       // saveIssueTitle writes the error line by id while the editor is open.
       '#dev-issue-title-error',
     ],
@@ -287,30 +276,6 @@ const OWNED = [
   {
     sel: '.gc-chat-pane',
     except: ['#gc-messages'],
-  },
-  // The dev chat's WHOLE screen. `#dc-view` is written by
-  // public/js/app-view.js's `renderDevChatTab`; everything inside it is
-  // features/dev-chat/view.tsx — the session header, the four banners, the
-  // launchpad slot, the transcript, the composer and (on the other branch)
-  // the app's session list. Five separate entries collapsed into this one
-  // when the skeleton stopped being a string.
-  //
-  // ONE host inside it stays legacy-owned and is excepted: `#dc-staging-panel`
-  // is a SLOT the docked preview is positioned over, watched by a
-  // ResizeObserver. `#dc-spec-viewer` was a second — the controller host
-  // `_renderSpecViewer` filled — and is in scope now that the reader is
-  // features/dev-chat/spec-viewer.tsx. The launchpad slot was never excepted:
-  // another module builds its markup, but it arrives through a
-  // dangerouslySetInnerHTML sink React itself owns.
-  //
-  // `#dc-session-list` is in here too, on the no-session branch. This sweep
-  // never reaches it: every route into the chat carries a session id (see
-  // migration-state.md), so the coverage is
-  // tests/archive-session-list.test.js plus the chunk's browser probe, which
-  // drives the branch by hand.
-  {
-    sel: '#dc-view',
-    except: ['#dc-staging-panel'],
   },
   // Only reachable under NATIVE=1 — see the stubbed bridge below. The row is
   // features/header/native-app-version-row.tsx; the module that used to write
@@ -324,9 +289,6 @@ const OWNED = [
   { sel: '[data-connector-status]' },        // features/settings/connectors-list.tsx
   { sel: '[data-connector-connections]' },   // ditto
   { sel: '#github-link-body' },              // features/settings/social-identity.tsx
-  { sel: '#settings-local-agents-list' },    // features/settings/local-agents-list.tsx
-  { sel: '#agent-files-instructions-list' }, // features/settings/agent-files-list.tsx
-  { sel: '#agent-files-skills-list' },
   // The WHOLE Workshop screen (#workshop): features/workshop/index.tsx renders
   // and reconciles every node under this root, and no public/js/** module has
   // ever written inside it — App.navigateToWorkshop drives it through the
@@ -400,20 +362,9 @@ const OWNED = [
 ];
 
 const ROUTES = [
-  '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990411',
-  '?shot=launchpad&venue=own-tools-pr#app/usernode-2d5619/dev/sessions/990401',
   '#home', '#workshop', '#week', '#ai', '#settings', '#settings/app-ai',
-  '#settings/email', '#settings/agent-files', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
-  '#agent/990801', '#agent/990801/changes', '#messages/agent/990801',
+  '#settings/email', '#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts', '#settings/experimental', '#profile', '#leaderboard', '#leaderboard/challenges', '#messages', '#notifications',
   '#app/recipebot', '#app/recipebot/app', '#app/recipebot/dev', '#app/recipebot/dev/chat',
-  '#app/recipebot/dev/sessions/1',
-  // The spec reader, which is the one host inside `#dc-view` whose subtree
-  // only exists while the panel is OPEN — its open state otherwise lives in
-  // localStorage, so no plain navigation reaches it and the sweep would run
-  // over an empty pane. `?shot=spec-viewer` is the deep link dapp.json's own
-  // declared check uses, on the migration-seeded session (src/db/migrate.js
-  // fixes id 900830 precisely so the route is stable).
-  '?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830',
   // A TOPIC page, which is the only route that mounts `.dev-thread` — the
   // thread panel, its composer and the topic card app-view.js fills. Without
   // it that OWNED entry was swept on no route at all. The number is a seeded

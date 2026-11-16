@@ -14,10 +14,10 @@ import { Av as KitAv, Tile as KitTile } from './kit';
  *
  * ── Two message shapes, because the deck has two conversations ────────
  *
- * The agent chat ("Your new idea") is a BUBBLE transcript: your turns are
- * accent-filled and right-aligned, the agent's are neutral and left-aligned,
- * with no names because there are only two participants and one of them is
- * you. The group chat ("Recipe App · 2 members") is a NAMED ROW transcript:
+ * A chat between two ("Your new idea") is a BUBBLE transcript: your turns are
+ * accent-filled and right-aligned, the other side's are neutral and
+ * left-aligned, with no names because there are only two participants and
+ * one of them is you. The group chat ("Recipe App · 2 members") is a NAMED ROW transcript:
  * square avatar, bold name, time, flat text, no bubble — because with n
  * participants the name is the disambiguator and bubbles would waste the
  * width the text needs.

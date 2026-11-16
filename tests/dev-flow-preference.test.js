@@ -162,54 +162,20 @@ test('Settings no longer offers the preference', () => {
   assert.ok(!html.includes('data-settings-section="build-venue"'), 'nor is its part');
 });
 
-test('the venue sheet and the launchpad toggle no longer save a default', () => {
-  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.doesNotMatch(devChat, /_saveDevFlowPreference|\/api\/me\/dev-flow|devFlowPreference/);
-});
-
-test('the dev chat asks nothing at creation, and assumes nothing either', () => {
-  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.doesNotMatch(devChat, /forcePicker/,
-    'nothing re-asks at creation time — the venue dropdown is the door now');
-  // #1353: and nothing ANSWERS for the user either. The saved default used
-  // to turn any untouched session into a web hand-off before a word was
-  // typed — while the venue derivation, which never read the preference,
-  // went on telling the header and the sheet that the session was
-  // On-Platform. One preference, two screens, and the only way back was per
-  // tab. A hand-off is a choice made about THIS session now, through the
-  // dropdown, and recorded on it (chat_sessions.build_venue).
-  const target = devChat.match(/_devFlowTarget\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(target, '_devFlowTarget must exist');
-  assert.doesNotMatch(target[0], /devFlowPreference/,
-    'the walkthrough is not summoned by a standing preference');
-  const venue = devChat.match(/_currentVenueId\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(venue, '_currentVenueId must exist');
-  assert.doesNotMatch(venue[0], /devFlowPreference/,
-    'nor does the venue the whole session paints from claim one');
-});
-
-test('the walkthrough appears exactly where the session says it is handed over', () => {
-  // The gates this used to check — no PR, still active, nothing typed —
-  // existed to keep a walkthrough summoned by a standing PREFERENCE from
-  // landing on work already under way. With that door closed (#1353) the
-  // walkthrough has one cause left: the venue this session is in, which is
-  // a deliberate act and outranks all three of those states by design
-  // (#1281 — a hand-off chosen halfway through a session is still a
-  // hand-off). So the assertion is that there is ONE input, not four.
-  const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
-  const fnStart = devChat.indexOf('_devFlowTarget() {');
-  assert.ok(fnStart !== -1, '_devFlowTarget must exist');
-  const fn = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
-  assert.match(fn, /DevChat\._currentVenueId\(\)/, 'the venue is the whole question');
-  assert.match(fn, /'web-codex'/);
-  assert.match(fn, /'web-claude-code'/);
-  assert.doesNotMatch(fn, /pr_number|status !== 'active'|role === 'user'/,
-    'no second set of gates to fall out of step with the header');
-  // And the surface asks the same one thing, which is the invariant
-  // tests/venue-surface-sync.test.js drives for real.
-  const launchpad = devChat.match(/_launchpadVenue\(\) \{[\s\S]*?\n  \},/);
-  assert.ok(launchpad, '_launchpadVenue must exist');
-  assert.match(launchpad[0], /DevChat\._currentVenueId\(\)/);
+test('no client surface saves or reads a default', () => {
+  // The venue sheet and the launchpad toggle wrote it from the dev chat,
+  // which is retired; nothing in the shell may pick the write back up.
+  const walk = (dir, out = []) => {
+    for (const entry of fs.readdirSync(path.join(__dirname, '..', dir), { withFileTypes: true })) {
+      const rel = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(rel, out);
+      else if (/\.(js|ts|tsx)$/.test(entry.name)) out.push(rel);
+    }
+    return out;
+  };
+  for (const file of [...walk('frontend/src'), ...walk('public/js')]) {
+    assert.doesNotMatch(read(file), /_saveDevFlowPreference|\/api\/me\/dev-flow|devFlowPreference/, file);
+  }
 });
 
 test('the "+" menu asks nothing about venue', () => {
@@ -221,11 +187,6 @@ test('the "+" menu asks nothing about venue', () => {
     'the second propose row is gone');
   assert.ok(!/createProposal\(\{ pickFlow: true \}\)/.test(appView),
     'and nothing re-opens a picker that no longer exists');
-  // The one surviving programmatic entry is the out-of-credits card's, and
-  // it stays: that user has been refused here, so a venue IS decided for
-  // them.
-  assert.match(appView, /createProposal\(\{ flow \}\)/,
-    'the out-of-credits hand-off still opens its walkthrough directly');
 });
 
 test('the ⋯ menu leads with its asks and names its settings group', () => {

@@ -1,14 +1,13 @@
 'use strict';
 
-// Saved drafts in a person's chat with Homeroom bot: the agent chats' list
-// (routes/chat-drafts.js, routes/agent-session-drafts.js), for the place in
-// that chat they are writing in: the chat itself, or one of its threads.
+// Saved drafts in a person's chat with Homeroom bot, for the place in that
+// chat they are writing in: the chat itself, or one of its threads.
 //
 // While the bot works on their message the message box saves what they type
 // instead of sending it (frontend/src/features/messages/bot-stop.ts); a draft
 // is sent later by a tap, never on its own. This module is the table's
-// reads and writes; who may call them is the route's to decide
-// (routes/conversations.js, the bot-drafts routes).
+// reads and writes and the list's limits; who may call them is the route's
+// to decide (routes/conversations.js, the bot-drafts routes).
 //
 // - The list is per person, per conversation, per thread (`threadRootId`, or
 //   null for the chat itself, stored as 0), oldest first.
@@ -16,15 +15,38 @@
 //   never trips the cap. The cap is held by a transaction-scoped advisory
 //   lock on the list, so two devices saving at once cannot both squeeze
 //   under it, and nothing a message send locks is touched.
-// - Limits are the agent chats' own (20 drafts, the id pattern, the
-//   savedAt clamp), except the length: a draft is sent as a message, so it
-//   is the message's 8000 characters, not the agent chats' 10,000.
+// - A draft is sent as a message, so it is at most a message's 8000
+//   characters.
 
 const conversations = require('./conversations');
 const log = require('./logger');
 
 const MAX_DRAFT_CHARS = conversations.MAX_MESSAGE_LENGTH;
 const DRAFTS_CHANGED = 'conversation_drafts_changed';
+
+// How many drafts one list holds.
+const MAX_DRAFTS = 20;
+
+// Client-generated ids: strict enough that the value can only ever be an
+// opaque token.
+const DRAFT_ID_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+// How far back a client-supplied savedAt may reach. A device replaying a
+// months-old local mirror still gets sensible ordering; a device with a
+// broken clock can't pin a draft above everything or into the far future.
+const SAVED_AT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+const CAP_MESSAGE = `That's ${MAX_DRAFTS} saved drafts. Send or delete one first`;
+
+// Client-supplied savedAt → a Date inside [now - 30d, now], or null to let
+// the column default to NOW(). Anything unparseable is simply ignored.
+function clampSavedAt(raw) {
+  if (raw == null) return null;
+  const ms = typeof raw === 'number' ? raw : Date.parse(String(raw));
+  if (!Number.isFinite(ms)) return null;
+  const now = Date.now();
+  return new Date(Math.min(Math.max(ms, now - SAVED_AT_MAX_AGE_MS), now));
+}
 
 function toWire(rows) {
   return rows.map((r) => ({ id: r.draft_id, text: r.content, savedAt: r.saved_at }));
@@ -123,6 +145,10 @@ function pushDraftsChanged(userId, conversationId, threadRootId = null) {
 
 module.exports = {
   MAX_DRAFT_CHARS,
+  MAX_DRAFTS,
+  DRAFT_ID_RE,
+  CAP_MESSAGE,
+  clampSavedAt,
   DRAFTS_CHANGED,
   listDrafts,
   isThreadRoot,

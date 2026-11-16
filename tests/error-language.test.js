@@ -363,7 +363,4 @@ test('the admin console keeps its English', () => {
 test('the comparisons still read error', () => {
   const app = fs.readFileSync(path.join(ROOT, 'public/js/app-view.js'), 'utf8');
   assert.match(app, /data\.error === 'proposal_not_ready'/);
-  const chat = fs.readFileSync(path.join(ROOT, 'frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
-  assert.match(chat, /\/active session not found\/i\.test\(peek\?\.error/);
-  assert.match(chat, /\/busy\/i\.test\(String\(data\.error/);
 });

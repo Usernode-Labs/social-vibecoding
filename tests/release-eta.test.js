@@ -88,16 +88,7 @@ test('the sentence, at each boundary of the estimate', () => {
   assert.equal(words.releaseSentence({ state: 'soon' }, NOW), null);
 });
 
-test('the short form, for a line that already says it merged, and the Done column count', () => {
-  const short = (release) => words.releaseShort(release, NOW);
-  assert.equal(short(next(8 * MIN)), 'Goes live in about 8 minutes');
-  assert.equal(short(next(30 * 1000)), 'Goes live in about a minute');
-  assert.equal(short(next(-MIN)), 'Going live now');
-  assert.equal(short({ state: 'rolling', etaAt: null }), 'Going live now');
-  assert.equal(short({ state: 'waiting', etaAt: null }), 'Waiting for a release');
-  assert.equal(short({ state: 'next', etaAt: null }), 'Goes live in the next release');
-  assert.equal(short(null), null);
-
+test('the Done column count', () => {
   const count = (release, n) => words.releaseCountLine(release, n, NOW);
   assert.equal(count(next(8 * MIN), 2), '2 merged changes go live in the next release (about 8 minutes)');
   assert.equal(count(next(8 * MIN), 1), '1 merged change goes live in the next release (about 8 minutes)');
@@ -121,7 +112,7 @@ test('minutes and ticking: only an estimate still ahead counts down', () => {
 test('the words follow the copy rules: no em dash, no "deploy"', () => {
   const cases = [next(8 * MIN), next(30 * 1000), next(-MIN), { state: 'rolling', etaAt: null }, { state: 'waiting', etaAt: null }, { state: 'next', etaAt: null }];
   for (const release of cases) {
-    for (const said of [words.releaseSentence(release, NOW), words.releaseShort(release, NOW), words.releaseCountLine(release, 2, NOW)]) {
+    for (const said of [words.releaseSentence(release, NOW), words.releaseCountLine(release, 2, NOW)]) {
       assert.doesNotMatch(said, /\u2014|deploy/i, said);
     }
   }

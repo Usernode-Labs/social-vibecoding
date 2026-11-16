@@ -5,9 +5,7 @@
 // ── What was wrong ────────────────────────────────────────────────────
 //
 // "$x left this week" was a REFETCH, and only ever a refetch. The composer's
-// meter re-read /api/budget when a turn ENDED (public/js/app.js calls
-// DevChat.refreshBudget on the billing-switch notice, and dev-chat.js calls it
-// when a session opens or a key is saved); the header drawer's AI-credit row
+// meter re-read /api/budget when a turn ENDED; the header drawer's AI-credit row
 // re-read /api/me/ai-budget when the drawer opened, throttled to three
 // minutes. So the one figure a builder watches while an agent burns their
 // allowance moved only after the agent had finished burning it — which is

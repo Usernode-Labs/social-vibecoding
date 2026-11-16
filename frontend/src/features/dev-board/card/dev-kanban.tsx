@@ -250,9 +250,6 @@ function Column(
               // "Open card" rides in the action band: a column is too
               // narrow for the facts-line seat (fold.tsx).
               detail: 'actions',
-              // No "Open session ›" line under a board card: app.css has no
-              // rule for `.dev-ws-sheet-actions` inside `#dev-kanban`.
-              sessionLink: false,
             }}
           />
         ))}

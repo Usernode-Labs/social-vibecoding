@@ -63,8 +63,7 @@ export function CliTokensListView({ phase, tokens }: CliTokensState) {
             </div>
             {/*
                 Demo rows (staging ?demo=1) are fabricated server-side and have
-                nothing to revoke — they get no button, the same stance the
-                demo agent-files rows take.
+                nothing to revoke — they get no button.
             */}
             {token.revocable ? (
               <button

@@ -1,11 +1,13 @@
 // test:changed: when src/prompts/design-guidance.md (the guidance this suite pins, read through services/prompts.js; scripts/test-changed.js)
 'use strict';
 
-// #2817: every coding agent builds with the same written design guidance,
-// and every scout settles the design in the spec. Claude and OpenRouter stay
-// in parity; the one difference is how the agent checks its work, which
-// follows whether the model running the turn takes images (#3426: an
-// OpenRouter model does when OpenRouter's catalog says so).
+// #2817: every coding agent builds with the same written design guidance
+// (src/prompts/design-guidance.md, read through services/prompts.js).
+// Claude and OpenRouter stay in parity; the one difference is how the agent
+// checks its work, which follows whether the model running the turn takes
+// images (#3426: an OpenRouter model does when OpenRouter's catalog says so).
+// Where Homeroom bot's builds and scouts carry it is
+// tests/homeroom-bot-build-design.test.js's subject.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -13,9 +15,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const prompts = require('../src/services/prompts');
-const { buildCodingAgentConventionsContext } = require('../src/routes/sessions');
-
-const SESSIONS = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
 
 test('the design guidance covers taste, UI/UX and coherence', () => {
   const guidance = prompts.getDesignGuidance();
@@ -77,43 +76,6 @@ test('an OpenRouter turn reads images exactly when its runtime says the catalog 
   }
   const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'worker.js'), 'utf8');
   assert.match(workerSrc, /safeEnv\.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata\?\.supportsImages === true \? '1' : '';/);
-});
-
-test('hosted Claude carries the guidance once as system context; local and Codex inline', () => {
-  const designGuidance = 'SENTINEL design rule';
-  const hosted = buildCodingAgentConventionsContext({ conventions: 'rules', designGuidance });
-  assert.match(hosted.systemPrompt, /==== END PLATFORM CONVENTIONS ====\n\nSENTINEL design rule$/);
-  assert.doesNotMatch(hosted.promptBlock, /SENTINEL design rule/);
-  assert.match(hosted.promptBlock, /The UI design guidance is supplied\nwith them\./);
-
-  for (const options of [{ runLocally: true }, { isCodexSession: true }]) {
-    const inline = buildCodingAgentConventionsContext({ ...options, conventions: 'rules', designGuidance });
-    assert.equal(inline.systemPrompt, null);
-    assert.match(inline.promptBlock, /==== END PLATFORM CONVENTIONS ====\n\nSENTINEL design rule$/);
-  }
-
-  const bare = buildCodingAgentConventionsContext({ conventions: 'rules' });
-  assert.doesNotMatch(bare.promptBlock, /design guidance/, 'no guidance, no pointer to it');
-});
-
-test('every build and scout gets the design text, whatever the backend', () => {
-  assert.match(SESSIONS, /const designGuidance = getDesignGuidance\(\{ readsImages \}\);/);
-  assert.match(SESSIONS, /runLocally, isCodexSession, harness, designGuidance,/,
-    'every transport the build renders carries it');
-  assert.match(SESSIONS, /const scoutDesignBrief = `\\n- \$\{SPEC_DESIGN_BRIEF\}`;/);
-  assert.match(SESSIONS, /so seeding is planned rather than improvised at build time\.\$\{scoutDesignBrief\}/);
-  assert.match(prompts.SPEC_DESIGN_BRIEF, /"### Design" subsection/);
-  assert.match(prompts.SPEC_DESIGN_BRIEF, /before any "### Questions"/,
-    'questions stay last in the user-facing half');
-  assert.match(prompts.SPEC_DESIGN_BRIEF, /Omit it for changes nobody sees/);
-});
-
-test('an OpenRouter scout is told it reads through the shell and changes nothing', () => {
-  // #3296: only when Codex runs it; a model the platform runs in Claude Code
-  // gets Claude's tools and the Claude wording below.
-  assert.match(SESSIONS, /const scoutPlanModeLine = isCodexSession && agentIdentity\.harness !== 'claude'\s*\n\s*\? 'You are running in PLAN MODE: read and search the repository with read-only shell commands/);
-  assert.match(SESSIONS, /: 'You are running in PLAN MODE: you can read files \(Read, Glob, Grep\) but you cannot edit, commit, or push anything\. Do not attempt to\.';/,
-    'the Claude scout keeps its exact wording');
 });
 
 test('one accent, and the colours an app\'s "## Design" section gives its subject are not accents (7 Oct 2026)', () => {

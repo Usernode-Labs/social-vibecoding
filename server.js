@@ -46,7 +46,6 @@ const { conversationRoutes } = require('./src/routes/conversations');
 const { friendRoutes } = require('./src/routes/friends');
 const { contentReportRoutes } = require('./src/routes/content-reports');
 const { sessionRoutes } = require('./src/routes/sessions');
-const { agentSessionRoutes } = require('./src/routes/agent-sessions');
 const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { demoModeRoutes } = require('./src/routes/demo-mode');
@@ -88,7 +87,6 @@ const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { appPermissionsRoutes, declaredFor, grantedCapabilities, effectiveCapabilities } = require('./src/routes/app-permissions');
-const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { reportAiRoutes } = require('./src/routes/report-ai');
@@ -105,8 +103,6 @@ const { homePanelRoutes } = require('./src/routes/home-panels');
 const { onboardingRoutes } = require('./src/routes/onboarding');
 const { adultAttestationRoutes } = require('./src/routes/adult-attestation');
 const { homeLayoutRoutes } = require('./src/routes/home-layout');
-const { chatDraftsRoutes } = require('./src/routes/chat-drafts');
-const { agentSessionDraftsRoutes } = require('./src/routes/agent-session-drafts');
 const { devFlowRoutes } = require('./src/routes/dev-flow');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
@@ -145,7 +141,6 @@ const worker = require('./src/services/worker');
 // stop handle and its tail, exported below for the tests that drive them.
 const turnRecovery = require('./src/services/turn-recovery');
 const { adoptOrphanWorker } = turnRecovery;
-const sessionBus = require('./src/services/session-bus');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
 const lifecycle = require('./src/services/lifecycle');
@@ -178,7 +173,7 @@ let startupDiagnostics = null;
 
 // First of all: count every request until it is answered, so the shutdown
 // drain in cleanup() can wait for the handlers still writing rather than
-// exit from under them. Event streams and long polls leave the count (see
+// exit from under them. Event streams leave the count (see
 // src/middleware/inflight-requests.js).
 app.use(inflightRequests.inflightRequests());
 
@@ -351,10 +346,6 @@ app.use((req, res, next) => {
       && /^\/api\/conversations\/[^/]+\/attachments$/.test(req.path)) {
     return next();
   }
-  // Agent-file uploads (#460) carry up to 48 KB of file content, which
-  // can exceed the 100kb default once JSON-escaped — the route mounts
-  // its own 256kb parser (see routes/user-agent-files.js).
-  if (req.path === '/api/me/agent-files' && req.method === 'POST') return next();
   // Locked report snapshots (report-lock-share) carry the full standalone
   // report HTML, which routinely exceeds 100kb; the route mounts its own
   // 3mb parser (routes/report-snapshots.js).
@@ -775,8 +766,6 @@ app.use(require('./src/routes/dictation').dictationRoutes(config));
 app.use(friendRoutes(config));
 app.use(contentReportRoutes(config));
 app.use(proposalHandoffRoutes(config));
-// #2779: agent sessions, the per-user conversation that starts changes.
-app.use(agentSessionRoutes(config));
 // #4313: the ?demo=1 Needs-you cards' votes, answered before the session
 // routers' guard refuses their negative ids (staging only).
 app.use(demoNeedsVoteRoutes());
@@ -853,7 +842,6 @@ app.use(appDirectoryRoutes(config));
 app.use(approverRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(appPermissionsRoutes(config));
-app.use(userAgentFilesRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(reportAiRoutes(config));
@@ -908,11 +896,6 @@ app.use(homeLayoutRoutes(config));
 // separate public avatarRoutes mounted above.
 app.use(profileRoutes(config));
 app.use(stakingRoutes(config));
-// #940: saved dev-chat drafts, now server-backed so they follow a user
-// across devices. Owner-scoped per session, like the /api/sessions/* family
-// in routes/sessions.js.
-app.use(chatDraftsRoutes(config));
-app.use(agentSessionDraftsRoutes(config));
 // #1049: the alternate development flows (Claude Code / Codex web UI) as
 // ordinary browser routes rather than MCP-only tools. App-scoped with the
 // same 'collab' bar as the other dev surfaces, so behind authMiddleware.
@@ -1330,9 +1313,6 @@ async function start() {
   // The limiters that gate a send, a bill or a guess count in Postgres: one
   // budget for every process, kept across a deploy (services/rate-limit-store.js).
   require('./src/services/rate-limit-store').setPool(getPool(config));
-  // Turns' streams, kept where a browser served by any process reads them
-  // (services/session-bus.js).
-  sessionBus.init({ pool: getPool(config) });
   // The clients every process that runs the workflow machines makes
   // (src/workflow/setup.ts): the push sender, GitHub, the model.
   await require('./src/workflow/setup.ts').startWorkflowClients(config);
@@ -1452,7 +1432,7 @@ if (require.main === module) {
 }
 
 // Test-only surface (#183): the orphan-adoption + recovered-turn finalize
-// internals, so the headless-recovery guards stay covered by node --test.
+// internals, so the recovery guards stay covered by node --test.
 // `cleanup` + `__setShutdownTargets`
 // (#767) let tests drive the graceful-shutdown sequence against a stubbed
 // listener and pool without booting a server. Not used by any runtime caller.
@@ -1472,8 +1452,8 @@ module.exports = {
   // finalizeRecoveredTurn already exposes one level down.
   resumeDetachedTurnInner: turnRecovery.resumeDetachedTurnInner,
   // ...and the handle factory it is driven with, so a test exercises the
-  // real dual-channel `send` (WS broadcast + session bus, `_seq` and all)
-  // rather than a hand-rolled stand-in that could drift from it.
+  // real `send` (the WS broadcast, `_seq` and all) rather than a
+  // hand-rolled stand-in that could drift from it.
   buildRecoveryStopHandle: turnRecovery.buildRecoveryStopHandle,
   finalizeRecoveredTurn: turnRecovery.finalizeRecoveredTurn,
   cleanup,
@@ -1503,7 +1483,7 @@ module.exports = {
 //
 // What the drain waits for, and for how long:
 //   - HTTP handlers still answering (src/middleware/inflight-requests.js,
-//     less event streams and long polls) and the work registered in
+//     less event streams) and the work registered in
 //     services/inflight-work.js — a merge pass, a push send — up to
 //     shutdownDrainMs(): DRAIN_TIMEOUT_MS under docker-compose, a minute by
 //     default on Kubernetes, whose 90s grace period this used to leave almost

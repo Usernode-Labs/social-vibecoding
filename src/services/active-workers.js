@@ -200,7 +200,7 @@ const activeWorkers = new ActiveWorkerSet();
 const activeSessionOperations = new Map();
 
 // Register non-worker operations that must not overlap a coding turn (for
-// example, adopting and checking an exact commit submitted by a local agent).
+// example, adopting and checking an exact commit a coding agent submitted).
 // Reference counts make independent callers safe, and the returned release
 // closure is idempotent so every owner can clean up in a finally block.
 // This process sees the operation at once; `release.recorded` resolves once
@@ -270,8 +270,8 @@ function ownHolder() {
 
 // The same, for the platform's every process: this one's memory, then what
 // the database says works on the session (src/workflow/session-work.ts
-// workedOnSql: a turn's record, a turn its machine runs, a local agent's
-// turn, a shots run, a durable build, a sync, a recorded operation). For a
+// workedOnSql: a turn's record, a turn its machine runs, a shots run, a
+// durable build, a sync, a recorded operation). For a
 // decision about a session another process may be working on. A database
 // that cannot answer leaves this process's own answer, as a reader that
 // cannot see another process never calls it busy. `exceptTurn`: asked by a

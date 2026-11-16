@@ -37,7 +37,6 @@ if (spec.kind === 'release') {
     await pool.query('INSERT INTO wf_test_stop_effects (pid, session_id, journal) VALUES ($1, $2, $3)', [process.pid, sessionId, journal]);
     return 'stopped';
   };
-  require('../../src/services/session-bus').publish = () => {};
   require('../../src/services/ws').broadcastGlobal = () => {};
 }
 const commands = { release: [workerRelease, workerReleaseServices], stop: [workerStop, workerStopServices], interrupt: [workerInterrupt, workerInterruptServices] };

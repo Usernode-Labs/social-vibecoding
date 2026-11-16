@@ -6,9 +6,8 @@ import * as api from './api';
 import type { SavedDraft } from './api';
 
 /*
- * SAVED DRAFTS, IN THE CHAT WITH HOMEROOM BOT. The agent chats' list
- * (features/agent-session/store.ts "Saved drafts", the dev chat's #798),
- * for the viewer's own chat with the bot and each of its threads.
+ * SAVED DRAFTS, IN THE CHAT WITH HOMEROOM BOT, for the viewer's own chat
+ * with the bot and each of its threads.
  *
  * While the bot works on their message the box saves what is typed instead
  * of sending it (./bot-stop.ts). A draft is words only, kept on the server
@@ -37,7 +36,7 @@ import type { SavedDraft } from './api';
 
 export type { SavedDraft } from './api';
 
-/** The server's cap (routes/chat-drafts.js MAX_DRAFTS): a full list refuses a save and evicts nothing. */
+/** The server's cap (services/conversation-drafts.js MAX_DRAFTS): a full list refuses a save and evicts nothing. */
 export const MAX_SAVED_DRAFTS = 20;
 
 const NONE: readonly SavedDraft[] = Object.freeze([]);
@@ -190,7 +189,7 @@ export function saveBotDraft(conversationId: number, threadRootId: number | null
  * Take a draft off the list, to send it or to put it back in the box: its
  * words, or null when it is no longer there. What the box held (`typed`) is
  * kept as a draft of its own first, so emptying the box for the draft never
- * throws away something the viewer wrote (the dev chat's #1962 rule).
+ * throws away something the viewer wrote (#1962).
  */
 export function takeBotDraft(conversationId: number, threadRootId: number | null, draftId: string, typed = ''): string | null {
   const held = botDraftsFor(conversationId, threadRootId);

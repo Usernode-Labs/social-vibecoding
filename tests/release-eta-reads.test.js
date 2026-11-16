@@ -55,48 +55,6 @@ const APP = (over = {}) => ({
 
 test.beforeEach(() => releaseWatch._forTest.resetOutlook());
 
-test('agent sessions: a Homeroom change going live carries its release; a child app\'s is not asked about', async () => {
-  const agentSessions = require('../src/services/agent-sessions');
-  const row = (id, change) => ({ id, user_id: 4, title: 't', title_source: 'auto', status: 'open', ...change });
-  const p = pool((sql) => {
-    if (/FROM agent_sessions s/.test(sql) && /LIMIT \$4/.test(sql)) {
-      return [
-        row(7, { change_id: 50, change_status: 'merging', change_app_slug: 'usernode-2d5619', change_app_self_hosted: true }),
-        row(8, { change_id: 60, change_status: 'merging', change_app_slug: 'notes', change_app_self_hosted: false }),
-        row(9, { change_id: 70, change_status: 'merging', change_app_slug: 'usernode-2d5619', change_app_self_hosted: true }),
-        row(10, { change_id: 80, change_status: 'promoted', change_app_slug: 'usernode-2d5619', change_app_self_hosted: true }),
-      ];
-    }
-    return undefined;
-  });
-  const { sessions } = await agentSessions.listAgentSessions(p, { userId: 4 });
-  assert.deepEqual(sessions[0].activeChange.release, EXPECTED());
-  assert.equal(sessions[1].activeChange.release, undefined, 'a child app\'s');
-  assert.equal(sessions[2].activeChange.release, undefined, 'still being merged: the read finds no merged row');
-  assert.equal(sessions[3].activeChange.release, undefined);
-  assert.deepEqual(p.asked(), [[50, 70]], 'one read, for the Homeroom changes going live only');
-
-  // Nothing going live: no read at all.
-  const quiet = pool((sql) => (/FROM agent_sessions s/.test(sql) ? [row(10, { change_id: 80, change_status: 'active', change_app_self_hosted: true })] : undefined));
-  await agentSessions.listAgentSessions(quiet, { userId: 4 });
-  assert.deepEqual(quiet.asked(), []);
-});
-
-test('agent sessions: the conversation and its changes drawer', async () => {
-  const agentSessions = require('../src/services/agent-sessions');
-  const change = { change_id: 50, change_status: 'merging', change_app_slug: 'usernode-2d5619', change_app_self_hosted: true };
-  const p = pool((sql) => {
-    if (/FROM agent_sessions s/.test(sql)) return [{ id: 7, user_id: 4, title: 't', title_source: 'auto', status: 'open', ...change }];
-    if (/FROM chat_sessions c JOIN apps a/.test(sql)) return [change, { ...change, change_id: 49, change_status: 'merged' }];
-    return undefined;
-  });
-  const session = await agentSessions.getAgentSession(p, { userId: 4, id: 7 });
-  assert.deepEqual(session.activeChange.release, EXPECTED());
-  assert.deepEqual(session.changes[0].release, EXPECTED());
-  assert.equal(session.changes[1].release, undefined, 'live');
-  assert.deepEqual(p.asked(), [[50]]);
-});
-
 test('the bot DM\'s ready cards: a Homeroom merge going live says when', async () => {
   const dm = require('../src/services/homeroom-bot-dm');
   const card = (message_id, session_id, status, app) => ({ message_id, session_id, status, live_at: null, ...app });
