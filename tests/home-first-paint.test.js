@@ -399,8 +399,9 @@ test('the built-in art is precached, every file of it (tests/pwa-sw-classify.tes
 test('the tile is sized in its own attributes and decoded with the frame that draws it', () => {
   const card = read('frontend', 'src', 'features', 'leaderboard', 'challenge-card.tsx');
   const img = /<img\s+src=\{art\.src\}([\s\S]*?)\/>/.exec(card)[1];
-  assert.match(img, /width=\{64\}/);
-  assert.match(img, /height=\{64\}/);
+  // 64px in a card's tile; 36px in the small tile of a list row (#6661).
+  assert.match(img, /width=\{size === 'sm' \? 36 : 64\}/);
+  assert.match(img, /height=\{size === 'sm' \? 36 : 64\}/);
   assert.match(img, /decoding="sync"/);
 });
 
