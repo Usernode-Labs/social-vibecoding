@@ -41,7 +41,7 @@ test('a minute is its UTC start, and a process is its hostname cut to the column
 test('the route is the template Express declared, never the path requested', () => {
   const req = (route, baseUrl = '', extra = {}) => ({ route: route && { path: route }, baseUrl, ...extra });
   assert.equal(counts.routeTemplate(req('/api/apps/:slug/topics/:key/signals')), '/api/apps/:slug/topics/:key/signals');
-  assert.equal(counts.routeTemplate(req('/turns/next', '/api/cli/agent')), '/api/cli/agent/turns/next');
+  assert.equal(counts.routeTemplate(req('/status', '/api/cli/token')), '/api/cli/token/status');
   assert.equal(counts.routeTemplate(req(null)), '(unmatched)', 'no route matched');
   assert.equal(counts.routeTemplate({}), '(unmatched)');
   assert.equal(counts.routeTemplate(req(['/api/a', '/api/b'])), '/api/a|/api/b');
@@ -475,26 +475,6 @@ test('a request whose client gave up first still costs what it took, counted as 
   assert.deepEqual([events.requests, events.streams, events.totalMs], [1, 1, 0],
     'an event stream ended by its client counts as a stream, its time left out');
   assert.deepEqual(finished.map((e) => [e.route, e.aborted]), [['/api/slow', true]], 'the stall watcher hears of it');
-});
-
-test('a long poll marked open-ended counts as held: no time, and no suspect in a stall', async () => {
-  const { openEnded } = require('../src/middleware/inflight-requests');
-  const c = counts.createCounts({ pod: 'p1' });
-  const finished = [];
-  const app = express();
-  app.use(requestCounts({ counts: c, health: { noteFinished: (e) => finished.push(e) } }));
-  app.get('/api/turns/next', (_req, res) => { openEnded(res); setTimeout(() => res.json({ turn: null }), 300); });
-  const server = await listen(app);
-  try {
-    await (await fetch(`http://127.0.0.1:${server.address().port}/api/turns/next`)).json();
-    for (let i = 0; i < 50 && !c.snapshot().length; i += 1) await new Promise((t) => setTimeout(t, 10));
-  } finally {
-    server.close();
-  }
-  const [r] = c.snapshot()[0].routes;
-  assert.deepEqual([r.route, r.requests, r.streams, r.totalMs], ['/api/turns/next', 1, 1, 0]);
-  assert.equal(c.snapshot()[0].requests, 1, 'it still counts in the /api/ totals');
-  assert.deepEqual(finished, []);
 });
 
 test('pipelined requests each count their own bytes', async () => {

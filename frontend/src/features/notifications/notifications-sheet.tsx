@@ -31,7 +31,7 @@
  * different things. It used to sum the rows paged in so far.
  *
  * The Messages filter is gone. It repeated the Messages tab in the bar
- * (which lists the same conversations and the agents beside them), and the
+ * (which lists the same conversations), and the
  * strip is now the count you came for and the archive. A message is still a
  * row here; consecutive lines from one conversation still collapse into one
  * counted row (collapseConversationRuns in ./notifications.js).

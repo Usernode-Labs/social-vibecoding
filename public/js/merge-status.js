@@ -12,7 +12,7 @@
 // precedence so the highest-signal stage always wins. `badgeHtml` / `pillHtml`
 // render that state consistently everywhere.
 //
-// Loaded as a plain <script> before dev-chat.js / app-view.js / home.js
+// Loaded as a plain <script> before app-view.js
 // (window.MergeStatus); also exported via module.exports so the derivation
 // can be unit-tested under Node.
 (function (root) {
@@ -268,11 +268,10 @@
     // 0 — #2038: the two states only the SERVER can report.
     //
     // The board card derives every other reason itself, as a TAG, from the
-    // columns it already reads (AppView.blockReasons). This function feeds a
-    // different surface — the dev-chat header pill and the home strip, which
-    // have one slot and no tag line — so here the two server-known states do
-    // take the slot, because on those surfaces there is nowhere else for them
-    // to go. Both are in-flight or waiting: neither asks the reader to act.
+    // columns it already reads (AppView.blockReasons). This function feeds
+    // the surfaces with one slot and no tag line (a state pill), so here the
+    // two server-known states do take the slot, because there is nowhere
+    // else for them to go. Both are in-flight or waiting: neither asks the reader to act.
     var served = (integ && Array.isArray(integ.blockReasons)) ? integ.blockReasons : [];
     // GitHub held this change's merge back: it was still finishing an earlier
     // merge, or refused it for a reason nobody has to act on. The queue tries

@@ -35,9 +35,8 @@
  * came from is the one you go back to. A PLAIN click does what the header's
  * listener in public/js/app.js did on this route once its claim chain
  * declined: `NavLink.isNativeClick` first, then preventDefault, then follow
- * the href by assigning `location.hash`. It does not consult that chain
- * (`DevChat.handleBack` and the rest): nothing in it claims a topic, and the
- * href is the answer.
+ * the href by assigning `location.hash`. It does not consult that chain:
+ * nothing in it claims a topic, and the href is the answer.
  *
  * The label is the destination's name, "Workshop", with the chevron as its
  * glyph; the accessible name says the whole thing. The native back-swipe

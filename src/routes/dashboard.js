@@ -112,8 +112,8 @@ const UTC_TODAY_SQL = "(CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date";
 // participation. Positive project-use heartbeats count; the independent
 // heartbeat-engagement work will tighten their legacy idle behavior. Every
 // other arm is a deliberate human action. Passive reads and system,
-// assistant, or generated rows do not count. Owner-scoped conversations
-// (Mayor and Global Chat) join back to their human owner; every other source
+// assistant, or generated rows do not count. Global Chat's owner-scoped
+// conversations join back to their human owner; every other source
 // carries its actor directly. UNION, rather than UNION ALL, keeps the result
 // de-duplicated when one person acts more than once or on several surfaces.
 // Current-state vote/kudos tables preserve the rows still present; their
@@ -133,7 +133,6 @@ function activityDaysSql(includeAdmins) {
   const aa = adminFilter('aa.user_id', includeAdmins);
   const cm = adminFilter('cm.user_id', includeAdmins);
   const cs = adminFilter('cs.user_id', includeAdmins);
-  const ags = adminFilter('ags.user_id', includeAdmins);
   const messages = adminFilter('m.sender_id', includeAdmins);
   const globalChat = adminFilter('gct.user_id', includeAdmins);
   const prVotes = adminFilter('pv.user_id', includeAdmins);
@@ -154,11 +153,6 @@ function activityDaysSql(includeAdmins) {
     FROM chat_session_messages csm
     JOIN chat_sessions cs ON cs.id = csm.session_id
    WHERE cs.user_id IS NOT NULL AND csm.role = 'user' ${cs}
-  UNION
-  SELECT ags.user_id, (csm.created_at AT TIME ZONE 'UTC')::date AS day
-    FROM chat_session_messages csm
-    JOIN agent_sessions ags ON ags.id = csm.agent_session_id
-   WHERE csm.session_id IS NULL AND csm.role = 'user' ${ags}
   UNION
   SELECT m.sender_id, (m.created_at AT TIME ZONE 'UTC')::date AS day
     FROM conversation_messages m
@@ -979,9 +973,10 @@ function dashboardRoutes(config) {
                               WHEN elapsed_ms < 600000  THEN '5-10m'
                               WHEN elapsed_ms < 1200000 THEN '10-20m'
                               ELSE '20m+' END`;
-    // Mirrors llm.isCompletionClaim's phrase family in SQL, so a claim made
-    // BEFORE suppression shipped is still counted (historical v1 rows have
-    // suppressed=false but the phrase is right there in estimate_text).
+    // The "nearly done" phrase family the estimator used to suppress, in
+    // SQL, so a claim made BEFORE suppression shipped is still counted
+    // (historical v1 rows have suppressed=false but the phrase is right
+    // there in estimate_text).
     const CLAIM_RE = `(nearly|almost|just about)[[:space:]]+(done|finished|complete|there)|wrapping[[:space:]]+up|finishing[[:space:]]+(up|off)|just[[:space:]]+finishing|final[[:space:]]+(touches|tweaks|checks)`;
     const metricsSql = (windowed, groupBy) => `
       SELECT

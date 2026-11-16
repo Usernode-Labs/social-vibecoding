@@ -2,7 +2,7 @@
 
 // #4487: a Homeroom bot proposal's visible changes, for its before/after
 // shots. The bot's build declares them itself with `declare_visible_changes`
-// (homeroom-bot-live.js buildPrompt), exactly as a dev chat's build does.
+// (homeroom-bot-live.js buildPrompt).
 // When it did not, they are derived here from the HTML spec the bot wrote
 // before building: its `<ol data-changes>` lists each visible change in plain
 // words with `data-steps` to reach it (prompts.js specHtmlContract), which is

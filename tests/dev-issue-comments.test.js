@@ -84,8 +84,8 @@ test('the module still decides the stamp and which sanitizer runs, and drops a s
   const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   const fn = code.match(/_requestThreadRows\(number\) \{([\s\S]*?)\n {2}\},/);
   assert.ok(fn, '_requestThreadRows() found');
-  assert.match(fn[1], /DevChat\.renderMarkdown\(str, \{ images: true \}\)/);
-  // The fallback for a page where dev-chat.js did not load escapes instead.
+  assert.match(fn[1], /PlatformMarkdown\.render\(str, \{ images: true \}\)/);
+  // The fallback for a page where the platform's renderer did not load escapes instead.
   assert.match(fn[1], /whitespace-pre-wrap font-sans">\$\{escapeHtml\(str\)\}/);
   // #1808: the thread's own stamp, never a slice of GitHub's UTC string.
   assert.match(fn[1], /GroupChat\._stamp\(iso\)/);
@@ -135,7 +135,7 @@ test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec'
   // reader would (paragraph semantics), and the Workshop row's preview
   // names it.
   const rows = code.match(/_requestThreadRows\(number\) \{([\s\S]*?)\n {2}\},/)[1];
-  assert.match(rows, /DevChat\.renderMarkdown\(str, \{ breaks: false \}\)/);
+  assert.match(rows, /PlatformMarkdown\.render\(str, \{ breaks: false \}\)/);
   assert.match(rows, /githubSpec: spec \? \{ title: spec\.title, markdown: spec\.body, html: renderSpec\(spec\.body\) \} : null,/);
   const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
   assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);

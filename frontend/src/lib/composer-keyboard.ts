@@ -20,10 +20,10 @@ import { useEffect, useRef, type RefObject } from 'react';
  * top edge, its box above it. Off screen, exactly as reported.
  *
  * The screens where the composer stayed put — a project's channel, a
- * channel's reply thread, a dev session — were never doing that alone. Each
+ * channel's reply thread — were never doing that alone. Each
  * is mounted by a legacy controller that calls `PlatformUI.attachScreenFx`
  * on its scroller (app-view.js renderGroupChatTab, group-chat.js
- * mountThread, dev-chat.js), and that attaches the kit's
+ * mountThread), and that attaches the kit's
  * `unNative.attachKeyboardAvoidance`, whose settled pin (native.js
  * `settledPin`) puts a fixed shell's pan back with `window.scrollTo(0, 0)`
  * once the keyboard's burst of viewport events has gone quiet. Pan undone,

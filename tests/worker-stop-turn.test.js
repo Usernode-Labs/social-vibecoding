@@ -1094,15 +1094,6 @@ test('ordinary journal stop preserves TERM grace and fences the journal before s
   } finally { restore(); }
 });
 
-test('retry-time worker cancellation returns false on web without runtime access', async t => {
-  const before = process.env.PROCESS_ROLE; process.env.PROCESS_ROLE = 'web';
-  t.after(() => { if (before == null) delete process.env.PROCESS_ROLE; else process.env.PROCESS_ROLE = before; });
-  const worker = require('../src/services/worker');
-  t.mock.method(worker, 'stopTurn', () => { throw new Error('web signal'); });
-  t.mock.method(worker, 'isWorkerExecuting', () => { throw new Error('web probe'); });
-  assert.equal(await require('../src/services/worker-interrupt').waitForTurnStopped(8402, 'unused'), false);
-});
-
 test('a machine stops only its own turn: another machine\'s, a person\'s or another kind is left alone', async () => {
   const { worker, calls, dbCalls, activeTurns, restore } = loadWorker();
   try {

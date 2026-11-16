@@ -1,21 +1,22 @@
-// The connector walkthrough is taught on TWO screens now, from one source
+// The connector walkthrough is taught on TWO screens, from one source
 // (#2706).
 //
-// The ask was to put the "connect Homeroom" steps for Claude and ChatGPT on
-// the dev session page itself, inline, instead of sending the reader to
-// Settings. The risk that comes with that ask is a second copy of six and
-// six steps of product-specific prose, which drifts the first time either
-// product moves a button — and the facts here are the ones people already
-// get wrong (the exact connector name, "there is no client secret",
-// ChatGPT's plugins directory, reworked for #4431 and #4433). So the
-// steps live in
+// Settings › Connectors teaches the "connect Homeroom" steps for Claude and
+// ChatGPT, and so does Homeroom bot's new thread when Claude Code or ChatGPT
+// is picked as the builder and its connector is not there yet
+// (frontend/src/features/messages/thread-builder.tsx, BuilderSetup). The risk
+// that comes with a second screen is a second copy of six and four steps of
+// product-specific prose, which drifts the first time either product moves a
+// button — and the facts here are the ones people already get wrong (the
+// exact connector name, "there is no client secret", ChatGPT's plugins
+// directory, reworked for #4431 and #4433). So the steps live in
 // frontend/src/features/settings/connector-setup-steps.tsx and both screens
 // render that module.
 //
 // This file pins the arrangement rather than the prose: one owner for the
 // steps, no second copy on either screen, no host written into the copy, and
-// the seam between the launchpad's innerHTML card and the React island that
-// sits beside it.
+// the ticks that are Settings' alone. What the builder's card renders is
+// tests/bot-new-thread.test.js's subject.
 //
 // Run with: node --test tests/connector-setup-shared.test.js
 
@@ -27,7 +28,6 @@ const assert = require('node:assert/strict');
 globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
 
 const read = (...rel) => fs.readFileSync(path.join(__dirname, '..', ...rel), 'utf8');
 // The assertions below are about COPY, and a header comment is free to
@@ -46,20 +46,9 @@ const wiredEnglish = (source) => [...source.matchAll(/['"]((?:settings|core):[\w
 const STEPS = read('frontend', 'src', 'features', 'settings', 'connector-setup-steps.tsx');
 const SETTINGS_SECTION = read('frontend', 'src', 'features', 'settings', 'sections', 'connectors.tsx');
 const SETTINGS_JS = read('frontend', 'src', 'features', 'settings', 'settings.js');
-const INLINE = read('frontend', 'src', 'features', 'dev-chat', 'connector-setup-inline.tsx');
-const HANDOFF = read('frontend', 'src', 'features', 'agent-session', 'handoff.tsx');
-const VIEW = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
-const DEV_CHAT = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-const FLOW_SELECT = read('public', 'js', 'dev-flow-select.js');
+const BUILDER = read('frontend', 'src', 'features', 'messages', 'thread-builder.tsx');
 
-const DevFlowSelect = require('../public/js/dev-flow-select.js');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-
-let cached = null;
-const card = () => (cached || (cached = loadTsx('frontend/src/features/dev-chat/connector-setup-inline.tsx')));
-const cardHtml = (view) => renderToHtml(createElement(card().ConnectorSetupInline, {
-  view: { product: 'Claude', url: 'https://example.test/mcp', connected: false, ...view },
-}));
 
 test('the shared module is the only place the two walkthroughs are written', () => {
   // Six and four, the counts both routes' summaries in Settings advertise
@@ -78,7 +67,7 @@ test('the shared module is the only place the two walkthroughs are written', () 
   // — the Codex and generic-client routes still render rows in that idiom —
   // so the assertion is on the product walkthroughs' own first lines, which
   // are what a copy would have to reproduce.
-  for (const [name, src] of [['Settings', SETTINGS_SECTION], ['the launchpad card', INLINE]]) {
+  for (const [name, src] of [['Settings', SETTINGS_SECTION], ['the thread builder', BUILDER]]) {
     assert.doesNotMatch(src, /Open connector settings\./, `${name} does not restate Claude's steps`);
     assert.doesNotMatch(src, /Open the plugins directory\./, `${name} does not restate ChatGPT's steps`);
     // Nor wires the steps' own messages: those ids belong to the shared module.
@@ -86,13 +75,13 @@ test('the shared module is the only place the two walkthroughs are written', () 
   }
   assert.match(SETTINGS_SECTION, /<ClaudeSetupSteps track="claude" \/>/);
   assert.match(SETTINGS_SECTION, /<ChatgptSetupSteps track="chatgpt" \/>/);
-  assert.match(INLINE, /from '\.\.\/settings\/connector-setup-steps'/);
+  assert.match(BUILDER, /from '\.\.\/settings\/connector-setup-steps'/);
 });
 
 test('the shared steps point at nothing that exists on only one of the screens', () => {
   // Claude's step 2 used to send the reader to the "Name it homeroom"
   // disclosure "under these steps" for why the spelling matters. That block
-  // is on the Settings pane and nowhere else, so on the launchpad the
+  // is on the Settings pane and nowhere else, so on another screen the
   // sentence pointed at nothing. The reason is in the step now; Settings
   // keeps the disclosure for what a step should not carry.
   const prose = `${stripComments(STEPS)}\n${wiredEnglish(STEPS)}`;
@@ -101,28 +90,27 @@ test('the shared steps point at nothing that exists on only one of the screens',
   // The one thing a step may point at is the value each caller renders
   // above it, and both callers do render it. Claude's steps still do.
   // ChatGPT's step 3 names the endpoint itself instead, but carries it the
-  // same way — from the caller, never written into the copy: the
-  // launchpad card and the hand-off pass the live value as a prop, and
-  // Settings' interior ships a fill-in placeholder that settings.js
-  // replaces with the same derived origin the #connector-url field shows.
+  // same way — from the caller, never written into the copy: the thread
+  // builder passes the live value as a prop, and Settings' interior ships a
+  // fill-in placeholder that settings.js replaces with the same derived
+  // origin the #connector-url field shows.
   assert.match(wiredEnglish(STEPS), /the MCP server URL above/);
   assert.match(STEPS, /title=\{t\('settings:connectors\.chatgptSteps\.url\.title'\)\}/);
   assert.equal(message('settings:connectors.chatgptSteps.url.title'), 'Enter Homeroom MCP server URL.');
   assert.match(STEPS, /data-connector-step-url="1"/);
-  assert.match(INLINE, /<ChatgptSetupSteps url=\{url\} \/>/);
-  assert.match(HANDOFF, /<ChatgptSetupSteps url=\{connectorUrl\} \/>/);
+  assert.match(BUILDER, /<ChatgptSetupSteps url=\{url\} \/>/);
   assert.match(SETTINGS_JS, /data-connector-step-url/,
     'Settings fills the ChatGPT step from the derived origin, as it fills the field');
-  assert.match(INLINE, /<ConnectorUrl url=\{url\} \/>/);
+  assert.match(BUILDER, /<ConnectorUrl url=\{url\} \/>/);
   assert.match(SETTINGS_SECTION, /id="connector-url"/);
   // And the fact the cross-reference was carrying survived the move.
   assert.match(wiredEnglish(STEPS), /Claude Code builds its permission rules/);
 });
 
 test('Settings keeps its route, and everything that is only on it', () => {
-  // #2706 moves the STEPS, not the pane. The reference a launchpad step has
-  // no business reproducing has to still be there, or this became a
-  // migration nobody asked for.
+  // #2706 shares the STEPS, not the pane. The reference a step on another
+  // screen has no business reproducing has to still be there, or this
+  // became a migration nobody asked for.
   for (const marker of [
     'data-settings-section="connectors"',
     'id="connector-url"',
@@ -133,8 +121,6 @@ test('Settings keeps its route, and everything that is only on it', () => {
   ]) {
     assert.ok(SETTINGS_SECTION.includes(marker), `${marker} stays on the Settings pane`);
   }
-  // And the card points back at it rather than replacing it.
-  assert.match(INLINE, /href="#settings\/connectors"/);
 });
 
 test('neither screen writes a host into the copy', () => {
@@ -147,217 +133,20 @@ test('neither screen writes a host into the copy', () => {
   // in the source or in the prerendered document.
   for (const [name, src] of [
     ['the shared steps', STEPS],
-    ['the launchpad card', INLINE],
-    ['the hand-off card', HANDOFF],
+    ['the thread builder', BUILDER],
   ]) {
     assert.doesNotMatch(src, /onhomeroom\.com/, `${name} names no host`);
     assert.doesNotMatch(src, /https:\/\/[a-z0-9.-]*\/mcp/, `${name} hardcodes no endpoint`);
   }
-  assert.match(DEV_CHAT, /url: `\$\{window\.location\.origin\}\/mcp`/,
-    'the launchpad builds it from the live origin, as Settings does');
-});
-
-test('the card is a React island BESIDE the walkthrough card, never inside it', () => {
-  // AGENTS.md: a region may hold state only when its whole subtree is
-  // React-owned. The walkthrough card is still DevFlowSelect's innerHTML, so
-  // the two are siblings — and the nesting branch is the only one that wraps
-  // the slot's contents, because `.dc-launchpad-slot:empty` has to keep
-  // collapsing an ordinary session's chat.
-  const branch = VIEW.slice(VIEW.indexOf('s.connectorSetup ? ('), VIEW.indexOf('<DevSessionChecks'));
-  assert.match(branch, /<div dangerouslySetInnerHTML=\{\{ __html: s\.launchpadHtml \}\} \/>\s*\n\s*<ConnectorSetupInline/,
-    'the innerHTML card and the island are siblings');
-  assert.doesNotMatch(INLINE, /dangerouslySetInnerHTML/, 'and nothing is injected into the island');
-  // Nothing outside React looks a node inside the card up.
-  assert.doesNotMatch(FLOW_SELECT, /connector-setup/);
-  assert.doesNotMatch(DEV_CHAT, /getElementById\('dc-connector-setup/);
-});
-
-// ── The behaviour, driven against the real DevChat ──────────────────────
-//
-// The same vm harness tests/dev-flow-link-github.test.js uses: a regex over
-// the source cannot say what the card decides, and what it decides is the
-// whole of #2706 — the steps are on screen for the reader who is stuck on
-// that step, without anybody pressing anything.
-
-function makeDevChat({ venue = 'web-claude-code' } = {}) {
-  const noopEl = {
-    style: {},
-    classList: { add() {}, remove() {}, toggle() {}, contains: () => false },
-    addEventListener() {}, removeEventListener() {},
-    setAttribute() {}, removeAttribute() {}, hasAttribute: () => false,
-    getAttribute: () => null, focus() {}, scrollIntoView() {},
-    querySelector: () => null, querySelectorAll: () => [],
-    appendChild() {}, insertAdjacentHTML() {}, remove() {},
-    innerHTML: '', textContent: '', value: '', dataset: {},
-  };
-  const sandbox = {
-    console,
-    document: {
-      getElementById: () => ({ ...noopEl }),
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener() {},
-      createElement: () => ({ ...noopEl }),
-      body: { appendChild() {} },
-    },
-    location: { search: '', hash: '', origin: 'https://example.test' },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
-    navigator: { sendBeacon() {} },
-    setTimeout, clearTimeout, setInterval, clearInterval,
-    localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
-    URLSearchParams,
-  };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  sandbox.window.addEventListener = () => {};
-  sandbox.DevFlowSelect = DevFlowSelect;
-  // The two modules _launchpadVenue leans on, stubbed to the venue under
-  // test — the derivation itself is tests/launchpad.test.js's subject.
-  sandbox.Launchpad = { isLaunchpad: (v) => ['web-claude-code', 'web-codex', 'own-tools-pr'].includes(v) };
-  sandbox.BuildVenues = { currentVenue: () => venue };
-  sandbox.App = { user: { id: 7, externalFlowsAvailable: true, devFlowPreference: null }, currentApp: 'x' };
-  sandbox.PlatformUI = { toast() {}, hasKit: () => false, menu: () => Promise.resolve(null) };
-  sandbox.UsernodeReact = {};
-  vm.createContext(sandbox);
-  vm.runInContext(`${DEV_CHAT}\n;globalThis.__DevChat = DevChat;`, sandbox);
-  const DevChat = sandbox.__DevChat;
-  DevChat._resetDevFlow(7);
-  DevChat.currentSession = { id: 7, status: 'active', build_venue: venue, session_title: 'Demo' };
-  DevChat.sessions = [DevChat.currentSession];
-  DevChat.messages = [];
-  DevChat.renderChatView = () => {};
-  DevChat.renderMessages = () => {};
-  DevChat._repaintDevFlow = () => {};
-  DevChat._devFlowEnsureStatus = async () => {};
-  return { DevChat, sandbox };
-}
-
-const status = (count) => ({
-  available: true,
-  github: { linked: true, login: 'octo' },
-  fork: { state: 'ready', owner: 'octo', repo: 'x' },
-  connectors: { count },
-});
-
-test('with no connector the steps are already on screen — nothing to press', () => {
-  const { DevChat } = makeDevChat();
-  DevChat._devFlow.status = status(0);
-  const view = DevChat._connectorSetupView();
-  assert.ok(view, 'the card renders for the step the reader is standing on');
-  assert.equal(view.product, 'Claude');
-  assert.equal(view.url, 'https://example.test/mcp');
-  assert.equal(view.connected, false);
-});
-
-test('a ChatGPT hand-off is taught ChatGPT\'s steps, not Claude\'s', () => {
-  // Claude Code signs in as a Claude.ai account and Codex as a ChatGPT one,
-  // and the connector is added in THAT account — the same mapping the
-  // walkthrough's own copy makes.
-  const { DevChat } = makeDevChat({ venue: 'web-codex' });
-  DevChat._devFlow.status = status(0);
-  assert.equal(DevChat._connectorSetupView().product, 'ChatGPT');
-  assert.equal(DevFlowSelect.connectorProduct('codex'), 'ChatGPT');
-});
-
-test('an existing connector puts the steps away, and the hint brings them back', () => {
-  const { DevChat, sandbox } = makeDevChat();
-  DevChat._devFlow.status = status(2);
-  assert.equal(DevChat._connectorSetupView(), null, 'nothing to teach unasked');
-
-  // The count spans every account, so "show the steps" in the card's hint is
-  // the second-account case — and it opens here, not on Settings.
-  const html = DevFlowSelect.wizardHtml({ agent: 'claude-code', status: status(2) });
-  assert.match(html, /data-flow-action="link-connector">show the steps</);
-  assert.doesNotMatch(html.slice(html.indexOf('dc-flow-card-hint')), /#settings\/connectors/);
-
-  DevChat._devFlowAction('link-connector', {}, { preventDefault() {} });
-  assert.equal(sandbox.location.hash, '', 'and the tab never leaves the session');
-  const view = DevChat._connectorSetupView();
-  assert.ok(view);
-  assert.equal(view.connected, true, 'the lead says which case this is');
-});
-
-test('"I\'ve added it" closes the card and re-reads the step', async () => {
-  const { DevChat } = makeDevChat();
-  DevChat._devFlow.status = status(0);
-  const forced = [];
-  DevChat._devFlowEnsureStatus = async (force) => { forced.push(!!force); };
-  await DevChat._devFlowConnectorDone();
-  assert.deepEqual(forced, [true], 'a fresh read, not the cached one');
-  assert.equal(DevChat._connectorSetupView(), null, 'and the card stands down');
-});
-
-test('the own-tools venue is not taught a connector it does not need', () => {
-  // A local agent is handed a CLI token instead; there is no MCP connector
-  // in that road at all, and no launchpad connector step to answer.
-  const { DevChat } = makeDevChat({ venue: 'own-tools-pr' });
-  DevChat._devFlow.status = status(0);
-  assert.equal(DevChat._connectorSetupView(), null);
-});
-
-// ── The rendered card ───────────────────────────────────────────────────
-//
-// Executed, not grepped, for the reason tests/lib/render-tsx.js exists: the
-// declared checks in dapp.json select on this markup, and a check that
-// cannot resolve its selector gates merge. These assert the same shapes.
-
-test('the card renders the hooks the declared checks select on', () => {
-  const html = cardHtml();
-  assert.match(html, /data-connector-setup="Claude"/);
-  assert.match(html, /<ol[^>]*>\s*<li/, 'the steps are a real list, for the :first-child selector');
-  assert.match(html, /Open connector settings\./, 'Claude step 1, from the shared module');
-  assert.match(html, /data-connector-setup-url="1"[^>]*value="https:\/\/example\.test\/mcp"|value="https:\/\/example\.test\/mcp"[^>]*data-connector-setup-url="1"/,
-    'the live URL is on screen beside the step that says to paste it');
-  assert.match(html, /href="#settings\/connectors"[^>]*>More connector settings</);
-  assert.match(html, /class="dc-flow-actions"/, 'the card reuses the walkthrough\u2019s own action row');
-});
-
-test('a ChatGPT card renders ChatGPT\'s four steps and its recap', () => {
-  const html = cardHtml({ product: 'ChatGPT' });
-  assert.match(html, /data-connector-setup="ChatGPT"/);
-  // #4431 moved the flow to the plugins directory; #4433 opened it at the
-  // directory's own address, as a link, with no Developer mode anywhere in
-  // it and no Settings walk first.
-  assert.match(html, /Open the plugins directory\./);
-  assert.match(html, /href="https:\/\/chatgpt\.com\/plugins"/);
-  assert.match(html, /Create custom MCP server/);
-  // The step names the endpoint it asks for, and shows the same live value
-  // the ConnectorUrl field above it does: once in the field, once in the
-  // step. A host written into the step would survive neither a fork nor a
-  // config change (see the test above), so this pins the rendered value.
-  assert.match(html, /Enter Homeroom MCP server URL\./);
-  assert.equal((html.match(/https:\/\/example\.test\/mcp/g) || []).length, 2,
-    'the step shows the same live URL the field above it does');
-  assert.doesNotMatch(html, /Developer mode/);
-  assert.doesNotMatch(html, /Browse plugins directory/, 'no Settings walk first');
-  assert.equal((html.match(/<li class="flex gap-3">/g) || []).length, 4);
-  assert.match(html, /In short:<\/strong> chatgpt\.com\/plugins/);
-  assert.doesNotMatch(html, /Add custom connector/, 'and none of Claude\u2019s');
-});
-
-test('the card states the fact that sends people back thinking it failed', () => {
-  // A connector added mid-conversation is not in the conversation it was
-  // added from. Neither product's own walkthrough says so, and it is the
-  // difference between "connected" and "why can it still not see my apps".
-  assert.match(cardHtml(), /start a NEW Claude conversation/i);
-  assert.match(cardHtml({ product: 'ChatGPT' }), /start a NEW ChatGPT chat/i);
-});
-
-test('the lead tells the two cases apart, because the count spans every account', () => {
-  assert.match(cardHtml({ connected: false }), /once per account/);
-  assert.match(cardHtml({ connected: true }), /connector on another account/);
+  assert.match(BUILDER, /const url = typeof window === 'undefined' \? '' : `\$\{window\.location\.origin\}\/mcp`;/,
+    'the thread builder builds it from the live origin, as Settings does');
 });
 
 // ── #6136: the ticks and the step's Copy are Settings' alone ───────────
 
-test('the launchpad card and the hand-off render no ticks and no new Copy', () => {
-  const html = cardHtml({ product: 'ChatGPT' }) + cardHtml({ product: 'Claude' });
-  assert.doesNotMatch(html, /data-connector-step-tick/);
-  assert.doesNotMatch(html, /data-connector-progress/);
-  assert.doesNotMatch(html, /connector-chatgpt-url-copy/);
-  for (const [name, source] of [['the inline card', INLINE], ['the hand-off', HANDOFF]]) {
-    assert.doesNotMatch(source, /\btrack\b/, `${name} does not ask for ticks`);
-  }
+test('the thread builder asks for no ticks and no new Copy', () => {
+  assert.doesNotMatch(BUILDER, /\btrack\b/, 'the builder does not ask for ticks');
+  assert.doesNotMatch(BUILDER, /connector-chatgpt-url-copy|data-connector-step-tick|data-connector-progress/);
 });
 
 test('Settings renders a tick per step and an empty, hidden progress line per guide', () => {

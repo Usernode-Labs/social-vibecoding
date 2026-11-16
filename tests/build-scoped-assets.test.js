@@ -113,7 +113,7 @@ test('on the generated document, prefixShellAssetUrls scopes exactly its scripts
   // Everything else is byte-identical: strip the prefix back out and compare.
   assert.equal(out.split(`/b/${SHA}/`).join('/'), plain);
   const scoped = after.filter((p) => p.startsWith(`/b/${SHA}/`));
-  assert.ok(scoped.length >= 30, `expected the shell's ~34 scripts and stylesheets scoped, got ${scoped.length}`);
+  assert.ok(scoped.length >= 23, `expected the shell's ~27 scripts and stylesheets scoped, got ${scoped.length}`);
   assert.ok(scoped.includes(`/b/${SHA}/shell/assets/shell.js`), 'the React entry');
   assert.ok(scoped.includes(`/b/${SHA}/js/app.js`), 'the last body script');
   assert.ok(scoped.includes(`/b/${SHA}/css/tailwind.css`), 'the compiled stylesheet');
@@ -160,9 +160,10 @@ test('every legacy <script> in Shell.tsx goes through assetUrl, and the head thr
   const plain = shell.match(/<script src="\/js\/[a-z-]+\.js" \/>/g) || [];
   assert.equal(plain.length, 0, `a plain src would revalidate on every load in a deploy: ${plain.join(' ')}`);
   // #1891 moved launchpad.js into the React bundle. The privacy-bounded UI
-  // telemetry collector adds one classic module, and shell-script-order.test.js
-  // pins the same 25 remaining legacy scripts at the end of <body>.
-  assert.equal(scoped.length, 25, 'the 25 legacy scripts');
+  // telemetry collector adds one classic module, the retired dev chat took
+  // seven with it, and shell-script-order.test.js pins the same 18 remaining
+  // legacy scripts at the end of <body>.
+  assert.equal(scoped.length, 18, 'the 18 legacy scripts');
   assert.match(shell, /import \{ assetUrl \} from '\.\/lib\/asset-url';/);
 
   const build = fs.readFileSync(path.join(ROOT, 'frontend/scripts/build-shell.mjs'), 'utf8');

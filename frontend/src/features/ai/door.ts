@@ -17,8 +17,12 @@
  * OLD ADDRESSES STILL LAND. `#homeroom-bot/main` was Main Chat: it opens the
  * thread the person's old Main Chat messages were moved under ("Earlier
  * chat"), or a new chat when they had none; `#homeroom-bot/main/m/<id>` is
- * the message, in the thread it is in now. The server says which thread
- * (./where.ts), and the address is rewritten in place.
+ * the message, in the thread it is in now. `#homeroom-bot/old/agent/<id>`
+ * and `#homeroom-bot/old/session/<id>` are an agent chat and a dev chat,
+ * which are gone: each opens the thread its history was moved under, or the
+ * page itself when there is none (the router sends `#agent/<id>` and
+ * `#messages/agent/<id>` here). The server says which thread (./where.ts),
+ * and the address is rewritten in place.
  *
  * The router (public/js/app.js) shows the tab and hands the place to
  * `askBotTab` (a thread), `askBotItem` (an item), `askBotNew` (a new chat) or
@@ -102,6 +106,24 @@ export function botTabAt(hash: string | null | undefined): BotAt | null {
     else if (rest[i] === 'm') out.focusMessageId = id;
   }
   return cleanAt(out);
+}
+
+/** A chat from before the bot's threads, as its old address names it: an agent chat or a dev chat, by its id. */
+export interface BotOldChat {
+  kind: 'agent' | 'session';
+  id: number;
+}
+
+/**
+ * Pure: the chat a `#homeroom-bot/old/agent/<id>` or
+ * `#homeroom-bot/old/session/<id>` address names, or null for anything else.
+ */
+export function botOldChatAt(hash: string | null | undefined): BotOldChat | null {
+  const match = /^homeroom-bot\/old\/(agent|session)\/(\d{1,10})\/?$/
+    .exec(String(hash || '').replace(/^#/, '').split('?')[0]);
+  if (!match) return null;
+  const id = Number(match[2]);
+  return valid(id) ? { kind: match[1] as BotOldChat['kind'], id } : null;
 }
 
 // ── A request, a change or a decision, in the column ────────────────────

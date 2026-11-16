@@ -7,9 +7,7 @@
  * account · unlock $10/day" for a zero tier, "credits temporarily
  * unavailable" when eligibility could not be checked, or nothing at all.
  * Every one of them is the same picture — a run of coloured text fragments
- * under one tooltip — so this carries fragments rather than four variants,
- * the same shape ../dev-chat/budget-pill-store.ts uses for the composer's
- * copy of the same figure.
+ * under one tooltip — so this carries fragments rather than four variants.
  *
  * WHICH fragments stays in ./ai-credit.js, where the budget data and
  * `CreditOptions.creditState` are: the thresholds, the dollar formatting,
@@ -33,14 +31,10 @@
  * drift from it are:
  *
  *   - this row (AiBudgetRow in ./ai-budget.tsx), via `view`/`hidden`;
- *   - the agent-session composer's "$ left" ring, via `figures`;
- *   - the dev chat's meter and banners (../dev-chat/dev-chat.js), via
- *     `adopt()`/`current()`;
  *   - Settings' "This week's spend" platform line (../settings/settings.js),
  *     via `current()`.
  *
- * The shape is unchanged (#6493): one `view`, its `hidden` flag and the raw
- * `figures` the component draws from.
+ * The shape is one `view` and its `hidden` flag.
  *
  * ── `hidden` is a third state, not `!view` ─────────────────────────────
  *
@@ -59,4 +53,4 @@ import { createStore } from '../../lib/plain-store.js';
  * the same arrangement ../app-frame/app-frame-store.js is in, for the same
  * reason. The TYPES live beside the component in ./ai-budget.tsx.
  */
-export const aiBudgetStore = createStore({ view: null, hidden: false, figures: null });
+export const aiBudgetStore = createStore({ view: null, hidden: false });

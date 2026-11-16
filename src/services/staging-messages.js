@@ -118,7 +118,7 @@ function demoMessagesRaw(user, conversationId) {
       reply: null, reactions: [], attachments: [], objects: [{
         type: 'spec', appId: 1, appSlug: 'usernode', sessionId: 3327, version: 1,
         available: true, title: 'Platform Messages plan v1', subtitle: 'Homeroom',
-        state: 'v1', author: 'ada', href: '#app/usernode/dev/sessions/3327',
+        state: 'v1', author: 'ada', href: '#app/usernode/dev/proposals/3327',
       }, {
         type: 'governance', appId: 1, appSlug: 'usernode', proposalId: 701,
         available: true, title: 'Enable Messages rollout', subtitle: 'Homeroom governance',

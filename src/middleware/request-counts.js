@@ -14,11 +14,10 @@
 // warning names (services/process-health.js). A response is given its
 // socket when it is the connection's turn to answer (a pipelined one waits
 // for the one before), so the socket's count from then on is its own. A
-// response held open by design (an event stream, a long poll marked
-// open-ended) counts as held, its time left out: it costs nothing while it
-// waits. A request whose connection closed before its response finished
-// (the client gave up, often because the process was slow) still costs what
-// it took, counted as aborted.
+// response held open by design (an event stream) counts as held, its time
+// left out: it costs nothing while it waits. A request whose connection
+// closed before its response finished (the client gave up, often because
+// the process was slow) still costs what it took, counted as aborted.
 //
 // Mounted early in server.js, ahead of every route, so each one passes
 // through it. It changes nothing a route answers: it only listens for the
@@ -70,7 +69,7 @@ function requestCounts({ counts = serverErrorCounts, health = processHealth } = 
       try {
         const durationMs = Number(process.hrtime.bigint() - started) / 1e6;
         const route = serverErrorCounts.routeTemplate(req);
-        const held = isEventStream(res) || !!(res.locals && res.locals.inflightOpenEnded);
+        const held = isEventStream(res);
         counts.record({
           method: req.method,
           route,

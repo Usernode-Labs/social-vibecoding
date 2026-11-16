@@ -1,7 +1,7 @@
 // Tests for the widened GET /api/sessions/:id/spec read path (shared
 // spec versions were invisible to everyone but the session owner — the
-// dev-session spec panel rendered "No spec yet" for a spec that WAS
-// shared to the group).
+// spec panel rendered "No spec yet" for a spec that WAS shared to the
+// group).
 //
 // Three layers:
 //   1. Route behaviour — owner sees spec_md + ALL versions; a non-owner
@@ -11,12 +11,9 @@
 //      never spec_md; zero visible versions keeps today's 404.
 //   2. The staging ?demo=1 mock list (#1012 convention) when no real
 //      data matched.
-//   3. Coarse source-token guards (same style as
-//      tests/spec-copy-markdown.test.js) pinning that both spec read
-//      routes share ONE visibility SQL fragment and that the viewer's view
-//      MODEL gates its owner-only affordances on _ownsSession. #1078 moved
-//      the panel's markup into features/dev-chat/spec-viewer.tsx; the
-//      gating stayed a decision in dev-chat.js, which is what this pins.
+//   3. A coarse source-token guard (same style as
+//      tests/spec-copy-markdown.test.js) pinning that every spec read
+//      shares ONE visibility SQL fragment.
 //
 // Like tests/spec-user-share.test.js, the pool is an in-memory mock that
 // pattern-matches SQL and the ws module is stubbed via require.cache.
@@ -26,7 +23,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { message } = require('./lib/platform-i18n');
 const express = require('express');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -326,14 +322,6 @@ test('staging + ?demo=1 → mock list only when no real data matched; prod stays
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(ROOT, ...p), 'utf8');
 
-function slice(src, startToken, endToken, label) {
-  const start = src.indexOf(startToken);
-  assert.ok(start !== -1, `${label}: found ${startToken}`);
-  const end = src.indexOf(endToken, start);
-  assert.ok(end !== -1, `${label}: found ${endToken} after it`);
-  return src.slice(start, end);
-}
-
 test('both spec read routes consume the ONE shared visibility fragment', () => {
   const src = read('src', 'routes', 'sessions.js');
   assert.ok(
@@ -353,42 +341,4 @@ test('both spec read routes consume the ONE shared visibility fragment', () => {
   assert.ok(src.includes("specVersionSharedVisibilitySql('s', '$3')"), 'single-version route call site');
   assert.ok(src.includes("async function changePlanFor("), 'plan card call site');
   assert.ok(src.includes("async function attachChangePlans("), 'board list call site');
-});
-
-test('_specViewerView gates the owner-only affordances on _ownsSession', () => {
-  const src = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  const render = slice(src, '_specViewerView() {', '_publishSpecViewer() {', '_specViewerView');
-  assert.ok(render.includes('DevChat._ownsSession(DevChat.currentSession)'), 'ownership is computed');
-  // `absent` is the model's word for "a non-owner never sees it" — both
-  // share routes are owner-scoped server-side, so for anyone else the
-  // buttons could only ever fail.
-  assert.ok(/groupShare = !isOwner\s*\n?\s*\?\s*\{ kind: 'absent' \}/.test(render),
-    'group-share button is owner-only');
-  assert.ok(/userShare = !isOwner \? \{ kind: 'absent' \}/.test(render),
-    'user-share button is owner-only');
-  assert.ok(render.includes('isOwner && isLatest && !isEmpty'), 'build hint is owner-only');
-  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.viewer')"), 'non-owner empty copy');
-  assert.equal(message('devchat:spec.empty.viewer'), 'No plan has been shared for this session yet.');
-  assert.ok(render.includes("PlatformI18n.t('devchat:spec.empty.owner')"), 'owner empty copy kept');
-  assert.equal(message('devchat:spec.empty.owner'), 'No plan yet. Ask the AI to draft one.');
-  // And the component renders nothing at all for an `absent` action.
-  const tsx = read('frontend', 'src', 'features', 'dev-chat', 'spec-viewer.tsx');
-  assert.ok((tsx.match(/if \(action\.kind === 'absent'\) return null;/g) || []).length === 2,
-    'both share buttons draw nothing for a non-owner');
-});
-
-test('_loadSpecViewer forwards ?demo=1 so staging previews reach the mock list', () => {
-  const src = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  const loader = slice(src, 'async _loadSpecViewer(', '_selectedSpecVersion() {', '_loadSpecViewer');
-  assert.ok(loader.includes('/spec${DevChat._demoQS()}'), 'demo flag rides along on the spec fetch');
-});
-
-test('?shot=spec-viewer keeps the panel URL-reachable for the dapp.json check', () => {
-  const src = read('frontend', 'src', 'features', 'dev-chat', 'dev-chat.js');
-  // The panel's open state otherwise lives only in localStorage; without
-  // this deep link the declared check (and the before/after screenshots)
-  // regress to a closed panel and assert nothing.
-  assert.ok(src.includes("get('shot') === 'spec-viewer'"), 'shot param opens the spec panel at session load');
-  const manifest = read('dapp.json');
-  assert.ok(manifest.includes('shot=spec-viewer'), 'a declared check points at the deep link');
 });

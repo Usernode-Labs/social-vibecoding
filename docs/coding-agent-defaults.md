@@ -8,12 +8,13 @@ coding agent builds with (#2817).
 ## Default coding model: DeepSeek V4.1 Flash 1017 (decided 2026-10-19)
 
 `deepseek/deepseek-v4.1-flash-1017` replaces GLM 5.3 Flash as the default
-OpenRouter coding model. It is the model a new agent chat session starts
-with, and the one the Homeroom bot's chat replies use, which read the same
-default. It runs in Claude Code (`OPENROUTER_MODEL_HARNESSES`) on its
+OpenRouter coding model. It is the model a change with no model of its own
+is built on, and the one the Homeroom bot's chat replies use, which read the
+same default. It runs in Claude Code (`OPENROUTER_MODEL_HARNESSES`) on its
 Parasail and InferenceNet host shortlist
-(`worker/claude-openrouter-request.js` `PROVIDER_ROUTING_BY_MODEL`). Since
-#5507, agent chat's conversation is routed to the same hosts.
+(`worker/claude-openrouter-request.js` `PROVIDER_ROUTING_BY_MODEL`). The chat
+client in `services/openrouter-mayor.js`, which the Homeroom bot's reviewer
+reads a change through, routes a model to the same hosts (#5507).
 
 What decided it, on the Homeroom bot bench (blind judge, both models in
 Claude Code):
@@ -55,10 +56,9 @@ fallback, still `z-ai/glm-5.3-flash`; the admin setting wins over it too.
 `OPENROUTER_RECOMMENDED_MODELS` has no admin setting and comes from the same
 places.
 
-What follows the default: a new agent chat for an account whose coding
-agent preference names no model, the model catalog's recommended model, and
-the Homeroom bot's stages left on the platform default and its answers in
-DMs and chats. A key set up for an account stores no model, so the account
+What follows the default: a change whose coding agent names no model, the
+model catalog's recommended model, and the Homeroom bot's stages left on the
+platform default and its answers in DMs and chats. A key set up for an account stores no model, so the account
 follows the default until its person picks one. Before this, setting up a
 key stored the default of the day, so a one-time migration
 (`followPlatformDefaultModel` in `src/db/migrate.js`) moved the GLM 5.3
@@ -243,10 +243,11 @@ Known differences from a Codex turn:
 - **Search fees are not in the ledger estimate.** The estimate prices tokens
   from the catalog. OpenRouter bills each web search separately, and the key's
   own limit still covers it.
-- **Scout and build only.** The dev chat and agent chats dispatch through the
-  same scout and build, so both use the map. Before & after shots and the Homeroom
-  bot still run Codex. They call the runtime without `harness: 'auto'`, and a
-  thread written by the other CLI is not resumed there.
+- **Who uses the map.** Every coding turn of the Homeroom bot (its triage,
+  spec, build and follow-up) and a benchmark trial that replays them ask the
+  runtime for `harness: 'auto'`. A caller that names no harness gets Codex.
+  Before & after shots do not come through here: they run Claude Code on
+  Anthropic's models.
 
 Changing the map mid-conversation is safe. The ledger records which CLI wrote
 each thread (`agent_turns.metadata.harness`). A turn whose harness differs
@@ -255,13 +256,14 @@ CLI to resume the other's thread. The branch and the conversation are kept.
 
 ## Design guidance for every coding agent (#2817)
 
-Every build carries `src/prompts/design-guidance.md`, and every scout writes
-a plain-language `### Design` subsection into the spec for anything a person
-will see (`SPEC_DESIGN_BRIEF` in `src/services/prompts.js`). #2817 asked for
-this on OpenRouter agents; Claude gets the same text so the two backends stay
-in parity and a difference in their output reflects the model, not the
-prompt. Hosted Claude receives it as system context next to the platform
-conventions; local Claude and OpenRouter receive it inline with them.
+Every Homeroom bot build and revision carries `src/prompts/design-guidance.md`
+inline in its prompt (`homeroom-bot-live.js`), its triage reads it as
+reference, and every spec writes a plain-language `### Design` subsection for
+anything a person will see (`SPEC_DESIGN_BRIEF` in `src/services/prompts.js`,
+which the spec format `get_spec_format` gives a connected agent also
+carries). #2817 asked for this on OpenRouter agents; Claude gets the same
+text so the two backends stay in parity and a difference in their output
+reflects the model, not the prompt.
 
 The one line that differs is the self-check. Claude looks at screenshots of
 the changed screens; OpenRouter models are given text input only by the

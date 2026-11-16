@@ -876,8 +876,7 @@ social-vibecoding mcp
 The CLI has two immutable built-in profiles: `production` defaults to
 `https://app.onhomeroom.com`, and `local` is exactly `http://localhost:3000`.
 An explicit `USERNODE_DOMAIN` overrides the production origin for self-hosted
-deployments. The CLI, stdio MCP server, and local-agent commands share this
-production default; a named profile in one user's configuration does not
+deployments. The CLI and the stdio MCP server share this production default; a named profile in one user's configuration does not
 change the committed default. Credentials remain keyed by origin, so a login
 issued for the old `my.onhomeroom.com` host is not reused for the new host.
 Users with only an old-host credential sign in to the new origin through the
@@ -1510,13 +1509,13 @@ workflow for work authored in a local Codex or Claude session:
    unknown). The HTTP body calls this optional field `externalAgent`; it is
    persisted in `external_agent` without changing the execution backend. Older
    clients remain compatible and display as External agent. Homeroom creates a native
-   `source='cli_handoff'` Dev session and a platform-managed branch at that
+   `source='cli_handoff'` change (a `chat_sessions` row) and a platform-managed branch at that
    exact base. History contains exact user-visible requests and concise agent
    summaries, each with a stable event ID. It never contains hidden reasoning,
    secrets, credentials, or raw tool logs. Event IDs are unique per session,
    making retries idempotent. `proposal_start` fingerprints its full normalized
    request and atomically commits the session, initial spec, and initial
-   history, so retrying remains read-only even after later local/web edits.
+   history, so retrying remains read-only even after later edits.
    The spec is stored in both the live session document and immutable spec
    history. The request ID and returned session ID remain the identity for
    retries, rebases, pushes, and check recovery. A new request ID for the same
@@ -1526,7 +1525,7 @@ workflow for work authored in a local Codex or Claude session:
    lineage-linked successor in one transaction.
 3. The agent implements and tests in its local checkout and creates one normal
    non-merge commit. It does not push the bot-owned branch with personal
-   GitHub credentials and does not dispatch a web worker merely to obtain push
+   GitHub credentials and does not dispatch a hosted worker merely to obtain push
    access. `proposal_push_commit` returns an exact host CLI argument vector;
    the agent executes it outside the stdio sandbox. The CLI reads only the
    named committed Git objects, never the working tree, and sends the local
@@ -1556,13 +1555,13 @@ workflow for work authored in a local Codex or Claude session:
    ready, then uses the existing Homeroom promotion route to create the app PR
    lazily and enter the normal vote flow; it never opens a GitHub PR directly.
 
-The returned `webPath` opens the exact same native session on the web Dev
-page. Continuing there is optional: its user/assistant transcript, spec,
-branch, staging preview, checks, and later PR context are shared, but the local
-agent can also complete the entire workflow through promotion without opening
-the page. Opening or editing in the web page never transfers ownership or
-changes provenance. Local and web turns may alternate on the same branch;
-web-worker commits advance the ordinary `checks_commit_sha`, while
+The returned `webPath` opens the change's own page on Homeroom
+(`#app/<slug>/dev/proposals/<id>`): its spec, branch, staging preview, checks,
+and later PR context. Opening it is optional: the local agent can complete the
+entire workflow through promotion without it, and opening the page never
+transfers ownership or changes provenance. Further work on the change comes
+from the local agent, or from Homeroom bot when the owner asks it on Homeroom.
+Commits made on Homeroom advance the ordinary `checks_commit_sha`, while
 `handoff_head_sha` remains the audit record of the latest commit explicitly
 submitted to staging by a local agent. `handoff_uploaded_sha` records the
 newest reconstructed local tree separately; upload invalidates the prior
@@ -1571,10 +1570,10 @@ verdict and artifacts but does not overwrite `checks_commit_sha`, set
 identity of any still-visible old preview until the new upload is submitted;
 an uploaded-but-not-submitted commit is never presented as checked or ready.
 `handoff_upload_checked_sha` snapshots that previous checked identity. An
-unchanged value means the upload is still pending; a later web turn advances
-`checks_commit_sha` and thereby supersedes it without destroying either audit
-identity. A subsequent local upload snapshots the new web head and becomes the
-pending branch tip normally.
+unchanged value means the upload is still pending; a later commit made on
+Homeroom advances `checks_commit_sha` and thereby supersedes it without
+destroying either audit identity. A subsequent local upload snapshots the new
+head and becomes the pending branch tip normally.
 
 `handoff_local_commit_sha` retains the corresponding local identity for audit;
 status reports it as `localHeadSha`, while `uploadedHeadSha` and
@@ -1591,7 +1590,7 @@ and size validation before any GitHub call. Upload is available only to an
 authenticated CLI bearer whose user still has collaboration access to the
 active handoff session.
 
-Uploads are serialized with web/session work. The persisted expected branch
+Uploads are serialized with other work on the session. The persisted expected branch
 tip is compare-and-swapped after GitHub mutation, and GitHub ref updates use
 `force: false`. A lost-response retry is recognized from an exact
 `Usernode-Local-Commit` trailer and matching tip tree before another commit is
@@ -1613,9 +1612,6 @@ and runs checks against the new head while the proposal remains in review. If
 GitHub reports a moved head at merge time, the same reconciliation runs before
 another vote or merge attempt. CLI handoffs do not carry a parallel
 merge-specific state machine.
-
-This is deliberately not the imported-PR path, whose Dev chat is read-only and
-cannot preserve cross-surface continuation.
 
 The API tools use the MCP server's pinned profile when `profile` is omitted.
 They accept only the immutable `production` or `local` names as an explicit

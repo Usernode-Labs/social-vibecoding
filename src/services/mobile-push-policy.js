@@ -54,12 +54,11 @@ function recipientBinding({ installationId, userId, environment }) {
 
 const TITLE_MAX = 80;
 const BODY_MAX = 140;
-const EMBED_TITLE_MAX = 60;
 // #1688: a voter's one-line reason, quoted as the vote push's body. Two
 // characters short of BODY_MAX for the quotation marks around it.
 const VOTE_REASON_EMBED_MAX = 138;
-// Labels embedded in a TITLE get a tighter cap than body embeds, so the
-// actor and the ` · App` suffix survive the final 80-char truncation.
+// Labels embedded in a TITLE are capped so the actor and the ` · App`
+// suffix survive the final 80-char truncation.
 const TITLE_EMBED_MAX = 40;
 // What a push says when nothing else can be said, and what that is when not
 // even the catalog can be read: genericCopy asks the catalog first, for the
@@ -138,12 +137,6 @@ function truncate(value, max) {
   if (value.length <= max) return value;
   return `${value.slice(0, max - 1).trimEnd()}…`;
 }
-
-const AUTO_SOLVE_BODIES = Object.freeze({
-  spec: 'push:autoSolve.done.body.spec',
-  code: 'push:autoSolve.done.body.code',
-  spec_code: 'push:autoSolve.done.body.specCode',
-});
 
 function daysSince(value, now) {
   const elapsed = new Date(now).getTime() - new Date(value || NaN).getTime();
@@ -281,8 +274,7 @@ function buildCopy(kind, context, now, t) {
     || (GENERATED_BRANCH_RE.test(branch) ? '' : branch);
   const withApp = (title) => (app ? t('push:join.app', { title, app }) : title);
   const withConversation = (title) => (conversation ? t('push:join.conversation', { title, conversation }) : title);
-  // The label as a body and as a title show it: a title's is shorter.
-  const bodyLabel = label ? truncate(label, EMBED_TITLE_MAX) : '';
+  // The label as a title shows it.
   const titleLabel = label ? truncate(label, TITLE_EMBED_MAX) : '';
   switch (kind) {
     case 'test_alert':
@@ -489,48 +481,6 @@ function buildCopy(kind, context, now, t) {
         title: withApp(t('push:approverInviteAccepted.title', { actor })),
         body: t('push:approverInviteAccepted.body'),
       };
-    case 'spec_shared':
-      return {
-        title: withApp(actor
-          ? (titleLabel ? t('push:specShared.title.named', { actor, title: titleLabel }) : t('push:specShared.title.plain', { actor }))
-          : t('push:specShared.title.unnamed')),
-        body: detail ? t('push:specShared.body.version', { version: detail }) : t('push:specShared.body.plain'),
-      };
-    case 'session_done':
-      return {
-        title: withApp(t('push:sessionDone.title')),
-        body: bodyLabel && t('push:sessionDone.body', { title: bodyLabel }),
-      };
-    // #3181: the turn ended on an error, a timeout or a lost worker, or the
-    // platform paused the session mid-turn. The title says what happened and
-    // where; the body is the one thing to do about it.
-    case 'session_stalled':
-      return {
-        title: app
-          ? t('push:sessionStalled.title.app', { app: truncate(app, TITLE_EMBED_MAX) })
-          : t('push:sessionStalled.title.plain'),
-        body: bodyLabel ? t('push:sessionStalled.body.named', { title: bodyLabel }) : t('push:sessionStalled.body.plain'),
-      };
-    case 'auto_solve_done': {
-      if (detail === 'question') {
-        return {
-          title: withApp(t('push:autoSolve.question.title')),
-          body: bodyLabel ? t('push:autoSolve.question.body.named', { title: bodyLabel })
-            : t('push:autoSolve.question.body.plain'),
-        };
-      }
-      if (detail === 'failed') {
-        return {
-          title: withApp(t('push:autoSolve.failed.title')),
-          body: bodyLabel ? t('push:autoSolve.failed.body.named', { title: bodyLabel })
-            : t('push:autoSolve.failed.body.plain'),
-        };
-      }
-      return {
-        title: withApp(titleLabel ? t('push:autoSolve.done.title.named', { title: titleLabel }) : t('push:autoSolve.done.title.plain')),
-        body: Object.prototype.hasOwnProperty.call(AUTO_SOLVE_BODIES, detail) ? t(AUTO_SOLVE_BODIES[detail]) : '',
-      };
-    }
     // B7 / "one story": the change and its project over who asked for it
     // and what to do ("Water reminders · Plant Pal" over "@ben's change is
     // ready to try. Try it and vote.").

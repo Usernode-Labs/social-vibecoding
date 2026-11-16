@@ -72,14 +72,14 @@ function assignedFields(src, header, target) {
 test('the façade\'s state has the same fields and defaults as settings.js', () => {
   const facade = literalKeys(facadeJs, facadeJs.indexOf('const state = '));
   const real = literalKeys(settingsJs, settingsJs.indexOf('    state: {'));
-  assert.ok(real.length >= 8, `settings.js state literal parsed (${real.length} fields)`);
+  assert.ok(real.length >= 6, `settings.js state literal parsed (${real.length} fields)`);
   assert.deepEqual(facade, real, 'facade.js `state` must mirror settings.js `state` field for field');
 });
 
 test('the façade\'s refresh() assigns exactly the fields settings.js\'s refresh() assigns', () => {
   const facade = assignedFields(facadeJs, '  async refresh() {', 'state');
   const real = assignedFields(settingsJs, '    async refresh() {', 'this\\.state');
-  assert.ok(real.length >= 8, `settings.js refresh parsed (${real.length} assignments)`);
+  assert.ok(real.length >= 6, `settings.js refresh parsed (${real.length} assignments)`);
   assert.deepEqual(facade, real);
   // And primes the CLI-auth memo from the same payload, like the original.
   assert.match(facadeJs, /Promise\.resolve\(u\.cliAuthEnabled !== false\)/);
@@ -93,12 +93,10 @@ test('the façade\'s refresh() assigns exactly the fields settings.js\'s refresh
 
 test('the façade reads /api/auth/me into state and publishes the dot, without loading anything', async () => {
   const published = [];
-  const budget = { calls: 0 };
   const boot = { user: { hasApiKey: true, keyLast4: '4242', walletLinkEnabled: true, locale: 'fr', cliAuthEnabled: false } };
   const win = {
     location: { search: '' },
     App: { bootSession: async () => boot, Visibility: { publish: (k, v) => published.push([k, v]) } },
-    DevChat: { renderBudget: () => { budget.calls += 1; } },
     addEventListener() {},
   };
   const prevWindow = globalThis.window;
@@ -123,7 +121,6 @@ test('the façade reads /api/auth/me into state and publishes the dot, without l
     assert.equal(S.state.locale, 'fr');
     assert.equal(await S._cliAuthPromise, false, 'the CLI-auth memo is primed from the same payload');
     assert.deepEqual(published, [['switcher-byok-dot', true]]);
-    assert.equal(budget.calls, 1, 'dev-chat is told to repaint its budget indicator');
     assert.equal(mod.settingsChunkStore.get().Sections, null, 'no chunk was loaded for any of this');
   } finally {
     globalThis.window = prevWindow;

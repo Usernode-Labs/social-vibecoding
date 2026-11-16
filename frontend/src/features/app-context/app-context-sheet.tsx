@@ -408,14 +408,6 @@ function MenuRow({
   );
 }
 
-/**
- * The agent chats that sat here — Build it now and the session rows — left
- * the menu (#4729): Messages' Agents list is their one home, where the "+"
- * starts a new one and "Show archived" reaches the archived ones. A menu
- * that lists an inbox's CONTENTS was the decay this file's header warns of;
- * the section was that, and it is gone whole. Nothing replaces it here.
- */
-
 /** One of Home.menuItemsFor's items for an app (features/home/home.js). */
 type MenuItem = { key: string; run: () => void };
 
@@ -1090,8 +1082,6 @@ export function AppsSwitcherSheet(): ReactNode {
               <RowBody icon={<PhonePlusIcon />} label={t('agent:appContext.row.addHomeroom')} external={homeroomOffer.via === 'browser'} />
             </button>
           ) : null}
-          {/* AGENT CHATS left the menu (#4729): see the note above
-              AppsSwitcherSheet. */}
           {/*
               REPORT APP IS SMALL TEXT AT THE FOOT (UI overhaul), not a row in
               the list: it is the one thing here that is about the app rather

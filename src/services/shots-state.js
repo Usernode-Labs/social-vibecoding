@@ -179,8 +179,8 @@ function waiveShots({ sessionId, appId, userId, reason }) {
 // ── A run under way, for the flows that wait for it ─────────────────────
 //
 // A shots run holds the proposal's agent from its copies' first build to
-// its agent's last word. A coding turn (the Homeroom bot's, the Mayor's)
-// waits for it rather than taking the agent from under it (#4575). Read
+// its agent's last word. A coding turn (the Homeroom bot's) waits for it
+// rather than taking the agent from under it (#4575). Read
 // from the shots machine's instance, so it answers for every process and
 // across restarts.
 

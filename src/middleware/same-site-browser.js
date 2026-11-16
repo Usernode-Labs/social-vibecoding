@@ -12,10 +12,10 @@ const { readSessionCookie } = require('../services/browser-session-cookies');
 // cookie-authenticated write that needs nothing but the URL, that is enough
 // to act for a signed-in visitor.
 //
-// The rule is the Sec-Fetch-Site half of the browserCsrf guard the dev-flow
-// and sign-in routes use (routes/dev-flow.js, routes/cli-auth.js): a browser
-// stamps every request with it, and only 'same-origin' means the Homeroom
-// page sent it. The fixed-origin comparison those routes make is not used
+// The rule is the Sec-Fetch-Site half of the browserCsrf guard the sign-in
+// routes use (routes/cli-auth.js): a browser stamps every request with it,
+// and only 'same-origin' means the Homeroom page sent it. The fixed-origin
+// comparison those routes make is not used
 // here: they compare against config.cliAuthOrigin, which is null on staging
 // previews, and these routes must work there. Instead the fallback below
 // compares Origin with the host the request itself was sent to.

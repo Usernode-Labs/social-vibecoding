@@ -692,7 +692,7 @@ function RowControls({ item, place, count, hostId, phone }: {
  * down chevron Messages' foldable headings use, turned sideways while folded.
  *
  * On the sidebar it is a small arrow beside the heading. On a phone the whole
- * heading is the button (as Messages' Agents heading is), at least 44px tall
+ * heading is the button, at least 44px tall
  * and the full width, so the target is never a 36px arrow.
  */
 function GroupHeading({ group, className, phone }: {

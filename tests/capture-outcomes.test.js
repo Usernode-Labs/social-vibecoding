@@ -333,16 +333,6 @@ test('storeArtifacts attributes a companion still to its parent route, mobile fr
   assert.equal(stored.captures[0].scenarioId, 'board.main');
 });
 
-test('every live session-event reader accepts the null payload that clears stale tiles', () => {
-  const fs = require('node:fs');
-  for (const file of ['../public/js/app.js', '../frontend/src/features/dev-chat/dev-chat.js']) {
-    const source = fs.readFileSync(require.resolve(file), 'utf8');
-    assert.match(source, /hasOwnProperty\.call\(data, 'visuals'\)/, file);
-    assert.match(source, /currentSession\.visuals = data\.visuals \|\| null/, file);
-    assert.doesNotMatch(source, /currentSession && data\.visuals/, file);
-  }
-});
-
 // ── shapeAgg: object values (id + path + viewport + fellBack) ──────────
 
 test('shapeAgg reads the object value form into labelled groups', () => {

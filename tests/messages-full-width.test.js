@@ -12,12 +12,10 @@
 //   1. ONE CONTROL: its labels, `aria-pressed`, the glyph swap, and the two
 //      classes dapp.json's checks and app.css select it by.
 //   2. EVERY PANE CARRIES IT, AT THE RIGHT: a conversation or #general (before
-//      ⋯), an app's channel, a dev session's bar, and the agent session's
-//      panel, which takes it as `headerAction` rather than importing this
-//      store.
-//   3. IT DOES SOMETHING ON EVERY PANE: the layout folds the list for an
-//      agent thread too, not only for a conversation or a channel.
-//   4. IT STAYS PUT: hidden on a phone, and out of the way of a side pane.
+//      ⋯), and an app's channel, where it draws nothing.
+//   3. IT DOES SOMETHING WHERE IT SHOWS: the layout folds the list for an
+//      open conversation, and a channel never has one beside it.
+//   4. IT STAYS PUT: hidden on a phone, and out of the way of a reply thread.
 //
 // Run with: node --test tests/messages-full-width.test.js
 
@@ -30,7 +28,6 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const SCREEN = read('frontend/src/features/messages/index.tsx');
-const SESSION = read('frontend/src/features/agent-session/index.tsx');
 const ICONS = read('frontend/@/components/ui/icons.tsx');
 const CSS = read('public/css/app.css');
 
@@ -92,27 +89,9 @@ test('an app\'s channel: at the end of its header, where it draws nothing — a 
     /if \(snap\.route\.appSlug \|\| \(snap\.active\?\.kind === 'channel' && snap\.active\.id === snap\.route\.conversationId\)\) return null;/);
 });
 
-test('a dev session: in the pane\'s bar, after "Open full view"', () => {
-  const pane = fn('AgentSessionThread');
-  assert.equal(message('messages:agent.session.openFull'), 'Open full view');
-  assert.match(pane, /<div className="messages-session-bar">\s*<a className="messages-session-full" href=\{full\}>\{t\('messages:agent\.session\.openFull'\)\}<\/a>\s*<FullWidthToggle \/>\s*<\/div>/);
-  assert.match(CSS, /\.messages-session-bar \{\s*display: flex;\s*align-items: center;\s*justify-content: flex-end;\s*gap: 12px;/);
-});
-
-test('a Mayor session: handed to its panel, drawn at the end of its bar', () => {
-  assert.match(fn('MayorSessionThread'), /<AgentSessionPanel embedded headerAction=\{<FullWidthToggle \/>\} \/>/);
-
-  // The Mayor: the session bar's `action`, after Changes, the "Open app"
-  // button (#2779 follow-up), and just before the session's ⋯, as on the
-  // other panes.
-  assert.match(SESSION, /export function AgentSessionPanel\(\{ embedded = false, headerAction = null \}: \{ embedded\?: boolean; headerAction\?: ReactNode \}\)/);
-  assert.match(SESSION, /<SessionBar session=\{snapshot\.session\} about=\{about\} embedded=\{embedded\} action=\{headerAction\} \/>/);
-  assert.match(SESSION, /\{t\('agent:session\.bar\.changes', \{ count \}\)\}\s*<\/button>\s*<OpenAppButton target=\{target\} \/>\s*\{action\}\s*<SessionMenu session=\{session\} \/>/);
-});
-
-test('the list folds for an agent thread too; a reply thread still belongs to a chat', () => {
-  assert.match(SCREEN, /const chatOpen = !!\(snap\.route\.conversationId \|\| snap\.route\.appSlug\);\s*const discussionOpen = chatOpen \|\| !!snap\.route\.agent;/);
-  assert.match(SCREEN, /\$\{\(snap\.listCollapsed && discussionOpen\) \|\| channelOpen \? ' messages-list-collapsed' : ''\}/,
+test('the list folds for an open chat; a reply thread still belongs to a chat', () => {
+  assert.match(SCREEN, /const chatOpen = !!\(snap\.route\.conversationId \|\| snap\.route\.appSlug\);/);
+  assert.match(SCREEN, /\$\{\(snap\.listCollapsed && chatOpen\) \|\| channelOpen \? ' messages-list-collapsed' : ''\}/,
     'a toggle that does nothing on half the panes is worse than none; a channel has no list beside it');
   assert.match(SCREEN, /\$\{chatOpen && \(snap\.route\.threadRootId \|\| blankThread\) \? ' messages-has-reply-thread' : ''\}/);
 });
@@ -124,10 +103,6 @@ test('app.css: a desktop control that keeps its ink, and stays under the pointer
   assert.doesNotMatch(CSS, /\.messages-list-toggle\[aria-pressed="true"\]/, 'the glyph says the state; no accent on top');
   // Between 768 and 1600px an open reply thread has already moved the list.
   assert.match(CSS, /\.messages-layout\.messages-has-reply-thread \.messages-list-toggle \{ display: none; \}/);
-  // So has a Mayor session's side pane (its spec or a preview) open beside its
-  // chat, from 1024px up.
-  assert.match(fn('FullWidthToggle'), /const specBeside = useSidePaneBeside\('messages'\);[\s\S]*if \(specBeside\) return null;/);
-  assert.match(SCREEN, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : /);
 });
 
 // #4229: a strip too narrow for a readable conversation beside the list.
@@ -141,6 +116,6 @@ test('one pane at a time on a phone; no desktop width is too narrow for the list
   assert.doesNotMatch(CSS, /messages-list-crowded/);
   // The way back to the list, on a phone.
   assert.match(STORE, /function listAside\(\): boolean \{\s*return isMobile\(\);\s*\}/);
-  assert.match(STORE, /const thread = listAside\(\) && !!\(state\.route\.conversationId \|\| state\.route\.appSlug \|\| state\.route\.agent\);/);
+  assert.match(STORE, /const thread = listAside\(\) && !!\(state\.route\.conversationId \|\| state\.route\.appSlug\);/);
   assert.match(STORE, /if \(!state\.route\.open \|\| !onThread \|\| !listAside\(\)\) return false;/);
 });

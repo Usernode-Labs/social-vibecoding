@@ -1517,13 +1517,12 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   assert.match(rest, /require\('\.\/session-lifecycle'\)\.restSession\(\{ pool, sessionId \}\)/, 'back to paused after every turn');
   assert.match(read('src/services/session-lifecycle.js'),
     /async function restSession[\s\S]*?if \(!now \|\| now\.status !== 'active'\) return false;[\s\S]*?pauseProposal\(\{ sessionId: Number\(sessionId\), reason: 'rest', from: 'active' \}\)/);
-  // Defence in depth on the board's two derivations, and the global cap.
-  // #6604: a request's page reads its own row without the board, so it
-  // composes the same two derivations — headless and in_progress — for one
-  // number. All four skip synthetic authors, as the board's two do.
+  // Defence in depth on the board's in_progress derivation, and the global
+  // cap. #6604: a request's page reads its own row without the board, so it
+  // composes the same derivation for one number. Both skip synthetic authors.
   const issues = read('src/routes/issues.js');
-  assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 4,
-    'headless and in_progress derivations, on the board and on a request\'s own page, all skip synthetic authors');
+  assert.equal((issues.match(/AND u\.is_synthetic IS NOT TRUE/g) || []).length, 2,
+    'the in_progress derivation, on the board and on a request\'s own page, skips synthetic authors');
   // The global cap's one count leaves synthetic sessions out, and every
   // route that starts a session passes the gate that asks it (#2779; the
   // native proposal start once had a copy without the clause, 12 Oct 2026).
@@ -1533,7 +1532,9 @@ test('the bot session is not work on any issue: is_headless FALSE, empty linked_
   assert.ok(!require('../src/services/session-caps').GLOBAL_SESSIONS_SQL.includes(capClause),
     'the global-cap count includes synthetic sessions');
   assert.ok(!read('src/services/session-lifecycle.js').includes(capClause));
-  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 3);
+  // A change is started by the native proposal start (proposal-handoff.js,
+  // below); the routes in sessions.js start none.
+  assert.equal((read('src/routes/sessions.js').match(/sessionLifecycle\.claimGlobalSlot\(/g) || []).length, 0);
   // The resume is the proposal machine's, which counts the platform-wide cap
   // itself under its lock (its count includes synthetic sessions too).
   assert.match(read('src/routes/sessions.js'), /platform\.resumeProposal\(\{[\s\S]*?caps: cap,/);

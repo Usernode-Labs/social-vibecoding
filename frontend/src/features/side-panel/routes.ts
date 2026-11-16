@@ -15,10 +15,10 @@
  *                                  activity, a bare dev) — known here so its
  *                                  old addresses map to it, but NEVER the
  *                                  panel's (below)
- *   app/<slug>/dev/proposals/<id>  a proposal (governance/<id> too)
+ *   app/<slug>/dev/proposals/<id>  a proposal (governance/<id> too; and
+ *                                  dev/sessions/<id>, its old address)
  *   app/<slug>/dev/changes/<N>     a proposal by its pull request's number
  *   app/<slug>/dev/issues/<n>      an issue
- *   app/<slug>/dev/sessions/<id>   a change — `new` is the unsent one
  *   app/<slug>/dev/shared/<id>     a change's shared page
  *   app/<slug>/dev/chat            the app's discussion, by its old
  *   messages/app/<slug>            addresses (full screen, an inbox thread):
@@ -29,14 +29,6 @@
  *   messages/channel/<handle>      a `#name` reference to a channel: a
  *                                  pointer, rewritten to the channel's own
  *                                  address (isPointer)
- *   agent/<id>[/changes]           an agent session (#2779): one conversation
- *                                  with the Mayor, on any app — `changes`
- *                                  is the same page with its drawer up
- *   agent/new                      a session not sent yet (New change): no
- *                                  row until its first message, when the
- *                                  address becomes the session's own
- *   messages/agent/<id|new>        the same, by the address Messages links
- *                                  it with; a numeric id or `new` only
  *   messages                       the inbox itself — never opened INTO the
  *                                  panel from outside it (it is a tab root,
  *                                  and a tab leaves the app), but it is where
@@ -67,9 +59,7 @@ export type PanelKind =
   | 'proposal'
   | 'issue'
   | 'change'
-  | 'new-change'
   | 'thread'
-  | 'agent'
   | 'messages';
 
 /** The parsed shape of a route the panel knows about. */
@@ -82,8 +72,6 @@ export interface PanelPage {
 }
 
 const NUMERIC = /^[1-9]\d{0,15}$/;
-// An agent session's serial id, or `new` for the one not sent yet.
-const isAgentSessionId = (segment: string | undefined) => segment === 'new' || NUMERIC.test(segment || '');
 
 function decode(seg: string): string {
   try { return decodeURIComponent(seg); } catch { return seg; }
@@ -150,17 +138,15 @@ export function panelPage(route: string): PanelPage | null {
     if (tab === 'group-chat') return { kind: 'workshop', slug, key: `${base}/workshop` };
     if (tab === 'individual-chat') {
       return parts[3] && NUMERIC.test(parts[3])
-        ? { kind: 'change', slug, key: `${base}/dev/sessions/${parts[3]}` }
+        ? { kind: 'proposal', slug, key: `${base}/dev/proposals/${parts[3]}` }
         : { kind: 'workshop', slug, key: `${base}/workshop` };
     }
     if (tab !== 'dev') return null; // the App tab, `full`, or an unknown tab
     const sec = parts[3] || '';
     const id = parts[4] || '';
-    if (sec === 'sessions' && id === 'new') {
-      return { kind: 'new-change', slug, key: `${base}/dev/sessions/new` };
-    }
+    // A change's old address is its page's: the router takes it there.
     if (sec === 'sessions' && NUMERIC.test(id)) {
-      return { kind: 'change', slug, key: `${base}/dev/sessions/${id}` };
+      return { kind: 'proposal', slug, key: `${base}/dev/proposals/${id}` };
     }
     if (sec === 'shared' && NUMERIC.test(id)) {
       return { kind: 'change', slug, key: `${base}/dev/shared/${id}` };
@@ -172,7 +158,8 @@ export function panelPage(route: string): PanelPage | null {
     if ((sec === 'proposals' || sec === 'changes' || sec === 'governance') && NUMERIC.test(id)) {
       return { kind: 'proposal', slug, key: `${base}/dev/${sec}/${id}` };
     }
-    // dev, dev/issues, dev/proposals, dev/sessions (no id): the card list.
+    // dev, dev/issues, dev/proposals, dev/sessions (no id, or `new`, which
+    // the router takes to Homeroom bot): the top window's.
     return { kind: 'workshop', slug, key: `${base}/workshop` };
   }
   if (head === 'messages') {
@@ -189,17 +176,8 @@ export function panelPage(route: string): PanelPage | null {
       // A `#name` channel reference (#2783) — see isPointer below.
       return { kind: 'thread', slug: null, key: `messages/channel/${parts[2]}` };
     }
-    if (parts[1] === 'agent' && isAgentSessionId(parts[2])) {
-      // An agent session (#2779). The panel is phone-width, so its document
-      // swaps this for `agent/<id>` in place (App.restoreFromHash) — the same
-      // page, which is why the key is the session's own.
-      return { kind: 'agent', slug: null, key: `agent/${parts[2]}` };
-    }
     // A malformed id: the router degrades it to the list.
     return { kind: 'messages', slug: null, key: 'messages' };
-  }
-  if (head === 'agent' && isAgentSessionId(parts[1])) {
-    return { kind: 'agent', slug: null, key: `agent/${parts[1]}` };
   }
   return null;
 }
@@ -261,13 +239,7 @@ export function appTabSlug(route: string): string | null {
 export function parentRoute(route: string): string | null {
   const page = panelPage(route);
   if (!page) return null;
-  switch (page.kind) {
-    case 'thread':
-    case 'agent':
-      return 'messages';
-    default:
-      return null;
-  }
+  return page.kind === 'thread' ? 'messages' : null;
 }
 
 /** What "Open in workshop" opens: the project, and the item there. */
@@ -286,15 +258,13 @@ export interface WorkshopItem {
  * which the Workshop resolves to the session when it gets there.
  *
  * A request, a change or a decision of a project only: the Workshop itself,
- * its list addresses, the unsent change, a conversation and an agent session
- * have no item a project page shows.
+ * its list addresses and a conversation have no item a project page shows.
  */
 export function workshopItemOf(route: string | null | undefined): WorkshopItem | null {
   const text = String(route || '');
   const page = panelPage(text);
   if (!page || !page.slug) return null;
-  if (page.kind === 'workshop' || page.kind === 'new-change'
-    || page.kind === 'thread' || page.kind === 'agent' || page.kind === 'messages') return null;
+  if (page.kind === 'workshop' || page.kind === 'thread' || page.kind === 'messages') return null;
   const parts = text.split('/');
   const num = (v: string | undefined) => (v && NUMERIC.test(v) ? Number(v) : 0);
   // An app's discussion's old per-change address is a change (panelPage).
@@ -329,25 +299,23 @@ const KIND_TITLE: Record<PanelKind, string> = {
   proposal: 'agent:sidePanel.title.proposal',
   issue: 'agent:sidePanel.title.request',
   change: 'agent:sidePanel.title.change',
-  'new-change': 'agent:sidePanel.title.newChange',
   thread: 'agent:sidePanel.title.thread',
-  agent: 'agent:sidePanel.title.agent',
   messages: 'agent:sidePanel.title.messages',
 };
 
 /** The pages whose title is their kind, whatever their header says. */
 const FIXED_TITLE: ReadonlySet<PanelKind> = new Set<PanelKind>([
-  'workshop', 'messages', 'proposal', 'issue', 'change', 'new-change',
+  'workshop', 'messages', 'proposal', 'issue', 'change',
 ]);
 
 /**
  * The header row's title for `route`, as the prototype draws it.
  *
  * The embedded document's own header title (`reported`) is the source where
- * it names the page: a conversation's name, an agent session's title. The
+ * it names the page: a conversation's name. The
  * Workshop, the inbox and a piece of work — a proposal, an issue, a change —
  * take their kind instead: "Workshop", "Messages", "Proposal", "Issue",
- * "Change", "New change". On those the header names only the APP (it draws
+ * "Change". On those the header names only the APP (it draws
  * the app's tile beside it on a phone), which beside the app itself would say
  * nothing. An app's discussion is its project page now (#3653), so the
  * Workshop's.
@@ -358,17 +326,6 @@ export function titleFor(route: string | null | undefined, reported?: string | n
   if (!page) return text;
   if (FIXED_TITLE.has(page.kind)) return t(KIND_TITLE[page.kind]);
   return text || t(KIND_TITLE[page.kind]);
-}
-
-/**
- * Where Expand takes `route`: the page itself, full width — except an agent
- * session, whose desktop home is the Messages pane beside the inbox
- * (`messages/agent/<id>`), not the phone screen the panel draws it as.
- */
-export function expandRoute(route: string): string {
-  const page = panelPage(route);
-  if (page && page.kind === 'agent') return `messages/${page.key}`;
-  return route;
 }
 
 /**

@@ -156,7 +156,7 @@ test('#3494: Messages takes the store back by routing, and release gives back on
     store.embed(GENERAL);
     await settle();
     // The Messages tab: the router routes the bare list.
-    store.route(null, null, null, {});
+    store.route(null, null, {});
     await settle();
     let snap = snapshotOf(store);
     assert.equal(snap.route.open, true);
@@ -169,7 +169,7 @@ test('#3494: Messages takes the store back by routing, and release gives back on
     store.embed(GENERAL);
     assert.ok(!snapshotOf(store).route.embedded, 'embed waits for Messages to close');
     // #general on the Messages screen, by its own address: the same room, opened there.
-    store.route(GENERAL, null, null, {});
+    store.route(GENERAL, null, {});
     await settle();
     snap = snapshotOf(store);
     assert.equal(snap.route.open, true);

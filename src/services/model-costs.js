@@ -7,23 +7,21 @@ const models = require('./models');
 //
 // Two different kinds of number live here and they must not be confused:
 //
-//   the ESTIMATE  a forward-looking figure the picker shows before you
-//                 spend anything. It is per-token pricing multiplied by a
-//                 typical change's token profile, its cached input priced
-//                 at the model's cache rates, and it is labelled an
+//   the ESTIMATE  a forward-looking figure: per-token pricing multiplied
+//                 by a typical change's token profile, its cached input
+//                 priced at the model's cache rates, and it is labelled an
 //                 estimate everywhere it appears. An admin can override it
 //                 by hand from the Model costs console.
 //   the OBSERVED  what changes on that model actually cost, aggregated
 //                 from the platform's own per-turn records — one dev
 //                 session is one change, counted once, agent spend
-//                 included (#2592). It is never shown in the picker and
-//                 never rewrites the estimate on its own: an admin reads
-//                 it and decides.
+//                 included (#2592). It never rewrites the estimate on its
+//                 own: an admin reads it and decides.
 //
 // The estimate is deliberately not derived from the observed figure
-// automatically. A median over a handful of changes moves violently, and a
-// number in the picker that jumps because two people ran long sessions
-// yesterday is worse than a stable estimate somebody chose.
+// automatically. A median over a handful of changes moves violently, and an
+// estimate that jumps because two people ran long sessions yesterday is
+// worse than a stable estimate somebody chose.
 
 // The platform setting that holds the admin overrides, as JSON:
 // { "<model id>": <cents> }. Absent means "no overrides", which is the
@@ -95,9 +93,9 @@ const OPENROUTER_NOTES = Object.freeze({
   'deepseek/deepseek-v4.1-flash': 'cheap bulk work and long refactors',
 });
 
-// Published per-MTok pricing for the models the platform curates, used when
-// no live catalogue entry is to hand (the picker has one; the admin console
-// does not, because it has no user's key to fetch a catalogue with).
+// Published per-MTok pricing for the models the platform curates, which the
+// estimate is priced from: the admin console has no user's key to fetch a
+// live catalogue with.
 //
 // Every figure is OpenRouter's catalog (GET https://openrouter.ai/api/v1/models,
 // read 2026-10-07): `prompt`, `completion`, `input_cache_read` and
@@ -534,9 +532,9 @@ async function writeOverride(pool, { modelId, cents, actorId }) {
   return current;
 }
 
-// ── The two payloads ────────────────────────────────────────────────────
+// ── The console's payload ───────────────────────────────────────────────
 
-/** A token profile as both payloads state it. */
+/** A token profile as the payload states it. */
 function profileView(profile) {
   return {
     inputTokens: profile.inputTokens,
@@ -544,40 +542,6 @@ function profileView(profile) {
     cacheWriteInputTokens: profile.cacheWriteInputTokens ?? 0,
     outputTokens: profile.outputTokens,
     source: profile.source,
-  };
-}
-
-/**
- * What the model picker needs: one note and one estimate per model it can
- * offer, plus the token profile so the client can derive an estimate for a
- * model from the user's own OpenRouter catalogue, which this process has no
- * key to read.
- */
-async function pickerPayload(pool) {
-  const [profile, overrides] = await Promise.all([
-    typicalChange(pool),
-    readOverrides(pool),
-  ]);
-  const out = {};
-  for (const id of curatedModelIds()) {
-    const override = Object.prototype.hasOwnProperty.call(overrides, id) ? overrides[id] : null;
-    const derived = estimateCents(publishedPricing(id), profile);
-    out[id] = {
-      note: noteFor(id),
-      estimateCents: override != null ? override : derived,
-      estimateSource: override != null ? 'override' : (derived == null ? 'none' : 'pricing'),
-    };
-  }
-  for (const [id, cents] of Object.entries(overrides)) {
-    if (out[id]) continue;
-    out[id] = { note: noteFor(id), estimateCents: cents, estimateSource: 'override' };
-  }
-  return {
-    // The cached parts ride along so the client prices the cached share of
-    // a model it derives an estimate for at that model's cache rates, the
-    // way estimateCents does here.
-    typicalChange: profileView(profile),
-    models: out,
   };
 }
 
@@ -645,6 +609,5 @@ module.exports = {
   observedPerModel,
   readOverrides,
   writeOverride,
-  pickerPayload,
   adminPayload,
 };

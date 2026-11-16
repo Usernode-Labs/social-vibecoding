@@ -329,8 +329,8 @@ test('a declared moment rides the preview URL and words the bar', async () => {
 
 test('"See it as now" reloads the same address without the moment, and back again', async () => {
   const { AppView, iframe, store, handlers } = await makeShell();
-  await AppView.swapToStaging(PREVIEW, { md: '1. Open the rota.', path: '/rota?week=41' },
-    { verified: true, jump: true, previewAt: PREVIEW_AT });
+  await AppView.swapToStaging(PREVIEW, { md: '1. Open the rota.' },
+    { verified: true, startPath: '/rota?week=41', previewAt: PREVIEW_AT });
   assert.equal(new URL(iframe.src).pathname, '/rota');
   assert.equal(iframe.loads, 1);
 

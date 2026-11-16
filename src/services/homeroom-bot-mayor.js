@@ -62,13 +62,13 @@
 // same people can already read it through a work order or a dev session.
 // Files that hold secrets by convention (.env, keys) are never read.
 //
-// It can also read the platform the way the agent-session Mayor does: the
-// same connector read tools (get_request, get_discussion, list_requests,
+// It can also read the platform through the connector's `agent_mayor`
+// audience: the connector read tools (get_request, get_discussion, list_requests,
 // get_proposal, get_platform_conventions, …) through the Mayor's in-process
 // shim (mayor/mcp-shim.js) on a read-only grant minted for the person and
 // this one turn, so it sees exactly what they can see and can change
-// nothing through them. Its prompt carries the platform rules the Mayor's
-// does (the connector charter's shared sections).
+// nothing through them. Its prompt carries the platform rules (the
+// connector charter's shared sections).
 //
 // It never blocks the chat. routes/conversations.js calls this after the
 // person's message is saved and answered, and a person's turns run one
@@ -77,10 +77,10 @@
 // has used their week's building time can still talk to the bot. It stops
 // answering only while the bot is off, or past MAX_TURNS_PER_HOUR.
 //
-// Why not the Mayor of an agent session (services/mayor/)? That Mayor reads
-// the platform as its user does, and the bot's proposals are the BOT's:
-// every "my proposals" list leaves them out. What this needs is the bot's
-// own ledger, scoped to one person, which is a handful of queries here.
+// Why not the connector's reads alone? They read the platform as its user
+// does, and the bot's proposals are the BOT's: every "my proposals" list
+// leaves them out. What this needs is the bot's own ledger, scoped to one
+// person, which is a handful of queries here.
 
 // Its limits are its thread kind's (bot-profiles.js, step 5).
 const { CHAT_LIMITS } = require('./bot-profiles');
@@ -206,8 +206,8 @@ const IMAGE_REPLAY_MESSAGES = 2;
 const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 const OPENROUTER = { provider: 'openrouter', purpose: 'coding_agent' };
 
-// The agent-session Mayor's connector READS (mcp-audiences.js), offered as
-// they are. Its writes are not: from a DM, a request is filed only through
+// The `agent_mayor` audience's connector READS (mcp-audiences.js), offered
+// as they are. Its writes are not: from a DM, a request is filed only through
 // offer_request and the person's tap.
 const PLATFORM_TOOLS = Object.freeze([
   'get_platform_conventions', 'list_apps', 'get_app', 'list_requests', 'get_request',
@@ -435,8 +435,8 @@ function threadToolsOf(deps) { return deps?.threadTools || require('./homeroom-b
 // ── The prompt ────────────────────────────────────────────────────────────
 
 /**
- * The platform rules the agent-session Mayor reads (mcp-charter.js), less
- * the sections about its own change lifecycle, which this chat does not
+ * The platform rules the connector charter holds (mcp-charter.js), less
+ * the sections about a change's lifecycle, which this chat does not
  * have: what Homeroom is, the conventions, untrusted content, never claiming
  * a change has landed.
  */
@@ -3821,13 +3821,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       ? deps.seesImages
       : await modelSeesImages(pool, config, t.apiKey, t.model);
     const takeImages = require('./mayor/mcp-shim').turnImageBudget();
-    // The agent-session Mayor's read tools, on a read-only grant for this
+    // The `agent_mayor` audience's read tools, on a read-only grant for this
     // person and this turn. Without them the turn still runs on its own tools.
     let platform = null;
     try {
       const open = deps.openMcp || require('./mayor/mcp-shim').openMayorMcp;
       platform = await open({
-        pool, config, userId: user.id, agentSessionId: null, ttlSeconds: PLATFORM_GRANT_SECONDS,
+        pool, config, userId: user.id, ttlSeconds: PLATFORM_GRANT_SECONDS,
         rateSubject: `hrbot-dm-${user.id}`,
         imageInput,
       });

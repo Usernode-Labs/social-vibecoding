@@ -174,9 +174,9 @@ async function threadHarnessFor(pool, sessionId, threadId) {
 // `harness` picks the CLI (#3296). The default, 'codex', is what a caller
 // that names none gets: the CLI every OpenRouter turn ran in before
 // harnesses existed. 'auto' asks the platform's per-model map
-// (config.openrouterModelHarnesses). The dev chat's scout and build use it,
-// and so does every coding turn of the Homeroom bot (its triage, spec,
-// build and follow-up) and of a benchmark trial that replays them, so GLM
+// (config.openrouterModelHarnesses). Every coding turn of the Homeroom bot
+// (its triage, spec, build and follow-up) uses it, and so does a benchmark
+// trial that replays them, so GLM
 // runs in Claude Code there too and a model the map leaves on Codex stays
 // there. Before & after shots do not come through here: they run on Claude
 // Code with Anthropic's models.
@@ -926,35 +926,10 @@ async function resolveCodexTurn(args) {
   return { ...ctx, ...attempt };
 }
 
-// Back-compat terminalization (used by pre-Commit-5 call sites). Delegates
-// to the idempotent completeCodexAttempt. No threadId is available on this
-// bridge, so the delta baseline is a fresh thread — correct for a single
-// physical dispatch per logical turn (the retry case is migrated in Commit
-// 5 with explicit thread propagation).
-async function completeCodexTurn({ pool, turnUuid, status = 'completed', errorDetail = null, errorCode = null, usage = null }) {
-  if (!turnUuid) return { updated: false, alreadyTerminal: true };
-  const u = usage || {};
-  const hasUsage = (u.inputTokens != null && Number.isFinite(u.inputTokens))
-    || (u.outputTokens != null && Number.isFinite(u.outputTokens));
-  return completeCodexAttempt({
-    pool, turnUuid, status, errorCode, errorDetail,
-    threadId: null,
-    usageTotal: hasUsage
-      ? {
-          inputTokens: u.inputTokens != null ? u.inputTokens : null,
-          cachedInputTokens: u.cachedInputTokens != null ? u.cachedInputTokens : null,
-          cacheWriteInputTokens: u.cacheWriteInputTokens != null ? u.cacheWriteInputTokens : null,
-          outputTokens: u.outputTokens != null ? u.outputTokens : null,
-          reasoningOutputTokens: u.reasoningOutputTokens != null ? u.reasoningOutputTokens : null,
-        }
-      : null,
-  });
-}
-
 
 // ── Shared backend-aware recovery settlement (plan 7.5) ───────────────
-// Used by BOTH interactive (server.js resumeDetachedTurnInner) and
-// headless (sessions.js) recovery so the two paths cannot drift. For a
+// Used by every recovery of a detached turn (services/turn-recovery.js,
+// services/durable-turn.js) so the paths cannot drift. For a
 // Codex turn this terminalizes the persisted attempt; for Claude it
 // settles Anthropic spend through `limits`. `settleClaude` is injected
 // (the caller owns the `limits` module + user context) to avoid a
@@ -992,8 +967,8 @@ async function settleRecoveredAgentAttempt({
 
 // Persist a thread id discovered while replaying a detached Codex journal.
 // Live dispatches already do this in sessions.js; recovery must do the same
-// before the next turn chooses its resume id. Shared by interactive and
-// headless recovery so the paths cannot drift again.
+// before the next turn chooses its resume id. Shared by every recovery path
+// so the paths cannot drift again.
 async function persistRecoveredAgentThread({ pool, session, result }) {
   const threadId = result?.agentThreadId || null;
   if (!threadId || threadId === session?.agent_thread_id) {
@@ -1128,7 +1103,6 @@ module.exports = {
   changedPaths,
   routedProvidersOf,
   shortlistFallbacksOf,
-  completeCodexTurn,
   resolveCodexTurn,
   settleRecoveredAgentAttempt,
   persistRecoveredAgentThread,

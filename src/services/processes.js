@@ -51,7 +51,6 @@ const KINDS = Object.freeze([
   'session',        // a turn or an operation on a dev session (active-workers.js)
   'handoff',        // a hand-off pipeline (handoff-pipeline.js)
   'deploy',         // a fleet rollover's deploy, by app slug (app-deploy-status.js)
-  'agent_turn',     // the Mayor's turn in an agent session (mayor/agent-turn.js)
 ]);
 const KNOWN = new Set(KINDS);
 

@@ -46,7 +46,6 @@ import { releaseStallStore, type ReleaseStallState } from './release-stall-store
 import { codePauseStore, type CodePauseState } from './code-pause-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
-import { DevSessionShell } from './session-frame';
 import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
@@ -72,23 +71,11 @@ import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
 import { askVotesInView } from './topic/votes-in-view';
 import type { TranscriptMessage } from '../group-chat/transcript-store';
-import { AutoSessionModal } from './modals/auto-session-modal';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
-import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
 import { PermissionConsentModal } from './modals/permission-consent-modal';
-import {
-  autoSessionModalStore,
-  creditOptionsModalStore,
-  llmConsentModalStore,
-  permissionConsentModalStore,
-} from './modals/modals-store';
-import type {
-  AutoSessionModalView,
-  CreditOptionsModalView,
-  LlmConsentModalView,
-  PermissionConsentModalView,
-} from './modals/model';
+import { llmConsentModalStore, permissionConsentModalStore } from './modals/modals-store';
+import type { LlmConsentModalView, PermissionConsentModalView } from './modals/model';
 
 /** What app-view.js passes for the card list. */
 export interface MountBoardOptions extends DevBoardFrameProps {
@@ -116,7 +103,6 @@ export interface DevBoardBridge {
   mountKanbanFilters(host: Element | null): void;
   publishKanbanFilters(patch: Partial<KanbanFiltersState>): void;
   mountVotingHelp(host: Element | null, props: VotingHelpProps): void;
-  mountSessionShell(host: Element | null): void;
   mountWorkshop(host: Element | null): void;
   publishWorkshop(view: DevWorkshopView): void;
   mountKanban(host: Element | null): void;
@@ -130,9 +116,7 @@ export interface DevBoardBridge {
   prefetchThread(slug: string | null, number: number | null): Promise<unknown> | null;
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
-  mountAutoSessionModal(host: Element | null, view: AutoSessionModalView): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
-  mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
   mountPermissionConsentModal(host: Element | null, view: PermissionConsentModalView): void;
   publishCardNow(now: number): void;
@@ -187,29 +171,25 @@ kanbanFiltersStore.setFlush(flushSync);
  * And every card surface: each publish replaces what used to be an
  * `innerHTML` assignment whose caller's NEXT LINES read the fresh DOM —
  * `_rerenderWorkshop` wires the comment observer and fills the kudos hosts,
- * `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu, and
- * `_renderTopicHead` binds the transcript toggle it just painted around
- * the card. cardNowStore ticks inside no such read, but flushing it keeps
+ * and `_repaintKanbanBoard` re-binds drag and re-anchors an open ⋯ menu.
+ * cardNowStore ticks inside no such read, but flushing it keeps
  * a countdown label and its expiry refetch on the same beat.
  */
 devWorkshopStore.setFlush(flushSync);
 devKanbanStore.setFlush(flushSync);
 cardNowStore.setFlush(flushSync);
-// The topic head's too, and it is load-bearing three times:
-// `_renderTopicHead` fills the kudos hosts it just rendered,
-// `_loadSessionTranscript` fills the transcript body on the line after the
-// repaint that opened it, and a request's page portals its header and back
-// chip into the thread shell's hosts in the same paint (#4453).
+// The topic head's too, and it is load-bearing twice:
+// `_renderTopicHead` fills the kudos hosts it just rendered, and a request's
+// page portals its header and back chip into the thread shell's hosts in the
+// same paint (#4453).
 topicHeadStore.setFlush(flushSync);
 
 /**
- * And the three body-mounted modals'. Each `_show*Modal` appends its scrim to
+ * And the two body-mounted modals'. Each `_show*Modal` appends its scrim to
  * `<body>` and then binds the dialog's dismissal by querying inside it, so
  * the card has to be in the DOM on the next line — the same contract the
  * `innerHTML` assignment these replace gave them.
  */
-autoSessionModalStore.setFlush(flushSync);
-creditOptionsModalStore.setFlush(flushSync);
 llmConsentModalStore.setFlush(flushSync);
 permissionConsentModalStore.setFlush(flushSync);
 
@@ -325,10 +305,6 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(VotingHelp, props));
   },
 
-  mountSessionShell(host) {
-    mountLegacyPortal(host, createElement(DevSessionShell));
-  },
-
   // ── The card surfaces ──────────────────────────────────────────────
   //
   // Both list hosts stay app-view.js's (`_repaintDevBody` writes them into
@@ -373,23 +349,13 @@ export const devBoardBridge: DevBoardBridge = {
     publishRequestThread(Number(number), rows || []);
   },
 
-  // The three body-mounted modals. Each host is created by app-view.js on
+  // The body-mounted modals. Each host is created by app-view.js on
   // every open and removed on close, so the view rides in with the mount
   // rather than through a separate publish: there is no "already open"
   // state to update, and a mount-then-publish pair would render the scrim
   // empty for one frame.
-  mountAutoSessionModal(host, view) {
-    autoSessionModalStore.set({ view });
-    mountLegacyPortal(host, createElement(AutoSessionModal));
-  },
-
   mountSessionChecks(host, props) {
     mountLegacyPortal(host, createElement(SessionChecks, props));
-  },
-
-  mountCreditOptionsModal(host, view) {
-    creditOptionsModalStore.set({ view });
-    mountLegacyPortal(host, createElement(CreditOptionsModal));
   },
 
   mountLlmConsentModal(host, view) {

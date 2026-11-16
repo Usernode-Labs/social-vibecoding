@@ -61,14 +61,12 @@ function QuickAction({ id, label, onClick }: {
  *
  * The menu offered "Give feedback" and "New change" side by side, and people
  * found both confusing: feedback read as a note to nobody in particular, and
- * New change started an agent session without saying so. The two did the
+ * New change started a build without saying so. The two did the
  * same thing from where the viewer stands, asking for something to change,
  * and differed in who does the work. So the button asks for the change (the
  * same dialog, headed "Suggest an improvement", which posts a request members
- * can see, vote on and pick up), and building it yourself is "Build it
- * now", Messages' "+" choice, in the Agents list that is agent chats' one
- * home (#4729: it also led the Homeroom menu's Agent chats section, which
- * has since left the menu whole). Until then this button is the menu's one
+ * can see, vote on and pick up), and building it yourself starts on the
+ * Homeroom bot tab's new-thread screen. This button is the menu's one
  * way to change the app, which is the point for a first-time user.
  *
  * It said "Ask for a change" until the first-session run-through (5 Oct

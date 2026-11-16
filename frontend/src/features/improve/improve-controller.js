@@ -43,7 +43,7 @@ import { iconViewFor } from '../apps/app-card.js';
 // boolean, so reading it here adds no cycle; ../notifications/ already
 // imports improveStore the other way for the rows themselves.
 import { notificationsSheetStore } from '../notifications/notifications-sheet-store.js';
-import { boardHref, improveStore } from './improve-store.js';
+import { improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
 import { t } from '../../lib/i18n/runtime';
 
@@ -64,8 +64,8 @@ function isBusy(session) {
  * answer is. `SessionState` (public/js/session-state.js) is what the server
  * has said SINCE: it pushes a `session_state` event on every real turn
  * boundary, so a turn that ended after the payload was issued is already
- * idle there — and every other surface that draws this fact (the dev
- * screen's session list, the board's cards) reads it through the store.
+ * idle there — and every other surface that draws this fact (the board's
+ * cards) reads it through the store.
  * This row was the one that did not, so its pill went Working → Ready one
  * refetch round trip after the turn ended, and a panel opened later painted
  * the flag a fetch during the turn had left behind until the open-time
@@ -161,13 +161,8 @@ function toRow(session, appNameFallback) {
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
       || t('agent:menu.row.sessionFallback', { number: session.id }),
-    // A row represents the change, not just its chat. The lifecycle-aware
-    // page keeps the context around the workspace and still embeds it. A
-    // change an agent session started is worked on in that conversation
-    // (#2779), so its row opens the conversation.
-    href: session.agent_session_id
-      ? `#messages/agent/${session.agent_session_id}`
-      : `#app/${session.app_slug}/dev/proposals/${session.id}`,
+    // A row represents the change, so it opens the change's page.
+    href: `#app/${session.app_slug}/dev/proposals/${session.id}`,
     status: statusLabel(session),
     busy: liveBusy(session),
     awaitingInput: awaitsInput(session),
@@ -184,8 +179,6 @@ function toRow(session, appNameFallback) {
     // Streamlined Concept: the app-context sheet's change rows show a
     // relative time, the way the Figma board draws them.
     lastActivityAt: session.last_activity_at || session.created_at || null,
-    // #2779: the agent session this change was started from, if any.
-    agentSessionId: session.agent_session_id || null,
   };
 }
 
@@ -382,8 +375,7 @@ const Improve = {
     const nextSubTab = next === 'dev' ? (subTab || 'forum') : null;
     improveStore.set({
       tab: next,
-      // Which dev sub-view: the header's eye is a PREVIEW control on a
-      // session and a back-to-the-app control everywhere else.
+      // Which dev sub-view is on screen.
       subTab: nextSubTab,
       // And which LAYOUT the Dev screen is in, for the header's back arrow on
       // the sub-views that are reached from it. Captured on every route change
@@ -391,7 +383,6 @@ const Improve = {
       // already left the board: by the time a topic publishes, the layout can
       // no longer change under it.
       boardView: Improve._boardView(),
-      sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
       topicOrigin: Improve._topicOriginFor(prev, next, nextSubTab),
     });
   },
@@ -415,88 +406,14 @@ const Improve = {
   },
 
   /**
-   * Where a session's back arrow should point, given the route being left.
-   *
-   * THIS IS THE ONE PLACE WITH BOTH HALVES IN HAND. `setTab` runs before the
-   * store has been updated, so `prev` is the route being left and the
-   * arguments are the route being entered — and the answer is only ever
-   * computed on the transition INTO a session, never re-derived afterwards.
-   * Anywhere later the outgoing route is already gone.
-   *
-   * Three cases, in order:
-   *
-   *   entering a session from elsewhere  →  serialise the route being left
-   *   already on a session (a hop inside it, a re-publish, a preview open)
-   *                                      →  keep what we captured
-   *   anywhere else                      →  null, so a stale origin cannot
-   *                                         outlive the session it belonged to
-   *
-   * A cold deep link straight to a session yields null twice over: `setTab`
-   * returns early before the slug is published, and there is no previous app
-   * route to serialise. The header falls back to the Board, which is where
-   * the session's own card lives.
-   */
-  /**
-   * The captured origin, for the click path that mirrors the header's arrow.
-   *
-   * DevChat reads it through `window.Improve` rather than importing the
-   * store: a dozen test files run dev-chat.js as a script in a `vm` context,
-   * where a top-level import is a syntax error.
-   */
-  sessionOrigin() {
-    return improveStore.get().sessionOrigin;
-  },
-
-  _sessionOriginFor(prev, next, nextSubTab) {
-    const entering = next === 'dev' && nextSubTab === 'sessions';
-    const first = !Improve._routed;
-    Improve._routed = true;
-    if (!entering) return null;
-    // A DOOR THAT NAMED ITS OWN ORIGIN (#2770). A change is an agent
-    // conversation, and Messages is where those live: New change and the
-    // inbox's own session rows say so before they navigate, because the
-    // store's `prev` cannot — it describes the last APP route, and Messages
-    // is not one. Taken once, on the way in, so it cannot outlive the entry
-    // it was set for.
-    const named = Improve._nextSessionOrigin;
-    Improve._nextSessionOrigin = null;
-    if (named) return named;
-    const wasSession = prev.tab === 'dev' && prev.subTab === 'sessions';
-    if (wasSession) return prev.sessionOrigin;
-    // A COLD DEEP LINK HAS NO PREVIOUS SCREEN, and the store cannot say so by
-    // itself: its INITIAL is `tab: 'app'`, which is indistinguishable from
-    // having actually been on the app tab. Reading it as one sent a shared
-    // session link's back arrow to `#app/<slug>/app` — a screen this tab had
-    // never shown, and on the platform's own self-hosted app one that does
-    // not exist. "The last screen you were on" requires there to have been
-    // one, so the first routing pass of a page load captures nothing.
-    if (first) return null;
-    return Improve._routeHref(prev);
-  },
-
-  /** Whether setTab has run at all in this page load. See above. */
-  _routed: false,
-
-  /**
-   * The origin the NEXT session entry should record, set by a door that
-   * knows it (see `_sessionOriginFor`). Null when the door said nothing.
-   */
-  _nextSessionOrigin: null,
-
-  /** Called by a session row in Messages just before its anchor navigates. */
-  enterSessionFrom(href) {
-    Improve._nextSessionOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
-  },
-
-  /**
    * Where a TOPIC's back chip should point, when not its board (#3103).
    *
-   * The session rule's shape, narrower: only a door that names its origin
-   * yields one. A card shared into a Messages conversation opens the topic
-   * route, and the Improve store's `prev` cannot say it came from Messages —
-   * it describes the last APP route. Taken once on the way in; kept while
-   * the route stays a topic (navigateToApp re-publishes it once the app's
-   * record loads); dropped by every other route.
+   * Only a door that names its origin yields one. A card shared into a
+   * Messages conversation opens the topic route, and the Improve store's
+   * `prev` cannot say it came from Messages — it describes the last APP
+   * route. Taken once on the way in; kept while the route stays a topic
+   * (navigateToApp re-publishes it once the app's record loads); dropped by
+   * every other route.
    */
   _topicOriginFor(prev, next, nextSubTab) {
     if (!(next === 'dev' && nextSubTab === 'topic')) return null;
@@ -512,7 +429,8 @@ const Improve = {
   /**
    * The captured topic origin, for the router (App._isBotTopic: a topic
    * opened from the Homeroom bot tab's page lights that tab). Read through
-   * `window.Improve` for the reason `sessionOrigin` is.
+   * `window.Improve`: the router is a classic script and cannot import the
+   * store.
    */
   topicOrigin() {
     return improveStore.get().topicOrigin;
@@ -534,58 +452,6 @@ const Improve = {
    */
   clearTopicOrigin() {
     if (improveStore.get().topicOrigin) improveStore.set({ topicOrigin: null });
-  },
-
-  /**
-   * An app route as an href, or null when it does not name one.
-   *
-   * Deliberately NOT App._appUrl: that serialises PATHS (`/app/<slug>/board`)
-   * for the address bar, and this feeds an anchor in the header, where every
-   * other destination is a hash. Both forms route — `_deepLinkTarget` reads
-   * either — but mixing them inside one control means a copied link differs
-   * by which screen you copied it from.
-   */
-  _routeHref(route) {
-    const slug = route.slug;
-    if (!slug) return null;
-    // The platform's own app has no App tab — App.switchTab coerces a request
-    // for one back to the dev forum — so it can never be an origin.
-    if (route.tab !== 'dev') return route.selfHosted ? null : `#app/${slug}/app`;
-    if (route.subTab === 'forum' || route.subTab === 'topic') {
-      // Workshop and Board are one screen in two layouts, and the layout IS
-      // the route (see the alias block in app.js's restoreFromHash), so the
-      // origin has to name the one that was on screen.
-      return boardHref(slug, Improve._boardView());
-    }
-    if (route.subTab === 'chat') return `#app/${slug}/dev/chat`;
-    return null;
-  },
-
-  /**
-   * The open session's staging preview, or null.
-   *
-   * Called by DevChat._publishPreview() whenever the open session or its
-   * `staging_url` changes. Gated the header's eye, back when the header had
-   * a contextual slot; ../dev-chat/session-header.tsx carries that loop now.
-   */
-  setSessionPreview(preview) {
-    improveStore.set({
-      previewSessionId: (preview && preview.sessionId) || null,
-      previewUrl: (preview && preview.url) || null,
-      previewBuildable: !!(preview && preview.buildable),
-    });
-  },
-
-  /**
-   * Whether a staging preview is on screen right now — the "seeing" half of
-   * the doing↔seeing loop. AppView.ensureStaging publishes true (every
-   * preview open funnels through it, #439); AppView.closeStagingOverlay
-   * publishes false. Drives the eye/pencil pair and the Preview chip.
-   */
-  setPreviewActive(on) {
-    if (improveStore.get().previewActive !== !!on) {
-      improveStore.set({ previewActive: !!on });
-    }
   },
 
   /**
@@ -792,15 +658,13 @@ const Improve = {
     const token = ++Improve._loadToken;
     // #6042: merged and merging changes ride along, so a row can say Live
     // instead of vanishing the moment its change merges. The server bounds
-    // them to its recent window; the dev tab's own fetch sends no flag and
-    // sees none of them.
+    // them to its recent window.
     const demo = Improve._demoQS();
     // #1958: stamped BEFORE the request goes out — see SessionState.seed.
     // This used to hand the seed `data.issuedAt`, a field the endpoint has
     // never sent, so every payload was stamped at ARRIVAL and an answer that
     // was in flight while a turn ended put the spinner straight back — the
-    // inversion the store's own comment warns about. DevChat.loadActiveSessions
-    // stamps the same call the same way.
+    // inversion the store's own comment warns about.
     const issuedAt = Date.now();
     if (!improveStore.get().sessionsLoaded) improveStore.set({ loadingSessions: true });
     let sessions = [];
@@ -874,8 +738,8 @@ const Improve = {
     // Without the change the gate read a field nobody writes, and the
     // reload below simply stopped happening.
     //
-    // …AND WHILE MESSAGES IS (#2770). A change is an agent conversation now,
-    // and Messages → Agents lists these same rows; without this their titles
+    // …AND WHILE MESSAGES IS (#2770). Messages lists these same rows;
+    // without this their titles
     // and status lines would freeze at whatever the last load said for as
     // long as the inbox stayed open. Asked through the island's window seam
     // rather than an import, so this module keeps its three dependencies.
@@ -920,7 +784,7 @@ const Improve = {
   /**
    * `SessionState.anyActiveFor(<viewer>)`, as store state: one of the
    * viewer's OWN sessions is mid-turn. Not anyActive(), which also counts
-   * every shared session and auto-run on the apps the viewer can see, so the
+   * every shared session on the apps the viewer can see, so the
    * mark lit up for other people's builds (#2779 follow-up). Safe before
    * either exists.
    */
@@ -1035,37 +899,16 @@ const Improve = {
    * Improve's "New change" and the Workshop's "Start here" both come through
    * here.
    *
-   * ── A NEW CHANGE IS AN AGENT SESSION (#2779) ─────────────────────────
-   *
-   * New work starts in a conversation with the Mayor, focused on the app
-   * Improve is pointed at. It used to open that app's classic new-session
-   * screen (/dev/sessions/new, #2241); classic sessions are no longer
-   * created, and the server takes POST /api/apps/:slug/sessions only from
-   * the Mayor's start_change. Nothing is created by the click: the unsent
-   * conversation becomes a session on its first message.
+   * New work starts on the Homeroom bot tab's new-thread screen, on the
+   * project Improve is pointed at. That screen offers Homeroom bot, Claude
+   * Code or ChatGPT as the builder. Nothing is created by the click.
    */
   startSession() {
     Improve.close();
-    Improve._startAgentSession({ slug: improveStore.get().slug, entry: 'improve' });
-  },
-
-  /**
-   * #2779: open an unsent agent session with whatever the entry point knows.
-   * The server drops an app the viewer cannot see rather than refusing.
-   *
-   * The controller is published by the shell bundle at module scope, before
-   * anything can be clicked; without it (a shell that failed to boot) the
-   * address still opens an unsent conversation, only without the hint.
-   */
-  _startAgentSession(hint) {
-    const clean = {};
-    if (hint && typeof hint.slug === 'string' && hint.slug) clean.slug = hint.slug;
-    if (hint && Number.isInteger(hint.issueNumber)) clean.issueNumber = hint.issueNumber;
-    if (hint && Number.isInteger(hint.proposalId)) clean.proposalId = hint.proposalId;
-    if (hint && typeof hint.entry === 'string') clean.entry = hint.entry;
-    const agent = window.UsernodeReact?.agentSession;
-    if (agent) void agent.start(clean);
-    else window.location.hash = '#agent/new';
+    const { slug } = improveStore.get();
+    window.location.hash = slug
+      ? `#homeroom-bot/new?project=${encodeURIComponent(slug)}`
+      : '#homeroom-bot/new';
   },
 
   /**

@@ -80,7 +80,7 @@ export function outcomeLabel(outcome: string | null): string {
 export function incidentLink(i: IncidentRow): { href: string; label: string } | null {
   if (!i.app) return null;
   const slug = encodeURIComponent(i.app);
-  if (i.sessionId != null) return { href: `#app/${slug}/dev/sessions/${i.sessionId}`, label: `Session ${i.sessionId}` };
+  if (i.sessionId != null) return { href: `#app/${slug}/dev/proposals/${i.sessionId}`, label: `Session ${i.sessionId}` };
   if (i.issueNumber != null) return { href: `#app/${slug}/dev/issues/${i.issueNumber}`, label: `Request #${i.issueNumber}` };
   return null;
 }

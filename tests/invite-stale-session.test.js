@@ -61,6 +61,22 @@ const json = (status, body) => ({
   json: async () => body,
 });
 
+// App's own timers, as each VM sees setTimeout. A session read that did not
+// land is retried on a timer that re-arms itself (App._scheduleSessionRetry),
+// and nothing here answers it, so the file stops what its Apps left running
+// when it ends, or they would hold it open after its last test.
+const appTimers = new Set();
+const appSetTimeout = (fn, ms, ...args) => {
+  const handle = setTimeout(() => { appTimers.delete(handle); fn(...args); }, ms);
+  appTimers.add(handle);
+  return handle;
+};
+const appClearTimeout = (handle) => { appTimers.delete(handle); clearTimeout(handle); };
+test.after(() => {
+  for (const handle of appTimers) clearTimeout(handle);
+  appTimers.clear();
+});
+
 // `routes` maps a path to a function returning (a promise of) a response, or
 // throwing for a read that never lands.
 function harness({ routes, snapshotBoot = true, session = memoryStorage(), confirm = true } = {}) {
@@ -77,7 +93,7 @@ function harness({ routes, snapshotBoot = true, session = memoryStorage(), confi
       replaceState(_state, _title, url) { location.href = url; },
     },
     URL, URLSearchParams, console, Promise, JSON, Date, Number, String,
-    setTimeout, clearTimeout, AbortController,
+    setTimeout: appSetTimeout, clearTimeout: appClearTimeout, AbortController,
     CustomEvent: class CustomEvent { constructor(type, init) { this.type = type; this.detail = init && init.detail; } },
     document: {
       title: '',

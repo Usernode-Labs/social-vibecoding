@@ -243,9 +243,7 @@ async function hasByokKeyOnFile(pool, userId) {
 
 // #664: user-facing notice that the payer switched to their own key mid-turn.
 // Persists a system chat row (visible on reload) and fans the event out live
-// over the global WS + the session bus (the resumable GET /events SSE) — the
-// proxy has no handle on the turn's POST SSE, but the dev-chat client listens
-// on both side channels. Entirely best-effort: a failed notice must never fail
+// over the global WS. Entirely best-effort: a failed notice must never fail
 // the API call.
 //
 // #1088: the caller decides WHETHER to emit. This used to be gated only by the
@@ -268,9 +266,8 @@ async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
       sessionId, userId, err: err.message,
     });
   }
-  // A proxy-minted _seq can't collide with the chat handler's
-  // `${prefix}-${n}` stream, and the client dedups the WS/bus overlap on
-  // this exact string.
+  // A proxy-minted _seq can't collide with the turn's own
+  // `${prefix}-${n}` stream.
   const seq = `byok-switch-${sessionId}-${Date.now().toString(36)}`;
   try {
     const { broadcastGlobal } = require('../services/ws');
@@ -280,12 +277,6 @@ async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
     });
   } catch (err) {
     log.warn('anthropic-proxy', 'Failed to broadcast billing switch', { sessionId, err: err.message });
-  }
-  try {
-    const sessionBus = require('../services/session-bus');
-    sessionBus.publish(sessionId, { type: 'billing_switched', _seq: seq, text });
-  } catch (err) {
-    log.warn('anthropic-proxy', 'Failed to publish billing switch to bus', { sessionId, err: err.message });
   }
 }
 

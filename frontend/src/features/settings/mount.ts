@@ -74,7 +74,7 @@ if (typeof window !== 'undefined') {
   bridge.settings = host.Settings;
   // #settings-usernode-section's seam. settings.js is a 5,000-line module a
   // dozen tests load in a `vm`, so it reaches React by name rather than
-  // importing — the same constraint dev-chat.js has.
+  // importing.
   bridge.settingsUsernode = {
     publish(state: UsernodeSectionState) { usernodeSectionStore.set(state); },
   };

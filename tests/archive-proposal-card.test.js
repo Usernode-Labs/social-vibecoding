@@ -1,8 +1,7 @@
 // Tests for the proposal-card Withdraw control (app-view.js
 // _renderProposalCard / _renderGovCard). A proposer-only Withdraw button
-// must render on your OWN live (status:'promoted') proposals, beside
-// "Open session", and must NOT render on someone else's proposal or on a
-// merged/merging card. Governance cards get the equivalent creator-only
+// must render on your OWN live (status:'promoted') proposals, and must NOT
+// render on someone else's proposal or on a merged/merging card. Governance cards get the equivalent creator-only
 // Withdraw button.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`) that
@@ -84,14 +83,12 @@ test('my own promoted proposal renders the Withdraw control', () => {
   // built from descriptors so the same list can render as a dropdown or as a
   // touch action sheet.
   assert.ok(!menuHas(AppView, html, /Archive/), 'proposal card never says Archive');
-  assert.ok(menuHas(AppView, html, /Open session/), 'Open session still offered');
 });
 
 test("someone else's promoted proposal does NOT render Withdraw", () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ user_id: 999 }));
   assert.ok(!menuHas(AppView, html, /^Withdraw$/), 'not the proposer — no Withdraw');
-  assert.ok(!menuHas(AppView, html, /Open session/), 'not the proposer — no Open session');
 });
 
 test('my merged proposal does NOT render Withdraw', () => {
@@ -114,8 +111,8 @@ test('my own rename PR proposal renders Withdraw', () => {
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'rename PR shows Withdraw in ⋯');
 });
 
-// #313/#827: "Explore in dev chat" is offered on proposals the viewer does
-// NOT own (where there's no "Open session"), and omitted on their own cards.
+// #313/#827: Explore is offered on proposals the viewer does NOT own, and
+// omitted on their own cards.
 // #1787 round four moved it back off the face and into ⋯: it is a door to a
 // side conversation ABOUT the proposal rather than one of the things you do
 // to it, and at ~170px it was the widest pill on the card, pushing Vote or
@@ -132,7 +129,7 @@ test("someone else's proposal offers Explore-in-dev-chat from ⋯", () => {
 test('my own proposal does NOT render the Explore-in-dev-chat card button', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal());
-  assert.ok(!menuHas(AppView, html, /Explore in a coding agent/), 'own card has none (Open session covers it)');
+  assert.ok(!menuHas(AppView, html, /Explore in a coding agent/), 'own card has none');
 });
 
 test("someone else's merged proposal renders the Explore-in-dev-chat button", () => {
@@ -258,8 +255,8 @@ test("topic head for another user's proposal offers Explore as a row of the shee
 });
 
 test("topic head for the viewer's OWN proposal shows no AI button", () => {
-  // #348: owners reach the Mayor via "Open session" on their own PR, so the
-  // detail view shows no pill (matching the card behaviour from #313).
+  // #348: the detail view shows no pill on the viewer's own proposal
+  // (matching the card behaviour from #313).
   const { AppView, els, published, headHtml } = makeTopicHarness(ME);
   els['gc-thread-head'] = fakeHead();
   AppView._devTopic = { kind: 'proposal', id: 7 };

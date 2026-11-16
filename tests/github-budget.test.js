@@ -510,19 +510,14 @@ test('Admin, Limits draws the figures from the AdminUI registry, read-only', () 
   assert.match(src, /<AppLimitCard canWrite=\{canWrite\} \/>\s*<SessionLimitCard canWrite=\{canWrite\} \/>\s*<GithubBudgetCard \/>/);
 });
 
-test('a 503 github_unavailable carries the reason, and the CLI prints it', () => {
+test('a 503 github_unavailable carries the reason, for the CLI or a connector to say', () => {
   const body = budget.githubUnavailableBody(rateLimited({ resetMin: 5 }), { now: NOW });
-  const { describeError } = require('../src/cli/agent-command');
-  assert.equal(describeError({ status: 503, data: body }),
-    "GitHub's hourly limit for Homeroom is used up. It resets in about 5 minutes.");
-  assert.equal(describeError({ status: 503, data: { error: 'github_unavailable' } }),
-    'GitHub is not reachable from the platform right now.', 'any other outage reads as before');
-  for (const rel of ['src/routes/proposal-handoff.js', 'src/routes/cli-agent.js']) {
-    const src = read(rel);
-    assert.doesNotMatch(src, /json\(\{ error: 'github_unavailable' \}\)/, `${rel} says why when it can`);
-  }
-  assert.match(read('src/routes/proposal-handoff.js'), /json\(githubBudget\.githubUnavailableBody\(err\)\)/);
-  // A local commit's upload, from either route, is the conductor's
-  // (`proposal.commit`), which answers the host's reason the same way.
+  assert.equal(body.error, 'github_unavailable');
+  assert.equal(body.message, "GitHub's hourly limit for Homeroom is used up. It resets in about 5 minutes.");
+  const handoff = read('src/routes/proposal-handoff.js');
+  assert.doesNotMatch(handoff, /json\(\{ error: 'github_unavailable' \}\)/, 'the hand-off route says why when it can');
+  assert.match(handoff, /json\(githubBudget\.githubUnavailableBody\(err\)\)/);
+  // A local commit's upload is the conductor's (`proposal.commit`), which
+  // answers the host's reason the same way.
   assert.match(read('src/services/proposal-commit-operation.js'), /return \{ status: 503, \.\.\.githubBudget\.githubUnavailableBody\(err\) \};/);
 });

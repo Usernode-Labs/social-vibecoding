@@ -30,7 +30,7 @@ const MIN_MAX_OUTPUT_TOKENS = 4_096;
 // 1.18M tokens for GLM 5.3 Flash's 1,310,720, which a change's thread never
 // reaches. A two-line change on a long-lived change then resent 1.5 to 2.3 MB
 // of history on each of its 140 requests and lost track of its own finished
-// work for 22 minutes (agent session 9, change 4971). A window under ~222k is
+// work for 22 minutes (change 4971). A window under ~222k is
 // unaffected: 90% of it is already lower.
 const AUTO_COMPACT_TOKEN_LIMIT = 200_000;
 const NEUTRAL_IDENTITY_INSTRUCTION = "You are Homeroom's repository coding agent.";

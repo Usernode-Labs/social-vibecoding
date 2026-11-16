@@ -3,27 +3,23 @@
 /**
  * Orphan sweeper for the progress-estimate accuracy dataset (#892).
  *
- * THE GAP. Every estimator tick INSERTs a `progress_estimates` row with its
- * prediction, and the turn's actual outcome is backfilled by a single UPDATE
- * in runClaudeCodeTool's dispatch `finally` (src/routes/sessions.js). That
- * choke point only exists inside the live turn — so if the server restarts,
- * crashes, or is redeployed mid-run, the rows for that run keep
- * `actual_total_ms IS NULL` forever and can never be scored. Measured in
- * production: 482 rows across 100 distinct runs, about 10% of all runs,
- * going back to the first day the table existed, with the daily unresolved
- * rate holding steady at 10-13%.
+ * THE GAP. `progress_estimates` holds one row per guess the progress
+ * estimator made about a coding run, and the run wrote its actual outcome
+ * onto those rows when it ended. A run that was cut short (a restart, a
+ * crash, a redeploy mid-run) never did, so its rows keep
+ * `actual_total_ms IS NULL` and cannot be scored. The estimator no longer
+ * runs and nothing writes new rows; what is left unresolved is resolved
+ * here.
  *
- * WHY IT MATTERS NOW. The dashboard's v1-vs-v2 comparison needs a clean
- * denominator: a permanently-drifting unresolved count makes "did the new
- * prompt help?" harder to answer than it needs to be, and the unresolved
- * tile stops being a data-health signal once it only ever goes up.
+ * WHY IT MATTERS. The admin dashboard's estimator card reads the recorded
+ * rows, and its unresolved count is only a data-health signal when it can
+ * reach zero.
  *
- * SAFETY. Every UPDATE is guarded on `actual_total_ms IS NULL`, so it can
- * never race or overwrite the live backfill — whichever runs first wins and
- * the other is a no-op. Rows are only considered once they are two hours
- * old, comfortably past any turn still legitimately in flight. Swept rows
- * are marked `outcome = 'unknown'` rather than being guessed into one of the
- * real outcome values: we know how long the run went, not how it ended.
+ * SAFETY. Every UPDATE is guarded on `actual_total_ms IS NULL`, so a row
+ * that already has its outcome is never overwritten. Rows are only
+ * considered once they are two hours old. Swept rows are marked
+ * `outcome = 'unknown'` rather than being guessed into one of the real
+ * outcome values: we know how long the run went, not how it ended.
  */
 
 // `getPool` is required lazily inside sweep() rather than at module load:
@@ -91,8 +87,8 @@ async function sweepOnce(pool) {
 
   let ticks = 0;
   for (const r of rows) {
-    // The `actual_total_ms IS NULL` guard is what makes this safe to run
-    // beside the live backfill — never remove it.
+    // The `actual_total_ms IS NULL` guard keeps a row that already has its
+    // outcome as it is — never remove it.
     const res = await pool.query(
       `UPDATE progress_estimates
           SET actual_total_ms     = $1,

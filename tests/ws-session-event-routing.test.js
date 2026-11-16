@@ -1,11 +1,8 @@
 // #4318: a session's live events are routed by session, not sent to every
 // /ws/events socket on the platform.
 //
-//   * a `session_event` reaches the session owner's sockets and the sockets
-//     that WATCH the session (a `watch_session` frame, answered with
-//     `session_watch`), and nobody else;
-//   * a watch succeeds only for a session the socket's user may open — its
-//     owner or an admin, the rule GET /api/sessions/:id/events applies;
+//   * a `session_event` reaches the session owner's sockets, and nobody
+//     else;
 //   * the few events lists and boards draw (checks, previews) still reach
 //     everyone who may VIEW the app, and nobody who may not;
 //   * a socket whose send buffer is over the limit is skipped, then told to
@@ -19,8 +16,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const http = require('node:http');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -55,7 +50,7 @@ const fakePool = {
       const own = session?.user_id === d.user_id;
       return { n: d.n, authenticated: !!user, username: user?.username, is_admin: !!user?.is_admin,
         session_owner: own, allowed: view && (d.session_id == null || !!session
-          && (own || d.watching && user?.is_admin || d.fanout)) };
+          && (own || d.fanout)) };
     }) };
     if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: [{ id: params[0] }] };
     if (/pg_notify/.test(sql)) { notifies.push(params); return { rows: [] }; }
@@ -146,12 +141,6 @@ function sessionEvents(sock, sessionId) {
   return sock.received.filter((m) => m.type === 'session_event' && m.sessionId === sessionId);
 }
 
-async function watch(sock, sessionId, type = 'watch_session') {
-  sock.send(JSON.stringify({ type, sessionId }));
-  await settle();
-  return sock.received.filter((m) => m.type === 'session_watch' && m.sessionId === sessionId).pop();
-}
-
 function progress(sessionId, text) {
   return { type: 'session_event', sessionId, event: 'cc_progress', text };
 }
@@ -167,59 +156,8 @@ test('a run\'s progress reaches its owner and nobody else', async () => {
 
   assert.equal(sessionEvents(owner, 100).length, 1, 'the owner sees their own run');
   assert.equal(sessionEvents(stranger, 100).length, 0, 'an unrelated socket hears nothing');
-  assert.equal(sessionEvents(admin, 100).length, 0, 'not even an admin, until they watch it');
+  assert.equal(sessionEvents(admin, 100).length, 0, 'not even an admin');
   for (const s of [owner, stranger, admin]) s.terminate();
-});
-
-test('a watch adds a socket to the audience, an unwatch takes it out', async () => {
-  const admin = await openEvents('admin');
-  await settle();
-
-  const ack = await watch(admin, 100);
-  assert.deepEqual(ack, { type: 'session_watch', sessionId: 100, watching: true });
-  ws.broadcastGlobal(progress(100, 'line one'));
-  await settle();
-  assert.deepEqual(sessionEvents(admin, 100).map((m) => m.text), ['line one']);
-
-  const off = await watch(admin, 100, 'unwatch_session');
-  assert.equal(off.watching, false);
-  ws.broadcastGlobal(progress(100, 'line two'));
-  await settle();
-  assert.deepEqual(sessionEvents(admin, 100).map((m) => m.text), ['line one'],
-    'nothing after the screen left the session');
-  admin.terminate();
-});
-
-test('a repeated watch is checked again: after a demotion it is refused and the watch ends', async () => {
-  const admin = await openEvents('admin');
-  await settle();
-  assert.equal((await watch(admin, 100)).watching, true);
-  USERS.admin.is_admin = false;
-  try {
-    assert.deepEqual(await watch(admin, 100), { type: 'session_watch', sessionId: 100, watching: false, code: 'not_found' },
-      'answered from access now, not from the socket\'s own list');
-  } finally {
-    USERS.admin.is_admin = true;
-  }
-  ws.broadcastGlobal(progress(100, 'after the refusal'));
-  await settle();
-  assert.equal(sessionEvents(admin, 100).length, 0, 'the refused watch ended: admin again, but no longer watching');
-  admin.terminate();
-});
-
-test('a watch on a session the user may not open is refused, and hears nothing', async () => {
-  const stranger = await openEvents('stranger');
-  await settle();
-  const ack = await watch(stranger, 100);
-  assert.deepEqual(ack, { type: 'session_watch', sessionId: 100, watching: false, code: 'not_found' },
-    'refused with the same answer as a session that does not exist');
-  const missing = await watch(stranger, 999);
-  assert.equal(missing.watching, false);
-
-  ws.broadcastGlobal(progress(100, 'secret log line'));
-  await settle();
-  assert.equal(sessionEvents(stranger, 100).length, 0);
-  stranger.terminate();
 });
 
 test('a ping is answered with a pong, on that socket alone', async () => {
@@ -233,15 +171,6 @@ test('a ping is answered with a pong, on that socket alone', async () => {
   assert.deepEqual(asker.received.filter((m) => m.type === 'pong'), [{ type: 'pong' }]);
   assert.equal(other.received.filter((m) => m.type === 'pong').length, 0);
   for (const s of [asker, other]) s.terminate();
-});
-
-test('the watch rule is the live stream\'s: owner or admin', () => {
-  const row = { user_id: 1 };
-  assert.equal(ws.canWatchSessionRow(row, { id: 1, isAdmin: false }), true);
-  assert.equal(ws.canWatchSessionRow(row, { id: 2, isAdmin: true }), true);
-  assert.equal(ws.canWatchSessionRow(row, { id: 3, isAdmin: false }), false);
-  assert.equal(ws.canWatchSessionRow(null, { id: 1, isAdmin: true }), false);
-  assert.equal(ws.canWatchSessionRow({ user_id: null }, { id: 3, isAdmin: false }), false);
 });
 
 test('frames per event do not grow with the number of connected users', async () => {
@@ -287,7 +216,7 @@ test('the audience decision is per event type', () => {
   assert.equal(ws.sessionEventAudience({ event: 'mayor_reasoning' }), 'session');
   assert.equal(ws.sessionEventAudience({ event: 'status' }), 'session');
   // staging_awake: a woken preview's loader may be a member's on somebody
-  // else's change, who neither owns nor watches the session.
+  // else's change, who does not own the session.
   for (const e of ['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']) {
     assert.equal(ws.sessionEventAudience({ event: e }), 'app', e);
   }
@@ -371,22 +300,4 @@ test('a socket over the buffer limit is skipped, then told to re-read once', asy
     Object.defineProperty(proto, 'bufferedAmount', original);
     sock.terminate();
   }
-});
-
-// ── The client half ────────────────────────────────────────────────────
-
-const APP_JS = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-const DEV_CHAT = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
-
-test('the events socket re-sends every watch when it (re)opens', () => {
-  const at = APP_JS.indexOf('App.eventsWs.onopen');
-  const body = APP_JS.slice(at, APP_JS.indexOf('};', at));
-  assert.match(body, /for \(const id of App\._watchedSessions\.keys\(\)\) App\._sendSessionWatch\('watch_session', id\)/);
-});
-
-test('DevChat\'s open session is what the tab watches', () => {
-  assert.match(DEV_CHAT, /set currentSession\(session\) \{[\s\S]{0,200}window\.App\?\.setDevChatSession\?\.\(/,
-    'every assignment — open, close, a test — reaches the socket');
-  assert.match(APP_JS, /setDevChatSession\(sessionId\) \{[\s\S]{0,300}unwatchSession\(App\._devChatWatchedId, 'devchat'\)[\s\S]{0,200}watchSession\(id, 'devchat'\)/);
 });

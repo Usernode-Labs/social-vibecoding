@@ -655,10 +655,13 @@ test('GET /api/ai/where is the signed-in person\'s own read, never cached', () =
   assert.match(route, /res\.set\('Cache-Control', 'private, no-store'\);/);
   assert.match(route, /if \(!req\.user\?\.id\) return res\.status\(401\)/);
   // The chat is the signed-in person's, resolved on the server: the request
-  // names a message or a project, never a conversation or a user.
-  assert.match(route, /whereFor\(pool, \{\s*user: req\.user, message, project, firstVersion: req\.query\.firstVersion === '1',\s*\}\)/);
+  // names a message, a project or an old chat of theirs, never a
+  // conversation or a user (tests/old-chat-move-postgres.test.js runs the
+  // old chats' half).
+  assert.match(route, /whereFor\(pool, \{\s*user: req\.user, message: message\.id, agentChat: agentChat\.id, devChat: devChat\.id,\s*project, firstVersion: req\.query\.firstVersion === '1',\s*\}\)/);
   assert.doesNotMatch(route, /req\.query\.(conversation|user)/);
-  assert.match(route, /if \(raw != null && message == null\) return res\.status\(400\)/);
+  assert.match(route, /if \(message\.bad\) return res\.status\(400\)/);
+  assert.match(route, /if \(agentChat\.bad \|\| devChat\.bad\) return res\.status\(400\)/);
 });
 
 // ── What needs no database ───────────────────────────────────────────────

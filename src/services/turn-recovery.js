@@ -1,11 +1,9 @@
 'use strict';
 
-// A coding turn whose process went before it ended: adopted, followed through
-// its journal to its end, and its tail and wrap-up finished; or, its worker
-// gone, abandoned with what it left (services/worker.js). Moved out of
-// server.js unchanged: what a turn's own work item runs when it resumes
-// (src/workflow/turn/), and, until every turn is one, what the leader's
-// sweeps run.
+// A coding turn whose record no work item holds any more: adopted, followed
+// through its journal to its end, and its tail finished; or, its worker
+// gone, abandoned with what it left (services/worker.js). What a `recover`
+// turn runs (src/workflow/turn/, services/turns.js).
 
 const { getPool } = require('../db/pool');
 const github = require('./github');
@@ -16,9 +14,7 @@ const recoveryRetry = require('./recovery-retry');
 const turnLifecycle = require('./turn-lifecycle');
 const { workflowTurnHeldSql } = require('../workflow/session-work.ts');
 const stopRegistry = require('./stop-registry');
-const sessionBus = require('./session-bus');
 const turnEffects = require('./turn-effects');
-const recoveryPills = require('./recovery-pills');
 const stagingRecovery = require('./staging-recovery');
 const stagingSvc = require('./staging');
 const limits = require('./limits');
@@ -26,6 +22,36 @@ const events = require('./events');
 const ws = require('./ws');
 const log = require('./logger');
 const repoRef = require('./repo-ref');
+
+// The breadcrumb text for a recovered scout turn whose journal replay
+// produced no spec text.
+const SCOUT_NO_SPEC_BREADCRUMB =
+  "The scout didn't produce a plan. Please send your request again.";
+
+// The breadcrumb text for a coding turn that could not be resumed at all.
+// One string for every unresumable shape (worker gone, journal unreadable,
+// mid-exec kill) — the shapes differ only to an operator, and
+// metadata.recoveredReason keeps them apart in SQL.
+const TURN_UNFINISHED_BREADCRUMB =
+  "That coding turn didn't finish. Please send your request again.";
+
+// The breadcrumb for a turn that couldn't be resumed BUT whose code
+// already landed: the agent committed and the branch is on GitHub, only
+// the platform-side tail (preview, cards) was lost. Asking for a resend
+// here — which TURN_UNFINISHED_BREADCRUMB does — tells the user to redo
+// work that is already safely pushed, and invites a duplicate run. So this
+// wording reports what landed and what is being repaired instead.
+//
+// `prNumber` is optional: a tail can die after the push but before the PR
+// exists, and naming a PR that isn't there would be worse than vague.
+// Per #896 the platform restart itself stays out of the wording — the
+// user can't act on it — and lives in metadata.recovered / the logs.
+function buildCodeLandedBreadcrumb({ prNumber = null, rebuildingPreview = true } = {}) {
+  const where = prNumber ? `pushed to PR #${prNumber}` : 'pushed to your branch';
+  return rebuildingPreview
+    ? `Your changes are committed and ${where}. Rebuilding the preview now.`
+    : `Your changes are committed and ${where}.`;
+}
 
 let config = null;
 function sharedConfig() {
@@ -239,11 +265,7 @@ async function adoptBotOrphan({ pool, session, sessionId, containerName, contain
   });
 }
 
-// `owned`: the caller is the work item the turn's record names as its owner
-// (a turn carried on after its process went: services/turns.js), so the
-// turn is its to finish: none of the checks that leave a turn to someone
-// else apply.
-async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }, { owned = false } = {}) {
+async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
   const { name: containerName, sessionId } = orphan;
   let containerState = orphan.state;
   const kubernetesWorker = worker.usesKubernetesWorkers();
@@ -252,10 +274,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   });
 
   const { rows } = await pool.query(
-    // #896: app_self_hosted rides along so the recovered turn's Mayor
-    // wrap-up gets the same system prompt a live turn would (the
-    // self-hosted block changes what the Mayor is allowed to say).
-    // And whether a durable build that owns the session is still under way
+    // Whether a durable build that owns the session is still under way
     // (bot-build, docs/plans/bot-build-workflow.md).
     `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
             a.self_hosted AS app_self_hosted, u.username,
@@ -285,7 +304,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // promoted; adopting its own live turn here put a second consumer on its
   // journal and finished it twice (cards, vote resets, wrap-ups), and the
   // adoption's `finally` took the live owner's busy flag with it.
-  if (!owned && (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusyHere(sessionId))) {
+  if (worker.getActiveTurnMode(sessionId) || activeWorkersSvc.isSessionBusyHere(sessionId)) {
     log.info('server', 'A turn on this worker is live in this process; not adopting it', { containerName, sessionId });
     return;
   }
@@ -294,7 +313,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   // that work's, which the next leader claims and carries on from its last
   // saved step. The worker is kept and registered; nothing else is done to
   // it here.
-  if (session.workflow_owned && !owned) {
+  if (session.workflow_owned) {
     if (containerState === 'running') worker.adoptWarmWorker(sessionId, containerName);
     log.info('server', 'Leaving a workflow turn\'s worker to its work', {
       containerName, sessionId, owner: session.workflow_owner, state: containerState,
@@ -336,8 +355,8 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 
   // #3654: a Homeroom bot benchmark trial is never recovered into the
-  // dev-chat tail below, which would open a PR, build staging and notify,
-  // none of which a trial may do. A trial is a durable build, left to its
+  // build tail below, which would open a PR and build staging, neither of
+  // which a trial may do. A trial is a durable build, left to its
   // build above; one that is not (it started before trials were durable)
   // has its turn stopped and abandoned, and the trial put back in the
   // lane's queue (services/bench/lane.js).
@@ -347,29 +366,6 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       containerRunning: containerState === 'running',
       retryRuntimeRecovery,
     });
-    return;
-  }
-
-  // #183: headless auto sessions own their multi-step loop for ALL
-  // container states — the turn resume AND the Mayor wrap-up continuation
-  // both happen in resumeHeadlessRuns (runs right after worker adoption).
-  // Running containers are registered warm so that loop can drive them;
-  // exited ones are left strictly alone: scraping them here would replay
-  // the interactive post-turn tail (PR + staging on the auto branch — the
-  // original #183 bug) and clearing active_turn would destroy the journal
-  // pointer the cc_running resume step needs. Leftover exited containers
-  // are reaped by the normal worker sweeps once the run goes terminal.
-  if (session.is_headless) {
-    if (containerState === 'running') {
-      log.info('server', 'Adopting headless worker (resume owned by resumeHeadlessRuns)', {
-        containerName, sessionId,
-      });
-      worker.adoptWarmWorker(sessionId, containerName);
-    } else {
-      log.info('server', 'Leaving exited headless worker to resumeHeadlessRuns', {
-        containerName, sessionId,
-      });
-    }
     return;
   }
 
@@ -384,8 +380,8 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   }
 
   // #3401: the Homeroom bot's own turns are the bot's to finish. A shadow
-  // build must leave no PR, staging, wrap-up or notification, which is what
-  // the dev-chat tail below would give it.
+  // build must leave no PR or staging, which is what the build tail below
+  // would give it.
   if (homeroomBotRecovery().isRecoveredBotSession(session)) {
     await adoptBotOrphan({
       config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
@@ -497,19 +493,13 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       // worker.stopTurn walks /proc inside the container — the worker
       // image has no pkill (see TURN_PROC_KILL_SCRIPT in worker.js).
       await worker.stopTurn(sessionId).catch(() => {});
-      // #786: the breadcrumb carries the turn's quick-reply pills. The
-      // Mayor wrap-up that normally supplies them can't run here, and
-      // without pills the bar above the composer stays empty until the
-      // user types — so there'd be no one-tap way to retry.
-      const killedPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
         [
           sessionId,
-          recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+          TURN_UNFINISHED_BREADCRUMB,
           JSON.stringify({
-            ...(killedPills ? { quickReplies: killedPills } : {}),
             // #896: the restart moves off the user's screen and into the
             // row's metadata — same text for every unresumable shape,
             // `recoveredReason` keeps them apart for an operator.
@@ -520,10 +510,8 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       ).catch(() => {});
       broadcastGlobal({
         type: 'session_event', sessionId, event: 'status',
-        text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
-        quickReplies: killedPills || undefined,
+        text: TURN_UNFINISHED_BREADCRUMB,
       });
-      await notifyTurnStalled(pool, sessionId);
       worker.adoptWarmWorker(sessionId, containerName);
       return;
     }
@@ -559,10 +547,7 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
     if (codeLanded) {
       const prNumber = goneTail.prNumber || session.pr_number || null;
-      // 'code_done' rather than 'unrecoverable': the useful next steps are
-      // Propose / tweak, not "try that again".
-      const landedPills = recoveryPills.buildRecoveryQuickReplies('code_done');
-      const landedText = recoveryPills.buildCodeLandedBreadcrumb({
+      const landedText = buildCodeLandedBreadcrumb({
         prNumber, rebuildingPreview: true,
       });
       await pool.query(
@@ -572,7 +557,6 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
           sessionId,
           landedText,
           JSON.stringify({
-            ...(landedPills ? { quickReplies: landedPills } : {}),
             recovered: true,
             recoveredReason: 'tail_worker_gone',
             sha: goneTail.sha,
@@ -583,7 +567,6 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       broadcastGlobal({
         type: 'session_event', sessionId, event: 'status',
         text: landedText,
-        quickReplies: landedPills || undefined,
       });
       log.warn('server', 'Tail record with a dead worker — code landed, healing preview', {
         sessionId, sha: String(goneTail.sha).substring(0, 8), prNumber,
@@ -603,22 +586,18 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       }
       return;
     }
-    // #786: pills on the breadcrumb — see the mid-exec branch above.
-    const goneP = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
       [
         sessionId,
-        recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+        TURN_UNFINISHED_BREADCRUMB,
         JSON.stringify({
-          ...(goneP ? { quickReplies: goneP } : {}),
           recovered: true,
           recoveredReason: 'worker_gone',
         }),
       ]
     ).catch(() => {});
-    await notifyTurnStalled(pool, sessionId);
   }
 
   // All running Kubernetes workers return above. A positively missing one
@@ -663,40 +642,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     },
   });
 
-  const finalized = await finalizeRecoveredTurn({
+  await finalizeRecoveredTurn({
     config, pool, staging, session, sessionId, result, repoOwner, repoName,
     emit, containerName,
     activeTurn: session.active_turn || null,
     // Legacy single-shot containers are per-turn; reap when done.
     keepWorker: false,
   });
-  if (recoveryAgent.isOpenRouter && finalized?.summary) {
-    const { runRecoveredWrapUp } = require('../routes/sessions');
-    await runRecoveredWrapUp({
-      pool, config, session, sessionId,
-      outcome: result.ahead > 0 && result.sha ? 'code' : 'no_changes',
-      dispatchSummary: finalized.summary,
-      fallbackPillKind: result.ahead > 0 && result.sha ? 'code_done' : 'chat_generic',
-      turnModel: recoveryAgent.metadata.agentModel,
-      turnId: session.active_turn?.turnId || null,
-      emit,
-    });
-  }
 }
 
-// Shared post-turn finalization for both recovery transports (legacy
-// `docker logs` scrape and detached-journal resume): persist the CC
-// session id, then — when the turn pushed a commit — run the same PR +
-// staging tail the live dev-turn path runs. `keepWorker` distinguishes
-// the long-lived warm contract (container stays adoptable) from the
-// legacy single-shot contract (container is reaped when done).
-// Append one line to the session's latest persisted progressLog row —
-// the same row flushProgress/onProgress write to. Used to stamp a
-// terminal marker ([interrupted] etc.) on turns whose journal can't
-// provide one, so the dev-chat progress card never ends frozen on an
-// in-progress label. Best-effort: a session with no progress row is a
-// clean no-op (the WHERE id subquery matches nothing).
-// The status texts a dev turn's TAIL emits before it is finished. If one
+// The status texts a build turn's TAIL emits before it is finished. If one
 // of these is a session's newest system row and no completion artefact
 // followed it, the tail was cut off: the transcript's last word is
 // "…preview" or "PR #N created" and nothing will ever come after it.
@@ -714,7 +669,7 @@ const TAIL_IN_PROGRESS_PATTERNS = [
 // completed tail produces — the agent's summary card (ccOutput), the
 // Changes-ready card (stagingUrl / changesReady), an explicit failure
 // (stagingFailed / checkError / turnError) — or an assistant reply came
-// after it (the Mayor's wrap-up, which is always last). Anything else
+// after it. Anything else
 // with a tail-in-progress row on top is dangling.
 //
 // Returns the offending row or null. Deliberately cheap: one indexed
@@ -754,28 +709,23 @@ async function findDanglingTail(pool, sessionId) {
 async function narrateDanglingTail({ config, pool, session, sessionId, broadcastGlobal }) {
   await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
   const landed = !!session.pr_number;
-  const kind = landed ? 'code_done' : 'unrecoverable';
-  const pills = recoveryPills.buildRecoveryQuickReplies(kind);
   const text = landed
-    ? recoveryPills.buildCodeLandedBreadcrumb({
+    ? buildCodeLandedBreadcrumb({
       prNumber: session.pr_number, rebuildingPreview: true,
     })
-    : recoveryPills.TURN_UNFINISHED_BREADCRUMB;
+    : TURN_UNFINISHED_BREADCRUMB;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, metadata)
      VALUES ($1, 'system', $2, $3)`,
     [sessionId, text, JSON.stringify({
-      ...(pills ? { quickReplies: pills } : {}),
       recovered: true,
       recoveredReason: 'dangling_tail',
     })]
   ).catch(() => {});
   broadcastGlobal({
     type: 'session_event', sessionId, event: 'status',
-    text, quickReplies: pills || undefined,
+    text,
   });
-  // #3181: the resend breadcrumb is a turn that stopped before finishing.
-  if (!landed) await notifyTurnStalled(pool, sessionId);
   if (!landed) return;
   // Heal the preview here rather than leave the row promising a rebuild
   // that nothing started.
@@ -790,6 +740,11 @@ async function narrateDanglingTail({ config, pool, session, sessionId, broadcast
   }
 }
 
+// Append one line to the session's latest persisted progressLog row, the
+// row flushProgress/onProgress write to: a terminal marker ([interrupted]
+// etc.) on a turn whose journal can't provide one, so its progress card
+// never ends frozen on an in-progress label. Best-effort: a session with no
+// progress row is a clean no-op.
 async function appendTerminalProgressLine(pool, sessionId, line) {
   await pool.query(
     `UPDATE chat_session_messages
@@ -805,26 +760,16 @@ async function appendTerminalProgressLine(pool, sessionId, line) {
   ).catch(() => {});
 }
 
-// #3181: a turn the platform could not finish tells its owner, in the bell
-// and as a push, that the session stopped before finishing, instead of
-// leaving the breadcrumb for them to find whenever they next look. Called
-// beside every "didn't finish, send it again" breadcrumb (a worker lost to
-// a restart or an eviction, a failed replay, an orphan the watchdog reaps).
-// Never throws: notifySessionStalled swallows its own errors.
-async function notifyTurnStalled(pool, sessionId) {
-  await require('../routes/sessions').notifySessionStalled(pool, sessionId);
-}
-
-// Returns { outcome, summary } for the recovered turn:
+// Post-turn finalization for both recovery transports (legacy `docker logs`
+// scrape and detached-journal resume): persist the CC session id, then,
+// when the turn pushed a commit, run the PR + staging tail. `keepWorker`
+// distinguishes the long-lived warm contract (container stays adoptable)
+// from the legacy single-shot contract (container is reaped when done).
 //
-//   outcome — the terminal state for the progress card: 'done' (turn
-//     wrapped up, including the no-changes case), 'push_failed' (commit
-//     exists only in the worker — re-push heal failed), or 'skip'
-//     (headless — owned by resumeHeadlessRuns).
-//   summary — the dispatch narrative for the Mayor wrap-up, assembled the
-//     same way runClaudeCodeTool builds its `summaryParts` tool result.
-//     Null on 'skip'. #896: without this the wrap-up would have to
-//     re-derive what happened from the transcript.
+// Resolves the recovered turn's terminal state for the progress card:
+// 'done' (the turn's tail finished, including the no-changes case) or
+// 'push_failed' (the commit exists only in the worker: the re-push heal
+// failed).
 //
 // Every persisted row carries metadata.recovered so an operator can find
 // recovery-written rows in SQL — the audit trail that replaces the
@@ -844,18 +789,9 @@ async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker, startedAtMs, alreadyDone = null,
   activeTurn = null,
-  // The machine a local agent's turn ran on (services/local-agent-recovery.js):
-  // its completion card names it, as the live card does.
-  localAgentLabel = null,
 }) {
   const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
   const recoveryAgent = recoveredAgentIdentity(session, activeTurn);
-  if (localAgentLabel) {
-    recoveryAgent.metadata = {
-      agentBackend: 'claude_code', agentModel: null,
-      runner: 'local', localAgentLabel, localMode: 'build',
-    };
-  }
   const noteMilestone = async (milestone) => {
     if (!activeTurn) return false;
     const noted = await worker.noteTailMilestone(
@@ -866,40 +802,19 @@ async function finalizeRecoveredTurn({
     if (noted) Object.assign(done, milestone);
     return noted;
   };
-  // #183 belt-and-braces: headless rows must never get the interactive
-  // post-turn tail (PR on the auto branch + staging + system message) from
-  // any recovery transport — resumeHeadlessRuns owns them. adoptOrphanWorker
-  // already routes headless sessions away before reaching here; this guard
-  // protects against future transports forgetting to.
-  if (session.is_headless) {
-    log.info('server', 'Skipping recovered-turn finalize for headless session (owned by resumeHeadlessRuns)', {
-      sessionId,
-    });
-    return { outcome: 'skip', summary: null };
-  }
-
-  const summaryParts = [];
   // Turn duration for the completion card's "(took 4m 12s)" suffix. The
   // pre-restart process recorded when the turn started on active_turn;
   // a legacy record without it just omits the suffix.
   const durationMs = startedAtMs ? Date.now() - startedAtMs : null;
 
-  // #896: the live path persists an outcome-aware completion row carrying
-  // the agent's own summary (sessions.js runClaudeCodeTool). Recovery
-  // persisted none, so the coding-agent completion card was missing
-  // AND every later Mayor turn was blind to what this turn built
-  // (buildMayorMessages folds ccOutput rows into the model's context).
+  // #896: an outcome-aware completion row carrying the agent's own
+  // summary, so the coding agent's completion card is in the transcript.
   const persistCompletionRow = async (ccText, ccOutcome) => {
     if (!ccText) return;
-    const directOpenRouterReply = recoveryAgent.isOpenRouter && ccOutcome === 'no_changes';
     // The interrupted tail already wrote this card — a second one would
-    // duplicate the agent's summary in the transcript AND double-count it
-    // in every later Mayor turn's context (buildMayorMessages folds
-    // ccOutput rows in). The summary still goes to the wrap-up below.
+    // duplicate the agent's summary in the transcript.
     if (done.completionRowPosted) {
       log.info('server', 'Recovered turn: completion card already posted — skipping', { sessionId });
-      if (directOpenRouterReply) summaryParts.unshift(ccText);
-      else summaryParts.unshift(`What the agent did:\n${ccText}`);
       return;
     }
     const statusText = (ccOutcome === 'success'
@@ -908,8 +823,7 @@ async function finalizeRecoveredTurn({
         ? (recoveryAgent.isOpenRouter
           ? `${recoveryAgent.name} replied`
           : `${recoveryAgent.name} made no changes`)
-        : `${recoveryAgent.name} did not complete`)
-      + (localAgentLabel ? ` Coding done on ${localAgentLabel}, so no Homeroom credits were used.` : '');
+        : `${recoveryAgent.name} did not complete`);
     const metadata = {
       ccOutput: ccText,
       ccOutcome,
@@ -918,35 +832,31 @@ async function finalizeRecoveredTurn({
       recovered: true,
     };
     let emitted = true;
-    if (!directOpenRouterReply) {
-      if (activeTurn?.turnId) {
-        const receipt = await turnEffects.runDbEffect({
-          pool,
-          turnId: activeTurn.turnId,
-          effectKey: 'completion_row',
-          sessionId,
-          run: async (client) => {
-            await client.query(
-              `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-               VALUES ($1, 'system', $2, $3)`,
-              [sessionId, statusText, JSON.stringify(metadata)],
-            );
-            return { persisted: true };
-          },
-        });
-        emitted = receipt.applied;
-      } else {
-        await pool.query(
-          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-           VALUES ($1, 'system', $2, $3)`,
-          [sessionId, statusText, JSON.stringify(metadata)],
-        );
-      }
-      if (emitted) emit('status', { text: statusText, ...metadata });
+    if (activeTurn?.turnId) {
+      const receipt = await turnEffects.runDbEffect({
+        pool,
+        turnId: activeTurn.turnId,
+        effectKey: 'completion_row',
+        sessionId,
+        run: async (client) => {
+          await client.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [sessionId, statusText, JSON.stringify(metadata)],
+          );
+          return { persisted: true };
+        },
+      });
+      emitted = receipt.applied;
+    } else {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [sessionId, statusText, JSON.stringify(metadata)],
+      );
     }
+    if (emitted) emit('status', { text: statusText, ...metadata });
     await noteMilestone({ completionRowPosted: true });
-    if (directOpenRouterReply) summaryParts.unshift(ccText);
-    else summaryParts.unshift(`What the agent did:\n${ccText}`);
   };
 
   // #127 parity: peel the TESTING block off the agent's summary once, up
@@ -968,21 +878,12 @@ async function finalizeRecoveredTurn({
 
   const hasChanges = result.ahead > 0 && !!result.sha;
   if (!hasChanges) {
-    // #896: persist the same outcome-aware row the live path writes, so
-    // the no-changes case survives a reload instead of vanishing with the
-    // emit — and so the wrap-up below has something honest to describe.
+    // #896: an outcome-aware row, so the no-changes case survives a reload
+    // instead of vanishing with the emit.
     const noChangeOutcome = (result.fatalError || result.ccIsError) ? 'error' : 'no_changes';
     await persistCompletionRow(recoveredCcSummary, noChangeOutcome);
-    if (result.fatalError) {
-      summaryParts.push(`The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`);
-    } else if (result.branchMismatch) {
-      summaryParts.push('The coding agent ended up working on a different branch that does not build on this '
-        + 'change, so nothing from the turn was saved. Tell the user to send the request again.');
-    } else if (!recoveryAgent.isOpenRouter) {
-      summaryParts.push('The coding agent finished without committing any changes.');
-    }
     if (!keepWorker) await worker.destroyWorker(containerName);
-    return { outcome: 'done', summary: summaryParts.join('\n\n') };
+    return 'done';
   }
 
   // Publication (including retries and its durable failure) was completed
@@ -1001,15 +902,7 @@ async function finalizeRecoveredTurn({
         })]
       ).catch(() => {});
       await persistCompletionRow(recoveredCcSummary, 'error');
-      summaryParts.push(
-        `The agent committed ${result.sha.substring(0, 8)} locally, but the push to `
-        + `${session.branch_name} failed, so no PR was opened and no preview was built. `
-        + (failure.permanent
-          ? 'This failure is permanent for this session — do NOT tell the user to retry. '
-            + `Reason: ${failure.text}`
-          : 'Tell the user to send their request again to re-push and open the PR.')
-      );
-      return { outcome: 'push_failed', summary: summaryParts.join('\n\n') };
+      return 'push_failed';
   }
 
   try {
@@ -1030,7 +923,6 @@ async function finalizeRecoveredTurn({
     // completion card, written before the PR/staging work so the row
     // order matches a normal turn's transcript.
     await persistCompletionRow(recoveredCcSummary, 'success');
-    summaryParts.push(`Commit ${result.sha.substring(0, 8)} pushed to ${session.branch_name}.`);
 
     // #127: same TESTING-block handling as the live dev-turn path —
     // persist the guidance (peeled off above) before applyPrMetadata
@@ -1141,9 +1033,6 @@ async function finalizeRecoveredTurn({
         prNumber: prResult.prNumber,
         prOpenedEventRecorded: true,
       });
-      summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
-    } else if (session.pr_number || prResult?.prNumber) {
-      summaryParts.push(`Pushed to existing PR #${session.pr_number || prResult.prNumber}.`);
     }
 
     // Live-path parity for a PROMOTED session (sessions.js's tail): a new
@@ -1161,25 +1050,15 @@ async function finalizeRecoveredTurn({
         // #1688: retired by an epoch bump, not deleted — the same step the
         // live tail takes, so the recovered turn also asks the prior Yes
         // voters back, in the proposal's own thread.
-        const retired = await require('../routes/sessions').retireVotesForNewCommit({
+        await require('../routes/sessions').retireVotesForNewCommit({
           pool, session, sessionId, commitHash: result.sha,
         });
-        if (retired.retired > 0) {
-          summaryParts.push('Group-chat votes were reset for the new commit.');
-        }
       } catch (err) {
         log.warn('server', 'Recovered turn: vote reset failed (non-fatal)', {
           sessionId, err: err.message,
         });
       }
     };
-
-    const stagingFailureSummary = (failure = {}) => (
-      `Staging build failed.\n\nWhat still happened: commit ${result.sha.substring(0, 8)} was pushed to `
-      + `${session.branch_name}${session.pr_number ? ` and PR #${session.pr_number} was created/updated` : ''}. `
-      + `Only the staging preview container is missing — there is no preview URL for this commit.\n\n`
-      + `${failure.fix || 'Retry the preview build when the staging issue is resolved.'}`
-    );
 
     // The transcript card and its replay checkpoint commit together: a
     // retained tail must never publish its outcome twice on a later wrap-up
@@ -1243,10 +1122,7 @@ async function finalizeRecoveredTurn({
       log.info('server', 'Recovered turn: staging failure already published — skipping rebuild', {
         sessionId,
       });
-      summaryParts.push(stagingFailureSummary(
-        typeof done.stagingFailed === 'object' ? done.stagingFailed : {},
-      ));
-      return { outcome: 'done', summary: summaryParts.join('\n\n') };
+      return 'done';
     }
 
     // The preview machine builds and checks the recovered commit; a preview
@@ -1273,44 +1149,29 @@ async function finalizeRecoveredTurn({
       : { rows: [] };
     if (serves) {
       await publishRecoveredStaging({ outcome: 'success', stagingUrl: serves.staging_url });
-      summaryParts.push(`Staging preview is live: ${serves.staging_url}`);
     } else {
       await publishRecoveredStaging({ outcome: 'building' });
-      summaryParts.push('The staging preview is building; its checks run once it is up.');
     }
   } finally {
     if (!keepWorker) await worker.destroyWorker(containerName);
   }
-  return { outcome: 'done', summary: summaryParts.join('\n\n') };
+  return 'done';
 }
 
-// Resume a detached CC turn after a restart. The turn kept running (or
-// finished) while we were down — its output is in the journal file
-// recorded on chat_sessions.active_turn. Replays the journal from line
-// 0 (rebuilding progress + result state), follows it live if the turn
-// is still going, then runs the standard post-turn tail. The warm
-// container stays registered for the session's next dispatch.
 // #1378: build the stop handle for an ADOPTED turn.
 //
-// A turn started by POST /chat registers a handle in the shared stop
-// registry, and that handle is the ONLY thing POST /stop looks at. A turn
-// adopted after a restart or a blue-green cutover is resumed from here
-// instead, so until now it had no handle at all: POST /stop classified it
-// 'no_active_turn' and answered { ok: true, stopped: false } while
-// GET /status still said busy, which painted a live red Stop button that
-// did nothing (production session 3539 — 36 minutes unstoppable).
+// The handle in the shared stop registry is what POST /stop looks at for a
+// turn no machine's work holds. A turn adopted after a restart or a
+// blue-green cutover is resumed from here, and registers one, so the route
+// can stop it: without it POST /stop classified the turn 'no_active_turn'
+// and answered { ok: true, stopped: false } while GET /status still said
+// busy (production session 3539 — 36 minutes unstoppable).
 //
-// Phase is 'cc' for the journal tail, which is what makes
-// stopPolicy.killsWorkerInPhase true so the request drives the
-// in-container kill; it moves to 'mayor2' when the wrap-up starts, where
-// stopping is refused by design.
-function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal, relayTo = [] }) {
-  // Recovery narration now fans out on BOTH channels. The global WS
-  // broadcast reaches tabs listening for session_event; the per-session bus
-  // is what a client reconnecting over GET /events replays from. The live
-  // turn's send() has always done both — recovery only did the first, so a
-  // reconnected client watching an adopted turn saw nothing, which would
-  // include the 'stopped' this change makes it able to receive.
+// Phase is 'cc' for the journal tail: the request drives the in-container
+// kill.
+function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadcastGlobal }) {
+  // Recovery narration goes out on the global WS broadcast, which reaches
+  // tabs listening for session_event.
   const seqPrefix = `rec-${sessionId}-${process.pid}`;
   let seq = 0;
   const send = (event, data) => {
@@ -1320,18 +1181,6 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
     try {
       broadcastGlobal({ ...payload, sessionId, event, type: 'session_event' });
     } catch {}
-    try { sessionBus.publish(sessionId, payload); } catch {}
-    // The conversations whose Mayor dispatched this run follow it on their
-    // own bus, as they follow a live dispatch. Its end is theirs to announce
-    // (handBackAfterRecovery), not the change's.
-    if (event === 'done' || event === 'stopped') return;
-    for (const agentSessionId of relayTo) {
-      try {
-        sessionBus.publish(require('./mayor/agent-turn').busKey(agentSessionId), {
-          ...payload, changeId: sessionId, agentSessionId,
-        });
-      } catch {}
-    }
   };
   const handle = stopRegistry.createHandle({
     sessionId,
@@ -1352,22 +1201,16 @@ function buildRecoveryStopHandle({ sessionId, containerName, activeTurn, broadca
   return handle;
 }
 
+// Resume a detached coding turn after a restart. The turn kept running (or
+// finished) while we were down — its output is in the journal file
+// recorded on chat_sessions.active_turn. Replays the journal from line
+// 0 (rebuilding progress + result state), follows it live if the turn
+// is still going, then runs the standard post-turn tail. The warm
+// container stays registered for the session's next dispatch.
 async function resumeDetachedTurn(args) {
   const { pool, sessionId, containerName, activeTurn, broadcastGlobal } = args;
-  const relayTo = [];
-  require('./agent-sessions').conversationsOfChange(pool, sessionId)
-    .then((conversations) => {
-      for (const c of conversations) {
-        relayTo.push(c.agentSessionId);
-        // Their lists read the dead Mayor's lease as idle; this run is theirs.
-        require('./ws').pushToUser(c.userId, {
-          type: 'agent_session_changed', agentSessionId: c.agentSessionId, busy: true,
-        });
-      }
-    })
-    .catch(() => {});
   const stopHandle = buildRecoveryStopHandle({
-    sessionId, containerName, activeTurn, broadcastGlobal, relayTo,
+    sessionId, containerName, activeTurn, broadcastGlobal,
   });
   stopRegistry.set(sessionId, stopHandle);
   // Register the whole recovery (journal tail + finalize's PR/staging
@@ -1376,13 +1219,8 @@ async function resumeDetachedTurn(args) {
   // was the sweeper pausing sessions and destroying their workers in
   // the window between the journal tail ending and finalize completing.
   await activeWorkersSvc.activeWorkers.enter(sessionId);
-  // Whether the recovery got to the end of the turn's work: only then has
-  // the conversation that dispatched it something new to read.
-  let recoveredToEnd = false;
   try {
-    const out = await resumeDetachedTurnInner({ ...args, stopHandle });
-    recoveredToEnd = true;
-    return out;
+    return await resumeDetachedTurnInner({ ...args, stopHandle });
   } catch (err) {
     let retainedTurn;
     try {
@@ -1408,14 +1246,6 @@ async function resumeDetachedTurn(args) {
     // this recovery unwinds, and clearing unconditionally would strand it.
     stopRegistry.deleteIf(sessionId, stopHandle);
     activeWorkersSvc.activeWorkers.delete(sessionId);
-    // The conversation whose Mayor dispatched this run is still leased to
-    // that Mayor's dead turn, and its screen follows the run. Whether the run
-    // finished, stopped or failed, it is over.
-    require('./mayor/agent-turn')
-      .handBackAfterRecovery({ pool, changeId: sessionId, finished: recoveredToEnd })
-      .catch((err) => log.warn('server', 'Recovered turn: conversation hand-back failed (non-fatal)', {
-        sessionId, err: err.message,
-      }));
     // Turn completion counts as activity: give the freshly recovered
     // session a full idle window instead of leaving last_activity_at at
     // the pre-restart user message (which made it instantly pause-
@@ -1454,8 +1284,8 @@ async function resumeDetachedTurnInner({
     phase: activeTurn.phase || 'exec',
     tailDone: Object.keys(tailDone),
   });
-  // #896: the same in-flight label a live turn shows — see the note in
-  // adoptOrphanWorker. Emit-only (never persisted), as before.
+  // #896: the in-flight label a running turn shows — see the note in
+  // adoptOrphanWorker. Emit-only (never persisted).
   emit('status', {
     text: `${recoveryAgent.name} is running...`,
     ...recoveryAgent.metadata,
@@ -1532,7 +1362,6 @@ async function resumeDetachedTurnInner({
       headline: `Stopped${by ? ` by @${by}` : ''}`,
       ...landing,
     });
-    const pills = recoveryPills.turnFallbackQuickReplies({ outcome: 'stopped' });
     log.info('server', 'Recovered turn was stopped by the user', {
       sessionId, by, turnId: turnLifecycle.turnIdentity(record),
     });
@@ -1565,10 +1394,10 @@ async function resumeDetachedTurnInner({
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
       [sessionId, text, JSON.stringify({
-        quickReplies: pills, recovered: true, stopped: true, stopLanding,
+        recovered: true, stopped: true, stopLanding,
       })]
     ).catch(() => {});
-    emit('status', { text, quickReplies: pills, stopLanding });
+    emit('status', { text, stopLanding });
     emit('stopped', { by });
     const stoppedCleanupArgs = turnCleanupArgs(record);
     recoveryRetry.requireDurableTurnCleanup(
@@ -1685,25 +1514,18 @@ async function resumeDetachedTurnInner({
     } else {
       await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
     }
-    // #786: the failed-resume breadcrumb carries retry pills — the
-    // phase-2 wrap-up that would normally supply them is gone with the
-    // dead SSE, so this is the turn's only chance to refill the bar.
-    const failedPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
-      [sessionId, recoveryPills.TURN_UNFINISHED_BREADCRUMB,
+      [sessionId, TURN_UNFINISHED_BREADCRUMB,
         JSON.stringify({
-          ...(failedPills ? { quickReplies: failedPills } : {}),
           recovered: true,
           recoveredReason: 'resume_failed',
         })]
     ).catch(() => {});
     emit('status', {
-      text: recoveryPills.TURN_UNFINISHED_BREADCRUMB,
-      quickReplies: failedPills || undefined,
+      text: TURN_UNFINISHED_BREADCRUMB,
     });
-    await notifyTurnStalled(pool, sessionId);
     // Cleanup is deliberately last: if its durable clear needs a retry, the
     // retry scheduler can repeat only cleanup without duplicating narration.
     const cleanupArgs = turnCleanupArgs(activeTurn);
@@ -1717,7 +1539,7 @@ async function resumeDetachedTurnInner({
 
   // #1378: the tail is done and the user had asked for this turn to stop.
   // Everything below — the Codex fresh-retry, the api-error retry inside
-  // finalize, the Mayor wrap-up — is work for a turn that is meant to keep
+  // finalize — is work for a turn that is meant to keep
   // going, so none of it may run. Close the turn as a stop and return.
   // (A benchmark turn writes no stop card either: the lane records the
   // trial as stopped on its clock, below.)
@@ -1817,27 +1639,11 @@ async function resumeDetachedTurnInner({
   // throw anywhere below still stamps [interrupted]; the happy paths
   // overwrite it with [done] / [push_failed] before the finally runs.
   let terminalLine = '[interrupted]';
-  // #786: which pill set the generic breadcrumb below should carry. The
-  // scout branches attach their own pills to their own (more specific)
-  // row and leave this null — a pill-less system row is transparent to
-  // the client's pill resolution, so the earlier row still wins.
-  // #896: which recovery-pill set the Mayor wrap-up falls back to when
-  // the model declines to call suggest_replies, and what to tell it the
-  // dispatch produced. Null wrapUpOutcome means "no wrap-up" — a sync
-  // turn, which has no Mayor reply on the live path either.
-  let wrapUpOutcome = null;
-  let wrapUpPillKind = null;
-  let wrapUpSummary = null;
-  // #3181: the recovered turn ended on the failures a live turn marks
-  // turnError (a scout that wrote no spec, a push that never landed), so
-  // its notification says it stopped before finishing.
-  let recoveredStalled = false;
   let durableTailComplete = false;
   try {
     if (recoveryActiveTurn.mode === 'scout') {
-      // Scout turns push nothing — their product is the spec text.
-      // Persist it the same way runScoutTool does (spec_md + frozen
-      // version) so the draft isn't lost with the dead SSE.
+      // Scout turns push nothing — their product is the spec text,
+      // persisted as spec_md and a frozen version.
       const {
         captureSpecOutput, persistScoutPublication,
       } = require('../routes/sessions');
@@ -1846,11 +1652,6 @@ async function resumeDetachedTurnInner({
       const ccText = capturedSpec.text;
       if (ccText) {
         const hadSpec = !!(session.spec_md || '').trim();
-        // #786: "spec drafted" pills ride the spec row itself rather than
-        // the wrap-up — it's the row that describes the state the session
-        // actually landed in. They stay as a safety net for the case where
-        // the wrap-up below can't run at all.
-        const specPills = recoveryPills.buildRecoveryQuickReplies('spec_done');
         const publication = await persistScoutPublication({
           pool,
           sessionId,
@@ -1858,7 +1659,6 @@ async function resumeDetachedTurnInner({
           content: ccText,
           contentHtml: capturedSpec.html,
           hadSpec,
-          quickReplies: specPills,
           recovered: true,
         });
         session.spec_md = ccText;
@@ -1870,36 +1670,22 @@ async function resumeDetachedTurnInner({
             version: publication.specVersion,
           });
         }
-        wrapUpOutcome = 'spec';
-        wrapUpPillKind = 'spec_done';
-        wrapUpSummary = publication.hadSpec
-          ? `The scout revised the session's spec doc (now ${publication.lineCount} lines). `
-            + 'The user can review it in the dev-chat spec viewer. When they are ready to ship, '
-            + 'they will ask you to dispatch the coding agent.'
-          : `The scout investigated the repo and drafted a ${publication.lineCount}-line markdown spec. `
-            + "It now lives in the session's spec doc; the user can review it in the dev-chat "
-            + 'spec viewer. When they are ready to ship, they will ask you to dispatch the coding agent.';
       } else {
-        // #786: previously emit-only, so a recovered-but-empty scout turn
-        // left no trace at all after a reload. Persist it (with retry
-        // pills) so the state is visible and actionable.
-        recoveredStalled = true;
-        const noSpecPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
+        // #786: persisted, so a recovered-but-empty scout turn leaves a
+        // trace after a reload.
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
            VALUES ($1, 'system', $2, $3)`,
           [
             sessionId,
-            recoveryPills.SCOUT_NO_SPEC_BREADCRUMB,
+            SCOUT_NO_SPEC_BREADCRUMB,
             JSON.stringify({
-              ...(noSpecPills ? { quickReplies: noSpecPills } : {}),
               recovered: true,
             }),
           ]
         ).catch(() => {});
         emit('status', {
-          text: recoveryPills.SCOUT_NO_SPEC_BREADCRUMB,
-          quickReplies: noSpecPills || undefined,
+          text: SCOUT_NO_SPEC_BREADCRUMB,
         });
       }
       // Persist the CC session id for the next --resume.
@@ -1924,7 +1710,7 @@ async function resumeDetachedTurnInner({
           .catch((err) => log.warn('server', 'post-recovery merge ask failed', { sessionId, err: err.message }));
       }
     } else {
-      const { outcome: finalizeOutcome, summary } = await finalizeRecoveredTurn({
+      const finalizeOutcome = await finalizeRecoveredTurn({
         config, pool, staging, session, sessionId, result, repoOwner, repoName,
         emit, containerName,
         // Warm contract: the container outlives the turn.
@@ -1936,83 +1722,6 @@ async function resumeDetachedTurnInner({
         activeTurn: recoveryActiveTurn,
       });
       terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
-      const recoveredNoChanges = !(result.ahead > 0 && result.sha);
-      wrapUpPillKind = finalizeOutcome === 'push_failed' ? 'push_failed' : 'code_done';
-      if (recoveryAgent.isOpenRouter && finalizeOutcome !== 'push_failed' && recoveredNoChanges) {
-        wrapUpPillKind = 'chat_generic';
-      }
-      wrapUpOutcome = finalizeOutcome === 'push_failed'
-        ? 'push_failed'
-        : (recoveredNoChanges ? 'no_changes' : 'code');
-      wrapUpSummary = summary;
-      recoveredStalled = finalizeOutcome === 'push_failed';
-    }
-
-
-    // #896: re-issue the Mayor's phase-2 wrap-up. It used to be skipped
-    // outright — the turn ended on a bare recovery breadcrumb and no
-    // Mayor reply at all, which is exactly what the issue reported.
-    // Provider failure degrades to a short static close carrying these pills.
-    // Durable receipt/message/spend failures still throw so this tail remains
-    // owned and is retried from its committed effects.
-    // ...unless the interrupted tail already got its wrap-up onto the
-    // transcript (a restart in the seconds between the wrap-up persisting
-    // and the record being released). Re-issuing it would post a second
-    // assistant reply describing the same build.
-    if (wrapUpOutcome && tailDone.wrapUpPosted) {
-      log.info('server', 'Recovered turn: wrap-up already posted — skipping re-issue', { sessionId });
-      wrapUpOutcome = null;
-    }
-    if (wrapUpOutcome) {
-      const { runRecoveredWrapUp } = require('../routes/sessions');
-      // #1378: phase-2 is stop-proof by design — the commit, PR and staging
-      // already exist, and killing the summary would leave the user without
-      // any context for changes that are real. Moving the handle to
-      // 'mayor2' is what makes POST /stop answer 'wrap_up_not_stoppable'
-      // for an adopted turn, exactly as it does for a live one.
-      handle.phase = 'mayor2';
-      emit('phase', { phase: 'mayor2' });
-      await runRecoveredWrapUp({
-        pool, config, session, sessionId,
-        outcome: wrapUpOutcome,
-        dispatchSummary: wrapUpSummary,
-        fallbackPillKind: wrapUpPillKind,
-        turnModel: recoveryActiveTurn.model || null,
-        turnId: recoveryActiveTurn.turnId || null,
-        emit,
-        signal: handle.abort?.signal || null,
-      });
-      await worker.noteTailMilestone(
-        sessionId,
-        { wrapUpPosted: true },
-        turnLifecycle.cleanupArgs(recoveryActiveTurn),
-      );
-      tailDone = { ...tailDone, wrapUpPosted: true };
-    }
-
-    // #161: the pre-restart SSE is guaranteed dead, so the owner cannot
-    // have been watching this turn finish — treat recovered turns as
-    // armed regardless of the persisted notify_on_done flag: clear it
-    // and always create the session_done notification (the WS push
-    // reaches them if they have a tab open elsewhere in the app).
-    // #3181: session_stalled instead when the recovered turn failed.
-    try {
-      const notifications = require('./notifications');
-      await pool.query(
-        `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
-        [sessionId]
-      ).catch(() => {});
-      const create = recoveredStalled
-        ? notifications.createSessionStalledNotification
-        : notifications.createSessionDoneNotification;
-      const created = await create(pool, {
-        userId: session.user_id, appId: session.app_id, sessionId,
-      });
-      if (created.length) await notifications.hydrateAndPush(pool, created[0]);
-    } catch (err) {
-      log.warn('server', 'recovered-turn session_done notify failed', {
-        sessionId, err: err.message,
-      });
     }
     durableTailComplete = true;
   } finally {
@@ -2040,99 +1749,12 @@ async function resumeDetachedTurnInner({
 
 
 /**
- * A dev chat turn that ended without its reply, or without its reply's
- * pills (#786): the reply's pills attached, or the "didn't answer" note
- * posted with its own, once. `session` is the change's row (id,
- * pr_number, spec_md) or its id. Resolves 'attached', 'breadcrumb' or
- * 'skipped'. The boot backfill runs it for each recent change (server.js
- * restoreMissingQuickReplies), and a classic turn's item for its own change
- * when it resumes after its process went (services/turns.js).
+ * Recover the coding turn on session `sessionId` whose record no work item
+ * holds (a `recover` turn: services/turns.js): followed through its journal
+ * to its end and its tail finished; or, its worker gone, abandoned with what
+ * it left.
  */
-async function repairUnansweredTurn(pool, session) {
-  if (typeof session !== 'object' || session === null) {
-    const { rows: [row] } = await pool.query('SELECT id, pr_number, spec_md FROM chat_sessions WHERE id = $1', [Number(session)]);
-    if (!row) return 'skipped';
-    session = row;
-  }
-  const sessionId = Number(session.id);
-  // System rows are transparent to the client's pill resolution, so
-  // the deciding row is the newest user/assistant one.
-  const { rows: lastRows } = await pool.query(
-    `SELECT id, role, content, metadata FROM chat_session_messages
-     WHERE session_id = $1 AND role IN ('user', 'assistant')
-     ORDER BY id DESC LIMIT 1`,
-    [sessionId]
-  );
-  const lastRow = lastRows[0] || null;
-  const verdict = recoveryPills.classifyMissingPills({ lastRow });
-
-  if (verdict === 'attach_assistant') {
-    const kind = recoveryPills.backfillKindForSession({
-      hasPr: session.pr_number != null,
-      hasSpec: !!(session.spec_md || '').trim(),
-    });
-    const pills = recoveryPills.buildRecoveryQuickReplies(kind);
-    if (!pills) return 'skipped';
-    await pool.query(
-      `UPDATE chat_session_messages
-       SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{quickReplies}', $1::jsonb)
-       WHERE id = $2`,
-      [JSON.stringify(pills), lastRow.id]
-    );
-    return 'attached';
-  }
-
-  if (verdict === 'breadcrumb_unanswered') {
-    // Idempotence across boots: if an earlier repair posted its
-    // breadcrumb (and the user hasn't sent anything since), the row is
-    // still the session's newest system row.
-    const { rows: sysRows } = await pool.query(
-      `SELECT content FROM chat_session_messages
-       WHERE session_id = $1 AND role = 'system'
-       ORDER BY id DESC LIMIT 1`,
-      [sessionId]
-    );
-    // #896: match earlier wordings too — the breadcrumb text changed,
-    // and comparing only against the current string would post a
-    // second breadcrumb on top of a pre-rename one at the next boot.
-    if (sysRows.length && recoveryPills.isUnansweredBreadcrumb(sysRows[0].content)) {
-      return 'skipped';
-    }
-    const pills = recoveryPills.buildRecoveryQuickReplies('unanswered', {
-      lastUserText: lastRow.content || '',
-    });
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [sessionId, recoveryPills.UNANSWERED_BREADCRUMB,
-        JSON.stringify({
-          ...(pills ? { quickReplies: pills } : {}),
-          recovered: true,
-          recoveredReason: 'unanswered',
-        })]
-    );
-    ws.broadcastGlobal({
-      type: 'session_event', sessionId, event: 'status',
-      text: recoveryPills.UNANSWERED_BREADCRUMB,
-      quickReplies: pills || undefined,
-    });
-    // #3181: the turn died before it could answer, which is a session
-    // that stopped before finishing. Once per breadcrumb: the check
-    // above skips a session already narrated.
-    await notifyTurnStalled(pool, sessionId);
-    return 'breadcrumb';
-  }
-  return 'skipped';
-}
-
-/**
- * Carry on the coding turn on session `sessionId` whose record names the
- * caller's work item as its owner (a turn's work item, resumed after its
- * process went: services/turns.js): followed through its journal to its
- * end, its tail and wrap-up finished; or, its worker gone, abandoned with
- * what it left. What the leader's adoption did for an orphaned turn.
- */
-async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId, owned = true }) {
+async function recoverTurn({ config = sharedConfig(), pool, sessionId }) {
   const containerName = worker.workerContainerName(sessionId);
   let state = 'not_found';
   try {
@@ -2143,50 +1765,11 @@ async function recoverOwnedTurn({ config = sharedConfig(), pool, sessionId, owne
   }
   await adoptOrphanWorker({ name: containerName, sessionId: Number(sessionId), state }, {
     config, pool, staging: stagingSvc, ghub: github, broadcastGlobal: ws.broadcastGlobal,
-  }, { owned });
-}
-
-/**
- * A coding turn record the work item `workId` still holds as it ends (a
- * record its recovery could not take to an end: written, then cut before its
- * agent started): released, with the unfinished-turn note and its retry
- * pills, so the change is not left busy for good. Only once its worker is
- * known not to run it: a turn that may still run (its worker executing, or
- * not readable) keeps its record, the pointer its recovery follows, and the
- * turn-leftovers clock asks a `recover` turn for it (services/turns.js
- * runRecover), which follows it to its end or, on its last ask, ends it with
- * a confirmed stop. Resolves the session id released, or null.
- */
-async function releaseLeftRecord({ pool, workId }) {
-  const { rows: [r] } = await pool.query(
-    `SELECT id, active_turn FROM chat_sessions WHERE active_turn->'owner'->>'workId' = $1 ORDER BY id DESC LIMIT 1`,
-    [String(workId)]);
-  if (!r) return null;
-  const sessionId = Number(r.id);
-  const executing = await worker.isWorkerExecuting(worker.workerContainerName(sessionId)).catch(() => null);
-  if (executing !== false) {
-    log.warn('server', 'A turn ended holding its coding record, which may still run; keeping it for recovery', {
-      sessionId, workId, executing,
-    });
-    return null;
-  }
-  log.warn('server', 'A turn ended holding its coding record; releasing it', { sessionId, workId });
-  await worker.clearActiveTurn(sessionId, turnCleanupArgs(r.active_turn));
-  await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
-  const pills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3)`,
-    [sessionId, recoveryPills.TURN_UNFINISHED_BREADCRUMB,
-      JSON.stringify({ ...(pills ? { quickReplies: pills } : {}), recovered: true, recoveredReason: 'turn_ended_holding' })],
-  ).catch(() => {});
-  await notifyTurnStalled(pool, sessionId).catch(() => {});
-  return sessionId;
+  });
 }
 
 module.exports = {
-  recoverOwnedTurn,
-  repairUnansweredTurn,
-  releaseLeftRecord,
+  recoverTurn,
   persistedActiveTurnExists,
   turnCleanupArgs,
   recoveredAgentIdentity,
@@ -2199,7 +1782,6 @@ module.exports = {
   findDanglingTail,
   narrateDanglingTail,
   appendTerminalProgressLine,
-  notifyTurnStalled,
   finalizeRecoveredTurn,
   buildRecoveryStopHandle,
   resumeDetachedTurn,

@@ -86,7 +86,6 @@ import { MessagesScreen } from './features/messages';
 import { ParkedStrip, PlatformTabs, SkipToNavigation, StripBack } from './features/nav';
 import { FrameApp } from './features/frame/frame-app';
 import { SidePanel } from './features/side-panel';
-import { AgentSessionScreen } from './features/agent-session';
 import { AiScreen } from './features/ai';
 import { WorkshopScreen } from './features/workshop';
 import { WeeklyDigestScreen } from './features/weekly-digest';
@@ -299,15 +298,6 @@ export function Shell() {
           which is how every messaging product on earth models it.
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
-      {/*
-          Agent sessions (#2779): one conversation with the Mayor that works
-          on any app. A React-owned sibling screen like Messages above,
-          shipped hidden and empty, revealed by the hash router at #agent/<id>
-          (a phone's surface; a desktop draws the same panel in the Messages
-          pane). Listed in App.REACT_SCREEN_IDS, so React alone writes its
-          `hidden`.
-      */}
-      <Island name="AgentSessionScreen"><AgentSessionScreen /></Island>
       <Island name="AiScreen"><AiScreen /></Island>
       {/*
           The Topochain leaderboard used to be its own <main> screen here
@@ -620,8 +610,8 @@ export function Shell() {
       {/*
           NavLink (#1036) — the "navigation controls behave like real links"
           seam (cmd/ctrl-click, middle-click and shift-click open a new tab).
-          No dependencies of its own and consumed by app.js, app-view.js and
-          dev-chat.js among the classic scripts, plus
+          No dependencies of its own and consumed by app.js and app-view.js
+          among the classic scripts, plus
           features/home/home.js and features/leaderboard/leaderboard.js from
           inside the React bundle, so it loads ahead of the whole bundle.
       */}
@@ -652,79 +642,32 @@ export function Shell() {
       */}
       <script src={assetUrl('/js/native-chrome.js')} />
       <script src={assetUrl('/js/dev-host.js')} />
-      {/*
-          #138: dev-chat completion alerts (chime + OS notification). Loaded
-          before dev-chat.js, which references DevAlerts. The notifications
-          module is in the React bundle now (#1079 chunk B) and runs later
-          still, so it sees DevAlerts too.
-      */}
-      <script src={assetUrl('/js/dev-alerts.js')} />
       <script src={assetUrl('/js/social-push.js')} />
       {/*
           Webview-safe replacement for window.confirm(). Loaded before any
-          feature script that wants a "really?" gate (dev-chat archive,
-          future settings/home destructive actions).
+          feature script that wants a "really?" gate (archiving a change,
+          settings/home destructive actions).
       */}
       <script src={assetUrl('/js/confirm-modal.js')} />
       {/*
-          The six build venues — the single list behind every "where should
-          this be built?" surface. Pure data + copy + presentation; it reads
-          nothing and fetches nothing. credit-options.js, session-options.js,
-          dev-chat.js and app-view.js all read window.BuildVenues, so it must
-          load before all four.
+          The six build venues — the single list behind every "where is
+          this built?" surface. Pure data + copy + presentation; it reads
+          nothing and fetches nothing. app-view.js reads window.BuildVenues
+          for a change card's venue chip.
       */}
       <script src={assetUrl('/js/build-venues.js')} />
       {/*
-          Shared "you're out of daily AI credits — here's how to keep building"
-          copy + destinations, used by the dev-chat card, the credits banner and
-          the Generate-proposal modal. Loaded before its three consumers.
+          The AI allowance as one state (window.CreditOptions): creditState
+          and resetSentence. The header's AI-credit row
+          (features/header/ai-credit.js) reads both at call time.
       */}
       <script src={assetUrl('/js/credit-options.js')} />
-      {/*
-          #1049: the "how do you want to build this?" picker and its guided
-          Claude Code / Codex walkthrough. Pure render + wire, no fetching —
-          dev-chat.js owns the state and must load AFTER it.
-      */}
-      <script src={assetUrl('/js/dev-flow-select.js')} />
-      {/*
-          #1055: the "session and billing options" menu behind the ⋯ beside
-          the dev-chat credit meter. Pure copy + gating + presentation;
-          dev-chat.js owns the state and must load AFTER it.
-      */}
-      <script src={assetUrl('/js/session-options.js')} />
       <script src={assetUrl('/js/group-chat.js')} />
       {/*
-          Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
-          whose spec viewer calls window.splitSpecSections.
-      */}
-      <script src={assetUrl('/js/spec-sections.js')} />
-      {/*
-          Read-only renderer for a SHARED dev-chat transcript. Pure string
-          builder; app-view.js's topic page calls SessionTranscript.renderHtml.
-          Load order is unconstrained relative to dev-chat.js — it looks up
-          DevChat.renderMarkdown at CALL time (and falls back to escaped text
-          if it's missing), not at load time.
-      */}
-      <script src={assetUrl('/js/session-transcript.js')} />
-      {/*
-          Pure progress-indicator helpers (#50). Must load BEFORE dev-chat.js,
-          whose elapsed ticker / live-activity summary call formatElapsed and
-          summarizeCcProgress.
-      */}
-      <script src={assetUrl('/js/cc-progress-summary.js')} />
-      {/*
-          Pure streaming/holdback helpers. Must load BEFORE dev-chat.js, whose
-          live assistant bubble and spec-preview snippet call
-          renderStreamingHtml / clipSpecSnippet to stop the task-checkbox
-          flicker while output streams.
-      */}
-      <script src={assetUrl('/js/streaming-markdown.js')} />
-      {/*
           #405: canonical merge-lifecycle helper (window.MergeStatus). Loaded
-          before dev-chat.js / app-view.js so both derive and label proposal
-          merge states from one place. (This list used to name home.js as a
-          third consumer; it has never read MergeStatus, and it is in the React
-          bundle as of #1083 chunk F either way.)
+          before app-view.js, which derives and labels proposal merge states
+          from it; the board's cards (features/dev-board/card/) read it at
+          call time.
       */}
       <script src={assetUrl('/js/merge-status.js')} />
       {/*
@@ -740,19 +683,6 @@ export function Shell() {
           which now fails on a precached-but-unloaded /js/** entry.
       */}
       <script src={assetUrl('/js/session-state.js')} />
-      {/*
-          /js/dev-chat.js used to load here, last of the chat cluster, after
-          every pure helper above that it consumes. #1084 chunk G moved it into
-          the React bundle (features/dev-chat/dev-chat.js) and the relative
-          order still holds: the bundle is a deferred module in <head>, so it
-          runs after ALL of these classic tags, which is exactly the position
-          the tag occupied. window.DevChat is published at module scope there,
-          before hydration, so app.js's DOMContentLoaded bootstrap still finds
-          it. Note the eight pure helpers it consumes are NOT retired —
-          group-chat.js, app-view.js and the session drawer still read them as
-          globals. Seven load above; build-log.js loads further down, next to
-          app-view.js, the other surface that reads it.
-      */}
       {/*
           /js/kudos.js and /js/ai-credit.js used to load here — same
           status-pane slot pattern, same poll-then-render shape. #1079 chunk B

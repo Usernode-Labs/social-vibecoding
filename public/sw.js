@@ -404,14 +404,8 @@ const SHELL_ASSETS = [
   '/js/app-view.js',
   '/js/app.js',
   '/js/build-log.js',
-  '/js/cc-progress-summary.js',
   '/js/topochain-events.js',
   '/js/confirm-modal.js',
-  '/js/dev-alerts.js',
-  // '/js/dev-chat.js' — #1084 chunk G moved it into the React bundle
-  // (frontend/src/features/dev-chat/dev-chat.js), which /shell/assets/shell.js
-  // already precaches. Precaching it here as well would 404 the install.
-  '/js/dev-flow-select.js',
   '/js/dev-host.js',
   // #1054: the offline feedback outbox. It has to be precached like any other
   // shell module — the whole point is that it works on the load where the
@@ -438,10 +432,6 @@ const SHELL_ASSETS = [
   // The feedback dialog's screenshot-capture module used to be listed here.
   // #1078 chunk I moved it into the React bundle, so /shell/assets/shell.js
   // above is what precaches it now.
-  '/js/session-options.js',
-  '/js/session-transcript.js',
-  '/js/spec-sections.js',
-  '/js/streaming-markdown.js',
   '/js/session-state.js',
   // The Leaderboard screen's three Topochain-domain panes were listed here
   // too, and moved in the same chunk. Only the shared event RULES they read
@@ -627,11 +617,6 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // returning visitor saw the cached SPA home page in place of the provider
   // redirect, and again in place of the status page on the way back.
   if (p.startsWith('/waitlist/connect/')) return 'bypass';
-  // The OpenRouter catalog is private, key-filtered, and has its own short
-  // server cache plus an explicit refresh control. Replaying the PWA's much
-  // longer offline copy can hide newly released models and account-policy
-  // changes, while an offline picker cannot start a usable run anyway.
-  if (p === '/api/me/coding-agent/models') return 'bypass';
   if (p.startsWith('/.well-known/oauth-')) return 'bypass';
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.

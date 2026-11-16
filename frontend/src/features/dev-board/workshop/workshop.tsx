@@ -575,10 +575,7 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
  * menu (#2740 review), an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
  * All items, where it is), and sends "make one yourself" to the ⋯'s own
- * Build it now row. It sent it to the Homeroom menu's until that row
- * showed only for people who have built something themselves (first-session
- * run-through, 5 Oct 2026: ../../app-context/app-context-sheet.tsx
- * AgentChats), so a newcomer would have looked for a row they do not have.
+ * Build it now row.
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
@@ -610,9 +607,10 @@ function EmptyNote({ filtered, loadFailed, onHub = false, start = null }: {
   /**
    * #6111: the one action that starts the first change, for a board that
    * really holds nothing. `bot` says Homeroom bot builds changes for this
-   * viewer here, so the action is its chat rather than a session. It is a
-   * sibling of the note, never inside it, so the sentence every check and
-   * pin selects on is unchanged.
+   * viewer here, so the action is a new chat with it with this project
+   * attached; otherwise it is a new chat set to this project, where they
+   * pick who builds. It is a sibling of the note, never inside it, so the
+   * sentence every check and pin selects on is unchanged.
    */
   start?: { slug: string; name: string; bot: boolean } | null;
 }): ReactNode {
@@ -701,9 +699,9 @@ export function startHereBotReference(slug: string, name: string): StagedObject 
  * ── Why the button is not a second "Start a new change" ─────────────────
  *
  * It is `Improve.startSession()`, the one the Homeroom menu's Start a new
- * change row calls (it was the Improve panel's New change) — imported, not re-implemented, so the navigate-then-create
- * sequence that entry point owns (features/improve/improve-controller.js)
- * can never drift from this copy of it. The gate is the same store field the
+ * change row calls: a new chat on the Homeroom bot tab, set to this project
+ * (features/improve/improve-controller.js). Imported, not re-implemented,
+ * so the two cannot drift. The gate is the same store field the
  * panel gates that row on, for the same reason: a viewer who may not start a
  * change from the panel must not be offered one here. They still get the
  * heading and the line, which say what the app's state IS — that part is not
@@ -3755,15 +3753,15 @@ export function DevWorkshop(): ReactNode {
   };
   // What happened's new requests nobody has picked up (New for you's, until
   // 5 Nov 2026, folded in here: the same rows were in both): Build it, the
-  // request card's own act when that act is building it (asking Homeroom
-  // bot, or yourself). 1 Nov 2026: or Work on it, where the card's act is
+  // request card's own act when that act is asking Homeroom bot to build
+  // it. 1 Nov 2026: or Work on it, where the card's act is
   // Work on this with Homeroom bot. Never on your own, or on one already
   // somebody's.
   const freshAct = (r: CardRow): ReactNode => {
     const b = r.brief;
     if (!b || b.mine || b.requested || b.kind !== 'request') return null;
     const a = primaryAct(r.card);
-    if (a && a.act && (a.act.fn === 'askBotToBuild' || a.act.fn === 'chooseIssueWork')) {
+    if (a && a.act && a.act.fn === 'askBotToBuild') {
       return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
     }
     if (a && a.act && a.act.fn === 'workOnIssueWithBot') {
@@ -3898,7 +3896,7 @@ export function DevWorkshop(): ReactNode {
       // Build it, on a new request nobody has picked up (freshAct, above).
       const a = fresh && !b.mine && !b.requested && b.kind === 'request' ? primaryAct(row.card) : null;
       const fn = a && a.act ? a.act.fn : '';
-      const actLabel = fn === 'askBotToBuild' || fn === 'chooseIssueWork' ? t('project:workshop.fresh.buildIt')
+      const actLabel = fn === 'askBotToBuild' ? t('project:workshop.fresh.buildIt')
         : fn === 'workOnIssueWithBot' ? t('project:workshop.fresh.workOnIt') : '';
       return {
         key: row.key,

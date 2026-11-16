@@ -6,8 +6,7 @@
 // app-view.js is a browser script, but it ships a CommonJS export guard
 // at the bottom (and the lone top-level window.addEventListener is
 // guarded), so requiring it in node returns the AppView object and the
-// pure helpers run without a DOM. Same executable-helper style as
-// tests/quick-replies.test.js.
+// pure helpers run without a DOM.
 //
 // Run with: node --test tests/dev-feed-scroll-memory.test.js
 

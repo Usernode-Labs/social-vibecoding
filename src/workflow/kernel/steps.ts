@@ -5,8 +5,7 @@
 // The work item's checkpoint is where it is kept: there is no other store,
 // and nothing outlives the attempt but what the checkpoint saved
 // (docs/workflows.md, "Work items and services"). A handler gets it as
-// `ctx.steps()`; code not run by the kernel (tests, a person's own dev chat)
-// gets the inert context of services/durable-steps.js, where every step
+// `ctx.steps()`; code not run by the kernel (tests) gets the inert context of services/durable-steps.js, where every step
 // simply runs.
 //
 // Everything a step keeps is JSON in that one object, keyed by step:

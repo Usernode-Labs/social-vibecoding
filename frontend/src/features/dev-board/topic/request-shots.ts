@@ -16,7 +16,7 @@
  *     holds an attached video's player: a walkthrough clip at the end of a
  *     long request was folded away behind "Show more" with the words.
  *
- * Both work on the markup DevChat.renderMarkdown built and sanitised: it is
+ * Both work on the markup PlatformMarkdown.render built and sanitised: it is
  * parsed with DOMParser (an inert document: nothing in it loads or runs),
  * changed with DOM calls, and written back out. The note is only ever a text
  * node, and the layer's position is built from two numbers. Where there is
@@ -29,7 +29,7 @@ import { readPins, type PinData } from '../../comment-pin/pin-data';
 
 /** Where the platform keeps a request's screenshots (src/routes/feedback.js `buildScreenshotsEmbed`). */
 export const SHOT_PATH = '/issue-images/';
-/** Where it keeps a request's video (src/routes/feedback.js `buildVideoEmbed`), which DevChat.renderMarkdown draws as a player. */
+/** Where it keeps a request's video (src/routes/feedback.js `buildVideoEmbed`), which PlatformMarkdown.render draws as a player. */
 export const VIDEO_PATH = '/issue-videos/';
 
 /** Past this far across the picture, the note goes on the pin's left. */

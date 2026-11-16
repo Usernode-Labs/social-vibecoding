@@ -30,12 +30,8 @@
  * ── #846: the import POST is awaited IN PLACE ─────────────────────────
  *
  * Progress row, dimmed list, frozen buttons — and only a server-confirmed
- * import routes the user to its full change page (`openTopic('proposal')`),
- * never the dev-chat session view. An imported PR has no dev session by
- * design (see the sessionBtn / importedNote
- * branches in `_renderProposalCard` / `_proposalDetailsHtml`), and that view
- * renders an empty transcript with a live composer until the minutes-long
- * staging build lands. The proposal page is complete on arrival and refreshes
+ * import routes the user to its full change page (`openTopic('proposal')`).
+ * The proposal page is complete on arrival and refreshes
  * itself on checks_ready / staging_ready.
  *
  * `busy` is also the dialog's `canClose` veto: a dismiss mid-request would

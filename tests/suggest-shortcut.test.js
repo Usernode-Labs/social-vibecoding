@@ -365,16 +365,12 @@ test('the bundle installs the shortcut, which loads comment mode on the first C'
 });
 
 test('Settings, Experimental no longer has the switch', () => {
-  const { ExperimentalSection } = loadTsx('frontend/src/features/settings/sections/experimental.tsx', {
-    stubs: { '../local-agents-list': { LocalAgentsList: () => null } },
-  });
+  const { ExperimentalSection } = loadTsx('frontend/src/features/settings/sections/experimental.tsx');
   const html = renderToHtml(createElement(ExperimentalSection));
+  assert.match(html, /id="settings-experimental-section"/, 'the pane itself still renders');
   assert.doesNotMatch(html, /suggest-shortcut-enabled/, 'the switch is gone');
   assert.doesNotMatch(html, /Comment on the page/);
   assert.doesNotMatch(html, /review-flow-enabled/, 'the Needs you switch is gone too');
-  // The other experiments keep their switches and their order.
-  assert.ok(html.indexOf('id="ai-progress-estimate"') < html.indexOf('id="session-bridge-enabled"'));
-  assert.ok(html.indexOf('id="session-bridge-enabled"') < html.indexOf('id="settings-local-agents-section"'));
 
   const settings = read('frontend/src/features/settings/settings.js');
   assert.doesNotMatch(settings, /suggest-shortcut-enabled/, 'nothing paints or saves it there');

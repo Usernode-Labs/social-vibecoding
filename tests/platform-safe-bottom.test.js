@@ -41,9 +41,7 @@ const APP_CSS = read('public/css/app.css');
 const INDEX = read('public/index.html');
 const APP_JS = read('public/js/app.js');
 const APP_VIEW = read('public/js/app-view.js');
-const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
-const DEV_VIEW = read('frontend/src/features/dev-chat/view.tsx');
 const GROUP_CHAT = read('public/js/group-chat.js');
 
 // ── 1. The tokens ────────────────────────────────────────────────────
@@ -157,12 +155,12 @@ test('keyboard-up suppresses the inset on both utilities', () => {
 });
 
 test('every composer column reserves the keyboard inset, exactly once', () => {
-  // #1937/#1491. Four screens are built the same way: a flex column with a
+  // #1937/#1491. Three screens are built the same way: a flex column with a
   // flex-1 scroller and the typing slot + composer pinned BELOW it as
   // shrink-0 siblings, OUTSIDE the scroller. The kit cannot help there —
   // `attachKeyboardAvoidance` gates on `scrollEl.contains(field)` and
   // `.un-kb-avoid` pads the inside of a scroller — so the composer sat behind
-  // the keyboard on all four, and on iOS the settled pin also reset Safari's
+  // the keyboard on all of them, and on iOS the settled pin also reset Safari's
   // reveal-pan once per keypress. Reserving on the column is what native does
   // (iOS and Android Messages both shrink the content area rather than cover
   // or pan it), and it leaves the pin inert.
@@ -176,7 +174,6 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
   const COLUMNS = [
     ['frontend/src/features/group-chat/thread-shell.tsx', /className="dev-thread dev-thread-fill platform-kb-column/],
     ['frontend/src/features/group-chat/general-chat.tsx', /className="gc-chat-pane platform-kb-column/],
-    ['frontend/src/features/dev-chat/view.tsx', /className="dc-chat-pane platform-kb-column/],
     ['frontend/src/features/messages/index.tsx', /messages-thread-pane platform-kb-column/],
   ];
   for (const [file, re] of COLUMNS) {
@@ -196,8 +193,8 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
 
   // …and the source check above is NOT sufficient on its own, which is what
   // shipped broken. `attachKeyboardAvoidance` ADDS `un-kb-avoid` to whatever
-  // scroller `attachScreenFx` hands it, so on the general chat, the topic
-  // thread and the dev chat the class is present at runtime no matter what the
+  // scroller `attachScreenFx` hands it, so on the general chat and the topic
+  // thread the class is present at runtime no matter what the
   // source says. The inset was counted twice, and a scroll container cannot
   // shrink below its own padding — #gc-messages floored at 368px and held the
   // composer 197px below the keyboard line. Only CSS can neutralise a class
@@ -336,7 +333,7 @@ test('no bare env(safe-area-inset-bottom) survives in app.css', () => {
 
 // ── 4. Dev-mode surfaces inside #app-view ────────────────────────────
 
-test('the dev scrollers carry platform-safe-scroll', () => {
+test('the Dev card list scroller carries platform-safe-scroll', () => {
   // #1084 chunk G: the Dev card list's frame is React
   // (frontend/src/features/dev-board/board-frame.tsx), so the scroller's
   // classes are a JSX className rather than an attribute in a template string.
@@ -347,53 +344,6 @@ test('the dev scrollers carry platform-safe-scroll', () => {
     'the Dev card list must clear the home indicator');
   assert.ok(!APP_VIEW.includes('id="dev-forum-scroll"'),
     'the template that used to emit it is retired, not duplicated');
-
-  // #1078: the dev chat's whole screen is a component too, so its scroller's
-  // classes are a JSX className rather than an attribute in a template string.
-  const sessions = /id="dc-session-list"[\s\S]{0,240}?>/.exec(DEV_VIEW);
-  assert.ok(sessions, '#dc-session-list is missing from view.tsx');
-  assert.match(sessions[0], /platform-safe-scroll/,
-    'the sessions list must clear the home indicator');
-  assert.ok(!DEV_CHAT.includes('id="dc-session-list"'),
-    'the template that used to emit it is retired, not duplicated');
-});
-
-test('the dev-chat composer bar carries platform-safe-bar', () => {
-  // The wrapper holding the model row, drafts, attachments, #dc-form and
-  // the shortcut hint — anchored to the bottom of the screen in a
-  // session, which is where the dead band used to be.
-  const idx = DEV_VIEW.indexOf('id="dc-messages"');
-  assert.ok(idx > -1, '#dc-messages is missing from view.tsx');
-  assert.match(DEV_VIEW.slice(idx, idx + 1200), /id="dc-composer-bar"/,
-    "the dev-chat composer's bar wrapper moved — re-anchor this test");
-  // #1348: the framing is dropped when a launchpad has emptied the bar, so
-  // that it does not frame nothing. The INSET is not part of that — it is the
-  // bottom of the screen either way, and a transcript running under the home
-  // indicator is the bug this test exists for. So platform-safe-bar must be
-  // in BOTH class runs, unlike the padding.
-  //
-  // Streamlined Concept retired the `border-t`: the composer is a card that
-  // floats on the pane's ground and carries its own elevation, so a rule
-  // above it drew a second edge. What is left to drop is the padding.
-  //
-  // The two runs are complete literals rather than one string with a
-  // conditional tail, because Tailwind's extractor is a regex over source
-  // text: a class name assembled from fragments compiles to nothing.
-  const bare = /bare: '([^']*)'/.exec(DEV_VIEW);
-  const framed = /framed: '([^']*)'/.exec(DEV_VIEW);
-  assert.ok(bare && framed, 'the empty-bar case must still be expressed here');
-  assert.match(bare[1], /platform-safe-bar/,
-    'the safe-area inset must never be conditional');
-  assert.match(framed[1], /platform-safe-bar/);
-  assert.doesNotMatch(bare[1], /p[xytb]?-\d/,
-    'the padding is the part that goes when there is nothing to frame');
-  assert.match(framed[1], /px-3 pb-3 pt-1/,
-    'and it is asymmetric on purpose: the card\'s own radius does the '
-    + 'insetting the old uniform p-2 did');
-  for (const run of [bare[1], framed[1]]) {
-    assert.doesNotMatch(run, /border-t/,
-      'the card draws its own edge; a rule above it would be a second one');
-  }
 });
 
 test('the general-chat composer bar carries platform-safe-bar, on both branches', () => {
@@ -451,43 +401,6 @@ test('the thread composer AND its read-only notice both carry the bar class', ()
 
 // ── 5. Panels that escape #app-view ──────────────────────────────────
 
-test('the spec viewer insets whichever of its two bottom elements is last', () => {
-  // The build hint is conditional (only a non-empty LATEST version
-  // renders it), so both need a rule and neither may double up —
-  // :last-child is what picks the right one.
-  const wrap = /\.dc-spec-viewer-body-wrap:last-child\s*\{([^}]*)\}/.exec(APP_CSS);
-  assert.ok(wrap, '.dc-spec-viewer-body-wrap:last-child rule is missing');
-  assert.match(wrap[1], /padding-bottom:\s*calc\(12px \+ var\(--platform-safe-bottom\)\)/,
-    'with no footer, the scroller carries the inset');
-
-  const hint = /\.dc-spec-viewer-build-hint\s*\{([^}]*)\}/.exec(APP_CSS);
-  assert.ok(hint, '.dc-spec-viewer-build-hint rule is missing');
-  assert.match(hint[1], /padding:\s*8px 12px calc\(8px \+ var\(--platform-safe-bottom\)\)/,
-    'the footer owns the inset when present — and it has a background, so '
-    + 'the strip reads as an extension of the footer rather than a gap');
-
-  // The unconditional (non-:last-child) rule must NOT also pad the
-  // bottom, or a viewer WITH a footer double-insets.
-  const plain = /\.dc-spec-viewer-body-wrap\s*\{([^}]*)\}/.exec(APP_CSS);
-  assert.ok(plain, '.dc-spec-viewer-body-wrap rule is missing');
-  assert.ok(!/--platform-safe-bottom/.test(plain[1]),
-    'the base body-wrap rule must stay plain 12px — the :last-child variant '
-    + 'is what adds the inset');
-});
-
-test('the fullscreen spec viewer clears the notch as well', () => {
-  // Below 1024px the panel is `position: fixed; inset: 0` — it covers the
-  // status bar too, so its header row needs the top inset.
-  const idx = APP_CSS.indexOf('@media (max-width: 1023px)');
-  assert.ok(idx > -1, 'the fullscreen spec-viewer media query is missing');
-  const block = APP_CSS.slice(idx, APP_CSS.indexOf('.dc-spec-resizer', idx));
-  assert.match(block, /\.dc-spec-viewer\.dc-spec-viewer-open\s*\{[^}]*position:\s*fixed/,
-    'the fullscreen mode is what makes the top inset necessary');
-  assert.match(block, /padding-top:\s*var\(--platform-safe-top\)/,
-    'a fixed inset:0 panel owns BOTH insets — its version picker / Share '
-    + 'buttons / ✕ sit under the notch otherwise');
-});
-
 test('the gc spec panel body carries the bottom inset', () => {
   const m = /\.gc-spec-panel-body\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(m, '.gc-spec-panel-body rule is missing');
@@ -496,16 +409,13 @@ test('the gc spec panel body carries the bottom inset', () => {
     + "bottom edge is now the screen's");
 });
 
-test('the fullscreen staging overlay clears the notch, docked does not', () => {
-  // Two exclusions now, and they are the same exclusion twice: the bar
-  // clears the notch only when nothing above it already has. Docked, the
-  // overlay is pinned mid-page. UNDER-CHROME, a session's own header sits
-  // above it and holds the inset — see the app.css block.
-  const m = /#staging-overlay:not\(\.staging-overlay-docked\):not\(\.staging-overlay-under-chrome\) \.staging-chrome-bar\s*\{([^}]*)\}/
-    .exec(APP_CSS);
+test('the staging overlay clears the notch', () => {
+  // The overlay is always fullscreen (`inset: 0`), so it covers the status
+  // bar and its chrome bar holds the top inset.
+  const m = /#staging-overlay \.staging-chrome-bar\s*\{([^}]*)\}/.exec(APP_CSS);
   assert.ok(m, 'the staging chrome-bar top-inset rule is missing');
   assert.match(m[1], /padding-top:\s*calc\(0\.5rem \+ var\(--platform-safe-top\)\)/,
-    'fullscreen over nothing, the overlay is inset:0 and covers the status bar');
+    'the overlay is inset:0 and covers the status bar');
   assert.match(INDEX, /<div class="staging-chrome-bar/,
     'the style hook the rule keys on must exist in index.html');
   // The BOTTOM deliberately gets nothing: everything below the bar is the

@@ -123,8 +123,8 @@ async function checkPromotedCap(pool, config, user) {
 // promoted cap above says why: a connector doing what the browser permits
 // must not be cut off earlier than the browser, and a full admin keeps the
 // admin tier here as they do everywhere else. Headless rows are excluded, as
-// they are in every other count in this module — an auto run holds no warm
-// worker of the user's.
+// they are in every other count in this module — an unattended run of the
+// past or a bench preview holds no warm worker of the user's.
 //
 // Counted BEFORE the session row is inserted, so an over-cap share leaves no
 // card behind and no branch copied into the app's repository.
@@ -216,45 +216,13 @@ async function checkOpenWorkOrders(pool, userId) {
 }
 
 // What a CONNECTOR caller refused by the cap above can do about it, by tool
-// name (#4266). Not written into that refusal, because the browser
-// walkthrough shows the same sentence (routes/dev-flow.js) and a tool name
-// means nothing on the platform's own screen. services/mcp-tools.js appends
+// name (#4266). Not written into that refusal, which is worded for any
+// caller, where a tool name means nothing. services/mcp-tools.js appends
 // it to prepare_work's `at_capacity`. The last sentence is there because a
 // closed work order cannot be submitted: an agent may still be building it.
 const OPEN_WORK_ORDERS_CONNECTOR_HINT = 'To see which ones, call list_my_work_orders. close_work_order '
   + 'puts one away by its task id, which frees its slot straight away. Check with the user before '
   + 'closing one, because a coding agent still working on it can no longer submit it.';
-
-// ── 3. The platform-build fallback ─────────────────────────────────────
-//
-// This path spends the platform's credits rather than the user's own
-// coding-agent subscription. The daily credit budget still applies
-// underneath (the platform route consults limits.resolveBillingPath
-// itself) — that is the spend meter, and it is the one the browser's own
-// auto-build route relies on too, so nothing here needs to count a day's
-// worth of builds.
-//
-// What is left is how many builds are RUNNING, bounded by the same per-user
-// session cap the browser applies to a dev session, admin tier included.
-async function checkFallbackStart(pool, config, user) {
-  const caps = effectiveSessionCaps(config, user);
-  const inFlight = await countOr(
-    pool,
-    `SELECT COUNT(*) AS cnt FROM chat_sessions
-      WHERE user_id = $1 AND is_headless = TRUE AND headless_status = 'generating'`,
-    [user.id],
-    'fallback-in-flight'
-  );
-  if (inFlight === null) return UNAVAILABLE;
-  if (inFlight >= caps.activeSessions) {
-    return limitError(
-      'at_capacity',
-      `You already have ${caps.activeSessions} Homeroom builds running. `
-      + 'Wait for one to finish before starting another.'
-    );
-  }
-  return null;
-}
 
 module.exports = {
   LIMITS,
@@ -262,5 +230,4 @@ module.exports = {
   checkActiveCap,
   checkOpenWorkOrders,
   OPEN_WORK_ORDERS_CONNECTOR_HINT,
-  checkFallbackStart,
 };

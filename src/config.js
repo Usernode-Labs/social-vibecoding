@@ -415,12 +415,6 @@ function load() {
     // user has a usable key; Claude remains the safe fallback for accounts
     // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
-    // #2809/#2810: an OpenRouter session's chat runs through the Mayor, on the
-    // session's own OpenRouter model and key (services/openrouter-mayor.js),
-    // so it gets the same plan, spec and wrap-up flow as a Claude session.
-    // False restores the direct path, where the coding agent answers alone.
-    openrouterSessionMayorEnabled:
-      String(process.env.OPENROUTER_SESSION_MAYOR_ENABLED || 'true') === 'true',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.
@@ -816,11 +810,9 @@ function load() {
     // Session auto-pause: a DB-driven sweeper (server.js) flips idle
     // 'active' sessions to 'paused' so they stop counting against the
     // session caps. Now that pause is cheap (it no longer tears down
-    // staging — see session-lifecycle.js) and activity is kept fresh by
-    // the dev-chat heartbeat while the tab is open, this is tuned to
-    // line up with the worker idle-eviction timescale (~5 min). A
-    // session pauses ~5 min after the user actually leaves (tab closed/
-    // backgrounded → no more heartbeats). Set to 0 to disable.
+    // staging — see session-lifecycle.js), this is tuned to line up with
+    // the worker idle-eviction timescale (~5 min): a session pauses ~5 min
+    // after its last activity. Set to 0 to disable.
     sessionAutopauseIdleMs: parseInt(process.env.SESSION_AUTOPAUSE_IDLE_MS || String(5 * 60 * 1000), 10),
     // Staging preview GC: pause no longer tears staging down, so this
     // sweeper reclaims the staging container + cloned DB from sessions
@@ -940,8 +932,7 @@ function load() {
     // config.previewProjects: false); an admin decides in Admin > Limits
     // (services/preview-projects-setting.js).
     previewProjectsEnabled: process.env.PREVIEW_PROJECTS_ENABLED !== 'false',
-    // #3699: apps whose spec author (an agent chat's or dev chat's scout, and
-    // the Homeroom bot) is asked for an HTML spec (before/after screens,
+    // #3699: apps whose spec author (the Homeroom bot) is asked for an HTML spec (before/after screens,
     // diagrams) instead of markdown. Every app by default; comma-separated
     // slugs to narrow it, `none` to turn it off. See src/services/spec-html.js.
     htmlSpecApps: (() => {

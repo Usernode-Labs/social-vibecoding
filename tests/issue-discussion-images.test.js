@@ -14,7 +14,7 @@ const { englishPlatformI18n } = require('./lib/platform-i18n');
 const { marked } = require('marked');
 
 const src = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend/src/features/dev-chat/dev-chat.js'), 'utf8'
+  path.join(__dirname, '..', 'frontend/src/lib/platform-markdown.js'), 'utf8'
 );
 
 function loadRenderer() {
@@ -44,9 +44,9 @@ function loadRenderer() {
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
-  vm.runInContext(`${src}\n;globalThis.__DevChat = DevChat;`, sandbox);
+  vm.runInContext(`${src}\n;globalThis.__PlatformMarkdown = PlatformMarkdown;`, sandbox);
   return {
-    render: (text, options) => sandbox.__DevChat.renderMarkdown(text, options),
+    render: (text, options) => sandbox.__PlatformMarkdown.render(text, options),
     sanitizeOptions: () => sanitizeOptions,
   };
 }

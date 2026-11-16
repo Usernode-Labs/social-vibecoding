@@ -1235,16 +1235,14 @@ function specTitle(spec) {
 // and leads it with the coding agent's latest description (pr-metadata's
 // deterministic path, which every OpenRouter session takes). The bot's build
 // gave it neither: its only request was the "Build issue #N: …" seed, and
-// its turn ran outside the dev chat, so no completion row recorded what it
-// said. Every bot proposal came out titled with the issue number and a
+// no completion row recorded what its turn said. Every bot proposal came out titled with the issue number and a
 // severed run of the plan, with no summary at all.
 //
 // The spec already holds both halves of a better answer, written for people:
 // a title naming the change (the spec prompt asks for one shaped like a pull
 // request title) and a "User-facing changes" half written for somebody who
 // is not a developer. The build adds the most accurate half: a DESCRIPTION
-// block written after the change exists, the one an OpenRouter dev chat turn
-// ends with (proposal-description.js, #2820).
+// block written after the change exists (proposal-description.js, #2820).
 
 // Scaffolding a title is not: a "Spec:" label, and the issue number, which
 // the proposal shows as its own Addresses chip.
@@ -1370,8 +1368,7 @@ function specCardLines(spec) {
 }
 
 /**
- * What the build said, as the completion row a dev chat turn writes stores
- * it: `ccOutput` is its message with the DESCRIPTION block taken out, and
+ * What the build said, as a completion row stores it: `ccOutput` is its message with the DESCRIPTION block taken out, and
  * `proposalDescription` the block, or the spec's user-facing half when the
  * build left the block out. A final message that is a wire failure (a run
  * can commit and then die on the API) says nothing about the change.
@@ -1397,13 +1394,12 @@ function buildDescription({ text, spec = null }) {
  *   - the name is proposed_pr_title, the author's own title for a change not
  *     yet proposed, which the route names the pull request with verbatim.
  *     submit_work stores an external agent's title there, and the bot is
- *     this change's author the same way. (#2779 keeps a Mayor's start_change
- *     name out of it because that name is a guess made before any work; the
- *     spec's title is written from the code, and the proposal goes up as
- *     soon as the build ends.) Only written while the session has no pull
+ *     this change's author the same way. (The spec's title is written from
+ *     the code, and the proposal goes up as soon as the build ends.) Only
+ *     written while the session has no pull
  *     request and no chosen title;
- *   - the description is the completion row every dev chat build leaves
- *     (a system row carrying ccOutput and proposalDescription), which
+ *   - the description is the completion row a build leaves (a system row
+ *     carrying ccOutput and proposalDescription), which
  *     pr-metadata's gatherSessionContext reads for the summary the group
  *     sees first, and the pull request body leads with.
  * Best-effort: a proposal that cannot be named or described still goes up,
@@ -2718,8 +2714,7 @@ function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null })
 }
 
 // #3518: the proposal's summary, the text the group reads before it votes.
-// The same block an OpenRouter dev chat turn ends with (#2820), parsed by
-// proposal-description.js; prepareProposal files it where the promote route
+// The DESCRIPTION block (#2820), parsed by proposal-description.js; prepareProposal files it where the promote route
 // reads it. The language rule it ends with is the change's one wording rule
 // (localeRule): a description is for the group, so it reads English unless
 // a DM context is carrying the requester's locale.
@@ -2763,9 +2758,8 @@ function withPlanLine(description, fromPlan) {
 
 // #4487: the bot's proposals get before/after shots on the exact builds, as
 // a person's do, and the group relies on them to check a small change that
-// went straight from request to proposal. The build declares what it built,
-// as the dev chat's hosted build does (routes/sessions.js
-// buildHostedCodingWorkflowGuidance); its declaration wins over the one
+// went straight from request to proposal. The build declares what it built;
+// its declaration wins over the one
 // derived from the spec (spec-visible-changes.js). Not asked of a first
 // version, which gets no shots (buildAndPropose). The copies have no model
 // key: a change to the bot's own replies declared as "ask the bot" had its
@@ -2822,8 +2816,8 @@ const PLATFORM_TEST_NOTE = Object.freeze([
 // #3737: the bot's build writes every first version, and it was the one
 // build on the platform given neither the UI design guidance (#2817) nor the
 // in-loop browser's instructions: its worker had the browser, and it was
-// never told how to boot the app in it. It gets the block the dev chat gives
-// an OpenRouter turn, as written, with what differs for it said first, and
+// never told how to boot the app in it. It gets the platform's in-loop
+// browser block, as written, with what differs for it said first, and
 // one rule of its own: a change a person will see is looked at before the
 // turn ends. How it looks follows the design self-check, by whether the
 // model reads images.
@@ -2885,7 +2879,7 @@ const LEAN_IN_LOOP_CHECKS = [
 ].join('\n');
 
 /**
- * The in-loop browser's guidance as a bot build reads it: as the dev chat
+ * The in-loop browser's guidance as a bot build reads it: as the platform
  * has it, or under `lean_turns` without its paragraph on running the
  * declared checks by hand (LEAN_IN_LOOP_CHECKS in its place). Throws if that
  * paragraph is gone, so a rewrite of the guidance cannot silently keep it.
@@ -3519,8 +3513,7 @@ function buildPrompt({
     ...APP_SERVER_LINES,
     ...stageGuidanceLines('build', { firstVersion, guidance, reviewed }),
     '',
-    // The rules every on-platform build works under (services/build-contract.js):
-    // this bot's own list, which the dev chat now shares.
+    // The rules every on-platform build works under (services/build-contract.js).
     buildContract.buildContractBlock({
       heading: 'Make exactly that change, and nothing else:',
       commits: 'harness',
@@ -3531,7 +3524,7 @@ function buildPrompt({
     ...browserLines({ readsImages, clocked: time.length > 0, reviewed, oneLook, lean }),
     ...(appChecks ? appChecksLines({ lean, firstVersion }) : []),
     '',
-    // #3737: the same design guidance the dev chat builds with (#2817).
+    // #3737: the platform's design guidance (#2817).
     getDesignGuidance({ readsImages }),
     ...(firstVersion ? [] : buildVisibleChangesLines(locale)),
     ...buildDescriptionLines(locale, fromPlan),
@@ -3566,8 +3559,7 @@ async function buildSeesImages({ pool, config, userId, model }) {
  * Why a coding turn Claude Code ran failed, or null when it did not (or ran
  * in Codex, unless its worker went from under it: workerLostReason). An OpenRouter model the platform maps to Claude Code (#3296)
  * runs in run-cc.sh, which commits and pushes whatever a turn leaves, even
- * when the agent failed partway: what a person's dev chat wants, and never
- * what the bot may propose. The Codex runner refuses to commit or push a
+ * when the agent failed partway, which is never what the bot may propose. The Codex runner refuses to commit or push a
  * failed turn at all (run-codex-agent.sh), which is why a Codex turn needs
  * no check here and its outcome is exactly what it was. The bot's turns ask
  * run-cc.sh to do the same (`discardFailedTurn`); this is the host's half,
@@ -4006,8 +3998,8 @@ async function draftSpec({
       owner: extra.owner || null,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
-        // The platform's per-model choice of CLI, as the dev chat's scout
-        // makes it (#3296): GLM runs in Claude Code. A configuration's
+        // The platform's per-model choice of CLI (#3296): GLM runs in
+        // Claude Code. A configuration's
         // Anthropic model runs there too (recipeHarness).
         harness,
         ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -4458,7 +4450,7 @@ function buildTurnRunner({
         owner: extra.owner || null,
         resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
           pool, session, userId: bot.id, model, resumeThreadId, config,
-          // The dev chat's build makes the same choice (#3296). The bot's
+          // The platform's per-model choice of CLI (#3296). The bot's
           // build works as it is under either CLI: the worker, not the agent,
           // commits and pushes what the turn leaves (buildPrompt's commits:
           // 'harness'; both runners use worker/session-branch.sh), and an

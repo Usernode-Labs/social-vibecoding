@@ -35,9 +35,9 @@ import { cn } from '@/lib/utils';
  *          difference — normalising it is a byte change for no benefit, and a
  *          byte change is the one thing a like-for-like conversion cannot
  *          make.)
- *   ring   the shell's focus treatment, absent from #agent-files-name and its
- *          sibling in the pending-upload form, and carrying
- *          `focus:border-transparent` on the dialogs' fields.
+ *   ring   the shell's focus treatment, absent from the App AI permissions
+ *          row's cap field, and carrying `focus:border-transparent` on the
+ *          dialogs' fields.
  *   hint   the placeholder colour, which the dialogs and the auth screens
  *          spell differently.
  *
@@ -63,22 +63,13 @@ const inputVariants = cva('', {
      * multi-line box the auto-grow produces. Call site:
      * features/group-chat/composer.tsx.
      */
-    /**
-     * `devComposer` is `.dc-textarea` — the dev chat's composer field, whose
-     * rule is a `max-height` cap and the scroll that goes with it, tuned
-     * against the same auto-grow. Call site:
-     * features/dev-chat/composer.tsx.
-     */
-    lead: { composer: 'gc-composer-input', devComposer: 'dc-textarea', none: '' },
-    // Leads the string on the two fields inside #agent-files-form, which sit
-    // under their own label text rather than beside it.
-    //
-    // `mt2` / `mt3` lead the same way on the three waitlist-survey fields that
-    // follow a sibling rather than a label: #more-made-note under
-    // #more-made-url, #more-group-need under the tools chip row, and the
-    // bottom margin's mirror on #waitlist-confirm-email (which writes its
-    // `mb-2` AFTER `w-full`, so that one rides in through className).
-    spacing: { mt1: 'mt-1', mt2: 'mt-2', mt3: 'mt-3', none: '' },
+    lead: { composer: 'gc-composer-input', none: '' },
+    // Leads the string on the three waitlist-survey fields that follow a
+    // sibling rather than a label: #more-made-note under #more-made-url,
+    // #more-group-need under the tools chip row, and the bottom margin's
+    // mirror on #waitlist-confirm-email (which writes its `mb-2` AFTER
+    // `w-full`, so that one rides in through className).
+    spacing: { mt2: 'mt-2', mt3: 'mt-3', none: '' },
     width: {
       full: 'w-full',
       flex: 'flex-1 min-w-0',
@@ -139,13 +130,8 @@ const inputVariants = cva('', {
       // by the primitive instead of sixteen hand-written copies of it.
       authWhite:
         'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm',
-      // The compact field inside #agent-files-form's inline card — a lighter
-      // fill on the card's darker one, and a smaller box to match its text-xs
-      // container.
-      inset:
-        'rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1',
-      // `inset` at the App AI permissions row's size: the same card-on-card
-      // fill and radius, with the tighter padding that keeps a number field
+      // The App AI permissions row's field: a white fill on the row's card
+      // and a small radius, with the tight padding that keeps a number field
       // on one line of a `text-xs` row (features/settings/grants-list.tsx).
       // It draws NO focus rule of its own — pair it with `ring={false}`, which
       // leaves the browser's own outline as the cue, exactly as the
@@ -196,28 +182,6 @@ const inputVariants = cva('', {
       // over. Call site: features/dev-board/card/feed-thread.tsx.
       activityReply:
         'resize-none overflow-y-auto max-h-24 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-1 text-xs leading-5 text-zinc-900 dark:text-zinc-100',
-      // The DEV chat's composer. The same fill and box as `composer` above —
-      // it sits on a chat pane too — but the two shape utilities are written
-      // at the very END of its string rather than in front of the radius, so
-      // they ride in through className there and this value carries neither.
-      // Transcribed rather than normalised onto `composer`: folding them
-      // would move the rendered class attribute on the one field it exists
-      // for. Call site: features/dev-chat/composer.tsx.
-      devComposer:
-        'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100',
-      // The dev composer's field once the composer became one CARD
-      // (Streamlined Concept). It contributes no box at all — no fill, no
-      // border, no radius, no padding — because the card around it is the
-      // box, and anything here would draw a second one inside the first.
-      // Pair it with `ring={false}`: the focus cue is the card's, not the
-      // field's, for the same reason.
-      //
-      // Kept as its own value rather than folded onto `groupRow`, which is
-      // also box-less: that one sits in a native-kit `.un-group-row` and
-      // carries `py-2` to line up with the row's hairline. This field's
-      // vertical rhythm is the card's padding, so it contributes none.
-      devCard:
-        'bg-transparent border-0 rounded-none p-0 text-[17px] leading-6 text-zinc-900 dark:text-zinc-100',
     },
     // The placeholder colour, written between the box and the focus ring in
     // every string that has it. Named `hint`, not `placeholder`, because
@@ -264,8 +228,8 @@ const inputVariants = cva('', {
       seamless:
         'focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent',
     },
-    // Only the `inset` box carries its text colour after the two groups above;
-    // `default` has it inline, where the hand-written string put it.
+    // Only the `insetTight` box carries its text colour after the two groups
+    // above; `default` has it inline, where the hand-written string put it.
     text: { true: 'text-zinc-900 dark:text-zinc-100', false: '' },
   },
   defaultVariants: {

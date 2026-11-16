@@ -5,12 +5,12 @@
 // plus the attribution strings that used to render `@username`:
 //
 //  1. safeMention itself (the sanitizer's contract),
-//  2. the agent-reported platform-issue confirm path (routes/sessions.js) —
-//     its attribution is backtick-wrapped, never `@username`,
+//  2. (gone) the agent-reported platform-issue confirm path: the session
+//     Mayor's draft card that fed it is retired, and the route with it,
 //  3. (gone) the platform-target feedback path: since 26 Oct 2026 a request
 //     is a row on Homeroom's own board (services/requests.js), not a GitHub
 //     issue, so its title and body never reach GitHub's linker and are no
-//     longer sanitized; the same holds for case 2's title and body,
+//     longer sanitized,
 //  4. pushFiles (services/github.js) — commit messages are sanitized (a
 //     user-controlled app name like "@someone" reaches it via rename PRs),
 //  5. createRevertPR (routes/votes.js) — the revert PR body writes the
@@ -29,18 +29,6 @@ poolMod.getPool = () => ({
   query: (sql, params) => poolHandler(String(sql), params),
 });
 
-// announceIssueCreated runs after an issue is filed (cache overlay + ws
-// broadcast) — irrelevant here, stub it out for both routes.
-const iaPath = require.resolve('../src/services/issue-announce');
-require.cache[iaPath] = {
-  id: iaPath, filename: iaPath, loaded: true,
-  exports: { announceIssueCreated: async () => {} },
-};
-
-// Pass-through collab guard so the sessions router reaches the handler.
-const appAccess = require('../src/services/app-access');
-appAccess.sessionCollabGuard = () => (req, res, next) => next();
-
 const github = require('../src/services/github');
 github.isEnabled = () => true;
 // The GitHub App, installed on the platform repository's owner: the only
@@ -51,11 +39,6 @@ github._setAppForTests({
 });
 
 const ZWSP = '​';
-
-// Requests are rows (services/requests.js, through github.createIssue); an
-// in-memory store stands in for it and records what was filed.
-const { installFakeRequests } = require('./helpers/fake-requests');
-const fakeRequests = installFakeRequests(null, { 'plat/repo': [] }, { firstNumber: 91 });
 
 // Serve octokit's Git Data endpoints for the pushFiles test; pass
 // everything else (the tests' own localhost requests) through to the real
@@ -84,28 +67,7 @@ global.fetch = async (url, opts = {}) => {
   return realFetch(url, opts);
 };
 
-const { sessionRoutes } = require('../src/routes/sessions');
 const votes = require('../src/routes/votes');
-const express = require('express');
-
-function startServer(mount) {
-  const app = express();
-  app.use(express.json());
-  app.use((req, res, next) => { req.user = { id: 7, username: 'evan' }; next(); });
-  app.use(mount);
-  return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
-  });
-}
-
-async function post(server, path, body) {
-  const port = server.address().port;
-  return realFetch(`http://127.0.0.1:${port}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
 
 // A posted string is "mention-safe" when no `@` is directly followed by a
 // word character — exactly what GitHub's linker needs to skip it.
@@ -125,52 +87,8 @@ test('safeMention neutralizes every @handle with a ZWSP and passes non-strings t
 });
 
 // ── 2. agent-reported platform issue (sessions confirm) ─────────────────
-
-test('platform-issue confirm writes backticked attribution, never @username', async () => {
-  fakeRequests.filed.length = 0;
-  const draft = {
-    status: 'pending',
-    title: 'Worker breaks when @ghstranger is in the diff',
-    body: 'Repro: mention @ghstranger anywhere in a commit.',
-  };
-  poolHandler = async (sql) => {
-    if (/FROM chat_session_messages m/.test(sql)) {
-      return {
-        rows: [{
-          id: 42,
-          metadata: { platformIssueDraft: draft },
-          app_id: 1, app_slug: 'demo', app_name: 'Demo App',
-        }],
-      };
-    }
-    if (/'"filed"'/.test(sql)) return { rowCount: 1, rows: [] };
-    return { rows: [], rowCount: 0 };
-  };
-
-  const server = await startServer(
-    sessionRoutes({ platformRepoUrl: 'https://github.com/plat/repo' })
-  );
-  try {
-    const res = await post(server, '/api/sessions/512/platform-issue/42/confirm', {});
-    assert.equal(res.status, 200);
-    const out = await res.json();
-    assert.equal(out.status, 'filed');
-
-    assert.equal(fakeRequests.filed.length, 1);
-    const posted = fakeRequests.filed[0];
-
-    // Attribution is backtick-wrapped — no `@` before the username at all.
-    assert.ok(posted.body.includes('confirmed by `evan`'),
-      `attribution not backtick-wrapped: ${posted.body}`);
-    assert.ok(!posted.body.includes('@evan'), 'attribution still uses @username');
-    // The draft's title and body are a request row's now, kept as written:
-    // they no longer reach GitHub, so nothing there can be pinged.
-    assert.equal(posted.title, draft.title);
-    assert.ok(posted.body.endsWith(draft.body));
-  } finally {
-    server.close();
-  }
-});
+// Removed: it pinned the backticked attribution the confirm route wrote. The
+// session Mayor's platform-issue draft card, and that route, are retired.
 
 // ── 3. platform-target feedback ──────────────────────────────────────────
 // Removed: it pinned safeMention on the title and body of the GitHub issue

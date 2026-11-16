@@ -59,7 +59,6 @@ test('active-user analytics count recorded human participation once per UTC day'
     appUse: await user('app-use'),
     appChat: await user('app-chat'),
     classic: await user('classic-change'),
-    mayor: await user('mayor-only'),
     direct: await user('direct-message'),
     group: await user('group-message'),
     channel: await user('channel-message'),
@@ -106,18 +105,6 @@ test('active-user analytics count recorded human participation once per UTC day'
     `INSERT INTO chat_session_messages (session_id, role, content)
      VALUES ($1, 'user', 'human change message')`,
     [sessionId]
-  );
-
-  // A Mayor-only prompt has no change session; agent_sessions owns it.
-  const { rows: agentRows } = await pool.query(
-    `INSERT INTO agent_sessions (user_id, title)
-     VALUES ($1, 'Activity fixture') RETURNING id`,
-    [actors.mayor]
-  );
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, agent_session_id, role, content)
-     VALUES (NULL, $1, 'user', 'human Mayor prompt')`,
-    [agentRows[0].id]
   );
 
   // Direct, group, and the built-in #general channel all share the Messages
@@ -350,27 +337,27 @@ test('active-user analytics count recorded human participation once per UTC day'
   const yesterday = (await pool.query(
     "SELECT to_char((CURRENT_TIMESTAMP AT TIME ZONE 'UTC')::date - 1, 'YYYY-MM-DD') AS day"
   )).rows[0].day;
-  assert.equal(general.daily.find((row) => row.day === today).dau, 14,
+  assert.equal(general.daily.find((row) => row.day === today).dau, 13,
     'each human-only surface counts (filing a request and messaging the bot too), '
     + 'while duplicates, generated rows and the bot itself do not');
   assert.equal(general.daily.find((row) => row.day === yesterday).dau, 1,
     'the message one second before midnight belongs to the previous UTC day');
 
   const withAdmins = await get('/api/admin/analytics/general-users?includeAdmins=true');
-  assert.equal(withAdmins.daily.find((row) => row.day === today).dau, 16,
+  assert.equal(withAdmins.daily.find((row) => row.day === today).dau, 15,
     'full and view-only admins enter together only when requested');
 
   const overview = await get('/api/admin/analytics/overview');
-  assert.equal(overview.wau, 15);
-  assert.equal(overview.mau, 15);
-  assert.equal(overview.users.total, 17, 'the synthetic bot is not a user');
+  assert.equal(overview.wau, 14);
+  assert.equal(overview.mau, 14);
+  assert.equal(overview.users.total, 16, 'the synthetic bot is not a user');
   assert.deepEqual(overview.prs, { promoted: 1, promoted_all_time: 2, merged: 1 },
     'bot builds count for their requester or filer; the admin\'s ask stays out');
   assert.equal(overview.llmSpendTodayCents, 500, 'the bot\'s spend is still spend');
   const overviewWithAdmins = await get('/api/admin/analytics/overview?includeAdmins=true');
-  assert.equal(overviewWithAdmins.wau, 17);
-  assert.equal(overviewWithAdmins.mau, 17);
-  assert.equal(overviewWithAdmins.users.total, 19);
+  assert.equal(overviewWithAdmins.wau, 16);
+  assert.equal(overviewWithAdmins.mau, 16);
+  assert.equal(overviewWithAdmins.users.total, 18);
   assert.deepEqual(overviewWithAdmins.prs, { promoted: 1, promoted_all_time: 3, merged: 2 });
 
   const name = (key) => `activity_${Object.keys(actors).indexOf(key) + 1}_`;
@@ -391,7 +378,7 @@ test('active-user analytics count recorded human participation once per UTC day'
   const growth = await get('/api/admin/analytics/growth');
   assert.equal(sum(growth.weeks, 'promoted_prs'), 2);
   assert.equal(sum(growth.weeks, 'merged_prs'), 1);
-  assert.equal(sum(growth.weeks, 'new_users'), 17, 'the bot is not a new user');
+  assert.equal(sum(growth.weeks, 'new_users'), 16, 'the bot is not a new user');
   const growthWithAdmins = await get('/api/admin/analytics/growth?includeAdmins=true');
   assert.equal(sum(growthWithAdmins.weeks, 'merged_prs_admin'), 1);
 
@@ -408,10 +395,10 @@ test('active-user analytics count recorded human participation once per UTC day'
 
   const retention = await get('/api/admin/analytics/retention');
   assert.equal(retention.cohorts.reduce((sum, cohort) => sum
-    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 15,
+    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 14,
   'retention uses the same de-duplicated human-action surface');
   const retentionWithAdmins = await get('/api/admin/analytics/retention?includeAdmins=true');
   assert.equal(retentionWithAdmins.cohorts.reduce((sum, cohort) => sum
-    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 17,
+    + Object.values(cohort.offsets).reduce((n, value) => n + Number(value), 0), 0), 16,
   'retention applies the same full and view-only admin inclusion switch');
 });

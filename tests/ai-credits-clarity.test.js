@@ -2,17 +2,15 @@
 //
 // Three things shipped and each one is a silent regression if it drifts:
 //   1. the figures a builder needs — what is LEFT and when it comes back —
-//      are RENDERED, not tooltip-only (they were invisible on touch and
-//      absent from every review screenshot),
-//   2. a proactive low-balance warning fires at the server-declared
-//      threshold and is mutually exclusive with the red exhausted banner,
-//   3. the exhausted path names the reset boundary and keeps the BYOK
-//      route on offer rather than dead-ending.
+//      are RENDERED on the drawer row, not tooltip-only (they were
+//      invisible on touch and absent from every review screenshot),
+//   2. the allowance turns low at the server-declared threshold, and a
+//      BYOK key never becomes a level of its own,
+//   3. the reset sentence and the shared-cap refusal name the boundary.
 //
 // The normalisation and the copy live in public/js/credit-options.js (one
-// definition, three surfaces), so most of this exercises that module
-// directly; the composer states are driven through the same vm harness
-// tests/credits-banner-render.test.js uses.
+// definition for every surface), so most of this exercises that module
+// directly; the drawer row is read from its source.
 //
 // Run with: node --test tests/ai-credits-clarity.test.js
 
@@ -24,16 +22,12 @@ const assert = require('node:assert/strict');
 globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
-const vm = require('node:vm');
-const { englishPlatformI18n, message } = require('./lib/platform-i18n');
-const { renderComponent } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const CO = require('../public/js/credit-options.js');
 const LIMITS_SRC = fs.readFileSync(path.join(root, 'src/services/limits.js'), 'utf8');
 const SESSIONS_SRC = fs.readFileSync(path.join(root, 'src/routes/sessions.js'), 'utf8');
-const DEV_CHAT_SRC = fs.readFileSync(
-  path.join(root, 'frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
 const AI_CREDIT_SRC = fs.readFileSync(
   path.join(root, 'frontend/src/features/header/ai-credit.js'), 'utf8');
 const DAPP = JSON.parse(fs.readFileSync(path.join(root, 'dapp.json'), 'utf8'));
@@ -106,61 +100,14 @@ test('the reset sentence names the UTC boundary and translates it', () => {
   assert.match(sentence, /reset at midnight UTC/,
     'the boundary the server enforces, stated as the server states it');
   assert.match(sentence, /about 3h 20m from now/, 'and how long that is');
-  assert.equal(CO.resetIn(at.toISOString(), at.getTime() - 45 * 60 * 1000), '45m');
-  assert.equal(CO.resetIn(at.toISOString(), at.getTime() + 1000), null,
-    'a past boundary drops the clause rather than printing a negative');
+  assert.match(CO.resetSentence({ resetsAt: at.toISOString() }, at.getTime() - 45 * 60 * 1000), /about 45m from now/);
+  const past = CO.resetSentence({ resetsAt: at.toISOString() }, at.getTime() + 1000);
+  assert.match(past, /reset at midnight UTC\./);
+  assert.doesNotMatch(past, /from now/, 'a past boundary drops the clause rather than printing a negative');
   assert.match(CO.resetSentence({}), /reset at midnight UTC\./,
     'no resetsAt → still says when, just not how long');
   assert.match(CO.resetSentence({ level: 'locked' }), /Connect GitHub or X.*\$10\.00\/day/,
     'locked credits name the unlock action, not a reset that will not help');
-});
-
-test('locked credits render an unlock meter and lead with the identity action', () => {
-  const state = CO.creditState(budget({
-    limitCents: 0, verificationRequired: true, entitlementAvailable: true,
-  }));
-  assert.deepEqual(CO.meterParts(state), [
-    { key: 'locked', text: 'verify account · unlock $10/day' },
-  ]);
-  assert.equal(CO.meterTone(state), 'amber');
-  // #4378: the card says they are out, and asks them to verify for more.
-  assert.equal(CO.lead({ ...state, capWindow: 'weekly' }), "You're out of this week's free AI credits.");
-  const options = CO.options({ verificationRequired: true });
-  assert.equal(options[0].id, 'verify-account');
-  assert.equal(options[0].cta, 'Verify my account');
-  assert.equal(options[0].hash, '#settings/linked-accounts');
-  const card = CO.cardHtml({ verificationRequired: true, capWindow: 'weekly', error: 'server words' });
-  assert.match(card, /<div class="dc-credits-card-lead">You&#39;re out of this week&#39;s free AI credits\.<\/div><div class="dc-credits-card-detail" data-credits-verify-line="1">Verify your account to get more: add your phone number, or link GitHub and X\.<\/div>/);
-  assert.match(card, /data-credits-verify-line="1">[^<]*<\/div><div class="dc-credits-verify"><button type="button" class="dc-pr-btn dc-credits-go" data-credits-verify="1" data-credits-hash="#settings\/linked-accounts">Verify my account<\/button>/);
-  assert.equal((card.match(/Verify my account/g) || []).length, 1, 'once, not again as a row of the list');
-  assert.doesNotMatch(card, /server words/, 'the verify line says it in place of the refusal');
-});
-
-test('the meter states what is left, in words a builder can act on', () => {
-  const left = (over) => {
-    const parts = CO.meterParts(CO.creditState(budget(over)));
-    return (parts.find((p) => p.key === 'remaining') || {}).text;
-  };
-  assert.equal(left({ spentCents: 1000 }), '$15.00 left');
-  assert.equal(left({ spentCents: 2000 }), '$5.00 left', 'low still names the figure');
-  assert.equal(left({ spentCents: 2500 }), 'none left');
-  assert.equal(left({ globalSpentCents: 20000 }), 'shared budget spent',
-    'the shared cap is not the user’s own spend and does not read like it');
-  assert.equal(CO.meterParts(CO.creditState(null)).length, 1,
-    'unknown renders the pair only — no invented remainder');
-
-  // The pair keeps its halves so both surfaces can colour the spend figure
-  // and leave the cap grey, without re-deriving the formatting.
-  const pair = CO.meterParts(CO.creditState(budget({ spentCents: 1000 })))[0];
-  assert.equal(pair.spent, '$10.00');
-  assert.equal(pair.limit, '$25.00');
-  assert.equal(pair.text, '$10.00/$25.00');
-});
-
-test('the tone thresholds are derived from the level, not retyped', () => {
-  assert.equal(CO.meterTone(CO.creditState(budget({ spentCents: 100 }))), 'emerald');
-  assert.equal(CO.meterTone(CO.creditState(budget({ spentCents: 2000 }))), 'amber');
-  assert.equal(CO.meterTone(CO.creditState(budget({ spentCents: 2500 }))), 'red');
 });
 
 // ── The server side ─────────────────────────────────────────────────────
@@ -168,7 +115,7 @@ test('the tone thresholds are derived from the level, not retyped', () => {
 test('both budget reads carry the remainder, the reset and the threshold', () => {
   const handler = SESSIONS_SRC.slice(
     SESSIONS_SRC.indexOf("router.get('/api/budget'"),
-    SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/deploy-staging'"));
+    SESSIONS_SRC.indexOf("router.get('/api/sessions/:id/preview-status'"));
   for (const field of ['remainingCents', 'resetsAt', 'lowBalancePct']) {
     assert.match(handler, new RegExp(field), `GET /api/budget sends ${field}`);
   }
@@ -197,175 +144,12 @@ test('the shared-cap refusal says when it lifts (it used to say "tomorrow")', ()
     '"tomorrow" is not a boundary — and for most readers it was the wrong day');
 });
 
-// ── The composer ────────────────────────────────────────────────────────
-
-// Same harness as tests/credits-banner-render.test.js: dev-chat.js is a
-// plain script, so it is evaluated in a vm context with the globals it
-// touches stubbed and #dc-budget captured.
-function makeDevChat({ hasApiKey = false, search = '' } = {}) {
-  // #1191: the meter's markup is features/dev-chat/budget-pill.tsx's, so
-  // `renderBudget()` publishes fragments. `meterHtml()` renders the component
-  // from what was published, so the assertions still read the meter as a
-  // reader sees it.
-  let published = { title: null, parts: [] };
-  const budgetEl = { innerHTML: '' };
-  const sandbox = {
-    console,
-    escapeHtml: (s) => String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;'),
-    document: {
-      getElementById: (id) => (id === 'dc-budget' ? budgetEl : null),
-      querySelector: () => null,
-      querySelectorAll: () => ({ forEach: () => {} }),
-      addEventListener: () => {},
-      createElement: () => ({ style: {}, innerHTML: '', textContent: '' }),
-      body: { appendChild: () => {} },
-    },
-    location: { search, hash: '' },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
-    navigator: { sendBeacon: () => {} },
-    URLSearchParams,
-    setTimeout, clearTimeout, setInterval, clearInterval,
-    localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-  };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  sandbox.window.addEventListener = () => {};
-  sandbox.Settings = { state: { hasApiKey, keyLast4: hasApiKey ? '1234' : null } };
-  sandbox.UsernodeReact = {
-    devChat: {
-      mountBudgetPill: () => {},
-      publishBudgetPill: (state) => { published = state; },
-      mountAttachStrip: () => {},
-      publishAttachStrip: () => {},
-    },
-  };
-  sandbox.PlatformI18n = englishPlatformI18n();
-  vm.createContext(sandbox);
-  vm.runInContext(fs.readFileSync(path.join(root, 'public/js/build-venues.js'), 'utf8'), sandbox);
-  vm.runInContext(fs.readFileSync(path.join(root, 'public/js/credit-options.js'), 'utf8'), sandbox);
-  vm.runInContext(`${DEV_CHAT_SRC}\n;globalThis.__DevChat = DevChat;`, sandbox);
-  const DevChat = sandbox.__DevChat;
-  // Both banners' markup is features/dev-chat/banners.tsx's since the four
-  // strips converted, for the same reason the meter's is budget-pill.tsx's:
-  // the module decides, the component draws. These render the component from
-  // what the module resolved, so every assertion below still reads a banner as
-  // a reader sees it — and "no banner" is a null view now, which these report
-  // as the '' the string builders returned.
-  const draw = (view) => (view
-    ? renderComponent('frontend/src/features/dev-chat/banners.tsx', 'CreditsBanner',
-      { b: JSON.parse(JSON.stringify(view)) })
-    : '');
-  return {
-    DevChat,
-    meterHtml: () => renderComponent(
-      'frontend/src/features/dev-chat/budget-pill.tsx', 'BudgetPillView',
-      JSON.parse(JSON.stringify(published)),
-    ),
-    bannerHtml: () => draw(DevChat._creditsBannerView()),
-    lowBannerHtml: () => draw(DevChat._creditsLowBannerView()),
-  };
-}
-
-test('the composer meter is the pair and the reset, and nothing else', () => {
-  // #593 rendered the remainder here rather than hiding it in a tooltip.
-  // #1353 took it back out of THIS meter alone: $25.00 minus $10.00 is the
-  // same fact as "$15.00 left", stated two characters away, on the
-  // narrowest strip in the app — and the remainder was the half that
-  // wrapped. The drawer row below still spells it out, and the low-balance
-  // and exhausted banners still say it in words once it starts to matter.
-  const { DevChat, meterHtml, bannerHtml, lowBannerHtml } = makeDevChat();
-  DevChat.budget = budget({ spentCents: 1000 });
-  DevChat.renderBudget();
-  assert.match(meterHtml(), /\$10\.00/, 'the spend/cap pair is what the meter is');
-  assert.match(meterHtml(), /\$25\.00/);
-  assert.doesNotMatch(meterHtml(), /data-credits-remaining/);
-  assert.doesNotMatch(meterHtml(), /left/, 'no second statement of the same figure');
-  assert.match(meterHtml(), /title="[^"]*reset at midnight UTC/,
-    'and the tooltip still answers "when do they come back?"');
-});
-
-test('nearly out → the amber warning, with the same routes as the red one', () => {
-  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat();
-  DevChat.budget = budget({ spentCents: 2000 });
-  assert.equal(DevChat._creditsExhausted(), false, 'nothing is refused yet');
-  assert.equal(DevChat._creditsLow(), true);
-  const html = lowBannerHtml();
-  assert.match(html, /id="dc-credits-low-banner"/);
-  assert.match(html, /Running low on free AI credits/, 'states the situation, not a failure');
-  assert.match(html, /\$5\.00 of \$25\.00 left today/, 'with the actual headroom');
-  assert.match(html, /reset at midnight UTC/, 'and the boundary');
-  assert.match(html, /dc-credits-add-key/, 'the BYOK route is offered before it bites');
-  assert.match(html, /#settings\/cli/, 'as are the other ways to keep building');
-  assert.match(html, /bg-amber-50/, 'amber — a warning, not an error');
-});
-
-test('the two banners are mutually exclusive', () => {
-  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat();
-  DevChat.budget = budget({ spentCents: 2500 });
-  assert.equal(DevChat._creditsExhausted(), true);
-  assert.equal(DevChat._creditsLow(), false, 'past the cap, "running low" is the wrong tense');
-  assert.equal(lowBannerHtml(), '');
-});
-
-test('the warning stays out of the way of everyone it cannot help', () => {
-  const withKey = makeDevChat({ hasApiKey: true });
-  withKey.DevChat.budget = budget({ spentCents: 2000 });
-  assert.equal(withKey.DevChat._creditsLow(), false,
-    'a key-holder spills over to their own key — the cap is not a cliff for them');
-
-  const quiet = makeDevChat();
-  quiet.DevChat.budget = null;
-  assert.equal(quiet.DevChat._creditsLow(), false, 'nothing fetched → no guessing');
-
-  const openrouter = makeDevChat();
-  openrouter.DevChat.currentSession = { id: 7, agent_backend: 'codex_openrouter' };
-  openrouter.DevChat.budget = budget({ spentCents: 2000 });
-  assert.equal(openrouter.DevChat._creditsLow(), false,
-    'an OpenRouter turn never touches the Claude allowance');
-});
-
-test('the exhausted banner names the reset in rendered text', () => {
-  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat();
-  DevChat.budget = budget({ spentCents: 2500, resetsAt: '2026-08-13T00:00:00.000Z' });
-  const html = bannerHtml();
-  assert.match(html, /data-credits-reset/);
-  assert.match(html, /reset at midnight UTC/);
-  assert.match(html, /dc-credits-add-key/, 'still links the bring-your-own-key route');
-});
-
-test('?shot=credits-low paints the warning without a fetch or a write', () => {
-  const { DevChat, meterHtml, bannerHtml, lowBannerHtml } = makeDevChat({ search: '?shot=credits-low' });
-  const fixture = DevChat._shotCreditsLowBudget();
-  assert.ok(fixture, 'the latch answers on the deep link');
-  assert.equal(fixture.spentCents / fixture.limitCents, 0.8, 'exactly at the threshold');
-  DevChat.currentSession = { id: 990403 };
-  DevChat.budget = fixture;
-  assert.equal(DevChat._creditsLow(), true);
-  DevChat.renderBudget();
-  assert.match(meterHtml(), /\$40\.00/, 'the meter paints the fixture spend');
-  // #2571: the allowance is the week's $50, so the headroom sentence is
-  // the week's too.
-  assert.match(lowBannerHtml(), /\$10\.00 of \$50\.00 left this week/,
-    'and the WARNING is what states the headroom (#1353)');
-
-  // Pure UI: no environment gate (a production "before" shot has to be
-  // obtainable) and no other ?shot= value hijacks the real budget read.
-  const fn = DEV_CHAT_SRC.slice(DEV_CHAT_SRC.indexOf('_shotCreditsLowBudget() {'));
-  const body = fn.slice(0, fn.indexOf('\n  },'));
-  assert.ok(!/staging|USERNODE_ENV|demo/i.test(body), 'not environment-gated');
-  assert.ok(!/fetch|pool|POST/.test(body), 'reads nothing and writes nothing');
-  assert.equal(makeDevChat({ search: '?shot=venue-sheet' }).DevChat._shotCreditsLowBudget(), null);
-  assert.equal(makeDevChat().DevChat._shotCreditsLowBudget(), null);
-});
-
 // ── The drawer row ──────────────────────────────────────────────────────
 
 test('the drawer row renders the remainder and shares the reset wording', () => {
   // #1367: the hook is rendered by features/header/ai-budget.tsx, from the
   // `remaining` flag this module sets on that part.
-  assert.match(AI_CREDIT_SRC, /remaining: true/, 'same hook as the composer meter');
+  assert.match(AI_CREDIT_SRC, /remaining: true/, 'the remainder carries its hook');
   assert.match(
     fs.readFileSync(path.join(root, 'frontend/src/features/header/ai-budget.tsx'), 'utf8'),
     /'data-credits-remaining': '1'/,
@@ -377,7 +161,7 @@ test('the drawer row renders the remainder and shares the reset wording', () => 
   assert.equal(message('wallet:credit.meter.leftWeekly', { remaining: '$839.99', limit: '$840' }), '<0>$839.99</0> of $840 left this week');
   assert.equal(message('wallet:credit.meter.leftToday', { remaining: '$19', limit: '$20' }), '<0>$19</0> of $20 left today');
   assert.match(AI_CREDIT_SRC, /CO\.resetSentence\(state, undefined, \{ withUtc: true \}\)/,
-    'one wording for the boundary, shared with the dev chat');
+    'one wording for the boundary, CreditOptions\'');
   assert.ok(!/Resets at midnight UTC/.test(AI_CREDIT_SRC),
     'no second, hand-written copy of the reset sentence');
   // The row is user-facing for every signed-in account, so the #555 rule
@@ -392,33 +176,4 @@ test('dapp.json points at the credits indicator', () => {
   assert.ok(named.some((t) => /data-credits-remaining/.test(t.expectSelector || '')),
     'the visible remainder has a check — the drawer row\'s, since #1353 took '
       + 'the composer meter\'s copy of the figure out');
-  // #3976: the dev chat's low-balance warning and the exhausted banner's
-  // reset statement were checked on classic sessions (?shot=credits-low,
-  // /dev/sessions/9904xx). Classic sessions are read-only now and their
-  // banners stand down, so those checks were retired with the chat; the
-  // unit assertions in this file still pin both banners.
-  assert.ok(!DAPP.tests.some((t) => /dc-credits-(low-)?banner/.test(t.expectSelector || '')),
-    'no declared check drives a banner a read-only session no longer shows');
-});
-
-test('?shot=credits-exhausted reaches the refusal state (#1348)', () => {
-  // The two-door bar IS that state's whole interface now, so it needs a
-  // route the checks and the vote screenshots can open without a reviewer
-  // burning a real daily allowance.
-  const { DevChat, bannerHtml, lowBannerHtml } = makeDevChat({ search: '?shot=credits-exhausted' });
-  const fixture = DevChat._shotCreditsLowBudget();
-  assert.ok(fixture, 'the shot answers with a fixture budget');
-  assert.equal(fixture.spentCents, fixture.limitCents, 'spent meets the cap');
-  assert.equal(fixture.remainingCents, 0);
-  // The low shot is still the low shot — one fixture shape, two states.
-  const low = makeDevChat({ search: '?shot=credits-low' }).DevChat._shotCreditsLowBudget();
-  assert.ok(low.spentCents < low.limitCents, 'the warning is not the refusal');
-  // And the exhausted fixture actually trips the banner.
-  DevChat.budget = fixture;
-  assert.equal(DevChat._creditsExhausted(), true);
-  const html = bannerHtml();
-  assert.match(html, /Add API key/);
-  assert.match(html, /data-credits-venue="1"/);
-  // QA 2026-09-24 Q27: count the doors, not the phone's "Details" toggle.
-  assert.equal((html.match(/<button[^>]*class="dc-credits-banner-btn/g) || []).length, 2);
 });

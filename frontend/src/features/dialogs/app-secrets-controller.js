@@ -63,8 +63,8 @@ const Secrets = {
     const modal = document.getElementById('app-secrets-modal');
     const redeploy = document.getElementById('app-secrets-redeploy');
     // Modal is the only piece this module hard-requires now. The entry-
-    // point button moved to the dev-chat tab; AppView wires its click
-    // to Secrets.openForCurrentApp() when that tab renders.
+    // point button is the Dev tab's "App secrets" row; AppView wires its
+    // click to Secrets.openForCurrentApp() when that tab renders.
     if (!modal) return;
 
     // #1078 chunk I: the close button and the backdrop click are React's
@@ -88,15 +88,15 @@ const Secrets = {
     });
   },
 
-  // Convenience for callers (currently the dev-chat Edit panel) that
-  // know "the current app" but don't track its slug locally.
+  // Convenience for callers (currently the Dev tab's "App secrets" row)
+  // that know "the current app" but don't track its slug locally.
   openForCurrentApp() {
     const slug = AppView.appData?.slug;
     if (slug) Secrets.open(slug);
   },
 
   // Legacy header-badge hook. The standalone red dot is gone — the
-  // dev-chat tab's "App secrets" row now shows "N missing" inline
+  // Dev tab's "App secrets" row now shows "N missing" inline
   // (see AppView.refreshDevChatSecretsState). Kept as a no-op so older
   // call-sites don't break; safe to delete once nothing references it.
   applyMissingBadge() { /* no-op */ },
@@ -108,9 +108,9 @@ const Secrets = {
     Secrets.close();
   },
 
-  // Re-render the dev-chat secrets row after a successful direct edit
+  // Re-render the Dev tab's secrets row after a successful direct edit
   // so "N missing" / "N of M set" reflects the new state without
-  // forcing a tab reload. Best-effort: if the dev-chat tab isn't
+  // forcing a tab reload. Best-effort: if the Dev tab isn't
   // mounted (user is on App / Group Chat) the helper itself no-ops.
   notifyDevChatRefresh() {
     if (window.AppView && typeof AppView.refreshDevChatSecretsState === 'function') {

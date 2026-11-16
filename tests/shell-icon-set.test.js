@@ -306,8 +306,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the top-level screen is a REPORT of what your apps want from you, not
     // a place to start something; the menu's went with the app strip above
     // it. Every plus left in the shell renders behind state.
+    // PlusThinIcon, UserCircleIcon and CheckLongIcon left this list and the
+    // module together: only the retired dev chat's banners drew them.
     'M12 4v16m8-8H4',
-    'M12 4.5v15m7.5-7.5h-15',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
     // WarningTriangleIcon left this list with #2716: Settings → Delete
@@ -316,7 +317,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M13 7l5 5m0 0l-5 5m5-5H6',
     'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5',
     'M15 18l-6-6 6-6',
-    'M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z',
     'M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6',
     'M16.023 9.348h4.992V4.356m-4.992 4.992l3.181-3.183a8.25 8.25 0 00-13.803 3.7M4.031 9.865v4.99m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7',
     'M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-7.322c.983.143 1.954.317 2.916.52a6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0',
@@ -352,7 +352,6 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // on), so it is in the cold document. The Needs-you rail still draws it
     // behind state too.
     'M4 6h16M4 12h16M4 18h16',
-    'M4.5 12.75l6 6 9-13.5',
     // CheckIcon ('M5 13l4 4L19 7') left this list with #6136: every setup step's
     // tick in Settings > Connectors carries one, hidden until it is pressed.
     'M5 15l7-7 7 7',

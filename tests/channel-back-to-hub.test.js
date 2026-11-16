@@ -219,7 +219,7 @@ test('a cold #general: the header arrow follows the slug to the hub, with the di
     const store = loadTsx('frontend/src/features/messages/store.ts');
     const HUB = loadTsx('frontend/src/features/messages/channel-hub.ts');
     const unfollow = store.followPlatformSlug();
-    store.route(GENERAL, null, null, {});
+    store.route(GENERAL, null, {});
     for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 5));
     store.syncChrome();
     assert.deepEqual(backIcons.at(-1), ['arrow', '/'], 'slugless: the arrow goes Home');

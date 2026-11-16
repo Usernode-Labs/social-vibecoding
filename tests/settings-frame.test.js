@@ -137,17 +137,16 @@ test('the primitives keep their stable names', () => {
 
 test('a section\'s parts stack with no rule between them, and a one-part page\'s label is not drawn twice', () => {
   assert.match(settings, new RegExp(`${ANY} #settings-section-content > \\[data-settings-section\\]:not\\(\\.hidden\\) ~ \\[data-settings-section\\]:not\\(\\.hidden\\):has\\(> :not\\(\\.hidden\\)\\) \\{ margin-top: 24px; padding-top: 0; border-top: 0; \\}`));
-  assert.match(settings, /\[data-settings-section="linked-accounts"\], \[data-settings-section="phones"\], \[data-settings-section="agent-files"\], \[data-settings-section="language"\], \[data-settings-section="tour"\], \[data-settings-section="guide"\], \[data-settings-section="about"\], \[data-settings-section="experimental"\], \[data-settings-section="wallet"\], \[data-settings-section="usernode"\]\) > div:first-child > \.ui-sechead:first-child \{ display: none; \}/);
+  assert.match(settings, /\[data-settings-section="linked-accounts"\], \[data-settings-section="phones"\], \[data-settings-section="language"\], \[data-settings-section="tour"\], \[data-settings-section="guide"\], \[data-settings-section="about"\], \[data-settings-section="experimental"\], \[data-settings-section="wallet"\], \[data-settings-section="usernode"\]\) > div:first-child > \.ui-sechead:first-child \{ display: none; \}/);
   assert.match(settings, new RegExp(`${ANY} #settings-section-content \\[data-settings-section\\] \\.border-t\\.pt-6 \\{ margin-top: 24px; padding-top: 0; border-top: 0; \\}`));
 });
 
 test('a switch row in a static pane is a neutral wrapper, laid out by the stylesheet: no node is moved', () => {
-  for (const [file, id] of [['dev-console.tsx', 'dev-console-always-show'], ['admin-preview.tsx', 'view-as-non-admin'], ['alerts.tsx', 'devchat-alerts-toggle']]) {
+  for (const [file, id] of [['dev-console.tsx', 'dev-console-always-show'], ['admin-preview.tsx', 'view-as-non-admin']]) {
     assert.match(section(file), new RegExp(`<div className="ui-card ui-swrow">\\s*<SwitchRow id="${id}">`), file);
   }
   const exp = section('experimental.tsx');
-  assert.match(exp, /<div className="ui-card">\s*<InterfaceModeControl \/>\s*<div className="ui-swrow">\s*<SwitchRow id="ai-progress-estimate">/, 'the three switches are one card');
-  assert.match(exp, /<div className="ui-swrow mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">\s*<SwitchRow id="session-bridge-enabled">/);
+  assert.match(exp, /<div className="ui-card">\s*<InterfaceModeControl \/>\s*<\/div>/, 'its one switch is a card');
   assert.doesNotMatch(exp, /new-look-enabled/, 'New look\'s switch is gone: its look is one of the Look menu\'s');
   assert.match(exp, /<div id="settings-look-section" className="hidden ui-card ui-fields /);
   assert.match(settings, new RegExp(`${ANY} #settings-screen #settings-section-content \\[data-settings-section\\] \\.ui-swrow \\{ display: grid; grid-template-columns: minmax\\(0, 1fr\\) auto;`));
@@ -178,7 +177,7 @@ test('`hidden` still hides a worn node, since settings.js shows and hides by tha
 });
 
 test('the lists of small cards are one card of rows, and the hand-made cards wear the kit\'s', () => {
-  for (const file of ['notification-prefs-list.tsx', 'app-permissions-list.tsx', 'grants-list.tsx', 'agent-files-list.tsx', 'cli-tokens-list.tsx', 'local-agents-list.tsx']) {
+  for (const file of ['notification-prefs-list.tsx', 'app-permissions-list.tsx', 'grants-list.tsx', 'cli-tokens-list.tsx']) {
     assert.match(read('frontend/src/features/settings', file), /const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-xs';/, file);
   }
   assert.match(section('app-permissions.tsx'), /<div id="app-permissions-list" className="ui-card space-y-2">/);
@@ -218,7 +217,7 @@ test('OpenRouter is one card: a neutral wrapper round its parts, each keeping it
   const close = src.indexOf('<StatusLine id="settings-openrouter-status"');
   assert.ok(open > 0 && close > open);
   const inside = src.slice(open, close);
-  const ids = ['settings-openrouter-included', 'settings-openrouter-key-display', 'settings-openrouter-key-info', 'settings-openrouter-personal-controls', 'settings-openrouter-models-wrap'];
+  const ids = ['settings-openrouter-included', 'settings-openrouter-key-display', 'settings-openrouter-key-info', 'settings-openrouter-personal-controls'];
   let at = 0;
   for (const id of ids) {
     const i = inside.indexOf(`id="${id}"`, at);
@@ -226,24 +225,13 @@ test('OpenRouter is one card: a neutral wrapper round its parts, each keeping it
     at = i;
   }
   assert.match(src, /<Label className="px-1 pb-1 text-\[15px\] font-normal text-zinc-500 dark:text-zinc-500" htmlFor="settings-openrouter-key">/, 'the personal key\'s label is a field\'s label, not a small-caps one');
-  assert.match(settings, new RegExp(`${IN}:is\\(\\.ui-onecard, \\.ui-filecard\\) > \\.ui-card, ${IN}\\.ui-onecard \\.ui-keyrow \\{ margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none;`), 'a part has no card of its own inside it');
+  assert.match(settings, new RegExp(`${IN}\\.ui-onecard > \\.ui-card, ${IN}\\.ui-onecard \\.ui-keyrow \\{ margin: 0; border: 0; border-radius: 0; background: none; box-shadow: none;`), 'a part has no card of its own inside it');
   assert.match(settings, new RegExp(`${IN}#settings-openrouter-personal-controls > label \\{ display: block; padding: 0 0 8px; font-size: 13px; font-weight: 650;`));
   for (const file of ['openrouter.tsx', 'api-key.tsx']) {
     assert.match(section(file), /<div className="ui-card ui-keyrow rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">/, file);
   }
   assert.match(settings, new RegExp(`${IN}\\.ui-keyrow \\{ display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 16px; \\}`), 'a key is a field with its button beside it');
   assert.doesNotMatch(css.replace(settings, ''), /\.ui-(onecard|keyrow|filecard)/, 'the standard look says nothing for these names');
-});
-
-test('a kind of agent file is one card with Upload at the end of its first row, placed by the grid', () => {
-  const src = section('agent-files.tsx');
-  assert.match(src, /<div className="ui-card ui-filecard mb-4">\s*<div className="flex items-center justify-between mb-1\.5">\s*<h4 className="text-xs font-semibold /);
-  assert.match(src, /<div className="ui-card ui-filecard mb-2">/);
-  assert.match(src, /<\/h4>\s*<button\s+data-agent-files-upload="instruction"/, 'the button settings.js binds stays where it was in the markup');
-  assert.match(settings, new RegExp(`${IN}\\.ui-filecard \\{ display: grid; grid-template-columns: minmax\\(0, 1fr\\) auto;`));
-  assert.match(settings, new RegExp(`${IN}\\.ui-filecard > div:first-child \\{ display: contents; \\}`));
-  assert.match(settings, new RegExp(`${IN}\\.ui-filecard \\[data-agent-files-upload\\] \\{ grid-column: 2; grid-row: 1 / span 2;`));
-  assert.match(settings, new RegExp(`${IN}\\.ui-filecard:has\\(\\.ui-mini\\) > \\.ui-card \\{ grid-column: 1 / -1; border-top: 1px solid var\\(--fr-line2\\); \\}`), 'its files are rows across the card');
 });
 
 test('inside a tool\'s guided set-up the product\'s nodes are drawn in the kit\'s type and tokens', () => {
