@@ -104,6 +104,19 @@ const App = {
   // restoreFromHash/setChromeless.
   chromeless: false,
 
+  // Webview mode (request #6701): a phone member's own choice to hide the
+  // header and the tab bar on every route, made from the Homeroom mark menu
+  // and remembered on the device. A second reason for the bars to be down,
+  // kept apart from `chromeless`, which stays a routing fact: the router
+  // clears that one on every navigation and this one must outlive it. The
+  // pill that chromeless floats is the way out of this as well. See
+  // _webviewActive / _chromeHidden / _applyChrome below.
+  webviewMode: false,
+  _WEBVIEW_KEY: 'homeroom.webviewMode',
+  // The keyboard handling's phone test (frontend/src/lib/keyboard-open.ts
+  // PHONE_QUERY): the bar's breakpoint, on a touch screen.
+  _WEBVIEW_QUERY: '(max-width: 767px) and (pointer: coarse)',
+
   // The side panel's OWN document (`?panel=1`, framed beside a running app on
   // a desktop window — see isSidePanelDocument above). It routes only the
   // panel's pages and hands everything else to the top window (restoreFromHash,
@@ -418,6 +431,11 @@ const App = {
     // makes the state agree — the header island takes `hidden` the way
     // chromeless gives it, and _syncPlatformTabs keeps the bar down.
     if (App.embeddedPanel) App.Visibility.publish('platform-header', false);
+    // A remembered Webview mode's pill. The boot block at the foot of this
+    // file took the bars down before the first paint; the pill is markup the
+    // prerender does not carry, so it waits for hydration, which is done by
+    // the time init runs.
+    if (App._webviewActive?.()) App.Visibility.publish('chromeless-pill', true);
 
     // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
     // `?shot=waitlist-joined`, `?shot=anon-back`). Captures and proposal checks carry a
@@ -5880,16 +5898,107 @@ const App = {
     const enable = !!on;
     if (App.chromeless === enable) return;
     App.chromeless = enable;
-    App.Visibility.publish('platform-header', !enable);
-    App.Visibility.publish('chromeless-pill', enable);
+    App._applyChrome();
+  },
+
+  // ── Webview mode (request #6701) ─────────────────────────────────────
+  // Whether the remembered choice applies to this window right now: only on
+  // a phone-sized touch screen, and never in the side panel's document,
+  // which draws no chrome of its own. A wide window keeps the choice and
+  // shows the bars; _watchWebviewQuery re-decides when the width changes.
+  _webviewActive() {
+    return !!App.webviewMode && App.webviewOffered();
+  },
+
+  // Whether the mark menu offers the row (app-context-sheet.tsx): where the
+  // mode would apply, whatever is stored. Asked here so the one query has
+  // one home, and the menu's panel never measures the window itself.
+  webviewOffered() {
+    if (App.embeddedPanel) return false;
+    try {
+      return !!window.matchMedia?.(App._WEBVIEW_QUERY)?.matches;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // The bars are down: the full-screen route, or Webview mode. The header,
+  // the pill and the tab bar read this; what is about the ROUTE (the
+  // address switchTab writes, the side panel, the Communities tab's scope)
+  // keeps reading App.chromeless.
+  _chromeHidden() {
+    return App.chromeless || App._webviewActive();
+  },
+
+  // The one place that publishes it. `data-webview-mode` on <html> is the
+  // mode's presence in the DOM, for app.css: the status bar's inset on
+  // Homeroom's own pages, where no header is left to hold it, and the bars
+  // gone before the first paint of a later load.
+  _applyChrome() {
+    const hidden = App._chromeHidden();
+    const webview = App._webviewActive();
+    try { document.documentElement?.toggleAttribute?.('data-webview-mode', webview); } catch (_) { /* no document */ }
+    App.Visibility.publish('platform-header', !hidden);
+    App.Visibility.publish('chromeless-pill', hidden);
+    // For the header's swipe back (platform-header.tsx): the bar is away,
+    // and its arrow's destination is still the page's way back.
+    App.Visibility.publish('webview-mode', webview);
     // The tab bar goes with the header, but through _syncPlatformTabs rather
-    // than a publish of its own: chromeless is only ONE of the three things
-    // that hide it (an app view and the signed-out shell are the others), so
-    // the bar has one place that decides and this tells it to decide again.
+    // than a publish of its own: the bars being down is only ONE of the
+    // things that hide it (an app view and the signed-out shell are the
+    // others), so the bar has one place that decides and this tells it to
+    // decide again.
     App._syncPlatformTabs();
     if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
       AppView.scheduleSafeAreaBroadcast();
     }
+  },
+
+  // Turn the mode on (the mark menu's row) or off (the pill). Remembered on
+  // the device; where storage is refused it holds for this load.
+  setWebviewMode(on) {
+    const enable = !!on;
+    App.webviewMode = enable;
+    try {
+      if (enable) localStorage.setItem(App._WEBVIEW_KEY, '1');
+      else localStorage.removeItem(App._WEBVIEW_KEY);
+    } catch (_) { /* private mode: this load still knows */ }
+    App._watchWebviewQuery();
+    App._applyChrome();
+  },
+
+  // A phone turned, or a window resized across the phone query: decide
+  // again. Installed once, where the mode is first on.
+  _webviewQueryWatched: false,
+  _watchWebviewQuery() {
+    if (App._webviewQueryWatched) return;
+    App._webviewQueryWatched = true;
+    try {
+      const mql = window.matchMedia?.(App._WEBVIEW_QUERY);
+      mql?.addEventListener?.('change', () => {
+        if (App.webviewMode) App._applyChrome();
+      });
+    } catch (_) { /* no matchMedia: nothing to watch */ }
+  },
+
+  // The remembered choice, read once when this file loads (the boot block
+  // at its foot). Before the first paint: the attribute, the header and the
+  // tab bar, each of which reaches the DOM as a class or through app.css.
+  // NOT the pill, which is new markup: published before hydration it would
+  // be a first render the prerender does not have. init publishes it.
+  _bootWebviewMode() {
+    try {
+      App.webviewMode = localStorage.getItem(App._WEBVIEW_KEY) === '1';
+    } catch (_) {
+      App.webviewMode = false;
+    }
+    if (!App.webviewMode) return;
+    App._watchWebviewQuery();
+    if (!App._webviewActive()) return;
+    try { document.documentElement?.setAttribute?.('data-webview-mode', ''); } catch (_) { /* no document */ }
+    App.Visibility.publish('platform-header', false);
+    App.Visibility.publish('webview-mode', true);
+    App.Visibility.publish('platform-tabs', false);
   },
 
   // The single decision point for "what animation does entering this
@@ -6556,7 +6665,7 @@ const App = {
       'platform-tabs',
       // …and never in the side panel's document, which draws no chrome at
       // all: the top window's bar and rail are the navigation.
-      App.embeddedPanel ? false : !!screen && !App.chromeless && (!inApp || railPinned),
+      App.embeddedPanel ? false : !!screen && !App._chromeHidden() && (!inApp || railPinned),
     );
     // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
@@ -9578,6 +9687,10 @@ try {
     App._applyBootScreen();
   }
 } catch (err) { /* no usable DOM — the router still routes, one paint later */ }
+
+// A remembered Webview mode (request #6701), here for the same reason: the
+// bars are down before the first paint rather than taken away after it.
+try { App._bootWebviewMode(); } catch (err) { /* the bars stay up; the menu row still works */ }
 
 document.addEventListener('DOMContentLoaded', () => App.init());
 

@@ -250,9 +250,14 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // shell's visibility store instead of writing the DOM — a classList toggle
   // from outside React is exactly what that store exists to replace. The two
   // subscribers produce the same DOM the imperative version did.
-  assert.ok(src.includes("App.Visibility.publish('platform-header', !enable)"),
+  // Request #6701: the publishing half is App._applyChrome, which Webview
+  // mode shares, so both read one answer (App._chromeHidden).
+  const setChromeless = src.slice(src.indexOf('  setChromeless(on) {'), src.indexOf('  _webviewActive() {'));
+  assert.ok(setChromeless.includes('App._applyChrome();'),
+    'setChromeless hands the publishing to the one place that does it');
+  assert.ok(src.includes("App.Visibility.publish('platform-header', !hidden)"),
     'the header hide must go through the visibility store');
-  assert.ok(src.includes("App.Visibility.publish('chromeless-pill', enable)"),
+  assert.ok(src.includes("App.Visibility.publish('chromeless-pill', hidden)"),
     'and so must the pill');
   assert.ok(header.includes("useVisibility('platform-header', true)"),
     'the header island subscribes, defaulting to the visible markup it ships');
@@ -282,7 +287,7 @@ test('app.js setChromeless toggles the header and the pill', () => {
   // the prerendered markup and the first hydrating render identical.
   assert.ok(pill.includes('if (!chromeless) return null;'));
   assert.ok(pill.includes("id=\"chromeless-pill\""));
-  assert.ok(pill.includes("aria-label={t('core:chromeless.openAppLabel')}"));
+  assert.ok(pill.includes("aria-label={webview ? t('core:chromeless.openWebviewLabel') : t('core:chromeless.openAppLabel')}"));
   assert.equal(message('core:chromeless.openAppLabel'), 'Open this app on Homeroom');
   // The pill's exit target is the regular App-tab view, which clears the
   // mode via restoreFromHash. The slug is read at CLICK time, so the pill

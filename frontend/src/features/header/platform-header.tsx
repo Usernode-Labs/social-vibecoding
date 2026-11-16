@@ -268,6 +268,10 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  // Webview mode (request #6701) hides the bar on Homeroom's own pages too,
+  // where its arrow was the way back: the swipe keeps that destination. In
+  // an app the slot is the close button, not an arrow, so nothing changes.
+  const webview = useVisibility('webview-mode', false);
   const dialogOpen = useDismissibleOpen();
   // The phone's Communities drawer: its pan is the swipe back.
   const drawerOn = useDrawerMode() === 'communities';
@@ -275,7 +279,7 @@ export function PlatformHeader() {
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
-    visible, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen, drawerOn,
+    visible: visible || webview, mode, href: resolvedBackHref, paneHref: paneBack, dialogOpen, drawerOn,
   }));
 
   return (

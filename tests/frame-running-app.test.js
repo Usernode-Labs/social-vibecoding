@@ -84,5 +84,6 @@ test('on a phone the product still takes the tabs down for a running app, and th
   const src = read(FRAME_APP);
   assert.match(src, /const routed = useVisibility\('platform-tabs', true\);\s*const on = isFrameSkin\(skin\) && viewer && routed;/);
   const app = read('public/js/app.js');
-  assert.match(app, /App\.embeddedPanel \? false : !!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/, 'app.js decides, as before: tabs stay only where the rail is pinned beside the app');
+  // Request #6701: the bars being down is the full-screen route or Webview mode (App._chromeHidden).
+  assert.match(app, /App\.embeddedPanel \? false : !!screen && !App\._chromeHidden\(\) && \(!inApp \|\| railPinned\),/, 'app.js decides, as before: tabs stay only where the rail is pinned beside the app');
 });

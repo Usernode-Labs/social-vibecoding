@@ -23,6 +23,16 @@
  * place. Profile and Settings keep theirs; these are extra ways in, not moves.
  * A third row that reports rather than navigates is still the decay signal.
  *
+ * ── Webview mode is bent the same way (request #6701) ──────────────────
+ *
+ * On a phone the menu ends its rows with "Webview mode", an action and not
+ * a destination: it hides Homeroom's header and tab bar on this phone
+ * (App.setWebviewMode in public/js/app.js), and the "Open in Homeroom" pill
+ * brings them back (../header/chromeless-pill.tsx). It is here because this
+ * is the one menu on every screen, which is where a member asked for it; it
+ * ends in no chevron, since it opens no page, and it is a one-tap action and
+ * not a switch, since the menu cannot be reached while the mode is on.
+ *
  * ── What #1431 built and what #1443 changed ────────────────────────────
  *
  * #1431 made this the Apps sheet: a title row with "Create New", a strip of
@@ -118,6 +128,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
+  ArrowsPointingOutIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
@@ -208,7 +219,7 @@ const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
  * the rest are <a>s. One fragment is what keeps "the buttons look like the
  * links" true by construction rather than by copies staying in step.
  */
-function RowBody({ icon, label, trailing, sub, external }: {
+function RowBody({ icon, label, trailing, sub, external, action }: {
   icon: ReactNode;
   label: string;
   trailing?: ReactNode;
@@ -219,6 +230,9 @@ function RowBody({ icon, label, trailing, sub, external }: {
   // ends in the external-link glyph rather than the chevron every row
   // inside the platform ends in, and says so to a screen reader.
   external?: boolean;
+  // A row that does something where you are and opens no page (Webview
+  // mode): it ends in nothing.
+  action?: boolean;
 }): ReactNode {
   return (
     <>
@@ -232,7 +246,7 @@ function RowBody({ icon, label, trailing, sub, external }: {
         </span>
       ) : <span className="flex-1 min-w-0 truncate font-medium">{label}</span>}
       {trailing}
-      {external ? <ExternalMark /> : (
+      {action ? null : external ? <ExternalMark /> : (
         <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-300 dark:text-zinc-600" aria-hidden="true" />
       )}
     </>
@@ -558,6 +572,17 @@ export function AppsSwitcherSheet(): ReactNode {
   // says which. Read after mount, for the prerender's sake.
   const homeroomOffer = useMemo(() => (mounted ? homeroomHomeScreen() : null), [mounted, open]);
   const [homeroomSteps, setHomeroomSteps] = useState<MobileOs | null>(null);
+  // WEBVIEW MODE (request #6701): offered on a phone-sized touch screen, the
+  // only place the mode applies. App.webviewOffered (public/js/app.js) says
+  // so, from the one query the mode itself reads; this panel does not ask
+  // about the window. Read after mount, for the prerender's sake, and again
+  // each time the menu opens, since a phone can be turned in between. Not
+  // while Go to Homeroom is the newcomer's card: the walk it leads to points
+  // at the bars.
+  const webviewOffer = useMemo(() => {
+    if (!mounted || newcomer || walkOwed) return false;
+    return !!(window as any).App?.webviewOffered?.();
+  }, [mounted, open, newcomer, walkOwed]);
   useEffect(() => {
     if (!takeArrival()) return undefined;
     let live = true;
@@ -1064,6 +1089,35 @@ export function AppsSwitcherSheet(): ReactNode {
           >
             <RowBody icon={<InfoCircleIcon />} label={appName ? t('agent:appContext.row.about', { app: appName }) : t('agent:appContext.row.aboutThisApp')} />
           </button>
+          {/*
+              WEBVIEW MODE (request #6701): the menu closes, then the header
+              and the tab bar go (the kit cannot take a surface down while
+              the page under it is being laid out again). `py-1.5` because
+              the row has two lines and ROW pads none.
+          */}
+          {webviewOffer ? (
+            <button
+              id="app-menu-row-webview"
+              type="button"
+              className={`${ROW} w-full text-start py-1.5`}
+              onClick={() => {
+                void AppContext.dismissForNav().then(() => {
+                  (window as any).App?.setWebviewMode?.(true);
+                });
+              }}
+            >
+              <RowBody
+                icon={<ArrowsPointingOutIcon />}
+                label={t('agent:appContext.row.webview')}
+                sub={(
+                  <span className="block truncate text-[0.8125rem] text-zinc-500 dark:text-zinc-400">
+                    {t('agent:appContext.row.webviewSub')}
+                  </span>
+                )}
+                action
+              />
+            </button>
+          ) : null}
           {homeroomOffer ? (
             <button
               id="app-menu-row-add-homeroom"

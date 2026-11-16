@@ -3,6 +3,15 @@
  * platform header is hidden (`/app/<slug>/full`). App._mountChromelessPill /
  * _unmountChromelessPill in app.js, as a component (#1079 chunk B).
  *
+ * ALSO THE WAY OUT OF WEBVIEW MODE (request #6701): a phone member's own
+ * choice, from the Homeroom mark menu, to hide the header and the tab bar on
+ * every route. The menu that turned it on went with the header, so this pill
+ * is up wherever the mode is (App._applyChrome publishes it for both
+ * reasons), on Homeroom's own pages too, and a tap turns the mode off where
+ * you are. On Homeroom's own pages it rests higher (app.css, the
+ * `data-webview-mode` block): a page's message box ends in its Send button,
+ * in this corner.
+ *
  * Visually matching the bridge's share-view pill (public/usernode-bridge.js
  * __USERNODE_PLATFORM_LINK__) so users see one consistent affordance. Unlike
  * the bridge pill it is NOT dismissible — in chromeless mode it's the only way
@@ -44,6 +53,7 @@ export function ChromelessPill() {
   // useVisibility resolves to this `false` — i.e. the shipped markup, which
   // had no pill in it at all.
   const chromeless = useVisibility('chromeless-pill', false);
+  const webview = useVisibility('webview-mode', false);
   const [hover, setHover] = useState(false);
   const t = useMessages();
 
@@ -53,14 +63,20 @@ export function ChromelessPill() {
     <a
       id="chromeless-pill"
       href="#"
-      aria-label={t('core:chromeless.openAppLabel')}
+      aria-label={webview ? t('core:chromeless.openWebviewLabel') : t('core:chromeless.openAppLabel')}
       style={{ ...PILL_STYLE, opacity: hover ? 1 : 0.85 }}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onClick={(ev) => {
         ev.preventDefault();
+        // Webview mode first: off, and the bars are back on this page. Read
+        // at click time, like the slug below.
+        const wasWebview = !!window.App?.webviewMode;
+        if (wasWebview) window.App?.setWebviewMode?.(false);
         const slug = window.App?.currentApp;
-        if (slug) {
+        // The full-screen route's own exit, as before; in Webview mode alone
+        // there is no route to leave, on an app or on a Homeroom page.
+        if (slug && (window.App?.chromeless || !wasWebview)) {
           // The explicit route entry point clears the mode while keeping the
           // already-loaded iframe mounted (same app, same tab).
           window.App?.openAppTab?.(slug, 'app');

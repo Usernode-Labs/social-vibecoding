@@ -23182,6 +23182,60 @@ html.in-side-panel body {
   --platform-rail-w: 0px !important;
 }
 
+/* ── WEBVIEW MODE (request #6701) ───────────────────────────────────────
+   A phone member's own choice, from the Homeroom mark menu, to hide the
+   header and the tab bar on every route (App.setWebviewMode in
+   public/js/app.js). The router's visibility publishes already put `hidden`
+   on both bars; `data-webview-mode` on <html> is the mode's own presence in
+   the DOM, written by App._applyChrome and, on a later load, before the
+   first paint (App._bootWebviewMode), so these rules also keep the
+   prerendered bars from flashing ahead of hydration. The attribute is only
+   there while the phone query matches: a wide window keeps the bars.
+
+   The parked strip rides on the tab bar and goes with it. */
+html[data-webview-mode] :is(#platform-header, #platform-tabs, #platform-parked) {
+  display: none !important;
+}
+/* ON HOMEROOM'S OWN PAGES THE HEADER LEAVES ITS STATUS-BAR BAND BEHIND. The
+   header is what extends into the status bar's inset (`un-safe-top-extend`),
+   so with it gone a page would start under the clock in the installed app.
+   An app's frame is handed the insets instead (the full-screen route does
+   the same), so there the header is simply away. The half rem is the lap
+   the header's `-mb-2` gave each page: the pages pad their tops against
+   it, and Home's search box met the screen's edge without it. The id is written twice to outweigh the
+   header's own padding rules, which are `!important` as well. */
+html[data-webview-mode] body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) #platform-header#platform-header {
+  display: block !important;
+  visibility: hidden;
+  box-sizing: border-box;
+  height: calc(var(--platform-safe-top) + 0.5rem);
+  min-height: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+/* Nothing measured from the header's foot (a sticky band, a sheet's cap, the
+   Workshop's fitted area) reserves its 52px, as in the side panel's own
+   document. On body as well, at a weight above the looks that declare it
+   there further down this file. */
+html[data-webview-mode],
+html[data-webview-mode][data-webview-mode] body {
+  --platform-header-h: 0px;
+}
+/* THE PILL, ON HOMEROOM'S OWN PAGES, RESTS ABOVE THE MESSAGE BAR. With the
+   tab bar away a page's message box is the foot of the screen and its Send
+   button is in the pill's corner. 104px clears the tallest of them, the
+   Homeroom bot's box with its row of chips (about 94px). Over an app it keeps the corner the
+   full-screen route gives it. While the keyboard is up it is away: the box
+   and its Send button are all the room there is, and it is back the moment
+   the keys go. */
+html[data-webview-mode] body:not(:has(#app-view:not(.hidden)[data-app-surface="app"])) #chromeless-pill {
+  bottom: calc(104px + var(--platform-safe-bottom)) !important;
+}
+html[data-webview-mode]:is(.platform-kb-open, .un-kb) #chromeless-pill {
+  display: none !important;
+}
+
 /* ── The Workshop tab, cleaned up (#4457) ─────────────────────────────
    One list per section, a hairline between rows (workshop/work-row.tsx).
    A row is a neutral tile, the title (15px, two lines at most), one line

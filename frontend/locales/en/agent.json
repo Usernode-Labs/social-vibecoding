@@ -575,6 +575,14 @@
     "text": "Add Homeroom to your home screen",
     "description": "Row in the app menu (the sheet opened from the Homeroom mark in the header) on a phone where Homeroom is not on the home screen yet: shows how to put Homeroom itself on the phone's home screen as an icon."
   },
+  "appContext.row.webview": {
+    "text": "Webview mode",
+    "description": "Row in the app menu (the sheet opened from the Homeroom mark in the header), on a phone only: one tap hides Homeroom's own header and bottom tab bar so the page or app fills the screen. Webview mode is the feature's name."
+  },
+  "appContext.row.webviewSub": {
+    "text": "Hide Homeroom's bars on this phone",
+    "description": "Second line of the \"Webview mode\" row in the app menu: what the row does. The bars are Homeroom's header at the top and its tab bar at the bottom; the choice is remembered on this phone."
+  },
   "appContext.row.community": {
     "text": "Go to community",
     "description": "Row in the app menu (the sheet opened from the app's name in the header): opens the hub page of the community that owns this app."

@@ -733,7 +733,7 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
     'the app itself covers the rail; its Workshop does not');
   // …except on a desktop, where the rail stays beside it by default (#3319,
   // tests/nav-rail-pinned.test.js).
-  assert.match(body, /!!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
+  assert.match(body, /!!screen && !App\._chromeHidden\(\) && \(!inApp \|\| railPinned\),/);
   // The Workshop tab is lit, so the rail knows where you are — except on a
   // thread opened from the Homeroom bot tab's page, which lights that tab
   // (App._isBotTopic).

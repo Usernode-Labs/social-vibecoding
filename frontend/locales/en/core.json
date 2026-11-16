@@ -249,7 +249,11 @@
   },
   "chromeless.open": {
     "text": "Open in Homeroom",
-    "description": "Text of the floating pill shown when an app is displayed without Homeroom's own header and tabs: opens the same app inside Homeroom."
+    "description": "Text of the floating pill shown when Homeroom's own header and tabs are hidden: on an app opened full screen it opens the same app inside Homeroom, and in Webview mode it brings the header and tabs back."
+  },
+  "chromeless.openWebviewLabel": {
+    "text": "Open in Homeroom: show Homeroom's bars again",
+    "description": "Accessible name of the floating \"Open in Homeroom\" pill while Webview mode is on (the member hid Homeroom's header and tab bar from the menu): a tap turns Webview mode off and the bars come back."
   },
   "banner.viewAsNonAdmin.text": {
     "text": "Viewing as non-admin (admin UI hidden).",

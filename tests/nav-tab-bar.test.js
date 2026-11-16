@@ -556,8 +556,14 @@ test('the desktop rail folds by hand, and a phone can never lose its bar', () =>
   // because it spends it through `useHiddenClass`, a ref effect that runs
   // after hydration has already agreed with the prerender. The rule is not
   // "never read the store", it is "never let a read reach the markup".
+  // Request #6701 added a second, Webview mode's, spent the same way: it
+  // reaches only the swipe back's effect, never an element.
   const reads = header.match(/^\s*const \w+ = useVisibility\(/gm) || [];
-  assert.equal(reads.length, 1, 'one read, and it is not the rail\u2019s');
+  assert.equal(reads.length, 2, 'its own and Webview mode\u2019s; neither is the rail\u2019s');
+  assert.doesNotMatch(header, /const \w+ = useVisibility\('platform-tabs'/);
+  assert.deepEqual(header.match(/\bwebview\b(?!-)/g), ['webview', 'webview'],
+    'declared once and handed to nativeBackEnabled once: it never reaches the markup');
+  assert.match(header, /visible: visible \|\| webview, mode,/);
   assert.match(header, /const visible = useVisibility\('platform-header', true\);\n\s*useHiddenClass\(headerRef, !visible\);/);
 
   // A PHONE'S BAR IS AT THE FOOT OF THE SCREEN and is the only navigation
