@@ -50,12 +50,12 @@ test('the Homeroom bot card links to the whole log', () => {
   assert.match(src, /href="#admin\/incidents" id="admin-homeroom-bot-unexpected-all"/);
 });
 
-test('an incident links to its session or request, and the days table counts per kind', () => {
+test('an incident links to its change page or request, and the days table counts per kind', () => {
   const { loadTsx } = require('./lib/render-tsx.js');
   const mod = loadTsx(SECTION, { stubs: { '../../lib/legacy-portals': { mountLegacyPortal() {}, unmountLegacyPortal() {} } } });
   const base = { at: '2026-10-07T10:00:00Z', kind: 'build_interrupted', app: 'recipe-bot', sessionId: null, runId: 12, issueNumber: null, why: null, outcome: 'resumed' };
   assert.deepEqual(mod.incidentLink({ ...base, sessionId: 41, issueNumber: 7 }),
-    { href: '#app/recipe-bot/dev/sessions/41', label: 'Session 41' });
+    { href: '#app/recipe-bot/dev/proposals/41', label: 'Session 41' });
   assert.deepEqual(mod.incidentLink({ ...base, issueNumber: 7 }),
     { href: '#app/recipe-bot/dev/issues/7', label: 'Request #7' });
   assert.equal(mod.incidentLink({ ...base, app: null, sessionId: 41 }), null);

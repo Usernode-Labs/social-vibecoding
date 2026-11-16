@@ -137,8 +137,8 @@ export function plainSummary(md: string | null | undefined): string {
  * the epoch, and on a project that is just yours the Yes marked `approve`, so
  * the item says Approve and Don't approve as its card does, #4270); a group
  * decision has none, and the vote sheet opens its page.
- * `html` renders a summary for the caption's "more" (DevChat's renderer,
- * through AppView, where it is loaded).
+ * `html` renders a summary for the caption's "more" (PlatformMarkdown's
+ * renderer, through AppView, where it is loaded).
  */
 /**
  * #6019: a ballot, or the bot's question, as the feed draws it: like a group

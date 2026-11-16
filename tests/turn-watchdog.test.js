@@ -10,22 +10,18 @@
 //      sweeper destroy workers mid-wrap-up).
 //   3. Source guards — the sweepers in server.js must use the shared
 //      predicate + the active_turn SQL guard, the conductor must append
-//      terminal publication markers, and the push-failure path in
-//      routes/sessions.js must stop PR creation instead of warning.
+//      terminal publication markers, and the push-failure path in a
+//      recovered turn's tail (services/turn-recovery.js) must stop PR
+//      creation instead of warning.
 //
 // Run with: node --test tests/turn-watchdog.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-
-// The scripts under test read their text from the language runtime's
-// global; give them the real English one.
-globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
 const {
-  TERMINAL_PROGRESS_LINES,
   appendTerminalLine,
 } = require('../src/services/turn-watchdog');
 
@@ -60,16 +56,6 @@ test('appendTerminalLine: successful publication supersedes [push_failed] with [
 test('appendTerminalLine: non-array input is a safe no-op', () => {
   assert.equal(appendTerminalLine(null, '[done]'), false);
   assert.equal(appendTerminalLine(undefined, '[interrupted]'), false);
-});
-
-test('terminal markers all have a friendly label in cc-progress-summary', () => {
-  const { ccPhaseLabel } = require('../public/js/cc-progress-summary.js');
-  for (const marker of TERMINAL_PROGRESS_LINES) {
-    const phase = marker.slice(1, -1);
-    // Every terminal marker must map to a friendly label, not fall back
-    // to the raw phase text.
-    assert.notEqual(ccPhaseLabel(phase), phase, `no label mapping for ${marker}`);
-  }
 });
 
 // ── 2. isSessionBusy (shared busy predicate) ────────────────────────────
@@ -114,14 +100,14 @@ test('no sweeper in server.js reaps, pauses or archives a session somebody works
   assert.doesNotMatch(serverSrc, /classifyStaleTurn|Reaping orphaned active_turn/);
   // The staging GC (once Pass 2) and the stale-preview cleanup are the
   // preview machine's: its idle give-back waits while somebody works on the
-  // session (a coding turn's journal, a turn on the author's machine, an
-  // operation a live process holds), read under the session's lock, so it
-  // cannot race a session-owned sync or pipeline tail.
+  // session (a coding turn's journal, a shots run, an operation a live
+  // process holds), read under the session's lock, so it cannot race a
+  // session-owned sync or pipeline tail.
   assert.doesNotMatch(serverSrc, /teardownStagingForSession|stagingReap\.sweepStale\(/);
   const preview = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/preview/machine.ts'), 'utf8');
   const worked = preview.slice(preview.indexOf('function worked(s: Live, f: Facts): boolean {'));
   assert.match(worked.slice(0, worked.indexOf('\n}\n')),
-    /if \(x && \(x\.turnRunning \|\| x\.localTurnRunning \|\| x\.shotsRunning\)\) return true;\n\s+return s\.data\.operations\.some\(\(o\) => f\.alive\.has\(o\.holder\)\);/);
+    /if \(x && \(x\.turnRunning \|\| x\.shotsRunning\)\) return true;\n\s+return s\.data\.operations\.some\(\(o\) => f\.alive\.has\(o\.holder\)\);/);
   const idleRetire = preview.slice(preview.indexOf('const idleDue: Entry'), preview.indexOf('const checksDue: Entry'));
   assert.match(idleRetire, /if \(worked\(s, f\)\) return step\(\{ name: s\.name, data: s\.data, timer: \{ at: new Date\(ctx\.now\.getTime\(\) \+ WORKED_RECHECK_MS\), event: \{ type: 'IdleDue' \} \} \}\);\n\s+return toRetiring\(s, 'idle'/,
     'staging GC cannot race a session-owned sync/pipeline tail');
@@ -139,7 +125,7 @@ test('no sweeper in server.js reaps, pauses or archives a session somebody works
   assert.match(review.slice(0, review.indexOf('\n};\n')), /if \(busy\(row\)\) return step\(s, \{ timer: again \}\);/,
     'stale proposal archival waits while somebody works on it');
   const facts = fs.readFileSync(path.join(__dirname, '..', 'src/workflow/proposal/facts.ts'), 'utf8');
-  assert.match(facts, /activeTurn: !!r\.active_turn, workedOn: !!r\.local_turn \|\| !!r\.operations,/,
+  assert.match(facts, /activeTurn: !!r\.active_turn, workedOn: !!r\.operations,/,
     'a live detached-turn record reads as busy');
 });
 
@@ -161,27 +147,25 @@ test('the conductor appends terminal progress after publication; scout still fin
 });
 
 test('a failed shared publication stops PR and preview creation', () => {
-  const failureBranchIdx = sessionsSrc.indexOf('} else if (!result.pushOk) {');
-  const headlessBranchIdx = sessionsSrc.indexOf('} else if (headless) {');
+  // The tail a recovered turn runs (finalizeRecoveredTurn): a commit that did
+  // not publish ends there, before any pull request or preview is made.
+  const fin = serverSrc.slice(serverSrc.indexOf('async function finalizeRecoveredTurn('));
+  const failureBranchIdx = fin.indexOf('if (!result.pushOk) {');
+  const prIdx = fin.indexOf('prMetadata.applyPrMetadata(');
   assert.ok(failureBranchIdx !== -1, 'terminal push-failure branch missing');
-  assert.ok(headlessBranchIdx !== -1, 'headless branch missing');
-  assert.ok(failureBranchIdx < headlessBranchIdx,
+  assert.ok(prIdx !== -1, 'the pull request step is still there');
+  assert.ok(failureBranchIdx < prIdx,
     'push-failure branch must precede the PR/staging success branches');
+  assert.match(fin.slice(failureBranchIdx, prIdx), /return 'push_failed';/, 'and ends the tail');
   // The old soft warnings are gone.
-  assert.ok(!/Warning: push reported a failure/.test(sessionsSrc),
+  assert.ok(!/Warning: push reported a failure/.test(serverSrc + sessionsSrc),
     'the soft push-failure warning must be replaced by the terminal error');
   // #1376: the copy now lives in worker.describePushFailure, which folds
   // the REAL reason (bad branch name, missing bot token, git error) into
   // the sentence and drops the retry advice when retrying cannot work.
-  assert.ok(/worker\.describePushFailure\(/.test(sessionsSrc),
+  assert.ok(/worker\.describePushFailure\(/.test(fin.slice(failureBranchIdx, prIdx)),
     'the push-failure tail must describe the failure, not hardcode one sentence');
   const workerSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/worker.js'), 'utf8');
   assert.ok(/Push to GitHub failed. Your changes are committed/.test(workerSrc),
     'the visible push-failure error message must exist');
-});
-
-test('sessions.js bumps last_activity_at when turns finish', () => {
-  const bumps = sessionsSrc.match(/SET last_activity_at = NOW\(\) WHERE id = \$1/g) || [];
-  // runScoutTool finally + runClaudeCodeTool finally.
-  assert.ok(bumps.length >= 2, `expected >=2 turn-end activity bumps, found ${bumps.length}`);
 });

@@ -294,9 +294,8 @@ test('the platform\'s service account may get pods in its own namespace, and not
 async function recoverTurn({ pool, recover, tries = 2 }) {
   const turns = require('../src/services/turns');
   const recovery = require('../src/services/turn-recovery');
-  const saved = { recoverOwnedTurn: recovery.recoverOwnedTurn, releaseLeftRecord: recovery.releaseLeftRecord, retry: { ...turns.RECOVERY_RETRY } };
-  recovery.recoverOwnedTurn = recover;
-  recovery.releaseLeftRecord = async () => null;
+  const saved = { recoverTurn: recovery.recoverTurn, retry: { ...turns.RECOVERY_RETRY } };
+  recovery.recoverTurn = recover;
   Object.assign(turns.RECOVERY_RETRY, { ms: 1, tries });
   try {
     return await turns.run({
@@ -304,7 +303,7 @@ async function recoverTurn({ pool, recover, tries = 2 }) {
       input: { kind: 'recover', sessionId: 5030, turnId: 't', instanceKey: 'session:5030' },
     }, { config: {}, pool });
   } finally {
-    Object.assign(recovery, { recoverOwnedTurn: saved.recoverOwnedTurn, releaseLeftRecord: saved.releaseLeftRecord });
+    recovery.recoverTurn = saved.recoverTurn;
     Object.assign(turns.RECOVERY_RETRY, saved.retry);
   }
 }

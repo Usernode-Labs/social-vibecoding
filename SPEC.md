@@ -48,7 +48,7 @@ When you tap into an app, you see 3 tabs along the bottom:
 
 1. **App** — the live app itself, rendered in an iframe
 2. **Group Chat** — real-time WebSocket group chat
-3. **Individual Chat** — private AI-assisted chat for making changes
+3. **Workshop** — the project's changes and requests; a new change starts there, with Homeroom bot
 
 ## Creating an App
 
@@ -70,17 +70,17 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 - At the top of the chat view: a panel showing all **current issues** and **staged PRs**, with inline vote buttons
 - When you cast a vote, it shows up as a message in the main chat stream (e.g. "Alice voted yes on PR #3")
 
-## Making Changes (Individual Chat)
+## Making Changes
 
-1. Click **+** to start a new session — this creates a new **branch + PR** on the backend
-2. Chat with an **LLM** (user chooses the model) to make changes to the app — the AI has access to the full repo contents and the conversation history from the current session. It can also see open GitHub Issues if the user asks about them.
-3. Claude produces commit messages for each change; the platform commits and pushes to the PR branch
+1. Ask **Homeroom bot** for a change (its tab, or the project's Start here), or work with your own coding agent (Claude Code, Codex) through the Homeroom connector or the CLI. Each change gets its own **branch + PR** on the backend.
+2. The coding agent (user chooses the model) has the full repo contents and what was asked for; it can also read the app's requests.
+3. The coding agent's commits are pushed to the PR branch by the platform
 4. Each push to the PR branch builds and deploys a **staging container** (with a copy of the production DB)
-5. The user previews their staging version via an **iframe swap** in the App tab
-6. You can **promote** your staged PR — this marks the GitHub PR as "ready for review" and presents it to the group for voting in the Group Chat
+5. The user previews their staging version from the change's page
+6. You can **promote** your staged PR — this marks the GitHub PR as "ready for review" and presents it to the group for voting
 7. PRs *are* staging versions — the staging container lives as long as the PR is open
-8. When the PR merges, the staging container is **torn down** and the session is **archived** (read-only chat history)
-9. A user can have **multiple open sessions** for the same app (up to their 3-container limit) and can return to any open session to keep iterating
+8. When the PR merges, the staging container is **torn down** and the change is **archived** (its record stays readable)
+9. A user can have **multiple open changes** for the same app (up to their session cap)
 
 ## Issues & Voting
 
@@ -106,7 +106,7 @@ The template is a stripped-down recipe-bot: Node.js/Express + single HTML page +
 
 ## LLM Usage & Rate Limits
 
-- User **chooses the model** (Claude, etc.) in the Individual Chat
+- User **chooses the model** (Claude, etc.) their changes are built with
 - **$25/day per user** free allowance
 - **$200/day global** platform cap
 - The platform tracks token usage and costs per user per day; requests are rejected when either limit is hit
@@ -231,7 +231,7 @@ docker exec project-usernode-db psql -U usernode -d usernode -c \
 4. Create an app — should show "Spinning up..." then transition to "running"
 5. Click into the app — should see the button + leaderboard in the iframe
 6. Switch to Group Chat — should connect via WebSocket
-7. Switch to Dev Chat — should be able to create a session and chat with Claude
+7. Ask Homeroom bot for a change to the app — it should build one on a branch, with a staging preview
 
 ### Post-Deploy Notes
 

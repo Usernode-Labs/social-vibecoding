@@ -129,7 +129,7 @@ export async function storeChecks(db: Queryable, sessionId: number, commitSha: s
 // allowing a concurrent newer build to be overwritten.
 //
 // #3180: a skipped verdict always carries a reason. The checks panel, the
-// status pill and the agent session's card each print it as "Automated
+// status pill and the change page each print it as "Automated
 // checks were skipped: <reason>.", so a caller that passes none records the
 // same fallback those surfaces show for a row without one.
 export async function storeChecksSkipped(db: Queryable, sessionId: number, commitSha: string | null, reason: unknown,

@@ -845,8 +845,8 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
 }
 
 // A join or a leave has landed: Home.setMembership's `sv:membership-changed`
-// (Discover's Join pill and detail page, the join-required prompt, the
-// Mayor's join card, a project page's Leave) or the join screen's
+// (Discover's Join pill and detail page, the join-required prompt, a
+// project page's Leave) or the join screen's
 // `sv:communities-joined`. The server counted a join before it answered
 // ("Join a community", challengeScorer.scoreOnJoin), so the block reads
 // again now rather than at the end of its minute, and the challenge ticks on

@@ -1,38 +1,31 @@
-// A session's branch is created on its FIRST TURN, not when it is created
-// (#1350).
+// A session's branch is created on its FIRST USE, not when the session is
+// created (#1350).
 //
-// What this replaces: POST /api/apps/:slug/sessions used to mint a name and
-// call github.createBranch before it returned, so opening the composer and
-// closing the tab left a real ref on the app's repository. Most sessions are
-// opened and abandoned, so most of those branches were never written to and
-// never cleaned up.
+// What this replaced: creating a session used to mint a name and call
+// github.createBranch before it returned, so a session opened and abandoned
+// left a real ref on the app's repository. Most were never written to and
+// never cleaned up. Homeroom bot's builds now make the session first and
+// cut its branch when the build starts.
 //
-// The deferral moves one line and adds four obligations, and this file pins
-// all of them:
+// Pinned here:
 //
-//   1. the creation route inserts branch_name NULL and calls no GitHub API
-//   2. ensureSessionBranch is idempotent, serialized, and all-or-nothing
-//   3. the three HEADLESS creation paths keep minting up front, because a
-//      run with no human in it has no "first message" to defer to
-//   4. every surface that reads branch_name copes with NULL rather than
+//   1. ensureSessionBranch (services/session-lifecycle.js) is idempotent,
+//      serialized, and all-or-nothing
+//   2. every surface that reads branch_name copes with NULL rather than
 //      producing a name-shaped hole ('heads/null', 'origin/null')
 //
-// Obligation 2's third clause is the load-bearing one. run-cc.sh dies on
+// Obligation 1's third clause is the load-bearing one. run-cc.sh dies on
 // "branch missing upstream: origin/$BRANCH" for a build turn, so a row that
 // records a branch GitHub does not have is a session that can never run a
 // turn again. The helper therefore persists the name only AFTER the ref
 // exists, and holds the session's lock (on the process's lock connection,
-// src/db/session-locks.js) across the call so two concurrent first turns
+// src/db/session-locks.js) across the call so two concurrent first uses
 // cannot mint two names for one session.
 //
 // Run with: node --test tests/session-branch-deferral.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-
-// The scripts under test read their text from the language runtime's
-// global; give them the real English one.
-globalThis.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -191,14 +184,6 @@ test('#3229: ensureSessionBranch falls back to the stored session title', async 
   assert.match(out.branchName, /^dev\/homeroom_bot-3229-session-branch-names-\d+$/);
 });
 
-test('#3229: the first turn hands its deterministic title to the mint', () => {
-  const src = read('src/routes/sessions.js');
-  const chat = src.indexOf("router.post('/api/sessions/:id/chat'");
-  const ensure = src.indexOf('await sessionLifecycle.ensureSessionBranch(', chat);
-  const call = src.slice(ensure, src.indexOf('});', ensure));
-  assert.match(call, /label: session\.session_title \|\| sessionTitles\.deterministicTitle\(message/);
-});
-
 test('ensureSessionBranch still produces a valid name with no username at all', async () => {
   const lifecycle = loadLifecycle();
   const branchNames = require('../src/services/branch-names');
@@ -232,102 +217,6 @@ test('a failed write leaves the session branchless rather than half-created', as
   assert.equal(rows.get(7).branch_name, null, 'nothing may be persisted');
 });
 
-// ── the creation route ──────────────────────────────────────────────────
-
-test('the interactive session route inserts a NULL branch and calls no GitHub API', () => {
-  const src = read('src/routes/sessions.js');
-  const start = src.indexOf("router.post('/api/apps/:slug/sessions'");
-  assert.ok(start > 0, 'the creation route must still exist');
-  // To the next route registration: the handler's whole body.
-  const end = src.indexOf("router.post('", start + 10);
-  const body = src.slice(start, end > 0 ? end : src.length);
-
-  assert.match(body, /INSERT INTO chat_sessions[\s\S]*branch_name/,
-    'the insert must still name the column');
-  assert.match(body, /VALUES \(\$1, \$2, NULL,/,
-    'branch_name must be inserted NULL (#1350)');
-  assert.equal(
-    /github\.createBranch\(/.test(body), false,
-    'creating a session must not create a ref — that is the whole of #1350'
-  );
-  assert.equal(
-    /branchNames\.devBranchName\(/.test(body), false,
-    'the interactive route must not mint a name up front'
-  );
-});
-
-test('the chat route ensures the branch before it dispatches a turn', () => {
-  const src = read('src/routes/sessions.js');
-  assert.match(src, /sessionLifecycle\.ensureSessionBranch\(/,
-    'the chat handler must call the helper');
-
-  // Order matters twice over. The ensure has to come before the message
-  // INSERT (so a failed mint leaves no orphan user message in the
-  // transcript) and before res.writeHead (after which a 503 is impossible,
-  // because the response is already an SSE stream).
-  const chat = src.indexOf("router.post('/api/sessions/:id/chat'");
-  assert.ok(chat > 0);
-  const ensure = src.indexOf('await sessionLifecycle.ensureSessionBranch(', chat);
-  const insert = src.indexOf('INSERT INTO chat_session_messages', chat);
-  const writeHead = src.indexOf('res.writeHead(200', chat);
-  assert.ok(ensure > chat, 'the ensure must be inside the chat handler');
-  assert.ok(ensure < insert, 'the branch must be ensured before the message is stored');
-  assert.ok(ensure < writeHead, 'the branch must be ensured while a 503 is still possible');
-
-  // And it is skipped once the row already carries a name. The helper is
-  // idempotent on its own, so this is not about correctness: without the
-  // guard every turn after the first would open a transaction and take a
-  // row lock only to re-read a value this handler already has in hand.
-  const guard = src.lastIndexOf('if (!String(session.branch_name || \'\').trim()) {', ensure);
-  assert.ok(guard > chat && guard < ensure,
-    'the ensure call must sit behind an already-has-a-branch guard');
-});
-
-test('the headless creation paths still mint up front, and say why', () => {
-  const src = read('src/routes/sessions.js');
-  // Two of them: an auto-issue run and a clone-headless run (the fork was
-  // the third, retired with classic sessions in #2779). Neither has a human
-  // on the other end to send a first message, so there is nothing to defer
-  // to.
-  const mints = src.match(/const branchName = [^;]+;/g) || [];
-  assert.equal(mints.length, 2, 'expected exactly the two headless mints');
-  const carveouts = src.match(/#1350 carve-out:/g) || [];
-  assert.equal(
-    carveouts.length, 2,
-    'each retained mint must carry the comment explaining why it is not deferred'
-  );
-});
-
-test('the clone path never asks GitHub for heads/null', async () => {
-  // A source session can be branchless (#1350), so a NULL source
-  // branch_name must never reach the host as the literal string "null".
-  // The clone's branch is a conductor's platform operation
-  // (services/branch-operation.js): it reads the source run's branch itself
-  // and starts from main when there is none.
-  const github = require('../src/services/github');
-  const branchOperation = require('../src/services/branch-operation');
-  const { none } = require('../src/services/durable-steps');
-  const prior = { getBranchSha: github.getBranchSha, ensureBranchAtSha: github.ensureBranchAtSha };
-  const read = []; const made = [];
-  github.getBranchSha = async (_o, _r, branch) => { read.push(branch); return `sha-of-${branch}`; };
-  github.ensureBranchAtSha = async (_o, _r, branch, sha) => { made.push({ branch, sha }); };
-  const pool = {
-    query: async (sql) => (/FROM apps WHERE id/.test(sql)
-      ? { rows: [{ id: 11, repo_url: 'https://github.com/acme/demo' }] }
-      : { rows: [{ app_id: 11, branch_name: null }] }),
-  };
-  try {
-    const out = await branchOperation.run({ pool }, {
-      appId: 11, input: { purpose: 'clone-headless', branch: 'dev/tester-1', sourceSessionId: 1 },
-    }, null, none());
-    assert.deepEqual(read, ['main']);
-    assert.deepEqual(made, [{ branch: 'dev/tester-1', sha: 'sha-of-main' }]);
-    assert.equal(out.inheritedCodeBranch, false);
-  } finally {
-    Object.assign(github, prior);
-  }
-});
-
 // ── the null-branch edge cases ──────────────────────────────────────────
 
 test('the push proxy refuses a branchless session permanently, with advice', async () => {
@@ -357,12 +246,6 @@ test('the no_branch guard runs before the charset check', () => {
   assert.ok(guard < charset, 'the null check must come first');
 });
 
-test('the CLI attach response tells an agent the branch is pending', () => {
-  const src = read('src/routes/cli-agent.js');
-  assert.match(src, /branch: session\.branch_name \|\| null/);
-  assert.match(src, /branchPending: !session\.branch_name/);
-});
-
 test('the connector refuses to continue a session that has not run a turn', () => {
   const src = read('src/services/external-agent-tasks.js');
   assert.match(src, /fail\(\s*'session_not_started'/);
@@ -377,160 +260,6 @@ test('a staging build refuses a branchless session instead of cloning origin/nul
   assert.match(src, /no branch yet/i);
 });
 
-// ── the hand-off copy ───────────────────────────────────────────────────
-
-test('the launchpad prefill has a resume shape and a start shape', () => {
-  const Launchpad = require('./lib/launchpad');
-  const base = { slug: 'my-app', sessionTitle: 'Make the header sticky' };
-
-  const fresh = Launchpad.prefillText({ ...base, targetKind: 'new' });
-  assert.match(fresh, /Create a proposal for the Homeroom app `my-app`/);
-  assert.equal(/proposalId/.test(fresh), false, 'new work has no proposal to continue');
-
-  const resume = Launchpad.prefillText({
-    ...base, targetKind: 'session', targetId: 812, branchName: 'dev/evan-1787',
-  });
-  assert.match(resume, /Continue work already started/);
-  assert.match(resume, /Continue session #812/);
-  assert.match(resume, /dev\/evan-1787/);
-  // The three things an agent gets wrong without being told.
-  assert.match(resume, /Do not start over/);
-  assert.match(resume, /current head of that branch/);
-  assert.match(resume, /Preserve the existing work/);
-});
-
-test('the resume prefill never tells an agent to push to the platform branch', () => {
-  // The local agent follows the repository's proposal workflow for uploads;
-  // the prompt must not suggest a direct push to a managed platform ref.
-  const Launchpad = require('./lib/launchpad');
-  const resume = Launchpad.prefillText({
-    slug: 'my-app', targetKind: 'session', targetId: 812, branchName: 'dev/evan-1787',
-  });
-  assert.equal(
-    /push (?:to|onto) (?:that|this) same branch/i.test(resume), false,
-    'the proposal workflow controls updates to the managed session branch'
-  );
-});
-
-test('a proposal continuation warns that the votes clear', () => {
-  const Launchpad = require('./lib/launchpad');
-  const out = Launchpad.prefillText({
-    slug: 'my-app', targetKind: 'proposal', targetId: 900, branchName: 'dev/evan-1',
-  });
-  assert.match(out, /existing proposal/);
-  assert.match(out, /re-review/);
-});
-
-test('the resume banner names the branch, and the new-work banner does not invent one', () => {
-  const Launchpad = require('./lib/launchpad');
-  const cont = Launchpad.resumeBannerHtml({
-    targetKind: 'session', targetId: 5, branchName: 'dev/evan-1',
-  });
-  assert.match(cont, /data-launchpad-resume="continue"/);
-  assert.match(cont, /<code>dev\/evan-1<\/code>/);
-
-  const fresh = Launchpad.resumeBannerHtml({ targetKind: 'new' });
-  assert.match(fresh, /data-launchpad-resume="new"/);
-  assert.match(fresh, /nothing to resume/);
-  assert.equal(/<code>/.test(fresh), false);
-});
-
-test('the resume banner escapes the branch name', () => {
-  const Launchpad = require('./lib/launchpad');
-  const out = Launchpad.resumeBannerHtml({
-    targetKind: 'session', targetId: 5, branchName: 'dev/<img src=x>-1',
-  });
-  assert.equal(/<img/.test(out), false);
-  assert.match(out, /&lt;img/);
-});
-
-test('a claimed continuation with no branch falls back to the start copy', () => {
-  // Belt and braces: webTargetKind already requires hasBranch for
-  // 'session', but the launchpad is rendered from a session row that a
-  // poll can replace, and the failure mode is instructions to continue a
-  // branch that does not exist.
-  const Launchpad = require('./lib/launchpad');
-  for (const state of [
-    { targetKind: 'session', targetId: 5, branchName: null },
-    { targetKind: 'session', targetId: 5, branchName: '   ' },
-    { targetKind: 'session', targetId: null, branchName: 'dev/evan-1' },
-  ]) {
-    const out = Launchpad.prefillText({ slug: 'a', ...state });
-    assert.match(out, /Create a proposal for the Homeroom app/, JSON.stringify(state));
-    assert.equal(Launchpad.resumeBannerHtml(state), '', 'no banner without both facts');
-  }
-});
-
-test('both hand-off launchpads render the banner from the same function', () => {
-  const src = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(src, /_launchpadResumeState\(\)/);
-  assert.match(src, /Launchpad\.resumeBannerHtml\(resume\) \+ DevFlowSelect\.wizardHtml\(/);
-  const own = src.match(/_ownToolsGuideView\(\)\s*\{[\s\S]*?\n  \},/)[0];
-  assert.match(own, /\.\.\.resume/);
-  assert.match(own, /resumeHtml: Launchpad\.resumeBannerHtml\(resume\)/);
-});
-
-test('the local-CLI card drops "same branch" when there is no branch', () => {
-  const SessionOptions = require('../public/js/session-options.js');
-  const withBranch = SessionOptions.leadHtml({ hasBranch: true });
-  assert.match(withBranch, /same branch/);
-
-  const without = SessionOptions.leadHtml({ hasBranch: false });
-  assert.equal(/same branch/.test(without), false);
-  assert.match(without, /no branch on GitHub/);
-  assert.match(without, /creates one when the first turn pushes/);
-});
-
-// ── the fixture ─────────────────────────────────────────────────────────
-
-test('staging seeds a branchless session, and it is the only branchless fixture', () => {
-  const src = read('src/db/migrate.js');
-  assert.match(src, /const STAGING_NO_BRANCH_SESSION_ID = 990411;/);
-  assert.match(src, /async function seedStagingNoBranchSession\(/);
-  assert.match(src, /await seedStagingNoBranchSession\(pool, config\);/,
-    'the seeder must be wired into the boot sequence');
-
-  const fn = src.slice(src.indexOf('async function seedStagingNoBranchSession('));
-  const body = fn.slice(0, fn.indexOf('\n}\n'));
-  assert.match(body, /USERNODE_ENV !== 'staging'/, 'must be a strict no-op in production');
-  assert.match(body, /ON CONFLICT \(id\) DO UPDATE/, 'staging containers rebuild on every push');
-  assert.match(body, /\[staging fixture\]/, 'seeded rows must be obviously fake');
-});
-
-test('the launchpad banner states are no longer declared checks (#3976)', () => {
-  // Both resume-banner states were checked through the launchpad shot link
-  // on classic sessions (990401, and this branchless 990411). Classic
-  // sessions are read-only now and are handed to no venue, so the launchpad
-  // never shows there and those checks were retired with the chat. The
-  // fixture stays until the classic dev chat itself is removed.
-  const dapp = JSON.parse(read('dapp.json'));
-  const paths = (dapp.tests || []).map((t) => String(t.path || ''));
-  assert.ok(!paths.some((p) => p.includes('/dev/sessions/990411')));
-  assert.ok(!(dapp.tests || []).some((t) =>
-    String(t.expectSelector || '').includes('data-launchpad-resume')));
-});
-
-// ── the copy rule ───────────────────────────────────────────────────────
-
-test('none of the new user-facing copy contains an em dash', () => {
-  const Launchpad = require('./lib/launchpad');
-  const SessionOptions = require('../public/js/session-options.js');
-  const strings = [
-    Launchpad.prefillText({ slug: 'a', targetKind: 'new' }),
-    Launchpad.prefillText({ slug: 'a', targetKind: 'session', targetId: 1, branchName: 'dev/x-1' }),
-    Launchpad.prefillText({ slug: 'a', targetKind: 'proposal', targetId: 1, branchName: 'dev/x-1' }),
-    Launchpad.resumeBannerHtml({ targetKind: 'new' }),
-    Launchpad.resumeBannerHtml({ targetKind: 'session', targetId: 1, branchName: 'dev/x-1' }),
-    SessionOptions.leadHtml({ hasBranch: false }),
-    SessionOptions.leadHtml({ hasBranch: true }),
-  ];
-  for (const s of strings) {
-    for (const dash of ['—', '&mdash;', '&#8212;']) {
-      assert.equal(s.includes(dash), false, `em dash in: ${s.slice(0, 60)}`);
-    }
-  }
-});
-
 test('the null-branch error messages read as instructions, not as diagnostics', () => {
   // Every one of these reaches a user, and each has exactly one useful
   // remedy: send a message. Saying so is the difference between a dead end
@@ -543,76 +272,4 @@ test('the null-branch error messages read as instructions, not as diagnostics', 
   }
   assert.match(worker, /Send a message in the session first/);
   assert.match(staging, /Send a message in the session first/);
-});
-
-// ── A stored branch that did not come across from GitHub ───────────────
-//
-// The other half of the backstop. A change made before its app moved to
-// Homeroom's git host names a branch that may only ever have existed on
-// GitHub (services/code-missing.js branchGone). Dispatching it used to warm
-// a worker, start the agent on main and die on "branch missing upstream".
-// ensureBranchForDispatch reads the stored branch live, at the entry of both
-// tools, and the tools refuse with nothing run.
-
-test('every dispatch reads its branch at the entry, before the spin-up row, the image or the worker', () => {
-  const src = read('src/routes/sessions.js');
-  for (const [name, spinUp] of [['runScoutTool', 'Scouting the repo for context'], ['runClaudeCodeTool', 'Spinning up coding agent']]) {
-    const at = src.indexOf(`async function ${name}({`);
-    assert.ok(at > 0, name);
-    const body = src.slice(at, src.indexOf('\nasync function ', at + 10));
-    const ensure = body.indexOf('await ensureBranchForDispatch(pool, session);');
-    assert.ok(ensure > 0, `${name} ensures the branch`);
-    assert.equal(body.indexOf('await ensureBranchForDispatch(', ensure + 1), -1, `${name}: once per dispatch`);
-    for (const later of [spinUp, 'worker.ensureWorkerImage()', 'worker.ensureWorker(']) {
-      const where = body.indexOf(later);
-      assert.ok(where > ensure, `${name}: the branch is read before ${later}`);
-    }
-  }
-  // A branchless change still mints (#1350); only a stored name is read.
-  const fn = src.slice(src.indexOf('async function ensureBranchForDispatch('), src.indexOf('async function codeMissingDispatchResult('));
-  assert.ok(fn.indexOf('codeMissing.branchGone(pool, session) === true') < fn.indexOf('sessionLifecycle.ensureSessionBranch('));
-  assert.match(fn, /if \(session\.branch_name\) \{/);
-});
-
-test('a dispatch on a change whose branch did not come across runs nothing, says so once, and tells the Mayor not to retry', async () => {
-  const codeMissing = require('../src/services/code-missing');
-  const worker = require('../src/services/worker');
-  const { activeWorkers } = require('../src/services/active-workers');
-  const real = { gone: codeMissing.branchGone, image: worker.ensureWorkerImage, ensure: worker.ensureWorker };
-  const touched = [];
-  worker.ensureWorkerImage = async () => { touched.push('image'); };
-  worker.ensureWorker = async () => { touched.push('worker'); return 'container'; };
-  const asked = [];
-  codeMissing.branchGone = async (_pool, s) => { asked.push([s.id, s.branch_name]); return true; };
-  try {
-    const { MAYOR_TURN_DEPS } = require('../src/routes/sessions');
-    for (const tool of ['runClaudeCodeTool', 'runScoutTool']) {
-      const statuses = [];
-      const session = { id: 9100, user_id: 3, app_id: 2, branch_name: 'dev/ada-old-1', agent_backend: 'claude_code', app_slug: 'todo' };
-      const out = await MAYOR_TURN_DEPS[tool]({
-        pool: { query: async () => ({ rows: [] }) },
-        config: {}, req: { user: { id: 3, username: 'ada' } }, res: { write() {} },
-        session, selectedModel: 'claude-sonnet-5-5', userMessage: 'Add dark mode', toolPromptArg: 'Add dark mode',
-        repoOwner: 'apps', repoName: 'todo', send: () => {},
-        sendStatus: async (text, meta) => { statuses.push({ text, meta }); },
-        stopHandle: null, userApiKey: null,
-      });
-      assert.equal(out.isError, true, tool);
-      assert.equal(out.codeMissing, true);
-      assert.equal(out.turnId, null, 'no turn record was made');
-      assert.match(out.toolResultText, /^code_missing: change 9100's code didn't come across when Homeroom moved off GitHub/);
-      assert.match(out.toolResultText, /Nothing ran and nothing was changed\. Do not suggest retrying\./);
-      assert.match(out.toolResultText, /start_change with fromChangeId 9100/);
-      assert.equal(statuses.length, 1, `${tool}: one status row, and no spin-up row before it`);
-      assert.equal(statuses[0].text, codeMissing.BRANCH_GONE);
-      assert.equal(statuses[0].meta.codeMissing, true);
-      assert.equal(activeWorkers.has(9100), false, 'the change is not left looking busy');
-    }
-    assert.deepEqual(touched, [], 'no worker image, no worker');
-    assert.deepEqual(asked, [[9100, 'dev/ada-old-1'], [9100, 'dev/ada-old-1']], 'read live, once per dispatch');
-  } finally {
-    codeMissing.branchGone = real.gone;
-    worker.ensureWorkerImage = real.image;
-    worker.ensureWorker = real.ensure;
-  }
 });

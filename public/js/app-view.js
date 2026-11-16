@@ -97,9 +97,8 @@ const AppView = {
 
   // Scroll-position memory for the Dev card list, keyed by app slug
   // (`App.currentApp`). In-memory only — reset on a full page reload by
-  // design, so a hard refresh starts at the top. Mirrors the
-  // per-session chat scroll memory in dev-chat.js
-  // (`_savedScrollBySession`): we capture the list's scrollTop when
+  // design, so a hard refresh starts at the top. We capture the list's
+  // scrollTop when
   // leaving it (any route that re-enters renderDevView) and restore it
   // after the feed repaints, so tapping into an item and coming Back
   // lands the user where they left off instead of at the top.
@@ -204,26 +203,15 @@ const AppView = {
     proposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-11h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5'],
     gov: ['bg-slate-500/15 text-slate-400', 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
     done: ['bg-emerald-500/10 text-emerald-700 dark:text-emerald-400', 'M5 13l4 4L19 7'],
-    // Document-text (Heroicons outline) — an issue with an auto-generated
-    // proposal attached (#250). Sky keeps "blue = proposal" consistent with
-    // the proposal cards, while the page shape stays distinct from their
-    // thumbs-up: this is a drafted spec on an issue, not a PR up for a vote.
-    issueProposal: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
-    // "Mine" variants — distinguished from their base by GLYPH ONLY: they keep
-    // the same sky tint as the base issue/PR chips but swap in a self-contained
-    // pencil/edit mark = "your work-in-progress, jump back in." They mark the
-    // two feed rows where the viewer already has a session waiting: a ready
-    // issue they cloned (Go to session) and an open PR they authored (Open
-    // session). No manual coordinate compositing: issueProposalMine is a true
-    // document-with-pencil (page + folded corner + pencil) so it still reads
-    // as a document; proposalMine is a plain pencil "edit" mark.
-    issueProposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M14 3v4a1 1 0 0 0 1 1h4M17 21h-7a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v4M18.42 15.61a2.1 2.1 0 0 1 2.97 2.97l-3.39 3.42h-3v-3l3.42 -3.39z'],
+    // The "mine" variant — distinguished from its base by GLYPH ONLY: it keeps
+    // the same sky tint as the base PR chip but swaps in a plain pencil
+    // "edit" mark = "your work-in-progress, jump back in." It marks the feed
+    // row of an open PR the viewer authored.
     proposalMine: ['bg-sky-500/15 text-sky-700 dark:text-sky-400', 'M12 15l8.385 -8.415a2.1 2.1 0 0 0 -2.97 -2.97l-8.415 8.385v3h3zM16 5l3 3'],
   },
 
   // Returns the icon's SPEC — tint classes + SVG path — which
-  // card/dev-card.tsx renders. `pulse` animates the whole chip for
-  // in-progress states (#250); `title` is the tooltip naming the state the
+  // card/dev-card.tsx renders. `title` is the tooltip naming the state the
   // tint encodes. The class literals stay in DEV_CARD_ICONS above, which is
   // where Tailwind's extractor already scanned them.
   _devCardIcon(type, opts) {
@@ -232,7 +220,6 @@ const AppView = {
       tint,
       path: d,
       small: (opts && opts.small) ? true : undefined,
-      pulse: (opts && opts.pulse) ? true : undefined,
       title: (opts && opts.title) || undefined,
     };
   },
@@ -816,10 +803,6 @@ const AppView = {
   // resolve against the previous app's rows. Stale lists for the SAME app
   // are the cached answer a topic page may draw from.
   _devDataSlug: null,
-  // One-shot flag set by the "Create proposal" button so the freshly
-  // opened dev session renders a "promoting this PR creates the
-  // proposal" hint.
-  _proposalHint: false,
 
   // Iframe tokens are signed for 1h. Refresh at 45min so the child app never
   // sees an expired JWT during a long reading/editing session.
@@ -879,9 +862,6 @@ const AppView = {
    * whole of the option.
    */
   async open(slug, { needsToken = true } = {}) {
-    // #2813: an app view is opening, so a session in the Messages pane must
-    // give up the ids it holds before this view renders its own.
-    AppView._retireEmbeddedSession();
     const openId = ++AppView._openId;
     const isCurrentOpen = () => openId === AppView._openId;
     window.UITelemetry?.screen?.('app_detail', { appSlug: slug });
@@ -1041,9 +1021,7 @@ const AppView = {
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
-    // Missing-secrets badge lives inside the dev-chat tab now and is
-    // re-applied by renderDevChatTab() on every mount, so the call here
-    // is just a primer for the case where the tab is already rendered.
+    // The missing-secrets badge's primer, for a surface already rendered.
     if (window.Secrets) {
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
@@ -1577,8 +1555,6 @@ const AppView = {
     // Take a load id so the Back button's teardown (and any later real
     // preview) supersedes this exactly as it would a genuine open.
     AppView._stagingLoadId += 1;
-    AppView._stagingDockable = false;
-    AppView._setStagingMode('fullscreen');
     staging.clearSrc();
     staging.setUrlLabel(AppView._stagingTitle(AppView.appData));
     staging.open();
@@ -1615,12 +1591,7 @@ const AppView = {
     AppView._teardownLaunch();
     GroupChat.disconnect();
     // Detach kit scroll/keyboard handles for every app-scoped screen.
-    ['dev-chat', 'group-chat', 'gc-thread', 'dev-feed'].forEach((k) => PlatformUI.detachScreenFx(k));
-    // Drop any in-memory dev-chat session state belonging to the app
-    // we're leaving. Without this, opening a different app and clicking
-    // the dev-chat tab would render the prior app's session instead of
-    // the new app's session list (fixes #20).
-    if (window.DevChat) DevChat.reset();
+    ['group-chat', 'gc-thread', 'dev-feed'].forEach((k) => PlatformUI.detachScreenFx(k));
     AppView.appData = null;
     AppView.iframeToken = null;
     AppView.iframeTokenSlug = null;
@@ -4775,139 +4746,10 @@ const AppView = {
       </a>`;
   },
 
-  // Returns the mount point for dev-view section renderers: the
-  // #dev-section slot inside the Dev mode's sub-tab layout when present,
-  // falling back to #app-content (defensive — every call site should be
-  // inside renderDevView these days).
-  _devContainer() {
-    // #2813: a session open in the Messages pane owns the Dev container
-    // while no app view is up. `App.currentApp` is the guard: the moment an
-    // app is navigated to, the app view's own #app-content is the container
-    // again, whatever the pane's teardown has not caught up with yet.
-    const embedded = AppView._embeddedSessionHost;
-    if (embedded && !(typeof App !== 'undefined' && App.currentApp) && embedded.isConnected) {
-      return embedded.querySelector('#dev-section') || embedded;
-    }
-    return document.getElementById('dev-section') || document.getElementById('app-content');
-  },
-
-  // ── A dev session in the Messages pane (#2813) ────────────────────
-  //
-  // On a desktop an agent thread of the Messages inbox opens BESIDE the list,
-  // as a conversation does. For a dev session that is the whole session view
-  // — the transcript, the composer, the header, the spec and staging slots —
-  // and all of it is DevChat's, which is one surface with one owner and
-  // fixed ids. So, like an app's discussion (`renderGroupChatTab({host})`),
-  // the pane renders a HOST and this fills it: the same `<DevSessionShell/>`
-  // the app view mounts, and the same `renderDevChatTab` into it.
-  //
-  // What makes that sound is that the two can never both be up. The pane
-  // exists only on the Messages screen, and the Messages screen and the app
-  // view are sibling screen roots — `App.currentApp` is null for as long as
-  // the pane is showing, and every path into an app sets it first. The
-  // container switch in `_devContainer` keys on exactly that.
-  //
-  // The app travels with the mount, as the discussion's does: AppView.appData
-  // is read throughout DevChat (the composer's budget and venue, the dev
-  // caches, readOnly), so it is loaded for this app when the app view has
-  // nothing open. Nothing here opens the app view, mints an iframe token or
-  // starts the app's activity tracking — this is not a visit to the app.
-  //
-  // THE SIDE PANES. The spec viewer and the staging preview are slots INSIDE
-  // #dc-view, so they open inside the pane, docked beside the transcript,
-  // exactly as they do in the app view — the pane is as wide as a laptop's
-  // app view less the list. Nothing is hidden or re-implemented for the pane.
-  _embeddedSessionHost: null,
-  _embeddedSessionSeq: 0,
-
-  /**
-   * Fill `host` with session `sessionId` of app `slug`. Resolves 'ready',
-   * 'unavailable' (no such session for this viewer, and no published chat to
-   * read instead) or 'stale' (a newer mount or an app navigation won).
-   */
-  async mountSessionInHost(host, { slug, sessionId } = {}) {
-    if (!host || !slug || !sessionId) return 'unavailable';
-    const seq = ++AppView._embeddedSessionSeq;
-    const inApp = () => typeof App !== 'undefined' && !!App.currentApp;
-    const live = () => seq === AppView._embeddedSessionSeq
-      && AppView._embeddedSessionHost === host && host.isConnected && !inApp();
-    if (inApp()) return 'stale';
-    // A full-screen session left behind in the hidden app view holds the
-    // same ids (#dev-section, #dc-view, #dc-messages…) DevChat looks up by
-    // `getElementById`. Retire it before the pane's copy exists.
-    const appContent = document.getElementById('app-content');
-    if (appContent && appContent.querySelector('#dev-section')) {
-      AppView._reactDevBoard()?.unmount?.(appContent);
-    }
-    AppView._embeddedSessionHost = host;
-    if (!AppView.appData || AppView.appData.slug !== slug) {
-      if (window.DevChat) DevChat.reset();
-      let app = null;
-      let res = null;
-      const askedAt = Date.now();
-      try {
-        res = await fetch(`/api/apps/${encodeURIComponent(slug)}?manifest=summary`);
-        if (res.ok) app = ((await res.json()) || {}).app || null;
-      } catch (_) { app = null; }
-      if (!live()) return 'stale';
-      if (!app) return 'unavailable';
-      // The same per-app reset AppView.open makes on an app switch: another
-      // app's board caches are another board.
-      Object.keys(AppView._govApplyTimers).forEach(AppView._clearGovApplyTimers);
-      AppView._govApplying = Object.create(null);
-      AppView._govDueSince = Object.create(null);
-      AppView._devDataReady = false;
-      AppView._resetMergedPagination();
-      AppView.appData = AppView._applyPendingAppStatus(app);
-      AppView._noteAppRecordRead(AppView.appData, res, askedAt);
-    }
-    AppView._reactDevBoard()?.mountSessionShell(host);
-    const result = await AppView.renderDevChatTab(sessionId, { embedded: true });
-    if (!live()) return 'stale';
-    return result === 'unavailable' ? 'unavailable' : 'ready';
-  },
-
-  /**
-   * An app view is opening while the pane still holds a session (#2813):
-   * "Open full view", a link out of the transcript, a deep link. The pane's
-   * screen is only hidden at the END of that navigation's transition, and
-   * until then its #dev-section / #dc-view / #dc-messages would be the ones
-   * `getElementById` finds — the app view would render its session into the
-   * pane. So the pane's copy goes first. DevChat and AppView.appData are
-   * left alone: the app view's open is about to own them.
-   */
-  _retireEmbeddedSession() {
-    const host = AppView._embeddedSessionHost;
-    if (!host) return;
-    AppView._embeddedSessionSeq += 1;
-    AppView._embeddedSessionHost = null;
-    AppView._reactDevBoard()?.unmount?.(host);
-    PlatformUI.detachScreenFx('dev-chat');
-  },
-
-  /**
-   * The pane is going away. Drops the session and the app it loaded — but
-   * only while no app view has taken over: an app navigation from the pane
-   * sets App.currentApp before the Messages screen unmounts, and the app
-   * view's own open is then what owns DevChat and AppView.appData.
-   */
-  unmountSessionHost(host) {
-    if (!host || AppView._embeddedSessionHost !== host) return;
-    AppView._embeddedSessionSeq += 1;
-    AppView._embeddedSessionHost = null;
-    AppView._reactDevBoard()?.unmount?.(host);
-    if (typeof App !== 'undefined' && App.currentApp) return;
-    PlatformUI.detachScreenFx('dev-chat');
-    if (window.DevChat) DevChat.reset();
-    AppView.appData = null;
-    AppView._devDataReady = false;
-    AppView._resetMergedPagination();
-  },
-
   // ── The React seam for the Dev surfaces (#1084 chunk G) ────────────
   //
-  // The Dev board's frame, the general-chat sub-view's frame and the session
-  // shell are React components now (frontend/src/features/dev-board/). They
+  // The Dev board's frame and the general-chat sub-view's frame are React
+  // components now (frontend/src/features/dev-board/). They
   // are not part of <Shell/>: #app-content ships EMPTY, so there is nothing
   // in the prerendered document to hydrate, and which surface exists depends
   // on the route. They therefore get an INTERIM React root — chunk A's
@@ -4954,25 +4796,20 @@ const AppView = {
   },
 
   /** Close whatever Dev dialog is open, resolving it the way Escape does. */
-  _creditsModalClose: null,
   _dismissDevModals() {
     if (AppView._sessionChecksClose) AppView._sessionChecksClose();
-    AppView._autoSessionCancel();
     AppView._llmConsentDecline();
-    if (AppView._creditsModalClose) AppView._creditsModalClose();
   },
 
   // ── Dev mode (#194, forum revision): one page ──────────────────────
-  // subTab ∈ 'forum' | 'sessions'. For 'sessions', `ref` is the dev
-  // session id (no id → forum). For 'forum', `ref` is an optional
-  // { kind: 'issue'|'proposal', id } deep link naming the card to
-  // expand.
+  // subTab ∈ 'forum' | 'chat' | 'topic'. For 'topic', `ref` is the
+  // { kind: 'issue'|'proposal'|…, id } the page is about.
   async renderDevView(subTab, ref) {
     const content = document.getElementById('app-content');
     if (!content) return;
 
     // #970: every Dev sub-view below is platform-rendered (card list,
-    // chat, session, topic) and wants clearance above the home indicator.
+    // chat, topic) and wants clearance above the home indicator.
     // Set once here rather than per branch — they all replace #app-content.
     AppView._setSurface('platform');
 
@@ -5005,7 +4842,7 @@ const AppView = {
     // Capture the Dev list's scroll position before any branch below
     // overwrites #app-content. #dev-forum-scroll only exists when the
     // outgoing view was the card list, so this is a no-op for
-    // topic/session/chat sub-views. Every back-navigation re-enters
+    // topic/chat sub-views. Every back-navigation re-enters
     // renderDevView, so this single point covers the Back buttons,
     // browser back/forward, and programmatic navigation alike.
     //
@@ -5048,11 +4885,11 @@ const AppView = {
     // other three branches, so the teardown — and the one Dev navigation that
     // threw the board frame's state away — is gone with the template.
 
-    // The Dev sub-views own the header's back slot: a SESSION leads with a
-    // real ← to the Board (the Figma session bar's left zone), every other
-    // sub-view hides it. Down here rather than per-branch because sub-view
-    // hops never pass App._showOnlyScreen, the usual single owner of that
-    // reset — without this, the session's arrow would linger on the Board.
+    // The Dev sub-views own the header's back slot: the chat sub-view leads
+    // with a real ← to its hub, every other sub-view hides it. Down here
+    // rather than per-branch because sub-view hops never pass
+    // App._showOnlyScreen, the usual single owner of that reset — without
+    // this, the chat's arrow would linger on the Board.
     //
     // 'none' RATHER THAN 'home' SINCE #2718's REVIEW. The rail is up on this
     // surface now (App._syncPlatformTabs), so the app's Workshop is a screen
@@ -5061,25 +4898,6 @@ const AppView = {
     // still the same reset: what a sub-view has to override is what it always
     // had to override.
     App.setBackIcon?.('none');
-
-    // Session view — a single DevChat session, full-screen, reached
-    // from the Your-sessions strip, proposal cards, or the "+" flow.
-    if (subTab === 'sessions' && ref) {
-      // Streamlined Concept: a cold deep link must not inherit the previous
-      // screen's title — the center tab names the app here, same as the app's
-      // other screens (the session's own name lives in #dc-session-header).
-      if (AppView.appData?.name) App.setHeaderTitle?.(AppView.appData.name);
-      // #2770: a change is an agent conversation, a thread of Messages, so
-      // its chevron hangs off that inbox — the same slot App._backSlotFor
-      // publishes for this route (the two writers have to agree). The header
-      // still prefers the session's captured origin for the destination.
-      App.setBackIcon?.('arrow', '#messages');
-      // <DevSessionShell/> — #dev-section stays the host renderDevChatTab
-      // writes into, exactly as when this was a template.
-      AppView._reactDevBoard()?.mountSessionShell(content);
-      await AppView.renderDevChatTab(ref);
-      return;
-    }
 
     // Full-screen general chat, at /app/<slug>/dev/chat.
     //
@@ -5117,7 +4935,7 @@ const AppView = {
     if (subTab === 'topic' && ref && ref.kind && (ref.id || (ref.kind === 'proposal' && ref.pr))) {
       // #2487: a cold topic deep link starts with the display-only header
       // snapshot from whichever app this browser visited last. Unlike the
-      // forum, chat and owner-session branches, this branch never replaced
+      // forum and chat branches, this branch never replaced
       // that snapshot after the current app's metadata loaded, so the whole
       // topic could keep naming another app indefinitely. The topic card
       // names the inner destination; the chip names the app, with no subtitle.
@@ -5304,15 +5122,6 @@ const AppView = {
       window.Notifications?.markProposalSeen?.(parseInt(id, 10));
     }, { capture: true, signal: devBodySignal });
     bodyEl.addEventListener('click', (e) => {
-      // #313/#827: the card-level "Explore in dev chat" button is a
-      // <button>, so the guard below would swallow it — handle it first,
-      // then bail. The node is passed along so the opener can disable it
-      // for the duration (a double-tap would otherwise create two chats).
-      const exploreBtn = e.target.closest('.gc-explore-chat-btn');
-      if (exploreBtn) {
-        AppView.exploreProposalInDevChat(exploreBtn.dataset.proposalId, exploreBtn);
-        return;
-      }
       // Session-card controls used to be inline pills delegated from here
       // (share / unshare / share-chat / read-chat / archive). They are now
       // ⋯ menu descriptors whose `act` closures call the same methods
@@ -5342,8 +5151,8 @@ const AppView = {
       // full-screen sub-view with its own sub-tab — so it switches rather
       // than calling openTopic.
       //
-      // HANDLED BEFORE THE GUARD BELOW, for the reason the explore button
-      // above is: #2341 made this row a `<button>`, because with the card
+      // HANDLED BEFORE THE GUARD BELOW: #2341 made this row a `<button>`,
+      // because with the card
       // around it gone the row IS the control — and `a, button, input,
       // form` then swallowed every click on it, so the row went dead and
       // Enter on it with it. The fold check stays ahead of this one: a
@@ -5362,8 +5171,7 @@ const AppView = {
       }
       const sharedRow = e.target.closest('[data-shared-session-row]');
       if (sharedRow) {
-        // Someone else's shared session → its public discussion topic
-        // (never their dev chat — that stays owner-scoped server-side).
+        // Someone else's shared session → its public discussion topic.
         AppView.openTopic('proposal', parseInt(sharedRow.dataset.sharedSessionRow, 10));
         return;
       }
@@ -5402,7 +5210,7 @@ const AppView = {
     // Restore the saved scroll position now that the feed has painted.
     // requestAnimationFrame waits for layout so scrollHeight is final;
     // scrollTo({ behavior: 'instant' }) overrides any CSS smooth-scroll
-    // (matching dev-chat.js's restoreSessionScroll) so this is an
+    // so this is an
     // instant jump, not a visible animation. We clamp to the rebuilt
     // list's max offset — a shorter list (collapsed "Show more") lands
     // near the old spot rather than overshooting. No saved value (or 0)
@@ -5654,12 +5462,6 @@ const AppView = {
     if (ref.kind === 'gov') AppView._invalidateGovVoteRoster(ref.id);
     // ...and both re-read after a gap while the topic is open.
     AppView._watchTopicLiveReads();
-    // Arriving at a SESSION topic used to open its shared transcript here:
-    // the "Read chat" pill that once set `_transcriptOpen` on its way was
-    // gone, so landing on this page WAS the read-the-chat gesture. #2605
-    // moved the chat off this page entirely — it is the dev session page's
-    // now, behind the card's "Read the build" pill — so nothing pre-expands
-    // a section this page no longer draws.
     // #363: NOTHING is pinned here now. The topic card/body does not sit in
     // its own capped, separately scrolling box — it's painted into the mounted
     // thread's in-scroll header slot (#gc-thread-head) so the header and the
@@ -5781,18 +5583,6 @@ const AppView = {
       AppView._releaseTopicSwap(content);
       const shown = AppView._devTopic;
       if (shown) shown.rowFresh = !!fresh;
-      // #2605: a link that asked for this change's Build panel predates the
-      // move, and the panel is the dev session's own page now. Checked here,
-      // once the item has resolved, because whether the change HAS a build
-      // surface is what decides between redirecting and staying put. The
-      // page still opened — record it, rather than leave the mark to time
-      // out on a screen this module handed off.
-      if (['proposal', 'session'].includes(ref.kind)
-          && AppView._redirectLegacyBuildLink(item)) {
-        note('success');
-        finish();
-        return true;
-      }
       // #4367: an old `dev/proposals/<id>` address of a change that has a
       // pull request becomes `dev/changes/<N>`, in place (no Back entry).
       if (ref.kind === 'proposal') {
@@ -6435,7 +6225,6 @@ const AppView = {
     // survives renderThread()'s message-list rewrites and WS-driven refreshes.
     if (!t) return;
     const item = AppView._findTopicItem();
-    const changePage = t.kind === 'session' || t.kind === 'proposal';
     const head = document.getElementById('gc-thread-head');
     if (!head) return;
     // #6608: no row for this topic. If it is the topic already painted (it
@@ -6517,11 +6306,6 @@ const AppView = {
     // the block appears once the answer republishes the head.
     const target = AppView._govRequestNumber(item);
     if (target) AppView._loadGovRequest(target);
-    // An auto-expanded transcript (arrived via "Read chat") loads straight
-    // away; every other one loads when it is opened.
-    if (!changePage && body.transcript && body.transcript.expanded) {
-      AppView._loadSessionTranscript(body.transcript.id);
-    }
   },
 
   /**
@@ -6586,11 +6370,6 @@ const AppView = {
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
-        // shared_at (and so transcript_shared) survives promotion and merge,
-        // so a proposal whose owner published the dev chat keeps offering it
-        // here — the "how did this change come about?" read, available while
-        // voting and after it merged.
-        transcript: AppView._transcriptSectionView(item),
       };
     } else if (t.kind === 'session') {
       // A shared session's public page: the static card (no nav — we're
@@ -6611,7 +6390,6 @@ const AppView = {
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
-        transcript: AppView._transcriptSectionView(item),
       };
     } else {
       card = AppView._govCardModel(item, { noNav: true });
@@ -6978,7 +6756,7 @@ const AppView = {
   //   held      the requester's private thread holds it for their plan
   //   start     it stopped, or nothing has happened to it: what can be started
   //   person    a person's own session or claim has it: their sentence instead
-  // A person's own work (a session, a claim, an auto-solve run) says who has
+  // A person's own work (a session, a claim) says who has
   // it, unless the change is settled; a change waiting for approval is the
   // standing's, which says how its checks and its vote stand, once the
   // standing has caught up with it.
@@ -7095,9 +6873,7 @@ const AppView = {
     else if (st.key === 'in_review') {
       lead = who === 'you' ? t('changes:request.status.lead.reviewYours')
         : who ? t('changes:request.status.lead.reviewNamed', { username: who }) : t('changes:request.status.lead.review');
-    } else if (st.key === 'auto_solving') lead = t('changes:request.status.lead.autoSolving');
-    else if (st.key === 'answer_needed') lead = t('changes:request.status.lead.answerNeeded');
-    else if (st.key === 'draft_ready') lead = t('changes:request.status.lead.draftReady');
+    }
     // A paused session: they started it, and nobody is in it right now.
     else if (st.key === 'paused') lead = people(AppView.REQUEST_WORKING_IDS.started);
     else lead = people(AppView.REQUEST_WORKING_IDS.working);
@@ -7126,7 +6902,6 @@ const AppView = {
     }
 
     let action = null;
-    let agentSession = false;
     const toChange = ref ? { label: t('changes:request.status.action.seeChange'), href: ref.href } : null;
     if (closed) {
       action = toChange;
@@ -7155,7 +6930,7 @@ const AppView = {
     } else if (!AppView.readOnly && issue.myPrSessionId) {
       action = {
         label: t('changes:request.status.action.continueWork'), title: t('changes:request.status.action.continueWorkTitle'),
-        act: { fn: 'openChangeWorkspace', args: [issue.myPrSessionId] },
+        act: { fn: 'openTopic', args: ['proposal', issue.myPrSessionId] },
       };
     } else if (card.act === 'plan') {
       // #6210 (3 Nov 2026): the plan is on this page, under this card, with
@@ -7176,8 +6951,6 @@ const AppView = {
       action = redundant ? null : primary && !(card.act === 'bot' && starts)
         ? { label: primary.label, title: primary.title, disabled: !!primary.disabled, act: primary.act }
         : toChange;
-      // 1 Nov 2026: Build it now moved into the ⋯, as an agent session.
-      agentSession = !!(primary && primary.act && primary.act.fn === 'workOnIssueWithBot') && card.act !== 'bot';
     } else {
       action = toChange;
     }
@@ -7202,9 +6975,6 @@ const AppView = {
       // #6387: the row expects a change section (request-head.tsx), so the
       // page holds its place while the thread is still being read.
       changeExpected: !!ref,
-      // 1 Nov 2026: "Build it in an agent session" is a row of the page's ⋯,
-      // where its one action is Work on this with Homeroom bot.
-      agentSession,
       // #5987: offer "Build it with your own Claude Code" under the card only
       // where starting work on it is still open to this viewer: an open
       // request with no change built for it, nothing Homeroom bot is on or
@@ -7242,22 +7012,16 @@ const AppView = {
   },
 
   // The sheet header's ⋯: everything that is not the next step. The work
-  // rows first (more work, the viewer's claim, an admin's release of
+  // rows first (the viewer's claim, an admin's release of
   // somebody else's), then editing it, its tags, and the rest of what a
   // request's card offers.
   _requestMenuItems(issue) {
     const n = issue.number;
     const closed = issue.state === 'closed';
     const base = AppView._issueMenuItems(issue, { noNav: true });
-    // The work rows carry `work` where _issueMenuItems builds them ('build',
-    // 'more', 'claim', 'stop'), so this reads the mark and never their words.
-    const work = [];
-    if (!AppView.readOnly && !closed && issue.myPrSessionId) {
-      work.push({ label: PlatformI18n.t('changes:request.menu.startMore'), work: 'more', icon: 'generate', title: PlatformI18n.t('changes:request.menu.startMoreTitle'), act: () => AppView.chooseIssueWork(n) });
-    }
-    for (const row of base) {
-      if (row.work && !(row.work === 'more' && work.length)) work.push(row);
-    }
+    // The work rows carry `work` where _issueMenuItems builds them ('claim',
+    // 'stop'), so this reads the mark and never their words.
+    const work = base.filter((row) => row.work);
     const rest = base.filter((row) => !row.work);
     // An admin's escape hatch for a stuck claim: the DELETE route is the
     // authoritative gate (claimer or write-admin).
@@ -7286,37 +7050,6 @@ const AppView = {
     return [...work, ...release, ...edit, ...tags, ...rest];
   },
 
-  // #1045: the ONE rule for whether a proposal row offers the "Explore in
-  // dev chat" pill. Every render site (the feed/board card, the Completed
-  // card, the topic head) calls this instead of re-deriving `!mine`, so the
-  // three can't drift — the topic head in particular uses it to decide
-  // whether to BIND the pill's click, and a head that disagrees with the
-  // card it just painted leaves an inert button.
-  //
-  // Who gets it:
-  // - Another user's PR proposal: yes (#313/#827) — the pill rides in the
-  //   card action row, and #321's "no duplicate standalone in the head"
-  //   rule still holds (there is no standalone button any more at all).
-  // - The viewer's OWN native PR proposal: no (#313/#348) — "Open session"
-  //   on their own PR is the better door to the same dev chat, so a pill
-  //   beside it is redundant clutter.
-  // - The viewer's OWN IMPORTED proposal: YES (#1045). An imported PR has
-  //   no platform-owned dev chat at all — src/routes/sessions.js refuses a
-  //   chat turn on a `source='imported'` row, so _renderProposalCard hides
-  //   "Open session" for it too (#687). Without this the owner of a PR they
-  //   imported (or had their own Claude Code / Codex build and submit
-  //   through the connector) gets NO AI affordance on their own proposal.
-  //   The pill opens a SEPARATE ordinary dev chat that reads the PR — it
-  //   never takes over the imported branch.
-  // - Governance proposals and applied close-issue rows: no (#827). A dev
-  //   chat can only reason about repo code and cannot act on a rename /
-  //   secret change / close-issue vote, so a "let's explore this" seed
-  //   there would mislead. Both carry `kind` (and close-issue rows a
-  //   `row_type`); PR-proposal rows from /promoted and mergedRowSelect
-  //   carry neither.
-  //
-  // Read-only viewers are NOT filtered here: that gate lives in
-  // _exploreChatBtnHtml (#621), so it stays in exactly one place.
   // Full cards own their action band. Secondary actions live in More;
   // contextual recovery lives beside its status in the detail ledger.
   _topicCard(card, kind, item, body) {
@@ -7327,7 +7060,7 @@ const AppView = {
     // A row the change page already offers on its cards or in its ledger is
     // marked `pageShortcut` where it is built (the session and proposal
     // menus), so this reads the mark and never the row's words. The same
-    // goes for the rows it looks for below: `sessionDoor` (Open session),
+    // goes for the rows it looks for below: `askBot` (Explore),
     // `githubPr` (View PR on GitHub), `codePr` (View code) and `githubIssue`
     // (Open on GitHub). The address decides which, if any (_prMenuItem): a
     // change's or a request's own Homeroom page is this page, so it gets none.
@@ -7342,7 +7075,7 @@ const AppView = {
       // Vote and Preview buttons are its Votes and Testing cards', Thank is
       // on the Addresses row, and everything else is a row of the sheet
       // header's ⋯ (here). So the rows the band used to carry come back to
-      // the menu: asking Homeroom bot for changes, the Build door, editing
+      // the menu: asking Homeroom bot for changes, editing
       // the requests it addresses, the shots' details and a retake, the
       // change's tags, and its code where it is kept: the pull request on
       // GitHub, or the code on the git host.
@@ -7355,17 +7088,8 @@ const AppView = {
           title: PlatformI18n.t('changes:page.menu.askForChangesTitle'),
           act: () => AppView.askBotForChanges(item.id, item.session_title || item.pr_title || null, item.pr_number),
         });
-      }
-      if (body.build) {
-        rows.push({
-          label: body.build.label, icon: 'session',
-          title: body.build.kind === 'owner'
-            ? PlatformI18n.t('changes:page.menu.buildOwnerTitle')
-            : PlatformI18n.t('changes:page.menu.buildReadTitle'),
-          act: () => AppView.openChangeWorkspace(item.id),
-        });
-        // The Build door is the owner's way into their session already.
-        for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].sessionDoor) menu.splice(i, 1);
+        // Explore opens the same thread: one row for it, not two.
+        for (let i = menu.length - 1; i >= 0; i -= 1) if (menu[i].askBot) menu.splice(i, 1);
       }
       if (body.canEditIssues) {
         const linked = (item.linked_issues || []).length;
@@ -8044,7 +7768,6 @@ const AppView = {
         : `<p>${PlatformI18n.htmlText('changes:page.summary.missing')}</p>`;
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
-    body.workspace = mine && item.source !== 'imported' ? item.id : null;
     body.discussion = underway && !item.shared_at ? PlatformI18n.t('changes:page.discussion.shareFirst') : null;
     card.meta = [...(card.meta || []), { t: 'text', s: underway ? (item.shared_at ? PlatformI18n.t('changes:card.meta.visibleToGroup') : PlatformI18n.t('changes:card.meta.notShared')) : (item.status === 'promoted' ? AppView._promotedWords(item) : item.status) }];
     // The Preview pill on the card says whether there is one to open, and
@@ -8097,7 +7820,6 @@ const AppView = {
     }
     const votes = rows.find((r) => r.key === 'votes');
     if (votes) votes.label = PlatformI18n.t('changes:page.ledger.votes.label');
-    body.build = AppView._buildDoorView(item);
     // The shots claims and state, for "What changes for you".
     body.shots = AppView._shotsView(item.shots);
     if (underway) {
@@ -8184,21 +7906,16 @@ const AppView = {
 
   async runChangeAction(id, action, item) {
     if (!['sync-main', 'promote'].includes(action) || AppView._changeActions.has(Number(id))) return;
-    const workspace = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
-      ? DevChat.currentSession : null;
-    // The detail polls independently of the workspace. Use the snapshot
-    // that rendered this action, including its readiness, so an older copy
-    // cannot silently veto an enabled button (or enable a blocked one).
-    const session = item || workspace || AppView._changeItems.get(Number(id));
+    // Use the snapshot that rendered this action, including its readiness,
+    // so an older copy cannot silently veto an enabled button (or enable a
+    // blocked one).
+    const session = item || AppView._changeItems.get(Number(id));
     if (!session || Number(session.id) !== Number(id)) return;
     if (action === 'promote' && AppView.changeSubmissionState(session).kind !== 'ready') return;
     const slug = AppView.appData?.slug;
-    const fromWorkspace = !!workspace;
-    const stillVisible = () => !fromWorkspace || Number(DevChat.currentSession?.id) === Number(id);
     AppView._changeActions.set(Number(id), action);
     const repaint = () => {
       AppView._renderTopicHead();
-      if (typeof DevChat !== 'undefined') { DevChat._publishDevView(); DevChat._publishTranscript(); }
       window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(id) }));
     };
     repaint();
@@ -8210,28 +7927,20 @@ const AppView = {
       if (!response.ok || data.ok === false) throw new Error(data.message || (data.error === 'proposal_not_ready'
         ? PlatformI18n.t('changes:page.actions.notReady')
         : data.error) || PlatformI18n.t('changes:page.actions.failed'));
-      if (stillVisible() && action !== 'promote') PlatformUI.toast(data.message || PlatformI18n.t('changes:page.actions.synced'));
+      if (action !== 'promote') PlatformUI.toast(data.message || PlatformI18n.t('changes:page.actions.synced'));
       if (action === 'promote') {
         const promoted = { status: 'promoted' };
         if (data.prNumber) promoted.pr_number = data.prNumber;
         if (data.prUrl) promoted.pr_url = data.prUrl;
         if (data.prTitle) promoted.pr_title = promoted.session_title = data.prTitle;
-        const listed = typeof DevChat !== 'undefined' && DevChat.sessions?.find((s) => Number(s.id) === Number(id));
-        const focused = typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)
-          ? DevChat.currentSession : null;
         // Reconcile only the matching session's public lifecycle fields.
-        // Keep workspace-only data and a newly focused session untouched.
-        for (const target of [session, AppView._changeItems.get(Number(id)), focused, listed]) {
+        for (const target of [session, AppView._changeItems.get(Number(id))]) {
           if (target) Object.assign(target, promoted);
         }
       }
-      if (typeof DevChat !== 'undefined' && Number(DevChat.currentSession?.id) === Number(id)) {
-        DevChat.renderChatView();
-      }
       if (AppView.appData?.slug === slug) await AppView._loadDevData();
     } catch (error) {
-      if (stillVisible()) PlatformUI.toast(error?.name === 'TypeError' ? PlatformI18n.t('changes:page.actions.networkError') : error.message);
-      else console.warn('Change action failed after leaving the session:', error.message);
+      PlatformUI.toast(error?.name === 'TypeError' ? PlatformI18n.t('changes:page.actions.networkError') : error.message);
     } finally {
       AppView._changeActions.delete(Number(id));
       repaint();
@@ -8976,36 +8685,22 @@ const AppView = {
     };
   },
 
-  // Fix it from the change's page (failed-checks.ts askFix): what the dev
-  // chat's own Fix it card would send (agent-session/fix-checks.ts), from the
-  // run's blocking failures as the server shapes them for that card
-  // (services/agent-sessions.js FAILING_CHECKS_SQL), and the build
-  // conversation it goes to. Only for the change's author, on a change built
-  // in an agent session (the Build door's own rule) that is still open to
-  // more work. Anybody else, and a change with no conversation to ask, keeps
-  // the re-run alone.
-  FIX_CHECKS_SHOWN: 5,
+  // Fix it from the change's page (failed-checks.ts askFix): the viewer's
+  // thread with Homeroom bot about the change (askBotForChanges), where they
+  // ask it to fix what failed. Only for the change's author, on a change
+  // with a blocking failure that is still open to more work. Anybody else
+  // keeps the re-run alone.
   _fixChecksView(item) {
     if (!item || AppView.readOnly || item.check_state !== 'failing' || !item.checks_checked_at) return null;
     if (!['active', 'paused', 'promoted'].includes(item.status)) return null;
     if (!(typeof App !== 'undefined' && App.user && Number(item.user_id) === Number(App.user.id))) return null;
-    const door = AppView._buildDoorView(item);
-    const agentSessionId = (door && door.agentSessionId) || AppView._agentSessionDoorId(item.id);
-    if (!agentSessionId) return null;
-    const rows = (Array.isArray(item.test_results) ? item.test_results : [])
-      .filter((r) => r && typeof r === 'object' && r.status !== 'pass' && !r.advisory);
-    if (!rows.length) return null;
-    const firstError = (r) => (Array.isArray(r.consoleErrors) && r.consoleErrors[0] && r.consoleErrors[0].message) || '';
+    const failing = (Array.isArray(item.test_results) ? item.test_results : [])
+      .some((r) => r && typeof r === 'object' && r.status !== 'pass' && !r.advisory);
+    if (!failing) return null;
     return {
-      agentSessionId: Number(agentSessionId),
       changeId: Number(item.id),
       prNumber: parseInt(item.pr_number, 10) || null,
-      total: rows.length,
-      checks: rows.slice(0, AppView.FIX_CHECKS_SHOWN).map((r) => ({
-        name: String(r.name || r.path || PlatformI18n.t('changes:verdict.row.unnamedCheck')).trim().slice(0, 200),
-        reason: String(r.failureReason || firstError(r)).trim().slice(0, 300),
-      })),
-      at: String(item.checks_checked_at),
+      title: item.session_title || item.pr_title || null,
     };
   },
 
@@ -9299,99 +8994,27 @@ const AppView = {
     const rows = [AppView._changeItems.get(Number(id)), AppView._topicProposal,
       AppView._sharedById?.[id], ...(AppView._mySessions || []),
       ...(AppView._sharedSessions || []), ...(AppView._proposals || [])];
-    if (typeof DevChat !== 'undefined') rows.push(DevChat.currentSession, ...(DevChat.sessions || []));
     for (const row of rows) if (Number(row?.id) === Number(id)) Object.assign(row, patch);
     window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: { id: Number(id), patch } }));
     AppView._repaintDevBody();
   },
 
-  /**
-   * The Build door for one change: whether there is a build surface to open
-   * at all, and what its pill says. 'owner' is the author's own dev session;
-   * 'published' is the read-only chat its owner published, for everybody
-   * else. Null when there is nothing behind the change — somebody else's
-   * private workspace, or an imported pull request, which never had a
-   * session.
-   *
-   * Derived from the ITEM alone, and the single rule for it: the pill on the
-   * card and the redirect that catches an old `?conversation=workspace` link
-   * both read this, so they cannot disagree about where a change's build
-   * surface is. `body.workspace` and `body.transcript` are the same two
-   * facts, which is what it was assembled from before #2605.
-   */
-  _buildDoorView(item) {
-    if (!item || item.source === 'imported') return null;
-    if (App.user && Number(item.user_id) === Number(App.user.id)) {
-      // #2779: a change started from an agent session is built from that
-      // conversation, so its owner's door leads back there.
-      if (item.agent_session_id) {
-        return { kind: 'owner', label: PlatformI18n.t('changes:page.build.continueInSession'), agentSessionId: Number(item.agent_session_id) };
-      }
-      return { kind: 'owner', label: ['active', 'paused'].includes(item.status) ? PlatformI18n.t('changes:page.build.continueBuilding') : PlatformI18n.t('changes:page.build.openBuild') };
-    }
-    return (item.transcript_shared || item.transcript_shared_at)
-      ? { kind: 'published', label: PlatformI18n.t('changes:page.build.readBuild') }
-      : null;
-  },
-
-  // #3712: the agent session the viewer continues change `id` in, or null.
-  // `_buildDoorView`'s answer, asked of EVERY copy of the change this page
-  // holds rather than of the first one a lookup reaches. The door's label
-  // was drawn from the change page's own read, which names the
-  // conversation; the click re-found the change by id, and for a change up
-  // for a vote the first copy `_findItem` reaches is the board's list row,
-  // which did not. So "Continue in agent session" opened the dev session,
-  // whose strip then offered the same thing again. Every copy is the same
-  // change with the same owner, so any one that names the conversation is
-  // the answer, and `_buildDoorView` still decides whether this viewer may
-  // follow it: the owner only, never on an imported pull request.
-  _agentSessionDoorId(id) {
-    const n = Number(id);
-    if (!Number.isInteger(n) || n <= 0) return null;
-    const rows = [AppView._changeItems && AppView._changeItems.get(n), AppView._topicProposal,
-      ...(AppView._proposals || []), ...(AppView._mySessions || []),
-      ...(AppView._sharedSessions || []), ...(AppView._merged || [])];
-    for (const row of rows) {
-      if (!row || Number(row.id) !== n) continue;
-      const door = AppView._buildDoorView(row);
-      if (door && door.agentSessionId) return door.agentSessionId;
-    }
-    return null;
-  },
-
-  // The Build door. It used to do one of two things depending on where it
-  // was pressed: on a change's own page it opened the Build sheet IN PLACE
-  // (the `change-workspace-open` event), and anywhere else it navigated.
-  // #2605 removed that sheet — a dev session is a screen, not a fold under a
-  // discussion — so this always navigates, and the change page and the board
-  // card now send a reader to the same address. A reader who does not own
-  // the session lands on its read-only published chat (`renderDevChatTab`).
-  // The owner of a change started from an agent session goes back to that
-  // conversation instead (#2779); `openProposalSession` makes that call, so
-  // every way into a change's session agrees on it (#3712).
-  openChangeWorkspace(id) {
-    AppView.openProposalSession(id);
-  },
-
-  /**
-   * An old link that asked for the Build panel — `?conversation=workspace`,
-   * and the `build` spelling that preceded it — arriving on a change's page.
-   * The panel is a page of its own now (#2605), so the link lands there
-   * rather than on a card page with nothing to open and no explanation.
-   *
-   * Returns true when it redirected, so the caller stops rendering this
-   * page. A change with no build surface (somebody else's private
-   * workspace, an imported pull request) keeps the card page: the link is
-   * stale, but the page it names is still the right one to read.
-   */
-  _redirectLegacyBuildLink(item) {
-    const requested = new URLSearchParams(window.location.search).get('conversation');
-    if (requested !== 'workspace' && requested !== 'build') return false;
-    if (!AppView._buildDoorView(item)) return false;
-    AppView.openChangeWorkspace(item.id);
-    return true;
-  },
-
+  // #1045: the ONE rule for whether a change offers the Explore pill, which
+  // opens the viewer's thread with Homeroom bot about it (askBotForChanges).
+  // Every render site (the feed/board card, the Completed card, the topic
+  // head) calls this instead of re-deriving `!mine`, so they can't drift.
+  //
+  // Who gets it:
+  // - Another user's change: yes (#313/#827).
+  // - The viewer's OWN native change: no (#313/#348).
+  // - The viewer's OWN IMPORTED change: yes (#1045). Its code lives on
+  //   GitHub, so this is the one AI affordance it has here.
+  // - Governance proposals and applied close-issue rows: no (#827). Both
+  //   carry `kind` (and close-issue rows a `row_type`); PR-proposal rows
+  //   from /promoted and mergedRowSelect carry neither.
+  //
+  // Read-only viewers are NOT filtered here: each render site gates on
+  // AppView.readOnly.
   _showExplorePill(pr) {
     if (!pr) return false;
     if (pr.kind || pr.row_type === 'close_issue') return false;
@@ -9431,18 +9054,14 @@ const AppView = {
     if (kind === 'proposal') {
       const mine = !!(App.user && item.user_id === App.user.id);
       const isMerged = item.status === 'merged';
-      if (mine && item.source !== 'imported') {
-        pills.push({
-          key: 'session', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:card.actions.continueBuilding'),
-          title: PlatformI18n.t('changes:card.actions.continueBuildingTitle'),
-          act: { fn: 'openChangeWorkspace', args: [item.id] },
-        });
-      }
-      // _showExplorePill, not `!mine`: the viewer's own IMPORTED proposal has
-      // no session behind the row above (#687), so Explore is its only AI
-      // affordance (#1045). The shared predicate owns that rule.
+      // _showExplorePill, not `!mine`: Explore is the one AI affordance on
+      // the viewer's own IMPORTED proposal (#1045). The shared predicate
+      // owns that rule.
       if (AppView._showExplorePill(item) && !AppView.readOnly) {
-        pills.push({ key: 'explore', label: PlatformI18n.t('changes:card.actions.explore'), title: AppView.EXPLORE_CHAT_TITLE, explore: item.id });
+        pills.push({
+          key: 'explore', label: PlatformI18n.t('changes:card.actions.explore'), title: AppView.EXPLORE_CHAT_TITLE,
+          explore: item.id, exploreTitle: item.session_title || item.pr_title || null, exploreNumber: item.pr_number || null,
+        });
       }
       if (!AppView.readOnly && !isMerged && mine && item.status === 'promoted') {
         // #3114: the non-destructive counterpart to Withdraw. The PR stays
@@ -9587,20 +9206,6 @@ const AppView = {
   // (card/dev-card.tsx's ActionButton), so it carries its own click and
   // reads `aiEnabledStore` for the availability the DOM pass used to apply.
 
-  // #313/#827: a compact "Explore in dev chat" action for the proposal CARD
-  // action row (the Dev feed, the kanban board, the Completed list). Cards
-  // render many at once, so this uses a class + data-proposal-id hook (ids
-  // must stay unique). Whether a given row gets one at all is
-  // _showExplorePill's call. Click is dispatched by the delegated
-  // feed/merged handler (and wired directly in the topic head).
-  _exploreChatBtnHtml(pr) {
-    // #621: the dev chat spends the viewer's LLM budget and its API is
-    // collab-gated — nothing to offer read-only viewers.
-    if (AppView.readOnly) return '';
-    return `<button type="button" class="gc-vote-btn gc-explore-chat-btn" data-proposal-id="${pr.id}"
-      title="${escapeAttr(AppView.EXPLORE_CHAT_TITLE)}"><span aria-hidden="true">✨</span> ${PlatformI18n.htmlText('changes:card.actions.exploreButton')}</button>`;
-  },
-
 
   // ── The shared card body moved to React ──────────────────────────────
   //
@@ -9727,14 +9332,11 @@ const AppView = {
     const fn = a.act.fn;
     const icon = fn === 'markIssueInProgress' ? 'progress'
       : fn === 'clearIssueClaim' ? 'clear'
-        : fn === 'exploreProposalInDevChat' ? 'explore'
-          // B8: asking Homeroom bot to build, or to change, is new work too.
-          : fn === 'askBotToBuild' || fn === 'askBotForChanges' ? 'generate'
+        // B8: asking Homeroom bot to build, or to change, is new work.
+        : fn === 'askBotToBuild' || fn === 'askBotForChanges' ? 'generate'
           : fn === '_shareCardToMessages' ? 'share'
-          : fn === 'openChangeWorkspace' ? 'session'
-          : fn === '_setSessionShared' ? (a.act.args && a.act.args[1] ? 'visible' : 'hide')
-            : fn === 'promoteImportedSession' ? 'merge'
-              : fn === 'createPrForIssue' || fn === 'startFromAutoSession' || fn === 'goToAutoSessionClone' ? 'generate'
+            : fn === '_setSessionShared' ? (a.act.args && a.act.args[1] ? 'visible' : 'hide')
+              : fn === 'promoteImportedSession' ? 'merge'
                 : 'default';
     return {
       label: a.label,
@@ -9816,13 +9418,12 @@ const AppView = {
   // the row's ink, so a danger row's icon is red with its label.
   MENU_ICONS: Object.freeze([
     'merge',      // admin bypass of the vote
-    'session',    // the dev session behind a proposal
     'withdraw',   // danger
     'undo',       // danger
     'unpromote',  // back a column, from In review to Underway
     'kudos',      // matches the bounty badge on the meta line
     'explore',    // was inline in the label; now the icon
-    'generate',   // the headless AI run
+    'generate',   // new work, asked of Homeroom bot
     'retry',
     'checks',     // check results
     'visuals',    // before/after captures
@@ -10200,7 +9801,7 @@ const AppView = {
   //
   // This is what makes the menu usable at all. Every repaint replaces
   // #dev-body's innerHTML, and the board repaints on its own schedule —
-  // the session-cache poll, the headless poll, and every websocket push.
+  // the session-cache poll and every websocket push.
   // The menu itself is body-mounted and position:fixed, so the swap never
   // touches it; only the trigger element it was anchored to is destroyed.
   // Closing on that basis meant a background refresh nobody asked for tore
@@ -10246,83 +9847,9 @@ const AppView = {
 
   get EXPLORE_CHAT_TITLE() { return PlatformI18n.t('changes:explore.title'); },
 
-  // #827: the closing paragraph of every exploration seed. Load-bearing —
-  // it is what keeps an UNEDITED send from making the Mayor dispatch the
-  // coding agent: the turn stays a chat-only explanation. Pinned
-  // byte-for-byte by tests/explore-pr-in-dev-chat.test.js.
-  get EXPLORE_SEED_TAIL() { return PlatformI18n.t('changes:explore.seed.tail'); },
-
-  // #827: the editable kickoff message for "Explore in dev chat", built
-  // purely from the cached proposal row (no extra fetch). Optional lines are
-  // dropped when the data is absent, so an imported PR with no linked issues
-  // and a title-only row both produce clean text.
-  _exploreSeed(pr) {
-    const row = pr || {};
-    const title = (row.pr_title || '').trim();
-    const author = (row.username || '').trim();
-    const lines = [];
-    if (row.pr_number) {
-      const values = { number: row.pr_number, title: title || PlatformI18n.t('changes:explore.seed.prUntitled', { number: row.pr_number }), author };
-      lines.push(author ? PlatformI18n.t('changes:explore.seed.prBy', values) : PlatformI18n.t('changes:explore.seed.pr', values));
-    } else {
-      const values = { title: title || PlatformI18n.t('changes:explore.seed.proposalUntitled'), author };
-      lines.push(author ? PlatformI18n.t('changes:explore.seed.proposalBy', values) : PlatformI18n.t('changes:explore.seed.proposal', values));
-    }
-    // A pull request on GitHub is a PR link; a change kept in Homeroom is
-    // named by its own page, written out whole for the agent.
-    const prKind = row.pr_url ? AppView._linkKind(row.pr_url) : null;
-    if (prKind === 'homeroom') {
-      const route = AppView._repoLink().homeroomRoute(row.pr_url);
-      const origin = typeof location !== 'undefined' && location.origin ? location.origin : '';
-      lines.push(PlatformI18n.t('changes:explore.seed.changeLink', { url: /^https?:/i.test(row.pr_url) ? row.pr_url : `${origin}/${route}` }));
-    } else if (prKind) {
-      lines.push(PlatformI18n.t('changes:explore.seed.prLink', { url: row.pr_url }));
-    }
-    const issues = Array.isArray(row.linked_issues)
-      ? row.linked_issues.filter((n) => Number.isInteger(n))
-      : [];
-    if (issues.length) lines.push(PlatformI18n.t('changes:explore.seed.linkedIssues', { issues: PlatformI18n.listText(issues.map((n) => `#${n}`)) }));
-    if (row.status === 'merged') lines.push(PlatformI18n.t('changes:explore.seed.merged'));
-    else if (row.status === 'merging') lines.push(PlatformI18n.t('changes:explore.seed.merging'));
-    return `${lines.join('\n')}\n\n${AppView.EXPLORE_SEED_TAIL}`;
-  },
-
-  // #2779: new work starts in an agent session, a conversation with the
-  // Mayor that works on any app. Classic sessions are no longer created: the
-  // server takes POST /api/apps/:slug/sessions only from the Mayor's
-  // start_change. Opens an unsent conversation with whatever the entry point
-  // knows. The controller is published by the shell bundle before anything
-  // can be clicked; without it (a shell that failed to boot) the address
-  // still opens an unsent conversation, only without the hint.
-  _startAgentSession(hint) {
-    const agent = window.UsernodeReact && window.UsernodeReact.agentSession;
-    if (agent) agent.start(hint);
-    else window.location.hash = '#agent/new';
-  },
-
-  // #827 "Explore": an editable message about the proposal, pre-filled and
-  // NEVER sent. #2779: it opens in an unsent agent session focused on the
-  // proposal (the Mayor reads the proposal from that focus). It used to seed
-  // the viewer's classic dev chat, reusing an unused one before creating
-  // one; classic sessions are no longer created. A row not in the caches
-  // still opens the conversation, only without the message.
-  exploreProposalInDevChat(id) {
-    const pid = parseInt(id, 10);
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!pid || !slug) return;
-    const pr = (AppView._proposals || []).find((p) => p.id === pid)
-      // Skip close-issue rows: issues.id can collide with a session id.
-      || (AppView._merged || []).find((p) => p.id === pid && p.row_type !== 'close_issue');
-    const hint = { slug, proposalId: pid, entry: 'proposal' };
-    if (pr) hint.message = AppView._exploreSeed(pr);
-    AppView._startAgentSession(hint);
-  },
-
-  // Resolve AI availability once (memoized) and disable every card-level
-  // "Explore in dev chat" button under `root` with a tooltip when no LLM is
-  // configured — a dev chat with no model behind it can't answer. Must be
-  // re-run after each feed/merged re-render, since innerHTML replacement
-  // paints fresh, enabled buttons every time.
+  // Resolve AI availability once (memoized): with no LLM configured, every
+  // card-level Explore pill is disabled with a tooltip — a bot with no
+  // model behind it can't answer.
   // Every Explore pill reads this from the store (card/dev-card.tsx's
   // `ActionButton`), so a repaint publishes the one fact and nothing walks
   // the DOM.
@@ -11198,12 +10725,12 @@ const AppView = {
       AppView._repaintDevBodyKeepingPosition();
     }
   },
-  // Mirrors DevChat.applyBehindMainUpdate for the topic page's own row.
+  // A `behind_main` session update, for the topic page's own row.
   applyBehindMainEvent(sessionId, behindMain) {
     if (typeof behindMain !== 'number') return;
     AppView.patchTopicProposal(sessionId, { behind_main: behindMain });
   },
-  // Mirrors DevChat.applyFreshnessUpdate: the `freshness` block AND the flat
+  // A `freshness` session update: the `freshness` block AND the flat
   // columns, because _freshnessOf accepts either shape.
   applyFreshnessEvent(data) {
     if (!data || data.sessionId == null) return;
@@ -11223,7 +10750,7 @@ const AppView = {
   },
   // sync_status: 'running' marks the row as resolving (the conflict note
   // stands down while an attempt is live); 'done'/'failed' clears it and the
-  // persisted state lands on the next refetch, which DevChat already triggers.
+  // persisted state lands on the next refetch.
   applySyncStatusEvent(data) {
     if (!data || data.sessionId == null) return;
     const running = data.state === 'running' || data.state === 'started';
@@ -11734,7 +11261,7 @@ const AppView = {
    * sub-view calls it with nothing and everything comes from AppView.appData,
    * exactly as it always did. The MESSAGES SCREEN calls it with a host and an
    * app, because an app's general discussion is a thread of that inbox now —
-   * listed beside the people and the agent chats, and opened beside the list
+   * listed beside the people, and opened beside the list
    * rather than by navigating to a different screen root.
    *
    * Passing the app in rather than reading AppView.appData is the point: the
@@ -11748,7 +11275,7 @@ const AppView = {
     // legacy caller), or into the host the caller named.
     const content = (ctx && ctx.host)
       || document.getElementById('dev-chat-body')
-      || AppView._devContainer();
+      || document.getElementById('app-content');
     if (!content) return;
     // The app this mount is ABOUT. AppView.appData is the app view's answer
     // and the default; a caller that named one owns its own.
@@ -13156,9 +12683,6 @@ const AppView = {
         working: 'changes:workshop.row.tag.beingWorkedOn',
         paused: 'changes:workshop.row.tag.started',
         claimed: 'changes:workshop.row.tag.pickedUp',
-        auto_solving: 'changes:workshop.row.tag.autoSolving',
-        answer_needed: 'changes:workshop.row.tag.needsAnswer',
-        draft_ready: 'changes:workshop.row.tag.draftReady',
       };
       if (ws) {
         // #4486: and who is on it ("Picked up · zura", "Started · you"), in
@@ -13181,7 +12705,7 @@ const AppView = {
         }
         tags.push({
           label,
-          tone: ws.spinner ? 'run' : ws.key === 'answer_needed' ? 'warn' : 'plain',
+          tone: ws.spinner ? 'run' : 'plain',
         });
       }
       const cat = it.category && it.category.top ? AppView._categoryMeta(it.category.top) : null;
@@ -13336,14 +12860,14 @@ const AppView = {
       || (typeof key === 'string' && AppView.WORKSHOP_CHANNEL_RE.test(key));
   },
   _workshopModels() {
-    const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
+    const src = (typeof PlatformModels !== 'undefined' && PlatformModels && PlatformModels.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };
     const list = Object.keys(src).map((id) => ({
       id,
       label: (src[id] && src[id].label) || id,
       note: (src[id] && src[id].changeSize && src[id].changeSize.short) || '',
     }));
-    const def = (typeof DevChat !== 'undefined' && DevChat._defaultModel) || null;
+    const def = (typeof PlatformModels !== 'undefined' && PlatformModels.defaultModel) || null;
     return { list, selected: list.some((m) => m.id === def) ? def : (list[0] ? list[0].id : null) };
   },
 
@@ -15277,11 +14801,12 @@ const AppView = {
       // Which tab a URL asked for, or null for the viewer's own choice.
       tab: AppView._workshopTab(),
       // The models the Needs-you tab's ask box may talk to, read from the
-      // SAME map the dev session's picker uses (DevChat.MODELS, refreshed
-      // from GET /api/models at startup) rather than a second list here —
+      // one map the platform keeps (PlatformModels.MODELS, refreshed from
+      // GET /api/models at startup) rather than a second list here —
       // tests/model-selector-ui.test.js already guards that map against the
-      // server's allowlist, and a third copy would drift out from under it.
-      // Empty where DevChat is not loaded, and the picker is then not drawn.
+      // server's allowlist, and another copy would drift out from under it.
+      // Empty where PlatformModels is not loaded, and the picker is then not
+      // drawn.
       models: AppView._workshopModels(),
       queue,
       votes,
@@ -15381,8 +14906,8 @@ const AppView = {
   _feedCommentsHtml(comments) {
     const list = Array.isArray(comments) ? comments : [];
     if (!list.length) return '';
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     const tail = list.slice(-AppView.FEED_COMMENT_PREVIEW);
     const hidden = list.length - tail.length;
@@ -15857,8 +15382,8 @@ const AppView = {
   //     sharedSessions — OTHER users' shared (shared_at-set) sessions
   //
   // Returns { issues, inProgress, inReview, done }:
-  //   issues     — open issues with no work under way on them (headless
-  //                none/failed/absent, no claim, no live linked session)
+  //   issues     — open issues with no work under way on them (no claim,
+  //                no live linked session)
   //   inProgress — TYPED entries {kind:'my-session'|'issue'|'shared-session',
   //                item}: the viewer's sessions pinned first (most recent
   //                activity first), then issues with work under way —
@@ -15950,15 +15475,14 @@ const AppView = {
     const col1 = [];
     const col2 = [];
     for (const i of issues) {
-      // Any live work routes the issue to the In-progress column: a
-      // headless run (the historical rule), a live linked dev session,
-      // or a manual claim — the shared _issueInProgress predicate — plus
-      // an open promoted proposal against it (#1251). The proposal case is
-      // named explicitly rather than left to _issueInProgress: the server
-      // sets `in_progress` from the same promoted session in the ordinary
-      // case, but a headless-authored proposal isn't in that query, and an
-      // issue with a live proposal must never sit in "Issues" inviting
-      // someone to start the work over.
+      // Any live work routes the issue to the In-progress column: a live
+      // linked dev session or a manual claim — the shared _issueInProgress
+      // predicate — plus an open promoted proposal against it (#1251). The
+      // proposal case is named explicitly rather than left to
+      // _issueInProgress: the server sets `in_progress` from the same
+      // promoted session in the ordinary case, but an issue with a live
+      // proposal must never sit in "Issues" inviting someone to start the
+      // work over.
       if (linked.has(i.number) || AppView._issueInProgress(i)) col2.push(i);
       else col1.push(i);
     }
@@ -15975,7 +15499,7 @@ const AppView = {
     const done = AppView._onePerPullRequest(merged).sort(AppView._compareMergedRows);
 
     // In progress = pinned own sessions (most recent activity first) →
-    // headless-working issues → other users' shared sessions (oldest
+    // issues being worked on → other users' shared sessions (oldest
     // shared_at first, so newly shared rows append at the bottom).
     const sessT = (s) => Math.max(ts(s.last_activity_at), ts(s.created_at));
     const mine = mySessions.slice().sort((a, b) => sessT(b) - sessT(a));
@@ -16893,9 +16417,6 @@ const AppView = {
       react.mountKanban(board);
       react.publishKanban(AppView._lastKanbanView);
     }
-    // The headless-state poller is keyed off the cached issue data, same
-    // as the list feed — filtering a generating row off-screen doesn't
-    // stop it.
     AppView._fillKudosHosts(board);
     // The comment slots an unfolded card ships empty, same as the Workshop's
     // repaint does (#1884). The store flushed synchronously above, so the
@@ -17280,8 +16801,7 @@ const AppView = {
   // `title` attribute) or ConfirmModal's title, all of which escape it
   // themselves. It returned escapeHtml's output from the innerHTML days,
   // so a title with a quote or an ampersand read `&quot;` / `&amp;` on the
-  // card. The agent-session Mayor names changes in prose, quotes and all,
-  // which is how it surfaced.
+  // card.
   _sessionCardLabel(s) {
     // #6124: a title chosen before the change has a pull request lands in
     // proposed_pr_title, which outranks the session's old name on every
@@ -17300,19 +16820,17 @@ const AppView = {
     return !!s.busy;
   },
 
-  // Where this session's turns actually run.
+  // Where this change was built.
   //
-  // The venue was decided once, at creation, from a preference the user set
-  // somewhere else — and then never mentioned again, so a board full of
-  // cards looked identical whether the work was billed to Homeroom credits,
-  // an OpenRouter key or a laptop. Naming it on the card is the cheapest
-  // place to make that visible; the sheet behind it is the same one every
-  // other surface opens (public/js/build-venues.js).
+  // A board full of cards looked identical whether the work was billed to
+  // Homeroom credits, an OpenRouter key or a laptop. Naming it on the card
+  // is the cheapest place to make that visible; the names are
+  // public/js/build-venues.js's.
   //
   // Suppressed on an imported row: that card already carries the amber
   // "Imported PR" badge, and one provenance badge is the right number. Also
-  // returns '' when build-venues.js has not loaded, so the card degrades to
-  // exactly what it rendered before rather than to a broken chip.
+  // returns null when build-venues.js has not loaded, so the card degrades
+  // to exactly what it rendered before rather than to a broken chip.
   _sessionVenueChipSpec(s) {
     const BV = (typeof window !== 'undefined' && window.BuildVenues) || null;
     if (!BV || !s || s.source === 'imported') return null;
@@ -17459,14 +16977,11 @@ const AppView = {
   // The whole card is the tap target — it opens the CARD: unfolded in place
   // inside a fold (card/fold.tsx), or the change's page from the delegated
   // #dev-body handler — so the inner controls stay real buttons inside a
-  // role="button" div. The owner's dev chat is a link INSIDE the open card
-  // ("Open session", fold.tsx `sessionHref`) and the change page's Build
-  // tab, never where the tap itself lands (#1887).
+  // role="button" div.
   _mySessionCardModel(s) {
     const label = AppView._sessionCardLabel(s);
     const imported = s.source === 'imported';
     const shared = !!s.shared_at;
-    const transcriptShared = !!s.transcript_shared_at;
     // Count comes from the shared-sessions row; a freshly-shared session
     // may not be in _sharedById yet (background refresh pending).
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
@@ -17479,14 +16994,12 @@ const AppView = {
         ? PlatformI18n.t('changes:session.mine.importedBy', { author: s.imported_pr_author })
         : PlatformI18n.t('changes:session.mine.importedByUnknown'))
       : (shared
-        ? (transcriptShared ? PlatformI18n.t('changes:session.mine.visibleChatReadable') : PlatformI18n.t('changes:session.mine.visible'))
+        ? PlatformI18n.t('changes:session.mine.visible')
         : PlatformI18n.t('changes:session.mine.private'));
 
-    // "Open chat" is GONE as a pill. Tapping this card opens the card itself
-    // (see above); the dev chat — its working surface — is the "Open session"
-    // link inside the open card, and the public discussion of a shared
-    // session is one ⋯ row rather than a competing affordance on the card
-    // face.
+    // Tapping this card opens the card itself (see above), and the public
+    // discussion of a shared session is one ⋯ row rather than a competing
+    // affordance on the card face.
     //
     // Visibility is PROMOTED to the face and is no longer a ⋯ row: it is the
     // one thing you do to your own session card, the subtitle right above it
@@ -17518,22 +17031,7 @@ const AppView = {
       ? AppView._prMenuItem(s.pr_url, PlatformI18n.t('changes:session.menu.viewPr'), PlatformI18n.t('changes:session.menu.viewCode'))
       : null;
     if (code) menu.push(code);
-    // The SECOND opt-in, offered only once the session is visible (there is
-    // nowhere for a reader to reach an invisible session's chat from).
     if (shared && !imported) {
-      menu.push(transcriptShared
-        ? {
-          label: PlatformI18n.t('changes:session.menu.stopSharingChat'),
-          icon: 'chat',
-          title: PlatformI18n.t('changes:session.menu.stopSharingChatTitle'),
-          act: () => AppView._setTranscriptShared(s.id, false, null),
-        }
-        : {
-          label: PlatformI18n.t('changes:session.menu.shareChat'),
-          icon: 'chat',
-          title: PlatformI18n.t('changes:session.menu.shareChatTitle'),
-          act: () => AppView._setTranscriptShared(s.id, true, null),
-        });
       const chatN = sh ? (parseInt(sh.chat_count, 10) || 0) : 0;
       menu.push({
         label: chatN
@@ -17585,14 +17083,6 @@ const AppView = {
     const attrs = { role: 'button', tabindex: '0', title: s.busy ? PlatformI18n.t('changes:session.mine.workingTitle', { title: label }) : label };
     if (imported) attrs['data-shared-session-row'] = String(s.id);
     else attrs['data-session-chip'] = String(s.id);
-    // #3081: a change started from an agent session is revised in that
-    // conversation — its own dev chat only shows a strip leading there — so
-    // the open card's "Open session ›" (fold.tsx `sessionHref`) goes to it.
-    // The same rule `_buildDoorView` applies to the change page's door.
-    const agentSessionId = Number(s.agent_session_id);
-    if (!imported && Number.isInteger(agentSessionId) && agentSessionId > 0) {
-      attrs['data-session-agent'] = String(agentSessionId);
-    }
     return {
       key: `my-session:${s.id}`,
       cls: `${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}${mutedCls}`,
@@ -17626,13 +17116,8 @@ const AppView = {
   },
 
   // Another user's shared session, as a MODEL. Opens the public discussion
-  // topic — never the owner's dev chat (those endpoints stay owner-scoped
-  // server-side). `opts.noNav` is the static header variant for the topic
+  // topic. `opts.noNav` is the static header variant for the topic
   // sub-view.
-  //
-  // "Read chat" is GONE as a pill: the shared transcript lives on this
-  // session's own detail page (and auto-expands there), which is the one
-  // canonical destination a tap on this card already goes to.
   _sharedSessionCardModel(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
@@ -17880,72 +17365,6 @@ const AppView = {
     }
   },
 
-  // Confirmation copy for turning transcript sharing ON. Spelled out
-  // rather than a generic "are you sure?": the whole point is that the
-  // owner knows what becomes readable (their own typed messages included)
-  // and what doesn't, before they publish it.
-  get SHARE_CHAT_CONFIRM() {
-    return {
-      title: PlatformI18n.t('changes:session.shareChat.confirmTitle'),
-      message: PlatformI18n.t('changes:session.shareChat.confirmMessage'),
-      confirmLabel: PlatformI18n.t('changes:session.shareChat.confirmLabel'),
-    };
-  },
-
-  // Publish / revoke the transcript of one of the viewer's own sessions
-  // ("Share chat" / "Chat shared"). Same optimistic shape as
-  // _setSessionShared: flip the cached row, repaint, then reconcile with
-  // server truth in the background.
-  //
-  // Turning it ON is gated behind ConfirmModal (webview-safe — native
-  // confirm() is suppressed in several shells the platform runs in).
-  // Turning it OFF is immediate: revoking access should never be the
-  // slower path.
-  async _setTranscriptShared(sessionId, on, btn) {
-    if (!sessionId) return;
-    if (on) {
-      const ok = await ConfirmModal.show(AppView.SHARE_CHAT_CONFIRM);
-      if (!ok) return;
-    }
-    const original = btn ? btn.textContent : '';
-    if (btn) { btn.disabled = true; btn.textContent = '...'; }
-    try {
-      const resp = await fetch(
-        `/api/sessions/${sessionId}/${on ? 'share-transcript' : 'unshare-transcript'}`,
-        { method: 'POST' }
-      );
-      const body = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        PlatformUI.toast(PlatformI18n.errorText(body) || PlatformI18n.t('changes:session.shareChat.failedHttp', { status: resp.status }));
-        if (btn) { btn.disabled = false; btn.textContent = original; }
-        return;
-      }
-      const s = (AppView._mySessions || []).find((x) => x.id === sessionId);
-      if (s) {
-        s.transcript_shared_at = on
-          ? (body.transcript_shared_at || new Date().toISOString())
-          : null;
-        // share-transcript implies visibility server-side — mirror that
-        // locally so the card jumps to the "Visible to everyone" group in
-        // the same repaint rather than after the background refresh.
-        if (on && !s.shared_at) s.shared_at = body.shared_at || new Date().toISOString();
-      }
-      // Drop any cached transcript for this session: what a reader may see
-      // just changed, and a stale cache would keep serving the old answer
-      // to the owner's own preview.
-      if (AppView._transcripts) delete AppView._transcripts[sessionId];
-      AppView._repaintDevBody();
-      if (AppView.appData) {
-        AppView._refreshSessionCaches(AppView.appData.slug).then((changed) => {
-          if (changed) AppView._repaintDevBody();
-        });
-      }
-    } catch (err) {
-      PlatformUI.toast(PlatformI18n.t('changes:session.shareChat.failed', { error: err.message }));
-      if (btn) { btn.disabled = false; btn.textContent = original; }
-    }
-  },
-
   // Restore an archived session (delegated from the archived toggle's
   // Unarchive buttons).
   async _unarchiveSession(sessionId, btn) {
@@ -18114,31 +17533,11 @@ const AppView = {
   _onSessionStateChanged() {
     if (!AppView.appData) return;
     if (typeof App !== 'undefined' && App.currentTab !== 'dev') return;
-    // _repaintCards, not _repaintDevBody: an auto-run can be watched from
-    // the OPENED TOPIC view (#gc-thread-head), where #dev-body isn't
-    // mounted at all. The 8s poller this replaced called that case out
-    // explicitly, and keying on #dev-body alone would silently strand it.
-    // Both halves no-op when their own surface is absent.
+    // _repaintCards, not _repaintDevBody: a request's work state can be
+    // watched from the OPENED TOPIC view (#gc-thread-head), where #dev-body
+    // isn't mounted at all, and keying on #dev-body alone would silently
+    // strand it. Both halves no-op when their own surface is absent.
     AppView._repaintCards();
-  },
-
-  // #1038: an auto-run's card state lives on the cached issue row, not on a
-  // session id, so the raw event has to patch it before the repaint reads
-  // it. Field-scoped merge (same as the retired 8s poller): bounty state can
-  // carry optimistic local edits a broadcast must not clobber.
-  _onSessionStateEvent(payload) {
-    if (!payload || !payload.headless) return;
-    const n = payload.headless.issueNumber;
-    if (n == null) return;
-    if (!AppView.appData || !payload.appSlug || payload.appSlug !== AppView.appData.slug) return;
-    const issue = (AppView._ghIssues || []).find((i) => i && i.number === n);
-    if (!issue) return;
-    issue.headless = {
-      ...(issue.headless || {}),
-      sessionId: payload.sessionId,
-      status: payload.headless.status,
-      outcome: payload.headless.outcome,
-    };
   },
 
   // The issue's body (GitHub markdown), rendered in the topic
@@ -18146,8 +17545,8 @@ const AppView = {
   _issueBodyHtml(issue) {
     // #683: images opt-in so attached screenshots (the **Screenshot:**
     // embed appended by routes/feedback.js) render inline.
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s, { images: true })
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     // No box of its own: the About sheet is the box (topic/topic-head.tsx).
     // #3132: issues filed before the rename say "**Source:** usernode user
@@ -18263,9 +17662,9 @@ const AppView = {
   //
   // What #396 and #1808 decided stays here: which authors are bots, and the
   // SANITIZER — a comment body is arbitrary GitHub markdown, run through
-  // `DevChat.renderMarkdown` (images opt-in, the raw <img> form GitHub
+  // `PlatformMarkdown.render` (images opt-in, the raw <img> form GitHub
   // writes for a resized screenshot rebuilt from its safe fields), with an
-  // escaped-`<pre>` fallback for a page where dev-chat.js did not load. The
+  // escaped-`<pre>` fallback for a page where the renderer did not load. The
   // stamp is the thread's own (`GroupChat._stamp`): the reader's zone, a
   // date once it is not today's.
   //
@@ -18278,11 +17677,11 @@ const AppView = {
     if (!slug) return null;
     const entry = AppView._ghComments.get(AppView._ghCommentsKey(slug, Number(number)));
     if (!entry) return null;
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (str) => DevChat.renderMarkdown(str, { images: true })
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (str) => PlatformMarkdown.render(str, { images: true })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
-    const renderSpec = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (str) => DevChat.renderMarkdown(str, { breaks: false })
+    const renderSpec = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (str) => PlatformMarkdown.render(str, { breaks: false })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
     // #3952: as in the request's body (_issueBodyHtml).
     const mentions = typeof renderRequestMentions === 'function' ? renderRequestMentions : (h) => h;
@@ -18326,214 +17725,18 @@ const AppView = {
     return { rows, truncated: !!entry.truncated, htmlUrl: (item && item.htmlUrl) || null };
   },
 
-  // ── Shared dev-chat transcript (read-only) ─────────────────────────
-  //
-  // Rendered on a shared session's topic page, and on a proposal's page
-  // when its owner published the chat. Collapsed by default and fetched on
-  // expand: a transcript is the biggest payload on either page and most
-  // visits are there for the discussion, not the chat.
-
-  // Per-session transcript cache, so re-expanding (or a WS-driven
-  // _renderTopicHead repaint) paints from memory instead of refetching.
-  // Cleared for a session when its owner toggles sharing (see
-  // _setTranscriptShared).
-  _transcripts: {},
-
-  // The id of the session whose transcript section is currently EXPANDED
-  // (null = collapsed). Deliberately AppView state rather than DOM state:
-  // _renderTopicHead re-innerHTML's the whole head on every WS/poll-driven
-  // refresh, so a DOM-only open flag gets wiped seconds after the reader
-  // expands the chat. Keeping it here means a repaint re-renders the
-  // section already open and repaints from _transcripts cache — no flicker,
-  // no lost scroll. Also what the "Read chat" chip sets to arrive expanded.
-  _transcriptOpen: null,
-
-  // The collapsed section shell. Returns '' when the item's owner hasn't
-  // published the transcript — the ONLY gate on the client; the server
-  // re-checks both share flags on the fetch, so a stale flag here buys
-  // nothing but an empty section.
-  //
-  // `item` is a shared-session row (transcript_shared + message_count from
-  // /shared-sessions) or a proposal row (transcript_shared from
-  // mergedRowSelect). The viewer's OWN rows carry transcript_shared_at
-  // instead, so accept either shape — the owner gets the section too, as
-  // the "preview what everyone else sees" path.
-  // The shared-chat disclosure. Its BODY stays public/js/session-transcript
-  // .js's — a controller host the head renders once, empty, with a constant
-  // className and never looks inside.
-  //
-  // `_transcriptLabels` holds the EXPANDED label, once the transcript
-  // payload has named its owner. It is kept across repaints because a
-  // repaint rebuilds the section from the model, and the collapsed label
-  // would otherwise come back the moment anything else on the head changed.
-  _transcriptLabels: Object.create(null),
-
-  _transcriptSectionView(item) {
-    if (!item) return null;
-    if (!(item.transcript_shared || item.transcript_shared_at)) return null;
-    const expanded = AppView._transcriptOpen === item.id;
-    const cached = expanded ? AppView._transcriptLabels[item.id] : null;
-    return {
-      id: item.id,
-      label: cached
-        || ((typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
-          ? SessionTranscript.headerText(item, { expanded: false })
-          : PlatformI18n.t('changes:transcript.readSession')),
-      expanded,
-    };
-  },
-
-  // Expand/collapse + lazy load. Flips _transcriptOpen (the durable state)
-  // as well as the DOM, so the next repaint of the topic head paints the
-  // section in the same state instead of snapping it shut.
-  // The disclosure's `hidden` and `aria-expanded` were written in place
-  // here; both are model fields now (topic/model.ts), so this flips the
-  // durable state and repaints. The body's CONTENTS stay
-  // session-transcript.js's, which is why the load still runs by id.
-  toggleTranscript(id) {
-    const opening = AppView._transcriptOpen !== id;
-    AppView._transcriptOpen = opening ? id : null;
-    AppView._renderTopicHead();
-    if (opening) AppView._loadSessionTranscript(id);
-  },
-
-  /**
-   * The dev session page in its READ-ONLY form (#2605): the chat a session's
-   * owner published, for everybody who does not own the session.
-   *
-   * The Build door used to open a sheet under the change's discussion; it
-   * navigates to the session's own page now, and GET /api/sessions/:id is
-   * owner-scoped, so `renderDevChatTab` reaches this with no workspace to
-   * show. GET /api/sessions/:id/transcript is the separate, side-effect-free
-   * route that serves a published chat to a reader, and this is the page it
-   * renders on.
-   *
-   * Returns false when there is no published chat to show — a private or
-   * archived session, or a bad id — which is the genuine miss the caller
-   * bounces to the board for. So the fetch happens BEFORE anything is
-   * painted: a page that cannot be filled is never put on screen.
-   *
-   * The section keeps the topic page's markup — `[data-transcript-section]`,
-   * `[data-transcript-body]`, session-transcript.js's own `dc-*` classes —
-   * with one difference: no disclosure. A reader who pressed "Read the
-   * build" came for the chat, so the page IS the chat rather than a line to
-   * press. `#dev-section` is a legacy-owned host (see session-frame.tsx),
-   * which is why this writes markup into it directly.
-   */
-  async _renderSessionTranscriptPage(sessionId) {
-    const id = Number(sessionId);
-    if (!Number.isSafeInteger(id) || id <= 0) return false;
-    let data = AppView._transcripts[id];
-    if (!data) {
-      try {
-        const res = await fetch(`/api/sessions/${id}/transcript${AppView._demoQS()}`);
-        if (!res.ok) return false;
-        data = await res.json();
-      } catch {
-        return false;
-      }
-      if (!data || !data.session) return false;
-      AppView._transcripts[id] = data;
-    }
-    const content = AppView._devContainer();
-    if (!content) return false;
-    const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
-      ? SessionTranscript.headerText(data.session, { expanded: true })
-      : PlatformI18n.t('changes:transcript.pageTitle');
-    content.innerHTML = `
-      <div class="dev-session-read">
-        <div class="st-section" data-transcript-section="${id}">
-          <p class="dev-session-read-head">${escapeHtml(label)}<span class="st-readonly-tag">${PlatformI18n.htmlText('changes:transcript.readOnlyTag')}</span></p>
-          <div class="st-body" data-transcript-body="${id}"></div>
-        </div>
-      </div>`;
-    // Paints straight from the cache the fetch above filled — the loader
-    // owns the body's contents on every surface that shows a transcript.
-    AppView._loadSessionTranscript(id);
-    return true;
-  },
-
-  // Fetch (or repaint from cache) one session's sanitised transcript.
-  // Best-effort: a failure leaves a short note rather than breaking the
-  // page, and we re-resolve the slot after the await in case a repaint
-  // replaced it.
-  async _loadSessionTranscript(sessionId) {
-    if (!sessionId) return;
-    const paint = (data) => {
-      // Swap the collapsed label ("Read the dev chat (24 messages)") for the
-      // expanded one ("Dev chat by alice · 24 messages · read-only") now that
-      // the payload names the owner. It used to be written straight onto
-      // `[data-transcript-label]`; the head renders that text, so the label
-      // is cached here and the repaint below picks it up.
-      //
-      // THE REPAINT IS CONDITIONAL, and that is not an optimisation.
-      // `_renderTopicHead` calls this loader on every paint of an expanded
-      // transcript, so an unconditional repaint here closes a SYNCHRONOUS
-      // cycle: paint → render → load → (cached) paint → render → … The
-      // first pass survives because it awaits the fetch, which unwinds the
-      // stack; the pass after it finds the cache and recurses until the
-      // stack overflows. That is a hard error on every load of a shared
-      // session's page, where the transcript arrives already expanded.
-      //
-      // Same shape as the vote roster's re-entry (see `_loadVoteRoster`),
-      // and the same rule: a loader a renderer calls per paint must not
-      // unconditionally re-enter that renderer. Here the repaint exists
-      // solely to pick up a CHANGED label, so that is what gates it.
-      let labelChanged = false;
-      if (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText) {
-        const next = SessionTranscript.headerText(data.session, { expanded: true });
-        labelChanged = AppView._transcriptLabels[sessionId] !== next;
-        AppView._transcriptLabels[sessionId] = next;
-      }
-      if (labelChanged) AppView._renderTopicHead();
-      // The BODY stays session-transcript.js's — a controller host the head
-      // renders once, empty, and never looks inside. The publish above
-      // flushes synchronously, so the fresh host is already here.
-      const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-      if (!slot) return;
-      const body = (typeof SessionTranscript !== 'undefined' && SessionTranscript.renderHtml)
-        ? SessionTranscript.renderHtml(data)
-        : '';
-      slot.innerHTML = body;
-    };
-
-    const cached = AppView._transcripts[sessionId];
-    if (cached) { paint(cached); return; }
-
-    const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-    if (slot) slot.innerHTML = `<div class="st-truncated">${PlatformI18n.htmlText('changes:transcript.loading')}</div>`;
-    try {
-      const res = await fetch(`/api/sessions/${sessionId}/transcript${AppView._demoQS()}`);
-      if (!res.ok) {
-        const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-        if (after) {
-          after.innerHTML = `<div class="st-error">${res.status === 404
-            ? PlatformI18n.htmlText('changes:transcript.notShared')
-            : PlatformI18n.htmlText('changes:transcript.loadFailedHttp', { status: res.status })}</div>`;
-        }
-        return;
-      }
-      const data = await res.json();
-      AppView._transcripts[sessionId] = data;
-      paint(data);
-    } catch (err) {
-      const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
-      if (after) after.innerHTML = `<div class="st-error">${PlatformI18n.htmlText('changes:transcript.loadFailedWith', { error: err.message })}</div>`;
-    }
-  },
-
   // The proposal's plain-language summary (pr_summary_md), rendered at the
   // top of the proposal topic sub-view above the proposer/linked-issues/
   // roster details. Mirrors _issueBodyHtml: light markdown through the same
-  // DevChat.renderMarkdown (marked + DOMPurify) pipeline, same styled
+  // PlatformMarkdown.render (marked + DOMPurify) pipeline, same styled
   // container. Empty string when no summary was generated (legacy proposals,
   // or an LLM-unavailable turn) so nothing renders and the rest of the view
   // is unchanged.
   _proposalSummaryHtml(pr) {
     const md = pr && typeof pr.pr_summary_md === 'string' ? pr.pr_summary_md.trim() : '';
     if (!md) return '';
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return `<div class="dev-issue-body">${renderMd(md)}</div>`;
   },
@@ -18597,15 +17800,15 @@ const AppView = {
 
   // A change's summary as the hero reads it: `summaryHtml` (the lead) and
   // `summaryMore`, the rest as a disclosure model, or null when there is no
-  // rest. `html` is DevChat.renderMarkdown's output, sanitised where built.
+  // rest. `html` is PlatformMarkdown.render's output, sanitised where built.
   _changeSummaryView(item) {
     const { lead, more } = AppView._summaryParts(item);
     const summaryHtml = AppView._proposalSummaryHtml({ pr_summary_md: lead });
     if (!more) return { summaryHtml, summaryMore: null };
     const id = Number(item && item.id);
     const hasStableId = Number.isInteger(id) && id > 0;
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
+      ? (s) => PlatformMarkdown.render(s)
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return {
       summaryHtml,
@@ -18634,8 +17837,8 @@ const AppView = {
   // The disclosure as a MODEL. `topic/topic-head.tsx` draws it; the open
   // flag stays HERE rather than becoming component state, for the reason the
   // note above gives — a repaint must not collapse it — and because that is
-  // the same seam the before/after visuals and the transcript section use.
-  // `html` is `DevChat.renderMarkdown`'s output: another renderer's markup,
+  // the same seam the before/after visuals use.
+  // `html` is `PlatformMarkdown.render`'s output: another renderer's markup,
   // sanitised where it is built, rendered through a sink.
   _proposalBodyView(pr) {
     let md = pr && typeof pr.pr_body === 'string' ? pr.pr_body.trim() : '';
@@ -18656,12 +17859,12 @@ const AppView = {
     if (!md) return null;
     const id = Number(pr && pr.id);
     const hasStableId = Number.isInteger(id) && id > 0;
-    const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+    const renderMd = (typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render)
       // Proposal descriptions can carry the same reviewer evidence as issue
       // bodies (for example an annotated screenshot). Keep image rendering
       // opt-in at this trusted surface; renderMarkdown still permits only
       // HTTPS or same-origin absolute URLs and sanitizes the resulting HTML.
-      ? (s) => DevChat.renderMarkdown(s, { images: true })
+      ? (s) => PlatformMarkdown.render(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return {
       // A proposal with no stable id cannot have its open state remembered,
@@ -18731,11 +17934,11 @@ const AppView = {
       ? AppView.closesPillSpecs(pr)
       : AppView.issueChipSpecs(pr.linked_issues, { says: 'closes' });
 
-    // mine: the viewer authored this PR, so they own its dev session. Drives
-    // both "Open session" and the violet "yours" icon below.
+    // mine: the viewer authored this PR. Drives the violet "yours" icon
+    // below.
     const mine = !!(App.user && pr.user_id === App.user.id);
-    // #687: an imported PR has no platform-owned dev session — its code is
-    // maintained on GitHub by an external author.
+    // #687: an imported PR's code is maintained on GitHub by an external
+    // author.
     const imported = pr.source === 'imported';
     const canEditTitle = !!(noNav && !AppView.readOnly && mine && !imported
       && ['promoted', 'merging'].includes(pr.status));
@@ -18767,8 +17970,8 @@ const AppView = {
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
     // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
     // covers — someone else's proposal (the one thing a reader does short of
-    // voting on it) and the viewer's own IMPORTED proposal (which has no
-    // "Open session", so this is its only AI affordance, #1045). Whether a
+    // voting on it) and the viewer's own IMPORTED proposal (this is its
+    // only AI affordance, #1045). Whether a
     // row gets one at all is _showExplorePill's call — the one predicate
     // every render site shares. It stays a ⋯ row on a merged card, where the
     // action band belongs to kudos instead, and on the detail head, which
@@ -19525,17 +18728,6 @@ const AppView = {
         });
       }
     }
-    // Sessions are owner-scoped server-side, so this only renders for the
-    // proposer — and never for an imported PR, which has no in-app session.
-    if (st.mine && !st.imported) {
-      items.push({
-        label: PlatformI18n.t('changes:proposal.menu.openSession'),
-        sessionDoor: true,
-        icon: 'session',
-        title: PlatformI18n.t('changes:proposal.menu.openSessionTitle'),
-        act: () => AppView.openProposalSession(pr.id),
-      });
-    }
     if (st.mine && !ro && !isMerged && !isMerging && pr.status === 'promoted') {
       items.push({
         label: PlatformI18n.t('changes:proposal.menu.moveBack'),
@@ -19597,19 +18789,18 @@ const AppView = {
         },
       });
     }
-    // #313/#827: owners reach the Mayor via "Open session" on their own PR,
-    // so Explore is offered only where _showExplorePill says so — proposals
-    // the viewer does NOT own, plus their own IMPORTED ones, which have no
-    // session for "Open session" to open (#1045).
+    // #313/#827: Explore is offered only where _showExplorePill says so —
+    // proposals the viewer does NOT own, plus their own IMPORTED ones
+    // (#1045).
     // st.exploreOnFace — a live board card promotes it into its action band,
     // and the row would then be a duplicate of the button beside it.
     if (AppView._showExplorePill(pr) && !ro && !st.exploreOnFace) {
       items.push({
-        // B8: a coding agent, beside asking Homeroom bot.
         label: PlatformI18n.t('changes:proposal.menu.explore'),
+        askBot: true,
         icon: 'explore',
         title: AppView.EXPLORE_CHAT_TITLE,
-        act: () => AppView.exploreProposalInDevChat(pr.id, null),
+        act: () => AppView.askBotForChanges(pr.id, pr.session_title || pr.pr_title || null, pr.pr_number),
       });
     }
     if (!ro && !pr.staging_url && pr.staging_error) {
@@ -20460,10 +19651,10 @@ const AppView = {
   // The sentence that says who brings a conflicted proposal up to date, and
   // how. It depends on where the head lives, not on the state that asked:
   //
-  //   native     — the author's dev-chat has a "Sync with main" button, and
-  //                that is the way out;
+  //   native     — the change's page has a "Sync with main" button for its
+  //                author, and that is the way out;
   //   mirror     — an imported row whose head the PLATFORM wrote. Its author
-  //                has no dev-chat for it; the branch is revised where it was
+  //                has no such button for it; the branch is revised where it was
   //                written and submitted again as an update to this proposal.
   //                The platform retries the sync itself on the next attempt,
   //                so `retrying` is only said when no attempt has failed yet;
@@ -20611,7 +19802,7 @@ const AppView = {
 
   // #361: expanded merge-conflict detail. Lists the conflicting file paths
   // and when the snapshot was last checked, plus the standing guidance to
-  // run "Sync with main" from the session's dev-chat.
+  // run "Sync with main" from the change's page.
   //
   // #386: renders for the 'failed' state — an auto-resolve attempt actually
   // ran and could not fix the conflict — and (since the silent-merge-failure
@@ -22850,33 +22041,8 @@ const AppView = {
     }
   },
 
-  // "Create proposal" — proposals are PRs, and PRs come from dev
-  // sessions, so this opens a fresh session on the Sessions sub-tab
-  // with a one-line hint that promoting the session's PR creates the
-  // proposal.
-  // "Open session" on a proposal card — jump into the dev session
-  // behind the proposal (proposer only; sessions are owner-scoped).
-  //
-  // #3712: a change its owner started from an agent session is continued in
-  // that conversation (#2779), so this goes straight there. It used to open
-  // the dev session by id and leave the session page to decide, and that
-  // page only points onward: its composer is a strip saying to continue in
-  // the agent session. The address is PUSHED, so Back from the conversation
-  // returns to the page the door was pressed on.
-  openProposalSession(sessionId) {
-    if (!sessionId) return;
-    const agentSessionId = AppView._agentSessionDoorId(sessionId);
-    if (agentSessionId) {
-      window.location.hash = `#messages/agent/${agentSessionId}`;
-      return;
-    }
-    if (typeof App !== 'undefined' && App.switchTab) {
-      App.switchTab('dev', sessionId, 'sessions');
-    }
-  },
-
-  // Imported PRs enter the shared In-progress board without a worker or dev
-  // chat. Their owner explicitly crosses the review boundary here; the server
+  // Imported PRs enter the shared In-progress board without a worker. Their
+  // owner explicitly crosses the review boundary here; the server
   // re-reads GitHub's current head before changing the row to `promoted`.
   async promoteImportedSession(sessionId, btn) {
     if (!sessionId) return;
@@ -23047,26 +22213,6 @@ const AppView = {
   promptReopenIssue(issueNumber) {
     if (!AppView.appData) return;
     dialogIsland('reopenIssue')?.open(issueNumber);
-  },
-
-  // New work on this app. #2779: it starts in an unsent agent session
-  // focused on the app, the same door Improve's "New change" opens. It used
-  // to open the app's classic unsent-change screen (#2241), or, with
-  // `opts.flow`, create a classic session up front to record a web hand-off
-  // on it; classic sessions are no longer created.
-  //
-  // `opts.flow` ('claude-code' | 'codex') is the out-of-credits card's "Use
-  // Claude Code" / "Use Codex": the conversation opens with its "Build with"
-  // sheet on that agent's tab (frontend/src/features/agent-session/
-  // handoff.tsx), which is where an agent session hands its work to a web
-  // agent. Nothing is created until the user sends or hands off.
-  createProposal(opts) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const flow = (opts && opts.flow) || null;
-    const hint = { slug, entry: 'app' };
-    if (flow === 'claude-code' || flow === 'codex') hint.handoff = flow;
-    AppView._startAgentSession(hint);
   },
 
   // The "💬 N" thread badge is card/dev-card.tsx's (`Badge`, the `chat`
@@ -24048,20 +23194,10 @@ const AppView = {
 
   // ---- Open Issues section ------------------------------------------------
 
-  // _headlessRank (the auto-solve rank, #177/#227) used to live here. It
-  // ordered the retired List view's issues group — 'generating' first, then
-  // 'ready', then everything else. The Feed is pure recency and the Kanban
-  // board buckets by column rather than ranking within one, so nothing reads
-  // it any more. The auto-solve STATE is still rendered on every issue row.
-
-
-
   // The Open Issues list exactly as rendered: env-var-proposal twins
   // filtered out (#131 — those rows render in the dedicated Environment
   // variables section). Ordering is owned by _feedItems(), which is pure
-  // recency now — the auto-solve rank it used to fold in ahead of recency
-  // belongs to the Kanban comparator alone. The filter runs on a copy, so
-  // _ghIssues itself keeps the
+  // recency. The filter runs on a copy, so _ghIssues itself keeps the
   // canonical fetch order (GitHub updated-desc). The feed renderer and
   // the open-card index lookup must both use this helper so paging
   // counts match what's on screen.
@@ -24101,19 +23237,7 @@ const AppView = {
     }
     if (issue.title_fallback) meta.push({ t: 'text', s: PlatformI18n.t('changes:issue.card.autoTitlePending') });
 
-    // ── Icon ──
-    // #250: mirrors the auto-solve state so proposal issues read at a
-    // glance — pulsing sky document while generating, steady sky document
-    // once ready, violet document-with-pencil when the viewer already has a
-    // session cloned off it, plain amber issue chip otherwise.
-    const h = issue.headless;
-    const icon = h && h.status === 'generating'
-      ? AppView._devCardIcon('issueProposal', { pulse: true, title: PlatformI18n.t('changes:issue.card.icon.generating') })
-      : h && h.status === 'ready'
-        ? (h.mySessionId
-            ? AppView._devCardIcon('issueProposalMine', { title: PlatformI18n.t('changes:issue.card.icon.mine') })
-            : AppView._devCardIcon('issueProposal', { title: PlatformI18n.t('changes:issue.card.icon.ready') }))
-        : AppView._devCardIcon('issue');
+    const icon = AppView._devCardIcon('issue');
 
     // "Propose to close" — opens the reason modal and files a close_issue
     // governance proposal. While one is already open for this issue (an open
@@ -24175,14 +23299,6 @@ const AppView = {
       const claim = noNav ? null : AppView._issueProgressActionSpec(issue);
       if (claim) actions.push(claim);
     }
-    // A ready auto-solve run with a live preview gets the same icon
-    // affordance every other previewable thing on the board gets.
-    const hasRunPreview = !!(h && h.status === 'ready' && h.stagingUrl
-      && (h.outcome === 'code' || h.outcome === 'spec_code'));
-    const preview = hasRunPreview
-      ? AppView._cardPreviewSpec({ staging_url: h.stagingUrl },
-        { kind: 'issue-run', sessionId: h.sessionId })
-      : null;
     const menu = AppView._issueMenuItems(issue, { noNav, progressOnFace: !noNav && !AppView.readOnly && !closed });
 
     const extra = [];
@@ -24260,13 +23376,11 @@ const AppView = {
       badges,
       chatCount: issue.chatCount,
       actions,
-      // Dense: the eye is pinned to the bottom of the rail. Detail head: it
-      // stays in the (uncapped, chevron-less) action list.
-      actionPreview: noNav ? preview : null,
+      actionPreview: null,
       rail: {
         menuKey: AppView._registerCardMenu(`issue:${n}`, menu),
         chevron: !noNav,
-        preview: noNav ? null : preview,
+        preview: null,
       },
       extra,
       dense: !noNav,
@@ -24276,40 +23390,21 @@ const AppView = {
 
   // ── The issue card's ONE primary action ──────────────────────────────
   //
-  // An issue card used to carry up to SEVEN pills, including two competing
-  // "Generate proposal" buttons at once (#155's rerun affordance sitting
-  // beside the clone affordance on a question outcome). They fold into one
-  // state machine, which is also what makes the card's action budget
+  // One state machine, which is what makes the card's action budget
   // achievable:
   //
-  //   no run, no session of mine   → Create proposal
-  //   no run, I have a session     → Create new proposal
-  //   run generating               → Generating proposal…      (disabled)
-  //   run ready, I cloned it       → Go to session
-  //   run ready, outcome question  → Answer & regenerate       (ONE button.
-  //                                  YOUR run: opens the run's own session,
-  //                                  which is where it asked. Somebody
-  //                                  else's: that transcript is owner-scoped
-  //                                  and unopenable, so it falls back to the
-  //                                  issue discussion — board only, since
-  //                                  the head already IS that discussion)
-  //   run ready, other outcomes    → Review spec / Review solution /
-  //                                  Changes ready — review & start session
+  //   the viewer's plan holds the bot  → Let Homeroom bot build it
+  //   Homeroom bot is on it            → See the plan / See progress, or a
+  //                                      disabled note of what it is doing
+  //   the bot builds here (_botDoor)   → Answer its question / Reply to it,
+  //                                      else Ask Homeroom bot
+  //   the bot does not build here      → Work on this with Homeroom bot
   //
-  // Start work opens a session with an agent. #2376: automated sessions
-  // ("Start AI build") are switched off for now, so the choice between the
-  // two is gone and Start work goes straight to the interactive one.
-  // `confirmAutoSession` and the server route stay, unreferenced from here,
-  // so bringing the option back is putting this sheet back; runs that
-  // already exist keep their Generating / Review / Go to session actions.
-  chooseIssueWork(number) {
-    if (AppView.readOnly) return;
-    AppView.createPrForIssue(number);
-  },
+  // Neither of the last two is offered while a change for the request
+  // already waits for approval.
   _issuePrimaryActionSpec(issue, opts) {
     const noNav = !!(opts && opts.noNav);
     const n = issue.number;
-    const h = issue.headless;
     // 1 Nov 2026: their own private thread about it holds Homeroom bot,
     // which waits for their plan (services/private-threads.js): letting it
     // go ahead is the one thing to do here.
@@ -24358,76 +23453,7 @@ const AppView = {
           : PlatformI18n.t('changes:issue.action.botBuildingTitle'),
       };
     }
-    if (h && h.status === 'generating') {
-      return {
-        key: 'primary', cls: 'gc-vote-btn', disabled: true, label: PlatformI18n.t('changes:issue.action.generating'),
-        title: h.username
-          ? PlatformI18n.t('changes:issue.action.generatingTitleBy', { username: h.username })
-          : PlatformI18n.t('changes:issue.action.generatingTitle'),
-      };
-    }
-    if (h && h.status === 'ready') {
-      if (h.mySessionId) {
-        return {
-          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.goToSession'),
-          title: PlatformI18n.t('changes:issue.action.goToSessionTitle'),
-          act: { fn: 'goToAutoSessionClone', args: [h.mySessionId] },
-        };
-      }
-      if (h.outcome === 'question') {
-        // Where the question actually IS decides where this button goes.
-        //
-        // A headless run does not post its questions to the issue: it drafts
-        // its spec and asks in ITS OWN transcript, then waits (#1372's run
-        // ends "reply with the URL(s) ... then tell me to build the spec").
-        // So for the person who started the run, the destination that lets
-        // them do what the label promises is that session — the spec viewer
-        // and the reply box are both there, and answering in it is what
-        // makes the agent regenerate.
-        //
-        // This button used to send everyone to the issue's discussion
-        // instead. On the board that at least moved; on the topic head the
-        // destination WAS the current view, so the click re-rendered what
-        // was already on screen and the button read as broken.
-        if (h.mine && h.sessionId) {
-          return {
-            key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.answer'),
-            title: PlatformI18n.t('changes:issue.action.answerMineTitle'),
-            act: { fn: 'openAutoRunSession', args: [h.sessionId] },
-          };
-        }
-        // Somebody else's run. Dev chats are owner-scoped by authorization,
-        // not just by missing UI (see /api/apps/:slug/shared-sessions), so
-        // its transcript is genuinely not navigable here and sending them
-        // there would only swap one dead button for another. The issue's
-        // discussion is the one place they can contribute — a real
-        // navigation from the board, and nothing at all from the head,
-        // which already IS that discussion.
-        if (noNav) return { key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.startWork'), act: { fn: 'chooseIssueWork', args: [n] } };
-        return {
-          key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.answer'),
-          title: PlatformI18n.t('changes:issue.action.answerOthersTitle'),
-          act: { fn: 'openTopic', args: ['issue', n] },
-        };
-      }
-      // What the run did is part of the tooltip's sentence: one whole
-      // message per outcome.
-      const runTitle = h.outcome === 'spec' ? PlatformI18n.t('changes:issue.action.runFinished.spec')
-        : h.outcome === 'code' ? PlatformI18n.t('changes:issue.action.runFinished.code')
-          : h.outcome === 'spec_code' ? PlatformI18n.t('changes:issue.action.runFinished.specCode')
-            : PlatformI18n.t('changes:issue.action.runFinished.other');
-      // #2779: a finished run used to be cloned into a classic dev chat of
-      // the viewer's ("Review & start session"). Classic sessions are no
-      // longer created, so the button starts an agent session on this
-      // request, as Start work does, and the title says what the run did.
-      return {
-        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.startWork'),
-        title: runTitle,
-        act: { fn: 'startFromAutoSession', args: [h.sessionId, n] },
-      };
-    }
-    // B8: where Homeroom bot builds, asking it is the card's one act, and
-    // building it yourself is the first row of its ≡ (_issueMenuItems).
+    // B8: where Homeroom bot builds, asking it is the card's one act.
     const door = AppView._botDoor();
     if (door) {
       // #4530: not while it is waiting on an answer here. Asking read the
@@ -24453,28 +23479,17 @@ const AppView = {
         act: { fn: 'askBotToBuild', args: [n] },
       };
     }
-    // #287: strictly per-viewer, and reverts to "Create proposal" once the
-    // session is archived (the server filters archived rows out of
-    // myPrSessionId).
-    //
-    // A change for this request already waiting for approval: no Build it
-    // now beside it. The "Waiting for approval" chip says where it stands.
-    if (!issue.myPrSessionId && AppView._issueAwaitingApproval(issue)) return null;
-    return issue.myPrSessionId
-      ? {
-        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.startMore'),
-        title: PlatformI18n.t('changes:issue.action.startMoreTitle'),
-        act: { fn: 'chooseIssueWork', args: [n] },
-      }
-      : {
-        // 1 Nov 2026: working on it with Homeroom bot, in a thread only they
-        // can see, where Build it now was. Building it in an agent session
-        // is a row of the ⋯ now (_issueMenuItems, and the request page's
-        // own beside Build it with your own Claude Code).
-        key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.workWithBot'),
-        title: PlatformI18n.t('changes:issue.action.workWithBotTitle'),
-        act: { fn: 'workOnIssueWithBot', args: [n] },
-      };
+    // A change for this request already waiting for approval: nothing to
+    // start beside it. The "Waiting for approval" chip says where it stands.
+    if (AppView._issueAwaitingApproval(issue)) return null;
+    // 1 Nov 2026: working on it with Homeroom bot, in a thread only they
+    // can see. The request's page offers building it with their own agent
+    // beside it (topic/own-agent-link.tsx).
+    return {
+      key: 'primary', cls: 'gc-vote-btn', label: PlatformI18n.t('changes:issue.action.workWithBot'),
+      title: PlatformI18n.t('changes:issue.action.workWithBotTitle'),
+      act: { fn: 'workOnIssueWithBot', args: [n] },
+    };
   },
 
   /**
@@ -24487,12 +23502,6 @@ const AppView = {
     if (!issue || !issue.botHold || issue.state === 'closed' || AppView.readOnly) return false;
     const bot = AppView._botOn(issue);
     return !bot || (bot.what === 'queued' && !bot.plan && !bot.held);
-  },
-
-  /** Whether the card's one action is "Work on this with Homeroom bot" (its ⋯ then offers the agent session). */
-  _worksWithBot(issue, opts) {
-    const primary = issue && !AppView.readOnly ? AppView._issuePrimaryActionSpec(issue, opts) : null;
-    return !!(primary && primary.act && primary.act.fn === 'workOnIssueWithBot');
   },
 
   /**
@@ -24881,32 +23890,12 @@ const AppView = {
   _issueMenuItems(issue, state) {
     const st = state || {};
     const n = issue.number;
-    const h = issue.headless;
     const meta = AppView._ghIssuesMeta || {};
     const items = [];
 
     // (#2365) Nothing on a closed issue is actionable work; sharing it and
     // opening it on GitHub still are.
     if (!AppView.readOnly && issue.state !== 'closed') {
-      // A finished run keeps its Review/Continue primary. New work remains
-      // available through the same two-choice launcher, never a second AI CTA.
-      // Not while the Homeroom bot is building it: that would build it twice.
-      if (h?.status === 'ready' && !h.mySessionId && !AppView._botOn(issue)) items.push({
-        label: PlatformI18n.t('changes:issue.menu.startMore'), work: 'more', icon: 'generate', act: () => AppView.chooseIssueWork(n),
-      });
-      // B8: with Homeroom bot's button on the face, building it yourself is
-      // the ≡'s first row, the same launcher; left out while the bot is on
-      // it, as Start work is, so it is never built twice.
-      else if (AppView._botDoor() && !AppView._botOn(issue) && !AppView._issueAwaitingApproval(issue)) items.unshift({
-        label: PlatformI18n.t('changes:issue.menu.buildNow'), work: 'build', icon: 'generate', act: () => AppView.chooseIssueWork(n),
-      });
-      // 1 Nov 2026: where its face is Work on this with Homeroom bot, Build
-      // it now is the ⋯'s first row, as an agent session. The request page
-      // lists it itself, beside Build it with your own Claude Code
-      // (topic/request-head.tsx), so not from here.
-      else if (!st.noNav && AppView._worksWithBot(issue, { noNav: false })) items.unshift({
-        label: PlatformI18n.t('changes:issue.menu.buildInSession'), work: 'build', icon: 'generate', act: () => AppView.chooseIssueWork(n),
-      });
       // "Pledge kudos" disables once the viewer has an open bounty here or
       // has spent their shared weekly allowance.
       // Not while kudos is parked (#5249, see _bountiesOffered).
@@ -25116,8 +24105,6 @@ const AppView = {
     if (AppView._topicProposal && Number(AppView._topicProposal.id) === id) {
       rows.push(AppView._topicProposal);
     }
-    if (typeof DevChat !== 'undefined' && DevChat.currentSession
-      && Number(DevChat.currentSession.id) === id) rows.push(DevChat.currentSession);
 
     for (const row of new Set(rows)) {
       row.session_title = title;
@@ -25363,7 +24350,7 @@ const AppView = {
   // Same green check icon as merged PRs so the column reads uniformly, but
   // the meta line says "Issue close" where a code proposal shows its PR
   // number, and there are deliberately NO code-proposal actions (Undo,
-  // kudos, Explore in dev chat). The priority/assignee/category chips DO
+  // kudos, Explore). The priority/assignee/category chips DO
   // stay: moving a task to Done settles the close vote, not its metadata —
   // /merged attaches the closed issue's own tally, and the chips keep
   // targeting ('issue', issueNumber) so collaborators can still correct
@@ -25585,381 +24572,6 @@ const AppView = {
       PlatformUI.toast(PlatformI18n.t('changes:issue.claim.clearFailedWith', { error: err.message }));
     }
   },
-
-  // Start work / Start more work on a request (and Feedback's "Try a fix
-  // yourself", which comes through here). #2779: the work starts in an agent
-  // session, a conversation with the Mayor focused on this request; it links
-  // and claims the request when it starts the change (the user confirms that
-  // on a card). The title is for the screen: the unsent conversation names
-  // the request and offers its first message in the box
-  // (frontend/src/features/agent-session/request-seed.ts). It used to create
-  // a classic dev chat linked to the issue and seed its draft (#287, #609);
-  // classic sessions are no longer created.
-  createPrForIssue(issueNumber) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-    const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
-    const hint = { slug, issueNumber, entry: 'issue' };
-    if (issue && issue.title) hint.issueTitle = String(issue.title);
-    AppView._startAgentSession(hint);
-  },
-
-  // ---- Headless auto sessions (#155) --------------------------------------
-
-  // "Generate proposal" — a short confirmation, with model selection behind
-  // a second step, before spinning up a headless AI session on this issue.
-  // The session is billed to the clicking user but isn't attached to their
-  // dev chat.
-  async confirmAutoSession(issueNumber) {
-    const slug = AppView.appData && AppView.appData.slug;
-    if (!slug) return;
-
-    // Follow the user's saved session provider. Claude auto-runs keep their
-    // existing chat-model choice; OpenRouter auto-runs choose from the same
-    // key-visible catalog as an ordinary OpenRouter session and never show
-    // Claude models or Claude-credit copy.
-    let models = [];
-    let defaultModel = '';
-    let provider = 'claude';
-    let reasoningEffort = null;
-    let prefs = {};
-    try {
-      if (typeof DevChat === 'undefined' || !DevChat._prepareDefaultCodingAgentForBuild) {
-        throw new Error(PlatformI18n.t('changes:issue.autoRun.setupLoading'));
-      }
-      // This click is the first real work request, so it is also the safe
-      // point to create an eligible user's included OpenRouter key. The
-      // helper preserves an explicit Claude default and throws the exact
-      // provisioning/configuration error instead of silently choosing it.
-      prefs = await DevChat._prepareDefaultCodingAgentForBuild();
-      if (prefs.defaultBackend === 'codex_openrouter') {
-        provider = 'openrouter';
-        const catalogRes = await fetch('/api/me/coding-agent/models?backend=codex_openrouter', {
-          credentials: 'same-origin',
-          cache: 'no-store',
-        });
-        const catalog = await catalogRes.json().catch(() => ({}));
-        if (!catalogRes.ok) {
-          throw new Error(catalog.error || PlatformI18n.t('changes:issue.autoRun.openRouterModelsFailed'));
-        }
-        models = Array.isArray(catalog.models) ? catalog.models : [];
-        const saved = prefs.backends && prefs.backends.codex_openrouter;
-        reasoningEffort = (saved && saved.reasoningEffort) || null;
-        defaultModel = (saved && models.some((m) => m.id === saved.model) && saved.model)
-          || catalog.recommendedModelId
-          || (models[0] && models[0].id)
-          || '';
-      } else {
-        const res = await fetch('/api/models');
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || PlatformI18n.t('changes:issue.autoRun.modelListFailed'));
-        models = Array.isArray(data.models) ? data.models : [];
-        defaultModel = data.default || (models[0] && models[0].id) || '';
-      }
-    } catch (err) {
-      PlatformUI.toast(err.message || PlatformI18n.t('changes:issue.autoRun.modelListRetry'));
-      return;
-    }
-    if (!models.length || !defaultModel) {
-      PlatformUI.toast(provider === 'openrouter'
-        ? PlatformI18n.t('changes:issue.autoRun.noOpenRouterModels')
-        : PlatformI18n.t('changes:issue.autoRun.noModels'));
-      return;
-    }
-    const stored = provider === 'claude' ? localStorage.getItem('usernode:dc:model') : null;
-    const preselect = models.some((m) => m.id === stored) ? stored : defaultModel;
-
-    const choice = await AppView._showAutoSessionModal(issueNumber, models, preselect, {
-      provider,
-      openrouterCredentialSource: prefs.openrouterCredentialSource || null,
-    });
-    if (!choice) return;
-
-    try {
-      const resp = await fetch(`/api/apps/${slug}/issues/${issueNumber}/headless-session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(provider === 'openrouter'
-          ? { backend: 'codex_openrouter', model: choice, reasoningEffort }
-          : { model: choice }),
-      });
-      const data = await resp.json().catch(() => ({}));
-      if (!resp.ok) {
-        // Out of daily credits is not an ordinary error — it has three real
-        // ways forward (own API key, a coding tool on your computer, a
-        // connected Claude.ai / ChatGPT subscription). Show the same card
-        // the dev chat shows instead of a one-line toast the user can only
-        // read and dismiss. Every other failure keeps the toast.
-        if (data.code === 'budget_exceeded') {
-          if (provider === 'openrouter') {
-            PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.autoRun.openRouterStartFailed'));
-            return;
-          }
-          AppView._showCreditOptionsModal(data.error, {
-            verificationRequired: !!data.verificationRequired,
-          });
-          return;
-        }
-        PlatformUI.toast(PlatformI18n.errorText(data) || PlatformI18n.t('changes:issue.autoRun.startFailedHttp', { status: resp.status }));
-        return;
-      }
-      // Deliberate flag/beta policy fallbacks are still reported. Credential,
-      // provisioning, and catalog failures have already stopped above, so a
-      // deployment problem can no longer arrive here disguised as Claude.
-      AppView._reportVenueFallback(data.agentFallbackReason);
-      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
-      if (issue) issue.headless = { sessionId: data.session.id, status: 'generating' };
-      AppView._repaintCards();
-      // #1038: no poller to arm. The server broadcasts this run's state
-      // changes (services/session-state.js) and _onSessionStateEvent patches
-      // the cached issue row, so the card advances to its outcome label on
-      // its own — on every open board, not just this one.
-    } catch (err) {
-      PlatformUI.toast(PlatformI18n.t('changes:issue.autoRun.startFailedWith', { error: err.message }));
-    }
-  },
-
-  // Out-of-credits popup for the Generate-proposal path. Same scrim/card
-  // chrome as _showAutoSessionModal below; the body is the shared card from
-  // public/js/credit-options.js, so the copy and the three Settings
-  // destinations are identical to the dev-chat card and the red banner.
-  // Choosing a route is a hash navigation, which unmounts this screen —
-  // so the modal only has to handle explicit dismissal.
-  _showCreditOptionsModal(errorText, billingState) {
-    const existing = document.getElementById('credit-options-modal');
-    if (existing) existing.remove();
-    if (!window.CreditOptions) {
-      PlatformUI.toast(errorText || PlatformI18n.t('changes:issue.autoRun.outOfCredits'));
-      return;
-    }
-    const react = AppView._reactDevBoard();
-    if (!react) return;
-    const root = document.createElement('div');
-    root.id = 'credit-options-modal';
-    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
-    const state = {
-      error: errorText || '',
-      hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
-      // The headless route refuses on the user's own allowance the same way
-      // the chat does; the shared-budget wording is reachable through the
-      // budget meter, which this modal doesn't read.
-      globalOut: false,
-      verificationRequired: !!(billingState && billingState.verificationRequired),
-      // #1049: whether to lead with the Claude Code / Codex hand-offs. From
-      // /api/auth/me, so the card offers only what this deployment supports.
-      externalFlowsAvailable: !!(typeof App !== 'undefined' && App.user
-        && App.user.externalFlowsAvailable),
-      // #1281: the session-CLI bridge is opt-in, so it only appears in the
-      // card's "Are you a developer?" half for a user who turned it on.
-      sessionBridgeEnabled: !!(typeof App !== 'undefined' && App.user
-        && App.user.sessionBridgeEnabled),
-    };
-    const close = () => {
-      AppView._creditsModalClose = null;
-      react.unmount(root);
-      root.remove();
-      document.removeEventListener('keydown', onKey);
-    };
-    // Published so `_dismissDevModals` can close this the same way Escape
-    // does — listener removal included.
-    AppView._creditsModalClose = close;
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
-    root.addEventListener('click', (e) => {
-      if (e.target === root) close();
-      if (e.target.closest('[data-credits-close]')) close();
-    });
-    document.addEventListener('keydown', onKey);
-    document.body.appendChild(root);
-    // The card is `features/dev-board/modals/credit-options-modal.tsx`; the
-    // BODY inside it is still CreditOptions' own markup, and `wire` binds
-    // below it on the next line — which is why the store flushes
-    // synchronously.
-    react.mountCreditOptionsModal(root, { cardHtml: CreditOptions.cardHtml(state) });
-    // #1049: "Use Claude Code" / "Use Codex" start the guided walkthrough in
-    // a new session rather than dropping the user in Settings to work out
-    // what to do next. Every other route is still a hash navigation, which
-    // unmounts this screen on its own.
-    CreditOptions.wire(root, {
-      onFlow: (flow) => {
-        close();
-        AppView.createProposal({ flow });
-      },
-    });
-  },
-
-  // "Your default wasn't available, so this is building somewhere else."
-  //
-  // One sentence, from the shared list, on whichever creation route the
-  // server stamped a reason onto. Silent when there is nothing to report —
-  // a session that got the venue it asked for should say nothing at all.
-  _reportVenueFallback(reason) {
-    if (!reason || !window.BuildVenues) return;
-    const note = BuildVenues.fallbackNote(reason);
-    if (note) PlatformUI.toast(note);
-  },
-
-  // Singleton confirm popup for Generate proposal. Its first step is a short
-  // summary; the full model catalog stays behind “Change model”. Resolves to
-  // the chosen model id, or null on cancel/backdrop/Esc.
-  _showAutoSessionModal(issueNumber, models, preselect, modalOptions = {}) {
-    let root = document.getElementById('auto-session-modal');
-    if (root) root.remove();
-    const react = AppView._reactDevBoard();
-    if (!react) return Promise.resolve(null);
-    root = document.createElement('div');
-    root.id = 'auto-session-modal';
-    root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
-    const openRouter = modalOptions.provider === 'openrouter';
-    // One whole message per case: the cost tier alone, and the cost tier of
-    // a recommended model.
-    const costLabels = {
-      free: { alone: 'changes:issue.autoRun.model.free', recommended: 'changes:issue.autoRun.model.recommendedFree' },
-      low: { alone: 'changes:issue.autoRun.model.low', recommended: 'changes:issue.autoRun.model.recommendedLow' },
-      medium: { alone: 'changes:issue.autoRun.model.medium', recommended: 'changes:issue.autoRun.model.recommendedMedium' },
-      high: { alone: 'changes:issue.autoRun.model.high', recommended: 'changes:issue.autoRun.model.recommendedHigh' },
-    };
-    const options = models.map((m) => {
-      const name = m.name || m.label || m.id;
-      let summary;
-      if (openRouter) {
-        const cost = Object.prototype.hasOwnProperty.call(costLabels, m.costTier) ? costLabels[m.costTier] : null;
-        if (cost) summary = PlatformI18n.t(m.isRecommended ? cost.recommended : cost.alone);
-        else summary = m.isRecommended ? PlatformI18n.t('changes:issue.autoRun.model.recommended') : PlatformI18n.t('changes:issue.autoRun.model.openRouter');
-      } else {
-        summary = (m.changeSize && m.changeSize.short) || PlatformI18n.t('changes:issue.autoRun.model.available');
-      }
-      return {
-        id: m.id,
-        name,
-        summary,
-        searchText: [name, m.id, m.provider, m.canonicalSlug].filter(Boolean).join(' '),
-        isRecommended: m.isRecommended === true,
-      };
-    });
-    const billingNote = openRouter
-      ? (modalOptions.openrouterCredentialSource === 'usernode_managed'
-        ? PlatformI18n.t('changes:issue.autoRun.billing.included')
-        : PlatformI18n.t('changes:issue.autoRun.billing.openRouter'))
-      : PlatformI18n.t('changes:issue.autoRun.billing.homeroom');
-
-    document.body.appendChild(root);
-    react.mountAutoSessionModal(root, {
-      issueNumber,
-      intro: PlatformI18n.t('changes:issue.autoRun.intro'),
-      billingNote,
-      options,
-      preselect: preselect || (options[0] && options[0].id) || '',
-      openRouter,
-      // A managed/company key inherits the platform account policy. Only a
-      // personal key needs a reminder that its key-visible catalog follows
-      // settings controlled in the user's own OpenRouter account.
-      personalOpenRouterKey: openRouter
-        && modalOptions.openrouterCredentialSource === 'personal',
-    });
-
-    return new Promise((resolve) => {
-      let settled = false;
-      const cleanup = (result) => {
-        if (settled) return;
-        settled = true;
-        AppView._autoSessionCleanup = null;
-        document.removeEventListener('keydown', onKey, true);
-        react.unmount(root);
-        root.remove();
-        resolve(result);
-      };
-      const onKey = (e) => {
-        if (e.key === 'Escape') { e.preventDefault(); cleanup(null); }
-      };
-      // The card's two buttons dispatch by NAME (the same shape the cards
-      // use), so the resolver has to be reachable from outside this closure.
-      AppView._autoSessionCleanup = cleanup;
-      root.addEventListener('click', (e) => {
-        if (e.target === root || e.target.dataset.modalBackdrop !== undefined) cleanup(null);
-      });
-      document.addEventListener('keydown', onKey, true);
-    });
-  },
-
-  /** The Generate-proposal dialog's two outcomes, called from its card. */
-  _autoSessionCleanup: null,
-  _autoSessionCancel() {
-    if (AppView._autoSessionCleanup) AppView._autoSessionCleanup(null);
-  },
-  _autoSessionConfirm(modelId) {
-    if (AppView._autoSessionCleanup) AppView._autoSessionCleanup(modelId || null);
-  },
-
-  // "Start session from proposal" — a finished auto-solve run on a request.
-  // It used to clone the run (chat history, spec, branch, CC memory) into a
-  // classic dev chat owned by the clicking user (POST
-  // /api/sessions/:id/clone-headless). Classic sessions are no longer
-  // created (#2779), so it starts an agent session on the run's request
-  // instead, exactly as Start work does; the run itself stays on the request.
-  //
-  // The card passes the request's number, because the request it was drawn
-  // from need not be in the board's cache (the topic head's is its own).
-  startFromAutoSession(headlessSessionId, issueNumber) {
-    const number = Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber
-      : ((AppView._ghIssues || []).find((i) => i.headless && i.headless.sessionId === headlessSessionId) || {}).number;
-    if (number) {
-      AppView.createPrForIssue(number);
-      return;
-    }
-    const slug = AppView.appData && AppView.appData.slug;
-    if (slug) AppView._startAgentSession({ slug, entry: 'app' });
-  },
-
-  // #172: "Go to session" — the viewer already cloned this auto session,
-  // so navigate to their existing derived session instead of cloning
-  // again. No DevChat.sessions.unshift needed: the switchTab path reloads
-  // the session list itself before opening the session.
-  async goToAutoSessionClone(sessionId) {
-    if (typeof DevChat === 'undefined') return;
-    if (typeof App !== 'undefined' && App.switchTab) {
-      await App.switchTab('dev', sessionId, 'sessions');
-    }
-  },
-
-  // "Answer & regenerate" — open the headless auto-run's OWN session, where
-  // it drafted its spec and asked its question. Only ever wired for a run
-  // the viewer started: /api/sessions/:id is owner-scoped, and openSession
-  // returns silently on a non-ok response, so pointing anyone else here
-  // would produce exactly the dead button this replaced. Same navigation as
-  // goToAutoSessionClone — the switchTab path loads the session itself, so
-  // it does not matter that headless rows are excluded from the session
-  // LIST (/api/sessions filters is_headless = FALSE); openSession fetches
-  // /api/sessions/:id directly and resumes the row if it is paused, which a
-  // finished run always is.
-  async openAutoRunSession(sessionId) {
-    if (typeof DevChat === 'undefined') return;
-    if (typeof App !== 'undefined' && App.switchTab) {
-      await App.switchTab('dev', sessionId, 'sessions');
-    }
-  },
-
-  // #287: reopen the viewer's existing proposal dev chat for an issue. No
-  // longer wired to the start-work button (which now always creates a new
-  // proposal via createPrForIssue — see _renderIssueRow); retained for the
-  // deferred "keep both buttons" variant that would re-add a one-tap reopen.
-  // Same navigation as goToAutoSessionClone; the switchTab path reloads the
-  // session list before opening the session.
-  async openIssuePrSession(sessionId) {
-    if (typeof DevChat === 'undefined') return;
-    if (typeof App !== 'undefined' && App.switchTab) {
-      await App.switchTab('dev', sessionId, 'sessions');
-    }
-  },
-
-  // #1038: the 8s `_syncHeadlessPolling` timer that used to live here is
-  // gone. It re-pulled the whole GitHub-issues payload every 8 seconds just
-  // to notice a generating auto-run had finished — while the server had
-  // been broadcasting exactly that transition all along (the
-  // `headless_update` session_event) with no client listening. The board
-  // now flips the card from the pushed `session_state` event:
-  // _onSessionStateEvent patches the cached issue row's `headless` field
-  // (same field-scoped merge the poller did, so optimistic bounty edits
-  // survive) and the coalesced repaint follows.
 
   // Core PR voting controls (Preview / Yes / No / Admin-merge) as an HTML
   // string. Shared by the vote panel rows and the inline buttons on
@@ -28264,8 +26876,7 @@ const AppView = {
   // { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
   // (one group per captured route), or the legacy flat form
   // { before, after, capturedPath } which is normalized to a single group.
-  // Shared by the vote-panel PR rows here and the dev-chat staging card
-  // (which calls through window.AppView). Webm plays as a silent loop with
+  // Webm plays as a silent loop with
   // the PNG as poster; PNG-only sets render a plain image. Clicking a tile
   // opens an in-app side-by-side comparison overlay (openVisualComparison)
   // rather than the raw asset in a new tab (#353) — each tile carries the
@@ -28553,18 +27164,14 @@ const AppView = {
   // ── "In progress" status on issue cards ──────────────────────────────
   //
   // An issue is in progress while ANY live signal exists: a live linked
-  // session or manual claim (issue.in_progress, from /github-issues) or a
-  // live headless auto-solve run (issue.headless generating/ready — kept
-  // as a separate field so the 8s headless poller's field-scoped merge
-  // stays correct; this predicate ORs the two). Shared by the chip
-  // renderer below and the kanban's In-progress-column routing. The
+  // session or manual claim (issue.in_progress, from /github-issues). Shared
+  // by the chip renderer below and the kanban's In-progress-column routing. The
   // Homeroom bot reading or building the request (its standing, _botOn: the
   // bot is never `in_progress`) is live work too, so its card is underway
   // rather than offered to whoever passes.
   _issueInProgress(issue) {
     if (!issue) return false;
-    const h = issue.headless;
-    return !!(issue.in_progress || AppView._botOn(issue) || (h && (h.status === 'generating' || h.status === 'ready')));
+    return !!(issue.in_progress || AppView._botOn(issue));
   },
 
   // #1112: mirrors IN_PROGRESS_PAUSED_WINDOW_DAYS / ISSUE_CLAIM_TTL_DAYS in
@@ -28584,15 +27191,13 @@ const AppView = {
 
   // ── #1112: the one work state an issue is actually in ────────────────
   //
-  // A single "In progress" chip used to cover seven unrelated situations —
-  // a proposal waiting on reviewers, an agent mid-turn, an auto-solve run,
-  // a session somebody paused days ago, a run waiting on an answer, a
-  // finished draft, and a bare manual claim. All seven read identically, so
-  // the chip told a reader nothing they could act on. This resolves exactly
-  // ONE state, first match wins, in the order below:
+  // A single "In progress" chip used to cover unrelated situations — a
+  // proposal waiting on reviewers, an agent mid-turn, a session somebody
+  // paused days ago, and a bare manual claim. All of them read identically,
+  // so the chip told a reader nothing they could act on. This resolves
+  // exactly ONE state, first match wins, in the order below:
   //
-  //   in_review > working > bot > auto_solving > paused > answer_needed
-  //             > draft_ready > claimed
+  //   in_review > working > bot > paused > claimed
   //
   // `bot` is the Homeroom bot reading or building the request (_botOn, read
   // off its standing). Its sessions are never `in_progress`, so before this
@@ -28607,12 +27212,9 @@ const AppView = {
   _issueWorkState(issue) {
     if (!issue) return null;
     const ip = issue.in_progress || null;
-    const h = issue.headless || null;
-    const hStatus = h ? h.status : null;
-    const headlessLive = hStatus === 'generating' || hStatus === 'ready';
     // 11 Nov 2026: Homeroom bot's work, from the request's standing.
     const bot = AppView._botOn(issue);
-    if (!ip && !headlessLive && !bot) return null;
+    if (!ip && !bot) return null;
 
     const sessUsers = (ip && Array.isArray(ip.users)) ? ip.users.filter(Boolean) : [];
     const claims = (ip && Array.isArray(ip.claims)) ? ip.claims.filter(Boolean) : [];
@@ -28668,16 +27270,10 @@ const AppView = {
     } else if (bot) {
       key = 'bot'; spinner = true;
       at = bot.since || null;
-    } else if (hStatus === 'generating') {
-      key = 'auto_solving'; spinner = true;
     } else if (paused.length) {
       key = 'paused'; tone = 'zinc';
       const s = pick(paused); who = named(s); at = s.lastActivityAt;
       clearAt = clearMs(at, AppView.WORK_PAUSED_WINDOW_DAYS);
-    } else if (hStatus === 'ready' && h.outcome === 'question') {
-      key = 'answer_needed'; tone = 'amber';
-    } else if (hStatus === 'ready') {
-      key = 'draft_ready'; tone = 'amber';
     } else if (claims.length) {
       key = 'claimed';
       const c = claims.find((x) => x.mine) || claims[0];
@@ -28697,21 +27293,17 @@ const AppView = {
     const LABEL_IDS = {
       in_review: 'changes:chips.work.inReview',
       working: 'changes:chips.work.working',
-      auto_solving: 'changes:chips.work.autoSolving',
       // The key stays 'paused' (it orders the states and dates the
       // self-clear), but the word is not shown (#2779 follow-up): the
       // platform pauses any session a few idle minutes after it was used,
       // so what this state means to a reader is "started, not being
       // worked on now".
       paused: 'changes:chips.work.started',
-      answer_needed: 'changes:chips.work.answerNeeded',
-      draft_ready: 'changes:chips.work.draftReady',
       claimed: 'changes:chips.work.pickedUp',
       bot: bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
         : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding',
     };
-    // The bot states name nobody: there is no person to name, and
-    // "Auto-solving… · maya" would imply maya is at a keyboard.
+    // The bot state names nobody: there is no person to name.
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
     let label = PlatformI18n.t(LABEL_IDS[key]);
@@ -28724,7 +27316,7 @@ const AppView = {
     }
 
     const note = AppView._workStateNote({
-      key, who, at, clearAt, claimUsers, headlessLive, bot: bot ? (bot.what || 'building') : null,
+      key, who, at, clearAt, claimUsers, bot: bot ? (bot.what || 'building') : null,
       botMine: !!(bot && bot.mine),
       botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
@@ -28885,19 +27477,13 @@ const AppView = {
   },
 
   // The closing "Also: …" sentence, by what else is going on: other people
-  // who picked the request up, an auto-solve run, and the Homeroom bot.
+  // who picked the request up, and the Homeroom bot.
   WORK_ALSO_IDS: {
-    'claims||': 'changes:chips.workNote.also.claims',
-    'claims|auto|': 'changes:chips.workNote.also.claimsAuto',
-    'claims||reading': 'changes:chips.workNote.also.claimsBotReading',
-    'claims||building': 'changes:chips.workNote.also.claimsBotBuilding',
-    'claims|auto|reading': 'changes:chips.workNote.also.claimsAutoBotReading',
-    'claims|auto|building': 'changes:chips.workNote.also.claimsAutoBotBuilding',
-    '|auto|': 'changes:chips.workNote.also.auto',
-    '|auto|reading': 'changes:chips.workNote.also.autoBotReading',
-    '|auto|building': 'changes:chips.workNote.also.autoBotBuilding',
-    '||reading': 'changes:chips.workNote.also.botReading',
-    '||building': 'changes:chips.workNote.also.botBuilding',
+    'claims|': 'changes:chips.workNote.also.claims',
+    'claims|reading': 'changes:chips.workNote.also.claimsBotReading',
+    'claims|building': 'changes:chips.workNote.also.claimsBotBuilding',
+    '|reading': 'changes:chips.workNote.also.botReading',
+    '|building': 'changes:chips.workNote.also.botBuilding',
   },
 
   // One short spell of a day — "2 Nov", or "2 Nov 2025" outside this year —
@@ -28961,24 +27547,17 @@ const AppView = {
       // #4190: Claim is offered beside the bot, and a claim made now does not
       // stop it. Said only while nobody has (the "Also:" below names them).
       if (!s.otherClaims) main = then(main, t('changes:chips.workNote.bot.anyoneCan'));
-    } else if (s.key === 'auto_solving') {
-      main = t('changes:chips.workNote.autoSolving');
     } else if (s.key === 'paused') {
       main = about('paused', 'pausedWhen');
       if (clears) main = then(main, t('changes:chips.workNote.pausedClears', { date: clears }));
-    } else if (s.key === 'answer_needed') {
-      main = t('changes:chips.workNote.answerNeeded');
-    } else if (s.key === 'draft_ready') {
-      main = t('changes:chips.workNote.draftReady');
     } else {
       // B10c: in the words of the button that said it.
       main = about('claimed', 'claimedWhen');
       if (clears) main = then(main, t('changes:chips.workNote.claimedClears', { date: clears }));
     }
     const alsoClaims = !!(s.otherClaims && s.claimUsers && s.claimUsers.length);
-    const alsoAuto = !!(s.headlessLive && s.key !== 'auto_solving' && s.key !== 'answer_needed' && s.key !== 'draft_ready');
     const alsoBot = (s.bot && s.key !== 'bot') ? (s.bot === 'reading' ? 'reading' : 'building') : '';
-    const alsoId = AppView.WORK_ALSO_IDS[`${alsoClaims ? 'claims' : ''}|${alsoAuto ? 'auto' : ''}|${alsoBot}`];
+    const alsoId = AppView.WORK_ALSO_IDS[`${alsoClaims ? 'claims' : ''}|${alsoBot}`];
     return alsoId
       ? then(main, t(alsoId, { names: alsoClaims ? PlatformI18n.listText(s.claimUsers) : '' }))
       : main;
@@ -28989,21 +27568,19 @@ const AppView = {
   // card's four-badge budget is untouched. When the server chose a link
   // target (in_progress.target — proposal > own session > shared session,
   // per-viewer) the chip is a button that opens the linked work; otherwise
-  // a plain informational span (private work, claims-only, or headless-only
-  // — those rows' own buttons navigate).
+  // a plain informational span (private work or claims-only — those rows'
+  // own buttons navigate).
   _WORK_TONE_CLS: {
     violet: 'bg-violet-500/10 text-violet-700 dark:text-violet-400',
     sky: 'bg-sky-500/10 text-sky-700 dark:text-sky-400',
     emerald: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
     zinc: 'bg-zinc-500/10 text-zinc-500 dark:text-zinc-400',
-    amber: 'bg-amber-500/10 text-amber-800 dark:text-amber-300',
   },
   _WORK_TONE_HOVER: {
     violet: 'hover:bg-violet-500/20',
     sky: 'hover:bg-sky-500/20',
     emerald: 'hover:bg-emerald-500/20',
     zinc: 'hover:bg-zinc-500/20',
-    amber: 'hover:bg-amber-500/20',
   },
 
   // The work-state chip's SPEC. A chip whose state names a linked session
@@ -29093,8 +27670,7 @@ const AppView = {
 
   // The "Closes #N" links, as SPECS. The merged proposal DETAIL head uses
   // these as links to each request's page (they were GitHub issue links
-  // until requests moved into Homeroom; the dev-chat session card opens its
-  // requests in-app since #3605); Board cards use issueChipSpecs.
+  // until requests moved into Homeroom); Board cards use issueChipSpecs.
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
     const merged = pr.status === 'merged';
@@ -29154,13 +27730,13 @@ const AppView = {
   // "Preview" used to be built in four separate places with four different
   // tooltips and four different gating rules: proposal cards (through the
   // since-retired voteButtonsHtml), the viewer's own session cards, other users' shared
-  // session cards, and the headless branch of an issue card. All four
+  // session cards, and an issue card's unattended run. All four
   // already funnelled into swapToStagingForSession(id, url), so the only
   // real differences were wording and which of staging_url / can_preview /
   // staging_building / staging_error they consulted. cardPreviewHtml folds
   // that into one truth table, and every call site now goes through it.
   //
-  // opts.kind ∈ 'proposal' | 'own-session' | 'shared-session' | 'issue-run'
+  // opts.kind ∈ 'proposal' | 'own-session' | 'shared-session'
   //   — picks the tooltip wording only; the gating is uniform.
   // opts.iconOnly (the board default) renders the eye glyph rather than the
   //   word "Preview". Deliberate: a read-only viewer gets no vote buttons,
@@ -29180,7 +27756,6 @@ const AppView = {
     proposal: { live: 'changes:frame.open.proposal', rebuild: 'changes:frame.open.proposalRebuild' },
     'own-session': { live: 'changes:frame.open.ownSession', rebuild: 'changes:frame.open.ownSessionRebuild' },
     'shared-session': { live: 'changes:frame.open.sharedSession', rebuild: 'changes:frame.open.sharedSessionRebuild' },
-    'issue-run': { live: 'changes:frame.open.issueRun', rebuild: 'changes:frame.open.issueRunRebuild' },
   },
 
   // Keep testing guidance out of DOM attributes. Every preview surface —
@@ -29623,15 +28198,6 @@ const AppView = {
       // at a newer epoch asks again.
       AppView._noteOwnVote(sessionId, vote);
       AppView._publishVoteSaved(sessionId, vote, epoch);
-      // #6496: the pill above the change's chat is drawn from
-      // `DevChat.currentSession`, which only the best-effort `vote_update`
-      // frame used to refresh — a dropped frame left the pill a vote behind
-      // the card on the same screen until a reload. The vote is saved now, so
-      // ask the open session for its new tally directly. Same guard as
-      // `App.handleVoteUpdate`; a no-op unless this session is the open one.
-      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
-        DevChat.refreshCurrentSessionStatus(sessionId);
-      }
       // The overlay stays until the post-vote read has landed: a load queued
       // ahead of it still publishes the pre-vote row first. The read joins
       // the burst the vote's own broadcast (vote_update) opens, so a vote
@@ -29850,11 +28416,6 @@ const AppView = {
       window.UsernodeReact?.actionOutbox?.drop?.(`vote:${sessionId}`);
       AppView._noteOwnVote(sessionId, null);
       AppView._publishVoteSaved(sessionId, null, epoch);
-      // #6496: an undo is saved too, so the pill above the change's chat
-      // re-reads the open session at once, exactly as a cast vote does.
-      if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
-        DevChat.refreshCurrentSessionStatus(sessionId);
-      }
       // #6109: the burst reads the chat's snapshot for this vote wherever it
       // is mounted (chatSlug), so the undo does not read it a second time.
       const refresh = typeof App !== 'undefined' && App._liveRefresh
@@ -30178,11 +28739,10 @@ const AppView = {
   },
 
   // #2879: a Dev screen with no app record to draw against — said, with a
-  // retry, instead of an empty page (the session screen) or a skeleton that
-  // never resolves (the Workshop). Plain markup, written ONLY into a host the
-  // caller already owns by innerHTML: the session screen's #app-content /
-  // #dev-section, or the board frame's legacy-owned #dev-body. `idBase`
-  // names the card and its button (`${idBase}-retry`).
+  // retry, instead of a skeleton that never resolves (the Workshop, a topic
+  // page). Plain markup, written ONLY into a host the caller already owns by
+  // innerHTML: the board frame's legacy-owned #dev-body, or the topic
+  // page's slot. `idBase` names the card and its button (`${idBase}-retry`).
   _renderAppUnavailable(host, idBase, onRetry) {
     host.innerHTML = `
       <div id="${idBase}" class="flex h-full min-h-0 flex-col items-center justify-center gap-3 px-6 py-10 text-center">
@@ -30195,162 +28755,6 @@ const AppView = {
         retry.disabled = true;
         onRetry();
       });
-    }
-  },
-
-  // Forum revision: the dedicated session view. There is no session
-  // list / meta panel anymore — sessions are reached from the forum's
-  // Your-sessions strip, proposal cards, and the "+" flow, and a
-  // missing/unopenable id bounces back to the card list. The App
-  // secrets / display-name shortcuts that used to live here now sit
-  // directly in the "+" menu (#645).
-  async renderDevChatTab(restoreSessionId, { embedded = false } = {}) {
-    const content = AppView._devContainer();
-    if (!content) return;
-    // #2813: in the Messages pane there is no Board to fall back to — the
-    // pane says the session could not be opened instead — and a redirect
-    // to another Dev surface goes through that surface's own address.
-    // Off the Messages pane it falls back to the Workshop, and SAYS SO
-    // (QA 2026-09-24 Q30b): landing on the board with nothing on screen about
-    // the link that was followed read as the link being wrong, or as the
-    // session having been opened somewhere out of sight. The server does not
-    // say which of private or gone it was (the 404 is the same on purpose),
-    // so the note names both.
-    const unavailable = () => {
-      if (embedded) return 'unavailable';
-      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
-      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
-        // Longer than the kit's 2.2s default: it arrives as the page does,
-        // while the eye is still finding its way round the board.
-        PlatformUI.toast(PlatformI18n.t('changes:session.unavailable'), { duration: 6000 });
-      }
-      return undefined;
-    };
-    if (!restoreSessionId) {
-      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
-      return;
-    }
-
-    content.innerHTML = `
-      <div style="display:flex;flex-direction:column;height:100%;min-height:0">
-        <div id="dc-view" style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden"></div>
-      </div>`;
-
-    // #2879: THE APP'S RECORD MAY NOT BE HERE. navigateToApp goes on to this
-    // screen whether or not AppView.open got GET /api/apps/<slug>: a failed
-    // or superseded read leaves AppView.appData empty (or describing another
-    // app), and this used to return right here, over an empty #dc-view.
-    // That is the blank page New change on Home landed on — the header
-    // already named Homeroom and lit Messages, and nothing drew beneath it.
-    // So ask for the record once more, and if it still will not come, say
-    // so with a way to try again rather than painting nothing.
-    if (!embedded && !AppView._hasCurrentAppRecord()) {
-      const record = await AppView._recoverCurrentAppRecord();
-      // The viewer went somewhere else while that was in flight.
-      if (record === 'moved') return undefined;
-      if (record === 'missing') {
-        AppView._renderAppUnavailable(content, 'dc-app-unavailable',
-          () => { AppView.renderDevChatTab(restoreSessionId); });
-        return undefined;
-      }
-    }
-    if (!AppView.appData) return;
-
-    // Ground-truth guard: if the in-memory session belongs to a
-    // different app than the one we're rendering, drop it before
-    // loading (fixes #20).
-    if (
-      DevChat.currentSession &&
-      DevChat.currentSession.app_slug &&
-      DevChat.currentSession.app_slug !== AppView.appData.slug
-    ) {
-      DevChat.reset();
-    }
-
-    await Promise.all([DevChat.loadSessions(AppView.appData.slug), AppView._loadDevData()]);
-
-    // #2241 → #2779: /dev/sessions/new was the classic change that had not
-    // been sent yet. Classic sessions are no longer created; the router
-    // sends that address to an unsent agent session before it gets here,
-    // and anything that still switches to it lands there too.
-    if (restoreSessionId === DevChat.NEW_SESSION_REF) {
-      App.openNewChangeAsAgentSession(AppView.appData.slug);
-      return;
-    }
-
-    // #2605: the Build door sends a READER to this page too, and the fetch
-    // below is owner-scoped — it 404s for them by design, and a 404 in the
-    // network log is a console error, which fails every declared check on
-    // the route. So when the Dev caches already say this change's build
-    // surface is a published CHAT rather than a workspace, go straight to
-    // it and never ask for the workspace. `_buildDoorView` is the same rule
-    // the pill that sent them here is drawn from.
-    //
-    // A change no cached list covers (a deep link past the cached pages)
-    // falls through and is answered by the server, as it always was.
-    const cached = AppView._findItem('session', Number(restoreSessionId));
-    if (AppView._buildDoorView(cached)?.kind === 'published'
-        && await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
-
-    // Landing on /app/<slug>/dev/sessions/<id> IS the user opening the
-    // session — from the drawer's completion row, the session list, a
-    // bookmark or Back. Carries the "user saw it" signal (?opened=1) that
-    // dismisses the session's unread completion; the machine refetches in
-    // dev-chat.js deliberately do not.
-    await DevChat.openSession(restoreSessionId, { userOpened: true });
-
-    // Inaccessible as a WORKSPACE — which, since #2605, is the ordinary way
-    // a reader arrives: the Build door sends "Read the build" to this page,
-    // and GET /api/sessions/:id is owner-scoped. So try the published chat
-    // before giving up; only a session with none (archived, private, a bad
-    // link) falls back to the forum rather than stranding an empty view.
-    if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
-      if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
-      return unavailable();
-    }
-
-    // #846: an imported PR has NO dev chat — its code lives on GitHub and
-    // this view would render an empty transcript with a live composer (see
-    // the importedNote in _proposalDetailsHtml). Any route that still
-    // reaches it (old bookmark, Back button, pasted link) lands on the
-    // proposal's discussion page instead. Nulling currentSession is enough
-    // teardown: the heartbeat interval openSession armed no-ops without it,
-    // and the outer switchTab's trailing updateHash() reads the topic state
-    // the redirect just set, so the URL follows.
-    if (DevChat.currentSession.source === 'imported') {
-      const importedId = Number(restoreSessionId);
-      DevChat.currentSession = null;
-      if (embedded) {
-        window.location.hash = `#app/${encodeURIComponent(AppView.appData.slug)}/dev/proposals/${importedId}`;
-        return 'unavailable';
-      }
-      AppView.openTopic('proposal', importedId);
-      return;
-    }
-
-    DevChat.renderChatView();
-
-    // #194: one-shot hint set by the "+" menu's "Propose a change" —
-    // proposals are PRs, so the path runs through a session.
-    // #1049: suppressed when the development-flow picker / walkthrough is
-    // about to render in the same empty pane — that card asks the same
-    // question with more precision, and two stacked explanations of what a
-    // proposal is read as noise.
-    if (AppView._proposalHint
-        && typeof DevChat !== 'undefined'
-        && typeof DevChat._devFlowTarget === 'function'
-        && DevChat._devFlowTarget()) {
-      AppView._proposalHint = false;
-    }
-    if (AppView._proposalHint) {
-      AppView._proposalHint = false;
-      // #1078: `#dc-view`'s children are a React island, so the hint is a
-      // FIELD of its model rather than an insertAdjacentHTML in front of
-      // them — a second author on nodes React reconciles. The copy lives in
-      // features/dev-chat/view.tsx with the markup it belongs to.
-      if (typeof DevChat !== 'undefined' && DevChat.showProposalHint) {
-        DevChat.showProposalHint();
-      }
     }
   },
 
@@ -30603,14 +29007,9 @@ const AppView = {
   //   fallbackUrl — the last-known preview URL (may be stale/dead); used
   //                only when the server says `ready` without echoing a URL.
   //   testing    — the session's testing guidance ({ md, path } | null).
-  //   opts.jump  — open the deep link directly (the "Test this change" btn).
-  //   opts.dock  — #771: open as the docked side panel beside the dev chat
-  //                (the caller must have mounted #dc-staging-panel first —
-  //                see DevChat.previewStaging / openStagingPanel), or beside
-  //                whichever dock host registered (setStagingDockHost).
-  //   opts.app   — #2779: the app the preview is of ({ slug, self_hosted }),
-  //                for a caller that is not on that app's screen (an agent
-  //                session in Messages). Defaults to the app on screen.
+  //   opts.app   — the app the preview is of ({ slug, self_hosted }), for a
+  //                caller that is not on that app's screen (Homeroom bot's
+  //                ready card). Defaults to the app on screen.
   //   opts.readOnly — overrides AppView.readOnly for that caller.
   _finishStagingTelemetry(attemptId, outcome, detail) {
     if (attemptId) window.UITelemetry?.outcome?.(attemptId, outcome, detail);
@@ -30622,8 +29021,6 @@ const AppView = {
     const app = AppView._stagingApp(opts);
     const slug = app?.slug;
     const readOnly = AppView._stagingReadOnly(opts);
-    const jump = !!(opts && opts.jump);
-    const dock = !!(opts && opts.dock);
     const inheritedTelemetryAttempt = opts && opts.telemetryAttempt;
     const telemetryAttempt = inheritedTelemetryAttempt
       || window.UITelemetry?.attempt?.('preview_open', {
@@ -30636,11 +29033,6 @@ const AppView = {
       window.UITelemetry?.cancel?.(AppView._stagingTelemetryAttempt);
     }
     AppView._stagingTelemetryAttempt = telemetryAttempt;
-    // Streamlined Concept: every preview open funnels through here (#439),
-    // so this is where "the viewer is SEEING" gets published — it flips the
-    // header's eye/pencil pair and the session strip's Preview chip. The
-    // matching false is closeStagingOverlay's.
-    window.Improve?.setPreviewActive?.(true);
     // What the preview is showing, for the comment files (#4918): the change
     // (its session id), the app it shows and whether that app is self-hosted.
     // The name: the session's own, else the open app's when it is this app.
@@ -30660,16 +29052,6 @@ const AppView = {
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
     staging.open();
-    // #771: apply the requested mode before anything paints, so the loader
-    // shows inside the side panel on a docked open (and a stale docked
-    // class can't leak into a fullscreen open from the vote panel).
-    if (dock && AppView._stagingDockSlot()) {
-      AppView._stagingDockable = true;
-      AppView._setStagingMode('docked');
-    } else {
-      AppView._stagingDockable = false;
-      AppView._setStagingMode('fullscreen');
-    }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
     staging.clearSrc();
@@ -30737,7 +29119,6 @@ const AppView = {
       // hitting the same container, which is the one honest reason a live
       // preview's first load can be slow.
       return AppView.swapToStaging(data.url || fallbackUrl, testing, {
-        jump,
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
         telemetryAttempt,
@@ -30788,7 +29169,7 @@ const AppView = {
       sub: PlatformI18n.t(data.waking ? 'changes:frame.loader.wakingSub' : 'changes:frame.loader.rebuildingSub'),
     });
     AppView._pendingStagingPreview = {
-      sessionId, slug, jump, testing, dock, loadId, retry,
+      sessionId, slug, testing, loadId, retry,
       telemetryAttempt,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
@@ -30860,8 +29241,6 @@ const AppView = {
       // receives the event. Re-enter ensure-staging so the exact same
       // revision/health/edge gate runs before iframe navigation (#2328).
       return AppView.ensureStaging(sessionId, url, pending.testing, {
-        jump: pending.jump,
-        dock: pending.dock,
         telemetryAttempt: pending.telemetryAttempt,
         ...(pending.app ? { app: pending.app } : {}),
         ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
@@ -30871,20 +29250,12 @@ const AppView = {
     AppView._showStagingUnavailable(pending.loadId, PlatformI18n.t('changes:frame.unavailable.noAddress'), pending.retry);
   },
 
-  // Open staging in the overlay (fullscreen, or docked beside dev chat).
+  // Open staging in the overlay.
   //
   // #127: `testing` is the session's bot-generated testing guidance
-  // ({ md, path } | null) and `opts.jump` opens the iframe directly at the
-  // deep-link path (the dev-chat "Test this change" button does this).
-  // Callers must never thread the markdown through an HTML attribute —
-  // use a wrapper that looks the object up at click time
-  // (swapToStagingForSession / DevChat.previewStaging).
-  //
-  // #771: `opts.dock` (explicit boolean) selects the docked side-panel
-  // mode. When absent the CURRENT mode is preserved — the rebuild
-  // resolution path (onStagingRebuildResult) relies on this so a mid-wait
-  // fullscreen/dock toggle wins over the mode the click originally asked
-  // for.
+  // ({ md, path } | null). Callers must never thread the markdown through
+  // an HTML attribute — use a wrapper that looks the object up at click
+  // time (swapToStagingForSession).
   //
   // #816: `opts.verified` means the server confirmed the container answered
   // its healthcheck moments ago, so the readiness poll is skipped entirely
@@ -30896,16 +29267,6 @@ const AppView = {
     const app = AppView._stagingApp(opts);
     const slug = app?.slug;
     const selfHosted = !!(app && app.self_hosted);
-
-    if (opts && typeof opts.dock === 'boolean') {
-      if (opts.dock && AppView._stagingDockSlot()) {
-        AppView._stagingDockable = true;
-        if (AppView._stagingMode !== 'docked') AppView._setStagingMode('docked');
-      } else {
-        AppView._stagingDockable = false;
-        if (AppView._stagingMode !== 'fullscreen') AppView._setStagingMode('fullscreen');
-      }
-    }
 
     const resolved = resolveDevHost(stagingUrl);
 
@@ -30939,7 +29300,9 @@ const AppView = {
       ? declared : null;
     if (!clock) staging.setClock(null);
     staging.open();
-    AppView._updateStagingModeUi();
+    // #970: the preview frame sits right on the home indicator, so the
+    // insets that apply to it are its own.
+    AppView.scheduleSafeAreaBroadcast();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     staging.setHandlers({ onBack: () => AppView.closeStagingOverlay(), onRetry: null, onClockToggle: null });
     staging.setTestBtn({ hidden: true });
@@ -31010,11 +29373,9 @@ const AppView = {
       if (clock && !clock.asNow) url.searchParams.set(AppView.PREVIEW_NOW_PARAM, clock.at);
       return url.toString();
     };
-    const jump = !!(opts && opts.jump) && !!safePath;
     // #4917: the first load opens on the page the change is about when it
-    // named one (`safeStart`), else the root. `jump` (Test this change)
-    // still wins, and its panel rule below is untouched.
-    const pending = { src: buildSrc(jump ? safePath : safeStart) };
+    // named one (`safeStart`), else the root.
+    const pending = { src: buildSrc(safeStart) };
 
     // "See it as now" and back: the same address with `un-now` dropped or
     // put back, so a deep link the preview was opened at survives. Before the
@@ -31041,7 +29402,7 @@ const AppView = {
       } : null,
     });
 
-    AppView._renderTestingControls(buildSrc, pending, jump);
+    AppView._renderTestingControls(buildSrc, pending);
     const checksRunning = !!(opts && opts.checksRunning);
 
     // #816: FAST PATH. The server verified this container answered its
@@ -31147,75 +29508,14 @@ const AppView = {
     AppView.ensureStaging(sessionId, stagingUrl, (AppView._sessionTesting || {})[sessionId] || null, {});
   },
 
-  // #439: pending on-demand-rebuild marker ({ sessionId, jump, testing,
-  // dock, loadId } | null), set by ensureStaging and consumed by the
+  // #439: pending on-demand-rebuild marker ({ sessionId, testing,
+  // loadId } | null), set by ensureStaging and consumed by the
   // staging_ready / staging_failed WS handlers via onStagingRebuildResult.
   _pendingStagingPreview: null,
   _stagingTelemetryAttempt: null,
   _stagingRebuildTimer: null,
 
-  // ── Docked staging preview (#771) ─────────────────────────────────
-  //
-  // Dev chat opens the staging preview as a resizable side panel beside
-  // the chat (like the spec viewer) instead of the fullscreen overlay.
-  // The overlay element never moves in the DOM — reparenting an iframe
-  // reloads it — so "docked" is a mode on the SAME fixed #staging-overlay:
-  // dev-chat renders an empty placeholder slot (#dc-staging-panel) as a
-  // flex sibling of the chat pane, and we pin the overlay over the slot's
-  // bounding rect (kept in sync by a ResizeObserver + window resize).
-  // Toggling fullscreen just adds/removes the docked class, so the iframe
-  // keeps its state either way.
-  _stagingMode: 'fullscreen',   // 'fullscreen' | 'docked'
-  // True while the current preview was opened from dev chat with a dock
-  // request — gates the "Exit full screen" re-dock affordance. Cleared on
-  // close so an unrelated later preview can't re-dock into a stale slot.
-  _stagingDockable: false,
-  _stagingDockObserver: null,   // ResizeObserver on the current slot
-  _stagingDockOnResize: null,   // bound window-resize handler (added once)
-  _stagingDockMql: null,        // matchMedia('(min-width: 1024px)') (bound once)
-  _STAGING_DOCK_MEDIA: '(min-width: 1024px)',
-
-  // #2779: WHO the docked preview belongs to. The dev chat's own slot by
-  // default; an agent session registers its side pane's slot (and how to
-  // collapse, re-dock and hear about a close) while it shows a preview there,
-  // so the same overlay, sign-in and iframe serve both.
-  //   slotId   — the placeholder element the overlay is pinned over
-  //   live()   — is the host still on screen (gates "Exit full screen")
-  //   collapse() — the preview left the slot (full screen, or closed)
-  //   redock() — "Exit full screen": make the slot ready again
-  //   closed() — the preview was closed (once; the host is then dropped)
-  _stagingDockHost: null,
-
-  _devChatDockHost() {
-    return {
-      slotId: 'dc-staging-panel',
-      live: () => typeof DevChat !== 'undefined' && !!DevChat.currentSession,
-      collapse: () => {
-        if (typeof DevChat !== 'undefined' && DevChat.stagingPanel && DevChat.stagingPanel.open) {
-          DevChat.stagingPanel.open = false;
-          DevChat.renderChatView();
-        }
-      },
-      redock: () => {
-        if (typeof DevChat !== 'undefined' && DevChat.openStagingPanel) DevChat.openStagingPanel();
-      },
-      closed: null,
-    };
-  },
-
-  _currentDockHost() {
-    return AppView._stagingDockHost || AppView._devChatDockHost();
-  },
-
-  setStagingDockHost(host) {
-    AppView._stagingDockHost = host || null;
-  },
-
-  _stagingDockSlot() {
-    try { return document.getElementById(AppView._currentDockHost().slotId); } catch { return null; }
-  },
-
-  // #2779: the app a preview is of: the caller's (opts.app), else the one on
+  // The app a preview is of: the caller's (opts.app), else the one on
   // screen. And whether a preview load is still for that app — for a caller
   // that named its app, the screen changing under it does not matter.
   _stagingApp(opts) {
@@ -31229,8 +29529,8 @@ const AppView = {
   },
 
   // The previewed app's audience ('open' | 'invited' | 'solo'), or null. A
-  // caller's own app record may not carry it (an agent session's preview
-  // hands over only { slug, self_hosted }); the open app's record does, when
+  // caller's own app record may not carry it (the bot's ready card hands
+  // over only { slug }); the open app's record does, when
   // it is the same app. Null words the banner for a group, the safe reading.
   _stagingAudience(app) {
     if (app && app.audience) return app.audience;
@@ -31263,135 +29563,6 @@ const AppView = {
     return opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : !!AppView.readOnly;
   },
 
-  // Same breakpoint as the spec viewer's side-panel layout.
-  _stagingDockViewport() {
-    try { return !!(window.matchMedia && window.matchMedia(AppView._STAGING_DOCK_MEDIA).matches); }
-    catch { return false; }
-  },
-
-  // Enter/leave docked mode on the overlay. Pure presentation — callers
-  // own the DevChat slot state (see expandStagingFullscreen /
-  // dockStagingPanel / closeStagingOverlay).
-  _setStagingMode(mode) {
-    AppView._stagingMode = mode === 'docked' ? 'docked' : 'fullscreen';
-    // Mode is state on the SAME overlay — the docked class and the pinned rect
-    // change, the element (and therefore the iframe's document) never does.
-    AppView._staging().setMode(AppView._stagingMode);
-    if (AppView._stagingMode === 'docked') {
-      AppView._ensureStagingDockListeners();
-      AppView.rebindStagingDock();
-    } else if (AppView._stagingDockObserver) {
-      AppView._stagingDockObserver.disconnect();
-    }
-    AppView._updateStagingModeUi();
-  },
-
-  // One-time global listeners: window resize re-syncs the pinned overlay,
-  // and crossing below the desktop breakpoint while docked flips to
-  // fullscreen (the slot's CSS hides below 1024px, so a docked overlay
-  // would be glued to a zero rect). No auto-re-dock on widening — the
-  // user explicitly toggles back.
-  _ensureStagingDockListeners() {
-    if (!AppView._stagingDockOnResize) {
-      AppView._stagingDockOnResize = () => AppView._syncStagingDockGeometry();
-      try { window.addEventListener('resize', AppView._stagingDockOnResize); } catch {}
-    }
-    if (!AppView._stagingDockMql && window.matchMedia) {
-      try {
-        const mql = window.matchMedia(AppView._STAGING_DOCK_MEDIA);
-        const onChange = () => {
-          if (!mql.matches && AppView._stagingMode === 'docked') {
-            AppView.expandStagingFullscreen();
-          }
-        };
-        if (mql.addEventListener) mql.addEventListener('change', onChange);
-        else if (mql.addListener) mql.addListener(onChange);
-        AppView._stagingDockMql = mql;
-      } catch {}
-    }
-  },
-
-  // Re-attach the ResizeObserver to the CURRENT slot element and re-sync.
-  // Called by dev-chat's renderChatView after every re-render (the slot
-  // node is recreated by innerHTML rewrites) and by _setStagingMode.
-  // Fail-safe: a missing slot while docked means the session view
-  // unmounted under us — close rather than float over a dead rect.
-  rebindStagingDock() {
-    if (AppView._stagingMode !== 'docked') return;
-    const slot = AppView._stagingDockSlot();
-    if (!slot) { AppView.closeStagingOverlay(); return; }
-    if (!AppView._stagingDockObserver && typeof ResizeObserver !== 'undefined') {
-      AppView._stagingDockObserver = new ResizeObserver(() => AppView._syncStagingDockGeometry());
-    }
-    if (AppView._stagingDockObserver) {
-      AppView._stagingDockObserver.disconnect();
-      try { AppView._stagingDockObserver.observe(slot); } catch {}
-    }
-    AppView._syncStagingDockGeometry();
-  },
-
-  // Pin the overlay over the slot's current bounding rect.
-  _syncStagingDockGeometry() {
-    if (AppView._stagingMode !== 'docked') return;
-    const slot = AppView._stagingDockSlot();
-    if (!slot) { AppView.closeStagingOverlay(); return; }
-    const r = slot.getBoundingClientRect();
-    AppView._staging().setDockRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-  },
-
-  // "Full screen" (docked header button, and the narrow-viewport
-  // auto-flip): expand the SAME overlay to fullscreen — no iframe touch,
-  // no reload — and collapse the dev-chat slot so the chat reflows.
-  expandStagingFullscreen() {
-    if (AppView._stagingMode !== 'docked') return;
-    AppView._setStagingMode('fullscreen');
-    AppView._currentDockHost().collapse();
-  },
-
-  // "Exit full screen": re-dock the live preview beside the chat. Only
-  // meaningful while the preview is dockable (opened from dev chat), the
-  // session view is still mounted, and the viewport is wide enough.
-  dockStagingPanel() {
-    if (AppView._stagingMode === 'docked' || !AppView._stagingDockable) return;
-    const host = AppView._currentDockHost();
-    if (!host.live()) return;
-    if (!AppView._stagingDockViewport()) return;
-    host.redock();
-    AppView._setStagingMode('docked');
-  },
-
-  toggleStagingFullscreen() {
-    if (AppView._stagingMode === 'docked') AppView.expandStagingFullscreen();
-    else AppView.dockStagingPanel();
-  },
-
-  // Sync the mode-dependent header chrome: the Full screen / Exit full
-  // screen toggle and the docked ×-close. Idempotent; safe with the
-  // overlay hidden.
-  _updateStagingModeUi() {
-    const staging = AppView._staging();
-    staging.setHandlers({
-      onDockClose: () => AppView.closeStagingOverlay(),
-      onFullscreen: () => AppView.toggleStagingFullscreen(),
-    });
-    const docked = AppView._stagingMode === 'docked';
-    const overlayOpen = staging.isOpen();
-    const canRedock = AppView._stagingDockable
-      && AppView._currentDockHost().live()
-      && AppView._stagingDockViewport();
-    staging.setFullscreenBtn({
-      hidden: !overlayOpen || (!docked && !canRedock),
-      text: docked ? PlatformI18n.t('changes:frame.fullscreen.enter') : PlatformI18n.t('changes:frame.fullscreen.exit'),
-      title: docked
-        ? PlatformI18n.t('changes:frame.fullscreen.enterTitle')
-        : PlatformI18n.t('changes:frame.fullscreen.exitTitle'),
-    });
-    // #970: docking / un-docking moves the preview frame's rect, so the
-    // insets that apply to it change (a docked panel is nowhere near the
-    // home indicator; a fullscreen one sits right on it).
-    AppView.scheduleSafeAreaBroadcast();
-  },
-
   // #127: per-render registry of { md, path } testing guidance keyed by
   // session id, populated by every preview surface. Exists so bot-authored
   // markdown never transits an inline onclick attribute.
@@ -31408,10 +29579,9 @@ const AppView = {
   _stagingPreview: null,
 
   // #127: show/hide + wire the overlay's "Test this change" button and the
-  // collapsible "How to test" panel for the current preview. `jump` is true
-  // only when the preview was entered via an explicit "Test this change"
-  // button — the one path where the panel auto-opens (#237).
-  _renderTestingControls(buildSrc, pending, jump) {
+  // collapsible "How to test" panel for the current preview. The panel
+  // stays hidden until asked for (#237).
+  _renderTestingControls(buildSrc, pending) {
     const staging = AppView._staging();
 
     staging.setTestPanelHidden(true);
@@ -31422,15 +29592,12 @@ const AppView = {
       return;
     }
 
-    // Bot-authored markdown: render through DevChat's escaping markdown
-    // pipeline (marked + DOMPurify), falling back to escaped plain text if
-    // dev-chat.js failed to load. Reach DevChat via a bare reference and
-    // `typeof` guard rather than `window.DevChat` — DevChat is a top-level
-    // `const`, which never becomes a `window` property (#237; same pitfall
-    // documented in group-chat.js).
+    // Bot-authored markdown: render through the platform's escaping markdown
+    // pipeline (PlatformMarkdown: marked + DOMPurify), falling back to
+    // escaped plain text if it failed to load.
     if (t.md) {
-      staging.setTestHtml((typeof DevChat !== 'undefined' && typeof DevChat.renderMarkdown === 'function')
-        ? DevChat.renderMarkdown(t.md)
+      staging.setTestHtml((typeof PlatformMarkdown !== 'undefined' && typeof PlatformMarkdown.render === 'function')
+        ? PlatformMarkdown.render(t.md)
         : `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(t.md)}</pre>`);
     } else {
       staging.setTestHtml(`<span class="text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:frame.testing.useButton')}</span>`);
@@ -31462,11 +29629,6 @@ const AppView = {
       },
       onTestingClose: () => staging.setTestPanelHidden(true),
     });
-
-    // #237: the panel no longer auto-opens on every preview. It auto-shows
-    // only when the user entered through an explicit "Test this change"
-    // button (jump) — plain Preview keeps it hidden until asked for.
-    if (jump && t.md) staging.setTestPanelHidden(false);
   },
 
   // Incremented on every swap/close so an in-flight readiness poll for a
@@ -31488,9 +29650,7 @@ const AppView = {
   // clearSrc, through a ref the island registers). That is deliberate and it is
   // the whole point: `src` as state would let a re-render re-apply it, and
   // re-applying `src` RELOADS the preview — destroying whatever the user was
-  // doing inside the previewed app. #771's docked ↔ fullscreen toggle makes the
-  // same promise ("the same overlay, so the iframe keeps its state either way")
-  // and now keeps it through React.
+  // doing inside the previewed app.
   //
   // `_stagingDom` implements the same API against the raw document, for
   // contexts where the React bundle is not present at all: the node-side render
@@ -31514,7 +29674,6 @@ const AppView = {
   _stagingDom: {
     _handlers: {},
     _open: false,
-    _mode: 'fullscreen',
     _testPanelHidden: true,
     _el(id) {
       return (typeof document !== 'undefined' && document.getElementById)
@@ -31541,30 +29700,8 @@ const AppView = {
       this._setHidden('staging-loader', true);
       this._setHidden('staging-test-btn', true);
       this._setHidden('staging-testing-panel', true);
-      this._setHidden('staging-fullscreen-btn', true);
     },
     isOpen() { return this._open; },
-    setMode(mode) {
-      this._mode = mode === 'docked' ? 'docked' : 'fullscreen';
-      const el = this._el('staging-overlay');
-      if (!el || !el.classList) return;
-      if (mode === 'docked') {
-        el.classList.add('staging-overlay-docked');
-        return;
-      }
-      el.classList.remove('staging-overlay-docked');
-      // Back to the CSS `inset: 0` fullscreen geometry.
-      if (el.style) { el.style.top = ''; el.style.left = ''; el.style.width = ''; el.style.height = ''; }
-    },
-    mode() { return this._mode; },
-    setDockRect(rect) {
-      const el = this._el('staging-overlay');
-      if (!el || !el.style || !rect) return;
-      el.style.top = `${Math.round(rect.top)}px`;
-      el.style.left = `${Math.round(rect.left)}px`;
-      el.style.width = `${Math.round(rect.width)}px`;
-      el.style.height = `${Math.round(rect.height)}px`;
-    },
     setUrlLabel(text) { this._setText('staging-url-label', text || ''); },
     // The banner's wording by audience is the island's alone; without it the
     // shipped line stays as it is.
@@ -31593,13 +29730,6 @@ const AppView = {
       this._setHidden('staging-testing-panel', !!hidden);
     },
     isTestPanelHidden() { return this._testPanelHidden; },
-    setFullscreenBtn({ hidden, text, title } = {}) {
-      this._setHidden('staging-fullscreen-btn', !!hidden);
-      const el = this._el('staging-fullscreen-btn');
-      if (!el) return;
-      if (text !== undefined) el.textContent = text;
-      if (title !== undefined) el.title = title || '';
-    },
     frame() { return this._el('staging-iframe'); },
     setSrc(src) {
       const el = this.frame();
@@ -31623,8 +29753,6 @@ const AppView = {
       };
       bind('staging-back', 'onBack');
       bind('staging-retry-btn', 'onRetry');
-      bind('staging-dock-close', 'onDockClose');
-      bind('staging-fullscreen-btn', 'onFullscreen');
       bind('staging-test-btn', 'onTest');
       bind('staging-testing-close', 'onTestingClose');
     },
@@ -31794,26 +29922,7 @@ const AppView = {
   closeStagingOverlay() {
     const staging = AppView._staging();
     const iframe = staging.frame();
-    // The "seeing" half of the doing↔seeing loop ends here — see the
-    // matching publish in ensureStaging.
-    window.Improve?.setPreviewActive?.(false);
     AppView._stagingPreview = null;
-    // #771: leave docked mode first (strips the docked class + pinned
-    // geometry, disconnects the slot observer) and collapse the dev-chat
-    // placeholder slot. The open check on stagingPanel makes this safe to
-    // call from DevChat's own teardown paths without re-render loops.
-    const wasDocked = AppView._stagingMode === 'docked';
-    AppView._stagingDockable = false;
-    if (wasDocked) AppView._setStagingMode('fullscreen');
-    // #2779: the host this preview was docked in (or opened for) hears it
-    // close once, and the next preview starts from the dev chat's default.
-    const host = AppView._currentDockHost();
-    AppView._stagingDockHost = null;
-    if (wasDocked) host.collapse();
-    if (typeof host.closed === 'function') {
-      try { host.closed(); } catch { /* the host's own bookkeeping */ }
-    }
-    staging.setFullscreenBtn({ hidden: true });
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;
     // #439: drop any pending on-demand rebuild marker + its give-up timer so
@@ -32090,9 +30199,8 @@ const AppView = {
   // Anything the shell's own chrome already covers is subtracted: with the
   // platform header over the frame's top edge the app's top inset is 0,
   // and it becomes the real status-bar inset the moment the header is
-  // hidden (chromeless). Same on the other three edges, so a docked
-  // staging panel, the anonymous viewer and desktop all fall out of the
-  // same arithmetic.
+  // hidden (chromeless). Same on the other three edges, so the anonymous
+  // viewer and desktop both fall out of the same arithmetic.
   //
   // Clamped to [0, raw] per edge and rounded. Both bounds matter: a frame
   // that doesn't reach an edge subtracts past zero, and a frame OVERHANGING
@@ -33571,8 +31679,6 @@ if (typeof document !== 'undefined' && typeof document.addEventListener === 'fun
     for (const id of Object.keys(AppView._voteRoster)) AppView._invalidateVoteRoster(id);
     for (const id of Object.keys(AppView._govVoteRoster)) AppView._invalidateGovVoteRoster(id);
     AppView._renderTopicHead();
-    // The preview bar's Full screen button, when a preview is up.
-    if (AppView._staging().isOpen()) AppView._updateStagingModeUi();
   });
 }
 
@@ -33594,15 +31700,11 @@ if (typeof window !== 'undefined') {
     // nothing; the request open there re-reads its own row instead.
     if (refreshed === undefined) AppView._refreshOpenRequestRow();
   });
-  // #1038: wire the Dev board's card surfaces to live session state. Both
-  // subscriptions are registered ONCE here rather than per mount, so no
+  // #1038: wire the Dev board's card surfaces to live session state. The
+  // subscription is registered ONCE here rather than per mount, so no
   // repaint or navigation can leave the board stranded on a stale spinner;
-  // the handlers themselves no-op when no card surface is mounted.
-  //
-  // Order matters: the raw event handler patches the cached issue row's
-  // auto-run state, and the coalesced subscriber repaints from that cache.
+  // the handler itself no-ops when no card surface is mounted.
   if (window.SessionState) {
-    SessionState.onEvent(AppView._onSessionStateEvent);
     SessionState.subscribe(AppView._onSessionStateChanged);
   }
 }

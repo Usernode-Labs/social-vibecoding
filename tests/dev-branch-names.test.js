@@ -259,14 +259,15 @@ test('every dev-branch mint goes through devBranchName', () => {
   // dropped from four to the three headless creation paths that have no
   // "first message" to defer to (auto-issue, clone, fork), plus the one in
   // session-lifecycle.js that the deferred path uses. #2779 retired the
-  // fork with classic sessions, which left two.
+  // fork with classic sessions, and retiring the headless build took the
+  // auto-issue and clone mints with it, so sessions.js mints none now.
   //
   // The assertion that matters is unchanged and is the second one: a mint
   // anywhere in these files must route through the sanitizer. The counts
   // are here so that DELETING a mint is a deliberate act rather than a way
   // to make this test pass.
   const expected = {
-    'src/routes/sessions.js': 2,
+    'src/routes/sessions.js': 0,
     'src/services/session-lifecycle.js': 1,
   };
   for (const [rel, count] of Object.entries(expected)) {
@@ -288,9 +289,10 @@ test('the push proxy validates through the shared module, not a local regex', ()
   );
 });
 
-test('both push-failure tails describe the failure instead of a fixed sentence', () => {
+test('the push-failure tail describes the failure instead of a fixed sentence', () => {
+  // The Mayor's coding tool in sessions.js carried the other tail; it went
+  // with the Mayor, and the recovered turn's is the one left.
   const sessions = read('src/routes/sessions.js');
-  assert.match(sessions, /worker\.describePushFailure\(/);
   assert.equal(
     sessions.includes("Retry your request to re-push and open the PR.'"), false,
     'sessions.js must not hardcode the retry sentence'

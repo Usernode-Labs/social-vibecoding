@@ -860,19 +860,6 @@ export interface MessagesRoute {
    */
   appSlug: string | null;
   /**
-   * #2813: an AGENT thread open beside the list on a desktop — an agent
-   * session (`#messages/agent/<id>`) or an app's dev session
-   * (`#messages/session/<slug>/<id>`). Both used to navigate away to a
-   * screen of their own (`#agent/<id>`, `#app/<slug>/dev/sessions/<id>`).
-   * On a PHONE a dev session still goes to its own: the router swaps that
-   * address there. An agent session opens here on a phone too, as the
-   * second level of the inbox's drawer (Evan, 18 Oct 2026).
-   *
-   * Mutually exclusive with the other two, for the same reason they are
-   * with each other: one thread is open.
-   */
-  agent: MessagesAgentThread | null;
-  /**
    * #2387: a reply thread open beside the conversation or app channel — the
    * id of the message it hangs off (`#messages/<id>/thread/<root>`,
    * `#messages/app/<slug>/thread/<root>`). Null when no thread is open.
@@ -900,13 +887,6 @@ export interface MessagesRoute {
    */
   threadsOnly?: boolean;
 }
-
-/** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
-export type MessagesAgentThread =
-  | { kind: 'session'; slug: string; id: number }
-  // #2779: an agent session, a conversation with the Mayor (a serial id), or
-  // `new`: the one New change opens, unsent until its first message.
-  | { kind: 'agent'; id: number | 'new' };
 
 /** The app whose discussion is open, once its metadata has landed. */
 export interface DiscussionContext {
@@ -953,10 +933,10 @@ export interface MessagesSnapshot {
    * #2718: the other two kinds of thread this screen lists.
    *
    * `discussions` is GET /api/messages/app-discussions — the general thread
-   * on each app the viewer is a member of, one row per app. Agent sessions
-   * are NOT here: they are already in features/agent-session's own store,
-   * and a second copy of a list that is loaded, merged and invalidated
-   * elsewhere is a copy that drifts.
+   * on each app the viewer is a member of, one row per app. The changes in
+   * flight are NOT here: they are already in the Improve store, and a second
+   * copy of a list that is loaded, merged and invalidated elsewhere is a
+   * copy that drifts.
    */
   discussions: AppDiscussion[];
   discussionsLoaded: boolean;

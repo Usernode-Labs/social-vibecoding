@@ -179,11 +179,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // to pick up".
     //
     // NO "BUILD IT YOURSELF" SENTENCE (first-session run-through, 5 Oct
-    // 2026). It said "To build it yourself with a coding agent, tap Build it
-    // yourself", the menu's row under its button; that row, with the whole
-    // Agent chats section, shows only once the viewer has had an agent
-    // session, so the person this tour is for would look for a row they do
-    // not have. The hub's ⋯ and a request's own page still offer it.
+    // 2026): the menu has no such row. A request's own page offers it.
     id: 'menu-actions',
     title: 'onboarding:tour.step.menuActions.title',
     body: 'onboarding:tour.step.menuActions.body',

@@ -11,7 +11,8 @@ const log = require('./logger');
 
 // Rows an upload made that no message, issue or conversation took.
 const ORPHANS = [
-  // A dev-chat upload removed from the composer or abandoned (#450).
+  // An upload to a change's composer (#450, the retired dev chat's) that no
+  // message took.
   ['chatAttachments', 'chat_session_attachments', 'message_id'],
   // A feedback screenshot or clip whose modal was cancelled (#683, #3940).
   ['issueScreenshots', 'issue_screenshots', 'issue_number'],

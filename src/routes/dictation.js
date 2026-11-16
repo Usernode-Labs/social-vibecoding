@@ -45,10 +45,24 @@ function dictationRoutes(config, deps = {}) {
     try {
       dictation.validateWav(req.body);
       const credential = { pool, userId, provider: 'openrouter', purpose: 'coding_agent' };
-      const meta = await (deps.readMetadata || credentialStore.readMetadata)(credential);
-      const apiKey = await (deps.readSecret || credentialStore.readSecret)({ pool, userId,
-        provider: 'openrouter', purpose: 'coding_agent', dataKey: config.dataEncryptionKey,
-        expectedRevision: meta?.revision });
+      const readKey = async () => {
+        const found = await (deps.readMetadata || credentialStore.readMetadata)(credential);
+        const secret = await (deps.readSecret || credentialStore.readSecret)({ pool, userId,
+          provider: 'openrouter', purpose: 'coding_agent', dataKey: config.dataEncryptionKey,
+          expectedRevision: found?.revision });
+        return { meta: found, apiKey: secret };
+      };
+      let { meta, apiKey } = await readKey();
+      // #2568: the lazy safety net for an account with no included key yet
+      // (one created before keys were issued at signup, or one whose signup
+      // ran while OpenRouter's management API was down). Idempotent and
+      // never throws; Settings' key status read runs it too.
+      if (!apiKey) {
+        const ensured = await (deps.ensureIncludedKey || managedOpenRouter.ensureIncludedKey)({
+          pool, userId, config, reason: 'dictation',
+        });
+        if (ensured?.created) ({ meta, apiKey } = await readKey());
+      }
       if (!apiKey) throw new dictation.DictationError('key_required', 403);
       const included = meta?.metadata?.source === managedOpenRouter.MANAGED_SOURCE;
       if (included) {

@@ -2382,7 +2382,7 @@ function HomeroomBotSection() {
                 />
               </div>
               <p className={`${AdminUI.muted} mt-1 mb-4`} id="admin-homeroom-bot-default-model-note">
-                What the bot&apos;s answers in DMs and chats run on, a new agent chat for anyone who has not picked a model, and any
+                What the bot&apos;s answers in DMs and chats run on, and any
                 stage of the bot&apos;s when no configuration is current. Every server follows a change within 10 seconds, with no
                 deploy.
               </p>

@@ -54,7 +54,6 @@ import type {
   WorkRequest, WorkResultPayload, WriteContext,
 } from '../kernel/index.ts';
 import { boardMoved, chatLine, issueUpdate, sessionUpdate, threadChanged, toUser, voteUpdate } from '../pushes.ts';
-import { changeClosed } from '../rules/agent-notes.ts';
 import { settleDecidedChange } from '../rules/change-notifications.ts';
 import { createConnectorSubmittedNotification, createPrProposedNotifications, createStalePrNotification } from '../rules/proposal-notifications.ts';
 import { invalidateHeadMoveSql } from '../rules/summary-freshness.ts';
@@ -653,11 +652,6 @@ function closedLine(r: Row, reason: string, byOwner: boolean, base: string | nul
 // The closes that follow GitHub's own (services/pr-import-sync.js).
 const GITHUB_SETTLED: ReadonlySet<string> = new Set(['pr-closed', 'pr-merged', 'merged-elsewhere']);
 
-// How a conversation that started the change words its close
-// (rules/agent-notes.ts closedSentence).
-const OUTCOMES: ReadonlyMap<string, string> = new Map([
-  ['auto-rejected', 'rejected'], ['admin-no', 'admin-no'], ['approver-no', 'approver-no'], ['proposal-replaced', 'replaced'], ['manual', 'withdrawn'],
-]);
 
 // ── Moves ───────────────────────────────────────────────────────────────
 
@@ -805,8 +799,7 @@ function close(s: Live, e: Event<any>, f: Facts, reason: string, more: { byOwner
     d = doom(d, purge);
     work.push(purge);
   }
-  const writes: DomainWrite[] = [{ type: 'closed', eventId: e.id, sessionId: d.sessionId, appId: d.appId,
-    outcome: OUTCOMES.get(reason) || 'closed', agentSessionId: row.agentSessionId, prNumber: row.prNumber }];
+  const writes: DomainWrite[] = [{ type: 'closed', eventId: e.id, sessionId: d.sessionId, appId: d.appId }];
   if (row.prNumber) writes.push(line(e, d, closedLine(row, reason, !!more.byOwner, more.base ?? null)));
   if (reason === 'request-closed') {
     // A change of the Homeroom bot's withdrawn because every request it is
@@ -868,7 +861,7 @@ const abandoned: Handler = (s, e, f, ctx, deps) => {
     messages: told, cancel, work,
     writes: [
       { type: 'abandoned', sessionId: s.data.sessionId },
-      line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Re-propose it from the session's dev-chat.`),
+      line(e, s.data, `${prLabel(f.row!)} is closed on GitHub and couldn't be reopened, so it has been taken off the vote panel. Propose it again from the change's page.`),
     ],
     push: [votes(f, { merging: false, mergeFailed: true, resolving: false, selfHosted: f.row!.selfHosted }), ...board(f, 'paused')],
     timer: timerFor(next, f, ctx, deps),
@@ -1473,7 +1466,7 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
     if (outcome === 'unresolvable') {
       const owner = f.row!.userId ? `<@${f.row!.userId}>` : 'the session owner';
       writes.push({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, msgType: 'conflict', metadata: null,
-        content: `PR #${f.row!.prNumber} conflicts with main and could not be resolved automatically. ${owner}: open the session's dev-chat to resolve it.` });
+        content: `PR #${f.row!.prNumber} conflicts with main and could not be resolved automatically. ${owner}: the conflict needs resolving on its branch before it can merge.` });
     }
   }
   return step({ name: s.name, data: d } as Live, {
@@ -2063,8 +2056,8 @@ const WRITES = {
       WHERE id = $1`, [w.sessionId]),
   resumed: async (tx: Tx, w: any) => tx.query('UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1', [w.sessionId]),
   // Closed: its votes stop counting (Q4); the work orders it held are
-  // abandoned; a value it declared is discarded with it; the conversation
-  // that started it hears; the bell stops asking about it.
+  // abandoned; a value it declared is discarded with it; the bell stops
+  // asking about it.
   closed: async (tx: Tx, w: any, ctx: WriteContext) => {
     await tx.query('UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [w.sessionId]);
     await tx.query(
@@ -2073,9 +2066,6 @@ const WRITES = {
     await tx.query(
       `UPDATE pending_secret_declarations SET status = 'discarded', value_enc = NULL
         WHERE session_id = $1 AND status = 'pending'`, [w.sessionId]);
-    if (w.agentSessionId) {
-      await changeClosed(tx, { change: { id: w.sessionId, agent_session_id: w.agentSessionId, pr_number: w.prNumber ?? null }, outcome: w.outcome });
-    }
     for (const userId of await settleDecidedChange(tx, w.sessionId, { status: 'archived' })) {
       ctx.push(toUser(userId, { type: 'notifications_changed' }));
     }

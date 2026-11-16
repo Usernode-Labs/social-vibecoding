@@ -177,12 +177,6 @@ function proposalBodyHtml(AppView, pr) {
   return b ? renderToHtml(createElement(mod().ProposalBody, { b })) : '';
 }
 
-/** The shared-chat disclosure alone. */
-function transcriptHtml(AppView, item) {
-  const t = AppView._transcriptSectionView(item);
-  return t ? topicHeadHtml(BLANK_CARD, { actions: null, transcript: t }) : '';
-}
-
 /** Render the opened topic's whole head from `AppView._renderTopicHead`'s two halves. */
 function topicHeadHtml(card, body) {
   const m = mod();
@@ -267,7 +261,6 @@ module.exports = {
   proposalBodyHtml,
   previewHtml,
   topicHeadHtml,
-  transcriptHtml,
   detailsHtml,
   detailActionsHtml,
   noteBoxHtml,

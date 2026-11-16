@@ -278,16 +278,12 @@ test('the three controls #1884 names are the same three on every surface', () =>
   // surfaces build rows through the one helper (asserted above).
   assert.match(FOLD, /\{row\.commentsFor != null \? \(/);
   assert.match(FOLD, /\{row\.thread && slug \? \(/);
-  // The one thing still keyed on the surface, and it is not one of the
-  // three: #1887's session line, which the Board has no rule to style.
-  const surfaceProps = FOLD.match(/^\s*sessionLink\??[:=]/gm) || [];
-  assert.ok(surfaceProps.length >= 2, 'sessionLink is declared and defaulted');
-  // And it is the only one: the open row takes the row, the slug, whether
-  // the viewer may post, where the pill sits, that line, and how to fold.
+  // Nothing is keyed on the surface: the open row takes the row, the slug,
+  // whether the viewer may post, where the pill sits, and how to fold.
   const sig = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'));
   assert.match(sig.slice(0, sig.indexOf('): ReactNode {')),
-    /row, slug, canPost, detail: placement = 'actions', sessionLink = true, onFold,/,
-    'nothing else in the signature decides behaviour per surface');
+    /row, slug, canPost, detail: placement = 'actions', onFold,/,
+    'nothing in the signature decides behaviour per surface');
 });
 
 test('a declared check reads the reply box off a board card', () => {

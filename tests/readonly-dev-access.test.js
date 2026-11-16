@@ -285,7 +285,6 @@ test("session/proposal/issue/board list routes read at 'view' level", () => {
 test('mutating slug routes keep their collab gate', () => {
   const cases = [
     ['src/routes/chat.js', "router.post('/api/apps/:slug/messages'"],
-    ['src/routes/sessions.js', "router.post('/api/apps/:slug/sessions'"],
     ['src/routes/issues.js', "router.post('/api/apps/:slug/issues'"],
     ['src/routes/board-order.js', "router.post('/api/apps/:slug/board-order'"],
     ['src/routes/topic-attributes.js', "router.post('/api/apps/:slug/topics"],

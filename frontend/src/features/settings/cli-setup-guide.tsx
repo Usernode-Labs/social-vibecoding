@@ -1,5 +1,5 @@
 /**
- * Shared local coding-agent setup for Settings and the own-tools launchpad.
+ * Local coding-agent setup, for Settings' CLI section.
  *
  * This guide is static section content, not a credential-list state. Keeping
  * it outside `#cli-tokens-list` means it remains visible while capability
@@ -89,14 +89,10 @@ function SetupStep({ n, title, children }: {
   );
 }
 
-export function CliSetupGuide({
-  id = 'cli-setup-guide',
-  proposalPrompt,
-  promptHelp,
-}: { id?: string; proposalPrompt?: string; promptHelp?: string } = {}) {
+export function CliSetupGuide() {
   const t = useMessages('settings');
   return (
-    <div id={id} className="ui-card ui-guide mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
+    <div id="cli-setup-guide" className="ui-card ui-guide mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4">
       <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">{t('settings:cli.guide.title')}</h3>
       <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
         {t('settings:cli.guide.intro')}
@@ -125,9 +121,9 @@ export function CliSetupGuide({
         </SetupStep>
         <SetupStep n={3} title={t('settings:cli.guide.ask.title')}>
           <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-            {promptHelp ?? t('settings:cli.guide.ask.promptHelp')}
+            {t('settings:cli.guide.ask.promptHelp')}
           </p>
-          <CopyableCode label={t('settings:cli.guide.ask.promptLabel')} copyLabel={t('settings:cli.guide.ask.promptCopyAria')} value={proposalPrompt ?? examplePrompt(t('settings:cli.guide.ask.examplePrompt'))} />
+          <CopyableCode label={t('settings:cli.guide.ask.promptLabel')} copyLabel={t('settings:cli.guide.ask.promptCopyAria')} value={examplePrompt(t('settings:cli.guide.ask.examplePrompt'))} />
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
             {t('settings:cli.guide.ask.follow')}
           </p>

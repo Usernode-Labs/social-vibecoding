@@ -982,15 +982,12 @@ function authRoutes(config) {
       const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, req.user.id);
       profile = shapeProfile(rows[0], verifiedLinks);
     } catch {}
-    // #1055 staging fixture: report a saved BYOK key so the composer's
-    // session-options menu renders its "Change your API key (…7f2c)" branch
-    // (and the meter its "your key" one). STRICTLY request-time — nothing is
+    // #1055 staging fixture: report a saved BYOK key so the screens that
+    // show one render that state. STRICTLY request-time — nothing is
     // written, users.anthropic_key_enc is untouched, and dropping `demo=1`
     // gives the honest unset state back on the very next request. A no-op in
     // production: same IS_STAGING && ?demo=1 gate as /api/me/ai-budget below.
-    let demoKey = false;
     if (IS_STAGING && req.query.demo === '1') {
-      demoKey = true;
       hasApiKey = true;
       keyLast4 = '7f2c';
     }
@@ -1046,19 +1043,6 @@ function authRoutes(config) {
         // meets it ({ used, limit, remaining, full }), or null when it does
         // not apply to them. Seeds the allowance panel's first paint.
         appServerCapacity: allowance.server || null,
-        // Experimental: opt-in AI progress estimate for coding runs
-        // (Settings → Experimental). Default OFF.
-        aiProgressEstimate: !!req.user.aiProgressEstimate,
-        // #1281: opt-in for the session-CLI bridge, the bottom rung of the
-        // spec's routing tree. build-venues.js requires this AND the
-        // deployment's cliAuthEnabled before offering the `local` venue.
-        sessionBridgeEnabled: !!req.user.sessionBridgeEnabled,
-        // #2779: new work starts in an agent session for everyone; the
-        // per-user flag and its Settings switch are retired. Still reported
-        // as true for a shell cached before that, whose entry points read it
-        // to choose between an agent session and a classic one the server
-        // no longer creates.
-        agentSessionsEnabled: true,
         // Platform-level language preference (issue #757): a BCP-47 tag or
         // null when unset. Settings → Language renders from this; apps read
         // it via the iframe JWT `locale` claim and the bridge's
@@ -1126,10 +1110,6 @@ function authRoutes(config) {
         // In-chat venue availability: feature flag + beta eligibility + a
         // currently usable personal or company OpenRouter credential.
         openrouterAvailable,
-        // Marks the two fields above as the staging fixture rather than
-        // real state, the same way every other ?demo=1 payload labels
-        // itself (services/local-agent-demo.js, GET /api/budget).
-        ...(demoKey ? { demoKey: true } : {}),
         usernodePubkey,
         walletLinkEnabled: !!config.usernodeAppPubkey,
         // Profile customization (#982). `username` stays the permanent
@@ -1157,11 +1137,10 @@ function authRoutes(config) {
         // Same shape as walletLinkEnabled / cliAuthEnabled above: the client
         // renders what the server reports and never sniffs the environment.
         // A staging clone has no GitHub OAuth app, so this would be false
-        // there and the whole #1049 surface would be unreviewable. Saying
-        // "offerable" in staging unlocks nothing: the two writes answer 503
-        // (routes/dev-flow.js), and the status route still reports
-        // available:false unless the request carries the ?demo=1 fixture
-        // flag — so the card only appears where a reviewer asks for it.
+        // there and the screens that offer a person's own coding agent would
+        // be unreviewable. Saying "offerable" in staging unlocks nothing: the
+        // dev-flow status route (routes/dev-flow.js) still reports what the
+        // GitHub link can actually do.
         externalFlowsAvailable: IS_STAGING || githubLink.isEnabled(config),
         // The platform's own app row — slug, display name, repo and deployed
         // short sha — or null on a deployment that has no self-hosted row.
@@ -1372,51 +1351,6 @@ function authRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('auth', 'Change password failed', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // Experimental: per-user "AI progress estimate" toggle (default OFF).
-  // Gates the Haiku estimator that watches in-flight Claude Code runs —
-  // see runClaudeCodeTool in src/routes/sessions.js. Wired to the
-  // Settings modal's Experimental section (fires on checkbox change).
-  router.post('/api/me/ai-progress-estimate', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled must be a boolean' });
-    }
-    try {
-      await pool.query(
-        'UPDATE users SET ai_progress_estimate = $1 WHERE id = $2',
-        [enabled, req.user.id]
-      );
-      log.info('settings', 'AI progress estimate toggled', { userId: req.user.id, enabled });
-      res.json({ ok: true, enabled });
-    } catch (err) {
-      log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // #1281: opt in to the session-CLI bridge (Settings -> Experimental).
-  // Same shape as the progress-estimate toggle above; see
-  // users.session_bridge_enabled in schema.sql for why it defaults off.
-  router.post('/api/me/session-bridge', async (req, res) => {
-    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled must be a boolean' });
-    }
-    try {
-      await pool.query(
-        'UPDATE users SET session_bridge_enabled = $1 WHERE id = $2',
-        [enabled, req.user.id]
-      );
-      log.info('settings', 'Session bridge toggled', { userId: req.user.id, enabled });
-      res.json({ ok: true, enabled });
-    } catch (err) {
-      log.error('settings', 'Failed to toggle session bridge', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

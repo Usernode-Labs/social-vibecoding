@@ -9,7 +9,7 @@
 // come here and answer with git: reads from the app's mirror
 // (services/repo-mirror.js), which is a full clone of the git host's
 // repository, and writes built in that mirror and pushed with a
-// compare-and-swap (services/git-host.js); a local agent's commit is built
+// compare-and-swap (services/git-host.js); a CLI hand-off's commit is built
 // in a scratch repository of its own instead (createProposalCommit, through
 // services/git-child.js), since its files are somebody else's. The shapes
 // and the error codes are GitHub's (`branch_conflict`, `branch_moved`,
@@ -547,7 +547,7 @@ async function deleteBenchBranch(owner, repo, branchName) {
   return true;
 }
 
-// ── A local agent's commit, in a scratch repository ─────────────────────
+// ── A CLI hand-off's commit, in a scratch repository ────────────────────
 
 // One git process in a scratch repository (`dir`, or none for `init`),
 // through services/git-child.js: nothing of this process's environment, its
@@ -582,7 +582,7 @@ function parseCommit(raw) {
 }
 
 /**
- * The CLI handoff's commit and a local agent's (services/github.js
+ * The CLI handoff's commit (services/github.js
  * createProposalCommit, asked by services/proposal-commit-operation.js on a
  * conductor): the local commit's tree rebuilt from `files` on the branch's
  * head, checked against the tree the agent tested, committed as 'Homeroom

@@ -81,7 +81,7 @@ export function mergeFollowupsServices({ config, pool }: Deps): Record<string, W
     // its own lock (machine.ts notIncludable).
     //
     // A change busy with an operation (a sync with main or a dispatch
-    // starting its worker, a hand-off's commit upload, a local agent run, a
+    // starting its worker, a hand-off's commit upload, a
     // push not yet reconciled into its head) is left out too: the preview
     // machine records those operations, and the guard reads them from its
     // record, in whichever process runs it.

@@ -81,7 +81,6 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
     return { removed: true };
   });
   t.mock.method(require('../src/services/ws'), 'broadcastGlobal', event => announcements.push(event));
-  t.mock.method(require('../src/services/session-bus'), 'publish', () => {});
   const role = process.env.PROCESS_ROLE; process.env.PROCESS_ROLE = 'web';
   const services = { ...workerStopServices({ pool }), ...workerInterruptServices({ pool }) };
   const web = createRuntime({ pool, machines: [workerStop(), workerInterrupt()], services, slots: 0 });
@@ -292,7 +291,7 @@ test('force-stop commands against the full PostgreSQL schema', { timeout: 60000 
   await t.test('the last recovery ask ends an unchanged executing record without its journal', async tt => {
     reset(); kill = 'not_current'; const s = await session();
     const recovery = require('../src/services/turn-recovery');
-    tt.mock.method(recovery, 'recoverOwnedTurn', async () => {});
+    tt.mock.method(recovery, 'recoverTurn', async () => {});
     const ctx = { workId: randomUUID(), resumeFrom: null, signal: new AbortController().signal,
       checkpoint: async () => {}, input: { kind: 'recover', sessionId: s.sessionId, identity: s.turn.turnId, last: true } };
     process.env.PROCESS_ROLE = 'conductor';

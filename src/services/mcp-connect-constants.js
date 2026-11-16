@@ -30,8 +30,9 @@ const REFRESH_PREFIX = 'svmcr_';
 // mcp_delegations row.
 const DELEGATED_TOKEN_PREFIX = 'svmcd_';
 
-// Who a delegated grant is for. `agent_mayor` is the Mayor of an agent
-// session; `worker_read` is the coding agent inside one change's worker;
+// Who a delegated grant is for. `agent_mayor` is Homeroom bot reading for
+// the person it answers; `worker_read` is the coding agent inside one
+// change's worker;
 // `bot_admin` is Homeroom bot answering a full platform admin in their own
 // conversation with it, reaching the connector's admin tools (Homeroom bot
 // parity P7, homeroom-bot-thread-tools/admin.js). The server picks the kind
@@ -50,15 +51,15 @@ const DELEGATED_CLIENT_IDS = Object.freeze({
 
 // Shown where a connector's name is (whoami's `connectedFrom`, logs).
 const DELEGATED_CLIENT_NAMES = Object.freeze({
-  agent_mayor: 'Homeroom agent session',
+  agent_mayor: 'Homeroom bot',
   worker_read: 'Homeroom coding agent',
   bot_admin: 'Homeroom bot (admin tools)',
 });
 
-// Upper bounds on a delegated grant's life. A Mayor's read token lasts one
-// turn and a write token one confirmed action; a worker's lasts one build
-// turn. The caller asks for less and revokes in its `finally`; these are the
-// ceilings for a caller that forgets.
+// Upper bounds on a delegated grant's life. Homeroom bot's read token lasts
+// one turn; a worker's lasts one build turn. The caller asks for less and
+// revokes in its `finally`; these are the ceilings for a caller that
+// forgets.
 const DELEGATION_MAX_TTL_SECONDS = Object.freeze({
   agent_mayor: 15 * 60,
   worker_read: 2 * 60 * 60,

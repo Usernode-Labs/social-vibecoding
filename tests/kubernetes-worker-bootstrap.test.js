@@ -48,7 +48,7 @@ test('clone error markers fail immediately with redacted bootstrap context', asy
   const f = fixture();
   f.setOutput('__USERNODE_PHASE__ clone\n__USERNODE_ERROR__ clone failed: postgres://user:secret@db/app\n');
   await assert.rejects(waitForWorkerBootstrap(f.core, f.apps, options), err => {
-    assert.ok(workerService.isBootstrapError(err));
+    assert.equal(err.bootstrapFailed, true, 'marked as a setup failure');
     assert.equal(err.bootstrapPhase, 'clone');
     assert.match(err.message, /^clone failed:/);
     assert.doesNotMatch(err.message + err.bootstrapLog.join('\n'), /secret/);
@@ -68,7 +68,7 @@ test('scheduling timeout retains Pod reasons and is classified as setup failure'
   const f = fixture();
   f.pod.status.conditions = [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable', message: 'Insufficient memory' }];
   const pending = assert.rejects(waitForWorkerBootstrap(f.core, f.apps, { ...options, timeoutMs: 2000 }), err => {
-    assert.ok(workerService.isBootstrapError(err));
+    assert.equal(err.bootstrapFailed, true, 'marked as a setup failure');
     assert.match(err.bootstrapLog.join('\n'), /Insufficient memory/);
     return true;
   });
@@ -80,7 +80,7 @@ test('quota admission failures retain controller evidence before any Pod exists'
   f.core.listNamespacedPod = async () => ({ items: [] });
   f.deployment.status.conditions = [{ type: 'ReplicaFailure', status: 'True', reason: 'FailedCreate', message: 'exceeded quota' }];
   await assert.rejects(waitForWorkerBootstrap(f.core, f.apps, options), err => {
-    assert.ok(workerService.isBootstrapError(err));
+    assert.equal(err.bootstrapFailed, true, 'marked as a setup failure');
     assert.match(err.message, /exceeded quota/);
     return true;
   });
@@ -105,7 +105,7 @@ async function expectStuck(t, f, reason, graceMs) {
   }
   await flush(); await flush(); await pending;
   assert.ok(settled instanceof Error, 'failed within the grace, not after the five-minute timeout');
-  assert.ok(workerService.isBootstrapError(settled));
+  assert.equal(settled.bootstrapFailed, true, 'marked as a setup failure');
   assert.ok(!workerService.isRetryableBootstrapError(settled));
   assert.equal(settled.bootstrapReason, reason);
   assert.ok(!Object.keys(settled).includes('bootstrapReason'));

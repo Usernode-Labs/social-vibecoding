@@ -102,6 +102,29 @@ test('dictation reuses the signed-in account’s encrypted managed key and never
   }
 });
 
+test('an account without a key gets its included key on first use, and one that has a key is not asked again', async t => {
+  const user = { id: nextUserId++ };
+  const ensured = []; let issued = false;
+  const url = await serverFor(t, { user,
+    readMetadata: async () => (issued ? { revision: 2, metadata: { source: 'usernode_managed' } } : null),
+    readSecret: async (args) => (issued && args.expectedRevision === 2 ? 'issued-key' : null),
+    ensureIncludedKey: async (args) => { ensured.push([args.userId, args.reason]); issued = true; return { created: true }; },
+    transcribe: async ({ apiKey }) => { assert.equal(apiKey, 'issued-key'); return { text: 'first words', seconds: 1, usage: {} }; },
+  });
+  const data = await recording();
+  const first = await post(url, data);
+  assert.equal(first.status, 200);
+  assert.equal((await first.json()).text, 'first words');
+  assert.deepEqual(ensured, [[user.id, 'dictation']]);
+  assert.equal((await post(url, data)).status, 200);
+  assert.equal(ensured.length, 1, 'a key on file skips the safety net');
+  const skipped = await serverFor(t, { readMetadata: async () => null, readSecret: async () => null,
+    ensureIncludedKey: async () => ({ created: false, skipped: 'not_configured' }) });
+  const denied = await post(skipped, data);
+  assert.equal(denied.status, 403);
+  assert.equal((await denied.json()).code, 'key_required');
+});
+
 test('managed dictation observes the shared budget and records provider cost in the correct bucket', async t => {
   const user = { id: nextUserId++ };
   let allowed = false; let calls = 0; const spend = [];

@@ -16,8 +16,7 @@
  * The model carries an `action` STRING and this file dispatches it into
  * `window.Settings` by name. settings.js is 5,000 lines that a dozen tests
  * load in a `vm`; keeping functions out of the view model is what lets the
- * model stay plain serialisable data — the same rule the dev chat's stores
- * follow.
+ * model stay plain serialisable data.
  */
 
 import { useCallback, useState, type ReactNode } from 'react';

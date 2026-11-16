@@ -16,14 +16,11 @@
 //   3. Source guards: execInWorker writes the prompt file BEFORE the
 //      detached dispatch and no longer puts the prompt in the exec env;
 //      run-cc.sh consumes the file on stdin, never as a `-p` argument.
-//   4. describeTurnError maps E2BIG to actionable, non-"just retry"
-//      language.
 //
 // Run with: node --test tests/prompt-file-transport.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -32,15 +29,6 @@ const { spawnSync } = require('node:child_process');
 const docker = require('../src/services/docker');
 const kubernetes = require('../src/services/kubernetes');
 const worker = require('../src/services/worker');
-const {
-  buildCodingAgentBuildGuidance,
-  buildCodingAgentConventionsContext,
-  buildHostedCodingWorkflowGuidance,
-  buildCodingAgentSpecContext,
-  canReuseHostedClaudeScoutSpec,
-  describeTurnError,
-} = require('../src/routes/sessions');
-const { IN_LOOP_BROWSER_GUIDANCE } = require('../src/services/in-loop-browser');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -51,164 +39,6 @@ function decodeScriptPayload(script) {
     .map((m) => m[1]);
   return Buffer.from(chunks.join(''), 'base64').toString('utf8');
 }
-
-test('hosted Claude receives conventions once as system context, while unchanged backends keep them inline', () => {
-  const conventions = 'SENTINEL platform rule\nsecond rule';
-
-  const hosted = buildCodingAgentConventionsContext({ conventions });
-  assert.match(hosted.systemPrompt, /SENTINEL platform rule/);
-  assert.doesNotMatch(hosted.promptBlock, /SENTINEL platform rule/);
-  assert.match(hosted.promptBlock, /supplied separately as authoritative\nsystem instructions/);
-
-  const local = buildCodingAgentConventionsContext({ runLocally: true, conventions });
-  assert.equal(local.systemPrompt, null);
-  assert.match(local.promptBlock, /SENTINEL platform rule/);
-
-  const codex = buildCodingAgentConventionsContext({ isCodexSession: true, conventions });
-  assert.equal(codex.systemPrompt, null);
-  assert.match(codex.promptBlock, /SENTINEL platform rule/);
-});
-
-test('the CLI that runs an OpenRouter turn decides the transport, not the backend (#3296)', () => {
-  const conventions = 'SENTINEL platform rule';
-  // Claude Code driving an OpenRouter model reads --append-system-prompt-file
-  // like hosted Claude does, so the handbook travels the same way.
-  const claudeHarness = buildCodingAgentConventionsContext({ isCodexSession: true, harness: 'claude', conventions });
-  assert.match(claudeHarness.systemPrompt, /SENTINEL platform rule/);
-  assert.doesNotMatch(claudeHarness.promptBlock, /SENTINEL platform rule/);
-  assert.deepEqual(claudeHarness, buildCodingAgentConventionsContext({ conventions }));
-  // Codex has no system-prompt file; absent means Codex.
-  for (const harness of ['codex', null]) {
-    const inline = buildCodingAgentConventionsContext({ isCodexSession: true, harness, conventions });
-    assert.equal(inline.systemPrompt, null);
-    assert.match(inline.promptBlock, /SENTINEL platform rule/);
-  }
-  // A local run keeps it inline whatever the harness.
-  const local = buildCodingAgentConventionsContext({ runLocally: true, isCodexSession: true, harness: 'claude', conventions });
-  assert.equal(local.systemPrompt, null);
-
-  const sessionsSource = read('src/routes/sessions.js');
-  assert.match(sessionsSource, /if \(runLocally \|\| \(isCodexSession && harness !== 'claude'\)\) \{/);
-  assert.match(sessionsSource, /const transport = buildTransport\(agentIdentity\.harness, !isCodexSession\);/);
-  // An OpenRouter attempt's prompt is rendered from the runtime it resolved:
-  // the CLI that runs it (the harness map can move between the prompt render
-  // and dispatch) and what its model can see.
-  assert.match(sessionsSource, /const openRouterBuildFor = isCodexSession && !runLocally\n\s+\? \(ctx\) => \{\n\s+const t = buildTransport\(ctx\.agentHarness === 'claude' \? 'claude' : 'codex', runtimeReadsImages\(ctx\)\);/);
-  assert.match(sessionsSource, /const openRouterBuild = !isClaudeDispatch && openRouterBuildFor\n\s+\? openRouterBuildFor\(ctx\)/);
-  assert.match(sessionsSource, /prompt: openRouterBuild \? openRouterBuild\.prompt : claudePrompt,/);
-  assert.match(sessionsSource, /systemPrompt: isClaudeDispatch\n\s+\? conventionsContext\.systemPrompt\n\s+: \(openRouterBuild \? openRouterBuild\.systemPrompt : null\),/);
-  // The worker takes a system prompt from any turn that runs Claude Code, and
-  // run-cc.sh treats the file as optional for an OpenRouter turn.
-  const workerSource = read('src/services/worker.js');
-  assert.match(workerSource, /runsClaude/);
-});
-
-test('hosted build guidance keeps proposal submission with the harness and shots intent with the agent', () => {
-  const hosted = buildHostedCodingWorkflowGuidance();
-  assert.match(hosted, /HOSTED WORKER LIFECYCLE/);
-  assert.match(hosted, /declare_visible_changes/);
-  assert.match(hosted, /harness handles push, pull request/);
-  assert.match(hosted, /Do not run\s+that skill, the social-vibecoding CLI/);
-  assert.match(hosted, /Do not create platform users or tokens/);
-  assert.equal(buildHostedCodingWorkflowGuidance({ runLocally: true }), '');
-  const sessionsSource = read('src/routes/sessions.js');
-  assert.match(sessionsSource, /const workflowGuidance = buildHostedCodingWorkflowGuidance\(\{ runLocally \}\)/);
-  assert.match(sessionsSource, /INSTRUCTIONS:\n\$\{workflowGuidance\}\n\$\{turnInstructions\}/);
-});
-
-test('hosted Claude references system build guidance while local and Codex share the reviewed inline contract', () => {
-  const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true });
-  const local = buildCodingAgentBuildGuidance();
-  const codex = buildCodingAgentBuildGuidance();
-  const hostedText = `${hosted.browserGuidance}\n${hosted.testingGuidance}`;
-  const localText = `${local.browserGuidance}\n${local.testingGuidance}`;
-
-  assert.deepEqual(codex, local, 'local Claude and Codex retain the same inline block');
-  assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
-  assert.equal(
-    crypto.createHash('sha256').update(localText).digest('hex'),
-    // App bench run 191: the in-loop launch signs an app in and prints its link.
-    '6a3e61f32987026d4c3173c23f4680ced7d2b9e92a365418e16b241265d27c63',
-    'the non-system-prompt backends retain their exact reviewed guidance',
-  );
-  assert.match(localText, /falls back to the home page and records that\n\s+default/);
-
-  assert.match(hostedText, /authoritative system instructions/);
-  assert.match(hostedText, /usernode-run-checks --changed/);
-  assert.match(hostedText, /==== TESTING ====/);
-  assert.match(hostedText, /one to three relative "path:" lines/);
-  assert.match(hostedText, /The block must be LAST/);
-  assert.doesNotMatch(hostedText, /A BLANK or empty-looking page/);
-  assert.doesNotMatch(hostedText, /Standalone server pages/);
-  assert.ok(
-    localText.length - hostedText.length >= 7000,
-    `hosted guidance should remove at least 7,000 repeated characters (saved ${localText.length - hostedText.length})`,
-  );
-
-  const conventions = read('src/prompts/app-conventions.md');
-  assert.match(conventions, /## In-loop browser \(build turns\)/);
-  assert.match(conventions, /## Proposal tests/);
-  assert.match(conventions, /## Staging mock data/);
-  assert.match(conventions, /### Make the changed screen URL-reachable/);
-
-  for (const options of [{}, { runLocally: true }, { isCodexSession: true }]) {
-    const context = buildCodingAgentConventionsContext({
-      ...options,
-      conventions: 'SENTINEL platform rule',
-    });
-    const guidance = buildCodingAgentBuildGuidance({
-      authoritativeSystemContext: Boolean(context.systemPrompt),
-    });
-    assert.equal(
-      context.systemPrompt !== null,
-      guidance.browserGuidance !== IN_LOOP_BROWSER_GUIDANCE,
-      'compact guidance is used exactly when the authoritative handbook is system context',
-    );
-  }
-});
-
-test('spec context keeps a complete user-level fallback and a content-free resumed reference', () => {
-  const sentinel = 'SENTINEL exact saved spec\nwith a second line';
-  const context = buildCodingAgentSpecContext({
-    currentSpec: sentinel,
-    specTaskReference: 'The coding task selects this turn',
-  });
-
-  assert.match(context.fullBlock, /SENTINEL exact saved spec/);
-  assert.match(context.fullBlock, /authoritative for what to build/);
-  assert.doesNotMatch(context.resumedBlock, /SENTINEL exact saved spec/);
-  assert.match(context.resumedBlock, /immediately preceding assistant response/);
-  assert.match(context.resumedBlock, /The coding task selects this turn/);
-  assert.deepEqual(
-    buildCodingAgentSpecContext({ currentSpec: '   ' }),
-    { fullBlock: '', resumedBlock: '' },
-  );
-});
-
-test('scout-to-build reuse requires the latest exact hosted-Claude publication receipt', async () => {
-  const calls = [];
-  const pool = {
-    async query(sql, params) {
-      calls.push({ sql, params });
-      return { rows: [{ reusable: true }] };
-    },
-  };
-
-  assert.equal(await canReuseHostedClaudeScoutSpec(pool, 717, '# Exact spec'), true);
-  assert.equal(calls.length, 1);
-  assert.deepEqual(calls[0].params, [717, '# Exact spec']);
-  assert.match(calls[0].sql, /scoutConversationSpecExact/);
-  assert.match(calls[0].sql, /agentBackend' = 'claude_code'/);
-  assert.match(calls[0].sql, /NOT \(metadata \? 'runner'\)/);
-  assert.match(calls[0].sql, /content = 'Claude Code progress'/);
-  assert.match(calls[0].sql, /ORDER BY id DESC\s+LIMIT 1/);
-
-  assert.equal(await canReuseHostedClaudeScoutSpec({
-    query: async () => ({ rows: [{ reusable: false }] }),
-  }, 717, '# Changed spec'), false);
-  assert.equal(await canReuseHostedClaudeScoutSpec(pool, 717, ''), false);
-  assert.equal(calls.length, 1, 'an empty spec never reaches the database');
-});
 
 // ── 1. buildTurnPromptScript ────────────────────────────────────────────
 
@@ -587,17 +417,4 @@ exit 0
   assert.notEqual(missingFallback.status, 0);
   assert.match(missingFallback.stdout, /resume fallback prompt file missing or empty/);
   assert.equal(fs.existsSync(invocationLog), false, 'Claude was never invoked');
-});
-
-// ── 4. describeTurnError E2BIG mapping ──────────────────────────────────
-
-test('describeTurnError maps spawn E2BIG to actionable language, not the raw errno', () => {
-  const friendly = describeTurnError(new Error('spawn E2BIG'));
-  assert.doesNotMatch(friendly, /E2BIG/);
-  assert.match(friendly, /too large/i);
-  assert.match(friendly, /spec|attachment/i);
-});
-
-test('describeTurnError leaves unrelated errors verbatim', () => {
-  assert.equal(describeTurnError(new Error('boom')), 'boom');
 });

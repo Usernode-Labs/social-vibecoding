@@ -1,7 +1,7 @@
 'use strict';
 
-// One notification of every kind, sent to one test account
-// (send_test_notifications, routes/test-accounts.js), so a tester holding a
+// One notification of every kind Homeroom still creates, sent to one test
+// account (send_test_notifications, routes/test-accounts.js), so a tester holding a
 // phone or a simulator signed in as that account sees every row the bell can
 // draw and every push it can ring, and can debug how each one looks.
 //
@@ -40,7 +40,9 @@
 //
 // Every kind is one row in its own statement, so each has its own time and
 // the list keeps their order. `kudos` is parked (services/kudos-parked.js):
-// neither listed nor pushed, so it is skipped with that reason.
+// neither listed nor pushed, so it is skipped with that reason. Kinds that
+// are no longer created (spec_shared, session_done, session_stalled,
+// auto_solve_done) are not sent: their old rows still draw in the bell.
 
 const crypto = require('crypto');
 const log = require('./logger');
@@ -76,10 +78,6 @@ const KINDS = Object.freeze([
   { kind: 'approver_invite', app: true, actor: true },
   { kind: 'approver_invite_accepted', app: true, actor: true },
   // A project's work.
-  { kind: 'spec_shared', app: true, actor: true, detail: '1' },
-  { kind: 'session_done', app: true },
-  { kind: 'session_stalled', app: true },
-  { kind: 'auto_solve_done', app: true, detail: 'code' },
   { kind: 'connector_submitted', app: true, detail: 'submitted' },
   { kind: 'agent_awaiting_input', app: true },
   // Changes and votes.

@@ -38,7 +38,16 @@ test('the catalogue: every kind the push registry knows, and words in the bell f
   const categories = 'direct_interactions|invitations|shared_work|developer_sessions|proposal_alerts|lightweight_activity|messages|app_alerts|builds|invite_activity';
   const seeded = new Set([...schema.matchAll(new RegExp(`\\('([a-z_]+)',\\s*'(?:${categories})',\\s*(?:TRUE|FALSE)\\)`, 'g'))].map((m) => m[1]));
   assert.ok(seeded.size >= 40, `read the registry (${seeded.size})`);
-  for (const kind of seeded) assert.ok(testNotifications.KIND_NAMES.includes(kind), `${kind} is sent`);
+  // Kinds the registry still holds but nothing creates any more: they went
+  // with the dev chat and the agent chats (old rows of them still draw).
+  const retired = new Set(['session_done', 'session_stalled', 'auto_solve_done', 'spec_shared']);
+  for (const kind of retired) {
+    assert.ok(seeded.has(kind), `${kind} is still in the registry`);
+    assert.ok(!testNotifications.KIND_NAMES.includes(kind), `${kind} is not sent`);
+  }
+  for (const kind of seeded) {
+    if (!retired.has(kind)) assert.ok(testNotifications.KIND_NAMES.includes(kind), `${kind} is sent`);
+  }
   // Each kind once, and the bell's renderer has a branch for it (a kind it
   // does not know would draw as a bare "posted" row).
   assert.equal(new Set(testNotifications.KIND_NAMES).size, testNotifications.KIND_NAMES.length);

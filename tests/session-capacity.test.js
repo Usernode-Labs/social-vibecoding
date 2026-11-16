@@ -45,8 +45,9 @@ test('one count spends the budget: active and promoted, whoever owns them, not i
 
 test('every start, resume and reopen passes the same gate, and says where it asked', () => {
   const sessions = read('src/routes/sessions.js');
-  const paths = [...sessions.matchAll(/claimGlobalSlot\(\{ pool, config, path: '([a-z_]+)'/g)].map((m) => m[1]);
-  assert.deepEqual(paths, ['start', 'issue_headless', 'clone_headless']);
+  // A change starts as a native proposal (proposal_start, below) or as
+  // Homeroom bot's build: the change routes start none, so ask for no slot.
+  assert.doesNotMatch(sessions, /claimGlobalSlot\(/);
   // A resume is the proposal machine's: it counts the same caps under locks
   // (R5) and refuses 'global_cap' over this one, and the route frees an idle
   // slot the same way, then records the refusal with its path, as the gate does.
@@ -60,15 +61,14 @@ test('every start, resume and reopen passes the same gate, and says where it ask
   // The per-user cap's refusals are recorded too.
   const userRefusals = [...`${sessions}\n${handoff}\n${read('src/services/connector-limits.js')}`
     .matchAll(/recordCapacityRefusal\(pool, \{\s*cap: 'user', path: '([a-z_]+)'/g)].map((m) => m[1]);
-  assert.deepEqual(userRefusals.sort(), ['clone_headless', 'connector', 'proposal_start', 'resume', 'resume', 'start']);
+  assert.deepEqual(userRefusals.sort(), ['connector', 'proposal_start', 'resume', 'resume']);
   // A slot Homeroom has not freed in time is no cap: every gate answers it
   // with the retryable 503 before its 429 (tests/session-not-decided-routes
-  // and tests/session-cap-enforcement drive two of them).
+  // drives them).
   const gates = `${sessions}\n${handoff}`;
-  assert.equal((gates.match(/if \(globalSlot\.notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);/g) || []).length, 3);
   assert.match(handoff, /if \(global\.notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);\n\s*if \(!global\.ok\)/);
-  assert.equal((gates.match(/if \(notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);/g) || []).length, 3,
-    'the user-cap frees: start, clone_headless, proposal_start');
+  assert.equal((gates.match(/if \(notDecided\) return sessionLifecycle\.answerNotDecided\(res, sessionLifecycle\.SLOT_NOT_DECIDED\);/g) || []).length, 1,
+    'the user-cap free: proposal_start');
 });
 
 function capPool({ count, idle = [] }) {

@@ -304,9 +304,9 @@ import { requireAdult } from '../auth/adult-gate';
 
       NodePill._sheet = PlatformUI.sheet({
         contentEl: panel,
-        // Drop the portal BEFORE the kit discards the node it is mounted in —
-        // the rule the dev chat's conversions wrote down, on the one seam here
-        // where something other than React destroys the host.
+        // Drop the portal BEFORE the kit discards the node it is mounted in,
+        // on the one seam here where something other than React destroys the
+        // host.
         onDismiss: () => {
           NodePill.setLiveRefresh('sheet', false);
           unmountNodeSheet(bodyEl);

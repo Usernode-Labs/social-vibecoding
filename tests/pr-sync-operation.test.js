@@ -263,9 +263,11 @@ test('the conductor reads each write\'s authority again', async (t) => {
   assert.equal(await refused(ask('create', {}, { from: 'staging' }), other, sessionRow({ pr_number: null, status: 'promoted' })), null,
     'any member may rebuild a change up for a vote');
   assert.equal((await refused(ask('create', {}, { from: 'staging' }), other, sessionRow({ pr_number: null })))?.status, 404);
-  assert.equal((await refused(ask('create', {}, { from: 'clone' }), other, sessionRow({ pr_number: null, status: 'promoted' })))?.status, 404,
-    'a clone is its owner\'s');
-  await assert.rejects(refused(ask('create', {}, { from: 'elsewhere' }), OWNER), /Unknown pull request write/);
+  // A pull request is opened only for a rebuilt preview: no other source,
+  // the retired unattended run's clone included, is taken even from the owner.
+  for (const from of ['clone', 'elsewhere']) {
+    await assert.rejects(refused(ask('create', {}, { from }), OWNER), /Unknown pull request write/, from);
+  }
 });
 
 test('a Preview click on a web process records the missing pull request for a conductor, which opens it once', async (t) => {
@@ -314,7 +316,7 @@ test('a pull request already open for the branch is adopted, not opened again', 
   const seen = [];
   t.mock.method(github, 'findOpenPrByBranch', async () => ({ number: 90, html_url: 'https://github.com/x/y/pull/90', title: 'Made before', body: 'b' }));
   t.mock.method(prMetadata, 'applyPrMetadata', async ({ session }) => { seen.push(session.pr_number); return { prNumber: session.pr_number }; });
-  await prSync.append(pool, { appId: 3, userId: 7, sessionId: 412, write: 'create', from: 'clone' });
+  await prSync.append(pool, { appId: 3, userId: 7, sessionId: 412, write: 'create', from: 'staging' });
   const [result] = await restore.drain();
   assert.equal(result.prNumber, 90);
   assert.deepEqual(seen, [90], 'applyPrMetadata updates the adopted one instead of creating');
@@ -327,10 +329,10 @@ test('a branch with nothing on it is an answer; a host that opened nothing is tr
   t.mock.method(github, 'findOpenPrByBranch', async () => null);
   let answer = () => { throw Object.assign(new Error('No commits between main and dev/owner-change'), { code: 'no_commits' }); };
   t.mock.method(prMetadata, 'applyPrMetadata', async () => answer());
-  await prSync.append(pool, { appId: 3, userId: 7, sessionId: 412, write: 'create', from: 'clone' });
+  await prSync.append(pool, { appId: 3, userId: 7, sessionId: 412, write: 'create', from: 'staging' });
   assert.deepEqual((await restore.drain())[0], { ok: false, status: 409, code: 'no_commits', error: 'No commits between main and dev/owner-change' });
   answer = () => null;
-  await prSync.append(pool, { appId: 3, userId: 7, sessionId: 412, write: 'create', from: 'clone' });
+  await prSync.append(pool, { appId: 3, userId: 7, sessionId: 412, write: 'create', from: 'staging' });
   await assert.rejects(restore.drain(), /was not opened/, 'thrown, so the machine tries it again');
 });
 

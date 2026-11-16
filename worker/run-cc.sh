@@ -196,9 +196,8 @@ fi
 # requires the separate authoritative system context. Fail before invoking
 # Claude if the host omitted it or failed to materialize it; there is no
 # reduced-context fallback that could silently drop platform rules. An
-# OpenRouter build may have none: the dev chat sends the handbook here for an
-# OpenRouter model too (sessions.js openRouterBuildPrompts), but the Homeroom
-# bot's builds work from the repository's own instructions alone.
+# OpenRouter build may have none: the Homeroom bot's builds work from the
+# repository's own instructions alone.
 if { [ "$MODE" = "build" ] || [ "$MODE" = "shots" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
     && [ "$AGENT_PROVIDER" != "openrouter" ]; then
   die "SYSTEM_PROMPT_FILE required for $MODE mode"
@@ -807,9 +806,9 @@ fi
 # exiting non-zero, or, read from this turn's journal, its final result
 # reporting an error or ending on the runtime's own "API Error" notice, which
 # Claude Code can exit 0 after (agent-api-failure.js: the definition the
-# platform judges the turn by). Otherwise a failed turn's work is kept, which
-# a person's dev chat wants. The next turn starts from the session branch as
-# GitHub has it, so nothing discarded here survives it.
+# platform judges the turn by). Otherwise a failed turn's work is kept. The
+# next turn starts from the session branch as GitHub has it, so nothing
+# discarded here survives it.
 if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
   TURN_FAILED=""
   if [ "$CC_EXIT" -ne 0 ]; then
@@ -840,7 +839,7 @@ fi
 git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 # #8: how many commits this branch is behind origin/main. Drives the
-# dev-chat "Sync with main" banner and the merge-time block.
+# change page's "Sync with main" banner and the merge-time block.
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 BRANCH_MISMATCH_FIELD=""

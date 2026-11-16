@@ -26,7 +26,7 @@ import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from '../app-frame/app-frame
  * Counts genuine `src` assignments on #staging-iframe.
  *
  * The identity test's core assertion: every state change that is NOT a
- * navigation (open, close, dock, un-dock, loader text, testing panel) must
+ * navigation (open, close, loader text, testing panel) must
  * leave this untouched, and the element must be the same object throughout.
  */
 let navigations = 0;
@@ -42,38 +42,12 @@ export const stagingBridge = {
       testBtnHidden: true,
       testPanelHidden: true,
       testHtml: '',
-      fsBtnHidden: true,
       clockLabel: '',
       clockAsNow: false,
     });
   },
   isOpen() {
     return stagingStore.get().open;
-  },
-
-  /** #771 — 'docked' | 'fullscreen'. Never touches the iframe. */
-  setMode(mode) {
-    const docked = mode === 'docked';
-    stagingStore.set(docked ? { mode: 'docked' } : { mode: 'fullscreen', dockRect: null });
-  },
-  mode() {
-    return stagingStore.get().mode;
-  },
-  /** Pin the docked overlay over the dev-chat slot's rect (or release it). */
-  setDockRect(rect) {
-    const next = rect
-      ? {
-        top: Math.round(rect.top),
-        left: Math.round(rect.left),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-      }
-      : null;
-    const current = stagingStore.get().dockRect;
-    if (next && current
-      && current.top === next.top && current.left === next.left
-      && current.width === next.width && current.height === next.height) return;
-    stagingStore.set({ dockRect: next });
   },
 
   setUrlLabel(text) {
@@ -130,14 +104,6 @@ export const stagingBridge = {
   },
   isTestPanelHidden() {
     return stagingStore.get().testPanelHidden;
-  },
-
-  setFullscreenBtn({ hidden, text, title } = {}) {
-    stagingStore.set({
-      fsBtnHidden: !!hidden,
-      fsBtnText: text === undefined ? stagingStore.get().fsBtnText : text,
-      fsBtnTitle: title || '',
-    });
   },
 
   /** The live iframe element, or null before hydration. */

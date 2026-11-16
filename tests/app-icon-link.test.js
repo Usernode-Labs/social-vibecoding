@@ -34,7 +34,6 @@ test('every app surface that draws an icon links it', () => {
     'frontend/src/features/header/header-title.tsx',
     'frontend/src/features/messages/index.tsx',
     'frontend/src/features/workshop/needs-reel.tsx',
-    'frontend/src/features/agent-session/index.tsx',
   ]) {
     assert.match(read(file), /<AppIconLink\b/, file);
   }

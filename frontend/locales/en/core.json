@@ -307,10 +307,6 @@
     "text": "Copy",
     "description": "Generic button, used only where the control is exactly this and nothing about the place changes its meaning: copies the text or link beside it to the clipboard."
   },
-  "common.dismiss": {
-    "text": "Dismiss",
-    "description": "Accessible name of an X button that hides a notice or banner without acting on it. Generic: used only where nothing about the place changes its meaning."
-  },
   "common.copied": {
     "text": "Copied",
     "description": "Generic confirmation shown briefly in place of a Copy button after the text or link was copied to the clipboard."
@@ -474,26 +470,6 @@
   "release.sentence.minutes_other": {
     "text": "Merged; goes live in the next release (about {{count}} minutes)",
     "description": "Says when a change merged into Homeroom itself goes live, on every surface that shows such a change (a change's page, a card's tooltip, a chat card): it goes out with Homeroom's next release, expected in about {{count}} minutes. No full stop: the surrounding message adds it."
-  },
-  "release.short.waiting": {
-    "text": "Waiting for a release",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): Homeroom's next release is held up, so no time is promised."
-  },
-  "release.short.now": {
-    "text": "Going live now",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): the Homeroom release that carries it is rolling out now."
-  },
-  "release.short.next": {
-    "text": "Goes live in the next release",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): it goes out with Homeroom's next release, and no time is known yet."
-  },
-  "release.short.minutes_one": {
-    "text": "Goes live in about a minute",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): Homeroom's next release, which carries it, is expected in about {{count}} minute. English spells the one minute out; a translation may use {{count}}."
-  },
-  "release.short.minutes_other": {
-    "text": "Goes live in about {{count}} minutes",
-    "description": "Short status of a change merged into Homeroom itself, on a line that already says it merged (a list row's second line, a status line): Homeroom's next release, which carries it, is expected in about {{count}} minutes."
   },
   "release.countLine.waiting_one": {
     "text": "{{count}} merged change waiting for a release",

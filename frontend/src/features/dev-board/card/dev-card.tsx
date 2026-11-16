@@ -174,7 +174,7 @@ export function CardIcon({ spec }: { spec: CardIconSpec }): ReactNode {
   const glyph = spec.small ? 'w-4 h-4' : 'w-5 h-5';
   return (
     <span
-      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0${spec.pulse ? ' motion-safe:animate-pulse' : ''}`}
+      className={`${box} rounded-lg dev-card-icon ${spec.tint} flex items-center justify-center shrink-0`}
       title={spec.title}
     >
       <Glyph className={glyph} d={spec.path} aria-hidden="true" />
@@ -1139,7 +1139,7 @@ export function ActionButton({ a, fold, hidden }: { a: ActionSpec; fold?: number
         {...foldAttrs}
         data-proposal-id={a.explore}
         title={enabled ? a.title : t('project:card.explore.unavailable')}
-        onClick={(e) => call({ fn: 'exploreProposalInDevChat', args: [a.explore!] }, e.currentTarget)}
+        onClick={() => call({ fn: 'askBotForChanges', args: [a.explore!, a.exploreTitle ?? null, a.exploreNumber ?? null] })}
       >
         <span aria-hidden="true">{'✨'}</span>
         {` ${t('project:card.explore.label')}`}

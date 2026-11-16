@@ -10,8 +10,6 @@
 //   2. The request page's "Build it with your own Claude Code"
 //      (topic/own-agent-link.tsx), a row of its ⋯ since 31 Oct 2026,
 //      renders the link and what you need.
-//   3. The "Build with" sheet's Claude Code tab uses the same builder for a
-//      conversation about one request.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -135,55 +133,9 @@ test('the request page folds the link under the card, with what you need', () =>
 test('the request\'s ⋯ offers it only when the view does, and the page draws it once pressed', () => {
   const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
   assert.match(head, /const ownAgent = !!\(r\.status\.ownAgent && !r\.status\.closed && agentSlug && r\.number\);/);
-  // 1 Nov 2026: after the agent session row, where the view offers that.
-  assert.match(head, /useThreadMenu\(menuKey, 'agent', \[\s*\.\.\.\(agentSession \? \[\{[\s\S]*?\}\] : \[\]\),\s*\.\.\.\(ownAgent \? \[\{/);
+  assert.match(head, /useThreadMenu\(menuKey, 'agent', \[\s*\.\.\.\(ownAgent \? \[\{/);
   assert.match(head, /\{ownAgent && agentOpen \? <OwnAgentLink slug=\{agentSlug\} number=\{r\.number\} startOpen onClose=\{\(\) => setAgentOpen\(false\)\} \/> : null\}/);
   assert.doesNotMatch(head, /\{s\.ownAgent && !s\.closed && slug && number \? <OwnAgentLink/, 'not a fold under Build it now');
   // The status is read once it is opened, never on load (declared checks never click).
   assert.match(read(OWN), /if \(!open \|\| !slug\) return undefined;/);
-});
-
-test('"Build with" hands a request to Claude Code as the same link, whatever the GitHub checks say', () => {
-  globalThis.window = { location: { hash: '', origin: 'https://h.example' }, addEventListener() {}, removeEventListener() {} };
-  try {
-    const { requestHandoff } = loadTsx('frontend/src/features/agent-session/handoff.tsx');
-    const app = { slug: 'reading-list', appName: 'Reading list', change: null };
-    const prompt = (view) => new URL(view.url).searchParams.get('prompt');
-
-    // An app on Homeroom's git host: the status says the fork hand-off is
-    // unavailable, and the link is offered anyway, with no repository and the
-    // connector named in the hint (no check row shows it).
-    const hosted = requestHandoff('claude-code', app, 128, { available: false, reason: 'no_repository', connectors: { count: 0 }, fork: null });
-    assert.ok(hosted);
-    assert.equal(prompt(hosted), PROMPT);
-    assert.equal(new URL(hosted.url).searchParams.get('repositories'), null);
-    assert.equal(hosted.needs, 'agent:session.handoff.request.needsConnector');
-    assert.ok(message(hosted.needs).includes('Homeroom connector'));
-
-    // Before the status answers: the link already, with no repository.
-    assert.equal(new URL(requestHandoff('claude-code', app, 128, null).url).searchParams.get('repositories'), null);
-
-    // An app on GitHub, GitHub not linked yet: still the link; the checks above say what is left.
-    const unlinked = requestHandoff('claude-code', app, 128, { available: true, github: { linked: false }, connectors: { count: 0 }, fork: null });
-    assert.equal(new URL(unlinked.url).searchParams.get('repositories'), null);
-    assert.equal(unlinked.needs, 'agent:session.handoff.request.needs');
-
-    // Fork ready: it is preselected.
-    const ready = requestHandoff('claude-code', app, 128, { available: true, connectors: { count: 1 }, fork: { state: 'ready', owner: 'maya', repo: 'reading-list' } });
-    assert.equal(new URL(ready.url).searchParams.get('repositories'), 'maya/reading-list');
-
-    // Not a request hand-off: copy and paste as before.
-    assert.equal(requestHandoff('codex', app, 128, null), null, 'Codex');
-    assert.equal(requestHandoff('claude-code', app, 0, null), null, 'no request');
-    assert.equal(requestHandoff('claude-code', { ...app, change: { id: 9, kind: 'session', prNumber: null } }, 128, null), null, 'continuing a change');
-    assert.equal(requestHandoff('claude-code', null, 128, null), null, 'no app');
-  } finally {
-    delete globalThis.window;
-  }
-  const src = read('frontend/src/features/agent-session/handoff.tsx');
-  assert.match(src, /\{request \? \(/, 'drawn whenever the decision gives a link, not only once every check is done');
-  assert.match(src, /className=\{buttonVariants\(\{ layout: 'fullIconRow', variant: 'pillAccent', size: 'pill' \}\)\}/);
-  assert.match(src, /data-agent-session-handoff-action="open-claude-code"/);
-  assert.match(src, /\{ready && instructions && !requestLink \? \(/, 'no instructions to copy for a request link');
-  assert.equal(message('agent:session.handoff.openInClaudeCode'), 'Open in Claude Code');
 });

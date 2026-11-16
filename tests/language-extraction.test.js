@@ -305,45 +305,6 @@ test('the Workshop\'s counted words read with a plural form for each count, and 
   assert.doesNotMatch(rule, /count === 1|=== 1 \?/, 'nor in the rule\'s sentences: each regime is its own message');
 });
 
-test('a machine with no name is a label where it stands alone and a wording of its own inside a sentence', async (t) => {
-  const FILE = 'frontend/src/features/dev-chat/composer-chrome.tsx';
-  // English, as it has always read.
-  {
-    // eslint-disable-next-line global-require
-    const { loadTsx } = require('./lib/render-tsx');
-    const { RunnerControlsView } = loadTsx(FILE);
-    const past = renderToHtml(createElement(RunnerControlsView, { kind: 'past', label: 'your machine', unnamed: true }));
-    assert.match(past, /title="The last turn ran on your machine\. That machine has detached, so the next turn runs on Homeroom\."/);
-    assert.match(past, />Last turn: your machine<\/span>/);
-    const live = renderToHtml(createElement(RunnerControlsView, { kind: 'live', label: 'your machine', unnamed: true }));
-    assert.match(live, /<option value="local"[^>]*>your machine<\/option>/);
-    assert.match(live, /title="Plan and coding turns in this session run on your machine, using its own Claude subscription\./);
-    const named = renderToHtml(createElement(RunnerControlsView, { kind: 'past', label: 'ada-laptop' }));
-    assert.match(named, /title="The last turn ran on ada-laptop\. /);
-    for (const id of ['pastTitle', 'liveTitle']) {
-      assert.equal(message(`devchat:runner.${id}Unnamed`), message(`devchat:runner.${id}`, { machine: 'your machine' }), id);
-    }
-  }
-  // A language where the machine takes a different form after a preposition.
-  const { module: chrome } = await loadInSpanish(t, FILE, {
-    'devchat:runner.yourMachine': 'ваша машина',
-    'devchat:runner.lastTurn': 'Последний ход: {{machine}}',
-    'devchat:runner.pastTitle': 'Последний ход выполнен на {{machine}}.',
-    'devchat:runner.pastTitleUnnamed': 'Последний ход выполнен на вашей машине.',
-    'devchat:runner.liveTitle': 'Ходы выполняются на {{machine}}.',
-    'devchat:runner.liveTitleUnnamed': 'Ходы выполняются на вашей машине.',
-  });
-  const past = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'past', label: 'ваша машина', unnamed: true }));
-  assert.match(past, />Последний ход: ваша машина<\/span>/, 'alone, the stand-in is a label');
-  assert.match(past, /title="Последний ход выполнен на вашей машине\."/, 'in the sentence, the unnamed wording has its own form');
-  assert.doesNotMatch(past, /на ваша машина/);
-  const live = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'live', label: 'ваша машина', unnamed: true }));
-  assert.match(live, /title="Ходы выполняются на вашей машине\."/);
-  assert.match(live, /<option value="local"[^>]*>ваша машина<\/option>/);
-  const named = renderToHtml(createElement(chrome.RunnerControlsView, { kind: 'past', label: 'ada-laptop' }));
-  assert.match(named, /title="Последний ход выполнен на ada-laptop\."/);
-});
-
 test('a stand-in for a missing name never reaches a sentence as the name, wherever it was made', async (t) => {
   // Each of these stand-ins is made in one file and used in another. English
   // is unchanged: the unnamed message is the named one with the stand-in in it.
@@ -356,7 +317,6 @@ test('a stand-in for a missing name never reaches a sentence as the name, wherev
     ['messages:bot.job.titled', 'messages:bot.job.titledUnnamed', { project: message('messages:bot.job.unnamedProject') }],
     ['leaderboard:standings.openDetails', 'leaderboard:standings.openDetailsAnonymous', { name: message('leaderboard:standings.anonymous') }],
     ['leaderboard:kudos.row.by', 'leaderboard:kudos.row.byUnknown', { username: message('leaderboard:kudos.unknownUser') }],
-    ['session:transcript.attachment.title', 'session:transcript.attachment.titleUnnamed', { filename: message('session:transcript.attachment.unnamed') }],
   ]) {
     assert.equal(message(unnamed, rest), message(named, { ...rest, ...standIn }), unnamed);
   }
@@ -392,7 +352,6 @@ test('a stand-in for a missing name never reaches a sentence as the name, wherev
   assert.match(read('frontend/src/features/leaderboard/topochain-standings.tsx'), /row\.anonymous \? t\('leaderboard:standings\.openDetailsAnonymous'\)/);
   assert.match(read('frontend/src/features/leaderboard/leaderboard.js'), /authorUnknown: !row\.author_username,/);
   assert.match(read('frontend/src/features/leaderboard/kudos-pane.tsx'), /row\.authorUnknown \? t\('leaderboard:kudos\.row\.byUnknown'\)/);
-  assert.match(read('public/js/session-transcript.js'), /htmlText\('session:transcript\.attachment\.titleUnnamed'\)/);
 });
 
 test('a normalizer says whether the name it gives is real, and the sentence downstream uses that', async (t) => {
@@ -473,8 +432,6 @@ test('every unnamed wording added for a stand-in reads as the named one did with
     ['chat:group.report.label', 'chat:group.report.labelUnknown', { username: 'System' }],
     ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPr', { name: 'PR 12', number: 12 }],
     ['chat:group.composer.replyingTo', 'chat:group.composer.replyingToPrUnnumbered', { name: 'PR' }],
-    ['devchat:transcript.attachment.openFullSize', 'devchat:transcript.attachment.openFullSizeUnnamed', { name: 'file' }],
-    ['devchat:transcript.attachment.download', 'devchat:transcript.attachment.downloadUnnamed', { name: 'file' }],
     ['agent:appContext.about.lineage.linkTitle', 'agent:appContext.about.lineage.linkTitleDeleted', { app: '<deleted>' }],
     ['agent:appContext.about.lineage.remixedFrom', 'agent:appContext.about.lineage.remixedFromDeleted', { app: '<deleted>' }],
     ['home:grid.tile.remixedFrom', 'home:grid.tile.remixedFromDeleted', { app: '<deleted>' }],
@@ -490,7 +447,6 @@ test('every unnamed wording added for a stand-in reads as the named one did with
   // Stand-ins that are shown alone, and sentences that used to be bare literals.
   assert.equal(message('messages:api.unknownUser'), 'unknown');
   assert.equal(message('chat:group.attachment.unnamed'), 'file');
-  assert.equal(message('devchat:attach.unnamedFile'), 'file');
   assert.equal(message('chat:group.quote.system'), 'system');
   assert.equal(message('shell:invitePreview.unnamed'), 'this community');
   assert.equal(message('shell:invitePreview.privateCommunity'), 'Private community');

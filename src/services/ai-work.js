@@ -297,6 +297,9 @@ SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, 
        -- what it drafts, never by the bot's line that opened it.
        m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
        m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
+       -- 15 Nov 2026: a thread a retired agent chat or dev chat was moved
+       -- under is named as that conversation was (services/old-chat-move.js).
+       m.metadata->'movedChat'->>'title' AS moved_title,
        -- 14 Nov 2026: a first version's thread is named by its project, the
        -- one its first message names when the project itself is gone.
        m.metadata->'homeroomBot'->>'appName' AS root_app_name,
@@ -656,12 +659,14 @@ function shapePrivate(row) {
   // drawn); a "+" thread by their first words; a design by its screen.
   // 14 Nov 2026: Earlier chat and a project's first version by what they
   // are ("Earlier chat", "Plant Pal, first version": private-threads.js
-  // kindTitle), never by their first words.
+  // kindTitle), never by their first words. 15 Nov 2026: a thread moved
+  // from a retired agent chat or dev chat by that conversation's title.
   const about = row.about_kind && Number(row.about_number) > 0
     ? { kind: row.about_kind, number: Number(row.about_number) } : null;
   const byKind = require('./private-threads').kindTitle({ kind: row.kind, appName: row.name || row.root_app_name || null });
   const named = byKind ? byKind
     : about && row.about_title ? row.about_title
+    : row.moved_title ? row.moved_title
     : row.project_idea ? row.project_idea
       : row.draft_title ? row.draft_title
         : row.kind === 'ask' && row.first_own ? row.first_own

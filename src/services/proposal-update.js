@@ -2302,9 +2302,8 @@ async function settleLandedHead({ config, pool, session, headSha, via = 'bot', c
 }
 
 // Every platform path that lands a reviewable commit into a session persists
-// a `changesReady: true` system row — the marker the dev chat renders as the
-// "Changes ready" card, which carries the Preview / Test / **Propose to
-// group** buttons (see the #361/#183 parity notes around the build tails in
+// a `changesReady: true` system row — the marker that a reviewable commit
+// landed (see the #361/#183 parity notes around the build tails in
 // routes/sessions.js). An external agent's update reaches the same
 // committed-and-pushed state, so it must leave the same marker: the chat's
 // synthetic fallback (_hydrateChangesReadyFromSession) needs a staging URL or

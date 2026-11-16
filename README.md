@@ -3,8 +3,8 @@
 > where the users are the developers are the users are the developers...
 
 A social platform where every signed-in user can propose changes to
-any app — and to the platform itself — through a chat-driven
-Mayor / Claude Code pipeline that produces real PRs.
+any app — and to the platform itself — by asking Homeroom bot or
+their own coding agent, in a pipeline that produces real PRs.
 
 ## Design docs
 
@@ -17,8 +17,9 @@ Mayor / Claude Code pipeline that produces real PRs.
   flag-flip recipes, why each phase exists. The phase numbers here
   are cited from comments throughout the codebase.
 - **[src/prompts/app-conventions.md](./src/prompts/app-conventions.md)**
-  — authoritative platform conventions injected into Mayor and
-  Claude Code prompts. Also served live at `/claude.md` on every
+  — authoritative platform conventions handed to the coding agents
+  that build on Homeroom, and to connected agents through
+  `get_platform_conventions`. Also served live at `/claude.md` on every
   running instance (see `server.js`).
 - **[docs/waitlist-public-api.md](./docs/waitlist-public-api.md)**
   — integrator reference for the public waitlist API: every
@@ -413,7 +414,7 @@ A few things won't work locally:
   localhost; you can add entries to `/etc/hosts` for any specific
   slugs you're testing.
 
-For early platform-internal work (group chat, dev-chat, settings,
+For early platform-internal work (group chat, settings,
 notifications, etc.) none of that matters; the stack comes up fine.
 
 ## Status

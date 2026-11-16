@@ -639,7 +639,7 @@ test('a running app never hands its page to the next check: the side panel takes
   const { loadTsx } = require('./lib/render-tsx');
   const R = loadTsx('frontend/src/features/side-panel/routes.ts');
   assert.equal(R.isPanelRoute('app/staging-demo-forkable'), false, 'the App tab: the app itself');
-  assert.equal(R.isPanelRoute('messages/agent/990801'), true, 'a conversation opens beside a running app');
+  assert.equal(R.isPanelRoute('messages/910003'), true, 'a conversation opens beside a running app');
   const controller = require('node:fs').readFileSync(require.resolve('../frontend/src/features/side-panel/controller.ts'), 'utf8');
   assert.match(controller, /export function onNavigate\(e: NavigateEventLike\): void \{[\s\S]*?if \(!panelTakes\(route\) \|\| !canTake\(\)\) return;\s+e\.preventDefault\(\);\s+open\(route, null\);/);
   // 1 Nov 2026: a panel page, but never the chat with Homeroom bot, which only its tab draws.

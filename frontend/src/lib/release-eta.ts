@@ -16,10 +16,6 @@
  *   Merged; waiting for a release   nothing is promised: the release is
  *                                   stuck, and the board's banner says why
  *
- * A compact surface (a list row's second line, the bot's status line) says
- * the same thing without the "Merged" it already shows: "Goes live in about
- * 8 minutes".
- *
  * `etaAt` is a moment, not a count, so the minutes are worked out again
  * whenever a surface draws, and a read a few minutes old still says the
  * right thing. Only the platform's own app ever has a `release` block: a
@@ -91,21 +87,6 @@ export function releaseSentence(release: unknown, now: number = Date.now()): str
 }
 
 /**
- * The same, for a line that already says the change merged (a row's second
- * line, the bot's status line): "Goes live in about 8 minutes". Null for
- * anything that is not a release block.
- */
-export function releaseShort(release: unknown, now: number = Date.now()): string | null {
-  const r = releaseOf(release);
-  if (!r) return null;
-  if (r.state === 'waiting') return t('core:release.short.waiting');
-  if (isNow(r, now)) return t('core:release.short.now');
-  const minutes = releaseMinutes(r, now);
-  if (minutes == null) return t('core:release.short.next');
-  return t('core:release.short.minutes', { count: minutes });
-}
-
-/**
  * The same for several at once, as the Done column counts them: "2 merged
  * changes go live in the next release (about 8 minutes)". They all go in the
  * same release, so one estimate is theirs. Null for anything that is not a
@@ -130,7 +111,7 @@ export function releaseTicking(release: unknown, now: number = Date.now()): bool
   return releaseMinutes(release, now) != null;
 }
 
-const ReleaseEta = { releaseOf, releaseMinutes, releaseSentence, releaseShort, releaseCountLine, releaseTicking };
+const ReleaseEta = { releaseOf, releaseMinutes, releaseSentence, releaseCountLine, releaseTicking };
 
 if (typeof window !== 'undefined') {
   (window as unknown as { ReleaseEta?: typeof ReleaseEta }).ReleaseEta = ReleaseEta;

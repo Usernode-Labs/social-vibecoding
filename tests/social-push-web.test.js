@@ -107,9 +107,6 @@ function loadCoordinator({
         return refreshImpl ? refreshImpl() : true;
       },
     },
-    DevAlerts: {
-      setRemoteDeliveryActive(active) { calls.push(['remote', active]); },
-    },
     usernode: {
       isNative: true,
       async getSocialPushState() {
@@ -382,8 +379,6 @@ test('pending id is opened through Notifications before native acknowledgement',
     loaded.calls.filter(([name]) => ['claim', 'open', 'ack'].includes(name)),
     [['claim'], ['open', 42], ['ack', 42]]
   );
-  assert.ok(loaded.calls.some(([name, active]) =>
-    name === 'remote' && active === true));
 });
 
 test('failed or malformed notification opens are never acknowledged', async () => {
@@ -818,7 +813,7 @@ test('native state change refreshes delivery status through the admitted bridge'
   loaded.fire('usernode:social-push-native-state-changed');
   await settle();
 
-  assert.deepEqual(loaded.calls, [['state'], ['remote', false]]);
+  assert.deepEqual(loaded.calls, [['state']]);
   assert.equal(loaded.sandbox.SocialPush._state.deliveryActive, false);
 });
 
@@ -877,15 +872,16 @@ test('state and pending work retry only after native session admission', async (
   });
 
   await loaded.sandbox.SocialPush.init();
-  assert.deepEqual(loaded.calls, [['remote', false]],
-    'a closed session clears stale delivery state without calling native');
+  assert.deepEqual(loaded.calls, [],
+    'a closed session calls nothing native');
+  assert.equal(loaded.sandbox.SocialPush._state, null, 'and holds no delivery state');
 
   admitted = true;
   loaded.fire('usernode:native-session-admission', { admitted: true });
   await settle();
 
-  assert.ok(loaded.calls.some(([name, active]) =>
-    name === 'remote' && active === true));
+  assert.equal(loaded.sandbox.SocialPush._state.deliveryActive, true,
+    'the state is read once the session is admitted');
   assert.deepEqual(
     loaded.calls.filter(([name]) => ['open', 'ack'].includes(name)),
     [['open', 44], ['ack', 44]]
@@ -899,7 +895,7 @@ test('closing native session admission clears prior delivery state', async () =>
 
   loaded.fire('usernode:native-session-admission', { admitted: false });
 
-  assert.deepEqual(loaded.calls, [['remote', false]]);
+  assert.deepEqual(loaded.calls, []);
   assert.equal(loaded.sandbox.SocialPush._state, null);
 });
 
@@ -941,10 +937,6 @@ test('a state read resolving after admission closes cannot restore old state', a
   await reading;
 
   assert.equal(loaded.sandbox.SocialPush._state, null);
-  assert.deepEqual(
-    loaded.calls.filter(([name]) => name === 'remote'),
-    [['remote', false]]
-  );
 });
 
 test('a second tap received during a drain is claimed after the first', async () => {

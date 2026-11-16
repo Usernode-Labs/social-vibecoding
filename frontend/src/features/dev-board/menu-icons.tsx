@@ -53,7 +53,6 @@ import {
   SparklesIcon,
   StarIcon,
   TagIcon,
-  TerminalIcon,
   UserCheckIcon,
   XIcon,
   type IconProps,
@@ -62,7 +61,6 @@ import {
 /** Every AppView.MENU_ICONS key, drawn. tests/dev-card-overflow-menu.test.js holds the two key lists equal. */
 export const MENU_ICON_COMPONENTS: Record<string, ComponentType<IconProps>> = {
   merge: BoltIcon,
-  session: TerminalIcon,
   withdraw: XIcon,
   undo: ReplyArrowIcon,
   unpromote: ArrowLeftIcon,

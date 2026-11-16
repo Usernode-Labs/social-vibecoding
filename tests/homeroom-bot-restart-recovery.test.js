@@ -380,8 +380,8 @@ test('a build\'s turn a restart caught is replayed with its own harness\'s parse
   assert.equal(replays.at(-1).agentHarness, 'claude');
   await follow(turn());
   assert.equal(replays.at(-1).agentHarness, null, 'a record from before harnesses: the registry\'s own default');
-  const src = require('node:fs').readFileSync(require.resolve('../src/routes/sessions'), 'utf8');
-  assert.match(src, /agentHarness: activeTurn\.harness \|\| null,/, 'the same as the dev chat\'s own recovery');
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/turn-recovery'), 'utf8');
+  assert.match(src, /agentHarness: activeTurn\.harness \|\| null,/, 'the same as the boot\'s own recovery of a turn');
 });
 
 // ── Runs a restart sent back before builds were durable ──────────────────

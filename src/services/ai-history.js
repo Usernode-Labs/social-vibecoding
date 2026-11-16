@@ -137,6 +137,7 @@ SELECT p.id, p.root_message_id AS root_id, p.kind, p.state, p.result_ref, p.done
        (SELECT d.title FROM design_threads d WHERE d.private_thread_id = p.id) AS design_title,
        m.metadata->'homeroomBot'->>'projectIdea' AS project_idea,
        m.metadata->'homeroomBot'->>'draftTitle' AS draft_title,
+       m.metadata->'movedChat'->>'title' AS moved_title,
        -- A first version's thread by its project, the one its first message
        -- names when the project itself is gone (ai-work.js PRIVATE_SQL).
        m.metadata->'homeroomBot'->>'appName' AS root_app_name,

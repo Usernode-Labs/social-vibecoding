@@ -11,9 +11,9 @@
 // four files had it nowhere.
 //
 // The rest of the platform already does this, which is what makes the gap a
-// defect rather than a policy question: app-files, app-illustrations, chat,
-// internal and sessions all set it at the send, and conversations sets it
-// for a whole path prefix through its `privateJson` middleware.
+// defect rather than a policy question: app-files, app-illustrations, chat
+// and internal all set it at the send, and conversations sets it for a whole
+// path prefix through its `privateJson` middleware.
 //
 // Scoped to the ONE named item. #2515 also lists "latent attribute-escaping
 // defects, dead traversal helper, qs advisory, and three hardening nits",
@@ -56,7 +56,7 @@ test('nosniff is set on the same response as the stored type, not merely present
 test('the platform-wide habit this restores is still in place elsewhere', () => {
   // Named so that if one of these stops setting it, this test says where the
   // convention used to live rather than silently shrinking.
-  for (const f of ['app-files.js', 'app-illustrations.js', 'chat.js', 'internal.js', 'sessions.js']) {
+  for (const f of ['app-files.js', 'app-illustrations.js', 'chat.js', 'internal.js']) {
     assert.match(read(f), /nosniff/, `${f} is one of the routes that already did this`);
   }
   assert.match(read('conversations.js'), /function privateJson[\s\S]{0,200}nosniff/,

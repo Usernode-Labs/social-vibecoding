@@ -88,7 +88,7 @@ test('a listed conversation is active from the first frame, and the detail repla
   try {
     const store = loadTsx('frontend/src/features/messages/store.ts');
     await store.loadConversations(true);
-    store.route(GROUP, null, null, {});
+    store.route(GROUP, null, {});
     await settle();
     let snap = snapshotOf(store);
     assert.equal(snap.loadingThread, true, 'the detail has not answered yet');
@@ -109,7 +109,7 @@ test('a conversation that fails to load drops the stand-in: an error, no header'
   try {
     const store = loadTsx('frontend/src/features/messages/store.ts');
     await store.loadConversations(true);
-    store.route(GROUP, null, null, {});
+    store.route(GROUP, null, {});
     await settle();
     assert.equal(snapshotOf(store).active?.id, GROUP);
     answer();

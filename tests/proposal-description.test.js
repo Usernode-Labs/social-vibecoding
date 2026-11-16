@@ -1,13 +1,10 @@
 // Tests for src/services/proposal-description.js (#2820): the
-// "==== DESCRIPTION ====" block an OpenRouter coding agent ends each turn
-// with, and the cleaned-up fallback used when a turn gave none. Also pins
-// that the OpenRouter build prompt asks for the block, and that the turn
-// path peels it off and hands it to the PR metadata.
+// "==== DESCRIPTION ====" block a coding agent ends its turn with (Homeroom
+// bot's builds ask for it and read it: services/homeroom-bot-live.js), and
+// the cleaned-up fallback used when a turn gave none (services/pr-metadata.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const subject = require('../src/services/proposal-description');
 const testingNotes = require('../src/services/testing-notes');
 
@@ -78,35 +75,4 @@ test('cleanTurnMessage drops leading filler and commit bookkeeping', () => {
   assert.equal(subject.cleanTurnMessage(undefined), '');
   const long = subject.cleanTurnMessage('y'.repeat(subject.FALLBACK_MAX + 10));
   assert.equal(long.length, subject.FALLBACK_MAX);
-});
-
-test('the OpenRouter build prompt requires a whole-change description block', () => {
-  const sessions = require('../src/routes/sessions');
-  const guidance = sessions.OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE;
-  assert.match(guidance, /^==== DESCRIPTION ====$/m);
-  assert.match(guidance, /^==== END DESCRIPTION ====$/m);
-  assert.match(guidance, /ENTIRE change so far/);
-  assert.match(guidance, /REPLACES the previous description/);
-  assert.match(guidance, /BEFORE the testing block/);
-  // The prompt's own example must parse with the real parser.
-  assert.ok(subject.extract(guidance).description);
-
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
-  assert.match(
-    src,
-    /\$\{isCodexSession \? `\$\{OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE\}\\n` : ''\}\$\{guidance\.testingGuidance\}/,
-    'only OpenRouter build prompts carry it, just ahead of the testing block',
-  );
-});
-
-test('the turn path peels the block off and hands it to the PR metadata', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
-  assert.match(src, /const described = proposalDescription\.extract\(testing\.cleanedText\);/);
-  // The OpenRouter escalation block is peeled off the same text next
-  // (tests/platform-issue-block.test.js); a message that was nothing but
-  // the description block still gets a chat card.
-  assert.match(src, /\? platformIssueBlock\.extract\(described\.cleanedText\)\s*\n\s*: \{ cleanedText: described\.cleanedText, issue: null \};/);
-  assert.match(src, /const ccText = escalation\.cleanedText \|\| turnDescription \|\| '';/);
-  assert.match(src, /proposalDescription: turnDescription,/);
-  assert.match(src, /\.\.\.\(turnDescription \? \{ proposalDescription: turnDescription \} : \{\}\),/);
 });

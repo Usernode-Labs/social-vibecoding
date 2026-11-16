@@ -123,7 +123,7 @@ test('no process leads: what a leader ran is the workflow\'s, which every color 
   // The wallet-link poller too: one run at a time, its cursor durable,
   // never a timer per serving process.
   assert.ok(!serverJs.includes('chainPoller.start(config)'), 'no process polls the chain on a timer of its own');
-  for (const job of ['turn-leftovers', 'estimate-backfill', 'local-agent-leases', 'wallet-links']) {
+  for (const job of ['turn-leftovers', 'estimate-backfill', 'wallet-links']) {
     assert.match(clock, new RegExp(`name: '${job}'`), `the ${job} clock`);
   }
 

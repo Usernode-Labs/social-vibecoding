@@ -103,7 +103,7 @@ function stagingMockMergeRuns() {
         { phase: 'sync:sync_conflict_cc', message: 'Worker sync: resolving conflicts with Claude…' },
         { phase: 'sync_result', message: 'Claude could not resolve the conflicts; branch left unchanged.', level: 'error', detail: { syncResult: 'conflict', conflictFiles: ['src/services/leaderboard.js', 'src/db/schema.sql'] } },
         { phase: 'persist:failed', message: 'Snapshot → failed.', level: 'warn' },
-        { phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge, so the owner must resolve it in dev-chat.", detail: { reason: 'unresolved_conflict' } },
+        { phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge, so the owner must resolve the conflict on its branch.", detail: { reason: 'unresolved_conflict' } },
         { phase: 'outcome', message: 'Resolution failed (unresolved_conflict).', level: 'error', detail: { reason: 'unresolved_conflict' } },
       ]),
     // 4. Blocked at a gate (votes reached, checks failing) — the #421/#431 case.
@@ -122,7 +122,7 @@ function stagingMockMergeRuns() {
       'conflict_resolution', 'conflict_resolver', 'pr_closed', 3, 1, [
         { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = false (state = closed).', detail: { mergeable: false, state: 'closed', merged: false } },
         { phase: 'pr_closed', message: "PR #900205 is closed on GitHub and couldn't be reopened: head branch was deleted.", level: 'error', detail: {} },
-        { phase: 'group_chat', message: 'Posted to group chat: PR is closed on GitHub, taken off the vote panel; re-propose from dev-chat.', detail: { reason: 'pr_closed' } },
+        { phase: 'group_chat', message: 'Posted to group chat: PR is closed on GitHub, taken off the vote panel; propose it again from its page.', detail: { reason: 'pr_closed' } },
       ]),
     // 6. PR closed on GitHub, auto-reopened, then resolved + merged — the
     // happy path of the same detection.

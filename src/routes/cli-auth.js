@@ -44,10 +44,6 @@ const {
   WRITE_SCOPE: CONNECTOR_WRITE_SCOPE,
 } = require('../services/mcp-connect-constants');
 const { clientIp } = require('../services/client-ip');
-// #907: the Settings "Local coding agent" block reads its list here, next to
-// the CLI token list it sits under.
-const localAgent = require('../services/local-agent');
-const localAgentDemo = require('../services/local-agent-demo');
 const log = require('../services/logger');
 
 const APPROVAL_CSP = [
@@ -117,10 +113,7 @@ function noStore(_req, res, next) {
 }
 
 // Strict JSON body parser for the CLI surface: exact content-type, hard size
-// cap, duplicate-key rejection. Parameterized by limit because the local
-// coding-agent protocol (#907) posts progress batches and run summaries that
-// legitimately exceed the 4kb every auth-flow payload fits in — the strictness
-// is the point, not the specific number.
+// cap, duplicate-key rejection.
 function jsonBody(limit) {
   return function parse(req, res, next) {
     if (!/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(req.headers['content-type'] || '')) {
@@ -242,8 +235,7 @@ function activeTokenMiddleware(pool, scope, auditRoute) {
       let user;
       try {
         const { rows } = await pool.query(
-          `SELECT id, username, is_admin, admin_readonly, app_quota,
-                  ai_progress_estimate, locale
+          `SELECT id, username, is_admin, admin_readonly, app_quota, locale
              FROM users WHERE id = $1`,
           [token.user_id]
         );
@@ -276,7 +268,6 @@ function activeTokenMiddleware(pool, scope, auditRoute) {
         adminReadonly: !!user.admin_readonly,
         canAdminWrite: !!user.is_admin && !user.admin_readonly,
         appQuota: user.app_quota ?? 0,
-        aiProgressEstimate: !!user.ai_progress_estimate,
         locale: user.locale || null,
       };
       req.cliAuthenticated = true;
@@ -331,8 +322,8 @@ function looksLikeConnectorBearer(req) {
 // #2779: a DELEGATED grant (the platform's own agent acting for the user)
 // arrives on the same chain and is held to its kind's own list instead
 // (services/cli-api-policy.js). A grant bound to an app is also held to that
-// app: every `:slug` must be it, and every `:id` a change in it — and a
-// Mayor's one-action token bound to a change may touch only that change.
+// app: every `:slug` must be it, and every `:id` a change in it — and an
+// `agent_mayor` grant bound to a change may touch only that change.
 function connectorApiBearerChain(config) {
   const pool = getPool(config);
   const { authenticateConnector, readConnectorBearer } = require('./mcp-remote');
@@ -449,8 +440,8 @@ function connectorApiBearerChain(config) {
     // is exactly true here — so a connector inherits every one of them.
     req.cliAuthenticated = true;
     req.connectorClientId = auth.clientId;
-    // The grant behind a delegated call, for the routes that act on the
-    // agent session it belongs to (#2779). Null for every external client.
+    // The grant behind a delegated call (#2779), by which a route tells the
+    // platform's own agent from a chat product. Null for every external client.
     req.mcpDelegation = auth.delegation || null;
     return next();
   };
@@ -787,7 +778,6 @@ function cliPreAuthRoutes(config) {
     next();
   }, retained, async (req, res) => {
     try {
-      let detached = null;
       await withTransaction(pool, async (client) => {
         const { rows } = await client.query(
           `WITH db_now AS (SELECT clock_timestamp() AS now)
@@ -808,12 +798,8 @@ function cliPreAuthRoutes(config) {
             scopes: req.cliToken.scopes,
             metadata: { reason: 'self' },
           });
-          // #907: a machine attached with this credential is detached by the
-          // same act, inside the same transaction.
-          detached = await localAgent.releaseLeasesForTokens(client, req.cliToken.id);
         }
       });
-      localAgent.notifyReleased(detached);
       return res.status(204).end();
     } catch (err) {
       log.error('cli-auth', 'Self revocation failed', { message: err.message });
@@ -840,18 +826,6 @@ function cliPreAuthRoutes(config) {
   router.all('/api/cli/rpc/*', (_req, res) => {
     res.status(404).json({ error: 'not_found' });
   });
-
-  // #907: the local coding-agent protocol. Mounted here — bearer-only, before
-  // the terminal /api/cli 404 and before any cookie middleware — so it gets
-  // the same no-store headers, the same staging gate, and the same "an
-  // ambient browser session cannot influence this" property as device login.
-  // Required lazily: cli-agent.js needs the middleware built above.
-  // eslint-disable-next-line global-require
-  const { cliAgentRoutes } = require('./cli-agent');
-  router.use('/api/cli/agent', cliAgentRoutes(config, {
-    pool,
-    auth: { jsonBody, activeTokenMiddleware, bearerIpGuard },
-  }));
 
   // The two browser-session device paths intentionally continue into cookie
   // auth. Every other unmatched CLI path terminates here so an ambient
@@ -954,15 +928,12 @@ function cliBrowserRoutes(config) {
     '/api/cli/device/approve',
     '/api/me/cli-tokens',
     '/api/me/cli-tokens/*',
-    '/api/me/local-agents',
-    '/api/me/local-agents/*',
   ], noStore);
 
   async function userRate(req, res, next) {
-    // Both Settings lists share the generous settings bucket; only the
+    // The Settings token list has the generous settings bucket; only the
     // device-approval paths keep the tight one.
-    const settings = req.path.startsWith('/api/me/cli-tokens')
-      || req.path.startsWith('/api/me/local-agents');
+    const settings = req.path.startsWith('/api/me/cli-tokens');
     const ok = await enforceBucket(pool, res, {
       namespace: settings ? 'settings-user' : 'approval-user',
       subject: String(req.user.id),
@@ -1113,8 +1084,8 @@ function cliBrowserRoutes(config) {
     // Staging mock data: cli_access_tokens is `staging:private` (schema.sql),
     // so a staging clone always has an empty list and the Settings section
     // would review as a blank panel. ?demo=1 fabricates two rows without
-    // touching the DB — same pattern as GET /api/me/llm-grants and
-    // GET /api/me/agent-files, and a strict no-op in production.
+    // touching the DB — same pattern as GET /api/me/llm-grants, and a strict
+    // no-op in production.
     if (req.query.demo === '1' && process.env.USERNODE_ENV === 'staging') {
       return res.json({ tokens: demoCliTokens(), next_cursor: null, demo: true });
     }
@@ -1181,7 +1152,6 @@ function cliBrowserRoutes(config) {
     const id = parseCanonicalPositiveBigint(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid_request' });
     try {
-      let detached = null;
       const found = await withTransaction(pool, async (client) => {
         const { rows } = await client.query(
           `SELECT id, user_id, scopes, revoked_at
@@ -1207,69 +1177,12 @@ function cliBrowserRoutes(config) {
             scopes: rows[0].scopes,
             metadata: { reason: 'settings' },
           });
-          // #907: revoking from Settings also detaches whatever machine had
-          // attached with this credential.
-          detached = await localAgent.releaseLeasesForTokens(client, id);
         }
         return true;
       });
-      localAgent.notifyReleased(detached);
       return found ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
     } catch (err) {
       log.error('cli-auth', 'Settings revocation failed', { message: err.message });
-      return res.status(503).json({ error: 'temporarily_unavailable' });
-    }
-  });
-
-  // #907: the machines currently holding a coding lease, for the Settings
-  // "Local coding agent" block. Deliberately NOT under /api/me/cli-tokens and
-  // NOT an isCliSurface() path: a lease is not a credential (it grants
-  // nothing — it only says "this session's next turn goes to that machine"),
-  // and unlike the token list it stays reviewable on staging, where the whole
-  // CLI surface 404s.
-  router.get('/api/me/local-agents', userRate, async (req, res) => {
-    const keys = Object.keys(req.query || {});
-    if (keys.some((key) => key !== 'demo') || Array.isArray(req.query.demo)) {
-      return res.status(400).json({ error: 'invalid_request' });
-    }
-    if (localAgentDemo.isStagingDemo(req)) {
-      return res.json({ agents: localAgentDemo.demoLocalAgents(), demo: true });
-    }
-    try {
-      const rows = await localAgent.activeLeasesForUser(pool, req.user.id);
-      return res.json({
-        agents: rows.map((row) => ({
-          ...localAgent.publicLease(row),
-          appSlug: row.app_slug,
-          appName: row.app_name,
-          sessionTitle: row.session_title,
-          branch: row.branch_name,
-        })),
-      });
-    } catch (err) {
-      log.error('cli-auth', 'Local agent list failed', { message: err.message });
-      return res.status(503).json({ error: 'temporarily_unavailable' });
-    }
-  });
-
-  // Detach from the browser. The machine finds out on its next heartbeat and
-  // stops long-polling; this is the escape hatch for a laptop that was closed
-  // without running `social-vibecoding agent detach`, so it must not require
-  // that laptop to cooperate.
-  router.delete('/api/me/local-agents/:leaseId', userRate, async (req, res) => {
-    if (!browserCsrf(config, req, res)) return undefined;
-    if (!noRequestPayload(req)) return res.status(400).json({ error: 'invalid_request' });
-    const leaseId = parseCanonicalPositiveBigint(req.params.leaseId);
-    if (!leaseId) return res.status(400).json({ error: 'invalid_request' });
-    try {
-      // 'revoked' is the owner letting the machine go from the browser; the
-      // release_reason CHECK allows nothing else for it.
-      const released = await localAgent.release(pool, {
-        leaseId, userId: req.user.id, reason: 'revoked',
-      });
-      return released ? res.status(204).end() : res.status(404).json({ error: 'not_found' });
-    } catch (err) {
-      log.error('cli-auth', 'Local agent detach failed', { message: err.message });
       return res.status(503).json({ error: 'temporarily_unavailable' });
     }
   });
@@ -1279,8 +1192,6 @@ function cliBrowserRoutes(config) {
     '/api/cli/device/approve',
     '/api/me/cli-tokens',
     '/api/me/cli-tokens/*',
-    '/api/me/local-agents',
-    '/api/me/local-agents/*',
   ], (_req, res) => {
     res.status(404).json({ error: 'not_found' });
   });
@@ -1296,12 +1207,6 @@ module.exports = {
   isCliSurface,
   isCliSurfaceEnabled,
   json4kb,
-  jsonBody,
-  // #907: the local coding-agent protocol reuses the exact bearer/scope/
-  // rate-limit chain the rest of the CLI surface runs on, rather than
-  // growing a parallel one that could drift out of step with it.
-  activeTokenMiddleware,
-  bearerIpGuard,
   readBearer,
   decodeCursor,
 };

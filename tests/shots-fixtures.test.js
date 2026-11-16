@@ -12,9 +12,6 @@ test('shots identities and rows cannot be created, inspected, or copied outside 
   };
   await assert.rejects(fixtures.ensureFullAdminIdentity(input), /isolated shots database/);
   await assert.rejects(fixtures.ensureHostedAppFixture(input), /isolated shots database/);
-  await assert.rejects(fixtures.canCopyMemberAgentSession(input), /isolated shots database/);
-  await assert.rejects(fixtures.copyMemberAgentSession(input), /isolated shots database/);
-  await assert.rejects(fixtures.copyFullAdminAgentSession(input), /isolated shots database/);
   await assert.rejects(fixtures.canInstallInvitedFixtures(input), /isolated shots database/);
   await assert.rejects(fixtures.ensureInvitedFixtures(input), /isolated shots database/);
 });
@@ -101,33 +98,6 @@ test('the invited fixtures are one private project, two invited members, a live 
   assert.match(waitlist.sql, /released_at/, 'listed, not released');
 });
 
-test('the full admin gets its own copy of the fixture agent session, with its change and a message', async () => {
-  // Without one, a list drawn only for a viewer with sessions (the menu's
-  // Agent sessions) is missing on the before build of a full-admin change.
-  const queries = [];
-  const client = {
-    async query(sql, params) {
-      queries.push({ sql, params });
-      if (/INSERT INTO agent_sessions/.test(sql)) return { rowCount: 1, rows: [{ id: params[0], title: 'Fixture session' }] };
-      return { rowCount: 1, rows: [{ id: params?.[0] }] };
-    },
-  };
-  const session = await fixtures.copyAgentSession(client, {
-    userId: fixtures.FULL_ADMIN_USER_ID, appId: 7, sessionId: fixtures.FULL_ADMIN_SESSION_ID,
-    changeId: fixtures.FULL_ADMIN_CHANGE_ID, branch: 'shots-fixture/full-admin-agent-session', persona: 'full admin',
-  });
-  assert.equal(session.title, 'Fixture session');
-  const insert = queries.find(({ sql }) => /INSERT INTO agent_sessions/.test(sql));
-  assert.deepEqual(insert.params, [fixtures.FULL_ADMIN_SESSION_ID, fixtures.FULL_ADMIN_USER_ID, 7, fixtures.SOURCE_SESSION_ID]);
-  assert.match(insert.sql, /u\.username = 'usernode-capture-admin'/, 'copied from the staging fixture\'s own session');
-  const change = queries.find(({ sql }) => /INSERT INTO chat_sessions/.test(sql));
-  assert.equal(change.params[0], fixtures.FULL_ADMIN_CHANGE_ID);
-  assert.equal(change.params[6], 'shots-fixture/full-admin-agent-session');
-  assert.ok(queries.some(({ sql }) => /INSERT INTO chat_session_messages/.test(sql)));
-  assert.notEqual(fixtures.FULL_ADMIN_SESSION_ID, fixtures.MEMBER_SESSION_ID);
-  assert.notEqual(fixtures.FULL_ADMIN_CHANGE_ID, fixtures.MEMBER_CHANGE_ID);
-});
-
 test('the hosted-app fixture is a public running row bound to the exact shots run', async () => {
   const queries = [];
   const runId = 'a'.repeat(32);
@@ -198,6 +168,7 @@ test('one moment for both sides: every NOW() a fixture writes is the pair\'s mom
   assert.throws(() => fixtures.pairMoment(new Date(NaN)), /valid moment/);
   // The same writes on two sides, at different instants, reach both
   // databases as the same statements with the same values.
+  const runId = 'c'.repeat(32);
   const sides = {};
   for (const side of ['base', 'head']) {
     const queries = [];
@@ -205,27 +176,32 @@ test('one moment for both sides: every NOW() a fixture writes is the pair\'s mom
     const client = fixtures.atMoment({
       async query(sql, params) {
         queries.push({ sql, params });
-        if (/INSERT INTO agent_sessions/.test(sql)) return { rowCount: 1, rows: [{ id: params[0], title: 'Fixture session' }] };
-        return { rowCount: 1, rows: [{ id: params?.[0] }] };
+        if (/SELECT id FROM users WHERE id = \$1 AND username = \$2/.test(sql)) {
+          return { rowCount: 1, rows: [{ id: fixtures.INVITE_MAKER_USER_ID }] };
+        }
+        if (/SELECT id FROM apps WHERE slug/.test(sql)) return { rowCount: 1, rows: [{ id: 42 }] };
+        if (/SELECT id, slug FROM apps/.test(sql)) return { rowCount: 0, rows: [] };
+        if (/SELECT community_id FROM apps/.test(sql)) return { rowCount: 1, rows: [{ community_id: 77 }] };
+        return { rowCount: 1, rows: [] };
       },
     }, at);
     await client.query('BEGIN');
-    await fixtures.copyAgentSession(client, {
-      userId: 2, appId: 7, sessionId: fixtures.MEMBER_SESSION_ID, changeId: fixtures.MEMBER_CHANGE_ID,
-      branch: 'shots-fixture/member-agent-session', persona: 'member',
-    });
+    await fixtures.installInvitedFixtures(client, { selfAppSlug: 'usernode-2d5619', runId });
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
   assert.deepEqual(sides.base, sides.head);
-  const writes = sides.base.filter(({ sql }) => /INSERT/.test(sql));
-  assert.equal(writes.length, 3);
-  for (const { sql, params } of writes) {
+  for (const { sql } of sides.base) {
     assert.doesNotMatch(sql, /\bnow\(\)/i, 'no statement reads either side\'s own clock');
-    assert.equal(params.at(-1), at);
-    assert.match(sql, new RegExp(`\\$${params.length}::timestamptz - INTERVAL`));
   }
+  // Each statement that wrote a time carries the moment as its last
+  // parameter, in the place of every NOW() it had.
+  const timed = sides.base.filter(({ params }) => params && params.at(-1) === at);
+  assert.ok(timed.length >= 3, `the fixture's timed writes (${timed.length})`);
+  for (const { sql, params } of timed) {
+    assert.match(sql, new RegExp(`\\$${params.length}::timestamptz`));
+  }
+  assert.ok(timed.some(({ sql, params }) => new RegExp(`\\$${params.length}::timestamptz - INTERVAL`).test(sql)),
+    'a time before the moment is counted back from it too');
   // A statement without NOW() is passed through as it was.
   assert.deepEqual(sides.base[0], { sql: 'BEGIN', params: undefined });
-  const update = sides.base.find(({ sql }) => /UPDATE agent_sessions/.test(sql));
-  assert.deepEqual(update.params, [fixtures.MEMBER_SESSION_ID, fixtures.MEMBER_CHANGE_ID]);
 });

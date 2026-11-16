@@ -1,25 +1,15 @@
-'use strict';
-
 // Where the venue answer is SHOWN.
 //
-// tests/build-venues.test.js pins the list and its gating; this file pins
-// the three surfaces that put the answer in front of somebody:
-//
-//   1. the dropdown at the top right of the session header (#1348), which
-//      states the venue on first paint and carries the only control that
-//      changes it;
-//   2. the chip on a session card in the dev feed, so the answer is
-//      readable from the list without opening the chat;
-//   3. the fallback note, for the one case where the venue you got is not
-//      the venue you asked for.
+// tests/build-venues.test.js pins the list and its rule; this file pins the
+// surface that puts the answer in front of somebody: the chip on a change
+// card in the Dev board, so where the work happened is readable from the
+// list without opening the change.
 //
 // The failure this guards is not "the wrong label rendered" — it is the
-// pre-#1086 state, where nothing rendered at all. A session's venue was
-// decided by resolveDefaultAgentPreference on the server, silently, and
-// the only way to find out what had been chosen was to read the billing
-// note under a dropdown that was about something else. So most assertions
-// here are about PRESENCE and about the paths that must not be able to
-// swallow it.
+// pre-#1086 state, where nothing rendered at all, and a card full of
+// changes looked identical whether the work was billed to Homeroom credits,
+// an OpenRouter key or a laptop. So most assertions here are about PRESENCE
+// and about the columns that must reach the card for it to be right.
 //
 // Run with: node --test tests/venue-surfaces.test.js
 
@@ -28,17 +18,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { englishPlatformI18n, message } = require('./lib/platform-i18n');
+const { englishPlatformI18n } = require('./lib/platform-i18n');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const DEV_CHAT_SRC = read('frontend/src/features/dev-chat/dev-chat.js');
-// #1348's button is JSX since the session header converted — see the note at
-// the first test below.
-const HEADER_TSX = read('frontend/src/features/dev-chat/session-header.tsx');
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const SESSIONS_SRC = read('src/routes/sessions.js');
 const APP_CSS = read('public/css/app.css');
+const DEV_CARD_TSX = read('frontend/src/features/dev-board/card/dev-card.tsx');
 
 // Same loader as tests/venue-labels.test.js: a classic script against a
 // bare `window`, which is the realm this module actually runs in.
@@ -55,164 +42,28 @@ function loadBuildVenues() {
 
 const BV = loadBuildVenues();
 
-// ── 1. The dropdown in the session header ────────────────────────────
+// ── 1. The chip on a change card ─────────────────────────────────────
 
-// The button was `BuildVenues.selectorHtml`'s string until the session header
-// converted; it is JSX in features/dev-chat/session-header.tsx now, built from
-// the `venue()` spec that builder read. What has to hold is unchanged, so the
-// assertions moved rather than went: the venue LOOKUP is still this module's
-// and is asserted here, and the markup it produces is asserted against the
-// component in tests/dev-session-header.test.js.
-
-test('every venue resolves to a control this module can name', () => {
-  // Every venue must produce a control. A venue that resolved to nothing
-  // would put the session back exactly where it was before #1086: no
-  // statement, and no door to the sheet either, since the change button IS
-  // the statement.
-  for (const v of BV.VENUES) {
-    const spec = BV.venue(v.id);
-    assert.ok(spec, `${v.id} resolves`);
-    assert.equal(spec.id, v.id);
-    assert.ok(spec.label, `${v.id} names itself`);
-    assert.ok(spec.blurb, `${v.id} explains itself, which is the button's tooltip`);
-  }
-});
-
-test('an unknown venue id resolves to nothing rather than a half sentence', () => {
-  // `current` is derived from session columns, which are server data. A
-  // value this list does not know about must not produce an empty chip.
-  assert.equal(BV.venue('nonsense'), null);
-  assert.equal(BV.venue('constructor'), null,
-    'including the prototype-chain members a bare lookup would answer');
-  // …and the component draws nothing for a null spec.
-  assert.match(HEADER_TSX, /s\.venue \? <VenueSelect/);
-});
-
-test('the selector is painted in the session header, top right (#1348)', () => {
-  // Not in the composer's bottom bar, where it was one caption among the
-  // meter, the runner and the budget menu — the arrangement that made the
-  // venue invisible. And after the status pill, so it lands on the right.
-  const VIEW_TSX = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
-  const header = VIEW_TSX.indexOf('id="dc-session-header"');
-  const body = VIEW_TSX.indexOf('className="dc-session-body');
-  assert.ok(header !== -1, 'the session header row is addressable');
-  assert.ok(header < body, 'and it opens before the chat body does');
-  // The strip's ORDER is the component's. The venue button was its last
-  // child until the doing<->seeing switch came down from the platform
-  // header — that switch is the strip's right edge now, and the venue sits
-  // immediately before it, so both still land right of the change's name.
-  // (The lifecycle pill moved up into the platform header with the
-  // Streamlined Concept; the strip's own state word is #dc-mode-chip, which
-  // is the switch's active segment.)
-  const select = HEADER_TSX.indexOf('<VenueSelect venue=');
-  const sw = HEADER_TSX.indexOf('<ModeSwitch');
-  const title = HEADER_TSX.indexOf('{s.title}');
-  assert.ok(select !== -1 && sw !== -1, 'both are painted');
-  assert.ok(title < select && select < sw,
-    'name, then venue, then the switch on the right edge');
-  assert.match(HEADER_TSX, /id="dc-mode-chip"/, 'the state word survives, on the switch');
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.sessionVenue\(/,
-    'resolved through the shared module, not retyped');
-});
-
-test('the selector survives the launchpad swap that hides the composer', () => {
-  // #1281 hides #dc-composer-controls for the three hand-off venues. A
-  // venue control inside it would be hidden by exactly the state it exists
-  // to undo, stranding the session in its launchpad.
-  // The control is in the HEADER's subtree; the swap is inside the composer,
-  // which is a different component in a different file — so "outside the
-  // swap" is structural rather than positional.
-  const VIEW_TSX = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'view.tsx'), 'utf8');
-  assert.match(VIEW_TSX, /id="dc-session-header"/);
-  const COMPOSER_TSX = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
-  assert.ok(COMPOSER_TSX.includes('id="dc-composer-controls"'), 'the swap is the composer\'s');
-  assert.doesNotMatch(COMPOSER_TSX, /dc-venue-select/,
-    'and the selector is not inside the thing it exists to undo');
-  assert.match(HEADER_TSX, /<VenueSelect/, 'it is in the header strip');
-});
-
-test('the selector is painted from the session row, so first paint is right', () => {
-  // Not from a status poll: a session whose venue only appeared after a
-  // round trip would show the wrong venue for as long as that took, which
-  // is precisely the moment someone is deciding whether to type.
-  const fn = DEV_CHAT_SRC.slice(
-    DEV_CHAT_SRC.indexOf('_currentVenueId() {'),
-    DEV_CHAT_SRC.indexOf('\n  },', DEV_CHAT_SRC.indexOf('_currentVenueId() {'))
-  );
-  assert.ok(fn.length > 0, '_currentVenueId must exist');
-  assert.match(fn, /BuildVenues\.currentVenue\(/,
-    'the precedence chain lives in one place, not here');
-});
-
-test('the change control is disabled mid-turn, in both places that paint it', () => {
-  // The old #dc-agent-select carried this guard: switching venue while a
-  // turn is streaming would leave the reply arriving from somewhere the
-  // line no longer names. Two sites set it — the render and the streaming
-  // sync — and a guard on only one of them is a guard that opens itself
-  // on the next repaint.
-  // The RENDER's site is the model now — `_headerVenue` resolves `disabled`
-  // from the same flag, and the component renders it — so the two sites are
-  // one derivation and one in-place write rather than two in-place writes.
-  assert.match(DEV_CHAT_SRC, /disabled: DevChat\._chatBusyForPaint\(\)/,
-    'the render resolves it from the streaming paint seam');
-  assert.match(HEADER_TSX, /disabled=\{venue\.disabled\}/,
-    'and the component is the only thing that writes it on the render path');
-  assert.match(HEADER_TSX, /data-venue-busy=\{venue\.disabled \? '1' : undefined\}/,
-    'the disabled state has a stable visible-check hook');
-  assert.equal(message('devchat:header.venue.thinking'), 'Thinking…');
-  assert.match(HEADER_TSX, /<LockIcon[\s\S]*t\('devchat:header\.venue\.thinking'\)/,
-    'the disabled state explains itself without relying on a mouse cursor');
-  const sites = DEV_CHAT_SRC.match(
-    /getElementById\('dc-venue-select'\)/g
-  ) || [];
-  assert.ok(sites.length >= 1,
-    `the streaming sync still finds the button by id (got ${sites.length})`);
-  assert.match(DEV_CHAT_SRC, /_setStreamingUI[\s\S]*?DevChat\._repaintSessionHeader\(\)/,
-    'and the streaming sync republishes the strip rather than writing the '
-    + 'attribute React would overwrite on its next paint');
-  assert.doesNotMatch(DEV_CHAT_SRC, /venueChange\.disabled/,
-    'no second writer on a node the component renders');
-});
-
-test('in-chat providers share one flat selector, and other venues get none', () => {
-  assert.match(DEV_CHAT_SRC,
-    /venue !== 'usernode-claude' && venue !== 'usernode-openrouter'\) return null;/,
-    'only in-chat venues receive the selector');
-  const COMPOSER_TSX = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'composer.tsx'), 'utf8');
-  assert.match(COMPOSER_TSX, /<select[\s\S]*id="dc-model-select"/,
-    'the control is inside the composer');
-  // #2569: ONE list. Provider provenance is a title, not a heading and not
-  // a label prefix.
-  assert.match(COMPOSER_TSX, /s\.models\.options\.map/,
-    'the selector renders one flat option list');
-  assert.doesNotMatch(COMPOSER_TSX, /<optgroup/,
-    'no native optgroups, so the closed control asks about models only');
-  assert.doesNotMatch(DEV_CHAT_SRC, /'OpenRouter key \u00b7 |'Anthropic key \u00b7 /,
-    'no option label names a provider');
-  assert.equal(message('devchat:model.option.openRouterKeyTitle'), 'Runs on your OpenRouter key');
-  assert.match(DEV_CHAT_SRC, /title: PlatformI18n\.t\('devchat:model\.option\.openRouterKeyTitle'\)/,
-    'which key pays survives as the option title');
-  assert.match(DEV_CHAT_SRC, /Add more OpenRouter models/,
-    'the full catalog is reachable from the selector');
-  assert.match(
-    DEV_CHAT_SRC,
-    /_switchCurrentCodingAgent\(null, \{ fixedBackend: 'codex_openrouter' \}\)/,
-    'changing the model keeps the chooser locked to OpenRouter',
-  );
-});
-
-// ── 2. The chip on a session card ────────────────────────────────────
+// The chip is resolved by `_sessionVenueChipSpec` and drawn as
+// card/dev-card.tsx's `venue` badge.
+const extract = (source, signature) => {
+  const start = source.indexOf(signature);
+  assert.ok(start !== -1, `${signature} must exist`);
+  const end = source.indexOf('\n  },', start);
+  return source.slice(start + signature.length, end);
+};
+// The chip's tooltip is a catalog message, so the body is handed the English runtime.
+const cardBody = new Function('s', 'window', 'PlatformI18n', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
+const card = (s) => cardBody(s, { BuildVenues: BV }, englishPlatformI18n());
 
 test('the card chip names the venue and carries the blurb as its title', () => {
-  const chip = BV.chipHtml('usernode-openrouter');
-  assert.match(chip, /class="dc-venue-chip"/);
-  assert.ok(chip.includes('Homeroom · OpenRouter'));
-  assert.match(chip, /title="/, 'the blurb is the hover explanation');
-  assert.equal(BV.chipHtml('nonsense'), '', 'an unknown id renders no chip');
+  const chip = card({ agent_backend: 'codex_openrouter' });
+  assert.equal(chip.t, 'venue');
+  assert.equal(chip.label, 'Homeroom · OpenRouter');
+  const v = BV.sessionVenue({ agentBackend: 'codex_openrouter' });
+  assert.ok(chip.title.includes(v.blurb), 'the blurb is the hover explanation');
+  assert.match(DEV_CARD_TSX, /case 'venue':\s*\n\s*return <span className="dc-venue-chip" title=\{b\.title\}>\{b\.label\}<\/span>;/,
+    'the card draws the label, with the title as its tooltip');
 });
 
 test('an imported proposal gets no chip, because it has no venue to be in', () => {
@@ -244,119 +95,23 @@ test('the session list SELECT carries what the chip needs', () => {
   }
 });
 
-// ── 3. The fallback note ─────────────────────────────────────────────
+// ── 2. Styles ────────────────────────────────────────────────────────
 
-test('every server fallback reason becomes a sentence', () => {
-  // Only deliberate feature-policy decisions fall back now. Credential,
-  // provisioning, and catalog failures stop visibly instead of changing
-  // providers; the remaining policy reasons still need user-facing copy.
-  const fn = SESSIONS_SRC.slice(
-    SESSIONS_SRC.indexOf('async function resolveDefaultAgentPreference('),
-    SESSIONS_SRC.indexOf('\n}', SESSIONS_SRC.indexOf('async function resolveDefaultAgentPreference('))
-  );
-  const reasons = new Set();
-  for (const m of fn.matchAll(/claudeFallback\('([a-z_]+)'\)/g)) reasons.add(m[1]);
-  // #2568 retired `not_in_beta` with the gradual-rollout allowlist, leaving
-  // the deployment switch as the only policy fallback.
-  assert.deepEqual([...reasons].sort(), ['flag_off']);
-  for (const reason of reasons) {
-    const note = BV.fallbackNote(reason);
-    assert.ok(note.length > 0, `reason '${reason}' has no user-facing copy`);
-    assert.ok(note.includes('Homeroom · Claude'),
-      `reason '${reason}' must name the venue it fell back TO`);
-  }
-});
-
-test('a reason the client does not know about stays silent', () => {
-  // The reason arrives on the 201 body, so it is server data. A bare
-  // property lookup would answer `toString` with a function and render it
-  // into the note.
-  assert.equal(BV.fallbackNote('brand_new_reason'), '');
-  assert.equal(BV.fallbackNote('toString'), '');
-  assert.equal(BV.fallbackNote(null), '');
-});
-
-test('the client keeps the reason across the navigation into the session', () => {
-  // The 201 arrives in createSession; the line that reports it is painted
-  // after a tab switch, in a different call stack. Stashing it on DevChat
-  // is what carries it across — and clearing it on paint is what stops it
-  // reappearing on every later re-render of the same session.
-  assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason = data\.agentFallbackReason/);
-  assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason \|\| DevChat\._shotVenueFallbackReason\(\)/,
-    'the stash is what the note reads');
-  assert.match(DEV_CHAT_SRC, /BuildVenues\.noteHtml\(\{/,
-    'and it renders through the shared module');
-  assert.match(DEV_CHAT_SRC, /DevChat\._venueFallbackReason = null;/,
-    'cleared once painted');
-});
-
-test('the note is reviewable on staging without a failing credential', () => {
-  // The reason is a creation-moment fact and is deliberately not stored, so
-  // a seeded fixture row cannot produce one — every other venue state is a
-  // column, this one is not. `?shot=venue-fallback` is the only way the
-  // copy gets reviewed, and it must fall through the SAME fallbackNote
-  // lookup, or a guessed reason would render an invented sentence.
-  const fnStart = DEV_CHAT_SRC.indexOf('_shotVenueFallbackReason() {');
-  assert.ok(fnStart !== -1, '_shotVenueFallbackReason must exist');
-  const fn = DEV_CHAT_SRC.slice(fnStart, DEV_CHAT_SRC.indexOf('\n  },', fnStart));
-  assert.match(fn, /shot !== 'venue-fallback'/, 'gated on the shot name');
-  const fallback = fn.match(/return reason \|\| '([a-z_]+)'/);
-  assert.ok(fallback, 'it names a default reason');
-  assert.ok(BV.fallbackNote(fallback[1]).length > 0,
-    `the default reason '${fallback?.[1]}' renders no copy`);
-});
-
-test('the headless routes report their fallback too', () => {
-  // Three server paths resolve a default (new session, headless, clone);
-  // all three already attach agentFallbackReason, and the client has a
-  // reporter for the two that do not paint a composer line.
-  const attached = SESSIONS_SRC.match(
-    /\.\.\.\(pref\.fallbackReason \? \{ agentFallbackReason: pref\.fallbackReason \} : \{\}\)/g
-  ) || [];
-  assert.ok(attached.length >= 3,
-    `every resolver call site reports its fallback (got ${attached.length})`);
-  const fnStart = APP_VIEW_SRC.indexOf('_reportVenueFallback(reason) {');
-  assert.ok(fnStart !== -1, '_reportVenueFallback must exist');
-  const fn = APP_VIEW_SRC.slice(fnStart, APP_VIEW_SRC.indexOf('\n  },', fnStart));
-  assert.match(fn, /BuildVenues\.fallbackNote\(reason\)/);
-  assert.match(fn, /PlatformUI\.toast\(note\)/, 'and it is said out loud, not logged');
-});
-
-// ── 4. Styles ────────────────────────────────────────────────────────
-
-test('every class these surfaces render has a rule', () => {
-  // The shell's Tailwind is compiled and these are hand-written classes in
-  // app.css; one that is not there simply has no styles, and the venue
-  // control would render as an unstyled run of text in the header.
-  for (const cls of [
-    'dc-venue-slot', 'dc-venue-select', 'dc-venue-name',
-    'dc-venue-caret', 'dc-venue-note', 'dc-venue-detail', 'dc-venue-chip',
-    'dc-model-select', 'dc-model-caret',
-  ]) {
+test('the class the chip renders has a rule', () => {
+  // The shell's Tailwind is compiled and this is a hand-written class in
+  // app.css; one that is not there simply has no styles, and the chip would
+  // render as an unstyled run of text on the card.
+  for (const cls of ['dc-venue-chip']) {
     assert.ok(new RegExp('\\.' + cls + '[\\s,:{]').test(APP_CSS),
       `.${cls} has no rule in app.css`);
   }
 });
 
 
-test('session card and header display the same native provider after reload', () => {
-  const extract = (source, signature) => {
-    const start = source.indexOf(signature);
-    const end = source.indexOf('\n  },', start);
-    return source.slice(start + signature.length, end);
-  };
-  // The chip's tooltip is a catalog message, so the body is handed the English runtime.
-  const cardBody = new Function('s', 'window', 'PlatformI18n', extract(APP_VIEW_SRC, '_sessionVenueChipSpec(s) {'));
-  const card = (s, window) => cardBody(s, window, englishPlatformI18n());
-  const header = new Function('session', 'window', 'BuildVenues', 'DevChat', 'PlatformI18n',
-    extract(DEV_CHAT_SRC, '_headerVenue(session) {'));
+test('the session card displays the native provider after reload', () => {
   for (const [agent, label] of [['codex', 'Codex'], ['claude-code', 'Claude Code'], [null, 'External agent']]) {
     const session = { source: 'cli_handoff', external_agent: agent, agent_backend: 'claude_code' };
-    const window = { BuildVenues: BV };
-    assert.equal(card(session, window).label, label);
-    assert.equal(header(session, window, BV, {
-      _currentVenueId: () => 'local', _chatBusyForPaint: () => false, _localAgent: null,
-    }, englishPlatformI18n()).label, label);
+    assert.equal(card(session).label, label);
   }
 });
 

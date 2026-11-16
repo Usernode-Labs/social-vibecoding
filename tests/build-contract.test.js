@@ -6,8 +6,7 @@
 //      exact text (tests/homeroom-bot-question-bar.test.js pins them in the
 //      bot's prompt too), and the rules added from Sheep countrr's faulty
 //      proposals (usernode-bot/sheep-countrr-a08857#48) say what they must.
-//   2. Both callers use it: the bot's buildPrompt, and the dev chat's build
-//      INSTRUCTIONS, which no longer carry the platform's first prompt.
+//   2. The Homeroom bot's buildPrompt builds from it.
 //   3. The two commit modes differ only in the commit line.
 //
 // Run with: node --test tests/build-contract.test.js
@@ -18,7 +17,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const buildContract = require('../src/services/build-contract');
-const sessions = require('../src/routes/sessions');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -110,9 +108,9 @@ test('the heading and closing summary are the caller\'s', () => {
   assert.ok(bot.endsWith(buildContract.SUMMARY_LINE));
   assert.match(buildContract.SUMMARY_LINE, /^End with a short, plain-language summary of what you changed/);
   assert.match(buildContract.SUMMARY_LINE, /list each file you changed with one\nline on why, and anything you noticed but left alone\./);
-  const devChat = buildContract.buildContractBlock({ summary: false });
-  assert.ok(devChat.startsWith('When you change files, work under these rules:\n'));
-  assert.ok(!devChat.includes(buildContract.SUMMARY_LINE));
+  const bare = buildContract.buildContractBlock({ summary: false });
+  assert.ok(bare.startsWith('When you change files, work under these rules:\n'));
+  assert.ok(!bare.includes(buildContract.SUMMARY_LINE));
 });
 
 test('the Homeroom bot builds from the contract', () => {
@@ -122,25 +120,6 @@ test('the Homeroom bot builds from the contract', () => {
   // No second copy of a rule left behind in the bot.
   assert.doesNotMatch(src, /'- Keep the change as small as the request needs\./);
   assert.doesNotMatch(src, /'- Do not commit or push yourself/);
-});
-
-test('a dev chat build carries the contract, and the first prompt is gone', () => {
-  const src = read('src/routes/sessions.js');
-  assert.match(src, /const buildContractBlock = `\$\{buildContract\.buildContractBlock\(\{ commits: 'agent', summary: false \}\)\}\n\$\{DEV_CHAT_SUMMARY_RULE\}`;/);
-  assert.match(src, /INSTRUCTIONS:\n\$\{workflowGuidance\}\n\$\{turnInstructions\}\n\$\{buildContractBlock\}\n\$\{guidance\.browserGuidance\}/);
-  assert.match(src, /\n {4}: DISPATCHED_TURN_INSTRUCTIONS;/);
-  // The first prompt's lines survive only in comments and the replay fixture.
-  const code = src.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-  assert.doesNotMatch(code, /Spend minimal time reading files/);
-  assert.doesNotMatch(code, /Just build it\./);
-  assert.doesNotMatch(code, /stage everything with "git add -A"/);
-
-  const dispatched = sessions.DISPATCHED_TURN_INSTRUCTIONS;
-  assert.match(dispatched, /IMPLEMENT the requested change fully/);
-  assert.match(dispatched, /do not ask questions/);
-  assert.match(dispatched, /choose the reading that changes the least existing behaviour, and say which you chose/);
-  assert.match(sessions.DEV_CHAT_SUMMARY_RULE, /before any block it ends with/);
-  assert.match(sessions.DEV_CHAT_SUMMARY_RULE, /name anything you noticed but left alone/);
 });
 
 test('#3426: a feature that needs a user gesture is started in a tap handler', () => {

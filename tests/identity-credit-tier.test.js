@@ -211,16 +211,14 @@ test('an unknown credit policy fails boot instead of silently choosing a payer',
 });
 
 test('post-turn helper calls cannot deliberately continue on stale platform billing', () => {
-  // #2779: the Mayor's pill ladder moved to services/mayor/pills.js.
+  // The helper call left after a turn is its PR metadata, and a turn a
+  // restart recovered asks it only with a payer it resolved now
+  // (services/turn-recovery.js).
   const sessionsSource = [
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-    path.join(__dirname, '..', 'src', 'services', 'mayor', 'pills.js'),
+    path.join(__dirname, '..', 'src', 'services', 'turn-recovery.js'),
   ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.doesNotMatch(sessionsSource, /continuing platform-billed|proceeds platform-billed/);
-  assert.match(sessionsSource,
-    /async function runHeadlessMayorEffect\(\{[\s\S]*allowInvoke = true/);
-  assert.match(sessionsSource,
-    /Quick-reply model rung skipped: no payer available/);
   assert.match(sessionsSource,
     /allowModelGeneration: prMetadataGenerationAllowed/);
 });

@@ -5,10 +5,9 @@
 //
 // This code used to live inside src/routes/proposal-handoff.js, where it was
 // written for exactly one caller: the `proposal_*` MCP tools driving a local
-// Codex/Claude session (`chat_sessions.source = 'cli_handoff'`). #907 adds a
-// second caller — a local coding agent attached to an ordinary native Dev
-// session (`source = 'anthropic'`) — that needs the identical tail: the
-// submitted commit handed to the preview machine, which builds and checks it.
+// Codex/Claude session (`chat_sessions.source = 'cli_handoff'`). Its tail:
+// the submitted commit handed to the preview machine, which builds and
+// checks it.
 //
 // The row guard (OWNED_SOURCE_SQL) is the callers': `source IS DISTINCT FROM
 // 'imported'`. An imported PR is a mirror of someone else's GitHub branch —

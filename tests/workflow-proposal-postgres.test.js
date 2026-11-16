@@ -563,15 +563,13 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
 
   // ── Close and reopen ────────────────────────────────────────────────
 
-  await t.test('P13 every close does the same: votes voided, work orders, the held secret, the conversation, the bell, the line, the PR, the worker, the preview for good (bugs 7, 14, 15)', async () => {
+  await t.test('P13 every close does the same: votes voided, work orders, the held secret, the bell, the line, the PR, the worker, the preview for good (bugs 7, 14, 15)', async () => {
     defaults();
     const reasons = ['manual', 'auto-rejected', 'stale-pr', 'superseded', 'request-closed', 'red-checks', 'proposal-replaced',
       'bot-failed', 'bench'];
     for (const reason of reasons) {
       const s = await session({ status: 'promoted', promotedAgo: 0 });
-      const { rows: [agent] } = await pool.query(`INSERT INTO agent_sessions (user_id) VALUES ($1) RETURNING id`, [s.owner.id]);
-      await pool.query('UPDATE chat_sessions SET agent_session_id = $2, linked_issues = ARRAY[5] WHERE id = $1', [s.id, agent.id]);
-      await pool.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [agent.id, s.id]);
+      await pool.query('UPDATE chat_sessions SET linked_issues = ARRAY[5] WHERE id = $1', [s.id]);
       const { rows: [task] } = await pool.query(
         `INSERT INTO external_agent_tasks (user_id, app_id, fork_owner, fork_repo, branch_name, base_sha, origin_session_id, status)
          VALUES ($1, $2, 'o', 'r', 'b', $3, $4, 'open') RETURNING id`, [s.owner.id, s.app_id, SHA('0'), s.id]);
@@ -591,7 +589,6 @@ test('proposal machine against the full PostgreSQL schema', { timeout: 180000 },
       assert.equal((await pool.query('SELECT status FROM external_agent_tasks WHERE id = $1', [task.id])).rows[0].status, 'abandoned', reason);
       const decl = (await pool.query('SELECT status, value_enc FROM pending_secret_declarations WHERE session_id = $1', [s.id])).rows[0];
       assert.deepEqual([decl.status, decl.value_enc], ['discarded', null], reason);
-      assert.equal((await pool.query('SELECT active_change_id FROM agent_sessions WHERE id = $1', [agent.id])).rows[0].active_change_id, null, reason);
       assert.equal((await pool.query('SELECT read_at FROM notifications WHERE user_id = $1', [asker.id])).rows[0].read_at !== null, true, `${reason}: the bell stops asking`);
       assert.equal((await pool.query(`SELECT 1 FROM chat_messages WHERE thread_type = 'session' AND thread_ref = $1`, [s.id])).rowCount, 1, reason);
       const kinds = (await workOf(s)).map((w) => w.kind).sort();

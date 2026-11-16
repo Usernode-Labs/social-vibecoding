@@ -9,7 +9,7 @@
  *
  * ── Why the host is mounted, not rendered into the tree ───────────────
  *
- * `#gc-messages` does not exist in the shell's markup. `AppView.renderDevChatTab`
+ * `#gc-messages` does not exist in the shell's markup. `AppView.renderGroupChatTab`
  * creates it at runtime inside `#app-content`, and destroys it on every tab
  * switch — so there is no node for the main React tree to own, and the portal
  * has to be (re)established each time the host is rebuilt. That is the same

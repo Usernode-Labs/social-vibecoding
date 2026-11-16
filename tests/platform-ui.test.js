@@ -439,7 +439,7 @@ test('index.html viewport meta carries viewport-fit=cover (kit safe-area contrac
 });
 
 test('settings toggles are kit switches (un-switch)', () => {
-  for (const id of ['view-as-non-admin', 'dev-console-always-show', 'devchat-alerts-toggle', 'ai-progress-estimate']) {
+  for (const id of ['view-as-non-admin', 'dev-console-always-show']) {
     const m = shellMarkup().match(new RegExp(`<input id="${id}"[^>]*>`));
     assert.ok(m, `missing settings checkbox #${id}`);
     assert.ok(m[0].includes('un-switch'), `#${id} lost its un-switch class`);
@@ -776,12 +776,10 @@ test('the menu\'s action leads it, shaped like the pill that used to open it', (
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  // New change left the menu with its Agent chats section (#4729); it is
-  // Messages' "+" choice now, which starts an agent session the same way.
+  // New change left the menu with its Agent chats section (#4729); building
+  // a change yourself starts on the Homeroom bot tab's new-thread screen.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.ok(!sheet.includes('id="improve-row-new-session"'), 'the menu carries no New change row');
-  assert.match(read('frontend/src/features/messages/index.tsx'),
-    /startAgentSession\(\{ entry: 'messages' \}\)/, 'Messages\' + starts it');
   // The BAND stays, and it is the same element: `#improve-quick-actions`
   // was a direct child of `#improve-body` and is a direct child of the
   // menu's sheet now. dapp.json's band-order check used to select the four
@@ -879,12 +877,13 @@ test("the Board owns the view control; the header's label is the chip", () => {
 
   // Which HALF of the app is on screen is still published from the single
   // place App.currentTab is assigned. The header's right slot no longer reads
-  // it — Improve is unconditional there now — but the session LIFECYCLE PILL
-  // is gated on exactly this pair, so the publish stays load-bearing.
+  // it — Improve is unconditional there now — but the header's label
+  // (header-title.tsx) and a topic's back chip read exactly this pair, so the
+  // publish stays load-bearing.
   const appJs = read('public/js/app.js');
   assert.match(appJs, /App\.currentTab = tab;[\s\S]{0,600}window\.Improve\?\.setTab\(tab, App\.currentSubTab\)/,
-    'switchTab must publish the active tab AND sub-tab — the header status '
-    + 'pill is gated on being on a session');
+    'switchTab must publish the active tab AND sub-tab — the header label '
+    + 'and a topic\'s back chip read them');
 
   // THE RIGHT SLOT IS NOT CONTEXTUAL — and since #2718 it is not a slot at
   // all. Improve used to swap into an eye on the Dev screens and into an
@@ -914,18 +913,6 @@ test("the Board owns the view control; the header's label is the chip", () => {
     assert.ok(!headerSrc.includes(gone), `the ${gone} half of the swap left the header`);
     assert.ok(!sheet.includes(gone), `and did not follow Improve into the menu`);
   }
-  // It went to the session strip, beside the name of the change it acts on.
-  const strip = read('frontend/src/features/dev-chat/session-header.tsx');
-  assert.match(strip, /id="dc-mode-switch"/, 'the strip draws the doing<->seeing switch');
-  assert.match(strip, /swapToStagingForSession/,
-    'and the eye there opens that preview, the one preview affordance');
-  // #2069 narrowed the gate rather than removing it: a session with nothing
-  // to preview still draws no switch, but "nothing to preview" no longer
-  // means "no live URL" — ensure-staging can build one from the branch.
-  assert.match(strip, /if \(!hasPreview\)/,
-    'a session with nothing to preview draws no switch — the gate moved with it');
-  assert.match(strip, /const hasPreview = !!previewUrl \|\| !!previewBuildable;/,
-    'and "nothing to preview" counts a preview that could be built');
 });
 
 test('the menu is actions, navigation and the app\'s options — one scroller', () => {

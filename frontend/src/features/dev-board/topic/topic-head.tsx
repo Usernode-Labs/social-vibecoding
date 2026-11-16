@@ -16,15 +16,11 @@
  * an inline wrapper rewrote every block's innerHTML each time, decoding the
  * before/after tiles' images again.
  *
- * - an issue's body and a proposal's summary — `DevChat.renderMarkdown`,
- *   the same pipeline the dev chat and the group chat's transcript use.
- * - the before/after tiles — `AppView.visualsTilesHtml`, which four other
- *   surfaces still call (the admin gallery, the dev chat's "Changes ready"
- *   card, and its own tests), so it stays a string builder.
- *
- * And a genuine controller host, rendered once, empty, with a constant
- * className: `[data-transcript-body]`, which public/js/session-transcript.js
- * fills on expand.
+ * - an issue's body and a proposal's summary — `PlatformMarkdown.render`,
+ *   the same pipeline the group chat's transcript uses.
+ * - the before/after tiles — `AppView.visualsTilesHtml`, which other
+ *   surfaces still call (the admin gallery and its own tests), so it stays
+ *   a string builder.
  *
  * A request's page is ./request-head.tsx (#4453): the request as a Messages
  * thread's root post, its GitHub comments in the thread's own stream.
@@ -47,7 +43,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, DevCard, StatusPill } from '../card/dev-card';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { topicHeadStore, TopicPageContext } from './topic-store';
-import { useChecksExplanation, useFixAsk, useFixing } from './failed-checks';
+import { askFix, useChecksExplanation } from './failed-checks';
 import { TopicBack } from './topic-back';
 import { RequestHead, RequestWords } from './request-head';
 import { ChangeThreadHead } from './change-head';
@@ -70,7 +66,6 @@ import type {
   IssueProposalRef,
   TextRun,
   TopicBody,
-  TranscriptSection,
   LedgerProgress,
   LedgerBuildStep,
   LedgerRow,
@@ -692,7 +687,7 @@ export function ProposalBody({ b, named = 'technical', part }: {
       <summary className="dev-topic-details-summary">
         {named === 'description' ? t('project:topic.change.descriptionFold') : t('project:topic.about.technicalDetails')}
       </summary>
-      {/* DevChat.renderMarkdown's output — sanitised where it is built, and
+      {/* PlatformMarkdown.render's output — sanitised where it is built, and
           the same pipeline the issue body above uses. */}
       <Html className="dev-issue-body dev-topic-details-body" html={b.html} />
     </details>
@@ -718,31 +713,9 @@ export function SummaryMore({ m }: { m: NonNullable<TopicBody['summaryMore']> })
       }}
     >
       <summary className="dev-topic-details-summary">{t('project:topic.hero.howItsBuilt')}</summary>
-      {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+      {/* PlatformMarkdown.render's output — sanitised where it is built. */}
       <Html className="dev-issue-body dev-topic-details-body" html={m.html} />
     </details>
-  );
-}
-
-function Transcript({ t: section }: { t: TranscriptSection }): ReactNode {
-  const t = useMessages('project');
-  return (
-    <div className="st-section" data-transcript-section={section.id}>
-      <button
-        type="button"
-        className="st-section-head"
-        data-transcript-toggle={section.id}
-        aria-expanded={section.expanded}
-        onClick={() => call('toggleTranscript', section.id)}
-      >
-        <span className="st-caret" aria-hidden="true"></span>
-        <span data-transcript-label="">{section.label}</span>
-        <span className="st-readonly-tag">{t('project:topic.transcript.readOnly')}</span>
-      </button>
-      {/* The BODY is public/js/session-transcript.js's — a controller host,
-          rendered once with a constant className and never looked inside. */}
-      <div className="st-body" data-transcript-body={section.id} hidden={!section.expanded}></div>
-    </div>
   );
 }
 
@@ -1452,21 +1425,15 @@ function WhatWentWrong({ ex }: { ex?: ChecksExplainView | null }): ReactNode {
 /** The Checks step's Fix it, for the change's author: the Testing card's own (./failed-checks.ts). */
 function FixStepButton({ fix }: { fix: FixChecksView }): ReactNode {
   const t = useMessages('project');
-  const { asking, refused, tap } = useFixAsk(fix);
-  const fixing = useFixing(fix);
   return (
-    <>
-      <button
-        type="button"
-        className="gc-vote-btn gc-vote-btn-accent"
-        data-change-fix-checks={fix.changeId}
-        disabled={asking || fixing}
-        onClick={tap}
-      >
-        {fixing ? t('project:topic.checks.fixing') : asking ? t('project:topic.change.gate.fixAsking') : t('project:topic.change.gate.fix')}
-      </button>
-      {refused ? <span className="dev-ledger-fix-refused" role="alert">{refused}</span> : null}
-    </>
+    <button
+      type="button"
+      className="gc-vote-btn gc-vote-btn-accent"
+      data-change-fix-checks={fix.changeId}
+      onClick={() => askFix(fix)}
+    >
+      {t('project:topic.change.gate.fix')}
+    </button>
   );
 }
 
@@ -1692,7 +1659,7 @@ export function DetailsBody({ prRef, steps, help, html }: {
       {html ? (
         <section className="dev-details-part" data-details-part="description">
           <h5 className="dev-details-sub">{t('project:topic.details.description')}</h5>
-          {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+          {/* PlatformMarkdown.render's output — sanitised where it is built. */}
           <Html className="dev-issue-body dev-topic-details-body" html={html} />
         </section>
       ) : null}
@@ -1943,8 +1910,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
       {changePage ? (
         <>
           {/* #4455: the change as a Messages thread's root post, where it
-              stands, its shots; its replies are the thread's stream. #2605:
-              no build surface here: the ⋯'s Build door leaves for it. */}
+              stands, its shots; its replies are the thread's stream. */}
           {body.thread ? (
             <ChangeThreadHead id={id ? Number(id) : null} card={card} body={body} v={body.thread} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} threadNumber={Number(session?.pr_number) || Number(linkedIssues[0]) || null} threadAsChange={Number(session?.pr_number) > 0} />
           ) : null}
@@ -1984,7 +1950,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               />
             ) : null}
           </div>
-          <TopicBodySections body={owner ? { ...body, transcript: null } : body} />
+          <TopicBodySections body={body} />
         </>
       )}
     </div>
@@ -2110,7 +2076,7 @@ function IssueBody(
 
 /**
  * Everything the topic screen draws BELOW its card: the ledger, the About
- * sheet, the transcript, and the host the GitHub thread mounts into.
+ * sheet, and the host the GitHub thread mounts into.
  *
  * Split out of `TopicHead` so the Workshop can render the same sections
  * under a row it has unfolded (#1787 round four) — same components, same
@@ -2159,7 +2125,7 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
       {hasAbout ? (
         <section className="dev-topic-sheet dev-topic-about" data-topic-sheet="about" {...images.scope}>
           {!issueEditor ? <h4 className="dev-topic-h">{body.aboutTitle || t('project:topic.about.title')}</h4> : null}
-          {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
+          {/* PlatformMarkdown.render's output — sanitised where it is built. */}
           {summaryHtml ? (
             <>
               <h5 className="dev-topic-sub">{t('project:topic.about.whatChanges')}</h5>
@@ -2205,11 +2171,6 @@ export function TopicBodySections({ body }: { body: TopicBody }): ReactNode {
               <Roster r={roster} />
             </div>
           ) : null}
-        </section>
-      ) : null}
-      {body.transcript ? (
-        <section className="dev-topic-sheet dev-topic-transcript" data-topic-sheet="transcript">
-          <Transcript t={body.transcript} />
         </section>
       ) : null}
     </>

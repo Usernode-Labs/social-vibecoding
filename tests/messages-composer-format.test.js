@@ -230,8 +230,8 @@ test('a formatted draft is drawn as it will be sent, above the field', () => {
 });
 
 test('the shared renderer understands ++underline++ and lets <u> through', () => {
-  const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(DEV_CHAT, /name: 'underline'/, 'the underline extension is registered');
-  assert.match(DEV_CHAT, /'del', 'u',/, '<u> is in the sanitizer allowlist');
-  assert.match(DEV_CHAT, /return `<u>\$\{this\.parser\.parseInline\(token\.tokens\)\}<\/u>`/);
+  const RENDERER = read('frontend/src/lib/platform-markdown.js');
+  assert.match(RENDERER, /name: 'underline'/, 'the underline extension is registered');
+  assert.match(RENDERER, /'del', 'u',/, '<u> is in the sanitizer allowlist');
+  assert.match(RENDERER, /return `<u>\$\{this\.parser\.parseInline\(token\.tokens\)\}<\/u>`/);
 });

@@ -1,8 +1,8 @@
 'use strict';
-// #5995: "Agent instructions & skills", "Connectors & CLI", "Linked accounts"
-// and "Linked phones" did not say what was behind them, so a viewer opened
-// each to find out. The phone's Settings menu gives those few rows one muted
-// line (ListRow's 13px subtitle); every other row keeps its single line.
+// #5995: "Connectors & CLI", "Linked accounts" and "Linked phones" did not
+// say what was behind them, so a viewer opened each to find out. The phone's
+// Settings menu gives those few rows one muted line (ListRow's 13px
+// subtitle); every other row keeps its single line.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -25,7 +25,7 @@ test('only the unclear rows have a subtitle, each a page the menu lists', () => 
   const subtitles = Object.fromEntries(
     [...block('SUBTITLES').matchAll(/'?([a-z-]+)'?: '(settings:nav\.subtitle\.[A-Za-z]+)'/g)].map((m) => [m[1], m[2]]),
   );
-  assert.deepEqual(Object.keys(subtitles), ['linked-accounts', 'phones', 'connectors', 'agent-files']);
+  assert.deepEqual(Object.keys(subtitles), ['linked-accounts', 'phones', 'connectors']);
   // A menu row is a PAGE: its `page`, else its own key.
   const pages = new Set([...block('SECTIONS', '[', ']').matchAll(/\{ key: '([a-z-]+)'[^}]*\}/g)]
     .map((m) => (m[0].match(/page: '([a-z-]+)'/) || [])[1] || m[1]));
@@ -35,7 +35,6 @@ test('only the unclear rows have a subtitle, each a page the menu lists', () => 
     assert.ok(pages.has(key), `${key} is a page`);
     assert.ok(message(id), `${id} is in the catalog`);
   }
-  assert.equal(message('settings:nav.subtitle.agentFiles'), 'Tell your coding agents how to work');
   assert.equal(message('settings:nav.subtitle.connectors'), 'Build from Claude, ChatGPT or a terminal');
   // The phone's menu carries it; the sidebar descriptor does not.
   const menuView = settingsJs.slice(settingsJs.indexOf('    _menuView() {'), settingsJs.indexOf('    _renderNav() {'));

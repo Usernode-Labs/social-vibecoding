@@ -113,7 +113,7 @@ test('a fixture write that keeps losing fails with Postgres\'s message; any othe
 
 test('every fixture write goes through the retrying transaction', () => {
   const source = require('node:fs').readFileSync(require.resolve('../src/services/shots-fixtures'), 'utf8');
-  for (const name of ['ensureFullAdminIdentity', 'ensureHostedAppFixture', 'copyMemberAgentSession', 'copyFullAdminAgentSession']) {
+  for (const name of ['ensureFullAdminIdentity', 'ensureHostedAppFixture']) {
     const body = source.slice(source.indexOf(`async function ${name}(`));
     const end = body.indexOf('\n}\n');
     assert.match(body.slice(0, end), /return inTransaction\(databaseUrl, /, name);

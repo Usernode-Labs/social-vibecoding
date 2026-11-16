@@ -1203,7 +1203,7 @@ const GroupChat = {
   // transcript.tsx renders it and is the only writer below #gc-messages.
   //
   // `bodyHtml` stays markup: renderMessageBody runs the content through
-  // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
+  // PlatformMarkdown.render and a sanitizer, and a second copy of that pipeline
   // in React is exactly how the two drift apart.
   // The same "is this mine" rule `_messageView` stamps on each row.
   _isOwnMessage(msg) {
@@ -1626,7 +1626,7 @@ const GroupChat = {
     const container = document.getElementById('gc-messages');
     if (!container) return;
     // (Re)establish the portal: #gc-messages is created fresh by
-    // AppView.renderDevChatTab on every tab switch, so the previous mount is
+    // AppView.renderGroupChatTab on every tab switch, so the previous mount is
     // pointing at a detached node by now.
     GroupChat._react()?.mountTranscript(container);
     // #4417 follow-up: a topic's channel says so when it is empty, as it did
@@ -4140,8 +4140,7 @@ const GroupChat = {
 
   // ── #694: file attachments ──────────────────────────────────────────
   //
-  // Upload-before-send, ported from dev-chat (#450, public/js/dev-chat.js
-  // _setupAttachments and friends): each picked/pasted/dropped file is
+  // Upload-before-send (#450): each picked/pasted/dropped file is
   // validated client-side (mirroring src/services/attachments.js
   // validateChatUpload), POSTed as raw octet-stream to
   // /api/apps/:slug/chat-attachments, and parked in `pendingAttachments`
@@ -5044,19 +5043,12 @@ const GroupChat = {
   // `meta.title` is set by the share endpoint when the spec content starts
   // with an H1; older shares predate that field and fall back to
   // "Spec v<n>". The snippet is rendered as markdown so the preview matches
-  // what the user sees in the dev-chat spec viewer (shared markdown helper
-  // from DevChat).
-  //
-  // Reach DevChat via a bare reference and a `typeof` guard rather than
-  // `window.DevChat` — DevChat is declared with `const` at dev-chat.js's top
-  // level, which does NOT install it as a property on `window` (only `var` /
-  // function declarations do). It IS visible as a global identifier across
-  // <script> tags because both files share the same script scope, so a bare
-  // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things safe if
-  // dev-chat.js ever fails to load.
+  // what the user sees in the spec viewer (the platform's markdown renderer,
+  // PlatformMarkdown). The `typeof` guard keeps things safe if it ever fails
+  // to load.
   _specShareView(meta, msg) {
-    const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-      ? (str) => DevChat.renderMarkdown(str)
+    const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render
+      ? (str) => PlatformMarkdown.render(str)
       : null;
     // #1808: composed from `_stamp` rather than spelling its own options
     // table, which had no `year` — a spec built last June read "Jun 16,
@@ -5084,7 +5076,7 @@ const GroupChat = {
       botNote: ['building', 'waiting', 'replaced', 'stopped'].includes(meta.botNote) ? meta.botNote : null,
       waitingFor: meta.botNote === 'waiting' && typeof meta.waitingFor === 'string' && meta.waitingFor ? meta.waitingFor : null,
       // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
-      // no snippet, or when dev-chat.js is not loaded to render one.
+      // no snippet, or when the renderer is not loaded to render one.
       snippetHtml: meta.snippet && renderMd ? renderMd(meta.snippet) : null,
       // …and the raw text as the fallback, escaped by React as a text child.
       snippetText: meta.snippet && !renderMd ? String(meta.snippet) : null,
@@ -5608,7 +5600,7 @@ function renderRefChips(html) {
 }
 
 // #328: the authoritative renderer for a USER message body. Renders a safe
-// markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
+// markdown subset via the shared PlatformMarkdown.render (marked + DOMPurify,
 // strict allowlist, https-only links, raw HTML escaped) and then layers the
 // existing @mention + PR/issue-ref decoration on top. All three message
 // surfaces (main chat, thread replies, inline edit) funnel through here so
@@ -5625,16 +5617,16 @@ function renderRefChips(html) {
 // markdown source on the wire and in the DB — this is display-only.
 //
 // Falls back to the plain renderWithMentions path when the markdown libs /
-// DevChat aren't available (CDN blocked, native shell, the test sandbox).
+// PlatformMarkdown aren't available (CDN blocked, native shell, the test sandbox).
 function renderMessageBody(raw) {
   const text = raw == null ? '' : String(raw);
-  const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown;
+  const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render;
   if (!renderMd || typeof document === 'undefined' || !document.createElement) {
     return renderWithMentions(text);
   }
   let html;
   try {
-    html = DevChat.renderMarkdown(text, { breaks: true });
+    html = PlatformMarkdown.render(text, { breaks: true });
   } catch {
     return renderWithMentions(text);
   }
@@ -5790,7 +5782,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
 // here, and stays text. The guard comes out of every text node, display
 // only, so what reads (and copies) is what was typed, a code block's
 // `@scope/pkg` included. Takes and returns sanitized HTML (the output of
-// DevChat.renderMarkdown); app-view.js calls it for a request's body and its
+// PlatformMarkdown.render); app-view.js calls it for a request's body and its
 // GitHub comments.
 const GC_MENTION_GUARD = '@​';
 

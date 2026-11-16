@@ -181,24 +181,6 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/estimate-backfill').sweep(pool),
   },
   {
-    // #907: local agents' leases whose machine stopped heartbeating are
-    // released, and a turn still sitting on one failed, so a change stops
-    // saying it runs on a laptop in a bag (services/local-agent.js). A
-    // lease is a 120 s TTL a 30 s heartbeat refreshes: a minute is well
-    // inside it. The turns it fails are finished by the item that
-    // dispatched them.
-    name: 'local-agent-leases', everyMs: MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/local-agent').sweepExpiredLeases(pool)
-      .then(async (n: number) => ({
-        released: n,
-        // A turn a machine was offered but never picked up is not covered by
-        // a lapsed lease: the machine can heartbeat forever without claiming
-        // it. Freed at the offer timeout, so a dispatch that died partway
-        // does not leave the change answering busy (services/local-agent.js).
-        unclaimed: await legacy('services/local-agent').sweepUnclaimedTurns(pool),
-      })),
-  },
-  {
     // What the triggers marked as changed since (work_state_dirty: a write
     // to what a work state is derived from, made anywhere), derived again
     // and pushed, within seconds (services/work-state.js drainDirty).
@@ -242,12 +224,6 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/turn-leftovers').sweep(pool),
   },
   {
-    // Turns' streams (stream_events) a finished turn did not clear, and the
-    // watchers of a process that went (services/session-bus.js).
-    name: 'turn-stream-retention', everyMs: 15 * MIN,
-    run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/session-bus').prune(pool),
-  },
-  {
     // #5132: a person's IP address is kept IP_RETENTION_DAYS (180 days, six
     // months, by default), then cleared from the rows that recorded it; the
     // rows stay.
@@ -275,7 +251,7 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/ui-telemetry').pruneAnonymous(pool),
   },
   {
-    // An agent session's delegated connector grants, a week after their turn.
+    // Delegated connector grants (Homeroom bot's turns), a week after they end.
     name: 'delegation-prune', everyMs: HOUR,
     run: async (_ctx: WorkContext, { pool }: JobDeps) => ({ pruned: await legacy('services/mcp-oauth').pruneDelegations(pool) }),
   },

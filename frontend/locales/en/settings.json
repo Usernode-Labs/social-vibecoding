@@ -321,79 +321,79 @@
   },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
-    "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.open.body": {
     "text": "Go to <0>Customize → Connectors</0> in Claude (<1>claude.ai/customize/connectors</1>). This is where both directory connectors and your own custom ones live.",
-    "description": "Text of step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Tag 0 is a menu path in Claude's own interface (use Claude's wording in the target language if it differs); tag 1 is a web address and stays exactly as written."
+    "description": "Text of step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Tag 0 is a menu path in Claude's own interface (use Claude's wording in the target language if it differs); tag 1 is a web address and stays exactly as written."
   },
   "connectors.claudeSteps.start.title": {
     "text": "Start a custom connector.",
-    "description": "Step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.start.body": {
     "text": "Click the <0>+</0> button, then choose “Add custom connector”. In the dialog, put <1>homeroom</1> in the Name field, exactly that spelling: Claude Code builds its permission rules from what you type here, and the read-only allowlist Homeroom ships in every app repo matches only the names it knows. On Team or Enterprise plans this option isn’t there for members, so an Owner adds it first from Organization settings → Connectors (Add → hover “Custom” → “Web”).",
-    "description": "Text of step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Tag 0 is the plus sign on a button; tag 1 is the exact name to type and stays \"homeroom\". The quoted words are labels in Claude's own interface."
+    "description": "Text of step 2 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Tag 0 is the plus sign on a button; tag 1 is the exact name to type and stays \"homeroom\". The quoted words are labels in Claude's own interface."
   },
   "connectors.claudeSteps.paste.title": {
     "text": "Paste your MCP server URL.",
-    "description": "Step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.paste.body": {
     "text": "For Homeroom that is the MCP server URL above, a public HTTPS endpoint ending in <0>/mcp</0>. A custom server must be reachable from Anthropic’s cloud, not just from your machine.",
-    "description": "Text of step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. \"The MCP server URL above\" is a field shown above the steps. Tag 0 is a URL ending and stays exactly as written. Anthropic is the company that makes Claude."
+    "description": "Text of step 3 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. \"The MCP server URL above\" is a field shown above the steps. Tag 0 is a URL ending and stays exactly as written. Anthropic is the company that makes Claude."
   },
   "connectors.claudeSteps.oauth.title": {
     "text": "Add OAuth credentials if needed.",
-    "description": "Step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.oauth.body": {
     "text": "If a server requires OAuth, open “Advanced settings” and enter your OAuth Client ID and Client Secret. Skip this for Homeroom: it uses dynamic client registration, so there is nothing to enter.",
-    "description": "Text of step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page: this step can be skipped for Homeroom. The quoted words and \"Client ID\", \"Client Secret\" are labels in Claude's own interface."
+    "description": "Text of step 4 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps: this step can be skipped for Homeroom. The quoted words and \"Client ID\", \"Client Secret\" are labels in Claude's own interface."
   },
   "connectors.claudeSteps.save.title": {
     "text": "Save and authenticate.",
-    "description": "Step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader."
+    "description": "Step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
   },
   "connectors.claudeSteps.save.body": {
     "text": "Click “Add” to finish configuring, then click “Connect” next to the connector. You’ll be redirected through the OAuth flow; review the scopes it asks for before approving.",
-    "description": "Text of step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. “Add” and “Connect” are buttons in Claude's own interface. \"Scopes\" are the permissions the connection asks for."
+    "description": "Text of step 5 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. “Add” and “Connect” are buttons in Claude's own interface. \"Scopes\" are the permissions the connection asks for."
   },
   "connectors.claudeSteps.enable.title": {
     "text": "Enable it in a conversation.",
-    "description": "Step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text. \"It\" is the connector; a conversation is a chat in Claude."
+    "description": "Step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text. \"It\" is the connector; a conversation is a chat in Claude."
   },
   "connectors.claudeSteps.enable.body": {
     "text": "In a chat, use the <0>+</0> button at the lower left, then “Connectors”, and toggle your connector on. Toggles are per-conversation, so you control which chats can reach it.",
-    "description": "Text of step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Tag 0 is the plus sign on a button; “Connectors” is a menu item in Claude's own interface."
+    "description": "Text of step 6 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Tag 0 is the plus sign on a button; “Connectors” is a menu item in Claude's own interface."
   },
   "connectors.chatgptSteps.directory.title": {
     "text": "Open the plugins directory.",
-    "description": "Step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader. The plugins directory is a page of ChatGPT."
+    "description": "Step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader. The plugins directory is a page of ChatGPT."
   },
   "connectors.chatgptSteps.directory.body": {
     "text": "Go to <0>chatgpt.com/plugins</0> in your browser. Plugin and MCP setup is currently a web feature.",
-    "description": "Text of step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. <0></0> is a link to that address; keep the address as it is. MCP is the name of the protocol connectors use."
+    "description": "Text of step 1 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. <0></0> is a link to that address; keep the address as it is. MCP is the name of the protocol connectors use."
   },
   "connectors.chatgptSteps.create.title": {
     "text": "Create a custom MCP server.",
-    "description": "Step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader. MCP is a protocol name."
+    "description": "Step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader. MCP is a protocol name."
   },
   "connectors.chatgptSteps.create.body": {
     "text": "Click <0>“Add plugin”</0>, then choose <1>“Create custom MCP server”</1>.",
-    "description": "Text of step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. The two quoted names are buttons in ChatGPT's own interface, drawn in bold; write them as ChatGPT shows them in the reader's language if known, otherwise keep the English."
+    "description": "Text of step 2 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. The two quoted names are buttons in ChatGPT's own interface, drawn in bold; write them as ChatGPT shows them in the reader's language if known, otherwise keep the English."
   },
   "connectors.chatgptSteps.url.title": {
     "text": "Enter Homeroom MCP server URL.",
-    "description": "Step 3 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; the address to enter is shown right after it. Homeroom is the product's name."
+    "description": "Step 3 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; the address to enter is shown right after it. Homeroom is the product's name."
   },
   "connectors.chatgptSteps.use.title": {
     "text": "Turn the server on in a chat.",
-    "description": "Step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. Shown in bold at the start of the step's text; an instruction to the reader. The server is the MCP server just created."
+    "description": "Step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader. The server is the MCP server just created."
   },
   "connectors.chatgptSteps.use.body": {
     "text": "Open the <0>+</0> / connector picker next to the message box, select the server you just created, and set it as active. Now ask ChatGPT to perform something that uses one of the tools, for example: <1>“Use my MCP server to list the open support tickets.”</1> When appropriate, ChatGPT will call the tools your MCP server exposes and use their results in the conversation.",
-    "description": "Text of step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and on a dev session's hand-off page. <0></0> holds the plus sign that is on the button; keep it. <1></1> is an example request in italics."
+    "description": "Text of step 4 of the ChatGPT connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. <0></0> holds the plus sign that is on the button; keep it. <1></1> is an example request in italics."
   },
   "connectors.chatgptSteps.inShort": {
     "text": "<0>In short:</0> chatgpt.com/plugins → Add plugin → Create custom MCP server → enter the Homeroom MCP server URL → connector picker → set it active.",
@@ -581,7 +581,7 @@
   },
   "cli.guide.title": {
     "text": "Set up a local coding agent",
-    "description": "Title of the setup guide card in Settings > CLI & coding-agent access (also shown on a dev session's own-tools page): how to use a coding agent on one's own computer with Homeroom."
+    "description": "Title of the setup guide card in Settings > CLI & coding-agent access: how to use a coding agent on one's own computer with Homeroom."
   },
   "cli.guide.intro": {
     "text": "Start Codex or Claude Code from a local checkout and ask it to create a proposal.",
@@ -658,18 +658,6 @@
   "cli.guide.copyFailedToast": {
     "text": "Couldn’t copy. Select the text and copy it manually",
     "description": "Brief pop-up message when a Copy button in the local coding agent setup guide could not copy to the clipboard."
-  },
-  "localAgents.lastSeen": {
-    "text": "{{runtime}} · last seen <0>{{when}}</0>",
-    "description": "Third line of an attached machine's row in Settings: which coding agent runs there and when it last reported in. {{runtime}} is the agent's name, for example Claude Code; {{when}} is a short relative time or a date, for example \"5m ago\" or \"Mar 3\". Keep the dot separator."
-  },
-  "localAgents.lastSeenUnknown": {
-    "text": "{{runtime}} · last seen unknown",
-    "description": "Third line of an attached machine's row in Settings when it is not known when the machine last reported in. {{runtime}} is the coding agent's name, for example Claude Code. Keep the dot separator."
-  },
-  "localAgents.detach": {
-    "text": "Detach",
-    "description": "Button on an attached machine's row in Settings: releases that machine's link to the person's dev session, so the coding agent on it stops working for the session."
   },
   "grants.title": {
     "text": "App AI permissions",
@@ -820,7 +808,7 @@
     "description": "Heading of the section in Settings where a person saves their own Anthropic API key. Anthropic is a company name."
   },
   "apiKey.intro": {
-    "text": "Bring your own Anthropic API key to keep working past the weekly limit. Your platform weekly allowance is used first; once it runs out, your key takes over automatically, even in the middle of a running turn, and usage bills directly to your Anthropic account.",
+    "text": "Bring your own Anthropic API key to keep using Homeroom's AI features past the weekly limit. Your weekly allowance is used first; once it runs out, your key takes over automatically, and usage bills directly to your Anthropic account.",
     "description": "Explanation under the \"Anthropic API key\" heading in Settings. A \"turn\" is one round of the AI agent working on a request."
   },
   "apiKey.savedKeyLabel": {
@@ -840,8 +828,8 @@
     "description": "Security note under the key field in Settings > Anthropic API key. Tag 0 is a link to the page on Anthropic's site where spend limits are set; the sentence continues after the link."
   },
   "openrouter.intro": {
-    "text": "Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.",
-    "description": "Explanation under the OpenRouter heading in Settings. OpenRouter, Claude, Claude Code and GLM 5.3 Flash are product and model names. \"Key-visible\" means the models this API key is allowed to see. A \"turn\" is one round of the AI agent working."
+    "text": "Voice input uses this key: when you press Speak, it turns what you say into text. Your account comes with an included OpenRouter key, and what it spends counts toward your weekly allowance. You can use your own OpenRouter key instead, billed to your OpenRouter account. Keys are encrypted at rest.",
+    "description": "Explanation under the OpenRouter heading in Settings. OpenRouter is a company name. \"Voice input\" is speaking a message instead of typing it; \"Speak\" is the label of the button that starts it (core:dictation.speak), so use the same word. The weekly allowance is the AI spending the platform includes for the person each week."
   },
   "openrouter.included.title": {
     "text": "Included OpenRouter key",
@@ -858,70 +846,6 @@
   "openrouter.personalKey.remove": {
     "text": "Remove",
     "description": "Button under the personal key field in Settings > OpenRouter: deletes the person's own saved OpenRouter API key."
-  },
-  "openrouter.model.label": {
-    "text": "OpenRouter model",
-    "description": "Label of the list in Settings > OpenRouter where the person picks which AI model their coding sessions use."
-  },
-  "openrouter.model.filterPlaceholder": {
-    "text": "Filter by model or provider…",
-    "description": "Placeholder of the search field above the model list in Settings > OpenRouter. \"Provider\" is the company that makes a model."
-  },
-  "openrouter.model.filterAria": {
-    "text": "Filter OpenRouter models",
-    "description": "Accessible name of the search field above the model list in Settings > OpenRouter."
-  },
-  "openrouter.model.favoritesOff": {
-    "text": "☆ Favorites",
-    "description": "Toggle button above the model list in Settings > OpenRouter, in its off state: pressing it narrows the list to the models the person starred. Keep the outlined star."
-  },
-  "openrouter.model.refresh": {
-    "text": "Refresh",
-    "description": "Button above the model list in Settings > OpenRouter: fetches the current list of models from OpenRouter again."
-  },
-  "openrouter.model.addFavorite": {
-    "text": "Add selected model to favorites",
-    "description": "Accessible name and tooltip of the star button beside the model list in Settings > OpenRouter, when the selected model is not starred yet."
-  },
-  "openrouter.model.favoritesNote": {
-    "text": "Platform recommendations start starred. Your changes override those defaults on every device. OpenRouter filters this catalog for your key and account policies.",
-    "description": "Note under the model list in Settings > OpenRouter, about the star (favorite) marks. \"This catalog\" is the list of models."
-  },
-  "openrouter.reasoning.label": {
-    "text": "Reasoning effort",
-    "description": "Label of a list in Settings > OpenRouter: how much thinking the chosen AI model should spend before answering."
-  },
-  "openrouter.reasoning.default": {
-    "text": "Default",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: let the model use its own default amount of reasoning."
-  },
-  "openrouter.reasoning.minimal": {
-    "text": "Minimal",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: the least reasoning."
-  },
-  "openrouter.reasoning.low": {
-    "text": "Low",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: little reasoning."
-  },
-  "openrouter.reasoning.medium": {
-    "text": "Medium",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: a medium amount of reasoning."
-  },
-  "openrouter.reasoning.high": {
-    "text": "High",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: a lot of reasoning."
-  },
-  "openrouter.reasoning.xhigh": {
-    "text": "Extra high",
-    "description": "Option in the \"Reasoning effort\" list in Settings > OpenRouter: the most reasoning."
-  },
-  "openrouter.saveDefault": {
-    "text": "Save as my default coding agent",
-    "description": "Button in Settings > OpenRouter: makes OpenRouter, with the model selected above, the coding agent used for the person's new sessions."
-  },
-  "openrouter.useClaudeDefault": {
-    "text": "Use Claude Code as my default instead",
-    "description": "Button in Settings > OpenRouter: switches the person's default coding agent back from OpenRouter to Claude Code."
   },
   "screen.signOut": {
     "text": "Sign out",
@@ -1259,98 +1183,6 @@
     "text": "Link Homeroom Wallet",
     "description": "Button in Settings > Homeroom Wallet: shows a QR code to scan with the Homeroom mobile app, which links that wallet to this account."
   },
-  "agentFiles.title": {
-    "text": "Agent instructions & skills",
-    "description": "Heading of the section in Settings where the person uploads files that the AI coding agent follows when it builds for them."
-  },
-  "agentFiles.intro": {
-    "text": "Personal files the coding agent follows on every build or plan run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48 KB per file. Changes apply from your next run.",
-    "description": "Explanation under the Agent instructions & skills heading in Settings. \"Build\" and \"plan run\" are two kinds of work the AI coding agent does (a plan run writes the plan for a change); \"run\" is a noun. Keep the non-breaking space between 48 and KB."
-  },
-  "agentFiles.instructions.heading": {
-    "text": "Instructions",
-    "description": "Subheading in Settings > Agent instructions & skills over the list of instruction files the person uploaded for the coding agent."
-  },
-  "agentFiles.instructions.upload": {
-    "text": "Upload",
-    "description": "Small button beside the Instructions subheading in Settings > Agent instructions & skills: picks an instruction file from the device to upload (verb)."
-  },
-  "agentFiles.instructions.empty": {
-    "text": "No instruction files yet. Upload a markdown file to guide the coding agent on every build you start.",
-    "description": "Shown under the Instructions subheading in Settings > Agent instructions & skills when the person has uploaded none. \"Build\" is a noun: a piece of work the coding agent does."
-  },
-  "agentFiles.skills.heading": {
-    "text": "Skills",
-    "description": "Subheading in Settings > Agent instructions & skills over the list of skill files: packaged abilities the coding agent can use."
-  },
-  "agentFiles.skills.upload": {
-    "text": "Upload",
-    "description": "Small button beside the Skills subheading in Settings > Agent instructions & skills: picks a skill file from the device to upload (verb)."
-  },
-  "agentFiles.skills.empty": {
-    "text": "No skills yet. Upload a skill file the agent can use while building for you.",
-    "description": "Shown under the Skills subheading in Settings > Agent instructions & skills when the person has uploaded none."
-  },
-  "agentFiles.form.nameLabel": {
-    "text": "Name",
-    "description": "Label of the field in the upload form in Settings > Agent instructions & skills: the name the uploaded file is saved under."
-  },
-  "agentFiles.form.descriptionLabel": {
-    "text": "Description",
-    "description": "Label of the field in the upload form in Settings > Agent instructions & skills, shown for a skill: one line saying what the skill does."
-  },
-  "agentFiles.form.descriptionPlaceholder": {
-    "text": "One line: what this skill does",
-    "description": "Placeholder of the Description field in the skill upload form in Settings > Agent instructions & skills."
-  },
-  "agentFiles.list.loadFailed": {
-    "text": "Failed to load your agent files.",
-    "description": "Error in Settings > Agent instructions & skills when the lists of uploaded files could not be fetched."
-  },
-  "agentFiles.file.size": {
-    "text": "{{size}} KB",
-    "description": "Size shown on a file's row in Settings > Agent instructions & skills. {{size}} is the number of kilobytes."
-  },
-  "agentFiles.file.view": {
-    "text": "View",
-    "description": "Link on a file's row in Settings > Agent instructions & skills: expands the row to show the file's contents."
-  },
-  "agentFiles.file.hide": {
-    "text": "Hide",
-    "description": "Link on a file's row in Settings > Agent instructions & skills while its contents are shown: collapses them again."
-  },
-  "agentFiles.file.viewName": {
-    "text": "View {{file}}",
-    "description": "Accessible name of the View link on a file's row in Settings > Agent instructions & skills. {{file}} is the file's name."
-  },
-  "agentFiles.file.hideName": {
-    "text": "Hide {{file}}",
-    "description": "Accessible name of the Hide link on a file's row in Settings > Agent instructions & skills, which collapses the file's contents. {{file}} is the file's name."
-  },
-  "agentFiles.file.delete": {
-    "text": "Delete",
-    "description": "Red link on a file's row in Settings > Agent instructions & skills: deletes that uploaded file after a confirmation."
-  },
-  "agentFiles.file.deleteName": {
-    "text": "Delete {{file}}",
-    "description": "Accessible name of the Delete link on a file's row in Settings > Agent instructions & skills. {{file}} is the file's name."
-  },
-  "agentFiles.file.loading": {
-    "text": "Loading…",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills while the file's contents are being fetched."
-  },
-  "agentFiles.file.emptyContent": {
-    "text": "(empty)",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills when the uploaded file has no contents. Keep the parentheses."
-  },
-  "agentFiles.file.loadFailedReason": {
-    "text": "Failed to load: {{reason}}",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills when the file's contents could not be fetched. {{reason}} is the error sentence from the server or the browser."
-  },
-  "agentFiles.file.loadFailed": {
-    "text": "Failed to load: fetch failed",
-    "description": "Shown inside an expanded file row in Settings > Agent instructions & skills when the file's contents could not be fetched and the server gave no reason."
-  },
   "experimental.title": {
     "text": "Experimental",
     "description": "Heading of the section in Settings that holds switches for features still being tested."
@@ -1358,22 +1190,6 @@
   "experimental.intro": {
     "text": "Early features we're still testing. They may change or disappear.",
     "description": "Explanation under the Experimental heading in Settings."
-  },
-  "experimental.progressEstimate.label": {
-    "text": "AI progress estimate",
-    "description": "Label of a switch in Settings > Experimental: shows an AI-made guess of how far along the coding agent is."
-  },
-  "experimental.progressEstimate.description": {
-    "text": "While the coding agent works, a small AI model skims its progress log about once a minute and guesses how far along it is and roughly how long is left. It's calibrated against how long real runs actually take, but it's still a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).",
-    "description": "Explanation under the AI progress estimate switch in Settings > Experimental. A \"run\" is one stretch of work by the coding agent."
-  },
-  "experimental.sessionBridge.label": {
-    "text": "Session bridge (run this chat on your computer)",
-    "description": "Label of a switch in Settings > Experimental. Session bridge is the feature's name: it lets a coding session on Homeroom do its work on the person's own computer."
-  },
-  "experimental.sessionBridge.description": {
-    "text": "Adds <0>Your computer · Homeroom session</0> to the list of places a session can be built. You keep the platform chat exactly as it is, with the same transcript, branch and proposal, but its turns run through the Homeroom CLI on your own machine, on your own Claude plan. It needs the CLI installed and attached, so it stays off until you ask for it.",
-    "description": "Explanation under the Session bridge switch in Settings > Experimental. The tagged part is the name of an option in another list, shown in a monospace font; translate it as that option is translated. CLI is the command-line tool; Claude is a product name; a \"turn\" is one request and answer of the coding agent."
   },
   "experimental.look.fold": {
     "text": "Look and theme",
@@ -1422,14 +1238,6 @@
   "experimental.lookTools.description": {
     "text": "Adds two buttons beside the bell on every screen: one changes the look, the other flips between light and dark. With this off, the top of the screen is the one everyone has, the look is chosen in the menu above, and light or dark is chosen in Settings, Appearance. Kept for this browser.",
     "description": "Explanation under the switch that shows the look menu and the light and dark switch beside the bell, in Settings, Experimental. Appearance is the name of another section of Settings, where the Theme control is; translate it the same way there and here."
-  },
-  "experimental.localAgents.title": {
-    "text": "Local coding agent",
-    "description": "Heading of a block in Settings > Experimental that lists the person's own computers attached to run the coding agent."
-  },
-  "experimental.localAgents.intro": {
-    "text": "Machines running <0>{{command}}</0>. While one is attached, that session's plan and coding turns run there on your own Claude subscription instead of on Homeroom. Each turn asks in your terminal before it starts; plan turns are read-only, and after a coding turn Homeroom still opens the pull request, builds the preview and runs the checks. Detaching sends the next turn back to Homeroom.",
-    "description": "Explanation under the Local coding agent heading in Settings > Experimental. {{command}} is a terminal command, shown in a monospace font inside the tag. A \"turn\" is one request and answer of the coding agent; a \"plan turn\" writes the plan for a change and a \"coding turn\" makes it. Claude is a product name."
   },
   "theme.title": {
     "text": "Theme",
@@ -1828,24 +1636,16 @@
     "description": "Explanation under the \"View as non-admin\" switch in Settings > Admin preview."
   },
   "alerts.title": {
-    "text": "Agent session sound & alerts",
-    "description": "Heading of the section in Settings about being told when an AI coding session finishes."
+    "text": "Test phone notifications",
+    "description": "Heading of the first block on the Notifications page in Settings: a test that sends a sample push notification to the person's phone."
   },
   "alerts.intro": {
-    "text": "Get a heads-up when an agent session finishes and is waiting for your reply.",
-    "description": "Explanation under the \"Agent session sound & alerts\" heading in Settings. An agent session is a conversation with the AI coding agent."
-  },
-  "alerts.toggle.label": {
-    "text": "Play a sound, and notify me when the app is in the background",
-    "description": "Label of the switch in Settings > Agent session sound & alerts."
-  },
-  "alerts.toggle.description": {
-    "text": "When you're in the app a soft chime plays. A browser can show notifications while its tab stays open. To receive push notifications with the mobile app backgrounded or closed, enable Activity notifications on your phone and Agent sessions below. The test queues a phone push with a 10-second delay so you can switch away.",
-    "description": "Explanation under the switch in Settings > Agent session sound & alerts. \"Activity notifications\" is the name of a switch in the Homeroom mobile app's settings and \"Agent sessions\" the name of a switch further down this page; translate them as those are translated."
+    "text": "Check that Homeroom can reach your phone. To get push notifications with the mobile app in the background or closed, turn on Activity notifications on your phone and the categories you want below. The test waits 10 seconds before it sends, so you can switch away.",
+    "description": "Explanation under the \"Test phone notifications\" heading in Settings. \"Activity notifications\" is the name of a switch in the Homeroom mobile app's settings; the categories are the switches under \"Mobile push categories\" further down this page."
   },
   "alerts.test": {
     "text": "Send a test alert",
-    "description": "Button in Settings > Agent session sound & alerts: plays the sound and sends a sample notification so the person can check it works."
+    "description": "Button under \"Test phone notifications\" on the Notifications page in Settings: sends a sample push notification to the person's phone so they can check it arrives."
   },
   "alerts.push.title": {
     "text": "Mobile push categories",
@@ -1899,21 +1699,13 @@
     "text": "Collaboration and approver invitations, including when yours are accepted.",
     "description": "What the Invitations category covers, under its name in Settings > Mobile push categories. An approver is someone whose approval a project's changes need."
   },
-  "alerts.push.sharedWork.label": {
-    "text": "Shared work",
-    "description": "Name of a phone notification category in Settings > Mobile push categories: work other people shared with this person."
-  },
-  "alerts.push.sharedWork.description": {
-    "text": "Plans that someone privately shares with you.",
-    "description": "What the Shared work category covers, under its name in Settings > Mobile push categories. A plan is a written description of a change, made before it is built."
-  },
   "alerts.push.developerSessions.label": {
-    "text": "Agent sessions",
-    "description": "Name of a phone notification category in Settings > Mobile push categories: conversations with the AI coding agent."
+    "text": "Your coding agent",
+    "description": "Name of a phone notification category in Settings > Mobile push categories: news from an AI coding agent the person connected to Homeroom."
   },
   "alerts.push.developerSessions.description": {
-    "text": "Agent sessions and unattended runs that finish while you are away.",
-    "description": "What the Agent sessions category covers, under its name in Settings > Mobile push categories. An unattended run is work the coding agent does without the person watching."
+    "text": "When a coding agent you connected to Homeroom puts up its work or is waiting on you. Test alerts use this switch too.",
+    "description": "What the \"Your coding agent\" category covers, under its name in Settings > Mobile push categories. A test alert is the sample notification sent by the \"Send a test alert\" button on the same page."
   },
   "alerts.push.proposalAlerts.label": {
     "text": "Change alerts",
@@ -2432,8 +2224,8 @@
     "description": "Heading of a block in Settings in the Homeroom mobile app: notifications on the phone about activity in Homeroom."
   },
   "usernode.socialPush.intro": {
-    "text": "Get a device notification when an agent session or unattended run finishes. Notification content is loaded only after you open Social.",
-    "description": "Explanation under the \"Homeroom app: activity notifications\" heading in Settings. Social is the name of this part of the mobile app; an agent session is a conversation with the AI coding agent."
+    "text": "Get a device notification about activity in Homeroom, such as a message, a vote that needs you or a build that is ready. Notification content is loaded only after you open Social.",
+    "description": "Explanation under the \"Homeroom app: activity notifications\" heading in Settings. Social is the name of this part of the mobile app; a build is something Homeroom bot is building for the person."
   },
   "usernode.socialPush.checking": {
     "text": "Checking status…",
@@ -2651,10 +2443,6 @@
     "text": "CLI & coding-agent access",
     "description": "Name of a part of Settings: the part listing command-line (CLI) credentials and coding agents attached from a person's own machine. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
-  "nav.part.agentFiles": {
-    "text": "Agent instructions & skills",
-    "description": "Name of a part of Settings: the page where a person writes instruction files and skills that their AI coding agents read. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
-  },
   "nav.part.experimental": {
     "text": "Experimental",
     "description": "Name of a part of Settings: the page of experimental features that can be switched on. Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
@@ -2681,7 +2469,7 @@
   },
   "nav.part.alerts": {
     "text": "Notifications",
-    "description": "Name of a part of Settings: the Notifications page (sound, alerts and phone push). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
+    "description": "Name of a part of Settings: the Notifications page (the phone push test, phone push categories and what apps may send). Shown as a row in the Settings menu or under a matching row when filtering, and as the phone header title when the part is a page of its own."
   },
   "nav.part.appPermissions": {
     "text": "App device permissions",
@@ -2747,10 +2535,6 @@
     "text": "Build from Claude, ChatGPT or a terminal",
     "description": "One muted line under the Connectors & CLI row in the phone's Settings menu, saying what the page is for: connecting AI chat apps or a command line (terminal) to Homeroom so they can build. Claude and ChatGPT are product names. Keep it short; it is cut to one line."
   },
-  "nav.subtitle.agentFiles": {
-    "text": "Tell your coding agents how to work",
-    "description": "One muted line under the Agent instructions & skills row in the phone's Settings menu, saying what the page is for: files that customise how the AI coding agent behaves when it builds. Keep it short; it is cut to one line."
-  },
   "nav.tag.beta": {
     "text": "Beta",
     "description": "A small grey label at the end of a row in the Settings menu (the Experimental row), saying the features behind it are still being tried and may change. One short word."
@@ -2781,7 +2565,7 @@
   },
   "nav.group.integrations": {
     "text": "Integrations & automation",
-    "description": "Heading over a group of rows in the Settings menu: the chat connectors (Claude, ChatGPT, Codex), command-line (CLI) access, and the instruction files and skills that coding agents read."
+    "description": "Heading over a group of rows in the Settings menu: the chat connectors (Claude, ChatGPT, Codex) and command-line (CLI) access."
   },
   "nav.group.preferences": {
     "text": "Preferences",
@@ -2872,7 +2656,7 @@
     "description": "Not shown on screen. Extra search words for \"Anthropic API key\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.openrouter": {
-    "text": "model glm deepseek reasoning default coding agent key",
+    "text": "key voice speak dictation microphone transcription personal",
     "description": "Not shown on screen. Extra search words for \"OpenRouter\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.connectors": {
@@ -2883,12 +2667,8 @@
     "text": "terminal token credentials revoke local agent opencode claude code",
     "description": "Not shown on screen. Extra search words for \"CLI & coding-agent access\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
-  "nav.keywords.agentFiles": {
-    "text": "instructions skills agents md claude md prompt files",
-    "description": "Not shown on screen. Extra search words for \"Agent instructions & skills\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
-  },
   "nav.keywords.experimental": {
-    "text": "beta labs progress estimate session bridge local agent look design",
+    "text": "beta labs advanced basic mode look design",
     "description": "Not shown on screen. Extra search words for \"Experimental\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.theme": {
@@ -2908,7 +2688,7 @@
     "description": "Not shown on screen. Extra search words for \"Language\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words. The non-English words are the word for \"language\" in other languages, so someone whose screen is in the wrong language can still find this page: keep them."
   },
   "nav.keywords.alerts": {
-    "text": "notifications sound push phone mute bell chime",
+    "text": "notifications push phone mute bell test alert",
     "description": "Not shown on screen. Extra search words for \"Notifications\" in the Settings menu's filter box: lower-case words separated by spaces that people might type to find it. Translate them into the words people would type in your language; you may add or drop words."
   },
   "nav.keywords.appPermissions": {
@@ -2997,79 +2777,35 @@
   },
   "alerts.test.queueing": {
     "text": "Queueing test alert…",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications while the request is being sent."
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications while the request is being sent."
   },
   "alerts.test.countdown.queued_one": {
-    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when a push notification was also queued for the phone. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
+    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification.",
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications, updated every second while the test counts down to the moment the push notification is sent to the phone. {{count}} is the seconds left; \"s\" abbreviates seconds."
   },
   "alerts.test.countdown.queued_other": {
-    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when a push notification was also queued for the phone. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.preferenceDisabled_one": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Enable Agent sessions under Mobile push categories and try again. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push was sent because the \"Agent sessions\" category is switched off under \"Mobile push categories\" on the same page. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.preferenceDisabled_other": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Enable Agent sessions under Mobile push categories and try again. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push was sent because the \"Agent sessions\" category is switched off under \"Mobile push categories\" on the same page. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.unavailable_one": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
-  },
-  "alerts.test.countdown.unavailable_other": {
-    "text": "Alert in {{count}}s. Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server. Stay here for the chime if sound is enabled.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications, updated every second while the test counts down, when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app. {{count}} is the seconds left; \"s\" abbreviates seconds. \"Chime\" is the sound Homeroom plays in the open page."
+    "text": "Alert in {{count}}s. Phone push queued. Background or close the mobile app to check for a notification.",
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications, updated every second while the test counts down to the moment the push notification is sent to the phone. {{count}} is the seconds left; \"s\" abbreviates seconds."
   },
   "alerts.test.after.queued": {
     "text": "The test push is queued for delivery. Check your phone; delivery may take a few more seconds.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications once the countdown ends and a push notification was queued for the phone."
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications once the countdown ends and a push notification was queued for the phone."
   },
   "alerts.test.after.preferenceDisabled": {
-    "text": "Phone push was not queued. Enable Agent sessions under Mobile push categories and try again.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications once the countdown ends, when no phone push was sent because the \"Agent sessions\" category is switched off under \"Mobile push categories\" on the same page."
+    "text": "Phone push was not queued. Turn on Your coding agent under Mobile push categories and try again.",
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications when no phone push was sent because the \"Your coding agent\" category is switched off under \"Mobile push categories\" on the same page. Translate both names as they are translated there."
   },
   "alerts.test.after.unavailable": {
     "text": "Phone push was not queued. Sign in on your phone and enable Activity notifications and notification permission. Push delivery must also be available on the server.",
-    "description": "Status under the \"Send test alert\" button in Settings > Notifications once the countdown ends, when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app."
+    "description": "Status under the \"Send a test alert\" button in Settings > Notifications when no phone push could be sent because no phone is registered for it. \"Activity notifications\" is the name of a switch in the phone app."
   },
   "alerts.test.failed": {
     "text": "Could not queue the test push. Please try again.",
-    "description": "Error under the \"Send test alert\" button in Settings > Notifications when the request failed and the server gave no reason."
+    "description": "Error under the \"Send a test alert\" button in Settings > Notifications when the request failed and the server gave no reason."
   },
   "screen.title": {
     "text": "Settings",
     "description": "Title of the Settings screen in the header (noun: the place where preferences live)."
-  },
-  "localAgents.demoData": {
-    "text": "Demo data: changes are not saved.",
-    "description": "Note under the list of attached machines in Settings when the rows are sample data on a preview server."
-  },
-  "localAgents.unknownApp": {
-    "text": "an app",
-    "description": "Stands in for the app's name in the line under an attached machine in Settings > Connectors & CLI, when the app is unknown. Lower case: it is shown alone or before a session title."
-  },
-  "localAgents.unnamedMachine": {
-    "text": "Unnamed machine",
-    "description": "Title of a row in the list of attached machines (computers running a coding agent for this account) in Settings, when the machine was given no label."
-  },
-  "localAgents.appAndSession": {
-    "text": "{{app}} · {{session}}",
-    "description": "Line under an attached machine in Settings: which app and which coding session it is attached to. {{app}} is the app's name, {{session}} the session's title. Keep the separator dot or use your language's equivalent."
-  },
-  "localAgents.detach.confirmNamed": {
-    "text": "Detach {{machine}}?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.",
-    "description": "Confirmation dialog before detaching a person's own computer from a coding session, in Settings. {{machine}} is the label the person gave the machine. \"Detach\" is a verb; \"branch\" is a Git branch. Keep the blank line."
-  },
-  "localAgents.detach.confirmUnnamed": {
-    "text": "Detach this machine?\n\nIts session's coding turns go back to running on Homeroom. Anything it already committed stays on the branch.",
-    "description": "Confirmation dialog before detaching a person's own computer from a coding session, in Settings, when the machine has no label. \"Detach\" is a verb; \"branch\" is a Git branch. Keep the blank line."
-  },
-  "localAgents.detach.failed": {
-    "text": "Could not detach that machine.",
-    "description": "Error under the list of attached machines in Settings when detaching one failed."
   },
   "connectors.setupPrompt": {
     "text": "I want to add a custom MCP connector. The server URL is {{url}} and it uses dynamic client registration, so there is no client ID or secret to enter. Name it exactly \"homeroom\". Walk me through it one step at a time and tell me what to click.",
@@ -3435,22 +3171,6 @@
     "text": "Credential revoked.",
     "description": "Confirmation in Settings > CLI access after a command-line credential was revoked and can no longer be used."
   },
-  "experimental.progressEstimate.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Error under the \"AI progress estimate\" switch in Settings > Experimental. when the change could not be saved and the server gave no reason."
-  },
-  "experimental.progressEstimate.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Error under the \"AI progress estimate\" switch in Settings > Experimental. when the request did not reach the server. {{reason}} is the browser's own technical message."
-  },
-  "experimental.sessionBridge.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Error under the session bridge switch (letting a coding session run on the person's own machine) in Settings > Experimental. when the change could not be saved and the server gave no reason."
-  },
-  "experimental.sessionBridge.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Error under the session bridge switch in Settings > Experimental. when the request did not reach the server. {{reason}} is the browser's own technical message."
-  },
   "mobilePush.invalidResponse": {
     "text": "Invalid preferences response.",
     "description": "Reason shown after \"Could not load mobile push preferences:\" or \"Could not save:\" in Settings > Notifications, when the server's answer could not be read."
@@ -3500,191 +3220,51 @@
     "description": "Error under the Anthropic API key field in Settings when the key could not be saved and the server gave no reason."
   },
   "apiKey.status.saved": {
-    "text": "Saved. Your chats now bill to your Anthropic account.",
+    "text": "Saved. Once your weekly allowance runs out, AI features bill to your Anthropic account.",
     "description": "Confirmation under the Anthropic API key field in Settings: from now on AI usage is charged to the person's own Anthropic account. \"Bill\" is a verb."
   },
   "apiKey.status.networkError": {
     "text": "Network error: {{reason}}",
     "description": "Error under the Anthropic API key field in Settings when the request did not reach the server. {{reason}} is the browser's own technical message."
   },
-  "openrouter.cost.free": {
-    "text": "Free",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier: the model costs nothing."
-  },
-  "openrouter.cost.low": {
-    "text": "Low cost",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier of the model."
-  },
-  "openrouter.cost.medium": {
-    "text": "Medium cost",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier of the model."
-  },
-  "openrouter.cost.high": {
-    "text": "High cost",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price tier of the model."
-  },
-  "openrouter.cost.unknown": {
-    "text": "Price unavailable",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Shown in place of a price tier when the model's price is not known."
-  },
-  "openrouter.cost.inputPrice": {
-    "text": "{{price}} /M input",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price per million input tokens (text sent to the model). {{price}} is a dollar amount such as $0.25, or \"?\" when unknown. \"/M\" means per million."
-  },
-  "openrouter.cost.outputPrice": {
-    "text": "{{price}} /M output",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Price per million output tokens (text the model writes). {{price}} is a dollar amount such as $1.50, or \"?\" when unknown. \"/M\" means per million."
-  },
-  "openrouter.model.badgeRecommended": {
-    "text": "Recommended",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Tag after the name of the model Homeroom recommends."
-  },
-  "openrouter.model.badgeNew": {
-    "text": "New",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Tag after the name of a model released in the last 30 days."
-  },
-  "openrouter.model.compatVerified": {
-    "text": "verified",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Last fact on the line: Homeroom has verified that the model works for coding in a repository. Lower case."
-  },
-  "openrouter.model.compatLimited": {
-    "text": "limited",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Last fact on the line: the model is known to have limits that can make coding fail. Lower case."
-  },
-  "openrouter.model.compatUnverified": {
-    "text": "unverified",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Last fact on the line: Homeroom has not checked yet whether the model works for coding. Lower case."
-  },
-  "openrouter.model.unknown": {
-    "text": "Unknown model",
-    "description": "Part of a model's line in the OpenRouter model list in Settings. Stands in for the model's name when it has none."
-  },
-  "openrouter.model.optionLabel": {
-    "text": "{{model}}: {{details}}",
-    "description": "One line of the OpenRouter model list in Settings. {{model}} is the model's name, possibly followed by tags (\"GLM 5.3 Flash · Recommended\"); {{details}} is its price and whether it is verified (\"Low cost · $0.25 /M input · $1.50 /M output · verified\"). Only the colon between them is translated."
-  },
-  "openrouter.catalog.updatedJustNow": {
-    "text": "Updated just now",
-    "description": "After the model count under the OpenRouter model list in Settings: the list of models was fetched less than a minute ago."
-  },
-  "openrouter.catalog.updatedMinutesAgo_one": {
-    "text": "Updated {{count}}m ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is minutes; \"m\" abbreviates minutes."
-  },
-  "openrouter.catalog.updatedMinutesAgo_other": {
-    "text": "Updated {{count}}m ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is minutes; \"m\" abbreviates minutes."
-  },
-  "openrouter.catalog.updatedHoursAgo_one": {
-    "text": "Updated {{count}}h ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is hours; \"h\" abbreviates hours."
-  },
-  "openrouter.catalog.updatedHoursAgo_other": {
-    "text": "Updated {{count}}h ago",
-    "description": "After the model count under the OpenRouter model list in Settings: how long ago the list of models was fetched. {{count}} is hours; \"h\" abbreviates hours."
-  },
-  "openrouter.catalog.shownOfTotal_one": {
-    "text": "{{shown}} of {{count}} models",
-    "description": "Line under the OpenRouter model list in Settings: how many models match the search out of all available. {{shown}} is the number listed, {{count}} the total."
-  },
-  "openrouter.catalog.shownOfTotal_other": {
-    "text": "{{shown}} of {{count}} models",
-    "description": "Line under the OpenRouter model list in Settings: how many models match the search out of all available. {{shown}} is the number listed, {{count}} the total."
-  },
-  "openrouter.catalog.noMatch": {
-    "text": "No models match. Clear the search or show all models",
-    "description": "Line under the OpenRouter model list in Settings when the search or the Favorites filter leaves nothing. It has no final full stop because \"· Updated 5m ago\" may follow it."
-  },
-  "openrouter.effort.defaultMinimal": {
-    "text": "Default (Minimal)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Minimal."
-  },
-  "openrouter.effort.defaultLow": {
-    "text": "Default (Low)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Low."
-  },
-  "openrouter.effort.defaultMedium": {
-    "text": "Default (Medium)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Medium."
-  },
-  "openrouter.effort.defaultHigh": {
-    "text": "Default (High)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently High."
-  },
-  "openrouter.effort.defaultExtraHigh": {
-    "text": "Default (Extra high)",
-    "description": "First choice in the reasoning effort list in Settings > OpenRouter: use the platform's default level, which is currently Extra high."
-  },
-  "openrouter.model.sortHint": {
-    "text": "Models are sorted by average input/output price. Actual spend depends on token usage.",
-    "description": "Tooltip on the OpenRouter model list in Settings when no model is selected."
-  },
-  "openrouter.model.removeFavorite": {
-    "text": "Remove selected model from favorites",
-    "description": "Tooltip and accessible name of the star button beside the OpenRouter model list in Settings, when the selected model is already a favorite."
-  },
-  "openrouter.model.notYetVerified": {
-    "text": "Not yet verified for repository coding.",
-    "description": "Sentence in the tooltip of the selected OpenRouter model in Settings: Homeroom has not checked yet that this model can edit code in a repository."
-  },
-  "openrouter.model.verified": {
-    "text": "Verified for repository coding.",
-    "description": "Sentence in the tooltip of the selected OpenRouter model in Settings: Homeroom has checked that this model can edit code in a repository."
-  },
-  "openrouter.model.mayFail": {
-    "text": "This model may lack repository tools or enough context, so an OpenRouter turn may fail.",
-    "description": "Sentence in the tooltip of the selected OpenRouter model in Settings, for a model below the minimum requirements. \"Context\" is how much text the model can read at once; a \"turn\" is one request to the model."
-  },
-  "openrouter.model.tooltip": {
-    "text": "{{cost}}. {{compatibility}} Actual spend depends on token usage.",
-    "description": "Tooltip of the selected model in the OpenRouter model list in Settings. {{cost}} is its price summary without a full stop (\"Low cost · $0.25 /M input · $1.50 /M output\"); {{compatibility}} is a complete sentence saying whether it is verified for coding."
-  },
-  "openrouter.effort.unsupported": {
-    "text": "This model does not expose reasoning-effort controls.",
-    "description": "Tooltip on the disabled reasoning effort list in Settings > OpenRouter when the selected model has no such setting."
-  },
-  "openrouter.effort.hint": {
-    "text": "How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.",
-    "description": "Tooltip on the reasoning effort list in Settings > OpenRouter. \"Default\" is the name of the first choice in that list."
-  },
   "openrouter.included.activeWeekly": {
-    "text": "Active. It carries the platform's {{amount}} weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries the platform's {{amount}} weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. The amount renews every week."
   },
   "openrouter.included.activeWeeklyWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries the platform's {{amount}} weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries the platform's {{amount}} weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. The amount renews every week."
   },
   "openrouter.included.activeDaily": {
-    "text": "Active. It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. This older key still has a limit that renews every day."
   },
   "openrouter.included.activeDailyWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} daily limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. This older key still has a limit that renews every day."
   },
   "openrouter.included.activeMonthly": {
-    "text": "Active. It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. This older key still has a limit that renews every month."
   },
   "openrouter.included.activeMonthlyWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} monthly limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. This older key still has a limit that renews every month."
   },
   "openrouter.included.activeLimit": {
-    "text": "Active. It carries a {{amount}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. This older key has a limit that never renews."
   },
   "openrouter.included.activeLimitWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. This older key has a limit that never renews."
   },
   "openrouter.included.activeOther": {
-    "text": "Active. It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active. It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00. {{cadence}} is the provider's own English word for how often the limit renews, shown as it is; this form is a fallback for a word Homeroom does not know."
   },
   "openrouter.included.activeOtherWithKey": {
-    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance, and you may choose any available model.",
+    "text": "Active (sk-or-…{{last4}}). It carries a {{amount}} {{cadence}} limit until it is moved to the platform's weekly allowance.",
     "description": "Status of the OpenRouter key that comes included with the account, in Settings > OpenRouter. The key is working. {{amount}} is a dollar amount such as $5.00; {{last4}} is the last four characters of the key, and \"sk-or-…\" is the start every such key has. Keep the parentheses and that prefix. {{cadence}} is the provider's own English word for how often the limit renews, shown as it is; this form is a fallback for a word Homeroom does not know."
   },
   "openrouter.included.blocked": {
@@ -3771,10 +3351,6 @@
     "text": "Remaining: {{remaining}}",
     "description": "Last fact on the line under the saved OpenRouter key in Settings: how much of the key's spending limit is left. {{remaining}} is a dollar amount, or empty when unknown."
   },
-  "openrouter.model.favoritesOn": {
-    "text": "★ Favorites",
-    "description": "Toggle button over the OpenRouter model list in Settings, while it is on: only models the person starred are listed. Keep the filled star."
-  },
   "usage.spend.platformOfLimit": {
     "text": "{{spent}} of {{limit}}",
     "description": "Value in the \"Today's spend\" block of Settings > Anthropic API key: how much of the platform's allowance is used. Both are dollar amounts such as $1.20 and $5.00."
@@ -3786,42 +3362,6 @@
   "usage.spend.resetsWeekly": {
     "text": "Resets {{day}} at {{time}}.",
     "description": "Line in the spend block of Settings > Anthropic API key saying when the weekly platform allowance starts again. \"Resets\" is a verb; its subject, the allowance, is left out. {{day}} is the weekday's full name and {{time}} the time of day, both in the person's own clock and format, for example \"Sunday\" and \"8:00 PM\"."
-  },
-  "openrouter.catalog.loadFailed": {
-    "text": "Could not load OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter when the list of AI models could not be fetched and the server gave no reason."
-  },
-  "openrouter.catalog.refreshing": {
-    "text": "Refreshing…",
-    "description": "Label of the Refresh button beside the OpenRouter model list in Settings while the list is being fetched again."
-  },
-  "openrouter.catalog.refreshingStatus": {
-    "text": "Refreshing the key-visible catalog from OpenRouter…",
-    "description": "Status line in Settings > OpenRouter while the list of models is fetched again. \"Key-visible catalog\" is the list of models this key may use."
-  },
-  "openrouter.catalog.refreshed_one": {
-    "text": "Loaded {{count}} current OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter after the list of models was fetched again. {{count}} is how many models it holds."
-  },
-  "openrouter.catalog.refreshed_other": {
-    "text": "Loaded {{count}} current OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter after the list of models was fetched again. {{count}} is how many models it holds."
-  },
-  "openrouter.catalog.refreshFailed": {
-    "text": "Could not refresh OpenRouter models.",
-    "description": "Status line in Settings > OpenRouter when fetching the list of models again failed without a more specific message."
-  },
-  "openrouter.favorite.failed": {
-    "text": "Could not update that favorite.",
-    "description": "Status line in Settings > OpenRouter when starring or un-starring the selected model could not be saved."
-  },
-  "openrouter.favorite.added": {
-    "text": "{{model}} added to favorites.",
-    "description": "Status line in Settings > OpenRouter after the selected model was starred. {{model}} is the AI model's name."
-  },
-  "openrouter.favorite.removed": {
-    "text": "{{model}} removed from favorites.",
-    "description": "Status line in Settings > OpenRouter after the star was taken off the selected model. {{model}} is the AI model's name."
   },
   "openrouter.key.pasteFirst": {
     "text": "Paste an OpenRouter API key first.",
@@ -3836,8 +3376,8 @@
     "description": "Status line in Settings > OpenRouter when the pasted key could not be saved and the server gave no reason."
   },
   "openrouter.key.saved": {
-    "text": "Saved, encrypted, and selected as your default coding agent.",
-    "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was saved: it is stored encrypted, and OpenRouter is now what their coding sessions use by default."
+    "text": "Saved and encrypted. Voice input now uses this key.",
+    "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was saved: it is stored encrypted, and voice input (speaking a message instead of typing it) now uses it."
   },
   "openrouter.key.networkError": {
     "text": "Network error: {{reason}}",
@@ -3850,38 +3390,6 @@
   "openrouter.key.removed": {
     "text": "Key removed.",
     "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was removed."
-  },
-  "openrouter.key.removedDefaultReset": {
-    "text": "Key removed. Key removed; your default agent was reset to Claude Code.",
-    "description": "Status line in Settings > OpenRouter after the person's own OpenRouter key was removed and, because of that, their default coding agent went back to Claude Code (a product name). The English says \"Key removed\" twice; once is enough in translation."
-  },
-  "openrouter.default.chooseModelFirst": {
-    "text": "Choose an OpenRouter model first.",
-    "description": "Status line in Settings > OpenRouter when \"Save as my default coding agent\" was pressed with no model selected."
-  },
-  "openrouter.default.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Status line in Settings > OpenRouter when making OpenRouter the default coding agent could not be saved and the server gave no reason."
-  },
-  "openrouter.default.saved": {
-    "text": "OpenRouter saved as your default session AI.",
-    "description": "Status line in Settings > OpenRouter after OpenRouter, with the selected model, became what the person's coding sessions use by default."
-  },
-  "openrouter.default.networkError": {
-    "text": "Network error.",
-    "description": "Status line in Settings > OpenRouter when making OpenRouter the default coding agent did not reach the server."
-  },
-  "openrouter.claudeDefault.saveFailed": {
-    "text": "Failed to save.",
-    "description": "Status line in Settings > OpenRouter when making Claude Code the default coding agent could not be saved and the server gave no reason."
-  },
-  "openrouter.claudeDefault.saved": {
-    "text": "Claude Code is now your default coding agent.",
-    "description": "Status line in Settings > OpenRouter after \"Use Claude Code as my default instead\" was pressed. Claude Code is a product name."
-  },
-  "openrouter.claudeDefault.networkError": {
-    "text": "Network error.",
-    "description": "Status line in Settings > OpenRouter when making Claude Code the default coding agent did not reach the server."
   },
   "password.status.tooShort": {
     "text": "New password must be at least 8 characters.",
@@ -3988,7 +3496,7 @@
     "description": "Title of the confirmation dialog before removing the saved Anthropic API key in Settings."
   },
   "apiKey.remove.confirmMessage": {
-    "text": "Future chats will fall back to your weekly Homeroom credits.",
+    "text": "Without your key, AI features use your weekly Homeroom allowance only.",
     "description": "Body of the confirmation dialog before removing the saved Anthropic API key in Settings: AI usage will be paid from the platform's allowance again."
   },
   "apiKey.remove.confirmButton": {
@@ -4190,62 +3698,6 @@
   "appPermissions.status.revokedSome": {
     "text": "Not every permission could be revoked. Any that still show Revoke are still allowed.",
     "description": "Error line in Settings > App device permissions when Revoke all took away some of an app's permissions but at least one request failed."
-  },
-  "agentFiles.status.tooLarge": {
-    "text": "\"{{file}}\" is too large. The limit is 48 KB per file.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the chosen file is too big to upload. {{file}} is the file's name; keep the quotation marks."
-  },
-  "agentFiles.status.unreadable": {
-    "text": "Could not read that file.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the browser could not read the chosen file."
-  },
-  "agentFiles.form.titleSkill": {
-    "text": "New skill from \"{{file}}\"",
-    "description": "Title of the small form shown after choosing a file to upload as a skill (a reusable procedure a coding agent can load), in Settings. {{file}} is the chosen file's name; keep the quotation marks."
-  },
-  "agentFiles.form.titleInstruction": {
-    "text": "New instruction file from \"{{file}}\"",
-    "description": "Title of the small form shown after choosing a file to upload as an instruction file (standing guidance a coding agent always reads), in Settings. {{file}} is the chosen file's name; keep the quotation marks."
-  },
-  "agentFiles.status.demoData": {
-    "text": "Demo data: changes are not saved.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the rows are sample data on a preview server and a change was tried."
-  },
-  "agentFiles.status.nameRequired": {
-    "text": "Give the file a name.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the name field of the upload form is empty."
-  },
-  "agentFiles.status.saveFailed": {
-    "text": "Failed to save the file.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when the upload could not be saved and the server gave no reason."
-  },
-  "agentFiles.status.saved": {
-    "text": "Saved \"{{name}}\". It applies from your next run.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, after a file was uploaded. {{name}} is the name it was saved under; keep the quotation marks. A \"run\" is one job the coding agent does."
-  },
-  "agentFiles.status.networkError": {
-    "text": "Network error: {{reason}}",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills when the request did not reach the server. {{reason}} is the browser's own technical message."
-  },
-  "agentFiles.delete.confirmTitle": {
-    "text": "Delete \"{{name}}\"?",
-    "description": "Title of the confirmation dialog before deleting an instruction file or skill in Settings. {{name}} is the file's name; keep the quotation marks."
-  },
-  "agentFiles.delete.confirmMessage": {
-    "text": "The coding agent stops using it from your next run. This cannot be undone.",
-    "description": "Body of the confirmation dialog before deleting an instruction file or skill in Settings. A \"run\" is one job the coding agent does."
-  },
-  "agentFiles.delete.confirmButton": {
-    "text": "Delete",
-    "description": "Red confirm button in the dialog that deletes an instruction file or skill for coding agents, in Settings."
-  },
-  "agentFiles.status.deleteFailed": {
-    "text": "Failed to delete.",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, when a file could not be deleted and the server gave no reason."
-  },
-  "agentFiles.status.deleted": {
-    "text": "Deleted \"{{name}}\".",
-    "description": "Status under the list of instruction files and skills for coding agents, in Settings > Agent instructions & skills, after a file was deleted. {{name}} is the file's name; keep the quotation marks."
   },
   "wallet.status.startFailed": {
     "text": "Failed to start linking.",

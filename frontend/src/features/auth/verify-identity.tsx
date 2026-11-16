@@ -8,8 +8,6 @@
  *   - making a project public (MAKE_PUBLIC_COPY: the hub's "Make it public",
  *     ../dev-board/workshop/community-card.tsx, whose route answers
  *     identity_required too);
- *   - running out of AI credits ("Verify my account" on the out-of-credits
- *     card, public/js/credit-options.js);
  *   - #6632: asking Homeroom bot for something while it works for verified
  *     accounts only (BOT_COPY; ../../lib/bot-verify-required.ts opens it for
  *     a press the server refused with `bot_verify_required`). That rule is
@@ -71,12 +69,6 @@ export const MAKE_PUBLIC_COPY: VerifyCopyIds = {
   title: 'auth:verify.public.title',
   lead: 'auth:verify.public.lead',
   reason: 'auth:verify.public.reason',
-};
-
-export const CREDITS_COPY: VerifyCopyIds = {
-  title: 'auth:verify.credits.title',
-  lead: 'auth:verify.credits.lead',
-  reason: 'auth:verify.credits.reason',
 };
 
 /** #6632: Homeroom bot works for verified accounts. `{{signals}}` is what counts, as a list. */
@@ -290,15 +282,6 @@ export function askToVerifyForPublic(): Promise<boolean> {
   });
 }
 
-/** The out-of-credits card's "Verify my account" (public/js/credit-options.js wire). */
-export function askToVerifyForCredits(): Promise<boolean> {
-  return openVerifySheet({ copy: CREDITS_COPY }).then((outcome) => {
-    if (outcome !== 'verified') return false;
-    noteVerified();
-    return true;
-  });
-}
-
 /**
  * #6632: Homeroom bot works for verified accounts only, and this one is not
  * yet (../../lib/bot-verify-required.ts, and the Verify button under the
@@ -326,7 +309,7 @@ export function askToVerifyForBot(signals?: readonly string[]): Promise<boolean>
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
   const bridge = (host.UsernodeReact ||= {});
-  bridge.verifyIdentity = { ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForCredits: askToVerifyForCredits, askForBot: askToVerifyForBot };
+  bridge.verifyIdentity = { ask: askToVerifyIdentity, askForPublic: askToVerifyForPublic, askForBot: askToVerifyForBot };
 }
 
 // `?shot=verify-public`: "Verify to make it public" for the before/after
