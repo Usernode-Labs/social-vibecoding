@@ -363,8 +363,9 @@ is no replay plan to write and nothing to verify locally.
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
   for and who was active this week, the actions, For you: votes owed, your
   work and the chat's last line, then Recently live; no charts),
-  **Needs you** and **Workshop**, a line, then **Channels** (**#general**) and **Topics**
-  (each topic's channel), each group under its heading. Place keys are
+  **Needs you** and **Workshop**, a line, then **Channels** (**#general**)
+  under its heading; a topic's channel is reached from the Hub's Topics card
+  and its own address. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   Above Hub, the list's first row is **App**, the project's own app
