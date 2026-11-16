@@ -91,10 +91,13 @@ test('onboarding flows: one row per real person over all time, with their door, 
     await signup('ana@example.com', {
       submitted_at: '2026-09-01T09:00:00Z', released_at: '2026-10-01T09:00:00Z', linked_user_id: ana,
       answers: JSON.stringify({ discovery: { source: 'friend' } }), referrer_host: 't.co',
+      // The first nudge went the next morning, and she made her account an hour after it.
+      reminder_1_sent_at: '2026-10-02T09:00:00Z',
     });
     await signup('gone@example.com', { submitted_at: '2026-08-01T09:00:00Z', released_at: '2026-08-20T09:00:00Z', linked_user_id: gone });
     const nia = await signup('nia@example.com', { submitted_at: '2026-10-20T09:00:00Z', released_at: '2026-11-10T09:00:00Z' });
-    const sam = await signup('sam@example.com', { submitted_at: '2026-09-10T09:00:00Z', released_at: '2026-10-10T09:00:00Z' });
+    const sam = await signup('sam@example.com', { submitted_at: '2026-09-10T09:00:00Z', released_at: '2026-10-10T09:00:00Z',
+      reminder_1_sent_at: '2026-10-12T09:00:00Z', reminder_2_sent_at: '2026-10-16T09:00:00Z' });
     await signup('wes@example.com', { submitted_at: '2026-10-14T09:00:00Z', confirmed_at: '2026-10-14T09:05:00Z' });
     await signup('lead@example.com', { submitted_at: '2026-01-01T09:00:00Z', released_at: '2026-01-02T09:00:00Z', linked_user_id: lead });
 
@@ -115,6 +118,15 @@ test('onboarding flows: one row per real person over all time, with their door, 
     await pool.query(
       `INSERT INTO community_members (community_id, user_id, source, joined_at)
        VALUES ($1, $2, 'joined', '2026-10-04T09:00:00Z') ON CONFLICT DO NOTHING`, [garden.community, ana]);
+
+    // Their answers to the first session's "What do you want to make?": the first one counts.
+    const answer = (who, type, at, metadata) => pool.query(
+      'INSERT INTO events (event_type, user_id, metadata, created_at) VALUES ($1, $2, $3, $4)', [type, who, JSON.stringify(metadata || {}), at]);
+    await answer(old, 'app_created', '2026-09-02T10:00:00Z', { from: 'first-session', template: 'chore-wheel' });
+    await answer(ana, 'first_session_looked_around', '2026-10-02T10:05:00Z');
+    await answer(gone, 'app_created', '2026-08-21T10:10:00Z', { from: 'create' });
+    await answer(gone, 'app_created', '2026-08-21T10:20:00Z', { from: 'first-session', described: true });
+    await answer(gone, 'first_session_looked_around', '2026-08-22T10:00:00Z');
 
     // What they did.
     const change = async (app, who, at, mergedAt) => Number((await pool.query(
@@ -144,6 +156,9 @@ test('onboarding flows: one row per real person over all time, with their door, 
     assert.equal(new Date(m('ana').releasedAt).toISOString(), '2026-10-01T09:00:00.000Z');
     assert.equal(m('ana').invite.by, 'old_hand');
     assert.equal(m('ana').cameFrom.waitlist.referrerHost, 't.co');
+    assert.deepEqual(m('ana').nudgedAt.map((d) => d && new Date(d).toISOString()), ['2026-10-02T09:00:00.000Z', null]);
+    assert.deepEqual([m('old_hand').firstAnswer, m('ana').firstAnswer, m('gone').firstAnswer], ['template', 'look', 'custom'],
+      'a project from the Create button is no answer, and a later look around does not replace the first');
 
     // When each person last contributed, and last spent a day in an app.
     const last = await journey.lastActs(pool, ctx);
@@ -186,6 +201,9 @@ test('onboarding flows: one row per real person over all time, with their door, 
       'contributed and came back, and nothing in the last four weeks');
 
     assert.deepEqual([p(`Signup #${sam}`).got, p(`Signup #${sam}`).noAccount, p(`Signup #${sam}`).lane], ['mail_none', true, 'none']);
+    assert.deepEqual([p('ana').mailIn, p('ana').nudges, p('ana').ask], ['nudge1', 1, 'look'], 'she came in after the first nudge');
+    assert.deepEqual([p(`Signup #${sam}`).mailIn, p(`Signup #${sam}`).nudges], [null, 2], 'nudged twice and not in');
+    assert.deepEqual([p('old_hand').mailIn, p('old_hand').nudges, p('old_hand').ask], [null, 0, 'template']);
     assert.deepEqual([p(`Signup #${nia}`).got, p(`Signup #${nia}`).tooNew, p(`Signup #${nia}`).k], ['new', true, `s${nia}`],
       'let off three days ago: too early to say');
 
