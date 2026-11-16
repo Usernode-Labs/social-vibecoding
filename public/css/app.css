@@ -22300,11 +22300,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
     background: var(--text-faint, #8e8e93);
   }
-  .platform-rail-nest .dev-ws-places-more {
-    padding-inline-start: 30px;
-    color: var(--text-muted);
-    font-size: 12.5px;
-  }
   .platform-rail-nest :is(.dev-ws-places-head, .platform-rail-subhead),
   .platform-rail-nest .dev-ws-places-group + .dev-ws-places-group .dev-ws-places-head {
     flex: none;
