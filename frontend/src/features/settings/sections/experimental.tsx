@@ -1,6 +1,7 @@
 import { SectionHeading } from '@/components/ui/field';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
+import { SwitchRow } from '@/components/ui/switch';
 
 import { useMessages } from '../../../lib/i18n/react';
 
@@ -8,7 +9,7 @@ import { InterfaceModeControl } from '../interface-mode-control';
 
 /**
  * Experimental: Advanced mode (./interface-mode-control.tsx), a switch kept
- * on the DEVICE, and under it the Look menu.
+ * on the DEVICE, and under it the Look menu with its own switch.
  *
  * #3624 Homeroom bot used to have a switch here too, while it was tried out
  * one person at a time. It works for everyone now, so the switch is gone.
