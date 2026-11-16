@@ -42,6 +42,7 @@ import { Btn, Card, CardNote, Icon, Lead, Note, PageBody, Pill, Row, Search, Sec
 import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { noteSignUpFrom } from '../../auth/sign-up-from';
+import { coverPills } from '../../home/frame/cover';
 import { ToJoinView } from '../../home/frame/to-join';
 import { matchesQuery } from '../../home/use-home-query';
 import { devicePinsStore, loadDevicePins, toggleDevicePin } from '../device-pins';
@@ -214,14 +215,11 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
           link={(app) => ({
             href: projectPath(app.slug),
             onClick: (event) => openProject(event, app.slug),
-            label: people(app) >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people(app) }) : undefined,
+            label: coverPills(app, t).label,
           })}
           // A visitor's cards are pictures, as on the standard landing: "New"
-          // and the people count sit on the cover.
-          picture={(app) => ({
-            flag: isNew(app) ? t('auth:guest.card.new') : undefined,
-            badge: people(app) >= MIN_PEOPLE ? <><Icon name="users" size={14} />{people(app).toLocaleString()}</> : undefined,
-          })}
+          // and the people count, or "No one active yet", sit on the cover.
+          picture={(app) => { const { flag, badge } = coverPills(app, t); return { flag, badge }; }}
           cardEnd={says}
           rowEnd={says}
           rowLine={(app) => app.description || undefined}

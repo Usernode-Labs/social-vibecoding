@@ -59,26 +59,38 @@ test('Communities is Home\'s own section: the kinds, and every community a pictu
   assert.deepEqual([...html.matchAll(/<button type="button" class="fr-btn(?: fr-quiet)? fr-sm" aria-pressed="(true|false)" data-home-join-kind="[a-z]+">([^<]+)<\/button>/g)].map((m) => [m[2], m[1]]),
     [['All', 'true'], ['Games', 'false'], ['Social', 'false'], ['Other', 'false']]);
   // Featured: the whole card is the door. With no illustration the cover is the icon on the community's own
-  // colour; the pill on it is how many people used it lately, heard with the name.
-  assert.match(html, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid" data-home-join-featured=""><a class="fr-card fr-fcard" href="\/app\/game-corner" aria-label="Game Corner, 41 people used it lately" data-home-join-card="game-corner"><span class="fr-fcover fr-tc" style="--fr-tc:#[0-9a-f]{6}"><span class="fr-tile" style="--fr-ts:64px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span><span class="fr-pill"><svg[^>]*>.*?<\/svg>41<\/span><\/span><span class="fr-fbody"><span class="fr-t">Game Corner<\/span><\/span><\/a><\/div>/s);
-  // The rest: picture cards too, the most used first, each its sentence on one line with the whole of it on hover, "New" for its first 30 days, people from five.
+  // colour; the pill on it is how many people used it lately, heard with the name. The first of Featured is
+  // the larger card (#6658): alone, it fills a row of two.
+  assert.match(html, /<h3 class="fr-cap fr-sub">Featured<\/h3><div class="fr-grid fr-c2" data-home-join-featured=""><a class="fr-card fr-fcard fr-fhero" href="\/app\/game-corner" aria-label="Game Corner, 41 people used it lately" data-home-join-card="game-corner"><span class="fr-fcover fr-tc" style="--fr-tc:#[0-9a-f]{6}"><span class="fr-tile" style="--fr-ts:64px;--fr-tc:#3b2d8f" aria-hidden="true">🎮<\/span><span class="fr-pill"><svg[^>]*>.*?<\/svg>41<\/span><\/span><span class="fr-fbody"><span class="fr-t">Game Corner<\/span><\/span><\/a><\/div>/s);
+  // The rest: picture cards too, the most used first, each its sentence on one line with the whole of it on hover, "New" for its first 30 days, people on every card (#6658).
   const rest = html.slice(html.indexOf('data-home-join-rest'), html.indexOf('fr-stack fr-first'));
   assert.deepEqual([...rest.matchAll(/<a class="fr-card fr-fcard" href="\/app\/([a-z-]+)"/g)].map((m) => m[1]), ['todo', 'best-color', 'tier-lists']);
   assert.match(rest, /<a class="fr-card fr-fcard" href="\/app\/best-color" aria-label="The Best Color, 5 people used it lately" data-home-join-card="best-color"><span class="fr-fcover fr-tc"[^>]*>.*?<span class="fr-pill fr-new">New<\/span><span class="fr-pill"><svg.*?<\/svg>5<\/span><\/span><span class="fr-fbody"><span class="fr-t">The Best Color<\/span><span class="fr-s" title="Find your favorite color\.">Find your favorite color\.<\/span><\/span><\/a>/s);
-  assert.match(rest, /<a class="fr-card fr-fcard" href="\/app\/tier-lists" data-home-join-card="tier-lists">(?:(?!fr-pill).)*<\/a>/s, 'fewer than five people is not said');
+  assert.match(rest, /<a class="fr-card fr-fcard" href="\/app\/tier-lists" aria-label="Community Tier Lists, 3 people used it lately" data-home-join-card="tier-lists"><span class="fr-fcover fr-tc"[^>]*>.*?<span class="fr-pill"><svg.*?<\/svg>3<\/span><\/span>/s, 'a small number is said too');
+  assert.doesNotMatch(rest, /fr-fhero/, 'the larger card is Featured\'s alone');
+  // Nobody lately is said in words, on the cover and to a screen reader, never left blank.
+  const quiet = render({ apps: [...APPS, app('quiet', 'Quiet')] });
+  assert.match(quiet, /<a class="fr-card fr-fcard" href="\/app\/quiet" aria-label="Quiet, no one active yet" data-home-join-card="quiet"><span class="fr-fcover fr-tc"[^>]*><span class="fr-tile"[^>]*>🎮<\/span><span class="fr-pill">No one active yet<\/span><\/span>/);
   assert.doesNotMatch(html, /<button[^>]*data-home-join=|>Join<|>Look<|members<|up for a vote|fr-row"/, 'no Join, no Look, no member count, no rows: the page behind the card has Try it, Join and Pin');
   // A community with an illustration shows it, and its dark twin in a dark theme.
   const drawn = render({ apps: [app('pic', 'Pic', { featured: true, featured_order: 1, illustration_url: '/i/pic.png', illustration_dark_url: '/i/pic-dark.png' })] });
-  assert.match(drawn, /<span class="fr-fcover"><img src="\/i\/pic\.png" alt="" loading="lazy" class="fr-sun"\/><img src="\/i\/pic-dark\.png" alt="" loading="lazy" class="fr-moon"\/><\/span>/);
+  assert.match(drawn, /<span class="fr-fcover"><img src="\/i\/pic\.png" alt="" loading="lazy" class="fr-sun"\/><img src="\/i\/pic-dark\.png" alt="" loading="lazy" class="fr-moon"\/><span class="fr-pill">No one active yet<\/span><\/span>/);
 });
 
-test('Featured is as many across as leaves no card alone on its last row', () => {
-  const { across } = require('./lib/render-tsx').loadTsx('frontend/src/features/home/frame/to-join.tsx');
+test('Featured is as many across as leaves no card alone on its last row, its first card taking two places', () => {
+  const { across, heroAcross } = require('./lib/render-tsx').loadTsx('frontend/src/features/home/frame/to-join.tsx');
   const src = read('frontend/src/features/home/frame/to-join.tsx');
   assert.match(src, /if \(count === 2\) return 2;\s*if \(count < 4 \|\| count % 3 !== 1\) return 3;\s*if \(count % 4 !== 1\) return 4;\s*return count % 2 === 0 \? 2 : 3;/);
   assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 10].map(across), [3, 2, 3, 4, 3, 3, 4, 4]);
-  const ten = Array.from({ length: 10 }, (_, i) => app(`f${i}`, `F${i}`, { featured: true, featured_order: i + 1 }));
-  assert.match(render({ apps: ten }), /<div class="fr-grid fr-c4" data-home-join-featured="">/, 'ten featured: four across (4, 4, 2), not three with one alone');
+  // The larger card counts as two: one fills two across, three and seven close rows of four, two and ten rows of three.
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 10].map(heroAcross), [2, 3, 4, 3, 3, 4, 4, 3]);
+  const some = (n) => Array.from({ length: n }, (_, i) => app(`f${i}`, `F${i}`, { featured: true, featured_order: i + 1 }));
+  const seven = render({ apps: some(7) });
+  assert.match(seven, /<div class="fr-grid fr-c4" data-home-join-featured=""><a class="fr-card fr-fcard fr-fhero" href="\/app\/f0"/, 'seven featured: four across (the larger card and two, then four)');
+  assert.equal((seven.match(/fr-fhero/g) || []).length, 1, 'one larger card, the first in the order admins set');
+  assert.match(render({ apps: some(10) }), /<div class="fr-grid" data-home-join-featured="">/, 'ten featured: three across');
+  const kit = read('frontend/looks/kit.css');
+  assert.ok(kit.includes('.grid>.fcard.fhero{grid-column:span 2}') && kit.includes('.phone .grid>.fcard.fhero{grid-column:1/-1}'), 'two places wide, the whole row on a phone');
   assert.match(src, /<SecNote end data-home-join-end="">/, 'and the line that ends the list is centred under it, as the standard section\'s');
 });
 

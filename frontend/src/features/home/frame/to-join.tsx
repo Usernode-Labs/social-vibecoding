@@ -16,8 +16,11 @@
  * A visitor's directory (`picture`) is picture cards from first to last, as
  * the standard landing's is: the community's illustration (its dark twin
  * in a dark theme), else its icon on its own colour, with "New" and the
- * people count on the cover. Featured is as many across as leaves no card
- * alone on its last row (`across`), where the count allows it.
+ * people count (or "No one active yet") on the cover. The first Featured
+ * community, in the order admins set, is the larger card (#6658): twice as
+ * wide on a desktop, the whole row on a phone. Featured is as many across as
+ * leaves no card alone on its last row (`heroAcross`, which counts the larger
+ * card as two), where the count allows it.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -40,9 +43,23 @@ export function across(count: number): 2 | 3 | 4 {
   return count % 2 === 0 ? 2 : 3;
 }
 
+/**
+ * How many across when the first card is the larger one, which takes two
+ * places: four or three when that fills every row, else what `across` says
+ * for one more card than there are.
+ */
+export function heroAcross(count: number): 2 | 3 | 4 {
+  const slots = count + 1;
+  if (slots % 4 === 0) return 4;
+  if (slots % 3 === 0) return 3;
+  return across(slots);
+}
+
 /** A community as a visitor's picture card. A component, for the colour it reads off the icon. */
-function PictureCard({ app, to, flag, badge, meta, end }: {
+function PictureCard({ app, to, flag, badge, meta, end, hero }: {
   app: GuestApp;
+  /** The larger card: the first of Featured. */
+  hero?: boolean;
   to: { href: string; onClick: (event: React.MouseEvent<HTMLElement>) => void; label?: string };
   flag?: React.ReactNode;
   badge?: React.ReactNode;
@@ -67,6 +84,7 @@ function PictureCard({ app, to, flag, badge, meta, end }: {
       line={app.description || undefined}
       meta={meta}
       end={end}
+      hero={hero}
     />
   );
 }
@@ -137,7 +155,8 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
 
   const door = (app: GuestApp) => { const to = link?.(app); return to ? { href: to.href, onClick: to.onClick, label: to.label } : {}; };
   const pictures = !!picture && !!link;
-  const wide = (count: number) => { const n = across(count); return n === 3 ? '' : `c${n}`; };
+  // Featured as pictures leads with the larger card, which takes two places.
+  const wide = (count: number) => { const n = pictures ? heroAcross(count) : across(count); return n === 3 ? '' : `c${n}`; };
   const face = (app: GuestApp, size: number) => <Tile size={size} name={app.name || app.slug} src={app.icon_url} emoji={app.icon_emoji} color={app.icon_color} />;
 
   return (
@@ -159,7 +178,7 @@ export function ToJoinView({ apps, failed, onRetry, exclude, query, heading, id,
           <CapSub>{t('home:join.featured')}</CapSub>
           {pictures ? (
             <div className={k('grid', wide(featured.length))} data-home-join-featured="">
-              {featured.map((app) => <PictureCard key={app.slug} app={app} to={link!(app)} {...picture!(app)} />)}
+              {featured.map((app, i) => <PictureCard key={app.slug} app={app} to={link!(app)} {...picture!(app)} hero={i === 0} />)}
             </div>
           ) : (
             <div className={k('grid', 'across', wide(featured.length))} data-home-join-featured="">

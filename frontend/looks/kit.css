@@ -528,3 +528,8 @@ button.fact,a.fact{display:block;text-align:left;color:inherit;font:inherit;text
 .fcard .fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
 .fcard>.fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--mut)}
 .fcard>.fm .fmt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* ---- #6658: the first of Featured is the larger card: two places wide (the whole row on a phone), its name a size up. Its picture keeps 16/10, so it is taller; the cards after it in the grid let their pictures take the height a taller row gives them ---- */
+.grid>.fcard.fhero{grid-column:span 2}
+.phone .grid>.fcard.fhero{grid-column:1/-1}
+.fcard.fhero .fbody .t{font-size:17px}
+.grid>.fcard.fhero~.fcard>.fcover{flex:1 0 auto}

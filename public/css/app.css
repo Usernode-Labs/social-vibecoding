@@ -27185,6 +27185,9 @@ html[data-skin] .fr-sro{position:absolute;width:1px;height:1px;overflow:hidden;c
 html[data-skin] .fr-fcard .fr-fdoor{display:flex;flex-direction:column;flex:1;min-width:0;color:inherit;text-decoration:none}
 html[data-skin] .fr-fcard>.fr-fm{margin:0;padding:0 12px 12px;font-size:13px;color:var(--fr-mut)}
 html[data-skin] .fr-fcard>.fr-fm .fr-fmt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+html[data-skin] .fr-grid>.fr-fcard.fr-fhero{grid-column:span 2}
+html[data-skin] .fr-fcard.fr-fhero .fr-fbody .fr-t{font-size:17px}
+html[data-skin] .fr-grid>.fr-fcard.fr-fhero~.fr-fcard>.fr-fcover{flex:1 0 auto}
 @media (min-width: 768px){
 html[data-skin][data-skin] .fr-p{display:none!important}
 }
@@ -27252,6 +27255,7 @@ html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack{display:contents}
 html[data-skin][data-skin] .fr-cols.fr-mix>.fr-stack>.fr-tail{order:1}
 html[data-skin][data-skin] .fr-grid.fr-c4:not(.fr-across){grid-template-columns:repeat(2,minmax(0,1fr))}
 html[data-skin][data-skin] .fr-crumb>.fr-keep{color:var(--fr-ink)}
+html[data-skin][data-skin] .fr-grid>.fr-fcard.fr-fhero{grid-column:1/-1}
 }
 html[data-skin]:where(:not([data-skin="brand"])) body{--fr-ground:var(--home-ground)}
 /* ── THE GLASS LOOK (data-skin="glass") ── */

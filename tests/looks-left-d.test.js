@@ -68,7 +68,10 @@ test('PicCard: with a control of its own the card is a group, its door over a fo
   assert.match(html(h(K.PicCard, { href: '/app/a', title: 'A' })), /^<a class="fr-card fr-fcard" href="\/app\/a">/, 'without one it is the link it was');
   const home = read('frontend/src/features/home/frame/home-frame.tsx');
   // Home's own directory no longer hands a card a control (#6609: no Join on a card), so there it is the link.
-  assert.match(home, /picture=\{\(app\) => \(\{\n\s+flag: isNew\(app\) \? ta\('auth:guest\.card\.new'\) : undefined,\n\s+badge: [^\n]+\n\s+\}\)\}/, 'a member\'s directory is picture cards, each the door to its page');
+  assert.match(home, /picture=\{\(app\) => \{ const \{ flag, badge \} = coverPills\(app, ta\); return \{ flag, badge \}; \}\}/, 'a member\'s directory is picture cards, each the door to its page');
+  // #6658: the larger card of a grid is the same card with one more class, as a link or as a group.
+  assert.match(html(h(K.PicCard, { href: '/app/a', title: 'A', hero: true })), /^<a class="fr-card fr-fcard fr-fhero" href="\/app\/a">/);
+  assert.match(html(h(K.PicCard, { href: '/app/a', title: 'A', hero: true, end: h('button', { type: 'button' }, 'Join') })), /^<div class="fr-card fr-fcard fr-fhero"><a class="fr-fdoor" href="\/app\/a">/);
 });
 
 // ── The frame ────────────────────────────────────────────────────────────

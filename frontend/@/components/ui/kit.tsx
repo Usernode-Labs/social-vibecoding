@@ -681,7 +681,9 @@ export function RowArrow() {
  * its tile large on the cover; its name, one sentence, who is there, and
  * the row's one word.
  */
-export function PicCard({ href, onClick, cover, darkCover, tile, color, title, line, two, meta, word, end, badge, flag, label, ...data }: {
+export function PicCard({ href, onClick, cover, darkCover, tile, color, title, line, two, meta, word, end, badge, flag, label, hero, ...data }: {
+  /** The larger card of a grid (the first of Featured): two places wide, the whole row on a phone. */
+  hero?: boolean;
   /** With no picture: the colour the tile stands on (the community's own). */
   color?: string | null;
   /**
@@ -728,13 +730,13 @@ export function PicCard({ href, onClick, cover, darkCover, tile, color, title, l
   );
   if (end) {
     return (
-      <div className={k('card', 'fcard')} {...data}>
+      <div className={k('card', 'fcard', hero && 'fhero')} {...data}>
         <a className={k('fdoor')} href={href} onClick={onClick} aria-label={label}>{face}</a>
         <div className={k('fm')}><span className={k('fmt')}>{meta}</span>{end}</div>
       </div>
     );
   }
-  return <a className={k('card', 'fcard')} href={href} onClick={onClick} aria-label={label} {...data}>{face}</a>;
+  return <a className={k('card', 'fcard', hero && 'fhero')} href={href} onClick={onClick} aria-label={label} {...data}>{face}</a>;
 }
 
 /**

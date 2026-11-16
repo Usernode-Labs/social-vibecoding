@@ -11,7 +11,8 @@
  * Kind chips over the cards, fading at whichever edge has more chips past it
  * so the row is never just cut off (the same rail as the AI page's project
  * chips). Then FEATURED, the communities an admin featured, in their order
- * (featured_order), in the same wrapping grid as the rest (#6434): the first
+ * (featured_order), in the same wrapping grid as the rest (#6434), its first
+ * card the larger one, two columns wide (#6658): the first
  * group of the section, of the chosen kind, and left out while a search is
  * typed (its matches are the grid, featured first). Its heading names the
  * chosen kind ("Featured in Games") so the group reads as that kind's. Then
@@ -143,8 +144,9 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             className={`${CARD_GRID} px-1`}
           >
             {featured.map((app, i) => (
-              <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
-                <Card app={app} eager={i < 3} featured />
+              // #6658: the first of Featured is the larger card, two columns wide (the whole row on a phone's two).
+              <div key={app.slug} role="listitem" data-home-join-hero={i === 0 ? '' : undefined} className={i === 0 ? 'col-span-2 flex [&>article]:flex-1' : 'flex [&>article]:flex-1'}>
+                <Card app={app} eager={i < 3} featured hero={i === 0} />
               </div>
             ))}
           </div>

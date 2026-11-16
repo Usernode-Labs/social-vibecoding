@@ -212,27 +212,32 @@ function cardOf(html, slug) {
   return html.slice(at, html.indexOf('</article>', at));
 }
 
-test('a card is its picture, its name and its own sentence; how many used it lately is a pill from five, in words for a screen reader', () => {
+test('a card is its picture, its name and its own sentence; how many used it lately is a pill on every card, in words for a screen reader', () => {
   const { MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE } = loadTsx(DATA);
   assert.deepEqual([MIN_MEMBERS, MIN_ACTIVE, MIN_BUILDERS, MIN_PEOPLE], [25, 10, 5, 5]);
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: FACT_APPS }));
-  // From five: a profile glyph and the number on the picture, hidden from a
-  // screen reader, which hears it in words with the name.
+  // A profile glyph and the number on the picture, hidden from a screen
+  // reader, which hears it in words with the name.
   const busy = cardOf(html, 'busy');
   assert.match(busy, /<span data-guest-card-people="" aria-hidden="true"[^>]*><svg[^>]*>.*?<\/svg>43<\/span>/);
   assert.match(busy, new RegExp(`data-guest-card-link="" aria-label="${message('auth:guest.card.peopleLabel', { name: 'Busy', count: 43 })}"`));
   assert.match(cardOf(html, 'some'), /data-guest-card-people=""[^>]*>.*?5<\/span>/);
-  // Under it, nothing: no pill and the link is the name alone.
+  // #6658: a small number is said as any other, and nobody lately is said
+  // in words, so no card's corner is blank.
   const quiet = cardOf(html, 'quiet');
-  assert.doesNotMatch(quiet, /data-guest-card-people/);
-  assert.doesNotMatch(quiet, /data-guest-card-link="" aria-label=/, 'the link is the name alone');
+  assert.match(quiet, /<span data-guest-card-people="" aria-hidden="true"[^>]*><svg[^>]*>.*?<\/svg>4<\/span>/);
+  assert.match(quiet, new RegExp(`data-guest-card-link="" aria-label="${message('auth:guest.card.peopleLabel', { name: 'Quiet', count: 4 })}"`));
+  const empty = cardOf(renderComponent(DISCOVER, 'GuestDiscover', discoverProps({ apps: [...FACT_APPS, { ...FACT_APPS[0], slug: 'empty', name: 'Empty', active_users: 0 }] })), 'empty');
+  assert.match(empty, /<span data-guest-card-people="none" aria-hidden="true"[^>]*>No one active yet<\/span>/);
+  assert.match(empty, /data-guest-card-link="" aria-label="Empty, no one active yet"/);
+  assert.equal(message('auth:guest.card.noOneYet'), 'No one active yet');
   // Members, votes and what changed lately are the project page's, not a card's.
   for (const slug of ['busy', 'some', 'quiet']) {
     const words = text(cardOf(html, slug));
     assert.ok(!words.some((w) => /member|people active|up for a vote|voted in|Updated|Latest change/.test(w)), `${slug}: ${words}`);
     assert.doesNotMatch(cardOf(html, slug), /data-guest-card-(?:fact|activity|votes)=/);
   }
-  assert.deepEqual(text(quiet).slice(1), ['Quiet'],
+  assert.deepEqual(text(quiet).slice(1), ['4', 'Quiet'],
     'the letter tile, then the name: a visitor\'s card carries no Pin or Join (#6433)');
 });
 
@@ -375,7 +380,11 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.deepEqual(cardsOf(html), ['fresh-one']);
   // #6434: Featured wraps in the same grid as the rest, at the same size,
   // and the rest get their own heading.
-  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
+  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" data-home-join-hero="" class="col-span-2 flex \[&amp;&gt;article\]:flex-1"><article data-guest-featured="todo-list".*?<\/article><\/div><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1"><article data-guest-featured="game-corner"/s);
+  // #6658: the first of Featured is the larger card, two columns of the grid (a phone's whole row), its name a size up.
+  assert.equal((html.match(/data-home-join-hero/g) || []).length, 1);
+  assert.match(html, /<article data-guest-featured="todo-list".*?<a [^>]*class="text-\[17px\] leading-\[22px\] /s);
+  assert.match(html, /<article data-guest-featured="game-corner".*?<a [^>]*class="text-\[15px\] leading-5 /s);
   assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
   assert.equal(message('home:join.featured'), 'Featured');
   assert.equal(message('home:join.more'), 'More communities');

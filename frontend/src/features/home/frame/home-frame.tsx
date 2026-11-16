@@ -60,7 +60,7 @@ import { useMessages } from '../../../lib/i18n/react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { useVisibility } from '../../../lib/visibility-store';
 import { liveAppLabel, useLiveAppSlugs } from '../../app-frame/live-apps';
-import { type GuestApp, MIN_PEOPLE, isNew } from '../../guest/guest-data';
+import { type GuestApp } from '../../guest/guest-data';
 import { communityScopeStore } from '../../workshop/community-scope';
 import { openAddAppsSheet } from '../add-apps-sheet';
 import { chromeStore } from '../chrome-store';
@@ -70,6 +70,7 @@ import { homePinsStore, setHomePin, type HomePin } from '../home-pins-store';
 import { panelsStore, type HomePanelsState } from '../panels-store';
 import { HOME_SEARCH_SHORTCUT_KEYS } from '../search-shortcut';
 import { matchesQuery, useHomeQuery } from '../use-home-query';
+import { coverPills } from './cover';
 import { ToJoinView } from './to-join';
 
 /** A tile's picture in the grids of this page. */
@@ -520,8 +521,6 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
   const exclude = useMemo(() => new Set([...pins.joined.map((c) => c.slug), ...pins.pins.map((p) => p.slug)]), [pins.joined, pins.pins]);
   if (!pins.ready) return null;
 
-  const people = (app: GuestApp) => app.active_users || 0;
-
   return (
     <ToJoinView
       apps={apps}
@@ -534,17 +533,14 @@ function ToJoin({ query, initialDirectory }: { query: string; initialDirectory: 
       title={(app) => app.name || app.slug}
       // The standard Home's card (../communities-to-join.tsx, #6609): the
       // picture or the tile on the community's colour, "New" and who is
-      // there on the cover, the name and the sentence. No foot and no Join:
+      // there (or "No one active yet") on the cover, the name and the sentence. No foot and no Join:
       // the whole card opens the project's page, where Join sits.
       link={(app) => ({
         href: hubHref(app.slug),
         onClick: (event) => openHub(event, app.slug),
-        label: people(app) >= MIN_PEOPLE ? ta('auth:guest.card.peopleLabel', { name: app.name, count: people(app) }) : undefined,
+        label: coverPills(app, ta).label,
       })}
-      picture={(app) => ({
-        flag: isNew(app) ? ta('auth:guest.card.new') : undefined,
-        badge: people(app) >= MIN_PEOPLE ? <><Icon name="users" size={14} />{people(app).toLocaleString()}</> : undefined,
-      })}
+      picture={(app) => { const { flag, badge } = coverPills(app, ta); return { flag, badge }; }}
       cardEnd={() => null}
       rowEnd={() => null}
       rowLine={(app) => app.description || undefined}

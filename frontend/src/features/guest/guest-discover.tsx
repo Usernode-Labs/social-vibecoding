@@ -14,8 +14,9 @@
  *
  * A card is its picture, its name and one sentence, the project's own
  * description, at most two lines. On the picture a pill says how many
- * people used it lately, as a profile glyph and a number, from MIN_PEOPLE
- * (a zero says nothing; a screen reader hears it in words with the name).
+ * people used it lately, as a profile glyph and a number, on every card
+ * (#6658): "No one active yet" for none, so no corner is left blank. A
+ * screen reader hears either in words with the name.
  * Member counts, votes and the last change stay on the project's page.
  *
  * THE WHOLE CARD IS ONE LINK to the project's read-only page
@@ -67,7 +68,6 @@ import { cardCover, morph, projectHero } from './card-morph';
 import { CardPreview } from './card-preview';
 import {
   type GuestApp,
-  MIN_PEOPLE,
   isNew,
   projectHash,
   projectPath,
@@ -165,14 +165,14 @@ export function ProjectLink({ slug, children, ...rest }: { slug: string; childre
  * A picture may carry an animated preview (`preview_url`), which plays over
  * it under the rules in ./card-preview.tsx; the pills stay on top.
  */
-function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
+function CardCover({ app, eager, grow = false }: { app: GuestApp; eager: boolean; grow?: boolean }) {
   const t = useMessages('auth');
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   const people = app.active_users || 0;
   return (
     <span
       data-guest-card-cover=""
-      className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-zinc-200 shadow-[inset_0_-1px_0_var(--app-sheet-line)] dark:bg-zinc-800"
+      className={cn('relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-zinc-200 shadow-[inset_0_-1px_0_var(--app-sheet-line)] dark:bg-zinc-800', grow ? 'grow' : '')}
       style={app.illustration_url ? undefined : { background: color }}
     >
       {app.illustration_url ? (
@@ -218,7 +218,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
           {t('auth:guest.card.new')}
         </span>
       ) : null}
-      {people >= MIN_PEOPLE ? (
+      {people >= 1 ? (
         <span
           data-guest-card-people=""
           aria-hidden="true"
@@ -227,7 +227,16 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
           <UserIcon className="h-3.5 w-3.5" />
           {people.toLocaleString()}
         </span>
-      ) : null}
+      ) : (
+        // #6658: nobody lately is said, so an empty corner is never read as a hidden number.
+        <span
+          data-guest-card-people="none"
+          aria-hidden="true"
+          className="absolute bottom-2 start-2 inline-flex h-6 items-center rounded-full bg-white/90 px-2 text-xs font-[650] text-zinc-800 shadow-[0_1px_3px_rgba(0,0,0,0.14)]"
+        >
+          {t('auth:guest.card.noOneYet')}
+        </span>
+      )}
       <span
         aria-hidden="true"
         className="absolute bottom-2 end-2 flex h-8 w-8 translate-x-[calc(-0.5rem*var(--rtl-sign,1))] items-center justify-center rounded-full bg-white/95 text-zinc-900 opacity-0 shadow-[0_2px_8px_rgba(0,0,0,0.2)] transition duration-150 ease-out group-hover:translate-x-0 group-hover:opacity-100 group-has-[a:focus-visible]:translate-x-0 group-has-[a:focus-visible]:opacity-100 motion-reduce:transition-none"
@@ -245,10 +254,16 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
  * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
  * finger has a real target while the card looks exactly as it did.
  */
-export function Card({ app, eager, featured = false }: {
+export function Card({ app, eager, featured = false, hero = false }: {
   app: GuestApp;
   eager: boolean;
   featured?: boolean;
+  /**
+   * The larger card, the first of Featured (#6658): its place in the grid is
+   * the caller's; here its name is a size up. Beside it a Featured card's
+   * picture takes the height the taller row gives, so no card ends in a gap.
+   */
+  hero?: boolean;
 }) {
   const t = useMessages('auth');
   const people = app.active_users || 0;
@@ -258,15 +273,15 @@ export function Card({ app, eager, featured = false }: {
       data-guest-featured={featured ? app.slug : undefined}
       className="group relative flex min-w-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05),0_10px_22px_-12px_rgba(0,0,0,0.22)] transition-[transform,box-shadow] duration-150 ease-out hover:-translate-y-1 hover:shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_2px_4px_rgba(0,0,0,0.05),0_22px_36px_-14px_rgba(0,0,0,0.34)] active:scale-[0.97] active:duration-75 has-[a:focus-visible]:outline has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-[3px] has-[a:focus-visible]:outline-violet-600 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100 dark:bg-zinc-900 dark:has-[a:focus-visible]:outline-violet-400"
     >
-      <CardCover app={app} eager={eager} />
-      <span className="flex flex-1 flex-col px-3 pb-3.5 pt-2.5">
+      <CardCover app={app} eager={eager} grow={featured} />
+      <span className={cn('flex flex-col px-3 pb-3.5 pt-2.5', featured ? 'flex-none' : 'flex-1')}>
         {/* The pill on the picture is hidden from a screen reader, which
             hears its number in words with the name instead. */}
         <ProjectLink
           slug={app.slug}
           data-guest-card-link=""
-          aria-label={people >= MIN_PEOPLE ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : undefined}
-          className="line-clamp-2 break-words text-[15px] font-[650] leading-5 text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100"
+          aria-label={people >= 1 ? t('auth:guest.card.peopleLabel', { name: app.name, count: people }) : t('auth:guest.card.noOneLabel', { name: app.name })}
+          className={cn(hero ? 'text-[17px] leading-[22px]' : 'text-[15px] leading-5', "line-clamp-2 break-words font-[650] text-zinc-900 outline-none -my-3 py-3 after:absolute after:inset-0 after:z-[1] after:rounded-[20px] after:content-[''] dark:text-zinc-100")}
         >
           {app.name}
         </ProjectLink>
