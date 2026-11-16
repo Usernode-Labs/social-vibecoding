@@ -104,6 +104,19 @@ test('who came in from the admit mail or a nudge, and what they chose to make fi
   assert.match(engine, /gridAt:9,/, 'the grid moved one column right');
 });
 
+test('too early to say is read by the admit mail, and none of it is a loss', () => {
+  const engine = read(ENGINE);
+  // Let off this week and not in: split by what the mail shows so far, in the Admit mail column.
+  assert.match(engine, /if\(g==='got:new'\)return newMail\(p\);/);
+  assert.match(engine, /function newMail\(p\)\{ if\(p\.noAccount&&p\.stuck==='mail_sent'\)return 'gn:nomail'; if\(!p\.mail\|\|p\.mail\[0\]==null\)return 'gn:untracked'; return p\.mail\[1\]\?'gn:clicked':\(p\.mail\[0\]\?'gn:opened':'gn:unopened'\); \}/);
+  for (const id of ['gn:unopened', 'gn:opened', 'gn:clicked', 'gn:untracked', 'gn:nomail']) {
+    assert.match(engine, new RegExp(`'${id}':\\{l:["']Too early: [^}]*neutral:true\\}`), `${id} is too early to judge, never lost`);
+  }
+  // The findings and the admit-day table say the same.
+  assert.match(engine, /' more were let off this week and are too early to say: '\+earlyMail\(/);
+  assert.match(engine, /\['Opened the admit mail','num'\],\['Clicked it','num'\]/);
+});
+
 test('each column title says how many people reach that step', () => {
   const engine = read(ENGINE);
   assert.match(engine, /function reach\(L,ci\)\{var n=0,k=0;L\.nodes\.forEach\(function\(nd\)\{if\(nd\.col!==ci\|\|nd\.meta\.pass\|\|nd\.meta\.phantom\)return;/,
