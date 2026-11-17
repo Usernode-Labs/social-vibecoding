@@ -27,6 +27,8 @@
 //   opened           any trace inside Homeroom (a floor: a visit can leave
 //                    none).
 //   stayed           30 seconds or more in an app on some day.
+//   time in an app   each person's longest visit (bestSeconds) and their
+//                    visits counted into TIME_BINS (visitBins), since the era.
 //   acted            started a change, voted on one, or wrote in a project.
 //   group            a project in a week where GROUP_MIN or more people of
 //                    the reading's scope acted; it came back when it had
@@ -41,6 +43,10 @@ const ERA_START = '2026-09-14';
 const GROUP_MIN = 3;
 const STAY_SECONDS = 30;
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+// The lower edges of the time-in-an-app histogram, in seconds: 1–4 s, 5–9 s,
+// 10–19 s, 20–29 s, then 30–59 s, 1–2 min, 2–5 min, 5–15 min, 15 min+. The
+// 30-second bar sits on an edge, so the chart shows both sides of it.
+const TIME_BINS = [1, 5, 10, 20, 30, 60, 120, 300, 900];
 
 // $1 the era's start, $2 the 30-second bar, $3 reserved name patterns,
 // $4 left-out ids (journey.realPersonParams).
@@ -118,6 +124,15 @@ const MAIL_SQL = `SELECT w.id AS signup_id, w.linked_user_id,
     FROM waitlist_signups w
    WHERE w.released_at >= $1::timestamptz
      AND NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)`;
+
+// Time in an app since the era, per person and bin: a visit is one row of
+// app_activity (a person in one app on one day). $1 the era's start, $2 the
+// bins' lower edges (TIME_BINS).
+const TIME_SQL = `SELECT a.user_id, width_bucket(a.seconds_spent, $2::int[]) AS bin,
+         COUNT(1)::int AS visits, MAX(a.seconds_spent)::int AS longest
+    FROM app_activity a
+   WHERE a.user_id IS NOT NULL AND a.seconds_spent > 0 AND a.date >= $1::date
+   GROUP BY a.user_id, width_bucket(a.seconds_spent, $2::int[])`;
 
 // The weeks each person was active since a week before the era: 30 seconds
 // in an app, or an act. $1 the era's start, $2 the 30-second bar.
@@ -233,12 +248,13 @@ function eraWeeks(now) {
 
 async function reading(pool, { leftOutIds = [], now = new Date() } = {}) {
   const params = [ERA_START, STAY_SECONDS, ...journey.realPersonParams(leftOutIds)];
-  const [{ rows: people }, { rows: noAccount }, { rows: mail }, { rows: weeks }, { rows: acts }] = await Promise.all([
+  const [{ rows: people }, { rows: noAccount }, { rows: mail }, { rows: weeks }, { rows: acts }, { rows: times }] = await Promise.all([
     pool.query(PEOPLE_SQL, params),
     pool.query(NO_ACCOUNT_SQL, [ERA_START, (leftOutIds || []).map(Number)]),
     pool.query(MAIL_SQL, [ERA_START]),
     pool.query(ACTIVE_WEEKS_SQL, [ERA_START, STAY_SECONDS]),
     pool.query(PROJECT_ACTS_SQL, [ERA_START]),
+    pool.query(TIME_SQL, [ERA_START, TIME_BINS]),
   ]);
   const ids = people.map((p) => Number(p.user_id));
   const { rows: lastWeek } = await pool.query(LAST_WEEK_SQL, [now, STAY_SECONDS, ids]);
@@ -250,6 +266,16 @@ async function reading(pool, { leftOutIds = [], now = new Date() } = {}) {
     weeksBy.get(id).add(String(w.week));
   }
   const lastBy = new Map(lastWeek.map((r) => [Number(r.user_id), r]));
+  const timeBy = new Map();
+  for (const t of times) {
+    const id = Number(t.user_id);
+    const bin = Number(t.bin) - 1;
+    if (bin < 0 || bin >= TIME_BINS.length) continue;
+    if (!timeBy.has(id)) timeBy.set(id, { best: 0, visits: TIME_BINS.map(() => 0) });
+    const cur = timeBy.get(id);
+    cur.visits[bin] += Number(t.visits) || 0;
+    cur.best = Math.max(cur.best, Number(t.longest) || 0);
+  }
   const mailBySignup = new Map(mail.map((m) => [Number(m.signup_id), m]));
   const mailByUser = new Map(mail.filter((m) => m.linked_user_id != null).map((m) => [Number(m.linked_user_id), m]));
   const mailState = (m) => (!m ? null : m.clicked ? 'clicked' : m.opened ? 'opened' : m.on_record ? 'sent' : 'not_on_record');
@@ -265,6 +291,7 @@ async function reading(pool, { leftOutIds = [], now = new Date() } = {}) {
       way, admittedDay: p.admitted_at ? journey.isoDay(p.admitted_at) : null, cameAt: iso(cameAt),
       heard: p.heard || null, mail: mailState(mailByUser.get(id)),
       opened: !!p.opened, stayed: !!p.stayed, lastSeen: iso(p.last_seen),
+      bestSeconds: timeBy.get(id)?.best || null, visitBins: timeBy.get(id)?.visits || TIME_BINS.map(() => 0),
       activeWeeks: [...(weeksBy.get(id) || [])].sort(),
       last7: { opened: !!last.opened, used: !!last.used, contributed: !!last.contributed, analyticsWau: !!last.analytics_wau },
     };
@@ -274,7 +301,7 @@ async function reading(pool, { leftOutIds = [], now = new Date() } = {}) {
       key: `w${w.signup_id}`, userId: null, name: null, early: false, seasonEarly: false, connected: false,
       way: 'waitlist', admittedDay: journey.isoDay(w.released_at), cameAt: iso(w.released_at),
       heard: w.heard || null, mail: mailState(mailBySignup.get(Number(w.signup_id))),
-      opened: false, stayed: false, lastSeen: null, activeWeeks: [],
+      opened: false, stayed: false, lastSeen: null, bestSeconds: null, visitBins: TIME_BINS.map(() => 0), activeWeeks: [],
       last7: { opened: false, used: false, contributed: false, analyticsWau: false },
     });
   }
@@ -303,6 +330,7 @@ async function reading(pool, { leftOutIds = [], now = new Date() } = {}) {
     eraStart: ERA_START,
     groupMin: GROUP_MIN,
     staySeconds: STAY_SECONDS,
+    timeBins: TIME_BINS,
     weeks: eraWeeks(now),
     thisWeek: weekOf(now),
     people: rows,
@@ -323,12 +351,14 @@ module.exports = {
   ERA_START,
   GROUP_MIN,
   STAY_SECONDS,
+  TIME_BINS,
   PEOPLE_SQL: PEOPLE_SQL,
   NO_ACCOUNT_SQL: NO_ACCOUNT_SQL,
   MAIL_SQL: MAIL_SQL,
   ACTIVE_WEEKS_SQL: ACTIVE_WEEKS_SQL,
   LAST_WEEK_SQL: LAST_WEEK_SQL,
   PROJECT_ACTS_SQL: PROJECT_ACTS_SQL,
+  TIME_SQL: TIME_SQL,
   GROUP_APPS_SQL: GROUP_APPS_SQL,
   GROUP_TIMELINE_SQL: GROUP_TIMELINE_SQL,
   groupsAmong,

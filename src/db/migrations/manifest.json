@@ -400,6 +400,11 @@
       "id": "request-summaries",
       "sha256": "e5c30240f6771f3dbceae9da6540e2cefa4dab0fe961f8f84833958562759d93",
       "schemaSha256": "6b2e5fe4998f0fdae27de7ec26bfb939a577280227a1c73197d6f2ff4f7755a3"
+    },
+    {
+      "id": "homeroom-bot-run-go-ahead-blocker",
+      "sha256": "df1654bbf2ff6ddfd3fb37fbb15eee15c95c4d64bffcf14a57596f1c9606e4e1",
+      "schemaSha256": "abb00afd2ad35eb1f854174240050bd46c011101d2de248d57d5130721853179"
     }
   ]
 }

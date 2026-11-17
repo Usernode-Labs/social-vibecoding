@@ -955,14 +955,16 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
   const requester = await dmModule(deps).requesterOf(pool, app.id, Number(place.ref)).catch(() => null);
   if (!(await botModule(deps).goAheadCounts(pool, app, requester, speaker.id))) return null;
   const { rows: [lastLook] } = await pool.query(
-    `SELECT verdict, reason, go_ahead_decides, first_step FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, go_ahead_blocker, first_step FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, Number(place.ref)],
   ).catch(() => ({ rows: [] }));
-  if (lastLook?.verdict !== 'person' || lastLook.go_ahead_decides !== false) return null;
+  // 17 Nov 2026: only a refusal whose read named its blocker is said again;
+  // an older one is read afresh by the turn (live.cannotStands).
+  if (!live.cannotStands(lastLook)) return null;
   return {
     text: live.goAheadCannotText({
-      reason: lastLook.reason, firstStep: lastLook.first_step, reader: speaker.username,
+      reason: lastLook.reason, firstStep: lastLook.first_step, reader: speaker.username, blocker: lastLook.go_ahead_blocker,
     }),
     labels: live.personSuggestions({ firstStep: lastLook.first_step, goAheadDecides: false }),
   };
