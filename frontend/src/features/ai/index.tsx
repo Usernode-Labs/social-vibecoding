@@ -119,6 +119,7 @@ import './where';
 import { useLiveLists } from './live';
 import { AiLists } from './lists';
 import { AiFrameList } from './frame-list';
+import { showsPicked } from './lines';
 import { isFrameSkin, useSkin } from '../../lib/skin';
 import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
@@ -613,7 +614,6 @@ export function AiScreen(): ReactNode {
   const waiting = useMemo(() => upNext(needs, work).map(cleared), [needs, work, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
   const live: AiThread[] = useMemo(() => liveThisWeek(work).map(cleared), [work, seenThreads, seenRoots]); // eslint-disable-line react-hooks/exhaustive-deps
   const owed = owedCount(rows);
-  const fresh = freshCount(rows);
   const projects = useMemo(
     () => new Set(rankProjects(rows, progress, waiting, live).map((p) => p.app.slug)),
     [rows, progress, waiting, live],
@@ -898,7 +898,15 @@ export function AiScreen(): ReactNode {
     demo: !!demoQuery(),
   });
 
-  const heroLine = work ? heroWords(owed, progress.length, fresh) : null;
+  // #6744: the line under the bot's name summarises the lists below it, so it
+  // counts only the projects the chips show, as the "Needs you" heading and
+  // every list do. Search does not narrow it (./lines.ts owedShown does), so it
+  // does not jump while you type; each chip keeps its own project's count.
+  const heroShows = showsPicked(picked);
+  const heroRows = rows.filter((row) => heroShows(row.app));
+  const heroLine = work
+    ? heroWords(owedCount(heroRows), progress.filter((th) => heroShows(th.app)).length, freshCount(heroRows))
+    : null;
   // A look of the one frame draws the list with the kit (./frame-list.tsx),
   // from the same rows and presses. Read after mount (lib/skin.ts says why).
   const frame = isFrameSkin(useSkin());
