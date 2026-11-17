@@ -498,9 +498,13 @@ function makeNode(n){
   g.addEventListener('blur',function(){setHover(null);});
   return g;
 }
+/* Where a card or a mark sits: an inline style, never the transform attribute. The native kit presses every
+   [role="button"] with a CSS transform (scale, from native.css), which replaced the attribute and threw a pressed
+   card to the drawing's top-left corner; an inline style outranks it, and the stylesheet keeps the press out. */
+function at(g,x,y){g.style.transform='translate('+x.toFixed(1)+'px,'+y.toFixed(1)+'px)';}
 function placeNode(g,n,x,y,hh,op,ww){
   var w=ww!=null?ww:(n.w||NODEW),card=!!n.card;
-  g.setAttribute('transform','translate('+x.toFixed(1)+','+y.toFixed(1)+')');
+  at(g,x,y);
   g.style.opacity=op;
   g.classList.toggle('card',card);
   var box=g.querySelector('.nbox'),hit=g.querySelector('.hit'),cap=g.querySelector('.caption');
@@ -655,18 +659,18 @@ function drawLeaks(L){
     var n=m.node,g,w,x,y=n.y-15,st=m.id?stepBy[m.id]:null;
     if(m.kind==='early'){
       // too early to judge: a grey mark, and nobody here is counted as lost
-      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':m.from+': too early to say.',transform:'translate('+(n.x+n.w-9).toFixed(1)+','+y.toFixed(1)+')'});
+      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':m.from+': too early to say.'});at(g,n.x+n.w-9,y);
       g.appendChild(s('circle',{cx:8.5,cy:8.5,r:8}));g.appendChild(s('path',{d:'M8.5 4.6V8.5L11.2 10.2'}));
       m.tip=['Too early to say','These '+m.n+' people were let off the waitlist in the last few days. They are not counted as lost.'];
     }else if(m.kind==='end'){
       // the card is itself an end: everyone in it stops here
-      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':'Everyone in '+m.from+' stops here.',transform:'translate('+(n.x+n.w-9).toFixed(1)+','+y.toFixed(1)+')'});
+      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':'Everyone in '+m.from+' stops here.'});at(g,n.x+n.w-9,y);
       g.appendChild(s('circle',{cx:8.5,cy:8.5,r:8}));g.appendChild(s('path',{d:'M4.6 8.5H12.4'}));
       m.tip=['Everyone stops here','All '+m.n+' people in '+m.from+' end here. They are counted as lost on the card they came from.'];
     }else{
       var ok=m.kind==='ok',txt=ok?(m.k?'\u2212'+m.k+' \u00b7 '+pct(m.k,m.n):'0'):('\u2212'+m.k+' \u00b7 '+pct(m.k,m.n)+' lost'),lead=ok?13:0;
       w=Math.ceil(textW(txt,FS))+14+lead; x=n.x+n.w-w+8;
-      g=s('g',{'class':'leak '+(ok?'ok':(m.strong?'strong':'')),tabindex:'0',role:'button',transform:'translate('+x.toFixed(1)+','+y.toFixed(1)+')'});
+      g=s('g',{'class':'leak '+(ok?'ok':(m.strong?'strong':'')),tabindex:'0',role:'button'});at(g,x,y);
       g.appendChild(s('rect',{width:w,height:17,rx:8.5}));
       if(ok)g.appendChild(s('path',{d:'M6.2 8.9L9 11.6L13.6 5.9'}));
       g.appendChild(s('text',{x:lead+(w-lead)/2,y:12,'text-anchor':'middle',text:txt}));
@@ -688,7 +692,7 @@ function drawLeaks(L){
     var lost=inv.filter(function(p){return !engaged(p);}),k=lost.length,ok=!k;
     var waiting=count(lost,function(p){return p.inv.status!=='joined';}),quiet=k-waiting;
     var txt=ok?String(inv.length):('\u2212'+k+' of '+inv.length),lead=ok?13:0,w=Math.ceil(textW(txt,FS))+14+lead,x=n.x+n.w-w-4,y=n.y+(n.h-17)/2;
-    var g=s('g',{'class':'leak '+(ok?'ok':(k/inv.length>=LEAK_STRONG?'strong':'')),tabindex:'0',role:'button',transform:'translate('+x.toFixed(1)+','+y.toFixed(1)+')'});
+    var g=s('g',{'class':'leak '+(ok?'ok':(k/inv.length>=LEAK_STRONG?'strong':'')),tabindex:'0',role:'button'});at(g,x,y);
     g.appendChild(s('rect',{width:w,height:17,rx:8.5}));
     if(ok)g.appendChild(s('path',{d:'M6.2 8.9L9 11.6L13.6 5.9'}));
     g.appendChild(s('text',{x:lead+(w-lead)/2,y:12,'text-anchor':'middle',text:txt}));
@@ -1219,7 +1223,13 @@ var VIEWP=(function(){
     if(kind==='wheel')zoomAt(p.x,p.y,Math.exp(-dy*0.0016));
     else panBy(-dx,-dy);
   },{passive:false});
-  sc.addEventListener('dblclick',function(e){var p=loc(e);zoomAt(p.x,p.y,1.8);});
+  /* Double-click zooms in on empty space only. On a box, a mark or a thread it is two clicks: the second clears
+     what the first selected, and zooming as well threw the drawing toward the pointer. */
+  sc.addEventListener('dblclick',function(e){
+    if(e.target.closest&&e.target.closest('[tabindex]'))return;
+    if(cur&&e.target.closest&&e.target.closest('svg')&&nearest(svgPoint(e)))return;
+    var p=loc(e);zoomAt(p.x,p.y,1.8);
+  });
   return {fit:fit,refit:function(){if(!moved)fit();else{clamp();apply();}},busy:function(){return busy;},moved:function(){return moved;},reset:function(){moved=false;fit();}};
 })();
 var NOTES=(function(){

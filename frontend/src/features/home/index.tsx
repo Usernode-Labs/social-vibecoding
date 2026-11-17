@@ -97,9 +97,12 @@ import { AppsMore } from './apps-more';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
+import { NeedsYouCard } from './needs-you-card';
+import { NewProjectCard } from './new-project-card';
+import { NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden } from './new-project-dismiss';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
-import { SectionHeading } from './panels/ui';
+import { PINS_CARD, SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -137,6 +140,11 @@ export function HomeScreen() {
   const [viewer, setViewer] = useState(false);
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
   const frame = isFrameSkin(skin) && viewer;
+  // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
+  const wip = skin === 'wip';
+  // The grid's trailing tile depends on the look (Home.hasSideCard): a look
+  // picked while Home is up repaints it.
+  useEffect(() => { (window as any).Home?.render?.(); }, [wip]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -150,9 +158,24 @@ export function HomeScreen() {
   // agrees.
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
+  // THE SIDE COLUMN (./new-project-card.tsx): drawn for the viewer who may
+  // make projects, never under a look of the frame, never before the grid's
+  // first paint, so the prerender agrees, and not once the viewer has closed
+  // the card in this browser (./new-project-dismiss.ts): Home is then the one
+  // wide column it draws below 1280px, and Pinned apps ends with its New
+  // project tile. The flag on the root is what app.css widens the column and
+  // sets the two side by side on.
+  const [cardHidden, setCardHidden] = useState(false);
+  useEffect(() => {
+    setCardHidden(newProjectCardHidden());
+    const onHidden = () => setCardHidden(true);
+    window.addEventListener(NEW_PROJECT_HIDDEN_EVENT, onHidden);
+    return () => window.removeEventListener(NEW_PROJECT_HIDDEN_EVENT, onHidden);
+  }, []);
+  const aside = wip && grid.ready && !!grid.create && !cardHidden;
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined} data-home-aside={aside ? '' : undefined}>
       {/* A look of the one frame draws this page with the kit
           (./frame/home-frame.tsx), as the scroller's first child. The
           standard Home below stays mounted, so what home.js writes still
@@ -248,6 +271,16 @@ export function HomeScreen() {
           in the grid now, so nothing below the grid is anchored any more.)
       */}
       <div id="home-body" className="home-column home-body-fill">
+        {/* The side column comes FIRST in the document and is displayed from
+            1280px only, beside the lists (app.css, "HOME'S SIDE COLUMN").
+            Narrower, Pinned apps ends with the New project tile instead. */}
+        {aside ? (
+          <aside id="home-aside" className="home-aside">
+            <NewProjectCard />
+            <NeedsYouCard />
+          </aside>
+        ) : null}
+        <div className="home-main">
         {/*
             #1561's once-per-account explainer stood here, above everything,
             because it was the thing a first-time viewer needed before the
@@ -381,6 +414,9 @@ export function HomeScreen() {
           >
             {t('home:grid.heading')}
           </SectionHeading>
+          {/* In Standard (WIP) the grid and its "Show all" line are one card
+              (PINS_CARD, ./panels/ui.tsx), as Pinned communities' tiles are. */}
+          <div className={wip ? PINS_CARD : undefined}>
           {frame && grid.editing ? null : <AppGrid />}
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -388,7 +424,8 @@ export function HomeScreen() {
               and empty; it is React's now (chromeStore), which is what lets
               its listener be attached once instead of on every paint.
           */}
-          <AppsMore />
+          <AppsMore card={wip} />
+          </div>
         </section>
         {/*
             A SEARCH NOTHING ANSWERS IS AN IDEA (./search-make.tsx, #5928):
@@ -483,6 +520,7 @@ export function HomeScreen() {
             sections above are outside #app-list and never re-rendered by a
             search keystroke, so there is nothing left to catch.
         */}
+        </div>
       </div>
     </main>
   );

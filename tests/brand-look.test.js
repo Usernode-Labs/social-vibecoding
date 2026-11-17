@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard: it is the one look that keeps the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard and its work-in-progress copy: it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');

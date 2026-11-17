@@ -376,6 +376,29 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   assert.match(css, /\.rf-desc-wrap\[data-open\] \.rf-desc \{ transform: none;/);
 });
 
+test('across all projects, the line and the card lead with the project\'s name in bold', () => {
+  const src = read('frontend/src/features/review-flow/review-flow.tsx');
+  // Only the all-projects Needs you: a project's own page already names it.
+  assert.match(src, /const appName = header === 'communities' && item && item\.app \? item\.app\.name : '';/);
+  const claim = src.slice(src.indexOf('className="rf-claim-row"'), src.indexOf('className="rf-picture"'));
+  assert.equal((claim.match(/<strong className="rf-claim-app">\{appName\}<\/strong>/g) || []).length, 2,
+    'both forms of the line, the button\'s span and the plain p, lead with the name');
+  assert.ok(claim.indexOf('rf-claim-app') < claim.indexOf('{line}'), 'the name comes before the line');
+  // The opened card: the name on its own line, before the full description.
+  const card = src.slice(src.indexOf('className="rf-desc"'), src.indexOf('className="rf-desc-foot"'));
+  assert.match(card, /\{appName \? <p className="rf-desc-app">\{appName\}<\/p> : null\}\s*<p className="rf-desc-text">\{item\.summary \|\| item\.line\}<\/p>/, 'the name, then the description as it was');
+  assert.match(src, /<ChangeBody item=\{leaving\} width=\{pw\} pageH=\{ph\} arrive="still" still=\{from\.view\} appName=\{leavingAppName\} \/>/, 'the copy Next leaves behind keeps the name it had');
+  assert.match(src, /appName=\{appName\}/);
+  // It is name text, not interface text: no catalog entry.
+  assert.doesNotMatch(src, /t\('communities:[^']*app[^']*name/i);
+
+  const css = read('public/css/app.css');
+  assert.match(css, /\.rf-desc-app \{ margin: 0 0 4px; font-size: 15px; line-height: 21px; font-weight: 650; color: var\(--rf-ink\); overflow-wrap: anywhere; \}/);
+  assert.match(css, /\.rf-claim-app \{ font-weight: 650; color: var\(--rf-ink\); \}/);
+  assert.match(css, /\n\.rf-claim \{[^}]*font-weight: 400;/, 'the line itself stays body weight and muted');
+  assert.match(css, /\n\.rf-desc-text \{[^}]*color: var\(--rf-muted\);/);
+});
+
 test('Next change goes to the next change with no vote, wraps to an earlier one, and skips what you voted on', () => {
   const items = [{ key: 'a' }, { key: 'b' }, { key: 'c' }];
   assert.equal(model.nextIndex(items, 0, {}), 1, 'nothing voted: the next one');

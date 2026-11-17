@@ -2307,6 +2307,14 @@
     "text": "Open this proposal and expand its before/after captures",
     "description": "Tooltip of the \"Before/after screenshots\" item in a proposal's ⋯ menu."
   },
+  "proposal.menu.copyLink": {
+    "text": "Copy link",
+    "description": "Row in a change's ⋯ menu: copies the address of the change's page to the clipboard."
+  },
+  "proposal.menu.copyLinkDone": {
+    "text": "Link copied",
+    "description": "Brief notice after pressing Copy link in a change's ⋯ menu: the link is on the clipboard."
+  },
   "proposal.menu.share": {
     "text": "Share to…",
     "description": "Item in a proposal's ⋯ menu: opens a picker to send the proposal's card to a chat or a discussion. \"Share\" is a verb."

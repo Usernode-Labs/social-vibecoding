@@ -160,6 +160,24 @@ test('its styles are scoped to the section and use no untuned palette', () => {
   assert.match(engine, /listen\(document,'scroll',function\(e\)\{[^}]*hold\(b\);\},true\);/, 'where each box belongs, from its own scroll events');
   assert.match(engine, /sc\.addEventListener\('focusin',function\(e\)\{\s*around\(\)\.forEach\(function\(b\)\{var at=held\.get\(b\);[^\n]*b\.scrollTop=at\[1\];\}\}\);\s*reveal\(e\.target\);/,
     'and the chart moves to the card instead');
+  // The fade that sends what a selection does not touch to the background is scoped to the chart's own class, so
+  // the chart must carry it: without it the engine's dim and hl classes changed nothing on screen.
+  assert.match(read(SECTION), /<svg className="of-flow" data-of="flow"/);
+  assert.match(block, /#admin-onboarding-flows \.of-flow\.dim \.thread\{opacity:\.1\}/);
+  assert.match(block, /#admin-onboarding-flows \.of-flow\.dim \.nodeg:not\(\.hl\) \.nbox,[^{]*\.nlabel,[^{]*\.nsub,[^{]*\.caption\{opacity:\.3\}/);
+  assert.match(read(ENGINE), /svg\.classList\.add\('dim'\);/);
+  // A pressed card stays where it is: the native kit's [role="button"]:active is a CSS transform, which would
+  // replace an SVG shape's transform attribute and throw it to the drawing's corner. Cards and marks are placed
+  // by an inline style instead, and the press does nothing inside the drawing.
+  const eng = read(ENGINE);
+  assert.match(eng, /function at\(g,x,y\)\{g\.style\.transform='translate\('\+x\.toFixed\(1\)\+'px,'\+y\.toFixed\(1\)\+'px\)';\}/);
+  assert.doesNotMatch(eng, /setAttribute\('transform'|transform:'translate\(/, 'no card or mark is placed by its transform attribute');
+  assert.match(block, /#admin-onboarding-flows svg \[role="button"\],#admin-onboarding-flows svg \[role="button"\]:active\{transition:none;filter:none\}/);
+  assert.match(block, /#admin-onboarding-flows svg text\[role="button"\]:active\{transform:none\}/);
+  assert.match(read('public/usernode-native/v1/native.css'), /\[role="button"\]:active,[\s\S]*?transform: scale\(0\.97\)/,
+    'the press this guards against; if the kit drops it, these rules can go');
+  // A double-click on a box, a mark or a thread is two clicks on it, not a zoom.
+  assert.match(eng, /sc\.addEventListener\('dblclick',function\(e\)\{\s*if\(e\.target\.closest&&e\.target\.closest\('\[tabindex\]'\)\)return;\s*if\(cur&&e\.target\.closest&&e\.target\.closest\('svg'\)&&nearest\(svgPoint\(e\)\)\)return;/);
   for (const src of [read(SECTION), read(ENGINE)]) assert.doesNotMatch(src, /\b(gray|indigo)-\d/);
 });
 

@@ -217,7 +217,12 @@ test('the visible row budget is measured from the screen, floored and capped', (
   // A resize is the one thing that changes the budget, and it re-renders only
   // when a WHOLE row's worth of it changed.
   assert.match(HOME, /addEventListener\('resize'/);
-  assert.match(HOME, /if \(Home\.visibleRowBudget\(\) === Home\._rowBudget\) return;/);
+  // (17 Nov 2026) or when the window crossed the width the side card needs.
+  assert.match(HOME, /if \(Home\.visibleRowBudget\(\) === Home\._rowBudget\s*&& Home\.hasSideCard\(\) === !!Home\._sideCard\) return;/);
+  // The floor is three rows since 17 Nov 2026; the model's own two-row
+  // default (DEFAULT_ROWS) is what defaultRowBound never goes under.
+  assert.match(HOME, /MIN_ROWS: 3,/);
+  assert.match(HOME, /const floor = Home\.MIN_ROWS;/);
   // …and never mid-drag, the same deferral load() and render() take.
   assert.match(HOME, /if \(Home\._dragActive\) return;/);
 });

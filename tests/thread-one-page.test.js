@@ -251,7 +251,7 @@ test('#6599: a built draft of yours puts itself up for a vote from its card', ()
   const src = read(`${TOPIC}/thread-changes.tsx`);
   assert.match(src, /useThreadMenu\(propose\.can \? key : null, 'propose', propose\.can/, 'the row goes on the change\'s own ⋯');
   assert.match(src, /\{ label: t\('project:topic\.thread\.page\.proposeAction'\), icon: 'default', act: propose\.propose \}/);
-  assert.match(src, /const propose = useProposeChange\(item, onChanged\);\s*useInView/, 'the line and its ⋯ draw from one hook');
+  assert.match(src, /const propose = useProposeChange\(item, onChanged\);\s*const thread = useContext\(ThreadCardContext\);\s*useInView/, 'the line and its ⋯ draw from one hook');
   assert.match(src, /<ChangeMenu item=\{item\} view=\{view\} propose=\{propose\} \/>/);
 });
 

@@ -45,8 +45,9 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
-import { normalizeWorkState } from '../../../lib/work-state';
-import { TrackCard, trackLinks } from '../../messages/bot-track';
+import type { BotTrack } from '../../messages/types';
+import { normalizeWorkState, type WorkState } from '../../../lib/work-state';
+import { TrackCard, trackClock, trackEyebrow, trackLinks } from '../../messages/bot-track';
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
 import { TranslateNote, useTranslate } from '../../messages/translate';
@@ -60,9 +61,14 @@ import {
   type RequestSpecCard,
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
+import { newestPlan, requestRail, type RailOpen } from './rail-model';
+import { requestFoot } from './card-model';
+import { closeStep, openStep, useOpenStep } from './step-store';
+import { PlanWords, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
-import { ThreadChanges, ChangeSectionSkeleton } from './thread-changes';
-import { requestPill, threadLayout, type ThreadHere } from './thread-model';
+import { ThreadChanges, ChangeSectionSkeleton, letterOf } from './thread-changes';
+import { ballotOf, requestPill, threadLayout, type ThreadHere } from './thread-model';
+import { ThreadRail } from './thread-rail';
 import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
 import { saveIssueBody } from './topic-head';
@@ -87,6 +93,20 @@ function call(fn: string, args: unknown[] = []): void {
   if (av && typeof av[fn] === 'function') av[fn](...args);
 }
 
+/**
+ * A change's own section on its request's page, brought into view; a change
+ * folded under the ballot is opened first.
+ */
+function showChangeSection(id: number): void {
+  if (typeof document === 'undefined') return;
+  const section = document.querySelector<HTMLElement>(`#gc-thread-head [data-thread-change="${id}"]`);
+  if (!section) return;
+  if (section.getAttribute('data-thread-fold') === 'shut') {
+    section.querySelector<HTMLElement>(`[data-thread-fold-toggle="${id}"]`)?.click();
+  }
+  section.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
 /** One of the layout's empty hosts, or null when the shell is not the request layout. */
 function host(id: string): Element | null {
   return typeof document === 'undefined' ? null : document.getElementById(id);
@@ -107,6 +127,13 @@ function translatedWords(markdown: string): string {
   const rendered = renderer.render(markdown, { images: true });
   const mentions = typeof window !== 'undefined' ? (window as any).renderRequestMentions : null;
   return `<div class="dev-issue-body">${mentions ? mentions(rendered) : rendered}</div>`;
+}
+
+/** Homeroom bot's summary, plain text, as the markup RequestWords draws: escaped, a paragraph per line. */
+function summaryWords(text: string): string {
+  const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paragraphs = text.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => `<p>${escape(line)}</p>`).join('');
+  return `<div class="dev-issue-body">${paragraphs}</div>`;
 }
 
 /**
@@ -545,6 +572,79 @@ function RequestAt({ s, specs, label }: { s: RequestStatusView; specs: RequestSp
   );
 }
 
+/**
+ * The foot of a request's card with no change built for it yet: where it
+ * stands, said once, and its one action. It replaces the stepper and the
+ * sentence box under the words (RequestStatus) and Homeroom bot's progress
+ * card, which the timeline's last step now opens over the card.
+ */
+function RequestFoot({ s, specs, standing, yours, track, page }: {
+  /** The page whose layer Read plan opens (./step-store.ts). */
+  page: string;
+  s: RequestStatusView;
+  specs: RequestSpecCard[];
+  standing: WorkState | null;
+  yours: boolean;
+  track: BotTrack | null;
+}): ReactNode {
+  const t = useMessages('project');
+  const stage = requestStage(s.stage, specs.length);
+  const foot = standing ? requestFoot(standing, yours) : null;
+  const stageLabel = STAGES.find((step) => step.key === stage)?.label;
+  const headline = s.closed
+    ? t('core:work.stage.closed')
+    : track ? trackEyebrow(track)
+      : foot ? t(foot.headline.id, foot.headline.values) : stageLabel ? t(stageLabel) : '';
+  const version = newestSpecVersion(specs);
+  const specLine = stage === 'spec' && !s.botSays
+    ? (version ? t('project:topic.request.status.specVersionReady', { version }) : t('project:topic.request.status.specReady'))
+    : null;
+  // The page's own sentence for where it is, when it has one; else the
+  // server's line for the stage, else the plain one.
+  const own = s.closed || sentences([s.lead, s.note || specLine]);
+  const said = foot?.sub ? t(foot.sub.id, foot.sub.values) : '';
+  // With Homeroom bot's progress known, the headline is its stage and try,
+  // so the page's own "Building." would only repeat it.
+  const picked = track && !s.closed ? (said || own) : (own || said);
+  // A sentence that only repeats the headline ("Voted in" over "Voted in.") is left out.
+  const plain = (text: string) => text.replace(/[.\s]+$/, '').toLowerCase();
+  const sub = plain(picked) === plain(headline) ? '' : picked;
+  const clock = track ? trackClock(track, new Date()) : null;
+  const a = s.action;
+  // The newest plan still standing, read over the card. The plan card that
+  // hung under the words is the timeline's Planned step and this button.
+  const plan = s.closed ? null : newestPlan(specs);
+  return (
+    <ThreadFoot
+      what={s.closed ? 'closed' : foot?.key || stage}
+      headline={headline}
+      sub={dotLine([clock, sub]) || null}
+      tone={s.closed ? 'muted' : foot?.tone || null}
+      extra={s.fine ? <p className="dev-thread-foot-also" data-thread-foot-fine="">{s.fine}</p> : null}
+    >
+      {plan ? (
+        <button type="button" className="gc-vote-btn" data-thread-foot-plan={plan.key} onClick={() => openStep(page, { kind: 'plan', key: plan.key })}>
+          {t('project:topic.card.foot.readPlan')}
+        </button>
+      ) : null}
+      {a ? (a.href ? (
+        <a className="dev-request-primary" href={a.href} title={a.title}>{a.label}</a>
+      ) : (
+        <button
+          type="button"
+          className="dev-request-primary"
+          title={a.title}
+          disabled={!!a.disabled}
+          data-act={a.act?.fn}
+          onClick={() => { if (a.act) call(a.act.fn, a.act.args || []); }}
+        >
+          {a.label}
+        </button>
+      )) : null}
+    </ThreadFoot>
+  );
+}
+
 export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // Under one of the frame's looks the page tells the bar its trail (the
   // Workshop, then this request) and stands its Status in the context
@@ -575,6 +675,11 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // Rendering markdown on every render would rebuild the body's nodes under a
   // reader who is just scrolling; the strings are the key, not the arrays.
   const bodyHtml = useMemo(() => (shownBody == null ? r.bodyHtml : translatedWords(shownBody)), [shownBody, r.bodyHtml]);
+  // The card look shows Homeroom bot's summary of the thread once there is
+  // one, in place of the asker's words, which the timeline's first step
+  // still opens whole. Plain text, drawn as paragraphs.
+  const summary = !frame && r.summary?.text ? r.summary : null;
+  const summaryHtml = useMemo(() => (summary ? summaryWords(summary.text) : ''), [summary]);
   // ⋯ "Edit request" asks for the editor by event, as a change page's
   // "Edit description" does: the menu's row is a closure in AppView.
   useEffect(() => {
@@ -655,16 +760,87 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     }] : []),
   ]);
   const threadMenu = ownAgent || !!threadRead.data?.follow;
+  // "How it got here": the thread's big events, beside the card on a wide
+  // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
+  // have their own context column, so they draw none.
+  const rail = frame ? null : host('gc-thread-rail');
+  // The changes that compete are named by their letter on the ballot, in the
+  // timeline as on the card ("Change A built").
+  const letters = useMemo(() => {
+    const ballot = threadRead.data ? ballotOf(threadRead.data, [r.number]) : null;
+    return ballot && ballot.options.length ? new Map(ballot.options.map((o, i) => [o.id, letterOf(i)] as const)) : null;
+  }, [threadRead.data, r.number]);
+  const railSteps = useMemo(() => requestRail({
+    asker: r.asker || null,
+    askedAt: r.askedAt || null,
+    specs,
+    changes: layout.changes,
+    standing,
+    yours: (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
+    words: !!r.bodyMarkdown?.trim(),
+    track: !!track,
+    letters,
+  }), [r.asker, r.askedAt, r.bodyMarkdown, r.standing, specs, layout.changes, standing, track, letters]);
+  // The standard look and the brand look draw the card the thread design
+  // agreed (./thread-card.tsx), and a step of the timeline opens over it.
+  const cardLook = !frame;
+  const page = `request:${r.number}`;
+  const openNow = useOpenStep(page);
+  useEffect(() => closeStep, [page]);
+  const cardContext = useMemo(() => ({ card: cardLook, page }), [cardLook, page]);
+  const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
+  const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
+  /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
+  const competes = (id: number) => typeof document !== 'undefined' && !!document.querySelector(`#gc-thread-head [data-thread-look="${id}"]`);
+  const openRail = (open: RailOpen) => {
+    if (cardLook && (open.kind === 'request' || open.kind === 'plan' || open.kind === 'track')) {
+      openStep(page, open);
+      return;
+    }
+    if (cardLook && (open.kind === 'checks' || open.kind === 'votes')) {
+      // A change on its own holds its votes and tests in a layer; one that
+      // competes is voted on in the ballot, so the change itself is opened
+      // over the card, where its tests are.
+      const layer = typeof document === 'undefined' ? null : document.querySelector(`[data-thread-change="${open.changeId}"] [data-step-layer="gates"]`);
+      if (layer) openStep(page, open);
+      else if (competes(open.changeId)) openStep(page, { kind: 'change', changeId: open.changeId });
+      else showChangeSection(open.changeId);
+      return;
+    }
+    if (cardLook && open.kind === 'change' && competes(open.changeId)) {
+      openStep(page, open);
+      return;
+    }
+    if (open.kind === 'track' || open.kind === 'votes') return;
+    if (open.kind === 'request') {
+      // The request's own words, whole, in the reader a plan opens in.
+      (window as any).UsernodeReact?.detail?.open({
+        kind: 'plan',
+        ref: {},
+        version: null,
+        payload: { title: r.title, markdown: r.bodyMarkdown || '', html: r.bodyHtml },
+      });
+    } else if (open.kind === 'plan') {
+      const card = specs.find((s) => s.key === open.key);
+      if (card) void openRequestSpec(card);
+    } else if (open.kind === 'checks') {
+      call('openTechnicalDetails', [open.changeId]);
+    } else {
+      showChangeSection(open.changeId);
+    }
+  };
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<RequestBar r={r} pill={pill} threadMenu={threadMenu} />, bar) : null}
+      {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={cardLook ? openNow : null} />, rail) : null}
       {images.viewer}
-      <article className="messages-message dev-request-root" data-ref-issue={r.number} data-request-root={r.number}>
+      <article className={`messages-message dev-request-root${cardLook ? ' dev-thread-card' : ''}`} data-ref-issue={r.number} data-request-root={r.number} data-thread-card={cardLook ? 'request' : undefined}>
         <Avatar shape="square" size="sm" color={swatchFor(r.asker)} aria-hidden="true">
           {(r.asker || '?').charAt(0).toUpperCase()}
         </Avatar>
         <div className="min-w-0 flex-1" {...images.scope}>
+          {cardLook ? <ThreadKicker kind="request" number={r.number} /> : null}
           <div className="messages-message-head">
             <span className="messages-message-author">{r.asker}</span>
             {r.askedTime ? <time dateTime={r.askedAt || undefined} title={r.askedTitle}>{r.askedTime}</time> : null}
@@ -707,6 +883,9 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           {frame ? <TopicFrameLabel>{t('project:frame.topic.theRequest')}</TopicFrameLabel> : null}
           {frame ? <TopicFrameBy name={r.asker} color={swatchFor(r.asker)} line={r.askedTime || null} title={r.askedTitle} at={r.askedAt} /> : null}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
+            // Homeroom bot's summary stands in for the asker's words, which
+            // the timeline's first step opens whole.
+            summary ? <RequestWords html={summaryHtml} /> : (
             <RequestWords
               html={bodyHtml}
               translate={!canTranslate || editing || (translation.state !== 'idle' && translation.state !== 'pending') ? null : (
@@ -721,7 +900,10 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               )}
               note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
             />
+            )
           )}
+          {cardLook && !editing && summary ? <WordsBy who="bot" basis={summary.basis} />
+            : cardLook && !editing && (r.bodyMarkdown?.trim() || r.bodyHtml) ? <WordsBy who="asker" name={r.asker || null} /> : null}
           {/* #6680: the viewer's own design thread, linked under the request's
               words (right after "Filed from a design thread…"), which opens it
               in the Homeroom bot column. Nobody else's read carries it, so no
@@ -736,21 +918,21 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               </a>
             </p>
           ) : null}
-          {working && !r.status.closed ? null : (
+          {(working && !r.status.closed) || cardLook ? null : (
             <RequestStatus s={r.status} specs={specs} tracked={!!track} frame={frame} />
           )}
           {/* #6207/#6210: Homeroom bot's plan, public, with Build it for any member. */}
           {working || r.status.closed || !slug ? null : <RequestPlan slug={slug} number={r.number} specs={specs} />}
           {ownAgent && agentOpen ? <OwnAgentLink slug={agentSlug} number={r.number} startOpen onClose={() => setAgentOpen(false)} /> : null}
           {track && !working && !frame ? (
-            // 16 Oct 2026 (C4, V3): the same card a request's thread leads
-            // with, where it is and why, its bar and its pictures, in place
-            // of having to open the chat to find out. Drawn from the board's
-            // older row it holds its place unseen (`trackPending`, app.css),
-            // and says where the work is once the fresh row lands.
-            <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
-              <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
-            </div>
+            // Homeroom bot's progress card (16 Oct 2026, C4, V3) is the
+            // content of the timeline's last step: kept in the page, opened
+            // over the card. The foot below says the stage and its try.
+            <StepLayer keep open={openNow?.kind === 'track'} name="track" title={trackEyebrow(track)} sub={t('project:topic.card.layer.trackSub')} onClose={closeStep}>
+              <div className="dev-request-track" data-request-track={r.trackPending ? 'pending' : track.work.stage} inert={!!r.trackPending}>
+                <TrackCard track={track} title={r.title} links={trackLinks(track, { request: false })} pictures />
+              </div>
+            </StepLayer>
           ) : null}
           {/* Under a look the same host, holding its place the same way,
               has the kit's Status card: what the progress card says, read
@@ -771,17 +953,33 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
                 : <RequestAt s={r.status} specs={specs} label={t('project:frame.topic.status')} />}
             </div>
           ) : null}
-          {unbuilt.length ? (
+          {unbuilt.length && !cardLook ? (
             <div className="messages-object-list dev-request-specs">
               {unbuilt.map((card) => <SpecCard key={card.key} card={card} />)}
             </div>
           ) : null}
           {/* #6019: the changes and the vote to close in this request's
               thread, under a rule; then the rest of it as a list. */}
-          {threadRead.data ? (
-            <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} plans={plans} onChanged={threadRead.reread} />
-          ) : holding ? (
-            <ChangeSectionSkeleton />
+          <ThreadCardContext.Provider value={cardContext}>
+            {threadRead.data ? (
+              <ThreadChanges slug={slug} data={threadRead.data} number={r.number} changes={layout.changes} close={layout.close} plans={plans} onChanged={threadRead.reread} />
+            ) : holding ? (
+              <ChangeSectionSkeleton />
+            ) : null}
+          </ThreadCardContext.Provider>
+          {/* The foot: where a request with no change yet stands, and its action. */}
+          {cardLook && (!working || r.status.closed) ? (
+            <RequestFoot s={r.status} specs={specs} standing={r.status.closed ? null : standing} yours={yours} track={working ? null : track} page={page} />
+          ) : null}
+          {cardLook && openNow?.kind === 'request' ? (
+            <StepLayer open name="request" title={t('project:topic.rail.asked')} sub={r.asker ? t('project:topic.card.layer.requestSub', { name: r.asker }) : null} when={r.askedTime || null} onClose={closeStep}>
+              <div className="dev-step-doc" data-step-request="" dangerouslySetInnerHTML={{ __html: r.bodyHtml || '' }} />
+            </StepLayer>
+          ) : null}
+          {cardLook && planOpen ? (
+            <StepLayer open name="plan" title={planOpen.title || t('project:topic.rail.planned')} sub={planOpen.by && !planOpen.byUnknown && !planOpen.bySystem ? t('project:topic.card.layer.planBy', { name: planOpen.by }) : null} when={planOpen.time || null} onClose={closeStep}>
+              <PlanWords plan={planOpen} />
+            </StepLayer>
           ) : null}
           <ThreadItems slug={slug} number={r.number} here={here} payload={threadRead.data} items={layout.listed} onChanged={threadRead.reread} menuKey={menuKey} />
         </div>

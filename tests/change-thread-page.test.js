@@ -148,7 +148,8 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  // 15 Nov 2026: "How it got here" has its host between the two (tests/thread-rail.test.js).
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-rail" class="dev-request-rail"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.doesNotMatch(html, /gc-thread-pin/, 'a change page has no pin host any more (#6419)');
   // The bar is the chat foot's (1 November 2026), Messages' own classes kept.
   assert.match(html, /class="messages-composer messages-composer-thread chat-composer-bar platform-safe-bar"/);
@@ -335,9 +336,11 @@ test('on a phone the gate card stacks its buttons under its line', () => {
   assert.ok(phone, 'the change page has a phone block');
   assert.match(phone, /\.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(phone, /\.dev-change-gate-act \{[^}]*order: 1;[^}]*flex-wrap: wrap;[^}]*\}/);
-  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
-  assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
-  assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // #6726: the head keeps its name and figure on one line, so a two-digit
+  // count cannot take a second row and push the Vote button down.
+  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: nowrap; row-gap: 2px; \}/);
+  assert.match(phone, /\.dev-change-gate-name \{ flex: none; min-width: 0; \}/);
+  assert.match(phone, /\.dev-change-gate-figure \{ min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; \}/);
   // #6419: while stuck the pair keeps one line on a phone too, the Vote
   // button back on the card's own line rather than under it.
   assert.match(phone, /\.dev-change-pair\[data-stuck\] \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\) auto; padding: 8px 12px; \}/);

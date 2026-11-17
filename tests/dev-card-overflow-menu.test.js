@@ -297,7 +297,32 @@ test('proposal, author: Withdraw, and no Explore and no Open session', () => {
 test('proposal, read-only viewer: only read-safe rows survive', () => {
   const AppView = makeAppView({ readOnly: true, admin: true });
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ pr_url: 'https://github.com/o/r/pull/7' })));
-  assert.equal(labels.join('|'), 'Share to…|View PR on GitHub');
+  assert.equal(labels.join('|'), 'Copy link|Share to…|View PR on GitHub');
+});
+
+test('proposal menu: Copy link copies the change’s address, and only says so when it worked', async () => {
+  const AppView = makeAppView({ readOnly: true });
+  AppView.appData = { slug: 'plant-pal', can_collaborate: false };
+  AppView.__sandbox.location = { origin: 'https://h.test' };
+  const copied = [];
+  const toasts = [];
+  let ok = true;
+  AppView.__sandbox.PlatformUI.copyText = async (text) => { copied.push(text); return ok; };
+  AppView.__sandbox.PlatformUI.toast = (msg) => { toasts.push(msg); };
+  const items = menuItems(AppView, proposalCardHtml(AppView,
+    PR({ id: 4209, pr_url: 'https://github.com/o/r/pull/4209' })));
+  assert.equal(items[0].label, 'Copy link', 'first row');
+  assert.equal(items[0].icon, 'link');
+  items[0].act();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(copied, ['https://h.test/#app/plant-pal/dev/proposals/4209']);
+  assert.deepEqual(toasts, ['Link copied']);
+  // A refused clipboard is silent, as on a governance vote's page.
+  ok = false;
+  items[0].act();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(copied.length, 2);
+  assert.deepEqual(toasts, ['Link copied'], 'no notice when nothing was copied');
 });
 
 test('issue and proposal menus open Share to… with their exact card references (#3660)', () => {

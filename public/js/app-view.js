@@ -6366,6 +6366,8 @@ const AppView = {
         // #4490: the author's diagram leads the page, above its description.
         diagram: item && item.diagram && typeof item.diagram === 'object' ? item.diagram : null,
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        // Whose words the summary is, for the line under it (thread-card.tsx WordsBy).
+        summaryBy: AppView._summaryBy(item),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
@@ -6388,6 +6390,8 @@ const AppView = {
         actions: AppView._detailActionsView('session', item),
         ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        // Whose words the summary is, for the line under it (thread-card.tsx WordsBy).
+        summaryBy: AppView._summaryBy(item),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
       };
@@ -6537,6 +6541,11 @@ const AppView = {
       similar: AppView._twinOf(issue),
       // #6680: the thread the viewer filed it from, for the link under its words.
       fromThread: AppView._fromThreadOf(issue),
+      // Homeroom bot's summary of the thread (services/request-summary.js),
+      // which the card shows in place of the asker's words once there is one.
+      summary: issue.summary && typeof issue.summary.text === 'string' && issue.summary.text.trim()
+        ? { text: issue.summary.text.trim(), basis: ['plan', 'change', 'changes'].includes(issue.summary.basis) ? issue.summary.basis : 'plan' }
+        : null,
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,
@@ -8041,6 +8050,7 @@ const AppView = {
       // unless GitHub is holding the merge or it is under way.
       merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
+      shotsNone: AppView._shotsNotNeeded(item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
@@ -9005,6 +9015,22 @@ const AppView = {
     };
   },
 
+  // Who wrote a change's summary: Homeroom bot ('generated', pr-metadata.js)
+  // or its author. Null with no summary, or when the row does not say.
+  _summaryBy(item) {
+    if (!item || typeof item.pr_summary_md !== 'string' || !item.pr_summary_md.trim()) return null;
+    return item.pr_summary_source === 'generated' ? 'bot' : item.pr_summary_source === 'author' ? 'author' : null;
+  },
+
+  // The change shows nothing a person can see: its shots were not required.
+  // The card says so where the picture would be (thread-card.tsx ShotsWait).
+  _shotsNotNeeded(item) {
+    const shots = item && item.shots && typeof item.shots === 'object' ? item.shots : null;
+    if (!shots) return false;
+    const view = AppView._shotsView(shots);
+    return !!view && view.state === 'not_required';
+  },
+
   // "The preview is ready · Try it", in a change's stream.
   _tryChangePreview(id) {
     const item = AppView._changeItems.get(Number(id)) || AppView._findTopicItem();
@@ -9462,6 +9488,7 @@ const AppView = {
     'visuals',    // before/after captures
     'github',     // leaves the platform, for GitHub
     'code',       // the code, on Homeroom's own git host
+    'link',       // copies the page's own address
     'priority',   // the same flag the priority chip uses
     'category',
     'assignee',
@@ -18876,6 +18903,24 @@ const AppView = {
     // Just-you change's Approve opens the vote picker, whose other side is
     // Don't approve with its line in the box; this was a second way to the
     // same No, asking for the line by prompt instead.
+    // #6727: the page's own address, so a change pasted elsewhere carries its
+    // link and not just its title. Same row, words and notice as a governance
+    // vote's page (_govDecisionMenu); the router sends a change built for a
+    // request to the request's page. unshift, not push up top: the admin
+    // merge block above has to stay in the first 1600 characters
+    // tests/vote-row-card.test.js slices on.
+    items.unshift({
+      label: PlatformI18n.t('changes:proposal.menu.copyLink'),
+      icon: 'link',
+      title: PlatformI18n.t('changes:proposal.menu.copyLink'),
+      act: () => {
+        const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+        const url = `${window.location.origin}/#app/${slug}/dev/proposals/${pr.id}`;
+        Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+          if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:proposal.menu.copyLinkDone'));
+        });
+      },
+    });
     return items;
   },
 
@@ -26174,7 +26219,8 @@ const AppView = {
   //                screen's size, otherwise on After. It is a fourth radio
   //                with no label, checked to start; any choice replaces it.
   //   zoom       — a Close-up / Whole screen switch on screens that have a
-  //                close-up. The radios hold it; the caller lays the sides out.
+  //                close-up. The radios hold it, checked on Whole screen so a
+  //                viewer opens fitted; the caller lays the sides out.
   // `key` makes the ids unique on the page, so a spec and a card can share one.
   SHOTS_SIZE_NAME_IDS: {
     desktop: 'changes:shots.size.desktop',
@@ -26368,7 +26414,7 @@ const AppView = {
     });
     const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBefore')}"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAfter')}"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBoth')}">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAuto')}" checked>` : ''}</span>`;
     const zoomPicks = zooming
-      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}"></span>`
+      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}"><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}" checked></span>`
       : '';
     const screenPicks = list.length > 1
       ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(Object.prototype.hasOwnProperty.call(AppView.SHOTS_SCREEN_PICK_IDS, String(screen.viewport))

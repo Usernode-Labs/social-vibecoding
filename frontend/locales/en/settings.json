@@ -1203,6 +1203,10 @@
     "text": "Standard",
     "description": "First option of the Look menu in Settings, Experimental: Homeroom's usual visual style, with no experimental look applied."
   },
+  "experimental.look.wip": {
+    "text": "Standard (WIP)",
+    "description": "Option of the Look menu in Settings, Experimental, right after Standard: Homeroom's usual visual style with the changes still being tried on it. WIP is short for work in progress."
+  },
   "experimental.look.brand": {
     "text": "Paper, simplified, with brand styling",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
