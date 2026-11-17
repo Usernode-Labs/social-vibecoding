@@ -1829,7 +1829,10 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // 17 Nov 2026 (#6769): the data rules now say what is allowed as well as
   // banned (about 900 more), so the bot stops refusing a gym log, a game
   // PIN, a choir rota or a Spotify playlist sync.
-  assert.ok(prompt.length < 30100, `a triage prompt stays small: ${prompt.length} chars`);
+  // 17 Nov 2026 (#6771): `elsewhere` and its candidates (about 290 more), so
+  // a request that is about another project names it, or the few it could be,
+  // and its requester is offered the move to that project's board.
+  assert.ok(prompt.length < 30400, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db"\}$/);
 });
