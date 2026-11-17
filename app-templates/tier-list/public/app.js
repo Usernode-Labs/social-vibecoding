@@ -74,11 +74,13 @@
   // Whole class names per tier, so the build and the <style> block see them.
   var TIER_CLASS = { S: 'tier-s', A: 'tier-a', B: 'tier-b', C: 'tier-c', D: 'tier-d', F: 'tier-f' };
   var TIERS = ['S', 'A', 'B', 'C', 'D', 'F'];
-  // Each item is a 44 px target. One you can move holds the finger
+  // Each item is a 44 px target; one you can move is a 48 px one, with more
+  // room either side, so a thumb lands on the item it meant on a phone (a
+  // near miss grabbed the row above). One you can move holds the finger
   // (touch-none): pressing it and moving drags it at once, with no hold to
   // time (Evan, 21 Oct 2026: "you need to hold on it just right").
   var CHIP = 'inline-flex min-h-11 max-w-full items-center rounded-lg bg-raised px-3 py-2 text-left text-small font-medium hover:bg-line';
-  var CHIP_MOVABLE = 'inline-flex min-h-11 max-w-full cursor-grab touch-none select-none items-center rounded-lg border border-line bg-surface px-3 py-2 text-left text-small font-medium shadow-sm';
+  var CHIP_MOVABLE = 'inline-flex min-h-12 max-w-full cursor-grab touch-none select-none items-center rounded-lg border border-line bg-surface px-4 py-2 text-left text-small font-medium shadow-sm';
   var NAME_CHIP = 'inline-flex max-w-full items-center rounded-lg bg-raised px-2.5 py-1.5 text-small font-medium';
   // The @ list's choices, the highlighted one and the rest.
   var MENTION_ON = 'flex min-h-11 w-full items-center bg-raised px-3 text-left text-small font-medium';
@@ -252,6 +254,9 @@
   }
 
   function onPointerDown(e) {
+    // A drag already under way keeps the item it started with: a second
+    // touch (another finger, the edge of your hand) never takes it over.
+    if (drag) return;
     if (view !== 'yours' || e.button > 0) return;
     var chip = e.currentTarget;
     drag = { id: Number(chip.getAttribute('data-item')), chip: chip, x: e.clientX, y: e.clientY, pointerId: e.pointerId, touch: e.pointerType !== 'mouse', active: false, frame: 0 };
@@ -269,7 +274,7 @@
     drag.active = true;
     var rect = drag.chip.getBoundingClientRect();
     var ghost = drag.chip.cloneNode(true);
-    ghost.className = 'pointer-events-none fixed z-50 inline-flex min-h-11 items-center rounded-lg border border-accent bg-surface px-3 py-2 text-small font-medium shadow-lg';
+    ghost.className = 'pointer-events-none fixed z-50 inline-flex min-h-12 items-center rounded-lg border border-accent bg-surface px-4 py-2 text-small font-medium shadow-lg';
     ghost.style.left = rect.left + 'px';
     ghost.style.top = rect.top + 'px';
     ghost.style.width = rect.width + 'px';
@@ -410,7 +415,10 @@
     var label = h('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' + TIER_CLASS[tier], tier);
     label.setAttribute('aria-label', 'Tier ' + tier);
     r.appendChild(label);
-    var chips = h('div', 'flex min-w-0 flex-1 flex-wrap items-center gap-1.5 px-3 py-2');
+    // More room between the lines of a wrapped tier and above and below its
+    // chips, so a press that lands between two rows falls in the gap rather
+    // than on the item above.
+    var chips = h('div', 'flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-3 px-3 py-3');
     items.forEach(function (item) { chips.appendChild(chipFor(item)); });
     r.appendChild(chips);
     return r;

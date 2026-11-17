@@ -320,12 +320,17 @@ test('a tier list ranks by dragging, and tapping one shows who ranked it what', 
   assert.doesNotMatch(html, /picked-actions/);
   assert.match(script, /var label = h\('div', 'flex w-14 shrink-0 items-center justify-center text-heading ' \+ TIER_CLASS\[tier\], tier\);/,
     'a tier\'s label is not a button any more');
-  // A press that moves drags at once, with no hold to time, from a 44 px
-  // target that holds the finger; the page scrolls from anywhere else, and
-  // under a drag held at the screen's edge (Evan, 21 Oct 2026: "you need to
-  // hold on it just right to start dragging").
-  assert.match(script, /var CHIP_MOVABLE = 'inline-flex min-h-11 [^']*touch-none select-none /);
+  // A press that moves drags at once, with no hold to time, from a 48 px
+  // target that holds the finger, with room between rows and between the
+  // lines of a wrapped one, so a near miss does not grab the row above
+  // (#6723: "the drag handle needs a bigger target"); the page scrolls from
+  // anywhere else, and under a drag held at the screen's edge (Evan, 21 Oct
+  // 2026: "you need to hold on it just right to start dragging").
+  assert.match(script, /var CHIP_MOVABLE = 'inline-flex min-h-12 [^']*touch-none select-none /);
   assert.match(script, /var CHIP = 'inline-flex min-h-11 /);
+  assert.match(script, /function onPointerDown\(e\) \{\s*(?:\/\/[^\n]*\n\s*)*if \(drag\) return;/,
+    'a second touch never takes over a drag already under way');
+  assert.match(script, /var chips = h\('div', '[^']*gap-x-1\.5 gap-y-3 /, 'the rows have room between them');
   assert.doesNotMatch(script, /setTimeout\(begin/, 'no hold before a drag');
   assert.match(script, /if \(Math\.abs\(e\.clientX - drag\.x\) \+ Math\.abs\(e\.clientY - drag\.y\) < SLOP_PX\) return;\s+if \(!begin\(\)\) return;/);
   assert.match(script, /gestures\.claim\('touch', 'tier-drag'\)/, 'a drag owns the gesture, so pulling to refresh never starts under it');
