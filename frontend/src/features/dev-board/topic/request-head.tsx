@@ -61,7 +61,7 @@ import {
   type RequestSpecCard,
 } from './request-model';
 import { requestShots, togglePinShot } from './request-shots';
-import { requestRail, type RailOpen } from './rail-model';
+import { newestPlan, requestRail, type RailOpen } from './rail-model';
 import { requestFoot } from './card-model';
 import { closeStep, openStep, useOpenStep } from './step-store';
 import { PlanWords, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
@@ -127,6 +127,13 @@ function translatedWords(markdown: string): string {
   const rendered = renderer.render(markdown, { images: true });
   const mentions = typeof window !== 'undefined' ? (window as any).renderRequestMentions : null;
   return `<div class="dev-issue-body">${mentions ? mentions(rendered) : rendered}</div>`;
+}
+
+/** Homeroom bot's summary, plain text, as the markup RequestWords draws: escaped, a paragraph per line. */
+function summaryWords(text: string): string {
+  const escape = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const paragraphs = text.split(/\n+/).map((line) => line.trim()).filter(Boolean).map((line) => `<p>${escape(line)}</p>`).join('');
+  return `<div class="dev-issue-body">${paragraphs}</div>`;
 }
 
 /**
@@ -571,7 +578,9 @@ function RequestAt({ s, specs, label }: { s: RequestStatusView; specs: RequestSp
  * sentence box under the words (RequestStatus) and Homeroom bot's progress
  * card, which the timeline's last step now opens over the card.
  */
-function RequestFoot({ s, specs, standing, yours, track }: {
+function RequestFoot({ s, specs, standing, yours, track, page }: {
+  /** The page whose layer Read plan opens (./step-store.ts). */
+  page: string;
   s: RequestStatusView;
   specs: RequestSpecCard[];
   standing: WorkState | null;
@@ -602,6 +611,9 @@ function RequestFoot({ s, specs, standing, yours, track }: {
   const sub = plain(picked) === plain(headline) ? '' : picked;
   const clock = track ? trackClock(track, new Date()) : null;
   const a = s.action;
+  // The newest plan still standing, read over the card. The plan card that
+  // hung under the words is the timeline's Planned step and this button.
+  const plan = s.closed ? null : newestPlan(specs);
   return (
     <ThreadFoot
       what={s.closed ? 'closed' : foot?.key || stage}
@@ -610,6 +622,11 @@ function RequestFoot({ s, specs, standing, yours, track }: {
       tone={s.closed ? 'muted' : foot?.tone || null}
       extra={s.fine ? <p className="dev-thread-foot-also" data-thread-foot-fine="">{s.fine}</p> : null}
     >
+      {plan ? (
+        <button type="button" className="gc-vote-btn" data-thread-foot-plan={plan.key} onClick={() => openStep(page, { kind: 'plan', key: plan.key })}>
+          {t('project:topic.card.foot.readPlan')}
+        </button>
+      ) : null}
       {a ? (a.href ? (
         <a className="dev-request-primary" href={a.href} title={a.title}>{a.label}</a>
       ) : (
@@ -658,6 +675,11 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // Rendering markdown on every render would rebuild the body's nodes under a
   // reader who is just scrolling; the strings are the key, not the arrays.
   const bodyHtml = useMemo(() => (shownBody == null ? r.bodyHtml : translatedWords(shownBody)), [shownBody, r.bodyHtml]);
+  // The card look shows Homeroom bot's summary of the thread once there is
+  // one, in place of the asker's words, which the timeline's first step
+  // still opens whole. Plain text, drawn as paragraphs.
+  const summary = !frame && r.summary?.text ? r.summary : null;
+  const summaryHtml = useMemo(() => (summary ? summaryWords(summary.text) : ''), [summary]);
   // ⋯ "Edit request" asks for the editor by event, as a change page's
   // "Edit description" does: the menu's row is a closure in AppView.
   useEffect(() => {
@@ -846,6 +868,9 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           {frame ? <TopicFrameLabel>{t('project:frame.topic.theRequest')}</TopicFrameLabel> : null}
           {frame ? <TopicFrameBy name={r.asker} color={swatchFor(r.asker)} line={r.askedTime || null} title={r.askedTitle} at={r.askedAt} /> : null}
           {editing ? <RequestEditor r={r} onClose={() => setEditing(false)} /> : (
+            // Homeroom bot's summary stands in for the asker's words, which
+            // the timeline's first step opens whole.
+            summary ? <RequestWords html={summaryHtml} /> : (
             <RequestWords
               html={bodyHtml}
               translate={!canTranslate || editing || (translation.state !== 'idle' && translation.state !== 'pending') ? null : (
@@ -860,8 +885,10 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               )}
               note={!canTranslate || translation.state === 'idle' ? undefined : <TranslateNote view={translation} className="mt-1" />}
             />
+            )
           )}
-          {cardLook && !editing && (r.bodyMarkdown?.trim() || r.bodyHtml) ? <WordsBy who="asker" name={r.asker || null} /> : null}
+          {cardLook && !editing && summary ? <WordsBy who="bot" basis={summary.basis} />
+            : cardLook && !editing && (r.bodyMarkdown?.trim() || r.bodyHtml) ? <WordsBy who="asker" name={r.asker || null} /> : null}
           {/* #6680: the viewer's own design thread, linked under the request's
               words (right after "Filed from a design thread…"), which opens it
               in the Homeroom bot column. Nobody else's read carries it, so no
@@ -911,7 +938,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
                 : <RequestAt s={r.status} specs={specs} label={t('project:frame.topic.status')} />}
             </div>
           ) : null}
-          {unbuilt.length ? (
+          {unbuilt.length && !cardLook ? (
             <div className="messages-object-list dev-request-specs">
               {unbuilt.map((card) => <SpecCard key={card.key} card={card} />)}
             </div>
@@ -927,7 +954,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           </ThreadCardContext.Provider>
           {/* The foot: where a request with no change yet stands, and its action. */}
           {cardLook && (!working || r.status.closed) ? (
-            <RequestFoot s={r.status} specs={specs} standing={r.status.closed ? null : standing} yours={yours} track={working ? null : track} />
+            <RequestFoot s={r.status} specs={specs} standing={r.status.closed ? null : standing} yours={yours} track={working ? null : track} page={page} />
           ) : null}
           {cardLook && openNow?.kind === 'request' ? (
             <StepLayer open name="request" title={t('project:topic.rail.asked')} sub={r.asker ? t('project:topic.card.layer.requestSub', { name: r.asker }) : null} when={r.askedTime || null} onClose={closeStep}>

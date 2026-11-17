@@ -6735,6 +6735,18 @@
     "text": "Summary by Homeroom bot.",
     "description": "Small line under the summary on a change's page when Homeroom bot wrote the summary above from the change itself."
   },
+  "topic.card.summaryByBotPlan": {
+    "text": "Summary by Homeroom bot, from the request and the plan.",
+    "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here the request has a plan and no change built yet."
+  },
+  "topic.card.summaryByBotChange": {
+    "text": "Summary by Homeroom bot, from the request and its change.",
+    "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here one change has been built for the request."
+  },
+  "topic.card.summaryByBotChanges": {
+    "text": "Summary by Homeroom bot, from the request and its changes.",
+    "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here two or more changes have been built for the request."
+  },
   "topic.card.foot.alsoTests": {
     "text": "Its tests: {{what}}",
     "description": "Second row at the foot of a change's card, under the vote's status, when the change is up for a vote while its tests have failed or are still running. {{what}} is the tests' own status sentence, for example \"The preview didn’t start. Could not parse repo URL.\""
@@ -6775,6 +6787,46 @@
     "text": "Read plan",
     "description": "Button at the foot of a request's card when it has a plan: opens the plan over the card."
   },
+  "topic.card.ballot.choosing_one": {
+    "text": "Choosing between {{count}} change",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote, before anyone has voted. One change (it competes with closing the request)."
+  },
+  "topic.card.ballot.choosing_other": {
+    "text": "Choosing between {{count}} changes",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote, before anyone has voted. Several changes."
+  },
+  "topic.card.ballot.leads": {
+    "text": "{{choice}} leads, {{yes}} to {{other}}",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote: which change has the most yes votes. {{choice}} is its letter (A, B, …), {{yes}} its yes votes and {{other}} the next change's."
+  },
+  "topic.card.ballot.levelTwo": {
+    "text": "{{a}} and {{b}} are level",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote when the two leading changes have the same number of yes votes. {{a}} and {{b}} are their letters."
+  },
+  "topic.card.ballot.level": {
+    "text": "The leading changes are level",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote when three or more changes share the most yes votes."
+  },
+  "topic.card.ballot.count": {
+    "text": "{{choice}} {{yes}}",
+    "description": "One choice's yes votes in the line under the headline at the foot of a request's card when two or more changes built for it compete for the group's vote, for example \"A 2\". {{choice}} is a change's letter, or the word for neither or for closing the request; {{yes}} its yes votes."
+  },
+  "topic.card.ballot.vote": {
+    "text": "Vote",
+    "description": "Button at the foot of a request's card when two or more changes built for it compete for the group's vote. Pressing it asks which change should go live."
+  },
+  "topic.card.ballot.change": {
+    "text": "Change my vote",
+    "description": "Link at the foot of a request's card when two or more changes built for it compete for the group's vote, once the viewer has voted. Pressing it asks again which change should go live."
+  },
+  "topic.card.ballot.which": {
+    "text": "Which one should go live?",
+    "description": "Question shown at the foot of a request's card when two or more changes built for it compete for the group's vote after Vote is pressed, over a button for each change and one for none of them."
+  },
+  "topic.card.ballot.cancel": {
+    "text": "Cancel",
+    "description": "Link beside the choices at the foot of a request's card when two or more changes built for it compete for the group's vote: puts the question away without voting."
+  },
   "topic.card.shots.noneTitle": {
     "text": "Nothing you can see changes",
     "description": "Heading in the box where a change's before and after screenshots would be, on a change that alters nothing visible."
@@ -6782,5 +6834,13 @@
   "topic.card.shots.noneText": {
     "text": "This change is to how it works underneath, so there are no before and after screenshots. The summary above says what it does.",
     "description": "Sentence under \"Nothing you can see changes\" in the box where a change's before and after screenshots would be."
+  },
+  "topic.card.shots.tile": {
+    "text": "Screen {{index}} of {{total}}",
+    "description": "Accessible name of a small picture under a change's before and after picture on its page: pressing it shows that screen in the picture above. {{index}} is the screen's position and {{total}} how many screens the change has."
+  },
+  "topic.card.shots.screenOf": {
+    "text": "{{index}} of {{total}} screens",
+    "description": "Small line beside the row of screen pictures under a change's before and after picture: which screen the picture above is showing. {{total}} is 2 or more."
   }
 }

@@ -26744,7 +26744,8 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
 /* The words are the card's own, not a quote of somebody. */
 .dev-thread-card .dev-request-ask { margin-top: 6px; padding-inline: 0; border-inline-start: 0; }
 .dev-thread-card .dev-request-ask-text { font-size: 15.5px; line-height: 24px; max-width: 70ch; }
-.dev-thread-by { margin: 6px 0 0; font-size: 12.5px; line-height: 18px; color: var(--text-muted); }
+.dev-thread-by { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 12.5px; line-height: 18px; color: var(--text-muted); }
+.dev-thread-by-glyph { flex: none; width: 14px; height: 14px; }
 
 /* The foot: where it stands, once, and the action. */
 .dev-thread-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--app-sheet-line); }
@@ -26758,6 +26759,8 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
 .dev-thread-foot-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--lit-ink); }
 .dev-thread-foot-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .dev-thread-foot-extra { flex-basis: 100%; min-width: 0; }
+.dev-thread-foot-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.dev-thread-foot-q { flex-basis: 100%; margin: 0; font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-foot-also { margin: 0; font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .dev-thread-foot-also[data-thread-foot-also="bad"] > span { color: var(--state-blocked); }
 @media (max-width: 520px) { .dev-thread-foot-acts { flex-basis: 100%; } }
@@ -26771,6 +26774,34 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
   background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
   color: var(--text-secondary);
 }
+/* The card's picture: the shots viewer read as one picture. The Before and
+   After switch lies over the picture's foot, the side's name is a chip at
+   its top end, and the screens are tiles under it with the legend of the
+   one showing. Expanded to the window (its popover) the viewer is its usual
+   self, so every rule here leaves the open popover alone. */
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-view { position: relative; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar {
+  position: absolute; z-index: 4; inset-inline: 0; bottom: 10px;
+  display: flex; justify-content: center; align-items: center; gap: 8px;
+  margin: 0; padding: 0; pointer-events: none;
+}
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar > * { pointer-events: auto; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.dev-change-card-name, .shots-seg-both, .shots-screen-nav, .shots-view-notes) { display: none; }
+/* The switch is a white pill over the picture in either scheme, so its
+   resting label keeps a dark ink; :where keeps the viewer's own rule for
+   the side that is showing on top. */
+:where([data-thread-picture] .dev-change-viewer:not(:popover-open)) .shots-seg-side .shots-seg-btn { color: #52525b; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-seg-side { margin-inline: auto; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-expand { position: absolute; inset-inline-end: 10px; bottom: 0; margin: 0; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { inset-inline-start: auto; inset-inline-end: 10px; }
+.dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
+.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
+.dev-thread-tiles-cap { flex: 1 1 auto; min-width: 0; }
+.dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-tiles-legend { display: block; }
+@media (max-width: 520px) { .dev-thread-tiles { flex-wrap: wrap; } .dev-thread-tiles-cap { flex-basis: 100%; } }
 .dev-thread-wait > b { font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-wait > span { max-width: 46ch; font-size: 13.5px; line-height: 20px; }
 

@@ -182,3 +182,26 @@ export function stageNote(standing: WorkState): Phrase | null {
     default: return null;
   }
 }
+
+/**
+ * Pure: the headline of the foot under a ballot between competing changes:
+ * who leads and by how much, that the leaders are level, or, before anyone
+ * has voted, that the group is choosing. `options` are the changes only, in
+ * the ballot's order, each with its letter and its yes votes; `say` words a
+ * message id.
+ */
+export function ballotHeadline(
+  options: readonly { label: string; yes: number }[],
+  say: (id: string, values?: Record<string, unknown>) => string,
+): string {
+  const ranked = [...options].sort((a, b) => b.yes - a.yes);
+  const top = ranked[0];
+  const next = ranked[1];
+  if (!top || top.yes <= 0) return say('project:topic.card.ballot.choosing', { count: options.length });
+  if (next && next.yes === top.yes) {
+    return ranked.filter((o) => o.yes === top.yes).length === 2
+      ? say('project:topic.card.ballot.levelTwo', { a: top.label, b: next.label })
+      : say('project:topic.card.ballot.level');
+  }
+  return say('project:topic.card.ballot.leads', { choice: top.label, yes: top.yes, other: next ? next.yes : 0 });
+}

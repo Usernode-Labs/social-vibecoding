@@ -543,6 +543,13 @@ export interface ClosesRequestView {
 }
 
 export interface RequestView {
+  /**
+   * Homeroom bot's summary of the thread, once the request has a plan or a
+   * change (src/services/request-summary.js): its words, and what it drew
+   * on, for the line under it. Null while the asker's own words are all
+   * there is.
+   */
+  summary?: { text: string; basis: 'plan' | 'change' | 'changes' } | null;
   similar?: { number: number; title: string } | null;
   /**
    * #6680: the viewer's own private Homeroom bot thread that filed this

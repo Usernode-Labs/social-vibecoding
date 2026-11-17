@@ -6541,6 +6541,11 @@ const AppView = {
       similar: AppView._twinOf(issue),
       // #6680: the thread the viewer filed it from, for the link under its words.
       fromThread: AppView._fromThreadOf(issue),
+      // Homeroom bot's summary of the thread (services/request-summary.js),
+      // which the card shows in place of the asker's words once there is one.
+      summary: issue.summary && typeof issue.summary.text === 'string' && issue.summary.text.trim()
+        ? { text: issue.summary.text.trim(), basis: ['plan', 'change', 'changes'].includes(issue.summary.basis) ? issue.summary.basis : 'plan' }
+        : null,
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,

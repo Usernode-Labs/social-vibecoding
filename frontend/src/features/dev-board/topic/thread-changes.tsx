@@ -69,12 +69,14 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
 import { ChangeFoot, ChangeGates } from './change-head';
-import { ThreadCardContext } from './thread-card';
+import { ballotHeadline } from './card-model';
+import { ThreadCardContext, ThreadFoot } from './thread-card';
+import { dotLine } from './frame/topic-page';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';
 import { outcomeLine, type GovernanceView } from './governance-model';
-import { RequestWords } from './request-head';
+import { RequestWords, sentences } from './request-head';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 import { holdVotesInView, onVotesAsked, takeVotesInView } from './votes-in-view';
 import { pageSlug } from './thread-items';
@@ -1061,6 +1063,9 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
   const box = useRef<HTMLDivElement>(null);
   const views = useChangeViews(options, revision);
   const closeRow = useCloseRow(slug, close, revision);
+  const thread = useContext(ThreadCardContext);
+  // The card look's foot asks "Which one should go live?" after Vote is pressed.
+  const [asking, setAsking] = useState(false);
   // A door to one of these changes (./votes-in-view.ts) lands on the ballot,
   // where it is voted on.
   useBallotInView(options, box);
@@ -1096,6 +1101,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
       }
     } finally {
       setBusy(false);
+      setAsking(false);
       setRevision((n) => n + 1);
       onChanged();
       refocusAfterVote(box.current, 'ballot-option', from, wasFocused);
@@ -1129,6 +1135,59 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
           </div>
         ) : null}
       </div>
+      {thread.card ? (
+        // The card look: the ballot is the card's foot. It says who leads,
+        // and one Vote button asks the question after the press.
+        <div data-change-gate="ballot" data-done="false" data-tone={ballot.pick === null ? 'ask' : 'muted'} role="group" aria-label={t('project:topic.thread.ballot.label')}>
+          <ThreadFoot
+            what="ballot"
+            headline={ballotHeadline(choices.slice(0, options.length), (id, values) => t(id, values))}
+            sub={sentences([
+              `${dotLine([
+                ...choices.map((c) => t('project:topic.card.ballot.count', { choice: c.label, yes: c.yes })),
+                ballot.pick === null ? null : t('project:topic.thread.ballot.picked'),
+              ])}.`,
+              close ? t('project:topic.thread.ballot.aboutClose', { project }) : t('project:topic.thread.ballot.about', { project }),
+            ])}
+            extra={asking ? (
+              <div className="dev-thread-foot-ask" role="radiogroup" aria-label={t('project:topic.thread.ballot.label')}>
+                <p className="dev-thread-foot-q">{t('project:topic.card.ballot.which')}</p>
+                {choices.map((c) => {
+                  const on = ballot.pick === c.pick;
+                  return (
+                    <button
+                      key={c.key}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      className="dev-vote-btn"
+                      data-ballot-option={c.key}
+                      aria-disabled={busy || undefined}
+                      style={on ? { minWidth: 0 } : { minWidth: 0, background: 'var(--state-neutral-bg)', color: 'var(--text-primary)' }}
+                      onClick={(e) => { if (on) setAsking(false); else void choose(c.pick, e.currentTarget); }}
+                    >
+                      {on ? <CheckIcon className="h-3.5 w-3.5" aria-hidden="true" /> : null}{c.label}
+                    </button>
+                  );
+                })}
+                <button type="button" className="dev-change-gate-link" data-ballot-cancel="" onClick={() => setAsking(false)}>
+                  {t('project:topic.card.ballot.cancel')}
+                </button>
+              </div>
+            ) : null}
+          >
+            {asking ? null : ballot.pick === null ? (
+              <button type="button" className="dev-vote-btn" data-ballot-vote="" onClick={() => setAsking(true)}>
+                {t('project:topic.card.ballot.vote')}
+              </button>
+            ) : (
+              <button type="button" className="dev-change-gate-link" data-ballot-vote="change" onClick={() => setAsking(true)}>
+                {t('project:topic.card.ballot.change')}
+              </button>
+            )}
+          </ThreadFoot>
+        </div>
+      ) : (
       <div className="dev-change-pair mt-2">
         <div className="dev-change-gate" data-change-gate="ballot" data-done="false" data-tone={ballot.pick === null ? 'ask' : 'muted'} role="group" aria-label={t('project:topic.thread.ballot.label')}>
           <div className="dev-change-gate-main">
@@ -1171,6 +1230,7 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
             : t('project:topic.thread.ballot.about', { project })}</p>
         </div>
       </div>
+      )}
       {/* D5: each change folded under the ballot, its section one tap away. */}
       <div className="mt-2 flex flex-col" data-thread-folds={options.length}>
         {options.map((o, i) => (

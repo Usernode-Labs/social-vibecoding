@@ -566,20 +566,71 @@ function ShotsCard({ s, single = false }: {
 }): ReactNode {
   const t = useMessages('project');
   const box = useRef<HTMLElement>(null);
-  // The viewer starts on its automatic side (side by side where there is
-  // room). In the card it starts on After; whatever the reader picks next
-  // replaces it, as any choice does.
+  const [tiles, setTiles] = useState<{ src: string; pick: string }[]>([]);
+  const [at, setAt] = useState(0);
+  const [legend, setLegend] = useState('');
+  // The card's picture is the viewer the change's shots are drawn in, read
+  // as one picture: it starts on After (the viewer's own start is side by
+  // side where there is room), its screens are tiles under it, and the
+  // legend of the screen showing sits beside them. The tiles and the legend
+  // are read off the viewer's own markup, in its order, and a tile presses
+  // the viewer's own screen pick; nothing is written into the viewer but
+  // which of its radios is checked.
   useEffect(() => {
-    if (!single || s.state !== 'verified') return;
-    const auto = box.current?.querySelector<HTMLInputElement>('.shots-side-auto:checked');
-    const after = box.current?.querySelector<HTMLInputElement>('.shots-side-after');
+    const el = box.current;
+    if (!single || s.state !== 'verified' || !el) { setTiles([]); setLegend(''); return undefined; }
+    const auto = el.querySelector<HTMLInputElement>('.shots-side-auto:checked');
+    const after = el.querySelector<HTMLInputElement>('.shots-side-after');
     if (auto && after) after.checked = true;
+    const views = Array.from(el.querySelectorAll<HTMLElement>('.shots-view'));
+    const picks = Array.from(el.querySelectorAll<HTMLInputElement>('.shots-screen-pick'));
+    const read = () => {
+      const index = Math.max(0, picks.findIndex((pick) => pick.checked));
+      setAt(index);
+      setLegend(views[index]?.querySelector('.shots-view-notes')?.innerHTML || '');
+    };
+    setTiles(views.length > 1 && picks.length === views.length
+      ? views.map((view, i) => ({
+        src: view.querySelector<HTMLImageElement>('.shots-flip-after img, .shots-flip-before img')?.getAttribute('src') || '',
+        pick: picks[i].id,
+      }))
+      : []);
+    read();
+    el.addEventListener('change', read);
+    return () => el.removeEventListener('change', read);
   }, [single, s.state, s.html]);
+  const legendInner = useMemo(() => ({ __html: legend }), [legend]);
+  const pickScreen = (id: string) => {
+    const pick = box.current?.querySelector<HTMLInputElement>(`#${CSS.escape(id)}`);
+    if (!pick) return;
+    pick.checked = true;
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+  };
   if (s.state === 'verified') {
     return (
-      <section ref={box} className="dev-change-shots" data-change-shots="verified">
+      <section ref={box} className="dev-change-shots" data-change-shots="verified" data-thread-picture={single ? '' : undefined}>
         {/* AppView.shotsHtml's `thread` reading — escaped where it is built. */}
         <Html className="dev-change-shots-html" html={s.html} />
+        {single && (tiles.length || legend) ? (
+          <div className="dev-thread-tiles" data-thread-tiles={tiles.length}>
+            {tiles.map((tile, i) => (
+              <button
+                key={tile.pick}
+                type="button"
+                className="dev-thread-tile"
+                aria-pressed={i === at}
+                aria-label={t('project:topic.card.shots.tile', { index: i + 1, total: tiles.length })}
+                onClick={() => pickScreen(tile.pick)}
+              >
+                {tile.src ? <img src={tile.src} alt="" loading="lazy" decoding="async" /> : null}
+              </button>
+            ))}
+            <div className="dev-thread-tiles-cap">
+              {tiles.length ? <p className="dev-thread-tiles-count">{t('project:topic.card.shots.screenOf', { index: at + 1, total: tiles.length })}</p> : null}
+              {legend ? <div className="dev-thread-tiles-legend shots-view-notes" dangerouslySetInnerHTML={legendInner} /> : null}
+            </div>
+          </div>
+        ) : null}
       </section>
     );
   }

@@ -19,7 +19,7 @@
 
 import { createContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
-import { XIcon } from '@/components/ui/icons';
+import { SparklesIcon, XIcon } from '@/components/ui/icons';
 
 import { useInnerHtml } from '../../../lib/html';
 import { useMessages } from '../../../lib/i18n/react';
@@ -66,14 +66,28 @@ export function ThreadKicker({ kind, number }: { kind: 'request' | 'change'; num
   );
 }
 
-/** Whose words the card's summary is: the asker's own, its author's, or Homeroom bot's. */
-export function WordsBy({ who, name = null }: { who: 'asker' | 'author' | 'bot'; name?: string | null }): ReactNode {
+/**
+ * Whose words the card's summary is: the asker's own, a change's author's,
+ * or Homeroom bot's. A request's summary by the bot says what it drew on
+ * (`basis`): the request and its plan, its change, or its changes.
+ */
+export function WordsBy({ who, name = null, basis = null }: {
+  who: 'asker' | 'author' | 'bot';
+  name?: string | null;
+  basis?: 'plan' | 'change' | 'changes' | null;
+}): ReactNode {
   const t = useMessages('project');
   if (who !== 'bot' && !name) return null;
+  const words = who === 'asker' ? t('project:topic.card.ownWords', { name })
+    : who === 'author' ? t('project:topic.card.summaryBy', { name })
+      : basis === 'plan' ? t('project:topic.card.summaryByBotPlan')
+        : basis === 'change' ? t('project:topic.card.summaryByBotChange')
+          : basis === 'changes' ? t('project:topic.card.summaryByBotChanges')
+            : t('project:topic.card.summaryByBot');
   return (
     <p className="dev-thread-by" data-thread-by={who}>
-      {who === 'bot' ? t('project:topic.card.summaryByBot')
-        : who === 'asker' ? t('project:topic.card.ownWords', { name }) : t('project:topic.card.summaryBy', { name })}
+      {who === 'bot' ? <SparklesIcon className="dev-thread-by-glyph" aria-hidden="true" /> : null}
+      <span>{words}</span>
     </p>
   );
 }

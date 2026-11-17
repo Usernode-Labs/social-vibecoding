@@ -4360,9 +4360,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "#1808: a request's GitHub replies carry a day and a time, and the year once it is not this one; Homeroom bot's spec comment is the request's spec card and a line saying it was posted, not a reply (#3490, #4453)",
+      "name": "#1808: a request's GitHub replies carry a day and a time, and the year once it is not this one; Homeroom bot's spec comment is a line saying it was posted, not a reply, and the plan is the card's Read plan and the timeline's Planned step (#3490, #4453)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
-      "expectSelector": "body:has(#gc-thread-head .dev-request-specs > .messages-object-card.dev-request-spec .messages-object-icon ~ .dev-request-read):has(#gc-thread-messages .dev-request-event[data-request-event=\"spec\"]) #gc-thread-messages .gc-msg-github .gc-msg-time[title]",
+      "expectSelector": "body:has(#gc-thread-head .dev-thread-foot .dev-thread-foot-acts > [data-thread-foot-plan]):has(#gc-thread-rail [data-rail-press=\"plan\"] [data-rail-open=\"plan\"]):has(#gc-thread-messages .dev-request-event[data-request-event=\"spec\"]) #gc-thread-messages .gc-msg-github .gc-msg-time[title]",
       "expectText": "2024"
     },
     {

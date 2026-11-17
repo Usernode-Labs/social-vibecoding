@@ -265,3 +265,63 @@ test('two competing changes are seeded on a staging copy only, as fake rows for 
     assert.match(call.args[7], /^staging-demo-/, 'by fake people, never whoever opened the preview');
   }
 });
+
+test('the ballot\'s foot says who leads, that the leaders are level, or that the group is choosing', () => {
+  const { ballotHeadline } = loadTsx(MODEL);
+  const say = (id, values) => message(id, values);
+  assert.equal(ballotHeadline([{ label: 'A', yes: 0 }, { label: 'B', yes: 0 }], say), 'Choosing between 2 changes');
+  assert.equal(ballotHeadline([{ label: 'A', yes: 2 }, { label: 'B', yes: 1 }], say), 'A leads, 2 to 1');
+  assert.equal(ballotHeadline([{ label: 'A', yes: 1 }, { label: 'B', yes: 3 }], say), 'B leads, 3 to 1');
+  assert.equal(ballotHeadline([{ label: 'A', yes: 2 }, { label: 'B', yes: 2 }], say), 'A and B are level');
+  assert.equal(ballotHeadline([{ label: 'A', yes: 2 }, { label: 'B', yes: 2 }, { label: 'C', yes: 2 }], say), 'The leading changes are level');
+  assert.equal(ballotHeadline([{ label: 'A', yes: 1 }], say), 'A leads, 1 to 0');
+  // One Vote button; the question comes after the press.
+  const changes = read(CHANGES);
+  assert.match(changes, /\{thread\.card \? \([\s\S]*?<ThreadFoot\s+what="ballot"/);
+  assert.match(changes, /className="dev-vote-btn" data-ballot-vote="" onClick=\{\(\) => setAsking\(true\)\}/);
+  assert.match(changes, /<p className="dev-thread-foot-q">\{t\('project:topic\.card\.ballot\.which'\)\}<\/p>/);
+  assert.match(changes, /setBusy\(false\);\s*setAsking\(false\);/, 'a vote cast puts the question away');
+  assert.equal(message('project:topic.card.ballot.which'), 'Which one should go live?');
+});
+
+test('a request with a summary shows it on the card, says what it was written from, and keeps the asker\'s words a press away', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const view = (over = {}) => ({
+    number: 4417, category: null, menuKey: '', asker: 'maya', askedAt: null, askedTime: '', askedTitle: '',
+    title: 'Dark mode switch', titleEditing: null, bodyHtml: '<div class="dev-issue-body"><p>Settings is three taps away.</p></div>',
+    bodyMarkdown: 'Settings is three taps away.',
+    editor: { issue: 4417, markdown: '', source: null, canEdit: false },
+    status: { stage: 'spec', lead: null, note: null, fine: null, action: null, closed: null },
+    ...over,
+  });
+  const own = renderComponent(REQUEST, 'RequestHead', { r: view() });
+  assert.match(own, /Settings is three taps away\./);
+  assert.match(own, /<p class="dev-thread-by" data-thread-by="asker"><span>maya’s own words\.<\/span><\/p>/);
+  const withSummary = renderComponent(REQUEST, 'RequestHead', { r: view({ summary: { text: 'maya asked for a switch. <b>Homeroom bot</b> has a plan.', basis: 'plan' } }) });
+  assert.match(withSummary, /<p>maya asked for a switch\. &lt;b&gt;Homeroom bot&lt;\/b&gt; has a plan\.<\/p>/, 'plain text, escaped');
+  assert.doesNotMatch(withSummary, /Settings is three taps away\./, 'the asker\'s words are the Asked step\'s, not the card\'s');
+  assert.match(withSummary, /data-thread-by="bot">.*?<span>Summary by Homeroom bot, from the request and the plan\.<\/span><\/p>/);
+  assert.equal(message('project:topic.card.summaryByBotChange'), 'Summary by Homeroom bot, from the request and its change.');
+  assert.equal(message('project:topic.card.summaryByBotChanges'), 'Summary by Homeroom bot, from the request and its changes.');
+  const request = read(REQUEST);
+  assert.match(request, /const summary = !frame && r\.summary\?\.text \? r\.summary : null;/, 'the frame\'s looks keep the request as written');
+  assert.match(request, /\{unbuilt\.length && !cardLook \? \(/, 'the plan card gives way to Read plan in the foot');
+  assert.match(request, /data-thread-foot-plan=\{plan\.key\} onClick=\{\(\) => openStep\(page, \{ kind: 'plan', key: plan\.key \}\)\}/);
+  // The view takes it from the request's read, and only a basis it knows.
+  const av = read('public/js/app-view.js');
+  assert.match(av, /summary: issue\.summary && typeof issue\.summary\.text === 'string' && issue\.summary\.text\.trim\(\)/);
+});
+
+test('the card\'s picture is the viewer read as one picture: After first, tiles for its screens, the legend beside them', () => {
+  const change = read(CHANGE);
+  assert.match(change, /if \(auto && after\) after\.checked = true;/, 'it starts on After, not side by side');
+  assert.match(change, /pick\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/, 'a tile presses the viewer\'s own screen pick');
+  assert.match(change, /<ShotsCard s=\{v\.shots\} single=\{cardLook\} \/>/);
+  assert.match(change, /className="dev-thread-tile"\s+aria-pressed=\{i === at\}/);
+  assert.equal(message('project:topic.card.shots.screenOf', { index: 2, total: 3 }), '2 of 3 screens');
+  const css = read('public/css/app.css');
+  const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf("THE BELL'S SHEET"));
+  assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.dev-change-card-name, \.shots-seg-both, \.shots-screen-nav, \.shots-view-notes\) \{ display: none; \}/,
+    'side by side, the pager and the viewer\'s own legend give way; expanded to the window it is its usual self');
+  assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) \.shots-bar \{\s*position: absolute;/, 'the switch lies over the picture');
+});
