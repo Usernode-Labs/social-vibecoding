@@ -1324,7 +1324,7 @@
     "description": "Label of a switch in Settings, Accessibility: whether project cards play their short, silent preview clips."
   },
   "accessibility.previews.description": {
-    "text": "A project's card plays a short, silent clip of the project when you point at it, or on a phone for the card you stop on. Turn this off to see still pictures only. Clips never play when your device is set to reduce motion or save data.",
+    "text": "A project's card plays a short, silent clip of the project when you point at it. Turn this off to see still pictures only. Clips never play when your device is set to reduce motion or save data.",
     "description": "Explanation under the Play previews switch in Settings, Accessibility."
   },
   "privacy.whoCanMessage.title": {

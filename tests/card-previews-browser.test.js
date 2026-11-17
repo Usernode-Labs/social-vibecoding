@@ -7,15 +7,15 @@
 // three cards and driven with Playwright:
 //
 //   - at rest there is no <video> at all: nothing mounts and nothing is
-//     fetched until a card is pointed at, focused or (on a phone) in view;
+//     fetched until a card is pointed at or focused;
 //   - on a device with a mouse it starts after a moment of pointing, loops,
 //     and stops when the pointer leaves; a quick pass over a card starts
 //     nothing; keyboard focus starts it too;
 //   - one plays at a time;
 //   - nothing plays under reduced motion, with Data Saver, or with "Play
 //     previews" turned off;
-//   - on a phone the card most in view plays once, without looping, then
-//     rests on its picture;
+//   - on a phone no card plays on its own, in view or after scrolling: the
+//     picture stays and no clip is ever fetched;
 //   - a missing loop leaves the picture, with no error on the console.
 //
 // Skipped (with the reason) where Chromium cannot launch.
@@ -172,23 +172,21 @@ test('a card\'s preview plays only when it is chosen, one at a time, and never a
       });
     }
 
-    await t.test('a phone: the card most in view plays once, unlooped, then rests on its picture', async () => {
+    await t.test('a phone: no card plays on its own, in view or after scrolling, and no clip is fetched', async () => {
       const context = await browser.newContext({ viewport: { width: 360, height: 420 }, hasTouch: true, isMobile: true });
       const page = await context.newPage();
+      const fetchedBefore = fetched.length;
       await page.goto(`${base}/phone`);
       await page.waitForSelector('[data-card-preview]', { state: 'attached' });
-      // The first card is the one most in view once things settle.
-      await playing(page, 0);
-      assert.equal(await videos(page), 1, 'never more than one');
-      assert.equal(await page.locator('[data-card-preview-video]').evaluate((v) => v.loop), false, 'a phone plays it once');
-      // It ends (or reaches five seconds) and the picture shows again.
-      await page.waitForFunction(() => !document.querySelector('[data-card-preview-video]'), null, { timeout: 9000 });
-      await page.waitForTimeout(600);
-      assert.equal(await videos(page), 0, 'it does not play again while it stays in view');
-      // Scroll the next card into view: it plays.
+      // Long enough for the old settle-and-play to have happened.
+      await page.waitForTimeout(1500);
+      assert.equal(await videos(page), 0, 'no video on a phone');
+      assert.equal(fetched.length, fetchedBefore, 'no clip requested on a phone');
+      // Scrolling another card into view changes nothing.
       await page.evaluate(() => window.scrollTo(0, document.querySelector('[data-card="2"]').offsetTop));
-      await playing(page, 2);
-      assert.equal(await videos(page), 1);
+      await page.waitForTimeout(1500);
+      assert.equal(await videos(page), 0, 'still no video after scrolling');
+      assert.equal(fetched.length, fetchedBefore, 'still no clip requested after scrolling');
       await context.close();
     });
   } finally {
