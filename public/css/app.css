@@ -4391,24 +4391,37 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   --site-on-sun: #121a0e;
   --site-chosen: #121a0e;
   --site-chosen-ink: #fffeea;
+  /* The band behind the rules, a hairline between rows, and the face of
+     the hub in the private page's picture. */
+  --site-sun-band: #fff6ac;
+  --site-line-soft: rgba(18, 26, 14, 0.2);
+  --site-ground-card: #fffeea;
 }
 .dark #auth-landing-screen {
-  --site-ink: #f4f4f5;
-  --site-muted: #a1a1aa;
-  --site-label: #a1a1aa;
-  --site-line: rgba(255, 255, 255, 0.34);
-  --site-sky: transparent;
-  --site-ground: transparent;
-  --site-panel: #18181b;
+  /* THE SITE AT NIGHT (17 Nov 2026). The same poster with the lights off:
+     the ground and the cards are the navy of the brand look's dark mode
+     (--bl-page, --bl-card), the words and the outlines the site's cream, a
+     dark sky with stars, leaf still green and sun still sun. It used to be transparent over the app's dark wallpaper, whose red
+     and purple washes are no colour of this site. */
+  --site-ink: #fffeea;
+  --site-muted: #c9ccb6;
+  --site-label: #a8ad97;
+  --site-line: rgba(255, 254, 234, 0.46);
+  --site-sky: #0b1f43;
+  --site-ground: #0d1421;
+  --site-panel: #182135;
   --site-sun-pale: transparent;
-  --site-sun-deep: #2b2a1c;
-  --site-window: #232326;
-  --site-leaf: #1b2618;
-  --site-leaf-pale: #26331f;
-  --site-sky-pale: #1c2733;
-  --site-mint: #26331f;
-  --site-chosen: #f4f4f5;
-  --site-chosen-ink: #18181b;
+  --site-sun-band: #131c2e;
+  --site-sun-deep: #3b3713;
+  --site-window: #243047;
+  --site-leaf: #2d4a2a;
+  --site-leaf-pale: #3a5c36;
+  --site-sky-pale: #173560;
+  --site-mint: #2f4d2b;
+  --site-chosen: #fffeea;
+  --site-chosen-ink: #0d1421;
+  --site-line-soft: rgba(255, 254, 234, 0.18);
+  --site-ground-card: #202b43;
 }
 /* One colour edge to edge, around content that keeps the column's width:
    the band's own fill, let out to both sides as a border image (a flat
@@ -4425,8 +4438,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
 /* The sky band is the website's own sky, clouds and all, in light. It is a
    picture, so it is laid behind the band as wide as the usable box rather
    than as a border image, which would stretch it. Dark has no sky band. */
-html:not(.dark) #auth-landing-screen .site-clouds { position: relative; isolation: isolate; }
-html:not(.dark) #auth-landing-screen .site-clouds::before {
+#auth-landing-screen .site-clouds { position: relative; isolation: isolate; }
+#auth-landing-screen .site-clouds::before {
   content: "";
   position: absolute;
   z-index: -1;
@@ -4436,14 +4449,68 @@ html:not(.dark) #auth-landing-screen .site-clouds::before {
   transform: translateX(-50%);
   background: var(--site-sky) url('/brand/sky.webp') center / cover no-repeat;
 }
+/* The large "Friend groups" card on the private page: the same sky, faded
+   out under its words. At night it is the night's sky. */
+#auth-landing-screen .site-sky-card {
+  background:
+    linear-gradient(90deg, var(--site-panel) 0%, color-mix(in srgb, var(--site-panel) 78%, transparent) 42%, transparent 78%),
+    var(--site-sky) url('/brand/sky.webp') center / cover no-repeat;
+}
+.dark #auth-landing-screen .site-sky-card {
+  background-color: var(--site-sky);
+  background-image:
+    linear-gradient(90deg, var(--site-panel) 0%, color-mix(in srgb, var(--site-panel) 72%, transparent) 42%, transparent 78%),
+    radial-gradient(1.2px 1.2px at 481px 246px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 105px 102px, #ffee6f 98%, transparent),
+    radial-gradient(2.0px 2.0px at 322px 103px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 54px 283px, #fffeea 98%, transparent),
+    radial-gradient(2.0px 2.0px at 29px 312px, #fffeea 98%, transparent),
+    radial-gradient(2.0px 2.0px at 342px 323px, #ffee6f 98%, transparent),
+    radial-gradient(1.2px 1.2px at 433px 278px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 458px 131px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 175px 233px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 127px 335px, #fffeea 98%, transparent),
+    linear-gradient(180deg, #050d1c 0%, #0b1f43 100%);
+  background-size: auto, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, auto;
+}
+/* At night the band is a dark sky with stars in place of the clouds (the
+   clouds read oddly dimmed). The stars are two tiles of small dots, of
+   different sizes so the pattern does not show, over a deep blue that is
+   darkest at the top. */
+.dark #auth-landing-screen .site-clouds::before {
+  background-color: var(--site-sky);
+  background-image:
+    radial-gradient(1.2px 1.2px at 481px 246px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 105px 102px, #ffee6f 98%, transparent),
+    radial-gradient(2.0px 2.0px at 322px 103px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 54px 283px, #fffeea 98%, transparent),
+    radial-gradient(2.0px 2.0px at 29px 312px, #fffeea 98%, transparent),
+    radial-gradient(2.0px 2.0px at 342px 323px, #ffee6f 98%, transparent),
+    radial-gradient(1.2px 1.2px at 433px 278px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 458px 131px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 175px 233px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 127px 335px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 95px 242px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 572px 50px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 243px 270px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 118px 213px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 76px 16px, #fffeea 98%, transparent),
+    radial-gradient(2.0px 2.0px at 222px 34px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 414px 222px, #ffee6f 98%, transparent),
+    radial-gradient(1.2px 1.2px at 699px 146px, #fffeea 98%, transparent),
+    radial-gradient(1.2px 1.2px at 23px 217px, #fffeea 98%, transparent),
+    linear-gradient(180deg, #050d1c 0%, #0b1f43 100%);
+  background-size: 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, auto;
+  background-repeat: repeat;
+}
 /* The ground under the two pages is the site's cream, flat: the washes of
    the app's wallpaper are the app's. The bar's faked glass follows it. Not
    under a look (html[data-skin]), which paints its own ground and draws the
    landing in its own frame. */
-html:not(.dark):not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) {
+html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) {
   background: var(--site-ground);
 }
-html:not(.dark):not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) #landing-header {
+html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) #landing-header {
   --fake-glass-tint: var(--site-ground);
 }
 /* Words on the two pages are the site's sans. */
@@ -4519,6 +4586,13 @@ html:not(.dark):not([data-skin]) #auth-landing-screen:has(:is([data-guest-discov
 #auth-landing-screen [data-guest-discover] :is([data-guest-card], [data-guest-featured]) > span:last-child {
   border-top: 1px solid var(--site-line);
 }
+/* The first featured communities, large: a taller picture, the name a size
+   up, two lines of what it is, and how many members and changes. */
+#auth-landing-screen [data-guest-discover] [data-guest-lead] > span:first-child { aspect-ratio: 16 / 9; }
+#auth-landing-screen [data-guest-discover] [data-guest-lead] > span:last-child { padding: 14px 16px 16px; min-height: 132px; }
+#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-link] { font-size: 24px; line-height: 29px; }
+#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-about] { margin-top: 4px; font-size: 15px; line-height: 21px; color: var(--site-muted); }
+#auth-landing-screen [data-guest-discover] [data-guest-lead] [data-guest-card-stats] { color: var(--site-label); }
 #auth-landing-screen [data-guest-discover] [data-guest-card-link] {
   font-family: var(--site-serif);
   font-size: 19px;

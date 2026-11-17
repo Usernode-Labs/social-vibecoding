@@ -245,17 +245,24 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
  * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
  * finger has a real target while the card looks exactly as it did.
  */
-export function Card({ app, eager, featured = false }: {
+export function Card({ app, eager, featured = false, lead = false }: {
   app: GuestApp;
   eager: boolean;
   featured?: boolean;
+  /** One of the first featured communities on a visitor's landing: drawn large, with its members and changes. */
+  lead?: boolean;
 }) {
   const t = useMessages('auth');
+  const th = useMessages('home');
   const people = app.active_users || 0;
+  const members = app.member_count || 0;
+  const changes = app.merged_count || 0;
+  const stats = [members > 0 ? th('home:join.members', { count: members }) : null, changes > 0 ? t('auth:guest.card.changes', { count: changes }) : null].filter(Boolean).join(' · ');
   return (
     <article
       data-guest-card={featured ? undefined : app.slug}
       data-guest-featured={featured ? app.slug : undefined}
+      data-guest-lead={lead ? '' : undefined}
       className="group relative flex min-w-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05),0_10px_22px_-12px_rgba(0,0,0,0.22)] transition-[transform,box-shadow] duration-150 ease-out hover:-translate-y-1 hover:shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_2px_4px_rgba(0,0,0,0.05),0_22px_36px_-14px_rgba(0,0,0,0.34)] active:scale-[0.97] active:duration-75 has-[a:focus-visible]:outline has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-[3px] has-[a:focus-visible]:outline-violet-600 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100 dark:bg-zinc-900 dark:has-[a:focus-visible]:outline-violet-400"
     >
       <CardCover app={app} eager={eager} />
@@ -277,6 +284,9 @@ export function Card({ app, eager, featured = false }: {
           <span data-guest-card-about="" className="mt-0.5 line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
             {app.description}
           </span>
+        ) : null}
+        {lead && stats ? (
+          <span data-guest-card-stats="" className="mt-auto pt-2 text-[13px] leading-[18px] font-medium text-zinc-600 dark:text-zinc-300">{stats}</span>
         ) : null}
       </span>
     </article>

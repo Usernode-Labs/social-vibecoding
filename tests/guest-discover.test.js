@@ -325,9 +325,15 @@ test('a card is the same signed in or out: no Pin, no Join, no footer, one count
   }
   // One code path: the same community's card is drawn identically on the
   // signed-out page and on the signed-in Home (#6609).
+  // The one difference (17 Nov 2026): a visitor's first featured communities
+  // are drawn large, so their cards carry the mark for it and a line of
+  // members and changes. Take those two away and the card is the same.
+  const plain = (card) => card.replace(' data-guest-lead=""', '').replace(/<span data-guest-card-stats=""[^>]*>[^<]*<\/span>/, '');
   for (const slug of ['game-corner', 'todo-list', 'fresh-one']) {
-    assert.equal(cardOf(signedIn, slug), cardOf(guest, slug), slug);
+    assert.equal(plain(cardOf(guest, slug)), cardOf(signedIn, slug), slug);
   }
+  assert.equal(cardOf(guest, 'fresh-one'), cardOf(signedIn, 'fresh-one'), 'a card outside the large row is identical');
+  assert.doesNotMatch(signedIn, /data-guest-lead|data-guest-card-stats/);
   // The card has no footer prop at all, so a later change cannot branch it.
   assert.doesNotMatch(read(DISCOVER), /footer=\{footerFor|data-guest-card-footer/);
   assert.doesNotMatch(read(JOIN), /footerFor|home:join\.votes|home:join\.button/);
@@ -375,8 +381,23 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   assert.deepEqual(cardsOf(html), ['fresh-one']);
   // #6434: Featured wraps in the same grid as the rest, at the same size,
   // and the rest get their own heading.
-  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
-  assert.doesNotMatch(read(JOIN), /snap-x|overflow-x-auto|w-\[min\(17rem/, 'nothing in the section scrolls sideways');
+  assert.match(html, /<div data-home-join-featured=""[^>]*><h3 id="home-join-featured-label" class="text-xs font-bold uppercase tracking-\[0\.06em\][^"]*">Featured<\/h3><div role="list" aria-labelledby="home-join-featured-label" data-home-join-featured-rest="" class="grid grid-cols-\[repeat\(auto-fill,[^"]*\] gap-3 px-1"><div role="listitem" class="flex \[&amp;&gt;article\]:flex-1">/);
+  assert.doesNotMatch(html.slice(html.indexOf('data-home-join-featured=""')), /snap-x|overflow-x-auto/, 'signed in, no row of cards scrolls sideways');
+  // A VISITOR'S FEATURED IS TWO ROWS THAT SCROLL SIDEWAYS (17 Nov 2026,
+  // Drea's review): the first four drawn large, each with its members and
+  // changes, then the rest of Featured as a smaller row, both above More
+  // communities. Signed in, Featured keeps the grid above.
+  const visitor = draw({ signedIn: false });
+  assert.deepEqual(featuredOf(visitor), ['todo-list', 'game-corner'], 'the same communities in the same order');
+  assert.match(visitor, /<div role="list" aria-labelledby="guest-join-featured-label" data-home-join-lead="2" class="flex snap-x snap-mandatory gap-3\.5 overflow-x-auto [^"]*">/);
+  assert.equal([...visitor.matchAll(/<article data-guest-featured="[^"]+" data-guest-lead=""/g)].length, 2, 'both are in the large row: there are fewer than four');
+  assert.doesNotMatch(visitor, /data-home-join-featured-rest/, 'and no second row with nothing left for it');
+  const join = read(JOIN);
+  assert.match(join, /const LEAD_FEATURED = 4;/);
+  assert.match(join, /const lead = useMemo\(\(\) => \(signedIn \? \[\] : featured\.slice\(0, LEAD_FEATURED\)\), \[signedIn, featured\]\);/);
+  assert.match(join, /: 'flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-1 pb-1 /, 'the rest of a visitor\'s Featured scrolls sideways too');
+  assert.equal(message('auth:guest.card.changes', { count: 34 }), '34 changes');
+  assert.equal(message('auth:guest.card.changes', { count: 1 }), '1 change');
   assert.equal(message('home:join.featured'), 'Featured');
   assert.equal(message('home:join.more'), 'More communities');
   assert.equal(JSON.parse(read('frontend/locales/en/home.json'))['join.all'], undefined, 'the old heading went with it');
@@ -737,9 +758,15 @@ test('the short story heads Discover: the headline, the Wikipedia line on two li
       assert.match(css, new RegExp(`#auth-landing-screen \\{[^}]*${name}:`), `${name} is declared`);
     }
   }
-  // The clouds are the light shell's: a picture behind the band, as wide as
-  // the usable page; the dark shell keeps its own ground.
-  assert.match(css, /html:not\(\.dark\) #auth-landing-screen \.site-clouds::before \{[^}]*width: var\(--platform-usable-w\);[^}]*background: var\(--site-sky\) url\('\/brand\/sky\.webp'\) center \/ cover no-repeat;\s+\}/);
+  // The clouds are a picture behind the band, as wide as the usable page.
+  // At night (the dark shell) the band is a dark sky with stars in their
+  // place, two tiles of small dots over a deep blue: no second picture.
+  assert.match(css, /\n#auth-landing-screen \.site-clouds::before \{[^}]*width: var\(--platform-usable-w\);[^}]*background: var\(--site-sky\) url\('\/brand\/sky\.webp'\) center \/ cover no-repeat;\s+\}/);
+  const night = css.match(/\.dark #auth-landing-screen \.site-clouds::before \{[^}]*\}/);
+  assert.ok(night, 'the dark shell has its own sky');
+  assert.equal([...night[0].matchAll(/radial-gradient\(/g)].length, 19, 'ten stars on one tile and nine on another');
+  assert.match(night[0], /linear-gradient\(180deg, #050d1c 0%, #0b1f43 100%\);\s+background-size: (?:520px 360px, ){10}(?:730px 410px, ){9}auto;/);
+  assert.doesNotMatch(night[0], /url\(/);
   // The hero's face is vendored, never fetched from another origin.
   assert.match(css, /--site-display: 'Source Serif 4', 'Young Serif', Georgia, 'Times New Roman', serif;/);
   assert.match(css, /@font-face \{\s+font-family: 'Source Serif 4';\s+src: url\('\/fonts\/source-serif-4\/source-serif-4-latin-opsz-normal\.woff2'\) format\('woff2'\);/);
@@ -1006,7 +1033,7 @@ test('the landing\'s declared checks hold Discover and the bar\'s Sign in, folde
   // And the page behind that door, at its own address, in Discover's place.
   const groups = manifest.tests.find((t) => t.path === '/communities?shot=anon');
   assert.ok(groups, 'the page about private communities has a declared check');
-  assert.match(groups.expectSelector, /^#auth-landing-screen:not\(\.hidden\):not\(:has\(\[data-guest-discover\]\)\) \[data-guest-groups\]:has\(button\[data-guest-groups-start\]\)/);
+  assert.match(groups.expectSelector, /^#auth-landing-screen:not\(\.hidden\):not\(:has\(\[data-guest-discover\]\)\) \[data-guest-groups\]:has\(\[data-guest-groups-for\]\):has\(button\[data-guest-groups-start\]\)/);
   assert.equal(groups.expectText, 'You or the group');
 });
 

@@ -50,18 +50,16 @@
 import type { ReactNode } from 'react';
 
 import {
+  ArrowRightShortIcon,
   BallotIcon,
+  BoardIcon,
   BookmarkIcon,
-  CheckIcon,
-  CupIcon,
-  GlobeIcon,
   HandRaisedIcon,
-  HomeIcon,
-  LockIcon,
-  NewspaperIcon,
+  HashIcon,
   TrophyOutlineIcon,
   UserCheckIcon,
   UserGroupIcon,
+  UserPlusIcon,
 } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
@@ -83,23 +81,10 @@ const CARD = 'rounded-[14px] border border-[color:var(--site-line)] bg-[var(--si
 // A card's or a row's title, in the serif, over its line.
 const ROW_TITLE = `${SERIF} text-[21px] leading-[26px] text-[color:var(--site-ink)]`;
 const ROW_LINE = 'text-[15px] leading-[21px] text-[color:var(--site-muted)]';
-// A link inside a sentence: ink, underlined (the site has no second accent).
-const LINK = 'font-semibold text-[color:var(--site-ink)] underline decoration-1 underline-offset-[3px]';
 // A band's own padding, top and bottom, inside the column's gutter.
 const BAND = 'flex flex-col gap-6 px-4 py-12 md:gap-7 md:py-[68px]';
-// The strip a window opens with, and one of its three dots.
-const STRIP = 'flex h-6 items-center gap-1.5 border-b border-[color:var(--site-line)] px-2.5 md:h-8 md:px-3';
-const DOT = 'h-2 w-2 rounded-full border border-[color:var(--site-line)] md:h-2.5 md:w-2.5';
-// The glyph tile a kind of group leads with: one of three fills in turn. Sun
-// keeps its ink glyph in the dark shell; the two pale fills follow the ink.
+// The glyph tile a kind of group leads with; its fill is named where it is drawn.
 const TILE = 'flex h-[42px] w-[42px] shrink-0 items-center justify-center rounded-[10px] border border-[color:var(--site-line)]';
-const TILE_FILLS = [
-  'bg-[var(--site-sun)] text-[color:var(--site-on-sun)]',
-  'bg-[var(--site-sky-pale)] text-[color:var(--site-ink)]',
-  'bg-[var(--site-mint)] text-[color:var(--site-ink)]',
-];
-// The round sun disc a check, a rule's glyph and a stage's glyph sit on.
-const SUN_DISC = 'flex shrink-0 items-center justify-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-sun)] text-[color:var(--site-on-sun)]';
 
 export function GuestCommunities({ waitlist, onStart }: {
   /** New accounts wait in line: the button says so (guest-data newAccountsWait). */
@@ -114,13 +99,18 @@ export function GuestCommunities({ waitlist, onStart }: {
   const start = () => { noteSignUpFrom('groups'); onStart(); };
   const startLabel = waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.groups.start');
 
-  const groups: { key: string; icon: ReactNode; title: string; body: string }[] = [
-    { key: 'friends', icon: <UserGroupIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.friends.title'), body: t('auth:guest.groups.for.friends.body') },
-    { key: 'school', icon: <BookmarkIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.school.title'), body: t('auth:guest.groups.for.school.body') },
-    { key: 'clubs', icon: <TrophyOutlineIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.clubs.title'), body: t('auth:guest.groups.for.clubs.body') },
-    { key: 'studios', icon: <CupIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.studios.title'), body: t('auth:guest.groups.for.studios.body') },
-    { key: 'neighbors', icon: <HomeIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.neighbors.title'), body: t('auth:guest.groups.for.neighbors.body') },
-    { key: 'towns', icon: <NewspaperIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.towns.title'), body: t('auth:guest.groups.for.towns.body') },
+  // The three kinds of group drawn as cards, then three more as a line each
+  // under a rule (Drea's mock-up, 17 Nov 2026): six identical cards read as
+  // a flat list.
+  const friends = { title: t('auth:guest.groups.for.friends.title'), body: t('auth:guest.groups.for.friends.body') };
+  const tinted: { key: string; icon: ReactNode; title: string; body: string; fill: string }[] = [
+    { key: 'school', icon: <BookmarkIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.school.title'), body: t('auth:guest.groups.for.school.body'), fill: 'bg-[var(--site-sky-pale)]' },
+    { key: 'clubs', icon: <TrophyOutlineIcon className="h-[22px] w-[22px]" />, title: t('auth:guest.groups.for.clubs.title'), body: t('auth:guest.groups.for.clubs.body'), fill: 'bg-[var(--site-mint)]' },
+  ];
+  const plain = [
+    { key: 'studios', title: t('auth:guest.groups.for.studios.title'), body: t('auth:guest.groups.for.studios.body') },
+    { key: 'neighbors', title: t('auth:guest.groups.for.neighbors.title'), body: t('auth:guest.groups.for.neighbors.body') },
+    { key: 'towns', title: t('auth:guest.groups.for.towns.title'), body: t('auth:guest.groups.for.towns.body') },
   ];
 
   const steps = [
@@ -129,39 +119,39 @@ export function GuestCommunities({ waitlist, onStart }: {
     { title: t('auth:guest.groups.how.change.title'), body: t('auth:guest.groups.how.change.body') },
   ];
 
-  const points = [
-    { title: t('auth:guest.groups.decides.suggest.title'), body: t('auth:guest.groups.decides.suggest.body') },
-    { title: t('auth:guest.groups.decides.see.title'), body: t('auth:guest.groups.decides.see.body') },
-    { title: t('auth:guest.groups.decides.configure.title'), body: t('auth:guest.groups.decides.configure.body') },
-  ];
-
   // The four presets a community picks from (services/governance-rules.js),
-  // in the Who decides dialog's order and its words. A new one starts on the
-  // first.
+  // in the Who decides dialog's order and under its names. Each line here is
+  // the short form of that dialog's own; a new community starts on the first.
   const rules: { key: string; icon: ReactNode; name: string; line: string }[] = [
-    { key: 'you_or_the_group', icon: <UserCheckIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.you_or_the_group.name'), line: td('dialogs:whoDecides.preset.you_or_the_group.line') },
-    { key: 'two_yeses', icon: <UserGroupIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.two_yeses.name'), line: td('dialogs:whoDecides.preset.two_yeses.line') },
-    { key: 'open_floor', icon: <HandRaisedIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.open_floor.name'), line: td('dialogs:whoDecides.preset.open_floor.line') },
-    { key: 'group_vote', icon: <BallotIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.group_vote.name'), line: td('dialogs:whoDecides.preset.group_vote.line') },
+    { key: 'you_or_the_group', icon: <UserCheckIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.you_or_the_group.name'), line: t('auth:guest.groups.rules.you_or_the_group') },
+    { key: 'two_yeses', icon: <UserGroupIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.two_yeses.name'), line: t('auth:guest.groups.rules.two_yeses') },
+    { key: 'open_floor', icon: <HandRaisedIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.open_floor.name'), line: t('auth:guest.groups.rules.open_floor') },
+    { key: 'group_vote', icon: <BallotIcon className="h-5 w-5" />, name: td('dialogs:whoDecides.preset.group_vote.name'), line: t('auth:guest.groups.rules.group_vote') },
   ];
 
-  const stages: { key: string; icon: ReactNode; title: string; body: ReactNode }[] = [
-    { key: 'solo', icon: <LockIcon className="h-[22px] w-[22px]" />, title: tc('communities:sections.solo.noun'), body: t('auth:guest.groups.private.solo') },
-    { key: 'invited', icon: <UserGroupIcon className="h-[22px] w-[22px]" />, title: tc('communities:sections.invited.noun'), body: t('auth:guest.groups.private.invited') },
-    {
-      key: 'open',
-      icon: <GlobeIcon className="h-[22px] w-[22px]" />,
-      title: tc('communities:sections.open.noun'),
-      body: <RichMessage id="auth:guest.groups.private.open" components={[<a href="/" className={LINK} />]} />,
-    },
+  // Just you, then a private community, then public if the group chooses.
+  const stages = [
+    { key: 'solo', label: tc('communities:sections.solo.noun') },
+    { key: 'invited', label: tc('communities:sections.invited.noun') },
+    { key: 'open', label: t('auth:guest.groups.private.publicIf') },
+  ];
+
+  // The hub in the hero's picture: every word is made up, and says so by
+  // being a supper club.
+  const hubRows: { key: string; icon: ReactNode; title: string; body: string; ask?: boolean }[] = [
+    { key: 'needs', icon: <BallotIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.groups.hub.needs.title'), body: t('auth:guest.groups.hub.needs.body'), ask: true },
+    { key: 'workshop', icon: <BoardIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.groups.hub.workshop.title'), body: t('auth:guest.groups.hub.workshop.body') },
+    { key: 'chat', icon: <HashIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.groups.hub.chat.title'), body: t('auth:guest.groups.hub.chat.body') },
   ];
 
   return (
     <div data-guest-groups="" className="flex w-full grow flex-col">
       {/* THE LANDING'S HERO FRAME (17 Nov 2026): the white window on the
           clouds, its words centred in the left part, the two buttons, and
-          the people on the window's bottom edge. */}
-      <section className="site-band site-clouds [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-6 md:pt-5 md:pb-6 lg:pb-20">
+          beside them a picture: a small community hub, drawn here (who is
+          in it, how many were active, what needs you, its chat), as the
+          landing's picture is of the communities page. */}
+      <section className="site-band site-clouds [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-6 md:pt-5 md:pb-6">
         <div className="border border-[color:var(--site-line)] bg-[var(--site-panel)] lg:grid lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)] lg:items-center">
           <div className="flex min-w-0 flex-col items-center px-4 pt-6 pb-6 text-center md:px-8 md:pt-10 md:pb-12 lg:ps-6 lg:pe-0 lg:pt-14 lg:pb-16">
             <div className={`${SITE_LABEL} hidden md:block`}>{t('auth:guest.groups.label')}</div>
@@ -180,15 +170,46 @@ export function GuestCommunities({ waitlist, onStart }: {
               </a>
             </div>
           </div>
-          <div className="hidden min-w-0 self-end px-6 lg:block" aria-hidden="true">
-            <img
-              src="/brand/landing-people.webp"
-              alt=""
-              width={619}
-              height={434}
-              draggable={false}
-              className="relative z-10 mx-auto -mb-14 h-auto w-[400px] max-w-full"
-            />
+          <div className="hidden min-w-0 px-8 py-10 lg:block" aria-hidden="true" data-guest-groups-hub="">
+            <div className="relative mx-auto w-[400px] max-w-full -rotate-2">
+              {/* The sun sheet behind it, as behind the landing's picture. */}
+              <div className="absolute inset-0 translate-x-3 translate-y-3 rounded-[16px] border border-[color:var(--site-line)] bg-[var(--site-sun)]" />
+              <div className="relative flex flex-col gap-3 rounded-[16px] border border-[color:var(--site-line)] bg-[var(--site-ground-card)] p-4 text-start">
+                <div className="flex items-center gap-3">
+                  <span className={`${TILE} bg-[var(--site-sun)] text-[color:var(--site-on-sun)]`}><UserGroupIcon className="h-[22px] w-[22px]" /></span>
+                  <div className="flex min-w-0 flex-1 flex-col">
+                    <span className={`${SERIF} truncate text-[19px] leading-[24px] text-[color:var(--site-ink)]`}>{t('auth:guest.groups.hub.name')}</span>
+                    <span className="truncate text-[13px] leading-[18px] text-[color:var(--site-muted)]">{t('auth:guest.groups.hub.kind')}</span>
+                  </div>
+                  <span className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border border-[color:var(--site-line)] bg-[var(--site-panel)] px-3 text-[13px] font-medium text-[color:var(--site-ink)] shadow-[0_2px_0_var(--site-line)]">
+                    <UserPlusIcon className="h-4 w-4" />
+                    {t('auth:guest.groups.hub.invite')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2.5 rounded-[12px] bg-[var(--site-sky-pale)] px-3 py-2">
+                  <span className="flex -space-x-1.5 rtl:space-x-reverse">
+                    {['bg-[#e8452e]', 'bg-[#2a8ce1]', 'bg-[#3cc23c]', 'bg-[#f2a531]'].map((fill) => (
+                      <span key={fill} className={`h-6 w-6 rounded-full border border-[color:var(--site-line)] ${fill}`} />
+                    ))}
+                  </span>
+                  <span className="text-[13px] leading-[18px] font-medium text-[color:var(--site-ink)]">{t('auth:guest.groups.hub.active')}</span>
+                </div>
+                <ul className="flex flex-col">
+                  {hubRows.map((row, i) => (
+                    <li key={row.key} className={i ? 'flex items-center gap-3 border-t border-[color:var(--site-line-soft)] py-2.5' : 'flex items-center gap-3 pb-2.5'}>
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[9px] border border-[color:var(--site-line)] bg-[var(--site-panel)] text-[color:var(--site-ink)]">{row.icon}</span>
+                      <span className="flex min-w-0 flex-1 flex-col">
+                        <span className="text-[14px] leading-[19px] font-semibold text-[color:var(--site-ink)]">{row.title}</span>
+                        <span className="truncate text-[13px] leading-[18px] text-[color:var(--site-muted)]">{row.body}</span>
+                      </span>
+                      {row.ask ? (
+                        <span className="inline-flex h-7 shrink-0 items-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-sun)] px-3 text-[13px] font-medium text-[color:var(--site-on-sun)]">{t('auth:guest.groups.hub.vote')}</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -209,86 +230,79 @@ export function GuestCommunities({ waitlist, onStart }: {
         </ol>
       </section>
 
-      <section className={BAND}>
-        <h2 className={HEADING}>{t('auth:guest.groups.for.heading')}</h2>
-        <ul className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-          {groups.map((g, i) => (
-            <li key={g.key} className={`${CARD} flex flex-col gap-3 p-5`}>
-              <div className="flex items-center gap-3">
-                <span className={`${TILE} ${TILE_FILLS[i % TILE_FILLS.length]}`} aria-hidden="true">{g.icon}</span>
-                <h3 className={`min-w-0 ${ROW_TITLE}`}>{g.title}</h3>
-              </div>
+      {/* WHO IT IS FOR: one large card on the sky, two tinted ones beside
+          it, and three more kinds of group as a line each under a rule. */}
+      <section className={BAND} data-guest-groups-for="">
+        <div className="flex flex-col gap-2.5">
+          <h2 className={HEADING}>{t('auth:guest.groups.for.heading')}</h2>
+          <p className={SUB}>{t('auth:guest.groups.for.sub')}</p>
+        </div>
+        <div className="grid gap-3.5 lg:grid-cols-[minmax(0,6fr)_minmax(0,5fr)]">
+          {/* The large card is on the site's own sky, faded out under its
+              words: the page's one picture besides the hub in the hero. */}
+          <article className="site-sky-card relative flex min-h-[240px] min-w-0 flex-col justify-end gap-2 overflow-hidden rounded-[18px] border border-[color:var(--site-line)] p-6 md:min-h-[300px] md:p-8">
+            <span className={`${TILE} bg-[var(--site-sun)] text-[color:var(--site-on-sun)]`} aria-hidden="true"><UserGroupIcon className="h-[22px] w-[22px]" /></span>
+            <h3 className={`${SERIF} mt-1 text-[30px] leading-[34px] tracking-[-0.01em] text-[color:var(--site-ink)] md:text-[40px] md:leading-[44px]`}>{friends.title}</h3>
+            <p className="max-w-[340px] text-[17px] leading-[24px] text-[color:var(--site-muted)]">{friends.body}</p>
+          </article>
+          <div className="grid min-w-0 gap-3.5">
+            {tinted.map((g) => (
+              <article key={g.key} className={`flex min-w-0 items-start gap-4 rounded-[18px] border border-[color:var(--site-line)] p-5 md:p-6 ${g.fill}`}>
+                <span className={`${TILE} bg-[var(--site-panel)] text-[color:var(--site-ink)]`} aria-hidden="true">{g.icon}</span>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <h3 className={`${SERIF} text-[24px] leading-[29px] text-[color:var(--site-ink)]`}>{g.title}</h3>
+                  <p className={ROW_LINE}>{g.body}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+        <ul className="grid gap-x-8 gap-y-5 border-t border-[color:var(--site-line-soft)] pt-6 md:grid-cols-3 md:divide-x md:divide-[color:var(--site-line-soft)] rtl:md:divide-x-reverse">
+          {plain.map((g, i) => (
+            <li key={g.key} className={i ? 'flex min-w-0 flex-col gap-1 md:ps-8' : 'flex min-w-0 flex-col gap-1'}>
+              <h3 className={ROW_TITLE}>{g.title}</h3>
               <p className={ROW_LINE}>{g.body}</p>
             </li>
           ))}
         </ul>
       </section>
 
-      <section className={`site-band [--band:var(--site-sun-pale)] ${BAND}`}>
-        <h2 className={HEADING}>{t('auth:guest.groups.decides.heading')}</h2>
-        <div className="grid items-start gap-x-10 gap-y-6 lg:grid-cols-3">
-          <div className="flex min-w-0 flex-col gap-5">
-            <p className="text-[17px] leading-[26px] text-[color:var(--site-muted)] md:text-lg md:leading-[27px]">{t('auth:guest.groups.decides.lead')}</p>
-            <ul data-guest-groups-points="" className={`${CARD} flex flex-col gap-4 px-5 py-[18px]`}>
-              {points.map((p) => (
-                <li key={p.title} className="flex items-start gap-3">
-                  <span className={`mt-0.5 h-[22px] w-[22px] ${SUN_DISC}`} aria-hidden="true">
-                    <CheckIcon className="h-3.5 w-3.5" />
-                  </span>
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <h3 className="text-base leading-[22px] font-semibold text-[color:var(--site-ink)]">{p.title}</h3>
-                    <p className="text-sm leading-5 text-[color:var(--site-muted)]">{p.body}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="min-w-0 border border-[color:var(--site-line)] bg-[var(--site-panel)] lg:col-span-2">
-            <div className={`${STRIP} bg-[var(--site-sun)]`} aria-hidden="true">
-              <span className="h-2 w-2 rounded-full border border-[color:var(--site-on-sun)] bg-[#e8452e] md:h-2.5 md:w-2.5" />
-              <span className="h-2 w-2 rounded-full border border-[color:var(--site-on-sun)] bg-[#f2a531] md:h-2.5 md:w-2.5" />
-              <span className="h-2 w-2 rounded-full border border-[color:var(--site-on-sun)] bg-[#3cc23c] md:h-2.5 md:w-2.5" />
-            </div>
-            <ul data-guest-groups-rules="" className="flex flex-col">
-              {rules.map((r, i) => (
-                <li
-                  key={r.key}
-                  data-guest-groups-rule={r.key}
-                  className={i ? 'flex items-start gap-3.5 border-t border-[color:var(--site-line)] px-5 py-4' : 'flex items-start gap-3.5 px-5 py-4'}
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-mint)] text-[color:var(--site-ink)]" aria-hidden="true">{r.icon}</span>
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
-                      <h3 className={ROW_TITLE}>{r.name}</h3>
-                      {i === 0 ? (
-                        <span className="inline-flex h-[22px] items-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-sky-pale)] px-2.5 text-xs font-semibold text-[color:var(--site-ink)]">
-                          {t('auth:guest.groups.decides.default')}
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className={ROW_LINE}>{r.line}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <section className={BAND}>
+      {/* YOUR GROUP, YOUR RULES: one line, the four rules as short cards,
+          and how private it is as one row under them. It was a paragraph,
+          three points and a window of four long rows, then a section of
+          three cards about privacy. */}
+      <section className={`site-band [--band:var(--site-sun-band)] ${BAND}`}>
         <div className="flex flex-col gap-2.5">
-          <h2 className={HEADING}>{t('auth:guest.groups.private.heading')}</h2>
-          <p className={SUB}>{t('auth:guest.groups.private.sub')}</p>
+          <h2 className={HEADING}>{t('auth:guest.groups.decides.heading')}</h2>
+          <p className={SUB}>{t('auth:guest.groups.decides.lead')}</p>
         </div>
-        <ol data-guest-groups-stages="" className="grid gap-3.5 rounded-[14px] border border-[color:var(--site-line)] bg-[var(--site-sky-pale)] p-4 md:grid-cols-3 md:p-5">
-          {stages.map((s) => (
-            <li key={s.key} className={`${CARD} flex min-w-0 flex-col gap-2.5 p-5`}>
-              <span className={`h-10 w-10 ${SUN_DISC}`} aria-hidden="true">{s.icon}</span>
-              <h3 className={ROW_TITLE}>{s.title}</h3>
-              <p className={ROW_LINE}>{s.body}</p>
+        <ul data-guest-groups-rules="" className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
+          {rules.map((r, i) => (
+            <li key={r.key} data-guest-groups-rule={r.key} className={`${CARD} flex min-w-0 flex-col gap-2.5 p-5`}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-mint)] text-[color:var(--site-ink)]" aria-hidden="true">{r.icon}</span>
+                {i === 0 ? (
+                  <span className="inline-flex h-[22px] items-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-sky-pale)] px-2.5 text-xs font-semibold text-[color:var(--site-ink)]">
+                    {t('auth:guest.groups.decides.default')}
+                  </span>
+                ) : null}
+              </div>
+              <h3 className={ROW_TITLE}>{r.name}</h3>
+              <p className={ROW_LINE}>{r.line}</p>
             </li>
           ))}
-        </ol>
+        </ul>
+        <div className="flex flex-col gap-3 pt-2 md:flex-row md:items-center md:gap-5">
+          <h3 className={`${LABEL} shrink-0`}>{t('auth:guest.groups.private.heading')}</h3>
+          <ol data-guest-groups-stages="" className="flex flex-wrap items-center gap-x-2 gap-y-2.5">
+            {stages.map((s, i) => (
+              <li key={s.key} className="flex items-center gap-2">
+                {i ? <ArrowRightShortIcon className="h-5 w-5 shrink-0 text-[color:var(--site-ink)] rtl:-scale-x-100" aria-hidden="true" /> : null}
+                <span className="inline-flex h-10 items-center rounded-[10px] border border-[color:var(--site-line)] bg-[var(--site-panel)] px-4 text-[15px] font-semibold text-[color:var(--site-ink)] shadow-[0_2px_0_var(--site-line)]">{s.label}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
       </section>
 
       <section data-guest-groups-closing="" className="site-band [--band:var(--site-sun-deep)] flex flex-col items-center gap-3 px-4 py-14 text-center md:py-[72px]">

@@ -1935,9 +1935,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out: /communities is the page about private communities, in the guest Discover's place, with the approval rules and its own way in",
+      "name": "Signed out: /communities is the page about private communities, in the guest Discover's place, with who it is for, the approval rules and its own way in",
       "path": "/communities?shot=anon",
-      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-discover])) [data-guest-groups]:has(button[data-guest-groups-start]):has(a[data-guest-groups-public][href=\"/\"]) [data-guest-groups-rule=\"you_or_the_group\"] h3",
+      "expectSelector": "#auth-landing-screen:not(.hidden):not(:has([data-guest-discover])) [data-guest-groups]:has([data-guest-groups-for]):has(button[data-guest-groups-start]):has(a[data-guest-groups-public][href=\"/\"]) [data-guest-groups-rule=\"you_or_the_group\"] h3",
       "expectText": "You or the group",
       "allowConsoleErrors": true
     },
@@ -4863,11 +4863,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row of large cards, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-lead] [data-guest-lead]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {
