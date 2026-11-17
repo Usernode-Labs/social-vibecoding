@@ -5452,6 +5452,19 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
+/* ============================================================
+   STANDARD (WIP): the standard look with the changes still being tried on
+   it (head.html window.Skin 'wip', which sets data-skin-wip and no
+   data-skin). Home's Pinned communities grid is a card, as Pinned apps'
+   grid and its "Show all" line are one (PINS_CARD, features/home).
+   ============================================================ */
+html[data-skin-wip] #home-communities-section > .grid {
+  padding: 16px 8px 14px;
+  border-radius: 20px;
+  background-color: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+
 /* HOME'S SIDE COLUMN (features/home/index.tsx, new-project-card.tsx,
    needs-you-card.tsx). The
    New project card sits in `#home-aside`, the first child of #home-body, and
@@ -10775,7 +10788,8 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .thread.both{stroke:url(#of-bothStripe)}
 #admin-onboarding-flows .of-flow.dim .thread{opacity:.1}
 #admin-onboarding-flows .of-flow.dim .thread.hl{opacity:1}
-#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub{opacity:.45}
+/* A selection, or a box or thread pointed at, keeps its own threads and cards and sends the rest to the background. */
+#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nbox,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .caption{opacity:.3}
 #admin-onboarding-flows .nodeg{cursor:pointer;outline:none}
 /* The native kit presses every [role="button"]: a CSS transform (scale), a dimming and a spring back. Inside the
    drawing a CSS transform replaces an SVG shape's own position, so a pressed card flew to the corner. Cards and
@@ -10832,7 +10846,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .leak.strong text{fill:var(--surface)}
 #admin-onboarding-flows .leak.on rect{stroke:var(--fg);stroke-width:2}
 #admin-onboarding-flows .leak:focus-visible rect{stroke:var(--fg);stroke-width:2}
-#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.5}
+#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.35}
 #admin-onboarding-flows .legend .stop{width:4px;height:14px;border-radius:2px;background:var(--drop)}
 #admin-onboarding-flows .loop path{fill:none;stroke:var(--share);stroke-width:1.6;stroke-dasharray:5 4}
 #admin-onboarding-flows .loop text{font-family:var(--font-body);font-size:12.5px;font-weight:500;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:5px}
@@ -26658,26 +26672,54 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
   .dev-rail-note { margin-top: 6px; padding: 8px 12px; }
 }
 
+/* THE CARDS, at every width: the root post, the timeline and the replies
+   are three cards on the page's ground, as the thread design drew them, on
+   a phone as on a desktop. Not in a side panel (the Workshop's, or the
+   embedded one), which keeps the one sheet, and not while the reader beside
+   the thread is open. A look paints them through the `-look` variables
+   (the brand look's are white); without one they are the standard sheet. */
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+}
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet {
+  background: none;
+  border-top-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  min-width: 0;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { padding: 8px 0 0; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { margin-top: 14px; padding: 6px 4px 8px; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail { margin-top: 14px; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
+  --rail-well: transparent;
+  margin: 0;
+  padding: 14px 10px 8px;
+  border-radius: 0;
+}
+/* The pile's markers lie over each other, so each needs an opaque ground. */
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail-pile-mark { background: var(--thread-card-solid); box-shadow: 0 0 0 2px var(--thread-card-solid); }
+
 /* WIDE: two columns. The page's header row runs across both; under it the
    root post and the replies are cards in the first column, and the rail is
-   a card that stays put beside them. Not in a side panel (the Workshop's,
-   or the embedded one), which is a narrow page however wide the window is,
-   and not while the reader beside the thread is open, which takes the
-   second column's room. */
+   a card that stays put beside them. */
 @media (min-width: 1180px) {
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
     --thread-rail-w: 332px;
     --thread-rail-gap: 20px;
-    --thread-card: var(--dc-sheet-fill);
-    --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05);
     max-width: 1132px;
-  }
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet {
-    background: none;
-    border-top-color: transparent;
-    box-shadow: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
   }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll {
     display: grid;
@@ -26686,18 +26728,9 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
     align-content: start;
     padding-bottom: 12px;
   }
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages) {
-    grid-column: 1;
-    min-width: 0;
-    border-radius: 20px;
-    background: var(--thread-card);
-    box-shadow: var(--thread-card-edge);
-    backdrop-filter: var(--dc-frost);
-    -webkit-backdrop-filter: var(--dc-frost);
-  }
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { grid-row: 1; padding: 8px 4px 4px; }
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { grid-row: 2; margin-top: 14px; padding: 6px 4px 8px; }
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages) { grid-column: 1; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { grid-row: 1; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { grid-row: 2; }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail {
     grid-column: 2;
     grid-row: 1 / span 2;
@@ -26705,25 +26738,219 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
     position: sticky;
     top: 0;
     max-height: 100%;
+    margin-top: 0;
     overflow-y: auto;
     overscroll-behavior: contain;
-    border-radius: 20px;
-    background: var(--thread-card);
-    box-shadow: var(--thread-card-edge);
-    backdrop-filter: var(--dc-frost);
-    -webkit-backdrop-filter: var(--dc-frost);
   }
-  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
-    --rail-well: transparent;
-    margin: 0;
-    padding: 16px 10px 8px;
-    border-radius: 0;
-  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail { padding: 16px 10px 8px; }
   /* The card says the title; the header row keeps the number, the pill and ⋯. */
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar .dev-request-bar-title { display: none; }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) {
     margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
   }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE THREAD'S CARD (dev-board/topic/thread-card.tsx). Beside "How it got
+   here", a request's and a change's page draw the thread as one card: a
+   kicker (the project, then "Request #N" or "Change #N"), the title, the
+   words and whose they are, the picture, and a foot that says where it
+   stands and holds the action. A step of the timeline opens its content
+   over the card, as a layer that never changes the card's height.
+
+   The pieces are rendered only under the standard look and the brand look
+   (the frame's looks keep their own page), so nothing here needs a look in
+   its selector: every rule hangs off a class those pages alone render.
+   ═══════════════════════════════════════════════════════════════════════ */
+/* The author row gives way to the kicker; the timeline says who and when. */
+.dev-thread-card { position: relative; --foot-x: 16px; --foot-b: 16px; }
+/* The card's own gutters, so the foot's band can reach its edges exactly. */
+.dev-request-root.dev-thread-card { padding: 4px var(--foot-x) var(--foot-b); }
+@media (min-width: 1180px) { .dev-thread-card { --foot-x: 20px; --foot-b: 18px; } }
+.dev-thread-card > :first-child:not(.min-w-0) { display: none; }
+.dev-thread-card .messages-message-head { display: none; }
+.dev-thread-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-kicker-tile { flex: none; width: 20px; height: 20px; border-radius: 6px; font-size: 11px; overflow: hidden; }
+/* The sheet's header keeps the category and ⋯; the card says the rest. */
+.dev-request:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-kicker, .messages-thread-name, [data-request-status], [data-change-status]) { display: none; }
+.dev-thread-card .dev-request-title { font-size: 22px; line-height: 28px; letter-spacing: -0.01em; text-wrap: balance; }
+/* The words are the card's own, not a quote of somebody. */
+.dev-thread-card .dev-request-ask { margin-top: 6px; padding-inline: 0; border-inline-start: 0; }
+.dev-thread-card .dev-request-ask-text { font-size: 15.5px; line-height: 24px; max-width: 70ch; }
+.dev-thread-by { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 12.5px; line-height: 18px; color: var(--text-muted); }
+.dev-thread-by-glyph { flex: none; width: 14px; height: 14px; }
+
+/* The foot: where it stands, once, and the action. */
+/* A band across the card: its line and its ground reach the card's edges,
+   and where the foot ends the card (thread-card.tsx marks it) the band runs
+   to the card's own rounded end. */
+.dev-thread-foot {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  margin: 16px calc(-1 * var(--foot-x)) 0; padding: 14px var(--foot-x);
+  border-top: 1px solid var(--app-sheet-line);
+  background: var(--thread-foot, transparent);
+}
+.dev-thread-foot[data-thread-foot-end] {
+  margin-bottom: calc(-1 * var(--foot-b)); padding-bottom: 16px;
+  border-radius: 0 0 var(--thread-card-r, 0px) var(--thread-card-r, 0px);
+}
+.dev-thread-foot-st { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dev-thread-foot-head { font-size: 17px; line-height: 22px; font-weight: 700; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-thread-foot[data-thread-foot-tone="bad"] .dev-thread-foot-head { color: var(--state-blocked); }
+.dev-thread-foot[data-thread-foot-tone="ok"] .dev-thread-foot-head { color: var(--state-ok); }
+.dev-thread-foot[data-thread-foot-tone="muted"] .dev-thread-foot-head { color: var(--text-secondary); }
+.dev-thread-foot-sub { font-size: 13px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-foot-bar { display: block; height: 4px; max-width: 280px; margin-top: 6px; border-radius: 2px; background: var(--messages-hair); overflow: hidden; }
+.dev-thread-foot-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--lit-ink); }
+.dev-thread-foot-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The foot's actions are full pills: the one to press, and the quieter ones
+   beside it. The vote's caret is put away: one Vote, and the question after. */
+.dev-thread-foot-acts :is(button, a):not(.dev-change-gate-link) {
+  height: 40px; min-height: 40px; padding-block: 0; padding-inline: 18px; border-radius: 999px;
+  font-size: 15px; font-weight: 650; line-height: 1;
+}
+.dev-thread-foot-acts .dev-vote-caret { display: none; }
+.dev-thread-foot-extra { flex-basis: 100%; min-width: 0; }
+.dev-thread-foot-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.dev-thread-foot-q { flex-basis: 100%; margin: 0; font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-foot-also { margin: 0; font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-foot-also[data-thread-foot-also="bad"] > span { color: var(--state-blocked); }
+@media (max-width: 520px) {
+  .dev-thread-foot-acts { flex-basis: 100%; }
+  /* On a phone the one to press takes the row it is on. */
+  .dev-thread-foot-acts > :is(.dev-vote-btn, .dev-request-primary, :has(> .dev-vote-btn)):last-child { flex: 1 1 auto; }
+  .dev-thread-foot-acts > :has(> .dev-vote-btn):last-child > .dev-vote-btn { width: 100%; }
+}
+
+/* Where the picture will be, before there is one. */
+.dev-thread-wait,
+.dev-thread-card .dev-change-shots-plain {
+  margin-top: 14px; min-height: 132px; padding: 20px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  border-radius: 16px; text-align: center;
+  background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-secondary);
+}
+/* The card's picture: the shots viewer read as one picture. The Before and
+   After switch lies over the picture's foot, the side's name is a chip at
+   its top end, and the screens are tiles under it with the legend of the
+   one showing. Expanded to the window (its popover) the viewer is its usual
+   self, so every rule here leaves the open popover alone. */
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-view { position: relative; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar {
+  position: absolute; z-index: 4; inset-inline: 0; bottom: 10px;
+  display: flex; justify-content: center; align-items: center; gap: 8px;
+  margin: 0; padding: 0; pointer-events: none;
+}
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar > * { pointer-events: auto; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.dev-change-card-name, .shots-seg-both, .shots-screen-nav, .shots-view-notes) { display: none; }
+/* The switch is a white pill over the picture in either scheme, so its
+   resting label keeps a dark ink; :where keeps the viewer's own rule for
+   the side that is showing on top. */
+:where([data-thread-picture] .dev-change-viewer:not(:popover-open)) .shots-seg-side .shots-seg-btn { color: #52525b; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-seg-side { margin-inline: auto; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-expand { position: absolute; inset-inline-end: 10px; bottom: 0; margin: 0; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { inset-inline-start: auto; inset-inline-end: 10px; }
+/* The chip says what the side is for this change ("If it passes · After"):
+   the page hands the words as CSS strings (change-head.tsx), drawn in place
+   of the viewer's own one word. */
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip { font-size: 0; letter-spacing: 0.04em; text-transform: uppercase; }
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip::after { font-size: 11px; line-height: 14px; font-weight: 700; }
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-after::after { content: var(--thread-chip-after); }
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-before::after { content: var(--thread-chip-before); }
+.dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
+.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
+.dev-thread-tiles-cap { flex: 1 1 auto; min-width: 0; }
+.dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-tiles-legend { display: block; }
+@media (max-width: 520px) { .dev-thread-tiles { flex-wrap: wrap; } .dev-thread-tiles-cap { flex-basis: 100%; } }
+.dev-thread-wait > b { font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-wait > span { max-width: 46ch; font-size: 13.5px; line-height: 20px; }
+
+/* A step's content, over the card. */
+.dev-step-layer { position: absolute; inset: 0; z-index: 6; }
+.dev-step-scrim { position: absolute; inset: -6px; border-radius: 14px; background: var(--messages-surface); opacity: 0.78; cursor: default; }
+.dev-step-sheet {
+  position: absolute; inset-inline: 0; top: 8px;
+  overflow: auto; overscroll-behavior: contain;
+  padding: 0 16px 16px; border-radius: 16px;
+  background: var(--messages-surface-2);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 14px 36px rgba(0, 0, 0, 0.2);
+  animation: dev-step-rise 0.16s ease-out;
+}
+@keyframes dev-step-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dev-step-sheet { animation: none; } }
+:where(html[data-motion="reduce"]) .dev-step-sheet { animation: none; }
+.dev-step-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 -16px; padding: 12px 16px 8px;
+  background: var(--messages-surface-2); box-shadow: 0 1px 0 var(--app-sheet-line);
+  border-radius: 16px 16px 0 0;
+}
+.dev-step-title { display: block; font-size: 15px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-step-sub { display: block; font-size: 13px; line-height: 18px; color: var(--text-secondary); }
+.dev-step-when { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
+.dev-step-close {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--messages-surface); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-primary);
+}
+.dev-step-body { padding-top: 12px; }
+.dev-step-doc { font-size: 15px; line-height: 24px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-step-doc .dev-issue-body { font-size: inherit; color: inherit; }
+.dev-step-plain { margin: 0; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.dev-step-who { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; color: var(--text-secondary); }
+.dev-step-who > b { font-weight: 650; color: var(--text-primary); }
+@media (max-width: 520px) { .dev-step-when { display: none; } .dev-step-sheet { padding-inline: 12px; } .dev-step-head { margin-inline: -12px; padding-inline: 12px; } }
+
+/* One step, one thing: the Tested step's layer shows the tests, the vote's
+   step its votes (change-head.tsx ChangeGates). */
+[data-gates-show="checks"] .dev-change-pair [data-change-gate="votes"],
+[data-gates-show="votes"] .dev-change-pair :is([data-change-gate="testing"], [data-change-gate="merge"]) { display: none; }
+
+/* A request with competing changes: a row each, its picture first, then its
+   letter and name, what its tests say and its yes votes, and Look, which
+   opens the change over the card. */
+.dev-thread-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.dev-thread-opt {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 10px; border-radius: 16px; text-align: start;
+  background: var(--thread-opt, var(--messages-surface)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+@media (hover: hover) { .dev-thread-opt:hover { box-shadow: inset 0 0 0 1px var(--text-muted); } }
+.dev-thread-opt-pic {
+  flex: none; width: 132px; height: 84px; border-radius: 10px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 22px; font-weight: 700; color: var(--text-muted);
+}
+.dev-thread-opt-pic > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.dev-thread-opt-main { flex: 1 1 auto; min-width: 0; }
+.dev-thread-opt-name { display: block; font-size: 15.5px; line-height: 21px; font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-thread-opt-line { display: block; margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-opt-line [data-opt-tests="bad"] { color: var(--state-blocked); font-weight: 600; }
+.dev-thread-opt-look { flex: none; display: inline-flex; align-items: center; gap: 4px; padding-inline: 4px 6px; font-size: 14.5px; font-weight: 650; color: var(--accent); white-space: nowrap; }
+@media (max-width: 520px) { .dev-thread-opt-pic { width: 84px; height: 60px; font-size: 18px; } .dev-thread-opt { gap: 10px; } }
+/* A change opened over the card from its row: the section its fold held. */
+.dev-step-body > [data-thread-look] { padding-bottom: 4px; }
+
+/* The timeline: a step with something to show is one press, the whole step. */
+.dev-rail-step { display: block; padding: 0; }
+.dev-rail-press { display: flex; gap: 12px; width: 100%; padding: 6px 6px 12px; border-radius: 12px; text-align: start; }
+.dev-rail-step:last-child .dev-rail-press { padding-bottom: 6px; }
+.dev-rail-desc, .dev-rail-note { display: block; }
+@media (hover: hover) { button.dev-rail-press:hover { background: color-mix(in srgb, var(--rail-line) 55%, transparent); } }
+/* The step the thread stands on is boxed, so the eye lands on it. */
+.dev-rail-step[data-rail-now] .dev-rail-press { background: var(--rail-now-box, transparent); box-shadow: inset 0 0 0 1px var(--rail-now-box-line, transparent); }
+.dev-rail-step[data-rail-on] .dev-rail-press { background: color-mix(in srgb, var(--rail-line) 55%, transparent); box-shadow: inset 0 0 0 1px var(--rail-line); }
+@media (max-width: 1179.98px) {
+  .dev-rail-step { padding: 0; }
+  .dev-rail-press { padding: 4px 6px 6px; }
+  .dev-rail-step[data-rail-now] { padding-top: 0; }
+  .dev-rail-step[data-rail-now] .dev-rail-press { padding-top: 8px; }
 }
 
 /* THE BELL'S SHEET (features/notifications/notifications-sheet.tsx, the
@@ -28591,8 +28818,14 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
    line is on the sun wash, as a thing to do is. The rail's heading is a
    sentence, as every label over a group is. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request {
+  --thread-card-look: var(--bl-card);
+  --thread-card-solid-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
   --thread-card: var(--bl-card);
   --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  /* The foot's band: the card with a breath of sun in it. */
+  --thread-foot: color-mix(in srgb, var(--bl-sun) 9%, var(--bl-card));
+  --thread-opt: var(--bl-card);
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
   backdrop-filter: none;
@@ -28614,3 +28847,28 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   color: var(--bl-label);
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-rail-link, .dev-rail-less, .dev-rail-pile-more) { color: var(--bl-sky); }
+/* The foot's one action is the look's sun pill, and the quieter ones beside
+   it are white pills on a line, as the website's two buttons are. The step
+   the thread stands on is boxed on the page's cream. The picture's switch
+   is ink where it is on, and its chip ink too: green and red said "good"
+   and "bad" about a before and an after, which are neither. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary),
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-ask .dev-vote-btn[aria-checked="true"] {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary, .dev-change-gate-link) {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-before:checked) .shots-seg-before,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-after:checked) .shots-seg-after {
+  background: var(--bl-solid);
+  color: var(--bl-on-solid);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { background: rgba(18, 26, 14, 0.82); color: #ffffff; }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-opt-look { color: var(--bl-sky); }

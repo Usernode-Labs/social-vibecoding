@@ -235,7 +235,7 @@ test('the waitlist card: join, an email, a code, then On the waitlist with "Want
   assert.doesNotMatch(listed, /Add an email too/, 'an email row has nothing to add');
   // Pinned communities follows the launcher directly (One Home, #6361; it
   // was Discover, #4937); the waitlist card keeps its place after it.
-  assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore \/>\s+<\/section>[\s\S]*<PinnedCommunities \/>\s+[\s\S]*<WaitlistCard \/>/);
+  assert.match(read('frontend/src/features/home/index.tsx'), /<AppsMore card=\{wip\} \/>\s+<\/div>\s+<\/section>[\s\S]*<PinnedCommunities \/>\s+[\s\S]*<WaitlistCard \/>/);
 });
 
 test('Home for a private member: no New community tile, no Challenges or Create panels', () => {

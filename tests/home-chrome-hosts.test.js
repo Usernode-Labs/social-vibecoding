@@ -358,7 +358,7 @@ test('nothing on the home screen is an innerHTML host any more', () => {
   // …and the island mounts a component for every one of them, so there is no
   // empty <section> left for a module to find by id and fill.
   const island = read('frontend/src/features/home/index.tsx');
-  for (const tag of ['<AppGrid />', '<AppsMore />', '<WidgetStrip />',
+  for (const tag of ['<AppGrid />', '<AppsMore card={wip} />', '<WidgetStrip />',
     '<PinnedCommunities />', '<ChallengesSection />', '<HomeJoin />']) {
     assert.ok(island.includes(tag), `the island mounts ${tag}`);
   }
