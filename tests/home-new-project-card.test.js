@@ -1,0 +1,79 @@
+'use strict';
+
+// Home's New project card ("Have an idea?"): the one card of Home's side
+// column, beside the pinned lists from 1280px.
+//
+//   1. It is drawn only where Home has a side column: the standard pages,
+//      from 1280px, for a viewer the grid gives a create view. Narrower than
+//      that the column is not displayed and Pinned apps ends with the New
+//      project tile instead (tests/home-create-tile.test.js).
+//   2. Its button opens the same make screen as the tile.
+//   3. The line under the button counts project slots only when there is a
+//      limit, and at none it links to the allowance card.
+//
+// Run with: node --test tests/home-new-project-card.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const { loadTsx } = require('./lib/render-tsx');
+const { message } = require('./lib/platform-i18n');
+
+const CARD = 'frontend/src/features/home/new-project-card.tsx';
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+
+test('the island mounts the card in a side column, on the standard pages only', () => {
+  const island = read('frontend/src/features/home/index.tsx');
+  assert.match(island, /const aside = !frame && grid\.ready && !!grid\.create;/);
+  assert.match(island, /data-home-aside=\{aside \? '' : undefined\}/);
+  assert.match(island, /\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NewProjectCard \/>\s*<\/aside>\s*\) : null\}/);
+  assert.match(island, /<div className="home-main">/);
+});
+
+test('the side column exists from 1280px and holds no place under it', () => {
+  const css = read('public/css/app.css');
+  const base = css.match(/\n\.home-aside \{([^}]*)\}/);
+  assert.ok(base, 'the column has a base rule');
+  assert.match(base[1], /display: none;/, 'one column draws no card');
+  const wide = css.slice(css.indexOf("HOME'S SIDE COLUMN"));
+  const media = wide.slice(wide.indexOf('@media (min-width: 1280px)'));
+  assert.match(media, /#home-screen\[data-home-aside\] \.home-aside \{\s*display: block;\s*flex: 0 0 304px;/);
+  assert.match(media, /#home-screen\[data-home-aside\] \.home-body-fill \{\s*flex-direction: row-reverse;/);
+  // home.js draws no grid tile at the same width (Home.hasSideCard).
+  assert.match(read('frontend/src/features/home/home.js'), /window\.matchMedia\('\(min-width: 1280px\)'\)\.matches/);
+});
+
+test('the card draws only for a viewer who may make projects, and opens the make screen', () => {
+  const src = read(CARD);
+  assert.match(src, /if \(!grid\.ready \|\| !grid\.create\) return null;/);
+  assert.match(src, /const open = \(\) => \{ win\(\)\.App\?\.showCreateModal\?\.\(\); \};/);
+  assert.match(src, /id="home-new-project-btn"\s+className=\{BUTTON\}\s+onClick=\{open\}/);
+  assert.match(src, /aria-labelledby="home-new-project-title"/);
+  assert.match(src, /href="#profile\?slots"/, 'at no slots left, the way to ask for more');
+  assert.equal(message('home:newProject.title'), 'Have an idea?');
+  assert.equal(message('home:create.label'), 'New project');
+  assert.match(message('home:newProject.slotsNone'), /<0>Request project slots<\/0>/);
+});
+
+test('the fan is the pinned apps\' pictures: five at most, no demo tile, no letter', () => {
+  const { fanIcons } = loadTsx(CARD);
+  const img = (n) => ({ app: { demo: false, icon: { kind: 'image', src: `/i/${n}.png` } } });
+  const items = [
+    img(1),
+    { app: { demo: false, icon: { kind: 'letter', letter: 'A' } } },
+    { app: { demo: true, icon: { kind: 'image', src: '/demo.png' } } },
+    img(2), img(3), img(4), img(5), img(6),
+  ];
+  assert.deepEqual(fanIcons(items).map((icon) => icon.src), ['/i/1.png', '/i/2.png', '/i/3.png', '/i/4.png', '/i/5.png']);
+  assert.deepEqual(fanIcons([]), []);
+});
+
+test('the slots line: a count with a limit, the request link at none, nothing without a limit', () => {
+  const { slotsState } = loadTsx(CARD);
+  assert.equal(slotsState(null), null, 'unknown yet');
+  assert.equal(slotsState({ limit: null, remaining: null }), null, 'no limit: a count would say nothing');
+  assert.equal(slotsState({ limit: 3, remaining: 2 }), 'free');
+  assert.equal(slotsState({ limit: 3, remaining: 0 }), 'none');
+});

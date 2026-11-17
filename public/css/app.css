@@ -5452,6 +5452,40 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
+/* HOME'S SIDE COLUMN (features/home/index.tsx, new-project-card.tsx). The
+   New project card sits in `#home-aside`, the first child of #home-body, and
+   the lists follow in `.home-main`. On a phone and a narrow window they are
+   one column, the card on top inside the lists' own 12px gutter. From 1280px,
+   and only while the root says the column is drawn (`data-home-aside`), the
+   page widens from 1024px to 1320px and the two sit side by side, the card
+   on the trailing side at 280px. The lists keep about the width they had. */
+.home-aside {
+  display: none; /* one column draws no card: nothing to hold a place for */
+  box-sizing: border-box;
+  padding: 12px 12px 0;
+}
+.home-main {
+  min-width: 0;
+}
+@media (min-width: 1280px) {
+  #home-screen[data-home-aside] .home-column {
+    max-width: 82.5rem; /* 1320px */
+  }
+  #home-screen[data-home-aside] .home-body-fill {
+    flex-direction: row-reverse;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  #home-screen[data-home-aside] .home-main {
+    flex: 1 1 0;
+  }
+  #home-screen[data-home-aside] .home-aside {
+    display: block;
+    flex: 0 0 304px; /* a 280px card and the 12px gutter each side */
+    padding-top: 16px;
+  }
+}
+
 /* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
    scroller at the bar's height does not take the bar off the screen on a
    phone: the platform header is translucent (rgba(255,255,255,.5) over a

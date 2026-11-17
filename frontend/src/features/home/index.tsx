@@ -97,6 +97,7 @@ import { AppsMore } from './apps-more';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
+import { NewProjectCard } from './new-project-card';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
@@ -150,9 +151,14 @@ export function HomeScreen() {
   // agrees.
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
+  // THE SIDE COLUMN (./new-project-card.tsx): drawn for the viewer who may
+  // make projects, never under a look of the frame, and never before the
+  // grid's first paint, so the prerender agrees. The flag on the root is what
+  // app.css widens the column and sets the two side by side on.
+  const aside = !frame && grid.ready && !!grid.create;
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined} data-home-aside={aside ? '' : undefined}>
       {/* A look of the one frame draws this page with the kit
           (./frame/home-frame.tsx), as the scroller's first child. The
           standard Home below stays mounted, so what home.js writes still
@@ -248,6 +254,15 @@ export function HomeScreen() {
           in the grid now, so nothing below the grid is anchored any more.)
       */}
       <div id="home-body" className="home-column home-body-fill">
+        {/* The side column comes FIRST in the document and is displayed from
+            1280px only, beside the lists (app.css, "HOME'S SIDE COLUMN").
+            Narrower, Pinned apps ends with the New project tile instead. */}
+        {aside ? (
+          <aside id="home-aside" className="home-aside">
+            <NewProjectCard />
+          </aside>
+        ) : null}
+        <div className="home-main">
         {/*
             #1561's once-per-account explainer stood here, above everything,
             because it was the thing a first-time viewer needed before the
@@ -483,6 +498,7 @@ export function HomeScreen() {
             sections above are outside #app-list and never re-rendered by a
             search keystroke, so there is nothing left to catch.
         */}
+        </div>
       </div>
     </main>
   );
