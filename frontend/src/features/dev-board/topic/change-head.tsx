@@ -72,6 +72,7 @@ import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
 import { ThreadRail } from './thread-rail';
+import { ThreadPicture } from './thread-picture';
 import { usePanelHead } from '../../side-panel/head-store';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
@@ -619,6 +620,13 @@ export function ShotsCard({ s, single = false, status = null }: {
     pick.checked = true;
     pick.dispatchEvent(new Event('change', { bubbles: true }));
   };
+  // A run that worked out its screens is drawn with the Needs you page's
+  // slider (./thread-picture.tsx); the viewer stays behind its Expand. A
+  // change that is up for a vote keeps the slider's own words on each side.
+  if (single && s.state === 'verified' && s.screens && s.screens.length) {
+    const voting = !!chips && chips.after === t('project:topic.card.shots.chipIfPasses');
+    return <ThreadPicture s={s} captions={voting ? null : chips} />;
+  }
   if (s.state === 'verified') {
     return (
       <section

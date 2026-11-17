@@ -587,3 +587,39 @@ test('the picture\'s chip says what the side is for this change', () => {
   assert.match(css, /\.shots-flip-chip-after::after \{ content: var\(--thread-chip-after\); \}/);
   assert.match(css, /\.shots-flip-chip-before::after \{ content: var\(--thread-chip-before\); \}/);
 });
+
+test('a run that worked out its screens is drawn with the Needs you slider, not the tinted viewer', () => {
+  const PICTURE = 'frontend/src/features/dev-board/topic/thread-picture.tsx';
+  const change = read(CHANGE);
+  // The card look hands such a run to the slider; a run without screens keeps the viewer.
+  assert.match(change, /if \(single && s\.state === 'verified' && s\.screens && s\.screens\.length\) \{/);
+  assert.match(change, /return <ThreadPicture s=\{s\} captions=\{voting \? null : chips\} \/>;/);
+  const picture = read(PICTURE);
+  assert.match(picture, /import \{ CompareSlider \} from '\.\.\/\.\.\/review-flow\/compare';/);
+  assert.match(picture, /ground="var\(--messages-surface-2\)"/, 'the ground is the card\'s own, never a tint');
+  assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
+  assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');
+  // The slider prints the page's own words for a change that is live or closed.
+  const compare = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(compare, /\{captions \? captions\.after : <RichMessage id="communities:review\.compare\.captionAfter"/);
+  assert.match(compare, /\{captions \? captions\.before : <RichMessage id="communities:review\.compare\.captionBefore"/);
+  // The page's model carries the screens.
+  assert.match(read('public/js/app-view.js'), /return html \? \{ state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number\(item\.id\) \|\| null \} : null;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-thread-compare \{\s*--rf-black: var\(--text-primary\); --rf-cream: var\(--bg-primary\); --rf-line: var\(--app-sheet-line\);/);
+
+  // The frame: the changed area, never larger than life, in a picture no taller than its room.
+  const { pictureFrame, PICTURE_MAX } = loadTsx(PICTURE);
+  const screen = (over = {}) => ({
+    viewport: 'desktop', width: 1280, before: { url: '/b', height: 800 }, after: { url: '/a', height: 800 },
+    regions: [{ n: 1, b: [100, 200, 400, 60], a: [100, 200, 400, 60], bMark: null, aMark: null }], changes: [1], ...over,
+  });
+  const small = pictureFrame(screen(), 600);
+  assert.equal(small.place.scale, 1, 'a small change is shown at life size');
+  assert.ok(small.height >= 300 && small.height <= PICTURE_MAX, `height ${small.height}`);
+  const tall = pictureFrame(screen({ viewport: 'mobile', width: 390, before: { url: '/b', height: 3000 }, after: { url: '/a', height: 3000 }, regions: [{ n: 1, b: [0, 0, 390, 2800], a: [0, 0, 390, 2800], bMark: null, aMark: null }] }), 600);
+  assert.ok(tall.height <= PICTURE_MAX);
+  assert.ok(tall.place.scale < 1, 'a tall change is fitted to the room');
+  const phone = pictureFrame(screen(), 340);
+  assert.ok(phone.height <= 374 && phone.height >= 200, `height ${phone.height}`);
+});

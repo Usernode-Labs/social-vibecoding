@@ -25,6 +25,7 @@
 
 import type { ActionSpec, StatusPillState } from '../card/model';
 import type { RequestSpecCard } from './request-model';
+import type { ReviewScreen } from '../../review-flow/model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -790,6 +791,15 @@ export interface ChangeThreadView {
      * page, and the id of the viewer (`html`) its Expand opens.
      */
     thumbs?: { before: string | null; after: string | null; viewer: string } | null;
+    /**
+     * A verified run's screens, each a before and an after with the areas
+     * that differ (AppView._workshopVisuals), and what changed, numbered:
+     * the card's picture draws them with the Needs you page's slider.
+     */
+    screens?: ReviewScreen[];
+    changes?: { n: number; text: string }[];
+    /** The change the shots are of, for the detail column its Expand opens. */
+    changeId?: number | null;
   } | null;
   /**
    * The change shows nothing a person can see, so no shots were asked for
