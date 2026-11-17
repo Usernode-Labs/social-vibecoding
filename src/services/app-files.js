@@ -1,6 +1,7 @@
 'use strict';
 
-// App file storage (#752): user-uploaded images and audio apps store
+// App file storage (#752): user-uploaded images, audio, video, PDFs and
+// text files apps store
 // through the platform. Bytes live in the MinIO object-store sidecar
 // (compose service `usernode-minio`, reachable only from the platform
 // over the internal `usernode-storage` network); Postgres's `app_files`
@@ -24,6 +25,12 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 // Server-generated narration is longer: 25 MB is roughly 30 minutes of
 // speech in Opus or MP3.
 const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024;
+// A menu, a score or a flyer as a PDF fits comfortably here.
+const MAX_PDF_FILE_BYTES = 25 * 1024 * 1024;
+// A short video clip. Counted against the same shared quotas as the rest.
+const MAX_VIDEO_FILE_BYTES = 100 * 1024 * 1024;
+// Plain text, CSV, JSON and calendar files are small by nature.
+const MAX_TEXT_FILE_BYTES = 5 * 1024 * 1024;
 // Object storage removes the DB-bloat constraint, so the caps are
 // generous: images and audio share one allowance.
 const PER_APP_CAP = 10 * 1024 * 1024 * 1024; // 10 GB
@@ -33,10 +40,10 @@ const PER_USER_PER_APP_CAP = 1 * 1024 * 1024 * 1024; // 1 GB
 const STAGING_PER_APP_CAP = 100 * 1024 * 1024; // 100 MB
 const STAGING_GC_DAYS = 7;
 
-// The raw-body parser's limit. It must exceed MAX_AUDIO_FILE_BYTES so
-// the service's own structured size check fires before the parser's
-// PayloadTooLarge.
-const UPLOAD_BODY_LIMIT = '26mb';
+// The raw-body parser's limit. It must exceed MAX_VIDEO_FILE_BYTES (the
+// largest per-kind cap) so the service's own structured size check fires
+// before the parser's PayloadTooLarge.
+const UPLOAD_BODY_LIMIT = '101mb';
 
 // Mirrors attachments.js's image map (not exported there; this keeps a
 // 4-line duplication rather than a cross-module export).
@@ -53,6 +60,30 @@ const AUDIO_EXT_TYPES = {
   opus: 'audio/ogg',
   ogg: 'audio/ogg',
   mp3: 'audio/mpeg',
+};
+
+// Documents download rather than render: a PDF served inline from the
+// platform's own origin would run as a page there.
+const DOCUMENT_EXT_TYPES = {
+  pdf: 'application/pdf',
+};
+
+// Video plays inline. MP4 covers H.264/AAC; WebM must say `webm` in its
+// EBML header (a Matroska file is refused). QuickTime is not accepted.
+const VIDEO_EXT_TYPES = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  webm: 'video/webm',
+};
+
+// Text and data kinds, also served as downloads. Any of these whose
+// bytes begin like HTML, XML, SVG or JavaScript is refused (see
+// sniffText), whatever the extension says.
+const TEXT_EXT_TYPES = {
+  txt: 'text/plain; charset=utf-8',
+  csv: 'text/csv; charset=utf-8',
+  json: 'application/json',
+  ics: 'text/calendar; charset=utf-8',
 };
 
 // ── Pure validation ─────────────────────────────────────────────────
@@ -77,7 +108,92 @@ function sniffAudioType(buf) {
   return null;
 }
 
-// Upload validation for images and audio. Returns { ok: true, contentType }
+// ISO-BMFF brands an MP4 may carry: H.264 video (`avc1`, `M4V `), the
+// common `mp4*`/`isom` family, and DASH segments. The list is the gate:
+// QuickTime's `qt  ` brand and every brand this does not name are refused.
+const MP4_BRANDS = new Set([
+  'isom', 'iso2', 'iso4', 'iso5', 'iso6', 'mp41', 'mp42', 'avc1', 'M4V ', 'dash',
+]);
+
+// MP4: bytes 4..8 are the `ftyp` box; its major brand or one of the
+// compatible brands listed in that box must be a known MP4 brand.
+function sniffMp4(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  if (buf.subarray(4, 8).toString('latin1') !== 'ftyp') return null;
+  if (buf.subarray(8, 12).toString('latin1').startsWith('qt')) return null;
+  let end = buf.readUInt32BE(0);
+  if (end < 16) end = 16;
+  end = Math.min(end, buf.length);
+  for (let off = 8; off + 4 <= end; off += 4) {
+    if (MP4_BRANDS.has(buf.subarray(off, off + 4).toString('latin1'))) return 'video/mp4';
+  }
+  return null;
+}
+
+// WebM: the EBML magic, with a DocType of `webm` in the header. Matroska
+// (`matroska`) is the same container with a different DocType — refused.
+function sniffWebm(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 4) return null;
+  if (!(buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3)) return null;
+  const head = buf.subarray(0, 64).toString('latin1');
+  if (head.includes('matroska')) return null;
+  return head.includes('webm') ? 'video/webm' : null;
+}
+
+// An opening that a browser would treat as markup or script. Refused even
+// under a `.txt`/`.csv` name, so a text upload can never be a page.
+const SCRIPT_OPENING = /^(#!|\/\/|\/\*|\(function|function\s|import\s|export\s|var\s|let\s|const\s)/;
+
+// Valid UTF-8 with no NUL bytes; a leading BOM and whitespace are dropped.
+// Returns the stripped text, or null when the bytes are not plain text.
+function sniffText(buf) {
+  if (!Buffer.isBuffer(buf) || !buf.length) return null;
+  if (buf.includes(0)) return null;
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    return null;
+  }
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+  text = text.replace(/^\s+/, '');
+  if (text.startsWith('<') || SCRIPT_OPENING.test(text)) return null;
+  return text;
+}
+
+// The sniff for the document, video and text kinds. Returns the stored
+// content type or null; the extension picks the kind, and the bytes must
+// agree with it.
+function sniffFileType(buf, ext) {
+  if (!Buffer.isBuffer(buf) || !buf.length) return null;
+  if (DOCUMENT_EXT_TYPES[ext]) {
+    return buf.length >= 5 && buf.subarray(0, 5).toString('latin1') === '%PDF-'
+      ? DOCUMENT_EXT_TYPES[ext] : null;
+  }
+  if (VIDEO_EXT_TYPES[ext]) {
+    return VIDEO_EXT_TYPES[ext] === 'video/webm' ? sniffWebm(buf) : sniffMp4(buf);
+  }
+  if (TEXT_EXT_TYPES[ext]) {
+    const text = sniffText(buf);
+    if (text === null) return null;
+    if (ext === 'json') {
+      try { JSON.parse(text); } catch { return null; }
+    }
+    if (ext === 'ics' && !/^BEGIN:VCALENDAR/i.test(text)) return null;
+    return TEXT_EXT_TYPES[ext];
+  }
+  return null;
+}
+
+// Whether a stored type is safe to render on the page. Only media (images,
+// audio, video) is inline; everything else is served as an attachment.
+function isInlineType(contentType) {
+  const type = String(contentType || '').toLowerCase();
+  return type.startsWith('image/') || type.startsWith('audio/') || type.startsWith('video/');
+}
+
+// Upload validation for images, audio, documents, video and text. Returns
+// { ok: true, contentType }
 // or { ok: false, code, error } with a user-facing message. Same rules as
 // attachments.validateUpload's image branch: magic-byte sniff, never trust
 // the client's Content-Type, extension must agree with the bytes. The
@@ -93,11 +209,39 @@ function validateUpload({ filename, data }) {
   const ext = fileExt(name);
   const imageType = IMAGE_EXT_TYPES[ext];
   const audioType = AUDIO_EXT_TYPES[ext];
-  if (!imageType && !audioType) {
+  const documentType = DOCUMENT_EXT_TYPES[ext];
+  const videoType = VIDEO_EXT_TYPES[ext];
+  const textType = TEXT_EXT_TYPES[ext];
+  if (!imageType && !audioType && !documentType && !videoType && !textType) {
     return {
       ok: false, code: 'invalid_image',
-      error: `"${name}" isn't a supported file type (PNG, JPEG, GIF, WebP, Opus or MP3)`,
+      error: `"${name}" isn't a supported file type (PNG, JPEG, GIF, WebP, Opus, MP3, PDF, MP4, WebM, TXT, CSV, JSON or ICS)`,
     };
+  }
+  if (documentType || videoType || textType) {
+    const cap = documentType ? MAX_PDF_FILE_BYTES
+      : videoType ? MAX_VIDEO_FILE_BYTES : MAX_TEXT_FILE_BYTES;
+    const label = documentType ? 'PDF' : videoType ? 'Video' : 'File';
+    if (data.length > cap) {
+      return {
+        ok: false, code: 'file_too_large',
+        error: `${label} too large (max ${Math.round(cap / 1024 / 1024)} MB)`,
+      };
+    }
+    const sniffed = sniffFileType(data, ext);
+    if (!sniffed) {
+      const what = documentType ? 'a valid PDF'
+        : ext === 'webm' ? 'a valid WebM video'
+          : videoType ? 'a valid MP4 video'
+            : textType === TEXT_EXT_TYPES.json ? 'valid JSON'
+              : textType === TEXT_EXT_TYPES.ics ? 'a valid calendar (.ics) file'
+                : 'plain UTF-8 text';
+      return {
+        ok: false, code: 'invalid_file',
+        error: `"${name}" doesn't look like ${what}`,
+      };
+    }
+    return { ok: true, contentType: sniffed };
   }
   if (audioType) {
     if (data.length > MAX_AUDIO_FILE_BYTES) {
@@ -448,6 +592,9 @@ async function sweepStagingFiles(pool, store, { limit = 200 } = {}) {
 module.exports = {
   MAX_FILE_BYTES,
   MAX_AUDIO_FILE_BYTES,
+  MAX_PDF_FILE_BYTES,
+  MAX_VIDEO_FILE_BYTES,
+  MAX_TEXT_FILE_BYTES,
   UPLOAD_BODY_LIMIT,
   PER_APP_CAP,
   PER_USER_PER_APP_CAP,
@@ -455,7 +602,12 @@ module.exports = {
   STAGING_GC_DAYS,
   IMAGE_EXT_TYPES,
   AUDIO_EXT_TYPES,
+  DOCUMENT_EXT_TYPES,
+  VIDEO_EXT_TYPES,
+  TEXT_EXT_TYPES,
   sniffAudioType,
+  sniffFileType,
+  isInlineType,
   validateUpload,
   validateImageUpload,
   normalizeVisibility,

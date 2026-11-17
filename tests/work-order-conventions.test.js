@@ -36,8 +36,10 @@ const CONVENTIONS = fs.readFileSync(
 // 6 KB for rule 11, the content rules (#2722): an offline agent must not
 // build what keeps an app from rating "None". Raised again for rule 12, the
 // data rules (#5117): no trackers, sensitive data, child audience,
-// passwords or card data, or a login of the app's own.
-const MAX_ESSENTIALS_BYTES = 7.5 * 1024;
+// passwords or card data, or a login of the app's own. Raised to 8 KB for
+// #6769: rule 12 now says what is allowed (connecting an outside account,
+// app-made codes, a club or topic, a person's own note) as well as banned.
+const MAX_ESSENTIALS_BYTES = 8 * 1024;
 
 test('the work-order markers exist in app-conventions.md, exactly once each', () => {
   const begins = CONVENTIONS.split(prompts.WORK_ORDER_BEGIN).length - 1;

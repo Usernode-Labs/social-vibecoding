@@ -109,6 +109,82 @@ test('the GitHub-shaped diff (with ---/+++ lines) reads the same', () => {
   assert.deepEqual(safety.destructiveStatements(diff), ['ALTER TABLE a ALTER COLUMN id TYPE bigint;']);
 });
 
+// ── Changes that lose nothing ────────────────────────────────────────
+
+const PEOPLE = ['CREATE TABLE people (id SERIAL PRIMARY KEY, name VARCHAR(40), score NUMERIC(6,2), n SMALLINT, bio TEXT);'];
+
+test('a column can be widened, made text, given bigger numbers, DROP NOT NULL or a DEFAULT', () => {
+  const types = safety.columnTypes(PEOPLE);
+  for (const line of [
+    'ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80);',
+    'ALTER TABLE people ALTER COLUMN name TYPE TEXT;',
+    'ALTER TABLE people ALTER COLUMN n TYPE INTEGER;',
+    'ALTER TABLE people ALTER COLUMN n TYPE BIGINT;',
+    'ALTER TABLE people ALTER COLUMN score TYPE NUMERIC(10,3);',
+    'ALTER TABLE people ALTER COLUMN name DROP NOT NULL;',
+    "ALTER TABLE people ALTER COLUMN name SET DEFAULT '';",
+  ]) {
+    assert.deepEqual(safety.destructiveStatements(diffOf('migrations/002.sql', [line]), { columnTypes: types }), [], line);
+  }
+  assert.equal(safety.normaliseType('CHARACTER VARYING (40)'), 'varchar(40)');
+  assert.equal(safety.normaliseType('pg_catalog.int8'), 'bigint');
+});
+
+test('narrowing, converting, USING, an unknown column and SET NOT NULL stay destructive', () => {
+  const types = safety.columnTypes(PEOPLE);
+  for (const line of [
+    'ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(20);',
+    'ALTER TABLE people ALTER COLUMN bio TYPE INTEGER;',
+    'ALTER TABLE people ALTER COLUMN score TYPE NUMERIC(5,2);',
+    'ALTER TABLE people ALTER COLUMN score TYPE NUMERIC(6,1);',
+    'ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80) USING trim(name);',
+    'ALTER TABLE people ALTER COLUMN missing TYPE VARCHAR(80);',
+    'ALTER TABLE people ALTER COLUMN name SET NOT NULL;',
+  ]) {
+    assert.deepEqual(safety.destructiveStatements(diffOf('migrations/003.sql', [line]), { columnTypes: types }), [line], line);
+  }
+  // A `varchar(40)` to the same width is a no-op, not a loss.
+  assert.equal(safety.isLosslessType('varchar(40)', 'character varying(40)'), true);
+});
+
+test('the types are read in file order, so a widening then a narrowing is caught', () => {
+  const widened = safety.columnTypes([...PEOPLE, 'ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80);']);
+  assert.equal(widened.get('people.name'), 'varchar(80)');
+  const narrow = 'ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(20);';
+  assert.deepEqual(safety.destructiveStatements(diffOf('migrations/004.sql', [narrow]), { columnTypes: widened }), [narrow]);
+  assert.equal(safety.losslessTypeChange(
+    'ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80);\nALTER TABLE people ALTER COLUMN name TYPE VARCHAR(20);',
+    safety.columnTypes(PEOPLE)
+  ), false, 'within one text, later statements see the type the earlier one set');
+});
+
+test('a column declared twice with different types is unknown, so changing it stays destructive', () => {
+  const types = safety.columnTypes([
+    'CREATE TABLE IF NOT EXISTS people (name VARCHAR(40));',
+    'CREATE TABLE IF NOT EXISTS people (name VARCHAR(80));',
+  ]);
+  assert.equal(types.get('people.name'), null);
+  assert.deepEqual(
+    safety.destructiveStatements(diffOf('migrations/005.sql', ['ALTER TABLE people ALTER COLUMN name TYPE TEXT;']), { columnTypes: types }),
+    ['ALTER TABLE people ALTER COLUMN name TYPE TEXT;']
+  );
+});
+
+test('a type change split over several added lines is allowed when it only widens', () => {
+  const types = safety.columnTypes(PEOPLE);
+  assert.deepEqual(safety.destructiveStatements(diffOf('migrations/006.sql', [
+    'ALTER TABLE people',
+    '  ALTER COLUMN name TYPE VARCHAR(80)',
+  ]), { columnTypes: types }), []);
+  // And the same split, narrowed, is still found.
+  const narrow = safety.destructiveStatements(diffOf('migrations/006.sql', [
+    'ALTER TABLE people',
+    '  ALTER COLUMN name TYPE VARCHAR(20)',
+  ]), { columnTypes: types });
+  assert.equal(narrow.length, 1);
+  assert.match(narrow[0], /ALTER COLUMN name TYPE VARCHAR\(20\)/);
+});
+
 test('the refusal says how many versions get the updates, in plain words', () => {
   assert.equal(safety.refusalMessage(3),
     "This change removes or renames data, and 3 versions get this project's updates. Changes here have to add, not remove.");
@@ -161,6 +237,59 @@ test('an original with following versions is refused a destructive change, at th
 
   const additive = { getProposalDiff: async () => ({ diff: diffOf('api.js', ['CREATE TABLE IF NOT EXISTS x (id int);']) }) };
   assert.equal(await safety.mergeRefusal(pool, SESSION, { github: additive, repoRef }), null);
+});
+
+test('a widening merges when the base shows the column it widens', async () => {
+  const calls = [];
+  const github = {
+    getProposalDiff: async () => ({
+      diff: diffOf('migrations/002.sql', ['ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80);']),
+    }),
+    listRepoFiles: async (owner, repo, ref) => {
+      calls.push(['list', owner, repo, ref]);
+      return {
+        files: [
+          { path: 'migrations/002.sql', size: 90, sha: 'new' },
+          { path: 'migrations/001.sql', size: 120, sha: 'old' },
+        ],
+        truncated: false,
+      };
+    },
+    getBlobContent: async (owner, repo, sha) => {
+      calls.push(['blob', owner, repo, sha]);
+      return sha === 'old' ? PEOPLE[0] : '-- this migration adds nothing\n';
+    },
+  };
+  assert.equal(await safety.mergeRefusal(fakePool({ following: 2 }), SESSION, { github, repoRef }), null);
+  assert.deepEqual(calls[0], ['list', 'apps', 'tier-list', 'main']);
+  assert.deepEqual(calls.slice(1).map((c) => c[3]), ['new', 'old'],
+    'the files the diff touches first, then the sql files by path');
+});
+
+test('a widening is still refused when the base cannot be read', async () => {
+  const diff = diffOf('migrations/002.sql', ['ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80);']);
+  const widening = { getProposalDiff: async () => ({ diff }) };
+  for (const github of [
+    { ...widening, listRepoFiles: async () => { throw new Error('host down'); } },
+    { ...widening, listRepoFiles: async () => ({ files: [], truncated: true }) },
+    { ...widening, listRepoFiles: async () => ({ files: [{ path: 'migrations/001.sql', size: 10, sha: 'x' }], truncated: false }),
+      getBlobContent: async () => { throw new Error('gone'); } },
+  ]) {
+    const out = await safety.mergeRefusal(fakePool({ following: 2 }), SESSION, { github, repoRef });
+    assert.ok(out, 'the first pass stands');
+    assert.deepEqual(out.statements, ['ALTER TABLE people ALTER COLUMN name TYPE VARCHAR(80);']);
+  }
+});
+
+test('the base is never listed when the diff changes no type', async () => {
+  let listed = 0;
+  const github = {
+    getProposalDiff: async () => ({ diff: diffOf('api.js', ['DROP TABLE items;']) }),
+    listRepoFiles: async () => { listed += 1; return { files: [], truncated: false }; },
+  };
+  const out = await safety.mergeRefusal(fakePool({ following: 1 }), SESSION, { github, repoRef });
+  assert.deepEqual(out.statements, ['DROP TABLE items;']);
+  assert.equal(listed, 0);
 });
 
 test('a diff that cannot be read does not hold the merge', async () => {
