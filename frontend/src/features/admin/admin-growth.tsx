@@ -139,6 +139,10 @@ const HELP: Record<string, string> = {
   wGroups: 'Projects where 3 or more people in scope acted that week.',
   retention: 'People grouped by the first week they were active since 14 Sep. Each cell shows how many of them were active again N weeks later.',
   wau: 'Admin › Analytics counts anyone with any app heartbeat (even a second), a message, vote, kudos or request in the last 7 days. It leaves out admins and tests but keeps Season 1.',
+  lifeNew: 'Active this week for the first time.',
+  lifeReturning: 'Active this week and the week before.',
+  lifeResurrecting: 'Active this week, not the week before, but some week earlier.',
+  lifeDormant: 'Active the week before, not this week. Drawn below the line.',
   lifecycle: 'Each week’s active people split four ways. New: active for the first time. Returning: active this week and last. Resurrecting: active this week, not last, but before. Dormant (below the line): active last week, not this one.',
   l4: 'Of people active at least once in the last 4 weeks, how many weeks each was active. Many at 3 or 4 means a habit.',
   depth: 'The last 7 days, from any trace to acting in a group.',
@@ -593,6 +597,7 @@ function PeopleTable({ list, reached, onOpenPerson }: { list: GrowthPerson[]; re
 
 function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Reading; when: When }) {
   const { term, help } = useHelp();
+  const [pick, setPick] = useState<string | null>(null);
   const pool = r.whoPeople;
   const weeks = data.weeks;
   const life = weeks.map((w, i) => {
@@ -637,16 +642,19 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className={G.title}>{term('lifecycle', 'Weekly lifecycle')}</h3>
             <span className="flex flex-wrap gap-3 text-xs text-zinc-600 dark:text-zinc-300">
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-300" />New</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-600" />Returning</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-600" />Resurrecting</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />Dormant</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-300" />{term('lifeNew', 'New')}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-600" />{term('lifeReturning', 'Returning')}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-600" />{term('lifeResurrecting', 'Resurrecting')}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />{term('lifeDormant', 'Dormant')}</span>
             </span>
           </div>
-          {help('lifecycle')}
+          {help('lifecycle', 'lifeNew', 'lifeReturning', 'lifeResurrecting', 'lifeDormant')}
           <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${life.length}, minmax(0, 1fr))` }}>
-            {life.map((l) => (
-              <div key={l.w} className={`flex flex-col items-center ${fade(l.w) ? 'opacity-30' : ''} ${l.w === data.thisWeek ? 'opacity-60' : ''}`}>
+            {life.map((l, i) => (
+              <div key={l.w} className="relative">
+              <button type="button" aria-expanded={pick === l.w} aria-label={`Week of ${dayLabel(l.w)}: ${l.nw} new, ${l.ret} returning, ${l.res} resurrecting, ${l.dor} dormant`}
+                onClick={() => setPick(pick === l.w ? null : l.w)} onMouseEnter={() => setPick(l.w)} onMouseLeave={() => setPick(null)}
+                className={`flex w-full flex-col items-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 ${pick === l.w ? 'bg-zinc-100 dark:bg-zinc-800' : ''} ${fade(l.w) ? 'opacity-30' : ''} ${l.w === data.thisWeek ? 'opacity-60' : ''}`}>
                 <div className="flex h-32 w-full flex-col items-center justify-end">
                   <span className="text-[11px] font-semibold tabular-nums">{l.nw + l.ret + l.res || ''}</span>
                   <span className="block w-3/4 bg-emerald-600" style={{ height: `${l.res * scale}px` }} />
@@ -659,6 +667,16 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
                   <span className="text-[11px] font-semibold tabular-nums text-amber-700 dark:text-amber-400">{l.dor ? `−${l.dor}` : ''}</span>
                 </div>
                 <span className="text-[10px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{dayLabel(l.w)}</span>
+              </button>
+              {pick === l.w ? (
+                <div role="note" className={`${G.help} pointer-events-none absolute top-0 z-30 w-max shadow-lg ${i < life.length / 2 ? 'start-0' : 'end-0'}`}>
+                  <p className="font-semibold">Week of {dayLabel(l.w)}{l.w === data.thisWeek ? ' (so far)' : ''}</p>
+                  {([['New', l.nw, 'bg-violet-300'], ['Returning', l.ret, 'bg-violet-600'], ['Resurrecting', l.res, 'bg-emerald-600'], ['Dormant', l.dor, 'bg-amber-400']] as Array<[string, number, string]>).map(([name, n, tone]) => (
+                    <p key={name} className="flex items-center gap-2 tabular-nums"><span className={`h-2 w-2 rounded-sm ${tone}`} /><span className="flex-1">{name}</span><b>{n}</b></p>
+                  ))}
+                  <p className="mt-1 tabular-nums">{people(l.nw + l.ret + l.res)} active</p>
+                </div>
+              ) : null}
               </div>
             ))}
           </div>
