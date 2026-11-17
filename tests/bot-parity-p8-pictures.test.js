@@ -76,7 +76,7 @@ test('every prompt the model gets starts with the content rules, then their word
   const said = pictures.promptFor({ prompt: 'A pear', aspect: 'wide', variant: 'light', letter: 'B', count: 3, purpose: 'featured' });
   assert.ok(said.startsWith(pictures.CONTENT_RULES), 'the rules come first');
   for (const rule of [/No sexual or suggestive content, and no nudity\./, /No violence, blood, weapons/, /No gambling\./,
-    /Nothing aimed at children\./, /No real person's likeness/, /No brand names, logos or trademarks unless they are given to you here\./]) {
+    /Nothing aimed at children under 13\./, /No real person's likeness/, /No brand names, logos or trademarks unless they are given to you here\./]) {
     assert.match(pictures.CONTENT_RULES, rule);
   }
   assert.match(said, /card picture in Discover/);
@@ -227,7 +227,7 @@ test('make_pictures: offered to a person while the bot is on, its words in the p
   assert.deepEqual(params.properties.for.enum, ['featured', 'app', 'design', 'other']);
   const lines = tool.promptLines(on).join('\n');
   assert.match(lines, /make_pictures/);
-  assert.match(lines, /nothing sexual or suggestive, no violence or weapons, no gambling, nothing aimed at children/);
+  assert.match(lines, /nothing sexual or suggestive, no violence or weapons, no gambling, nothing aimed at children under 13/);
   assert.match(lines, /their own week of building time/);
   for (const text of [lines, tool.TOOL.function.description, ...Object.values(params.properties).map((p) => p.description || '')]) {
     assert.doesNotMatch(text, /—/);

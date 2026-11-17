@@ -39,8 +39,10 @@ const CONVENTIONS = fs.readFileSync(
 // passwords or card data, or a login of the app's own. Raised again for
 // #6766: which outside data services are allowed, and the difference
 // between a library the app serves and a script on another origin, and then
-// the group's allowed-content list and two bans. The excerpt stays a few
-// kilobytes, never the whole document.
+// the group's allowed-content list and two bans. Rule 12 also says what is
+// allowed (#6769: connecting an outside account, app-made codes, a club or
+// topic, a person's own note). The excerpt stays a few kilobytes, never the
+// whole document.
 const MAX_ESSENTIALS_BYTES = 9 * 1024;
 
 test('the work-order markers exist in app-conventions.md, exactly once each', () => {

@@ -42,7 +42,8 @@ test('the data rules ride in the same block, read from their own section (#5117)
   assert.ok(block.indexOf('==== END CONTENT RULES ====') < block.indexOf('==== THE PLATFORM\'S DATA RULES'));
   assert.ok(block.trimEnd().endsWith('==== END DATA RULES ===='));
   const build = live.buildPrompt({ seed: 'SEED', buildNote: 'plan' });
-  assert.ok(build.includes('Passwords or payment card data'), 'the build prompt carries them');
+  // 17 Nov 2026 (#6769): the bullet now says whose password it means.
+  assert.ok(build.includes('Account passwords or payment card data'), 'the build prompt carries them');
 });
 
 test('triage, spec, build and follow-up prompts all carry it, after the request', () => {

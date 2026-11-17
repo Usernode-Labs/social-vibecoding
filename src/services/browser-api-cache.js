@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 
-const { scopeCookieName } = require('./browser-session-cookies');
+const { scopeCookieName, sessionSameSite, dropUnpartitionedCopy } = require('./browser-session-cookies');
 const SCOPE_COOKIE = scopeCookieName();
 const SCOPE_HEADER = 'X-Usernode-Cache-Scope';
 const EXPIRY_HEADER = 'X-Usernode-Cache-Expires';
@@ -18,10 +18,12 @@ function sessionCacheScope(token) {
 // on ordinary reads would let an old request overwrite a newer login's hint.
 function setSessionCacheCookie(res, token, expiresAt) {
   const secure = process.env.NODE_ENV === 'production' || res.req?.secure === true;
-  res.cookie(scopeCookieName(process.env, secure), sessionCacheScope(token), {
-    httpOnly: false, secure,
-    sameSite: 'lax', path: '/', expires: new Date(expiresAt),
-  });
+  // Partitioned in a preview, beside the session it labels
+  // (browser-session-cookies.js sessionSameSite).
+  const name = scopeCookieName(process.env, secure);
+  const options = { httpOnly: false, secure, ...sessionSameSite(), path: '/', expires: new Date(expiresAt) };
+  dropUnpartitionedCopy(res, name, options);
+  res.cookie(name, sessionCacheScope(token), options);
   // Old tabs must lose their previous hint when a new server pairs the
   // protected label with a different login. They may refresh to regain
   // offline use; they must never keep using the former partition meanwhile.

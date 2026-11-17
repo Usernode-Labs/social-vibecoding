@@ -743,9 +743,10 @@ function stageGuidanceLines(stage, { firstVersion = false, guidance = null, revi
  * the same section).
  *
  * THE DATA RULES (#5117). Their section rides in the same block, read the
- * same way: no trackers or outside scripts, no special-category data,
- * nothing aimed at children, no passwords or card data, no login of the
- * app's own. The merge-time review holds a proposal to it as well.
+ * same way: no trackers or outside scripts, no profiling people by
+ * sensitive traits, nothing for under-13s, no account passwords or card
+ * data, no payments, no login of the app's own. The merge-time review
+ * holds a proposal to it as well.
  */
 const CONTENT_RULES_SLUG = 'content-rules-what-no-app-may-show';
 const DATA_RULES_SLUG = 'data-rules-what-no-app-may-collect-or-load';

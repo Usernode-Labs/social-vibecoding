@@ -40,6 +40,10 @@
  * request or a change to a project that exists has no door, even when the
  * thread is not tied to a project.
  *
+ * 17 Nov 2026 (#6763): a "+" thread's project is the chip's preset (New chat
+ * starts on the project you were on), not what the idea is about, so the
+ * bot's offer opens New project there too, project set or not.
+ *
  * The first render is nothing: where the thread stands is read in an effect
  * (`usePrivateThread`, held by the thread's pane for its head and its foot).
  *
@@ -81,6 +85,12 @@ export interface PrivateThreadState {
    */
   title?: string | null;
   /**
+   * #6764 (17 Nov 2026): the thread's name is a stored one, an automatic
+   * summary ('auto') or the person's own ('person'), so the row and this
+   * head both take it ahead of the first words.
+   */
+  titled?: 'auto' | 'person';
+  /**
    * 1 Nov 2026: whether it is the viewer's private thread at all: a row of
    * theirs, or a root that is their own message (services/private-threads.js
    * stateOf). Absent from an older server (isOwnPrivateThread).
@@ -113,6 +123,9 @@ export function doorsFor(where: PrivateThreadState | null, botReplied: boolean, 
   if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
   // B04: a screen drawn for no project yet is made into one, with its drawing.
   if (where.design && !where.app && where.kind !== 'draft_request' && where.kind !== 'draft_reply') return ['new'];
+  // #6763: a "+" thread's project is the chip's preset, not what the idea is
+  // about, so the bot's offer opens New project there even with one set.
+  if (where.kind === 'ask' && invited) return ['new'];
   // A design thread's bot offers the project itself (design-bot.js offer_project).
   if (where.kind === 'draft_request' || where.kind === 'draft_reply' || where.kind === 'design' || where.app) return [];
   return invited ? ['new'] : [];
@@ -243,10 +256,10 @@ export function noteThreadName(rootId: number | null | undefined, name: string |
   if (rootId && said) serverNames.set(rootId, said);
 }
 
-/** Keep the names of the rows the server names by kind (the Homeroom bot page's read of its lists). */
-export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null }> | null | undefined): void {
+/** Keep the names of the rows the server names itself: by kind, or by a stored title (#6764). */
+export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null; titled?: string | null }> | null | undefined): void {
   for (const row of rows || []) {
-    if (row && KINDS_NAMED.has(String(row.kind))) noteThreadName(row.rootId, row.title);
+    if (row && (KINDS_NAMED.has(String(row.kind)) || row.titled)) noteThreadName(row.rootId, row.title);
   }
 }
 
@@ -263,15 +276,24 @@ export function usePrivateThread(rootId: number | null): [PrivateThreadState | n
     setWhere(null);
     if (!rootId) return undefined;
     let live = true;
-    fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data || typeof data.state !== 'string') return;
-        noteThreadName(rootId, data.title);
-        if (live) setWhere(data);
-      })
-      .catch(() => {});
-    return () => { live = false; };
+    const read = () => {
+      fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data || typeof data.state !== 'string') return;
+          noteThreadName(rootId, data.title);
+          if (live) setWhere(data);
+        })
+        .catch(() => {});
+    };
+    read();
+    // #6764: an automatic title written after the bot's answer reaches an
+    // open head without a reload, as the lists re-read on the same push.
+    window.addEventListener('homeroom-bot-work-changed', read);
+    return () => {
+      live = false;
+      window.removeEventListener('homeroom-bot-work-changed', read);
+    };
   }, [rootId]);
   return [where, setWhere];
 }

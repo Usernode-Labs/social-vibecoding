@@ -4615,6 +4615,22 @@
     "text": "Mark done",
     "description": "A menu item in a private thread's ⋯ menu (in its head, and on its row on the Homeroom bot page): finishes the thread, which then leaves the page's lists. Nothing in it is deleted."
   },
+  "privateThread.rename": {
+    "text": "Rename",
+    "description": "A menu item in a private thread's ⋯ menu (in its head, and on its row on the Homeroom bot page), above Mark done: opens a small prompt to give the thread a name of the person's own, which the automatic title never replaces."
+  },
+  "privateThread.renameTitle": {
+    "text": "Rename thread",
+    "description": "The title of the small prompt a private thread's Rename opens, with one text field and Save."
+  },
+  "privateThread.renamePlaceholder": {
+    "text": "Thread name",
+    "description": "The placeholder in the text field of the prompt a private thread's Rename opens: what the thread should be called."
+  },
+  "privateThread.renameFailed": {
+    "text": "Couldn’t rename this thread.",
+    "description": "The message shown when renaming a private thread failed and the server gave no sentence of its own. The thread keeps its name."
+  },
   "privateThread.menu": {
     "text": "Thread actions",
     "description": "Accessible name and tooltip of the ⋯ button on a private thread with Homeroom bot, which opens a menu with Mark done (or Reopen)."
