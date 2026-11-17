@@ -1026,7 +1026,7 @@ test('the heading is the prerender\'s own until the data lands', () => {
   assert.doesNotMatch(before, /home-panel-see-all|<article/);
   const [, sections] = PANEL_SOURCES.find(([n]) => n.endsWith('sections.tsx'));
   assert.match(sections,
-    /label=\{challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll \? <SeeAllLink \/> : null\}/,
+    /\) : challenges \? challenges\.heading : t\('home:challenges\.heading'\)\}\s*action=\{challenges\?\.seeAll && !wip \? <SeeAllLink \/> : null\}/,
     'the content-named heading and its link follow the view, and fall back to the prerender\'s values');
   assert.equal(message('home:challenges.heading'), 'Challenges');
 });

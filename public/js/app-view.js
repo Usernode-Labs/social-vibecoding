@@ -8999,7 +8999,11 @@ const AppView = {
       const pic = html ? AppView._workshopVisuals(null, shots) : null;
       const thumbs = pic && (pic.before || pic.after)
         ? { before: pic.before || null, after: pic.after || null, viewer: `shots-${Number(item.id)}-viewer` } : null;
-      return html ? { state: 'verified', html, line: null, thumbs } : null;
+      // The run's own screens and what changed on each, for the card's
+      // picture: the Needs you page's slider (topic/thread-picture.tsx).
+      const screens = pic && Array.isArray(pic.screens) ? pic.screens : [];
+      const changes = pic && Array.isArray(pic.changes) ? pic.changes : [];
+      return html ? { state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number(item.id) || null } : null;
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };

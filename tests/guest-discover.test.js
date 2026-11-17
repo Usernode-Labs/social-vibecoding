@@ -392,8 +392,10 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // internal state), so pin the source: the heading stays inside the
   // list.length branch, and the non-search list leaves the featured slugs
   // out (they follow the kind, like Featured does).
-  assert.match(read(JOIN), /: featured\.length \? \(\s*<h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3>/, 'the heading is not limited to a chosen kind');
+  assert.match(read(JOIN), /: restLabel \? \(\s*<h3 className=\{`\$\{SMALL_CAPS_LABEL\} px-1 pb-2`\} data-home-join-rest="">\{t\('home:join\.more'\)\}<\/h3>/, 'the heading is not limited to a chosen kind');
   const src = read(JOIN);
+  // The label is drawn whenever something is featured, but under Standard (WIP), which draws Featured apart from this list.
+  assert.match(src, /const restLabel = featured\.length > 0 && !wip;/);
   assert.match(src, /const lead = new Set\(featured\.map\(\(a\) => a\.slug\)\);\s+return \(query \? joinOrder\(pool, sort\) : sortApps\(pool, sort\)\.filter\(\(a\) => !lead\.has\(a\.slug\)\)\)/, 'the non-search list leaves out what Featured shows');
   // The kind chips fade at whichever edge has more chips, the AI page's own
   // rail, and a chosen kind names itself in Featured's heading (#6660).

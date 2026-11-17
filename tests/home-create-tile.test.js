@@ -313,7 +313,7 @@ test('#5825: the My apps heading carries the compact entry exactly when the tile
   // #5871: it shares the seat with "Edit", which starts edit mode, so the
   // seat is drawn when either is due and each decides for itself.
   assert.match(source,
-    /\) : \(canEdit \|\| grid\.create\?\.heldBack \|\| \(wip && \(moreCount > 0 \|\| canFold\)\)\) \? \(/,
+    /\) : \(canEdit \|\| grid\.create\?\.heldBack\) \? \(/,
     'the heading has an action when Edit or the held-back tile needs one');
   assert.match(source,
     /\{grid\.create\?\.heldBack \? <CreateCompact view=\{grid\.create\} \/> : null\}/,

@@ -5513,11 +5513,11 @@ html[data-skin-wip] {
   --wip-tile-h: 6.25rem;       /* p-3 12 + icon 72 + p-3 12, and the text's 94 */
   --wip-tile-gap: 0.75rem;
   --wip-icon: 4.5rem;
-  --wip-icon-radius: var(--wip-radius-inner);
+  --wip-icon-radius: 0.875rem;  /* 14px: an icon is a step rounder than the things beside it, about a fifth of its side */
   --wip-icon-glyph: 2rem;      /* an emoji icon's size */
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 6px 14px -4px rgb(0 0 0 / 0.2);
-  --wip-gloss: rgb(255 255 255 / 0.5);
-  --wip-gloss-edge: rgb(255 255 255 / 0.14);
+  --wip-icon-edge: var(--wip-card-line); /* a hairline round an icon's tile, so a white icon keeps its shape on a white card */
+  --wip-icon-tile: var(--bg-primary); /* the tile under an emoji or a letter */
   --wip-sheen: rgb(255 255 255 / 0.55);
   --wip-sheen-time: 650ms;
   /* The filled action */
@@ -5530,13 +5530,26 @@ html[data-skin-wip] {
   /* A panel's row of items (Needs you) */
   --wip-item-radius: var(--wip-radius-inner);
   --wip-item-icon: 2.25rem;
-  --wip-item-icon-radius: var(--wip-radius-small);
+  --wip-item-icon-radius: 0.5rem; /* 8px, the same fifth of a small icon's side */
   --wip-ink: var(--text-primary);
   --wip-ink-soft: var(--text-secondary);
   --wip-pill-bg: var(--accent);
   --wip-pill-ink: var(--wip-cta-ink);
   --wip-count-bg: var(--accent-tint);
   --wip-count-ink: var(--accent-tint-ink);
+  /* A community card's own colour, lifted: lighter and fuller, so a row of them is not a row of dark blocks */
+  --wip-cover-lift: brightness(1.5) saturate(1.35);
+  /* A challenge picture's band: how much of its pale tone it wears and, under
+     that, how much of the tone's deeper line colour over the card. The light
+     is all pale tone; the dark is none of it and a third of the deep one,
+     since a pastel over black is only grey. */
+  --wip-poster-tone: 100%;
+  --wip-poster-deep: 0%;
+  /* A meter's fill, and a hairline round a count */
+  --wip-meter: var(--wip-ink-action);
+  --wip-count-line: transparent;
+  /* A thing done */
+  --wip-ok: var(--state-ok);
   /* Widths */
   --wip-search-w: 24rem;
 }
@@ -5562,26 +5575,45 @@ html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-ink-muted: rgb(0 0 0 / 0.6);
   --wip-ink-action: #000000;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 14px -6px rgb(0 0 0 / 0.16);
-  --wip-cta-from: #ffee6f;
-  --wip-cta-via: #ffee6f;
-  --wip-cta-to: #ffee6f;
-  --wip-cta-ink: #000000;
-  --wip-cta-glow: rgb(0 0 0 / 0.14);
+  /* The filled action is the kit's Cream + Black: yellow on a cream page
+     would be the quietest thing on it. */
+  --wip-cta-from: #000000;
+  --wip-cta-via: #000000;
+  --wip-cta-to: #000000;
+  --wip-cta-ink: #fffeea;
+  --wip-cta-glow: rgb(0 0 0 / 0.22);
   --wip-pill-bg: #3090e1;
   --wip-pill-ink: #000000;
   --wip-count-bg: #ffee6f;
   --wip-count-ink: #000000;
+  --wip-count-line: rgb(0 0 0 / 0.2);
+  --wip-meter: #3090e1;
+  /* The shell's own marks on a page of this config: where you are, in the
+     kit's ink on a wash of it, not the standard blue. */
+  --lit-ink: #000000;
+  --lit-tint: rgb(0 0 0 / 0.07);
+  --lit-line: rgb(0 0 0 / 0.14);
 }
 /* In the dark it is the kit's other pairing, cream on black. */
 html[data-skin-wip][data-wip-tokens="brand"].dark {
-  --wip-page-bg: #000000;
-  --wip-card-bg: #141412;
+  --wip-page-bg: #0b0b0c; /* the shell's own dark ground, so the page and its frame are one black */
+  --wip-card-bg: #171715;
   --wip-card-line: rgb(255 254 234 / 0.14);
   --wip-ink: #fffeea;
   --wip-ink-soft: rgb(255 254 234 / 0.78);
   --wip-ink-muted: rgb(255 254 234 / 0.62);
   --wip-ink-action: #fffeea;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
+  /* On black the filled action is the kit's Black + Yellow. */
+  --wip-cta-from: #ffee6f;
+  --wip-cta-via: #ffee6f;
+  --wip-cta-to: #ffee6f;
+  --wip-cta-ink: #000000;
+  --wip-cta-glow: rgb(255 238 111 / 0.18);
+  --wip-count-line: transparent;
+  --lit-ink: #fffeea;
+  --lit-tint: rgb(255 254 234 / 0.1);
+  --lit-line: rgb(255 254 234 / 0.18);
 }
 /* How many columns a list of the look has, by the room there is: one, two
    from 640px, three from 1024px, four from 1440px. Needs you's rows and
@@ -5590,15 +5622,21 @@ html[data-skin-wip] { --wip-cols: 1; }
 @media (min-width: 640px) { html[data-skin-wip] { --wip-cols: 2; } }
 @media (min-width: 1024px) { html[data-skin-wip] { --wip-cols: 3; } }
 @media (min-width: 1440px) { html[data-skin-wip] { --wip-cols: 4; } }
+/* In the dark (either config): an icon's tile is a step lighter than the
+   card and edged, so a dark picture stays a shape; a community's colour is
+   lifted less; a challenge's band wears a third of its tone's deep colour. */
 html[data-skin-wip].dark {
+  --wip-cover-lift: brightness(1.2) saturate(1.25);
+  --wip-poster-tone: 0%;
+  --wip-poster-deep: 34%;
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 14px -4px rgb(0 0 0 / 0.55);
+  --wip-icon-edge: rgb(255 255 255 / 0.14);
+  --wip-icon-tile: #2a2a2d;
 }
 
 /* ── Components (features/home/wip-kit.tsx) ─────────────────── */
-/* The card. Challenges is drawn by its own section, so it takes the same
-   rule by its place rather than by the class. */
-.wip-card,
-html[data-skin-wip] .home-row > #home-challenges-section {
+/* The card. */
+.wip-card {
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
@@ -5622,17 +5660,37 @@ html[data-skin-wip] .home-row > #home-challenges-section {
 .wip-cta:hover { transform: translateY(-1px); filter: brightness(1.1); }
 .wip-cta:active { transform: scale(0.98); }
 .wip-cta-glyph { width: 1.125rem; height: 1.125rem; }
-/* A link riding a section's heading. */
-.wip-head-link {
-  display: flex;
+/* A section's label as the way to all of it: the label's words (a count
+   beside them), then a chevron, one thing to press. The words keep the
+   label's own type, which it inherits; under the pointer they take the ink
+   and the chevron a soft disc. */
+.wip-head-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: color 150ms;
+}
+.wip-head-more:hover { color: var(--wip-ink); }
+.wip-head-chevron {
+  display: inline-flex;
   flex: none;
   align-items: center;
-  white-space: nowrap;
-  font-size: var(--wip-link-size);
-  font-weight: 600;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-inline-start: -0.125rem;
+  border-radius: var(--wip-radius-pill);
   color: var(--wip-ink-action);
+  transition: background-color 150ms;
 }
-.wip-head-link:hover { text-decoration: underline; }
+.wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-count-bg); }
+.wip-head-chevron-glyph { width: 0.875rem; height: 0.875rem; }
 /* Rows: one thing a line, a hairline between them. */
 .wip-rows { display: grid; min-width: 0; margin-top: 0.25rem; overflow: hidden; }
 .wip-rows > li { min-width: 0; }
@@ -5650,23 +5708,8 @@ html[data-skin-wip] .home-row > #home-challenges-section {
   border-radius: var(--wip-item-radius);
 }
 .wip-row:hover .wip-item-title { color: var(--wip-ink-action); }
-/* A panel: a card with its label, a count, a note and a link on one line,
-   over a row of items that scrolls sideways (Needs you). */
+/* A panel: a card's inside, padded, for a list (Needs you). */
 .wip-panel { padding: var(--wip-card-pad); min-width: 0; }
-.wip-panel-head {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 1.75rem;
-}
-.wip-panel-label {
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  color: var(--wip-ink-muted);
-}
 .wip-count {
   display: inline-flex;
   align-items: center;
@@ -5680,8 +5723,8 @@ html[data-skin-wip] .home-row > #home-challenges-section {
   font-size: var(--wip-body-size);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 0 1px var(--wip-count-line);
 }
-.wip-panel-link { margin-inline-start: auto; }
 .wip-item-icon {
   display: flex;
   flex: none;
@@ -5729,6 +5772,103 @@ html[data-skin-wip] .home-row > #home-challenges-section {
   box-shadow: none;
   background-color: var(--wip-pill-bg);
   color: var(--wip-pill-ink);
+}
+/* Posters: things side by side in one card with no card of their own, each
+   as wide as one of the look's columns; the row scrolls sideways for what
+   does not fit (Challenges). A poster's picture runs across its top on the
+   picture's own tone. */
+.wip-posters {
+  display: flex;
+  gap: var(--wip-col-gap);
+  padding: var(--wip-card-pad);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: var(--wip-card-pad);
+  scrollbar-width: none;
+}
+.wip-posters::-webkit-scrollbar { width: 0; height: 0; }
+.wip-poster {
+  display: flex;
+  flex: 0 0 calc((100% - (var(--wip-cols, 1) - 1) * var(--wip-col-gap)) / var(--wip-cols, 1));
+  flex-direction: column;
+  min-width: 0;
+  text-align: start;
+  scroll-snap-align: start;
+}
+.wip-poster:hover .wip-item-title { color: var(--wip-ink-action); }
+.wip-poster-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 4.25rem;
+  margin-bottom: 0.625rem;
+  overflow: hidden;
+  /* The picture's own tone (.home-tone-* sets --tone-50 and its deeper
+     --tone-light-line) over the card, in the parts the tokens say: the pale
+     tone in the light, a third of the deep one in the dark, where the
+     shell's own dark tone is too near black to read as a colour. A
+     hairline's grey without a tone. */
+  background-color: color-mix(
+    in srgb,
+    var(--tone-50, var(--wip-card-line)) var(--wip-poster-tone),
+    color-mix(in srgb, var(--tone-light-line, var(--wip-card-line)) var(--wip-poster-deep), var(--wip-card-bg))
+  );
+  border-radius: var(--wip-radius-inner);
+  font-size: 2rem;
+}
+.wip-poster-art > img { width: 3.75rem; height: 3.75rem; object-fit: contain; transition: transform 200ms; } /* the band's height but a breath */
+.wip-poster:hover .wip-poster-art > img { transform: scale(1.06); }
+.wip-poster-facts { display: flex; align-items: baseline; gap: 0.5rem; }
+.wip-poster-facts > .wip-item-meta { flex: 1 1 0; min-width: 0; }
+/* What it is worth is the line's strong half: a step larger than where the
+   viewer stands, in the ink. Earned, it is in the done colour. */
+.wip-poster-worth {
+  flex: none;
+  font-size: var(--wip-link-size);
+  font-weight: 700;
+  color: var(--wip-ink);
+}
+.wip-poster-worth-ok { color: var(--wip-ok); }
+/* A meter: a track, and the accent as far as the thing has come; green once
+   it is done. */
+.wip-meter {
+  display: block;
+  height: 0.375rem;
+  margin-top: 0.5rem;
+  overflow: hidden;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-card-line);
+}
+.wip-meter > span { display: block; height: 100%; border-radius: inherit; background-color: var(--wip-meter); }
+.wip-poster[data-state="done"] .wip-meter > span { background-color: var(--wip-ok); }
+/* Before it is started there is nothing to measure: the meter keeps its
+   place, so the posters stay level, and draws no track that would read as a
+   rule under the words. */
+.wip-poster[data-state="new"] .wip-meter { background-color: transparent; }
+/* A filter line: the choices at its start (they scroll sideways when they
+   do not fit) and one menu at its end, close over the list they filter. */
+.wip-filterbar {
+  display: flex;
+  align-items: center;
+  gap: var(--wip-card-gap);
+  padding-bottom: 0.625rem;
+}
+/* Its menu is one of the line's own: a chip's height, shape and type, on the
+   card's colour under a hairline, at the line's end. */
+html[data-skin-wip] .wip-filterbar > select {
+  flex: none;
+  width: auto;
+  height: 2.75rem;
+  margin-inline-start: auto;
+  padding-block: 0;
+  padding-inline-start: 1rem;
+  border: 0;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  font-size: var(--wip-title-size);
+  font-weight: 500;
+  color: var(--wip-ink);
 }
 /* The search row: a short field, then the filled action at its end, the
    same distance from the header as from the first label. */
@@ -5799,18 +5939,15 @@ html[data-skin-wip] .home-row > #home-challenges-section {
     font-weight: var(--wip-title-weight);
   }
 }
-/* The icon sits a little above the card (one soft shadow), under a fixed
-   gloss over its top half, at every width. */
+/* The icon sits a little above the card: one soft shadow, at every width,
+   and in the dark a hairline round a tile a step lighter than the card, so
+   a dark picture or glyph stays a shape. (No gloss: it read as a grey cap
+   on a dark icon and as nothing on a light one.) */
 html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile {
   position: relative;
-  box-shadow: var(--wip-icon-shadow);
-}
-html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: radial-gradient(130% 75% at 50% -12%, var(--wip-gloss) 0%, var(--wip-gloss-edge) 62%, transparent 63%);
+  border-color: transparent;
+  background-color: var(--wip-icon-tile);
+  box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow);
 }
 /* A sheen: one band of light crosses the icon when the pointer comes over
    its tile. Only where a pointer hovers, never while the tiles are being
@@ -5847,6 +5984,13 @@ html[data-skin-wip] #home-screen {
   font-family: var(--wip-font);
   --accent: var(--wip-ink-action);
 }
+/* While Home is the screen on show, a config that names a page colour gives
+   it to the frame too (the header and the sidebar are clear over the body),
+   so the page and its frame are one ground with no seam. */
+html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)) {
+  background-color: var(--wip-page-bg);
+  background-image: none;
+}
 /* One column, in this order: Pinned projects, Needs you, Challenges, Featured
    (lifted out of Communities to join), then the rest of Communities to join. The markup keeps its own order; the column is a flex
    column, and both Communities to join and the row that holds Needs you
@@ -5876,39 +6020,36 @@ html[data-skin-wip] #home-screen #home-join-section > [data-home-join-featured] 
 /* Its rows stand one row gap apart, and nothing is drawn between them. A
    section's label brings one card gap of its own. */
 html[data-skin-wip] #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
-/* Needs you is a row of its own, as wide as the column, right
-   under Pinned projects. */
+/* Needs you is a row of its own, as wide as the column, right under Pinned
+   projects, and Challenges the row after it. Each is a section as Pinned
+   projects is: its label line on the page, then one card. The label brings
+   one card gap of its own above it. */
 html[data-skin-wip] .home-row > .home-aside {
   display: flex;
-  padding: var(--wip-row-gap) var(--wip-gutter) 0;
+  padding: calc(var(--wip-row-gap) - var(--wip-card-gap)) var(--wip-gutter) 0;
 }
 html[data-skin-wip] .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
-/* Challenges is a card: its label and See all inside it, over its row. */
-html[data-skin-wip] .home-row > #home-challenges-section {
-  margin: var(--wip-row-gap) var(--wip-gutter) 0;
-  padding: 0 var(--wip-card-pad) var(--wip-card-pad);
-  overflow: hidden; /* the row scrolls sideways inside the card */
-}
-html[data-skin-wip] .home-row > #home-challenges-section > .home-area-label { padding-top: var(--wip-card-pad); }
-/* Its row still scrolls sideways, and shows as many cards at a time as the
-   look has columns: each card is one column wide, so four, three, two or one
-   fit and the next ones are a swipe away. */
-html[data-skin-wip] .home-row > #home-challenges-section .home-panel-rows { gap: var(--wip-col-gap); }
-html[data-skin-wip] .home-row > #home-challenges-section .home-panel-rows > .home-challenge-card {
-  width: calc((100% - (var(--wip-cols) - 1) * var(--wip-col-gap)) / var(--wip-cols));
-}
+html[data-skin-wip] .home-row > #home-challenges-section { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
 /* A pinned project's press area, the search field and the sort menu: inside
    a card, or a field. */
 html[data-skin-wip] #app-list > .app-card,
 html[data-skin-wip] .wip-search > input,
 html[data-skin-wip] #home-join-section select { border-radius: var(--wip-radius-inner); }
-/* A challenge card sits inside the Challenges card, so it is an inner card,
-   and its picture, its status bar and its arrow are small marks. */
-html[data-skin-wip] .home-row > #home-challenges-section .home-challenge-card { border-radius: var(--wip-radius-inner); }
-html[data-skin-wip] .home-row > #home-challenges-section .home-challenge-card [class*="rounded-[0.6875rem]"] { border-radius: var(--wip-radius-small); }
 /* A community's card, and the placeholders that stand for one while it
    loads, are cards on the page. */
 html[data-skin-wip] #home-join-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
+/* A community's card with no picture of its own wears its colour, which is
+   picked to carry white text elsewhere and is dark for a field this size.
+   Here a copy of that colour lies on it, lifted (lighter and fuller, not
+   washed toward grey), under the glow and the icon, which keep their own
+   strength. (A card with a picture has no colour laid on it, and no lift.) */
+html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  filter: var(--wip-cover-lift);
+}
 /* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
    Pinned communities: the section stays mounted, since it loads the pins
    other parts of Home read, and is not displayed. */
@@ -27371,6 +27512,25 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 [data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip::after { font-size: 11px; line-height: 14px; font-weight: 700; }
 [data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-after::after { content: var(--thread-chip-after); }
 [data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-before::after { content: var(--thread-chip-before); }
+/* The same picture where the run worked out its screens: the Needs you
+   page's slider (.rf-compare), in the card's own colours. No outline and no
+   tint: the seam is what tells the two sides apart. Expand opens the full
+   viewer in the detail column. */
+.dev-thread-picture { margin-top: 14px; overflow: visible; background: none; }
+.dev-thread-compare {
+  --rf-black: var(--text-primary); --rf-cream: var(--bg-primary); --rf-line: var(--app-sheet-line);
+  position: relative; min-height: 120px; border-radius: 16px; overflow: hidden; isolation: isolate;
+  background: var(--messages-surface-2);
+}
+.dev-thread-compare::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--app-sheet-line); pointer-events: none; }
+.dev-thread-compare-expand {
+  position: absolute; z-index: 5; inset-inline-end: 12px; bottom: 12px; width: 40px; height: 40px; padding: 0;
+  display: grid; place-items: center; border: 1.5px solid var(--rf-black); border-radius: 999px;
+  background: var(--rf-cream); color: var(--rf-black); cursor: pointer;
+}
+.dev-thread-compare-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
+.dev-thread-tiles-said > li + li { margin-top: 4px; }
 .dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
 .dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
 .dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
