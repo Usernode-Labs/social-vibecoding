@@ -196,15 +196,18 @@ test('#3047: the expander appears for the tile alone, naming every app', () => {
   const HOME = HOME_SRC;
   // #4669 added the `!editing` half: edit mode shows every tile and its
   // trailing tile, so the collapsed-grid gates step aside while it holds.
-  assert.match(HOME, /const createHidden = !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
-  assert.match(HOME, /const collapsed = hiddenRows \|\| createHidden;/);
+  // 17 Nov 2026: a collapsed grid whose last shown row is full no longer
+  // holds the tile back. The tile takes that row's last cell and the app in
+  // it goes behind the expander (the render tests below).
+  assert.match(HOME, /const createTakesLast = !inCard && !editing && !Home\._appsExpanded\s*&& HomeLayout\.createTileCollapsed\(shown, cols, rowBound\);/);
+  assert.match(HOME, /const collapsed = hiddenRows \|\| createTakesLast;/);
   assert.match(HOME, /moreCount = collapsed \? \(canvas\.length \+ HomeLayout\.overflowItems\(layout\)\.length\) : 0;/);
   // #4757: a held-back tile is no longer dropped — the view is pushed with
   // heldBack and no placement, and index.tsx's My apps heading draws the
   // compact entry (#5825; apps-more.tsx drew it before).
   assert.match(HOME, /create = \{/);
   assert.match(HOME, /heldBack: createHidden,/);
-  assert.match(HOME, /placement: createHidden \|\| flows/);
+  assert.match(HOME, /placement: createCell\s*\? \{ \.\.\.createCell, w: 1, h: 1 \}\s*: createHidden \|\| flows/);
   // The shot links that pin the tile's treatments open the grid, so the tile
   // they exist to show is on screen whatever the viewport's budget.
   assert.match(HOME, /shot === 'home-apps' \|\| shot === 'create-enabled' \|\| shot === 'create-disabled'/);
@@ -350,6 +353,58 @@ test('without a held-back tile, or with a count, the line is the expander alone'
   );
 });
 
+// 17 Nov 2026: where Home is one column the collapsed grid ENDS with the
+// tile; beside the New project card (from 1280px) the grid draws none.
+test('a full last row gives its last cell to the tile, and that app waits behind Show all', () => {
+  const { Home, model, moreCount } = makeHome();
+  Home._apps = mine(12); // three full rows: the least Home shows
+  Home.render();
+  const state = model();
+  assert.equal(Home.MIN_ROWS, 3);
+  assert.equal(state.items.length, 11, 'three rows of four cells: eleven apps and the tile');
+  assert.equal(state.items.some((it) => it.app.slug === 'app-11'), false, 'the last cell\'s app is held back');
+  assert.deepEqual(state.create.placement, { col: 3, row: 2, w: 1, h: 1 });
+  assert.equal(state.create.heldBack, false, 'no compact entry stands in for it');
+  assert.equal(moreCount(), 12, 'the expander names every app');
+
+  Home._appsExpanded = true;
+  Home.render();
+  const open = model();
+  assert.equal(open.items.length, 12, 'expanded, every app is back in its own cell');
+  assert.deepEqual(open.create.placement, { col: 0, row: 3, w: 1, h: 1 }, 'and the tile follows the last one');
+});
+
+test('beside the New project card the grid draws no tile and gives up no cell', () => {
+  const { Home, model, moreCount, sandbox } = makeHome();
+  sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 1280px)' });
+  Home._apps = mine(12);
+  Home.render();
+  const state = model();
+  assert.equal(state.create.inCard, true);
+  assert.equal(state.items.length, 12, 'four apps to the last row');
+  assert.equal(moreCount(), 0, 'nothing is held back');
+  assert.doesNotMatch(
+    renderGrid({ ready: true, items: [], create: { ...CREATE, heldBack: false, inCard: true, placement: null } }),
+    /home-create-tile/,
+  );
+
+  // The shot links the declared Create checks open keep the tile.
+  const shot = makeHome({ search: '?demo=1&shot=create-enabled' });
+  shot.sandbox.matchMedia = () => ({ matches: true });
+  shot.Home._apps = mine(2);
+  shot.Home.render();
+  assert.equal(shot.model().create.inCard, false);
+
+  // A frame look draws its own Home, with the tile, at every width.
+  const framed = makeHome();
+  framed.sandbox.matchMedia = () => ({ matches: true });
+  framed.sandbox.Skin = { get: () => 'glass' };
+  framed.Home._apps = mine(12);
+  framed.Home.render();
+  assert.equal(framed.model().create.inCard, false);
+  assert.deepEqual(framed.model().create.placement, { col: 3, row: 2, w: 1, h: 1 });
+});
+
 // #6522: Home.render() hands the grid its Create view again, and the three
 // cases that decide whether it is there at all.
 test('#6522: a normal account\'s render yields the Create view, search and private members none', () => {
@@ -390,8 +445,12 @@ test('the tile draws both states, and never the disabled attribute', () => {
   // dialog with the quota in it.
   assert.doesNotMatch(off, /<button[^>]*\sdisabled/);
   assert.doesNotMatch(off, /aria-disabled/);
-  // The accent arrives on hover only while creation is open.
-  assert.match(on, /group-hover:border-violet-500/);
+  // The accent face (17 Nov 2026: a gradient app icon, no longer a dashed
+  // slot) is drawn only while creation is open; the locked tile is the quiet
+  // dashed outline.
+  assert.match(on, /bg-gradient-to-br from-violet-400 to-violet-700 text-white/);
+  assert.doesNotMatch(on, /border-dashed/);
+  assert.match(off, /border-dashed/);
   assert.doesNotMatch(off, /violet/);
 });
 

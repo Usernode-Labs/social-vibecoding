@@ -112,9 +112,9 @@ test('Home.render() pushes the expander count and the strip together', () => {
   const chromeNow = () => JSON.parse(JSON.stringify(chromeStore.get()));
   assert.deepEqual(chromeNow(), INITIAL_CHROME, 'nothing published before a render');
 
-  // Nine apps against a two-row, four-column default: one row is held back,
-  // so the expander names all nine.
-  Home._apps = Array.from({ length: 9 }, (_, i) => ({ ...APP, slug: `app-${i}`, name: `App ${i}` }));
+  // Thirteen apps against the three rows of four Home shows at least: one
+  // row is held back, so the expander names all thirteen.
+  Home._apps = Array.from({ length: 13 }, (_, i) => ({ ...APP, slug: `app-${i}`, name: `App ${i}` }));
   Home._layout = null;
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._widgetSectionVisible = true;
@@ -122,7 +122,7 @@ test('Home.render() pushes the expander count and the strip together', () => {
   Home.render();
 
   const chrome = chromeNow();
-  assert.equal(chrome.moreCount, 9, 'the expander names every app, not just the hidden ones');
+  assert.equal(chrome.moreCount, 13, 'the expander names every app, not just the hidden ones');
   assert.equal(chrome.strip.active, true, 'the strip rides the SAME push');
   assert.deepEqual(chrome.strip.tiles.map((t) => t.id), ['w1']);
 });

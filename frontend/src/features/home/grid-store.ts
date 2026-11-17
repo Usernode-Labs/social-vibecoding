@@ -126,6 +126,12 @@ export interface CreateTileView {
    * tile IS the grid's trailing cell, expanded or not.
    */
   heldBack: boolean;
+  /**
+   * True where Home has its side column (from 1280px, the standard look):
+   * the New project card there is the way to make one, and the grid draws no
+   * tile.
+   */
+  inCard?: boolean;
   placement: GridPlacement | null;
 }
 

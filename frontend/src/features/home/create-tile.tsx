@@ -71,17 +71,22 @@ function win(): any {
 // source text.
 const TILE = 'home-create-tile home-create-btn group relative flex select-none flex-col items-center '
   + 'gap-1.5 rounded-xl p-2 text-center transition-colors sm:p-3';
+//
+// 17 Nov 2026: where Home is one column the tile is the way to make a
+// project (the collapsed grid ends with it, home.js), so its face is no
+// longer a dashed empty slot. It is an app icon of its own: the accent as a
+// gradient, a white plus, a soft accent shadow. At the limit it goes back to
+// the quiet dashed outline.
 const FACE = 'home-create-glyph flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl '
-  + 'border-2 border-dashed transition-colors';
-const FACE_ON = 'border-zinc-300 text-zinc-500 group-hover:border-violet-500 group-hover:text-violet-600 '
-  + 'group-focus-visible:border-violet-500 group-focus-visible:text-violet-600 '
-  + 'dark:border-zinc-600 dark:text-zinc-400 dark:group-hover:border-violet-400 dark:group-hover:text-violet-400';
-const FACE_OFF = 'border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500';
+  + 'transition';
+const FACE_ON = 'bg-gradient-to-br from-violet-400 to-violet-700 text-white shadow-lg shadow-violet-500/35 '
+  + 'ring-1 ring-inset ring-white/25 group-hover:brightness-110 group-hover:shadow-violet-500/50 '
+  + 'group-active:scale-95';
+const FACE_OFF = 'border-2 border-dashed border-zinc-300 text-zinc-400 dark:border-zinc-700 dark:text-zinc-500';
 // `.app-card-title` is the tiles' own label box: 11px on a 13px line, two
 // lines, clamped — so "Create an app" wraps and truncates exactly as an app
 // name in the next cell does.
-const LABEL_ON = 'home-create-label app-card-title text-zinc-500 group-hover:text-violet-700 '
-  + 'dark:text-zinc-400 dark:group-hover:text-violet-400';
+const LABEL_ON = 'home-create-label app-card-title font-semibold text-violet-700 dark:text-violet-200';
 const LABEL_OFF = 'home-create-label app-card-title text-zinc-400 dark:text-zinc-500';
 
 // "New project" since communities, stage 4: the create dialog it opens is
@@ -130,7 +135,7 @@ export function CreateTile({ view, style }: { view: CreateTileView; style?: stri
       }}
     >
       <span className={`${FACE} ${on ? FACE_ON : FACE_OFF}`} aria-hidden="true">
-        <PlusWideIcon className="h-6 w-6" strokeWidth="2" />
+        <PlusWideIcon className="h-6 w-6" strokeWidth={on ? '2.4' : '2'} />
       </span>
       <span className={on ? LABEL_ON : LABEL_OFF}>{t(CREATE_TILE_LABEL)}</span>
     </button>
