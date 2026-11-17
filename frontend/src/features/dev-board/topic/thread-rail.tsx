@@ -99,7 +99,9 @@ export function ThreadRail({ steps, onOpen, current = null }: {
       <ol className="dev-rail-steps">
         {steps.map((s) => {
           const stamp = s.at ? messageStamp(s.at) : null;
-          const when = !stamp ? '' : s.since ? t('project:topic.rail.since', { when: shortDate(s.at) }) : stamp.text;
+          // An older step shows its day; only today's shows the clock.
+          const today = !!s.at && new Date(s.at).toDateString() === new Date().toDateString();
+          const when = !stamp ? '' : s.since ? t('project:topic.rail.since', { when: shortDate(s.at) }) : today ? stamp.text : shortDate(s.at);
           const opens = stepOpens(s);
           const on = !!opens && sameStep(opens, current);
           const body = (
@@ -117,7 +119,7 @@ export function ThreadRail({ steps, onOpen, current = null }: {
                     {s.link ? <span className="dev-rail-link" data-rail-open={s.link.open.kind}>{say(s.link.label)}</span> : null}
                   </span>
                 ) : null}
-                {s.note ? <span className="dev-rail-note">{say(s.note)}</span> : null}
+                {s.note ? <span className="dev-rail-note" data-rail-note={s.noteTone}>{say(s.note)}</span> : null}
               </span>
             </>
           );

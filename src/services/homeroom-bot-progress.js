@@ -1085,9 +1085,13 @@ async function changeBotFix(pool, sessionId, { viewer = null } = {}) {
     const run = runs.rows[0];
     if (run.limit_stop !== 'own_revisions') return { state: 'handed_off', since: null, reason: null };
     // #6284: stopped at its own limit. An open grant means a round is
-    // already waiting or running for this stop.
+    // already waiting or running for this stop. #6776: only if one really
+    // is; a grant with nothing behind it leaves the button there to press.
     const counts = await require('./homeroom-bot-followup').revisionCounts(pool, id);
-    if (counts.openGrant) return { state: 'queued', since: null, reason: null };
+    if (counts.openGrant) {
+      const round = await require('./homeroom-bot-retry-grants').roundState(pool, id);
+      if (round.state !== 'none') return { state: 'queued', since: null, reason: null };
+    }
     const canTryAgain = viewer
       ? await require('./homeroom-bot-retry-grants').mayGrant(pool, { sessionId: id, user: viewer }).catch(() => false)
       : false;
@@ -1739,6 +1743,8 @@ module.exports = {
   stageOf,
   // #6234: the bot's own fix of a change's failing checks, for its page.
   changeBotFix,
+  // #6776: the same queue order, for a try's place in line.
+  queuePositions,
   checksOnHead,
   // #6521: the same rule for a change page's own row shape.
   sessionChecksOnHead,
