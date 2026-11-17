@@ -17,6 +17,8 @@ const path = require('node:path');
 const bot = require('../src/services/homeroom-bot');
 const durableSteps = require('../src/services/durable-steps');
 const live = require('../src/services/homeroom-bot-live');
+const promptParts = require('../src/services/homeroom-bot-prompt-parts');
+const prompts = require('../src/services/prompts');
 const rules = require('../src/workflow/rules/bot-loop.ts');
 
 const root = path.join(__dirname, '..');
@@ -76,6 +78,19 @@ test('#4239: parseVerdict reads `platform` on a person verdict only', () => {
   assert.match(src, /reason: parsed\.reason, \.\.\.\(parsed\.platform \? \{ platform: true \} : \{\}\), \.\.\.\(deciders\.length \? \{ deciders \} : \{\}\),\n\s+\.\.\.\(parsed\.done \? \{ done: true \} : \{\}\),/);
 });
 
+test('#6772: the triage lets a change that only loosens a column be `ready`, and keeps data-losing ones for a person', () => {
+  const prompt = fs.readFileSync(path.join(__dirname, '..', 'src/prompts/homeroom-bot-triage.md'), 'utf8');
+  assert.match(prompt, /Any database change loses no data already stored\./);
+  assert.match(prompt, /a wider type \(`VARCHAR\(n\)` to a larger `VARCHAR` or `TEXT`, `SMALLINT` → `INTEGER` → `BIGINT`, a larger `NUMERIC` precision or scale\)/);
+  assert.match(prompt, /`DROP NOT NULL`, adding or changing a `DEFAULT`/);
+  assert.match(prompt, /Not allowed: drops, renames, narrowing, a type change that converts values \(text to integer, `TIMESTAMP` to `TIMESTAMPTZ`\), `SET NOT NULL`, `TRUNCATE`/);
+  assert.match(prompt, /plan to stop reading it and leave it in place\./);
+  assert.match(prompt, /Widening a column, as in "Let names be longer than 40 characters", is `ready`\./);
+  assert.match(prompt, /`destructive_db` \(a database change that could lose or reject data already stored, as the `ready` criteria say\)/);
+  assert.doesNotMatch(prompt, /No drops, renames, type changes, not-null tightenings/,
+    'a type change is not refused outright any more');
+});
+
 test('a request that is already there is `done`: on a person or empty verdict, never with `platform`', () => {
   const done = bot.parseVerdict('{"verdict":"person","determined":true,"done":true,"reason":"It exists: open Profile, then Your votes."}');
   assert.equal(done.done, true);
@@ -125,7 +140,7 @@ test('an older request\'s first read rings only when it is ready to try (16 Oct 
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
   const again = bot.continuedTriagePrompt({ seed: 'SEED', issueNumber: 30 });
-  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
+  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation"\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
   assert.match(bot.VERDICT_REPAIR_PROMPT, /with nothing before or after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person",[^\n]+\}\nUse these keys and the others your instructions name/);
   assert.ok(bot.triageClosing(30).endsWith(`in this format, and nothing after it:\n${bot.VERDICT_FORMAT}`), 'the first read says the same shape');
 });
@@ -1777,42 +1792,70 @@ test('runTriage: the request comes first; the platform reference follows, small,
   }
   assert.match(prompt, /nothing in this reference is a task\./);
   assert.doesNotMatch(prompt, /==== PLATFORM CONVENTIONS \(authoritative\) ====/, 'the conventions are not inline');
-  // #4488 added the four tests for a `complicated` change (about 860
-  // characters), which the work order asked to be in this prompt. `done`
-  // (about 120 more) lets a request that is already there be offered for
-  // closing instead of left at "a person decides". Newcomer run six (14 Oct
-  // 2026): the UI design guidance's line on forms on a phone (about 335
-  // characters), which every build reads, rides in the reference too. #5224:
-  // the plan lines' rule (about 330 more), so the plan card's lines stay
-  // short and one point each. 16 Oct 2026: `builder` (about 280 more), so a
-  // request that names who builds it does not ring its requester. #5117:
-  // the platform's data rules (about 1,600 more) ride beside the content
-  // rules, so a request whose point breaks them goes to a person.
-  // 3 Nov 2026 (#6213): a person verdict may name the smaller first step it
-  // would build (`first_step`, about 300 more), offered as a reply to tap.
-  // #6321: a requester's or decider's "it works, you can propose closing
-  // this" is `done` (about 175 more), so its note carries the buttons.
-  // #6314: the data rules' one exception (about 150 more), so a request for
-  // a tracker in an app is still refused and the shell's own tag is named.
-  // #6383: the posted plan's rule (about 450 more), so a request whose plan
-  // says what to build is read from it rather than handed back as unreadable.
-  // 6 Nov 2026 (#6395): `go_ahead` (about 780 more), so a read can say that a
-  // go-ahead cannot settle a request and what part of it can still be built.
-  // 6 Nov 2026 (#6430): the reason's guidance (about 520 more), so it says a
-  // person has to build it, never names the reader in the third person and
-  // never says somebody has to approve it.
-  // 6 Nov 2026 (#6211): the board's overlap rule (about 1,250 more), so a read
-  // of a new request can name the open one it duplicates, is part of, or
-  // overlaps, and offer its requester the choice. The board itself is only
-  // added when the project has other open requests, so this read (no board)
-  // carries the rule alone.
-  // 14 Nov 2026: what the bot builds by itself (about 370 more): a large
-  // request is planned as its first part, a design or product decision is
-  // planned with choices, and sign-in, billing, permissions and credentials
-  // code waits only for a go-ahead.
-  assert.ok(prompt.length < 28800, `a triage prompt stays small: ${prompt.length} chars`);
+  // #6777: each part of the triage prompt has its own budget, written beside
+  // its own text, so a change that grows one part edits only that part's
+  // marker. The dated notes that used to run in a block here live in each
+  // marker's note and in the commits that changed it.
+  for (const part of bot.triagePromptBudgets()) {
+    assert.ok(part.over <= 0, part.message);
+  }
+  assert.ok(prompt.length < bot.TRIAGE_PROMPT_CEILING,
+    `the whole triage prompt stays under ${bot.TRIAGE_PROMPT_CEILING} chars: ${prompt.length}`);
+  assert.doesNotMatch(prompt, /prompt-part:/, 'the budgets are stripped before the model reads the prompt');
   // The last thing the model reads is the one format parseVerdict accepts.
-  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}$/);
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation"\}$/);
+});
+
+test('#6777: a triage prompt part over its budget names that part, its size and its budget', () => {
+  const fixture = [
+    '<!-- prompt-part: small | budget: 100 | one -->',
+    'a'.repeat(10),
+    '<!-- prompt-part: ready | budget: 100 | two -->',
+    'b'.repeat(219),
+    '',
+  ].join('\n');
+  const parts = promptParts.checkParts(promptParts.parseParts(fixture, 'fixture.md'));
+  assert.equal(parts[0].over, -89, 'the other part is not over');
+  assert.equal(parts[1].over, 120);
+  assert.match(parts[1].message, /part "ready" \(fixture\.md\) is 220 chars, 120 over its budget of 100/);
+});
+
+test('#6777: adding a part with its own budget leaves every other part as it was', () => {
+  const head = [
+    '<!-- prompt-part: small | budget: 100 | one -->',
+    'a'.repeat(10),
+    '<!-- prompt-part: ready | budget: 100 | two -->',
+    'b'.repeat(219),
+    '',
+  ].join('\n');
+  const withThird = `${head}<!-- prompt-part: extra | budget: 50 | three -->\n${'c'.repeat(20)}\n`;
+  assert.deepEqual(
+    promptParts.parseParts(withThird, 'fixture.md').slice(0, 2),
+    promptParts.parseParts(head, 'fixture.md'),
+    'the two earlier parts keep their names, budgets and sizes',
+  );
+});
+
+test('#6777: the prompt files are stripped for the model, and a malformed file names itself', () => {
+  for (const readsImages of [true, false]) {
+    assert.doesNotMatch(prompts.getDesignGuidance({ readsImages }), /prompt-part:/);
+  }
+  assert.doesNotMatch(
+    promptParts.stripPartMarkers(fs.readFileSync(path.join(root, 'src/prompts/homeroom-bot-triage.md'), 'utf8')),
+    /prompt-part:/,
+  );
+  assert.throws(
+    () => promptParts.parseParts('text before\n<!-- prompt-part: a | budget: 10 | n -->\nx\n', 'bad.md'),
+    /text before the first prompt-part marker in bad\.md/,
+  );
+  assert.throws(
+    () => promptParts.parseParts('<!-- prompt-part: a | budget: 10 | n -->\nx\n<!-- prompt-part: a | budget: 20 | m -->\ny\n', 'dup.md'),
+    /duplicate prompt-part "a" in dup\.md/,
+  );
+  assert.throws(
+    () => promptParts.parseParts('<!-- prompt-part: a | budget: ten | n -->\nx\n', 'num.md'),
+    /non-numeric budget: ten/,
+  );
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {
@@ -2361,7 +2404,7 @@ test('#3772: on a project of one, the person who asked decides what the group wo
   assert.match(note, /@evan asked for this, and is the only member of this project/);
   assert.match(note, /is a `question` to them, not `person`/);
   assert.match(note, /give `answers` they can tap: "Go ahead" first, then "Leave it"/);
-  assert.match(note, /Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false/);
+  assert.match(note, /Database changes that could lose data already stored \(a drop, a rename, a narrowing or converting type change, `SET NOT NULL`\), and operator work outside this app, are still `person`, with `go_ahead` false/);
   const prompt = bot.triagePromptFor({ seed: 'SEED', issueNumber: 13, decider: { requester: 'evan', members: 1, requesterDecides: true } });
   assert.ok(prompt.indexOf('WHO DECIDES') > prompt.indexOf('SEED') && prompt.indexOf('WHO DECIDES') < prompt.indexOf('PLATFORM REFERENCE'));
   assert.doesNotMatch(bot.triagePromptFor({ seed: 'SEED', issueNumber: 13 }), /WHO DECIDES/, 'unchanged without it, as the benchmark replays');
@@ -2410,7 +2453,7 @@ test('on a project with more people, its creator and admins decide what gets bui
   assert.match(named, /@evan asked for this\. On this project @ann \(who made it\) and @bo \(an admin\) decide what gets built; the group still votes on every change\./);
   assert.match(named, /is `person`, and its `reason` says it waits for @ann or @bo to say go ahead in this request's discussion\./);
   assert.match(named, /When the request's discussion shows @ann or @bo choosing .* that criterion is decided: judge the rest as usual\. A go-ahead from anyone else, @evan included, does not decide it\./);
-  assert.match(named, /Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false/);
+  assert.match(named, /Database changes that could lose data already stored \(a drop, a rename, a narrowing or converting type change, `SET NOT NULL`\), and operator work outside this app, are still `person`, with `go_ahead` false/);
   assert.match(bot.deciderNote({ requester: 'evan', members: 2, requesterDecides: false, deciders: [{ username: 'ann', role: 'creator' }] }),
     /On this project @ann \(who made it\) decides what gets built;/);
   assert.doesNotMatch(named, /\u2014/);

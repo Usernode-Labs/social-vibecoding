@@ -26,15 +26,17 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
  */
 export const FRAME_SKINS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
-export type Skin = 'standard' | 'brand' | FrameSkin;
+export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
 
 /**
- * Every look the Look menu offers after Standard, in its order: 'brand'
+ * Every look the Look menu offers after Standard, in its order: 'wip'
+ * ("Standard (WIP)": the standard look, drawn with the changes still being
+ * tried on it; the head sets `data-skin-wip` for it and no `data-skin`), 'brand'
  * ("Paper, simplified, with brand styling", which keeps the standard pages)
  * and then the looks of the frame. It is the head's SKINS, and the option
  * values of Settings › Experimental › Look and of the look picker.
  */
-export const MENU_SKINS = ['brand', ...FRAME_SKINS] as const;
+export const MENU_SKINS = ['wip', 'brand', ...FRAME_SKINS] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
 /** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */
@@ -49,11 +51,39 @@ declare global {
       set(skin: Skin): void;
       apply(): void;
       onChange(fn: () => void): void;
+      /** Standard (WIP)'s token config (head.html): 'current', or another set's name. */
+      getTokens?(): string;
+      setTokens?(name: string): void;
     };
   }
 }
 
 const SKINS: readonly Skin[] = ['standard', ...MENU_SKINS];
+
+/**
+ * The token configs of Standard (WIP), in the menu's order: the values that
+ * draw it. 'current' is the look as it is drawn; the head's TOKEN_SETS is
+ * the rest. Offered by the look picker beside the bell, to admins, while
+ * that look is on.
+ */
+export const WIP_TOKEN_SETS = ['current', 'brand'] as const;
+export type WipTokens = typeof WIP_TOKEN_SETS[number];
+
+/** The device's token config for Standard (WIP); 'current' when the head module is absent. */
+export function currentWipTokens(): WipTokens {
+  if (typeof window === 'undefined') return 'current';
+  try {
+    const got = window.Skin?.getTokens?.();
+    return (WIP_TOKEN_SETS as readonly string[]).includes(got as string) ? got as WipTokens : 'current';
+  } catch {
+    return 'current';
+  }
+}
+
+/** The token config, followed live as the look is (one listener, shared). */
+export function useLiveWipTokens(): WipTokens {
+  return useSyncExternalStore(subscribeSkin, currentWipTokens, () => 'current');
+}
 
 /** The device's look right now; 'standard' when the head module is absent. */
 export function currentSkin(): Skin {

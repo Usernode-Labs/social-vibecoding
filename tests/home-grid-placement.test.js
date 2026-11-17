@@ -1540,7 +1540,7 @@ test('render() and load() are the only publishers of the grid model', () => {
   // load() is the single-flight gate; the load itself is _loadOnce().
   const load = code.indexOf('async _loadOnce() {');
   const render = code.indexOf('  render() {');
-  const afterRender = code.indexOf('  _renderAppsMore(count) {');
+  const afterRender = code.indexOf('  _renderAppsMore(count, canFold) {');
   assert.ok(load > 0 && render > load && afterRender > render);
   const inLoad = sites.filter((at) => at > load && at < render).length;
   const inRender = sites.filter((at) => at > render && at < afterRender).length;
@@ -1562,11 +1562,13 @@ test('render() and load() are the only publishers of the grid model', () => {
 const revealHome = () => {
   const h = makeHome({ width: 390 });
   installListEl(h);
-  h.Home._apps = ['a', 'b', 'far'].map(app);
+  // Three rows hold something before the far one: the least Home shows.
+  h.Home._apps = ['a', 'b', 'c', 'far'].map(app);
   h.Home._layouts = {
     4: [
       { type: 'app', slug: 'a', col: 0, row: 0 },
       { type: 'app', slug: 'b', col: 0, row: 1 },
+      { type: 'app', slug: 'c', col: 0, row: 2 },
       { type: 'app', slug: 'far', col: 0, row: 5 },
     ],
   };

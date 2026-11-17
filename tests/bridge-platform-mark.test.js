@@ -447,6 +447,12 @@ test('a host the platform does not know, or a bad answer, draws nothing and asks
   assert.ok(!(await asked({ host: 'example.com', appHost: { slug: 'x' } })), 'two labels is never a custom domain');
   assert.ok(!(await asked({ host: 'app.onhomeroom.com', appHost: { slug: 'x' } })), 'the platform itself');
   assert.ok(!(await asked({ host: 'a.b.onhomeroom.com', appHost: { slug: 'x' } })), 'under the apps domain');
+  // A staging preview is on the previews domain, under neither the apps
+  // domain nor the platform: asking about it logged a 404 on every preview.
+  assert.ok(!(await asked({ host: 'bread-bot--s42.onhomeroom.dev', appHost: { slug: 'x' } })), 'a staging preview');
+  assert.ok(!(await asked({ host: 'bread-bot--s42--ab12cd.onhomeroom.dev', appHost: { slug: 'x' } })), 'a legacy staging preview');
+  assert.ok(await asked({ host: 'xn--caf-dma.example.com', appHost: { slug: 'x' } }), 'an international custom domain is still asked about');
+  assert.ok(await asked({ host: 'my--shop.example.com', appHost: { slug: 'x' } }), 'two hyphens alone do not make a preview');
   assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, inIframe: true })), 'inside the platform’s frame');
   assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, platformShell: true })), 'the shell');
   assert.ok(!(await asked({ host: 'app.example.com', appHost: { slug: 'x' }, scriptSrc: 'https://cdn.example.com/usernode-bridge/v1/bridge.js' })), 'a tag naming another host');

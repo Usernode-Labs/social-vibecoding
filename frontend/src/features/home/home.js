@@ -632,6 +632,8 @@ const Home = {
   // the thing it is protecting rather than as a row count that only happened
   // to protect it at one viewport.
   APPS_VIEWPORT_FRACTION: 1 / 2,
+  // The fewest rows Home shows (visibleRowBudget).
+  MIN_ROWS: 3,
 
   // The row count that fraction buys, measured rather than assumed.
   //
@@ -653,7 +655,9 @@ const Home = {
   // the floor, so navigating away and back does not collapse the grid to two
   // rows for one paint.
   visibleRowBudget() {
-    const floor = HomeLayout.DEFAULT_ROWS;
+    // 17 Nov 2026: the least Home shows is three rows at every width (it
+    // was the model's two).
+    const floor = Home.MIN_ROWS;
     const last = Home._rowBudget || floor;
     if (typeof document === 'undefined') return last;
     // ONE try/catch around the whole measurement, not one per read. Every
@@ -706,6 +710,26 @@ const Home = {
   _rowBudgetWired: false,
   _rowBudgetPending: 0,
 
+  // Whether New project is drawn outside the grid, so the grid ends with no
+  // tile: under Standard (WIP) only, whose search row carries the button
+  // (features/home/index.tsx), for a viewer who gets a tile.
+  hasSideCard() {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+    if (window.App?.user?.privateMember) return false;
+    // The two shot links that exist to show the tile's treatments keep it in
+    // the grid at every width (the declared Create checks open them).
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot === 'create-enabled' || shot === 'create-disabled') return false;
+    } catch { /* no address to read */ }
+    let skin = 'standard';
+    try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
+    // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
+    // search row at every width, so its grid draws no tile. Every other
+    // look, Standard among them, ends Pinned apps with the tile.
+    return skin === 'wip';
+  },
+
   _wireRowBudget() {
     if (Home._rowBudgetWired) return;
     // Not `typeof window === 'undefined'`: this module is unit-tested inside a
@@ -721,7 +745,8 @@ const Home = {
       // Same deferral the other re-render paths take: never yank the grid out
       // from under a live drag. The gesture's own end re-runs load().
       if (Home._dragActive) return;
-      if (Home.visibleRowBudget() === Home._rowBudget) return;
+      if (Home.visibleRowBudget() === Home._rowBudget
+        && Home.hasSideCard() === !!Home._sideCard) return;
       Home.render();
     };
     window.addEventListener('resize', () => {
@@ -947,6 +972,8 @@ const Home = {
     // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
+    // An unfolded grid that would hide rows when folded: "Show less" has a job.
+    let canFold = false;
     // The trailing "Create an app" tile — null in the search view, which is a
     // transient list of matches rather than the launcher.
     let create = null;
@@ -1017,7 +1044,8 @@ const Home = {
       }
       const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
-      const shown = hiddenRows
+      canFold = !editing && Home._appsExpanded && canvas.some((it) => it.row > rowBound);
+      let shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
       // THE CREATE TILE GOES BEHIND "SHOW ALL" TOO (#3047). When the last row
@@ -1026,9 +1054,29 @@ const Home = {
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
-      const createHidden = !editing && !Home._appsExpanded
+      //
+      // 17 Nov 2026: THE COLLAPSED GRID ENDS WITH THE TILE INSTEAD. Holding
+      // it back left New project as a small button beside the heading. When
+      // the last shown row is full, the app in its last cell goes behind
+      // "Show all N apps" and the tile takes that cell: the last row shows
+      // three apps and New project. Nothing is re-placed: the app keeps its
+      // cell and is there again once the grid is expanded or edited.
+      //
+      // Not under Standard (WIP) (`inCard`, Home.hasSideCard): New project is
+      // a button on its search row, and the grid draws no tile at all: four
+      // apps to the last row.
+      const inCard = Home.hasSideCard();
+      Home._sideCard = inCard;
+      const createTakesLast = !inCard && !editing && !Home._appsExpanded
         && HomeLayout.createTileCollapsed(shown, cols, rowBound);
-      const collapsed = hiddenRows || createHidden;
+      let createCell = null;
+      if (createTakesLast) {
+        const lastShown = shown[shown.length - 1]; // canvasItems is in reading order
+        createCell = { col: lastShown.col, row: lastShown.row };
+        shown = shown.slice(0, -1);
+      }
+      const createHidden = false;
+      const collapsed = hiddenRows || createTakesLast;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
       const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
@@ -1077,9 +1125,12 @@ const Home = {
         enabled: canCreate,
         hint: message(Home.CREATE_DISABLED_HINT),
         heldBack: createHidden,
-        placement: createHidden || flows
-          ? null
-          : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+        inCard,
+        placement: createCell
+          ? { ...createCell, w: 1, h: 1 }
+          : createHidden || flows
+            ? null
+            : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
       // waitlist (their Home's waitlist card says so), so no tile at all —
@@ -1107,7 +1158,7 @@ const Home = {
     // explicit cell placement #app-list uses. Its reorder recognizer is
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
-    Home._renderAppsMore(moreCount);
+    Home._renderAppsMore(moreCount, canFold);
     // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
@@ -1173,6 +1224,10 @@ const Home = {
       // derives it per row, and anything it does not say reads as a
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
+      // Standard (WIP)'s tile says what the app is and how many people made
+      // it: dapp.json's own sentence, and the list's contributor count.
+      description: String(app.manifest_snapshot?.description || '').trim(),
+      contributors: Math.max(0, Number(app.contributor_count) || 0),
     };
   },
 
@@ -1793,9 +1848,10 @@ const Home = {
   // Kept its name and its caller. It no longer touches the DOM, and the
   // listener it used to re-attach on every paint is now attached once by
   // ./apps-more.tsx to an element React keeps.
-  _renderAppsMore(count) {
+  _renderAppsMore(count, canFold) {
     chromeStore.set({
       moreCount: count || 0,
+      canFold: !!canFold,
       strip: Home.widgetSectionView(),
     });
   },

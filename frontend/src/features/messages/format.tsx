@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useState, type MouseEvent } from 'react';
 
 import { Av as KitAv, Tile as KitTile } from '@/components/ui/kit';
+import { matchRanges } from '../ai/search';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { isFrameSkin, useLiveSkin } from '../../lib/skin';
@@ -30,6 +31,58 @@ export function fullTime(value: string): string {
   return messageStamp(value).title;
 }
 
+/**
+ * 17 Nov 2026 (#6738): the words a search result opened, marked in the
+ * message they were found in. The same look as the marked words in the
+ * results (../../features/ai/lists.tsx FOUND_MARK): the accent's own tint
+ * behind them, the title's ink and weight. A complete literal, so Tailwind
+ * compiles it.
+ */
+const SEARCH_MARK = 'rounded-[3px] bg-[color:var(--accent-tint)] font-semibold text-zinc-900 dark:text-zinc-100';
+
+/** Elements whose text is not a word a person read: no mark goes in one. */
+const NO_MARKS = new Set(['SCRIPT', 'STYLE', 'MARK']);
+
+/**
+ * Every place `q` is in the text under `root`, each word wrapped in a
+ * <mark data-search-mark>. The nodes are built here, never read as markup:
+ * the words come out of the message's own text nodes and go back as text.
+ * Marks are part of the html the body is drawn with, so a re-render, a
+ * scroll or a part drawn later keeps them. A match split across two nodes
+ * (a phrase with a bold word inside it) is not marked; a word inside a
+ * link, a code span or a request chip is, and leaves the chip working.
+ */
+export function markSearchHits(root: Node, q: string | null | undefined): void {
+  if (!q) return;
+  const texts: Text[] = [];
+  const collect = (parent: Node) => {
+    for (let child = parent.firstChild; child; child = child.nextSibling) {
+      if (child.nodeType === 3) { texts.push(child as Text); continue; }
+      if (child.nodeType !== 1) continue;
+      if (NO_MARKS.has((child as Element).tagName)) continue;
+      collect(child);
+    }
+  };
+  collect(root);
+  for (const node of texts) {
+    const ranges = matchRanges(node.data, q);
+    if (!ranges.length) continue;
+    const frag = document.createDocumentFragment();
+    let from = 0;
+    for (const [start, end] of ranges) {
+      if (start > from) frag.appendChild(document.createTextNode(node.data.slice(from, start)));
+      const mark = document.createElement('mark');
+      mark.setAttribute('data-search-mark', '');
+      mark.className = SEARCH_MARK;
+      mark.textContent = node.data.slice(start, end);
+      frag.appendChild(mark);
+      from = end;
+    }
+    if (from < node.data.length) frag.appendChild(document.createTextNode(node.data.slice(from)));
+    node.parentNode?.replaceChild(frag, node);
+  }
+}
+
 function fallbackMarkdown(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -50,7 +103,7 @@ function fallbackMarkdown(value: string): string {
  * requests, and record this conversation as where they were opened from, as
  * a shared card does (`recordObjectOrigin`).
  */
-export function MessageMarkdown({ content, channels, appSlug, requestColors = false }: { content: string; channels?: ReadonlySet<string>; appSlug?: string | null; requestColors?: boolean }) {
+export function MessageMarkdown({ content, channels, appSlug, requestColors = false, marks = null }: { content: string; channels?: ReadonlySet<string>; appSlug?: string | null; requestColors?: boolean; marks?: string | null }) {
   const html = useMemo(() => {
     const rendered = typeof window !== 'undefined' && window.PlatformMarkdown?.render
       ? window.PlatformMarkdown.render(content, { breaks: true })
@@ -71,8 +124,11 @@ export function MessageMarkdown({ content, channels, appSlug, requestColors = fa
         chip.style.setProperty('--req-h', String(requestHue(n)));
       }
     }
+    // #6738: the words a search result opened, marked after the chips are
+    // made, so a word inside one is marked too (./ai/search-mark.ts).
+    markSearchHits(root, marks);
     return root.innerHTML;
-  }, [content, channels, appSlug, requestColors]);
+  }, [content, channels, appSlug, requestColors, marks]);
   // The SAME object while the html is unchanged. React 19 compares this prop
   // by identity and reassigns innerHTML when it differs, so an inline
   // `{ __html }` tore down and rebuilt every message body on every render of

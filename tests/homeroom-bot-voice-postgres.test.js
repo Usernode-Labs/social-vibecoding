@@ -1161,10 +1161,10 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
       [app.id, number],
     );
     const { rows: [run] } = await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, go_ahead_decides, first_step)
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, go_ahead_decides, first_step, go_ahead_blocker)
        VALUES ($1, $2, 'live', 'person',
                'it changes permissions and production database access', FALSE,
-               'Just the three missing read tools') RETURNING id`,
+               'Just the three missing read tools', 'operator_work') RETURNING id`,
       [app.id, number],
     );
     const trigger = await say(evan, 'go ahead, with the full version', { type: 'issue', ref: number });
@@ -1181,7 +1181,7 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.equal(answer.content, require('../src/services/homeroom-bot-live').goAheadCannotText({
       reason: 'it changes permissions and production database access',
       firstStep: 'Just the three missing read tools',
-      reader: evan.username,
+      reader: evan.username, blocker: 'operator_work',
     }));
     assert.doesNotMatch(answer.content, /I'm on it|I am on it|about to read/i);
     assert.doesNotMatch(answer.content, /tell you/i);

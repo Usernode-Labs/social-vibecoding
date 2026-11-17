@@ -94,6 +94,10 @@ export interface HomeAppView {
    * community, which is what most of the grid is.
    */
   audience: 'open' | 'invited' | 'solo';
+  /** dapp.json's one sentence about the app; '' when it has none. Drawn by Standard (WIP)'s tile. */
+  description?: string;
+  /** How many people have contributed to it (GET /api/apps `contributor_count`); zero says nothing. */
+  contributors?: number;
 }
 
 /**
@@ -126,6 +130,11 @@ export interface CreateTileView {
    * tile IS the grid's trailing cell, expanded or not.
    */
   heldBack: boolean;
+  /**
+   * True under Standard (WIP), where New project is a button on the search
+   * row (Home.hasSideCard): the grid draws no tile.
+   */
+  inCard?: boolean;
   placement: GridPlacement | null;
 }
 

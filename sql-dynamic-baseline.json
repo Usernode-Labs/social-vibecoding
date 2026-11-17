@@ -929,6 +929,13 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
+      "fingerprint": "7465ad937edb1a34afe0",
+      "count": 1,
+      "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
       "fingerprint": "7fd330324b2641e1a416",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
@@ -960,13 +967,6 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "ed2a6965e24f99bc2d8f",
-      "count": 1,
-      "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
     },
     {
       "source": "src/routes/votes.js",

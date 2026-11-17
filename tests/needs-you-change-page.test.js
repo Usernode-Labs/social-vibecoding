@@ -402,8 +402,12 @@ test('Vote is the Votes card’s button and Preview the Testing card’s; everyt
   const { v, page } = render(av, PR);
   const votes = page.slice(page.indexOf('data-change-gate="votes"'), page.indexOf('data-change-gate="testing"'));
   const testing = page.slice(page.indexOf('data-change-gate="testing"'));
-  assert.match(votes, /<div class="dev-change-gate-act"><button type="button" class="dev-vote-btn"/);
-  assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview" aria-label="Open preview"/);
+  // Under the card look (thread-card.tsx) the two cards are put away in the
+  // layer their steps open, and the card's foot holds their buttons, once
+  // each: Preview, then Vote.
+  assert.doesNotMatch(votes, /dev-vote-btn|dev-change-gate-act/, 'put away, the Votes card carries no button');
+  assert.match(testing, /<div class="dev-thread-foot-acts">(?:(?!<\/div>)[\s\S])*<button type="button" class="gc-vote-btn gc-vote-btn-preview" aria-label="Open preview"(?:(?!<\/div>)[\s\S])*<button type="button" class="dev-vote-btn"/);
+  assert.equal((page.match(/class="dev-vote-btn"/g) || []).length, 1, 'one Vote on the page');
   assert.doesNotMatch(page, /gc-explore-chat-btn|>Share<|gc-card-actions/, 'no action band');
   const menu = av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label);
   for (const row of ['Details', 'Explore in a coding agent', 'Share to…', 'View PR on GitHub']) {
@@ -560,11 +564,15 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
 
   const { page, details } = render(own, FAILED);
   const testing = unescape(page.slice(page.indexOf('data-change-gate="testing"')));
-  // Preview stays in the corner; the re-run moves beside Fix it, under the sentence.
-  assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
+  // Under the card look the Testing card is put away in the layer its step
+  // opens, with the re-run and Preview. 17 Nov 2026: the card's foot says the
+  // failure plainly and offers See what failed, then the one action that
+  // moves it on, Fix it (the foot had four buttons and a red paragraph).
+  assert.match(testing, /<div class="dev-thread-foot-acts"><button[^>]*data-thread-foot-see="checks"[^>]*>See what failed<\/button>(?:<[^>]*data-vote-btn[^>]*>[\s\S]*?)?<span class="contents" data-thread-foot-next=""><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><\/span><\/div>/);
+  assert.match(testing, /<div class="dev-thread-foot" data-thread-foot="failed" data-thread-foot-tone="bad" role="group"><div class="dev-thread-foot-st" role="status"><b class="dev-thread-foot-head">Tests failed<\/b>/);
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
   assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
-  assert.match(testing, /<div class="dev-change-gate-fix"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><\/div>/);
+  assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-thread-foot')), /dev-change-gate-fix/, 'the card offers them itself only once its layer is open');
   assert.match(testing, /<p class="dev-change-gate-note">Fix it opens your chat with Homeroom bot about this change, where you can ask it to fix what failed\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
 
   // Details › Checks: the app's own tests by what they are, the test that
@@ -666,7 +674,7 @@ test('#6234: the card of a change the bot is fixing says so, and its re-run is d
   const page = unescape(render(admin, botChange({ state: 'fixing', since, reason: null })).page);
   const testing = page.slice(page.indexOf('data-change-gate="testing"'));
   assert.match(testing, /^data-change-gate="testing" data-done="false" data-tone="muted" data-change-bot-fix="fixing"/);
-  assert.match(testing, /<span class="dev-change-gate-figure">Fixing<\/span>/);
+  assert.match(testing, /<span class="dev-change-gate-figure" title="Fixing">Fixing<\/span>/);
   assert.match(testing, /<button class="gc-vote-btn gc-vote-btn-accent" disabled="" title="Homeroom bot is fixing this\. Re-running now would restart its fix\.">Re-run checks<\/button>/);
   assert.match(testing, /<p class="dev-change-gate-note">Homeroom bot is fixing this, started 10 min ago\. Re-running the checks now would restart its fix\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.doesNotMatch(testing, /Its author needs to fix this/);
@@ -1081,7 +1089,8 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
     artifacts: [{ storyId: 's1', viewport: 'desktop', side: 'base', variant: 'context', url: url('a') },
       { storyId: 's1', viewport: 'desktop', side: 'head', variant: 'context', url: url('b') }] };
   const verified = render(av, { ...PR, shots }).page;
-  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified"><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer" id="shots-4090-viewer" popover="auto">/);
+  // `data-thread-picture`: under the card look it is read as one picture (thread-card.test.js).
+  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified" data-thread-picture="" data-thread-chips="" style="[^"]*"><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer" id="shots-4090-viewer" popover="auto">/);
   assert.match(verified, /<div class="shots-bar"><span class="dev-change-card-name">Before and after<\/span><span class="shots-seg shots-seg-side"/);
   assert.match(verified, /shots-seg-both/, 'side by side is one of its sides');
   assert.match(verified, /shots-side-auto/, 'and it starts side by side when there is room');

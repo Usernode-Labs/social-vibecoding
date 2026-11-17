@@ -970,6 +970,48 @@ const LEDGER_NEWER_SQL = `
   ) AS newer
 `;
 
+// Whether the standings are BEHIND the ledger even though no ledger row is
+// newer than them (#6735). A snapshot's `fresh` is the newest write in the
+// generation, and more than a ledger credit moves it: the admin rebuild of
+// one event, and the admin refresh-totals route, both rewrite snapshot rows
+// with a later `updated_at` without counting every event's credits. A
+// credit older than that moment then never looked "newer", so the board kept
+// the old figure — a member's own row sat at 0 — until an unrelated credit
+// (a vote) made the ledger newer and the rebuild counted everything.
+//
+// So compare the ledger against the snapshot itself, per (event, user): the
+// weighted ledger total above that user's latest snapshot's `extra_points`
+// for the event, or positive weighted points where no snapshot row exists.
+// The weight is the snapshot builder's own (see event-standings.js
+// ledgerWeight): face value on a points-only event, `offchain_weight`
+// otherwise. Bounded to events that still score, and to sums above the
+// 0.01 tolerance a 2-decimal snapshot column already rounds at.
+const LEDGER_AHEAD_SQL = `
+  SELECT EXISTS (
+    SELECT 1
+      FROM (
+        SELECT ua.season_event_id, ua.user_id,
+               SUM(ua.points) AS ledger_points,
+               CASE WHEN se.start_epoch IS NULL OR se.end_epoch IS NULL THEN 1
+                    ELSE COALESCE((se.scoring_formula->>'offchain_weight')::numeric, 0) END AS weight
+          FROM user_activities ua
+          JOIN season_events se ON se.id = ua.season_event_id
+         WHERE se.internal = FALSE
+         GROUP BY ua.season_event_id, ua.user_id, se.start_epoch, se.end_epoch, se.scoring_formula
+        HAVING SUM(ua.points) > 0
+      ) l
+      LEFT JOIN LATERAL (
+        SELECT ls.extra_points
+          FROM leaderboard_snapshots ls
+         WHERE ls.season_event_id = l.season_event_id AND ls.user_id = l.user_id
+         ORDER BY ls.snapshot_at DESC, ls.id DESC
+         LIMIT 1
+      ) s ON TRUE
+     WHERE l.ledger_points * l.weight > 0.01
+       AND (s.extra_points IS NULL OR l.ledger_points * l.weight > s.extra_points + 0.01)
+  ) AS ahead
+`;
+
 // The scorer writes the ledger; the snapshot builder turns the ledger into
 // standings. Progress rails read the ledger directly, so a credit shows up
 // on the card within a tick, and the standings have to keep up with it.
@@ -996,6 +1038,13 @@ const LEDGER_NEWER_SQL = `
 // (#6499). Looking back one minute catches it on the next refresh. The
 // overlap stops itself: that refresh writes a new `fresh` past it.
 //
+// One more hole that comparison cannot see (#6735): another writer moving
+// `fresh` without counting every event's credits (the admin rebuild of one
+// event, the admin refresh-totals route) leaves a real credit older than
+// `fresh`. LEDGER_AHEAD_SQL below asks the question that actually matters —
+// is the ledger ahead of the SNAPSHOT? — and the rebuild it triggers counts
+// the old credit too, without waiting for an unrelated new one.
+//
 // `runOnce` also calls this on a pass that wrote credits even when the
 // scheduled check is not due, so the place a credit moves is the pass that
 // counts it rather than a later batch.
@@ -1014,7 +1063,15 @@ async function maybeAggregate(pool, { hours, now = Date.now() }) {
   const { rows: newer } = await pool.query(
     LEDGER_NEWER_SQL, [new Date(fresh.getTime() - REFRESH_OVERLAP_MS)]
   );
-  if (!newer[0] || newer[0].newer !== true) return null;
+  if (!newer[0] || newer[0].newer !== true) {
+    // #6735: nothing looked newer, but the SNAPSHOT may still be behind the
+    // ledger — see LEDGER_AHEAD_SQL. Rebuild in place exactly as the newer
+    // case does, and name why in the result.
+    const { rows: ahead } = await pool.query(LEDGER_AHEAD_SQL);
+    if (!ahead[0] || ahead[0].ahead !== true) return null;
+    const result = await buildSnapshots(pool, { now: last });
+    return { events: result.events.length, refreshed: true, reason: 'ledger_ahead' };
+  }
   const result = await buildSnapshots(pool, { now: last });
   return { events: result.events.length, refreshed: true };
 }
@@ -1387,6 +1444,7 @@ module.exports = {
   aggregateHours,
   LAST_AGGREGATE_SQL,
   LEDGER_NEWER_SQL,
+  LEDGER_AHEAD_SQL,
   REFRESH_OVERLAP_MS,
   MAX_CREDITS_PER_RUN,
   MAX_GRADES_PER_RUN,

@@ -94,12 +94,15 @@ import { SearchIcon } from '@/components/ui/icons';
 import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
+import { chromeStore } from './chrome-store';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
+import { NeedsYouCard } from './needs-you-card';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
+import { WipCard, WipCta, WipHeadMore } from './wip-kit';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -118,6 +121,14 @@ import './home-layout.js';
 import './home-panels.js';
 import './home.js';
 
+/** Fold or unfold Pinned projects' grid: the flag "Show all N apps" has always set. */
+function foldApps(fold: boolean) {
+  const home = (window as any).Home;
+  if (!home) return;
+  home._appsExpanded = !fold;
+  home.render();
+}
+
 export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -127,6 +138,7 @@ export function HomeScreen() {
   // with no items and editing off, so the prerender and the first client
   // render draw no action at all.
   const grid = useStoreState(gridStore);
+  const { moreCount, canFold } = useStoreState(chromeStore);
   // A look of the one frame draws this page in it (./frame/home-frame.tsx).
   // Read after mount only: the first render must match the prerendered
   // document, which knows no look (lib/skin.ts says why).
@@ -137,6 +149,11 @@ export function HomeScreen() {
   const [viewer, setViewer] = useState(false);
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
   const frame = isFrameSkin(skin) && viewer;
+  // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
+  const wip = skin === 'wip';
+  // The grid's trailing tile depends on the look (Home.hasSideCard): a look
+  // picked while Home is up repaints it.
+  useEffect(() => { (window as any).Home?.render?.(); }, [wip]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -150,6 +167,8 @@ export function HomeScreen() {
   // agrees.
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
+  // Standard (WIP): the Needs you card rides Challenges' row.
+  const aside = wip && grid.ready && !!grid.create;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
@@ -212,8 +231,10 @@ export function HomeScreen() {
             already take. A phone keeps `pt-3`: its bar tucks under the
             header, and the reveal reads the bar's height, not a constant.
         */}
-        <div className="home-column px-3 pt-3 md:pt-5 pb-2">
-          <div className="relative w-full">
+        {/* Standard (WIP): the field is a short one at the row's start, and
+            New project, the page's one filled action, ends the row. */}
+        <div className={wip ? 'home-column wip-topbar' : 'home-column px-3 pt-3 md:pt-5 pb-2'}>
+          <div className={wip ? 'relative wip-search' : 'relative w-full'}>
             <SearchIcon
               className="w-4 h-4 absolute start-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none dark:text-zinc-400"
               aria-hidden="true"
@@ -236,6 +257,11 @@ export function HomeScreen() {
               &times;
             </button>
           </div>
+          {wip && grid.ready && grid.create ? (
+            <WipCta id="home-new-project-top" onClick={() => { (window as any).App?.showCreateModal?.(); }}>
+              {t('home:create.label')}
+            </WipCta>
+          ) : null}
         </div>
       </div>
       {/*
@@ -248,6 +274,7 @@ export function HomeScreen() {
           in the grid now, so nothing below the grid is anchored any more.)
       */}
       <div id="home-body" className="home-column home-body-fill">
+        <div className="home-main">
         {/*
             #1561's once-per-account explainer stood here, above everything,
             because it was the thing a first-time viewer needed before the
@@ -379,8 +406,23 @@ export function HomeScreen() {
               </span>
             ) : null}
           >
-            {t('home:grid.heading')}
+            {/* Standard (WIP): the label and the chevron after it are one
+                thing to press, which unfolds the grid and folds it again.
+                Down while rows are held back; up once they are out and
+                folding would hide some; plain words when neither. */}
+            {wip && moreCount > 0 ? (
+              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
+                {t('home:grid.headingProjects')}
+              </WipHeadMore>
+            ) : wip && canFold ? (
+              <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
+                {t('home:grid.headingProjects')}
+              </WipHeadMore>
+            ) : wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
           </SectionHeading>
+          {/* In Standard (WIP) the grid and its "Show all" line are one card
+              (WipCard, ./wip-kit.tsx), as Pinned communities' tiles are. */}
+          <WipCard on={wip}>
           {frame && grid.editing ? null : <AppGrid />}
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -388,7 +430,9 @@ export function HomeScreen() {
               and empty; it is React's now (chromeStore), which is what lets
               its listener be attached once instead of on every paint.
           */}
-          <AppsMore />
+          {/* Standard (WIP) has no "Show all" line: See all rides the heading. */}
+          {wip ? null : <AppsMore />}
+          </WipCard>
         </section>
         {/*
             A SEARCH NOTHING ANSWERS IS AN IDEA (./search-make.tsx, #5928):
@@ -397,6 +441,19 @@ export function HomeScreen() {
             want to make?" with the words typed in. Null in the prerender.
         */}
         {frame ? null : <HomeSearchMake />}
+        {/* Standard (WIP): Home is one column, and under Pinned projects the
+            Needs you card is a row of its own, then Challenges
+            (app.css, "STANDARD (WIP)"), at every width. */}
+        {wip ? (
+          <div id="home-row" className="home-row">
+            {aside ? (
+              <aside id="home-aside" className="home-aside">
+                <NeedsYouCard />
+              </aside>
+            ) : null}
+            <ChallengesSection />
+          </div>
+        ) : null}
         {/*
             ── AREAS 2-4: DISCOVER, WAITLIST, VERIFY, CHALLENGES ──────
 
@@ -456,7 +513,7 @@ export function HomeScreen() {
             GitHub and X. Nothing in the prerender, like the card above.
         */}
         {frame ? null : <VerifyCard />}
-        <ChallengesSection />
+        {wip ? null : <ChallengesSection />}
         <HomeJoin />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
@@ -483,6 +540,7 @@ export function HomeScreen() {
             sections above are outside #app-list and never re-rendered by a
             search keystroke, so there is nothing left to catch.
         */}
+        </div>
       </div>
     </main>
   );

@@ -88,7 +88,7 @@ function LineRow({ line, plain = false, where = false }: { line: Line; plain?: b
   return (
     <div className={k('rowx')} data-ai-line-done="">
       {row}
-      <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} />
+      <ThreadDoneMenu rootId={rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') mark(); }} />
     </div>
   );
 }
@@ -109,7 +109,7 @@ function FoundRow({ line }: { line: FoundLine }): ReactNode {
       href={line.href}
       title={line.name}
       aria-label={line.name}
-      onClick={(e) => followFound(e, line.href)}
+      onClick={(e) => followFound(e, line.href, { messageId: line.messageId, q: line.q })}
       data-ai-found={line.thread ? 'thread' : 'chat'}
     >
       <span className={k('ei')} aria-hidden="true"><Icon name="chat" size={18} /></span>

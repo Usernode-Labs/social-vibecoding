@@ -6366,6 +6366,8 @@ const AppView = {
         // #4490: the author's diagram leads the page, above its description.
         diagram: item && item.diagram && typeof item.diagram === 'object' ? item.diagram : null,
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        // Whose words the summary is, for the line under it (thread-card.tsx WordsBy).
+        summaryBy: AppView._summaryBy(item),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
@@ -6388,6 +6390,8 @@ const AppView = {
         actions: AppView._detailActionsView('session', item),
         ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        // Whose words the summary is, for the line under it (thread-card.tsx WordsBy).
+        summaryBy: AppView._summaryBy(item),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
       };
@@ -6537,6 +6541,11 @@ const AppView = {
       similar: AppView._twinOf(issue),
       // #6680: the thread the viewer filed it from, for the link under its words.
       fromThread: AppView._fromThreadOf(issue),
+      // Homeroom bot's summary of the thread (services/request-summary.js),
+      // which the card shows in place of the asker's words once there is one.
+      summary: issue.summary && typeof issue.summary.text === 'string' && issue.summary.text.trim()
+        ? { text: issue.summary.text.trim(), basis: ['plan', 'change', 'changes'].includes(issue.summary.basis) ? issue.summary.basis : 'plan' }
+        : null,
       titleEditing: canEditTitle && AppView._editingIssueTitle === n ? { issue: n, initial: issue.title || '' } : null,
       bodyHtml: words.text.trim() ? AppView._issueBodyHtml({ body: words.text }) : '',
       bodyMarkdown: words.text,
@@ -8041,6 +8050,13 @@ const AppView = {
       // unless GitHub is holding the merge or it is under way.
       merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
+      shotsNone: AppView._shotsNotNeeded(item),
+      // When it went live, for "Since …" in the card's foot and the
+      // timeline's Live step (frontend topic/card-model.ts, rail-model.ts).
+      liveAt: item.status === 'merged' ? (item.live_at || item.merged_at || null) : null,
+      // The last run's counts and its failures by name, for the layer See
+      // what failed opens over the card (change-head.tsx ChecksSummary).
+      checks: AppView._checksSummary(item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
@@ -8053,6 +8069,27 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // What a finished run of a change's tests came to: how many passed, how
+  // many failed, and each failure by its name and its own reason. Null while
+  // nothing has finished. The card look's layer draws it as chips and rows
+  // in place of the Testing card's bar and paragraph.
+  _checksSummary(item) {
+    if (!item || (item.check_state !== 'failing' && item.check_state !== 'passing')) return null;
+    const v = AppView._checksVerdictView(item);
+    if (!v) return null;
+    const failures = Array.isArray(v.failures) ? v.failures.filter(Boolean) : [];
+    // The count is of the failures that block: an advisory one is listed,
+    // quieter, and never counted as a failed test.
+    const blocking = failures.filter((row) => !row.advisory);
+    return {
+      passed: Number(v.passCount) || 0,
+      failed: blocking.length || (item.check_state === 'failing' ? failures.length : 0),
+      fails: failures.slice(0, 12).map((row) => ({
+        key: String(row.key || row.name || ''), name: String(row.name || ''), reason: row.reason ? String(row.reason) : null, advisory: !!row.advisory,
+      })),
     };
   },
 
@@ -8962,7 +8999,11 @@ const AppView = {
       const pic = html ? AppView._workshopVisuals(null, shots) : null;
       const thumbs = pic && (pic.before || pic.after)
         ? { before: pic.before || null, after: pic.after || null, viewer: `shots-${Number(item.id)}-viewer` } : null;
-      return html ? { state: 'verified', html, line: null, thumbs } : null;
+      // The run's own screens and what changed on each, for the card's
+      // picture: the Needs you page's slider (topic/thread-picture.tsx).
+      const screens = pic && Array.isArray(pic.screens) ? pic.screens : [];
+      const changes = pic && Array.isArray(pic.changes) ? pic.changes : [];
+      return html ? { state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number(item.id) || null } : null;
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
@@ -8970,6 +9011,22 @@ const AppView = {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
     };
+  },
+
+  // Who wrote a change's summary: Homeroom bot ('generated', pr-metadata.js)
+  // or its author. Null with no summary, or when the row does not say.
+  _summaryBy(item) {
+    if (!item || typeof item.pr_summary_md !== 'string' || !item.pr_summary_md.trim()) return null;
+    return item.pr_summary_source === 'generated' ? 'bot' : item.pr_summary_source === 'author' ? 'author' : null;
+  },
+
+  // The change shows nothing a person can see: its shots were not required.
+  // The card says so where the picture would be (thread-card.tsx ShotsWait).
+  _shotsNotNeeded(item) {
+    const shots = item && item.shots && typeof item.shots === 'object' ? item.shots : null;
+    if (!shots) return false;
+    const view = AppView._shotsView(shots);
+    return !!view && view.state === 'not_required';
   },
 
   // "The preview is ready · Try it", in a change's stream.
@@ -9429,6 +9486,7 @@ const AppView = {
     'visuals',    // before/after captures
     'github',     // leaves the platform, for GitHub
     'code',       // the code, on Homeroom's own git host
+    'link',       // copies the page's own address
     'priority',   // the same flag the priority chip uses
     'category',
     'assignee',
@@ -18843,6 +18901,24 @@ const AppView = {
     // Just-you change's Approve opens the vote picker, whose other side is
     // Don't approve with its line in the box; this was a second way to the
     // same No, asking for the line by prompt instead.
+    // #6727: the page's own address, so a change pasted elsewhere carries its
+    // link and not just its title. Same row, words and notice as a governance
+    // vote's page (_govDecisionMenu); the router sends a change built for a
+    // request to the request's page. unshift, not push up top: the admin
+    // merge block above has to stay in the first 1600 characters
+    // tests/vote-row-card.test.js slices on.
+    items.unshift({
+      label: PlatformI18n.t('changes:proposal.menu.copyLink'),
+      icon: 'link',
+      title: PlatformI18n.t('changes:proposal.menu.copyLink'),
+      act: () => {
+        const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+        const url = `${window.location.origin}/#app/${slug}/dev/proposals/${pr.id}`;
+        Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+          if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:proposal.menu.copyLinkDone'));
+        });
+      },
+    });
     return items;
   },
 
@@ -21153,7 +21229,9 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
         return;
       }
-      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.done'));
+      // #6776: the bot's own sentence, so "queued it again" is heard too.
+      const data = await resp.json().catch(() => ({}));
+      PlatformUI.toast(data.said || PlatformI18n.t('changes:tryAgain.done'));
       AppView.refreshDevData('tryAgain');
       if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
       return true;
@@ -26141,7 +26219,8 @@ const AppView = {
   //                screen's size, otherwise on After. It is a fourth radio
   //                with no label, checked to start; any choice replaces it.
   //   zoom       — a Close-up / Whole screen switch on screens that have a
-  //                close-up. The radios hold it; the caller lays the sides out.
+  //                close-up. The radios hold it, checked on Whole screen so a
+  //                viewer opens fitted; the caller lays the sides out.
   // `key` makes the ids unique on the page, so a spec and a card can share one.
   SHOTS_SIZE_NAME_IDS: {
     desktop: 'changes:shots.size.desktop',
@@ -26335,7 +26414,7 @@ const AppView = {
     });
     const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBefore')}"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAfter')}"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBoth')}">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAuto')}" checked>` : ''}</span>`;
     const zoomPicks = zooming
-      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}"></span>`
+      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}"><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}" checked></span>`
       : '';
     const screenPicks = list.length > 1
       ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(Object.prototype.hasOwnProperty.call(AppView.SHOTS_SCREEN_PICK_IDS, String(screen.viewport))

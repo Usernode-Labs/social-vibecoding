@@ -74,9 +74,14 @@ test('the review holds a change to the data rules too, read from their section (
   await run({ deps });
   assert.ok(calls.system.includes(data.content), 'the data rules are read from the conventions, never copied');
   assert.match(calls.system, /content rules and data rules/);
-  for (const term of [/trackers/, /special-category data/, /children/, /passwords or payment card data/, /login, signup or outside sign-in/]) {
+  for (const term of [/trackers/, /special-category/, /under 13/, /passwords or PINs/, /payment/, /Sign in with/]) {
     assert.match(calls.system, term);
   }
+  // 17 Nov 2026 (#6769): the reviewer is told what is never a flag, so it
+  // stops reading "outside account" and "a health club" as breaks.
+  assert.match(calls.system, /An OAuth connection that uses a person's outside account for its data/);
+  assert.match(calls.system, /a club or topic in those areas, and a note a person enters about themselves are never a flag/);
+  assert.doesNotMatch(calls.system, /special-category data, passwords or payment card data/);
   // Without the section the review still runs on the content rules alone.
   const plain = contentReview.buildSystemPrompt('RULES');
   assert.match(plain, /against the platform's content rules below/);
@@ -90,6 +95,34 @@ test('a data-rule break is flagged like a content-rule one, naming the rule', as
   assert.equal(out.row.status, 'fail');
   assert.equal(out.row.advisory, true);
   assert.match(out.row.failureReason, /^Flagged: Third-party trackers or external scripts in public\/index\.html\./);
+});
+
+// #6766: the conventions now allow images, video, audio, fonts, map tiles and
+// styles, public API data and iframe players from other origins, while a
+// `<script>` tag from another origin and trackers or pixels in any form stay
+// banned. The group's follow-up named four cases the reviewer must tell
+// apart. The model is faked in this suite, so what is pinned is the guidance
+// it reads: an OpenFreeMap style and a YouTube embed are allowed, and an
+// outside script tag or an analytics pixel is a flag.
+test('#6766: the reviewer tells an allowed tile or embed from an outside script or pixel', async () => {
+  const diff = [
+    'diff --git a/src/map.js b/src/map.js',
+    '+const style = "https://tiles.openfreemap.org/styles/liberty";',
+    'diff --git a/src/page.html b/src/page.html',
+    '+<iframe src="https://www.youtube-nocookie.com/embed/abc123"></iframe>',
+    'diff --git a/public/index.html b/public/index.html',
+    '+<script src="https://cdn.example.com/widget.js"></script>',
+    '+<img src="https://analytics.example.com/pixel.gif">',
+  ].join('\n');
+  const { deps, calls } = fakeDeps({ diff, files: filesOf('src/map.js', 'src/page.html', 'public/index.html') });
+  await run({ deps });
+  for (const fixture of ['tiles.openfreemap.org/styles/liberty', 'youtube-nocookie.com/embed/abc123', 'cdn.example.com/widget.js', 'analytics.example.com/pixel.gif']) {
+    assert.ok(calls.input.includes(fixture), `${fixture} reaches the reviewer`);
+  }
+  // Both bans, with the pixel named as a tracker.
+  assert.match(calls.system, /a `<script>` tag from another origin, or trackers, analytics, ads, pixels or beacons in any form, including image pixels/);
+  // The allowed list, and the instruction that it is never a flag.
+  assert.match(calls.system, /An image, video, audio file, web font, map tile or style, public API response or embedded player in an `<iframe>` from another origin is allowed, and is never an outside script\./);
 });
 
 test('a flag is advisory by default and names the category and file', async () => {

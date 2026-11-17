@@ -50,6 +50,7 @@ test.after(() => fs.rmSync(root, { recursive: true, force: true }));
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const gitHost = require('../src/services/git-host');
+const schemaSafety = require('../src/services/schema-safety');
 const offers = require('../src/services/upstream-offers');
 const lineage = require('../src/services/upstream-lineage');
 const upstreamOperation = require('../src/services/upstream-operation');
@@ -126,6 +127,23 @@ test('facts: what changes data already stored, and what does not', () => {
   assert.deepEqual(moved.destructive, [], 'a line it only moved is not new');
   const docs = factsOf(diffOf({ 'docs/schema.md': { add: ['DROP TABLE x;'] } }), {}, {});
   assert.deepEqual(docs.destructive, [], 'prose says nothing');
+});
+
+test('facts: a widening that loses nothing is left out, a narrowing and SET NOT NULL stay in', () => {
+  const base = ['CREATE TABLE scores (id SERIAL, points INTEGER, name VARCHAR(40));'];
+  const types = schemaSafety.columnTypes(base);
+  const facts = factsOf(diffOf({ 'server.js': { add: [
+    'ALTER TABLE scores ALTER COLUMN name TYPE VARCHAR(80);',
+    'ALTER TABLE scores ALTER COLUMN points TYPE SMALLINT;',
+    'ALTER TABLE scores ALTER COLUMN name SET NOT NULL;',
+  ] } }), {}, {}, { columnTypes: types });
+  assert.deepEqual(facts.destructive, [
+    'ALTER TABLE scores ALTER COLUMN points TYPE SMALLINT;',
+    'ALTER TABLE scores ALTER COLUMN name SET NOT NULL;',
+  ]);
+  const without = factsOf(diffOf({ 'server.js': { add: ['ALTER TABLE scores ALTER COLUMN name TYPE VARCHAR(80);'] } }), {}, {});
+  assert.deepEqual(without.destructive, ['ALTER TABLE scores ALTER COLUMN name TYPE VARCHAR(80);'],
+    'with no base types every type change counts');
 });
 
 test('facts: a removed SQL comment inside a hunk is read as a removed line, never as a file header', () => {

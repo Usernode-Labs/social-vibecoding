@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -51,7 +51,7 @@ import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
-import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
+import { CheckIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToFit, upstreamAction } from '../../versions/upstream';
@@ -59,12 +59,20 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import { shortDate } from '../../../lib/timestamp';
+import { changeRail, type RailOpen } from './rail-model';
+import { changeFoot, changePhase, fixStanding, type ChangePhase } from './card-model';
+import { closeStep, isGates, openStep, useOpenStep } from './step-store';
+import { NoPicture, PlanWords, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
 import { askFix, useChecksExplanation } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { openRequestSpec } from './request-model';
 import { TopicPageContext } from './topic-store';
 import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
+import { ThreadRail } from './thread-rail';
+import { ThreadPicture } from './thread-picture';
 import { usePanelHead } from '../../side-panel/head-store';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
@@ -148,12 +156,21 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
 }
 
 /**
+ * A change's Votes and Testing cards are put away in the layer a step opens
+ * over the card (./thread-card.tsx), and that layer is shut: the card's foot
+ * holds their buttons, so the page offers each action once.
+ */
+const GatesShut = createContext(false);
+
+/**
  * The Testing card's Fix it, for the change's author, with the re-run beside
  * it (./failed-checks.ts askFix): the author's thread with Homeroom bot
  * about the change.
  */
 function FixRow({ fix, rerun }: { fix: FixChecksView; rerun: ReactNode }): ReactNode {
   const t = useMessages('project');
+  // Put away in a shut layer, the card's foot offers Fix it instead.
+  if (useContext(GatesShut)) return null;
   return (
     <div className="dev-change-gate-fix">
       <button
@@ -350,7 +367,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [], line
             {g.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
             {g.name}
           </span>
-          <span className="dev-change-gate-figure">{g.figure}</span>
+          <span className="dev-change-gate-figure" title={g.figure}>{g.figure}</span>
         </div>
         <div className="dev-change-bar" role="img" aria-label={g.label}>
           {g.segments.map((seg, i) => (
@@ -544,13 +561,104 @@ export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
 }
 
 /** The Before and after card: the shots, or the line that says where they are. */
-function ShotsCard({ s }: { s: NonNullable<ChangeThreadView['shots']> }): ReactNode {
+export function ShotsCard({ s, single = false, status = null }: {
+  s: NonNullable<ChangeThreadView['shots']>;
+  /** The card's picture: it opens on After alone, one picture with the switch, not side by side. */
+  single?: boolean;
+  /** The change's status key, for what the picture's two sides are called. */
+  status?: string | null;
+}): ReactNode {
   const t = useMessages('project');
+  const box = useRef<HTMLElement>(null);
+  const [tiles, setTiles] = useState<{ src: string; pick: string }[]>([]);
+  const [at, setAt] = useState(0);
+  const [legend, setLegend] = useState('');
+  // The card's picture is the viewer the change's shots are drawn in, read
+  // as one picture: it starts on After (the viewer's own start is side by
+  // side where there is room), its screens are tiles under it, and the
+  // legend of the screen showing sits beside them. The tiles and the legend
+  // are read off the viewer's own markup, in its order, and a tile presses
+  // the viewer's own screen pick; nothing is written into the viewer but
+  // which of its radios is checked.
+  useEffect(() => {
+    const el = box.current;
+    if (!single || s.state !== 'verified' || !el) { setTiles([]); setLegend(''); return undefined; }
+    const auto = el.querySelector<HTMLInputElement>('.shots-side-auto:checked');
+    const after = el.querySelector<HTMLInputElement>('.shots-side-after');
+    if (auto && after) after.checked = true;
+    const views = Array.from(el.querySelectorAll<HTMLElement>('.shots-view'));
+    const picks = Array.from(el.querySelectorAll<HTMLInputElement>('.shots-screen-pick'));
+    const read = () => {
+      const index = Math.max(0, picks.findIndex((pick) => pick.checked));
+      setAt(index);
+      setLegend(views[index]?.querySelector('.shots-view-notes')?.innerHTML || '');
+    };
+    setTiles(views.length > 1 && picks.length === views.length
+      ? views.map((view, i) => ({
+        src: view.querySelector<HTMLImageElement>('.shots-flip-after img, .shots-flip-before img')?.getAttribute('src') || '',
+        pick: picks[i].id,
+      }))
+      : []);
+    read();
+    el.addEventListener('change', read);
+    return () => el.removeEventListener('change', read);
+  }, [single, s.state, s.html]);
+  const legendInner = useMemo(() => ({ __html: legend }), [legend]);
+  // What each side of the one picture is for this change: what the app does
+  // today and what it will do if the change passes; once live, what it did
+  // and what it does now; closed, what was proposed. The viewer's own chip
+  // says only "Before" or "After" (app.css draws these in its place).
+  const chips = !single ? null
+    : status === 'merged' || status === 'live' || status === 'deployed_reload' || status === 'merged_reload'
+      ? { before: t('project:topic.card.shots.chipWas'), after: t('project:topic.card.shots.chipLive') }
+      : status === 'closed' || status === 'archived'
+        ? { before: t('project:topic.card.shots.chipToday'), after: t('project:topic.card.shots.chipProposed') }
+        : { before: t('project:topic.card.shots.chipTodayBefore'), after: t('project:topic.card.shots.chipIfPasses') };
+  const pickScreen = (id: string) => {
+    const pick = box.current?.querySelector<HTMLInputElement>(`#${CSS.escape(id)}`);
+    if (!pick) return;
+    pick.checked = true;
+    pick.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  // A run that worked out its screens is drawn with the Needs you page's
+  // slider (./thread-picture.tsx); the viewer stays behind its Expand. A
+  // change that is up for a vote keeps the slider's own words on each side.
+  if (single && s.state === 'verified' && s.screens && s.screens.length) {
+    const voting = !!chips && chips.after === t('project:topic.card.shots.chipIfPasses');
+    return <ThreadPicture s={s} captions={voting ? null : chips} />;
+  }
   if (s.state === 'verified') {
     return (
-      <section className="dev-change-shots" data-change-shots="verified">
+      <section
+        ref={box}
+        className="dev-change-shots"
+        data-change-shots="verified"
+        data-thread-picture={single ? '' : undefined}
+        data-thread-chips={chips ? '' : undefined}
+        style={chips ? ({ '--thread-chip-after': JSON.stringify(chips.after), '--thread-chip-before': JSON.stringify(chips.before) } as CSSProperties) : undefined}
+      >
         {/* AppView.shotsHtml's `thread` reading — escaped where it is built. */}
         <Html className="dev-change-shots-html" html={s.html} />
+        {single && (tiles.length || legend) ? (
+          <div className="dev-thread-tiles" data-thread-tiles={tiles.length}>
+            {tiles.map((tile, i) => (
+              <button
+                key={tile.pick}
+                type="button"
+                className="dev-thread-tile"
+                aria-pressed={i === at}
+                aria-label={t('project:topic.card.shots.tile', { index: i + 1, total: tiles.length })}
+                onClick={() => pickScreen(tile.pick)}
+              >
+                {tile.src ? <img src={tile.src} alt="" loading="lazy" decoding="async" /> : null}
+              </button>
+            ))}
+            <div className="dev-thread-tiles-cap">
+              {tiles.length ? <p className="dev-thread-tiles-count">{t('project:topic.card.shots.screenOf', { index: at + 1, total: tiles.length })}</p> : null}
+              {legend ? <div className="dev-thread-tiles-legend shots-view-notes" dangerouslySetInnerHTML={legendInner} /> : null}
+            </div>
+          </div>
+        ) : null}
       </section>
     );
   }
@@ -637,7 +745,22 @@ function gateActions(card: DevCardModel, v: ChangeThreadView) {
 export const ChangeGates = forwardRef<HTMLDivElement, {
   id: number | null; card: DevCardModel; v: ChangeThreadView; ballot?: boolean; closes?: ClosesRequest[];
 }>(function ChangeGates({ id, card, v, ballot = false, closes = [] }, ref) {
-  const { voteAction, testAction, withFix, testingActions, stopped } = gateActions(card, v);
+  const t = useMessages('project');
+  // Under the card look (./thread-card.tsx) a change that is voted on here,
+  // not under a ballot, says where it stands in the card's foot, and this
+  // pair is the content of the layer its steps open over the card: kept in
+  // the page while the layer is shut, and never floating under the header.
+  const thread = useContext(ThreadCardContext);
+  const layer = thread.card && !ballot;
+  const openNow = useOpenStep(thread.page);
+  // Shut, the layer's cards carry no buttons: the foot has them, so the page
+  // never offers the same action twice.
+  const shut = layer && !isGates(openNow, id);
+  const acts = gateActions(card, v);
+  const { withFix, stopped } = acts;
+  const voteAction = shut ? null : acts.voteAction;
+  const testAction = shut ? null : acts.testAction;
+  const testingActions = shut ? null : acts.testingActions;
   // Under one of the frame's looks, on the change's own page, each card's
   // name is the kit's label over it (app.css puts the name inside away).
   const frame = isFrameSkin(useLiveSkin());
@@ -661,7 +784,7 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
   // document-wide id: another pane can hold the same id (#4640). A browser
   // without an observer leaves the pair at full size and draws no strip.
   useEffect(() => {
-    if (!stick) return;
+    if (!stick || layer) return;
     const el = mark.current;
     const scroller = el ? el.closest<HTMLElement>('#gc-thread-scroll') : null;
     if (!el || !scroller || typeof IntersectionObserver !== 'function') return;
@@ -672,8 +795,8 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
     }, { root: scroller, rootMargin: '4px 0px 0px 0px' });
     io.observe(el);
     return () => io.disconnect();
-  }, [id, stick]);
-  return (
+  }, [id, stick, layer]);
+  const drawn = (
     <>
       {stick ? <span ref={mark} className="dev-change-pair-mark" aria-hidden="true" /> : null}
       {/* #6615: the one-line rows, out of the page's flow under the sheet's
@@ -703,7 +826,144 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
       </div>
     </>
   );
+  if (!layer) return drawn;
+  return (
+    <GatesShut.Provider value={shut}>
+    <StepLayer
+      keep
+      open={isGates(openNow, id)}
+      name="gates"
+      title={openNow?.kind === 'checks'
+        ? (v.checks && v.checks.failed ? t('project:topic.rail.testsFailed', { count: v.checks.failed }) : v.testing.name)
+        : v.votes.name}
+      sub={openNow?.kind === 'checks' ? t('project:topic.card.layer.checksSub') : t('project:topic.card.layer.votesSub')}
+      onClose={closeStep}
+    >
+      {/* One step, one thing: the Tested step shows its tests, and the vote's
+          step its votes (app.css puts the other card away while it is open).
+          Shut, both stay in the page for the doors and the declared checks. */}
+      <div data-gates-show={isGates(openNow, id) ? (openNow?.kind === 'checks' ? 'checks' : 'votes') : undefined}>
+        {/* The tests, as counts and one row per failure. The Testing card
+            stays in the page under it (app.css puts it away), for the doors
+            that reach into it. */}
+        {openNow?.kind === 'checks' && isGates(openNow, id) && v.checks ? (
+          <ChecksSummary v={v} actions={<>{testingActions}{testAction}</>} />
+        ) : null}
+        {drawn}
+      </div>
+    </StepLayer>
+    </GatesShut.Provider>
+  );
 });
+
+/**
+ * The foot of a change's card: where it stands, said once, with its action.
+ * The headline and the line under it come from whichever of its votes, its
+ * tests and its merge decides what happens next (./card-model.ts); the cards
+ * themselves are a press away, in the layer the timeline's steps open
+ * (`page` is the page whose layer that is, ./step-store.ts).
+ */
+/**
+ * What a finished run of the change's tests came to, in the layer See what
+ * failed (or See checks) opens: how many failed and passed as chips, each
+ * failure as a row with its name and its own reason, the plain-words account
+ * when there is one, and the run's actions.
+ */
+function ChecksSummary({ v, actions }: { v: ChangeThreadView; actions: ReactNode }): ReactNode {
+  const t = useMessages('project');
+  const explanation = useChecksExplanation(v.testing.explain);
+  const c = v.checks;
+  if (!c) return null;
+  const why = c.failed ? (explanation || v.testing.explain?.fallback || '') : '';
+  return (
+    <div className="dev-checks-sum" data-checks-summary={c.failed ? 'failed' : 'passed'}>
+      <p className="dev-thread-facts">
+        {c.failed ? (
+          <span className="dev-thread-fact" data-tone="bad"><XIcon className="h-3.5 w-3.5" aria-hidden="true" />{t('project:topic.card.checks.failed', { count: c.failed })}</span>
+        ) : null}
+        <span className="dev-thread-fact" data-tone="ok"><CheckIcon className="h-3.5 w-3.5" aria-hidden="true" />{t('project:topic.card.checks.passed', { count: c.passed })}</span>
+      </p>
+      {why ? <p className="dev-checks-why">{why}</p> : null}
+      {c.fails.length ? (
+        <ul className="dev-checks-rows">
+          {c.fails.map((row) => (
+            <li key={row.key} className="dev-checks-row" data-checks-row={row.advisory ? 'advisory' : 'failed'}>
+              <b><XIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span>{row.name}</span></b>
+              {row.reason ? <span>{row.reason}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="dev-checks-acts">{actions}</div>
+    </div>
+  );
+}
+
+/** The one phase a change is in (./card-model.ts), from its page's view. */
+export function phaseOf(v: ChangeThreadView): ChangePhase {
+  return changePhase({ status: v.status ? { key: v.status.key, label: v.status.label } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
+}
+
+export function ChangeFoot({ id, card, v, page, ballot = false, tail = null }: {
+  id: number | null; card: DevCardModel; v: ChangeThreadView; page: string; ballot?: boolean;
+  /** A quiet row at the foot's end, inside its band (the private suggestion). */
+  tail?: ReactNode;
+}): ReactNode {
+  const t = useMessages('project');
+  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
+  const { voteAction, testAction, testingActions } = gateActions(card, v);
+  const now = useReleaseNow(v.votes.release);
+  const release = v.votes.release ? releaseSentence(v.votes.release, now) : null;
+  const failed = foot.key === 'failed';
+  // The line under the headline: short facts, then the card's own sentences.
+  // The long account of what failed is in the layer See what failed opens,
+  // and what an approved change waits on is the timeline's note.
+  let lines = foot.sub;
+  if (foot.gate === 'votes' && release) lines = [...lines, t('project:topic.change.gate.release', { release })];
+  const facts = foot.facts.map((f) => (typeof f === 'string' ? f : t(f.id, f.values)));
+  // "Live · Since Nov 14": the day it went live leads its line.
+  if (foot.key === 'live' && v.liveAt) facts.unshift(t('project:topic.card.foot.since', { when: shortDate(v.liveAt) }));
+  const see = (kind: 'checks' | 'votes') => { if (id != null) openStep(page, { kind, changeId: id }); };
+  const tests = foot.gate === 'testing';
+  // Settled by the group: nothing asks for a vote any more.
+  const decided = foot.key === 'approved' || foot.key === 'merging' || foot.key === 'live' || foot.key === 'closed';
+  // Short facts lead, a dot between them; the sentences follow.
+  const line = (lead: string[], rest: string[]) => dotLine([...lead.map((f) => f.replace(/[.\s]+$/, '')), sentences(rest)]);
+  return (
+    <ThreadFoot
+      what={foot.key}
+      headline={foot.title ? t(foot.title.id, foot.title.values) : foot.headline}
+      sub={line(facts, lines) || null}
+      tone={foot.tone}
+      progress={foot.progress}
+      busy={foot.key === 'testing'}
+      extra={tail}
+    >
+      {tests ? (
+        <button type="button" className="gc-vote-btn" data-thread-foot-see="checks" onClick={() => see('checks')}>
+          {failed ? t('project:topic.rail.seeFailed') : t('project:topic.card.foot.seeProgress')}
+        </button>
+      ) : null}
+      {/* Failed: See what failed, Vote when the viewer has one to cast, and
+          the one action that moves it on (Fix it, else the re-run). Preview
+          and the other re-run are in the layer, with what failed. */}
+      {failed && !ballot && v.votes.tone === 'ask' ? voteAction : null}
+      {failed && v.testing.fix ? (
+        <span className="contents" data-thread-foot-next="">
+          <button type="button" className="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks={v.testing.fix.changeId} onClick={() => askFix(v.testing.fix!)}>
+            {t('project:topic.change.gate.fix')}
+          </button>
+        </span>
+      ) : null}
+      {/* With no Fix it, or under a bot that stopped: the re-run. Otherwise
+          it rides with Preview (gateActions). */}
+      {failed && !v.testing.fix && testingActions.length ? <span className="contents" data-thread-foot-next="">{testingActions}</span> : null}
+      {failed ? null : testAction}
+      {/* Tests still running: the vote is open meanwhile, beside See progress. */}
+      {failed || ballot || decided ? null : voteAction}
+    </ThreadFoot>
+  );
+}
 
 export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSaved, threadNumber = null, threadAsChange = false }: {
   id: number | null;
@@ -746,7 +1006,11 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   useEffect(() => {
     let release: (() => void) | null = null;
     const show = () => {
-      const card = pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
+      // Under the card look the vote is the card's foot, and the Votes card
+      // is in the layer. Found from the pair itself, never by a
+      // document-wide lookup: another pane can hold the same change (#4640).
+      const card = pair.current?.closest('[data-thread-card]')?.querySelector<HTMLElement>('.dev-thread-foot')
+        || pair.current?.querySelector<HTMLElement>('[data-change-gate="votes"]');
       if (!card || !takeVotesInView(id)) return;
       release?.();
       release = holdVotesInView(card);
@@ -755,16 +1019,62 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     const off = onVotesAsked(show);
     return () => { off(); release?.(); };
   }, [id]);
+  // "How it got here": the change's big events, beside its card on a wide
+  // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
+  // have their own context column, so they draw none.
+  const rail = frame ? null : host('gc-thread-rail');
+  const railSteps = useMemo(() => changeRail({
+    id,
+    author: v.author || null,
+    at: v.at || null,
+    plan: body.plan || null,
+    testing: v.testing || null,
+    status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null,
+    votes: v.votes || null,
+    merge: v.merge || null,
+    fixNote: v.testing?.authorNote || null,
+    liveAt: v.liveAt || null,
+  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes, v.merge, v.liveAt]);
+  // The standard look and the brand look draw the card the thread design
+  // agreed (./thread-card.tsx): a kicker, the summary and whose words it is,
+  // the picture, and a foot that says where it stands. A step of the
+  // timeline opens over it.
+  const cardLook = !frame;
+  const page = `change:${id ?? ''}`;
+  const openNow = useOpenStep(page);
+  useEffect(() => closeStep, [page]);
+  const openRail = (open: RailOpen) => {
+    if (!cardLook) {
+      if (open.kind === 'plan' && body.plan) void openRequestSpec(body.plan);
+      else if (open.kind === 'checks') (window as any).AppView?.openTechnicalDetails?.(open.changeId);
+      return;
+    }
+    openStep(page, open);
+  };
+  const cardContext = useMemo(() => ({ card: cardLook, page }), [cardLook, page]);
+  // 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
+  // words say so, and the bot building or fixing it leaves this out.
+  const workWithBot = (
+    <WorkWithBotButton
+      slug={slug}
+      number={v.number}
+      voting={!!v.votes.facts?.length}
+      botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
+    />
+  );
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
+      {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={cardLook ? openNow : null} />, rail) : null}
       {images.viewer}
-      <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
+      <ThreadCardContext.Provider value={cardContext}>
+      <article className={`messages-message dev-request-root dev-change-root${cardLook ? ' dev-thread-card' : ''}`} data-change-root={id ?? ''} data-thread-card={cardLook ? 'change' : undefined}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">
           {(v.author || '?').charAt(0).toUpperCase()}
         </Avatar>
         <div className="min-w-0 flex-1" {...images.scope}>
+          {cardLook ? <ThreadKicker kind="change" number={v.number} category={v.category} /> : null}
           <div className="messages-message-head">
             <span className="messages-message-author">{v.author}</span>
             {v.time ? <time dateTime={v.at || undefined} title={v.timeTitle}>{v.time}</time> : null}
@@ -781,6 +1091,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {frame ? <TopicFrameBy name={v.author} color={swatchFor(v.author)} line={dotLine([v.time, v.via])} title={v.timeTitle} at={v.at} /> : null}
           <ChangeDiagram value={body.diagram} />
           <RequestWords html={body.summaryHtml || ''} />
+          {cardLook && body.summaryBy ? <WordsBy who={body.summaryBy} name={v.author || null} /> : null}
           {body.summaryMore ? <SummaryMore m={body.summaryMore} /> : null}
           {v.upstream ? <UpstreamCard u={v.upstream} /> : null}
           {body.descriptionFold && body.proposalBody
@@ -789,7 +1100,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {body.summaryStale && body.summaryHtml
             ? <p className="dev-change-stale" role="note">{t('project:topic.change.summaryStale')}</p>
             : null}
-          {body.plan ? (
+          {body.plan && !cardLook ? (
             <div className="messages-object-list dev-request-specs" data-change-plan={id ?? ''}>
               <SpecCard card={body.plan} />
             </div>
@@ -822,17 +1133,22 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
-          {v.shots ? <ShotsCard s={v.shots} /> : null}
-          {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:
-              the words say so, and the bot building or fixing it leaves this out. */}
-          <WorkWithBotButton
-            slug={slug}
-            number={v.number}
-            voting={!!v.votes.facts?.length}
-            botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
-          />
+          {v.shots ? <ShotsCard s={v.shots} single={cardLook} status={v.status?.key || null} /> : null}
+          {/* The card look: with nothing to picture it says so; then the foot,
+              which says where it stands once. Votes and Testing above are the
+              content of the layer their steps open, kept in the page. */}
+          {cardLook && !v.shots ? <NoPicture none={!!v.shotsNone} phase={phaseOf(v)} stopped={fixStanding(v.testing) === 'stopped'} /> : null}
+          {/* The private suggestion rides at the foot's end, inside its band. */}
+          {cardLook ? <ChangeFoot id={id} card={card} v={v} page={page} tail={workWithBot} /> : null}
+          {cardLook && body.plan && openNow?.kind === 'plan' ? (
+            <StepLayer open name="plan" title={body.plan.title || t('project:topic.rail.planned')} sub={body.plan.by && !body.plan.byUnknown && !body.plan.bySystem ? t('project:topic.card.layer.planBy', { name: body.plan.by }) : null} when={body.plan.time || null} onClose={closeStep}>
+              <PlanWords plan={body.plan} />
+            </StepLayer>
+          ) : null}
+          {cardLook ? null : workWithBot}
         </div>
       </article>
+      </ThreadCardContext.Provider>
     </>
   );
 }

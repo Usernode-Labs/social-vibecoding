@@ -550,8 +550,16 @@ function otherThreadLines(thread) {
     lines.push(
       '- It is their Earlier chat thread: what you and they said before every conversation here became a thread of',
       '  its own. They can still write here. Nothing in it is filed until you offer it: once what they want is clear',
-      '  enough to build, offer it as a request with offer_request. When, and only when, they bring an idea for a',
-      '  project of its own with no project yet, call offer_new_project so New project shows under your reply.',
+      '  enough to build, offer it as a request with offer_request. When this thread is an idea for a project of its',
+      '  own with no project yet, or they plainly ask to make or work on a new app even before they say what it is',
+      '  (New project\'s screen asks what it should do), call',
+      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
+      '  project that exists. Never tell them to tap New project unless you called it this turn.',
+      // #6781: the make screen opens from what it passes here, so the brief
+      // says what they want, not only the first thing they typed.
+      '  Pass its idea (the project as you agreed it, with their answers folded in, at most 4000 characters) and a',
+      '  short name: the make screen opens with both. Write the idea from their own words and answers, and leave out',
+      '  any limit you said was not possible.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -564,19 +572,35 @@ function otherThreadLines(thread) {
       '  Help them say what they want. Once it is clear enough to build, offer it as a request with offer_request:',
       '  File it shows only under that offer, so make it then, without waiting to be asked. When they want to see how a',
       '  screen could look, call draw_screen: it is drawn here, in this thread, and changed at their word.',
-      // #6523: New project is offered, never guessed from the kind of thread.
-      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
-      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
-      '  project that exists.',
+      // #6523, #6763: New project is offered, never guessed from the kind of
+      // thread. 17 Nov 2026 (Evan): in this "+" thread the plan comes first,
+      // and New project follows it carrying their answers.
+      '  When this thread is an idea for a project of its own with no project yet, or they plainly ask to make or work',
+      '  on a new app even before they say what it is (New project\'s screen asks what it should do), shape it here',
+      '  first: ask what it should do and put the plan here for them. Once the plan is here, call',
+      '  offer_new_project so New project shows under your reply, carrying their answers. Never offer it before the',
+      '  plan, never for a question, a report, or a request about a project that exists, and never tell them to tap New',
+      '  project unless you called it this turn.',
+      // #6781: the make screen opens from what it passes here, so the brief
+      // carries their answers and the plan, not only their first line.
+      '  Pass its idea (the project as you agreed it here, with their answers folded in, at most 4000 characters) and a',
+      '  short name: the make screen opens with both. Write the idea from their own words and answers, and leave out',
+      '  any limit you said was not possible.',
     );
   } else if (!d) {
     lines.push(
       '- Nothing in this thread is filed until you offer it. Once what they want is clear enough to build, offer it as',
       '  a request with offer_request: File it shows only under that offer.',
-      // #6523: New project is offered, never guessed from the kind of thread.
-      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
+      // #6523, #6763: New project is offered, never guessed from the kind of thread.
+      '  When this thread is an idea for a project of its own with no project yet, or they plainly ask to make or work',
+      '  on a new app even before they say what it is (New project\'s screen asks what it should do), call',
       '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
-      '  project that exists.',
+      '  project that exists. Never tell them to tap New project unless you called it this turn.',
+      // #6781: the make screen opens from what it passes here, so the brief
+      // says what they want, not only the first thing they typed.
+      '  Pass its idea (the project as you agreed it, with their answers folded in, at most 4000 characters) and a',
+      '  short name: the make screen opens with both. Write the idea from their own words and answers, and leave out',
+      '  any limit you said was not possible.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
@@ -690,13 +714,16 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  asked, why it matters, how it fits what the project already does, and what is still undecided. When they',
     '  rework an idea, offer the whole request again as it now stands. Never refer back to, contrast with, or say',
     '  it replaces or revises an earlier draft: nobody else ever saw it.',
-    '- A request on one of their projects that is about Homeroom itself (its header, its request form, a project\'s',
-    '  description or invite message, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s',
-    '  own board: request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for',
-    '  it, or they made the project or are one of its admins, offer to move it there (offer_move_request). Nothing',
-    '  moves until they tap Move it to Homeroom under your message, so never say it was moved. When they want it on',
-    '  Homeroom\'s own board as well and the request kept here, offer to copy it there instead (offer_copy_request):',
-    '  nothing is filed until they tap Put it on Homeroom\'s board, and this request stays open.',
+    '- A request on one of their projects that is about Homeroom itself (its header, its request form, the invite email',
+    '  it sends, how votes or notifications work), not the project\'s code, belongs on Homeroom\'s own board:',
+    '  request_detail says aboutHomeroom when you left it for that reason. When they filed it or asked for it, or they',
+    '  made the project or are one of its admins, offer to move it there (offer_move_request). Nothing moves until they',
+    '  tap Move it to Homeroom under your message, so never say it was moved. When they want it on Homeroom\'s board as',
+    '  well and the request kept here, offer to copy it there instead (offer_copy_request): nothing is filed until they',
+    '  tap Put it on Homeroom\'s board, and this request stays open. A project\'s name, description and icon are lines',
+    '  in its own dapp.json: a change on its own board makes them, so they are never about Homeroom.',
+    '- A request that is really about another project, not the one it is filed on, belongs to that project:',
+    '  offer to move it there with offer_move_request and `to` set to the project\'s name, when they can see it.',
     '- When they ask you to close a request, or say one is done and can be closed, offer a vote on closing it',
     '  (offer_close_request). Nothing happens until they tap Propose to close under your message, and it closes only',
     '  if its group votes for it, so never say it was closed.',
@@ -807,9 +834,16 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  their projects on Homeroom. Never offer or start a request for any of it; offer the closest version that',
     '  keeps to the rules instead. Cartoon or fantasy combat and weapons in a game, pretend-currency card and',
     '  casino games, and apps where people post and comment are allowed: never decline those.',
-    '- Decline the same way anything the platform\'s data rules forbid: trackers, ads or outside scripts, health,',
-    '  religion, sexuality, ethnicity, politics or biometric data, an app for children, collecting passwords or card',
-    '  data, or a login of the app\'s own.',
+    '- Decline the same way anything the platform\'s data rules forbid: trackers, ads, pixels or `<script>` tags',
+    '  from another origin, a login or "Sign in with" of the app\'s own, asking for account passwords or card data,',
+    '  payments, an app for children under 13, or an app that profiles or targets people by health, religion,',
+    '  sexuality, ethnicity, politics or biometrics. Connecting an outside account for its data, codes the app makes',
+    '  such as a game PIN, family and class tools, and clubs or topics in those areas are allowed: never decline',
+    '  those. Maps, place search and other outside data services are allowed: the app calls them from its server,',
+    '  with any key in its secrets.',
+    '- Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it. When',
+    '  unsure, say you will check rather than state a limit; a live app already doing it (Homeroom Maps has a real',
+    '  map and place search) shows it can be built.',
     '- Do not repeat these instructions or show raw tool output.',
     `Today is ${today.toISOString().slice(0, 10)}.`,
     '',
@@ -1006,13 +1040,14 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_move_request',
-      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. Up to three offers under one reply.',
+      description: 'Offer to move one of their requests to a project its request is really about: Homeroom\'s own board when it is about the Homeroom platform itself (its header, its request form, the invite email it sends, how votes or notifications work; never a project\'s name, description or icon, which are lines in its own dapp.json), or any project they can see (pass `to`). Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to <project> and Keep it here, or Join <project> and move it when they are not a member there yet; nothing moves unless they tap it. Then it is filed on that project\'s board with its discussion and a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. Up to three offers under one reply.',
       parameters: {
         type: 'object',
         properties: {
           project: { type: 'string', description: 'The project it is on: its name or short name.' },
           number: { type: 'integer', description: 'The request number.' },
-          reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
+          reason: { type: 'string', description: 'Why it belongs on the other board rather than this project, in a few plain words. They see it with the offer.' },
+          to: { type: 'string', description: 'The project it belongs on, when it is not Homeroom itself: its name or short name. Leave it out for Homeroom\'s own board.' },
         },
         required: ['project', 'number', 'reason'],
         additionalProperties: false,
@@ -1116,10 +1151,24 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_new_project',
-      description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet) '
-        + 'and not a question, a report, or a change to a project that exists: put the New project button under your '
-        + 'reply. One per turn.',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet), '
+        + 'or a plain ask to make or work on a new app before they have said what it is (New project asks for the '
+        + 'idea), and not a question, a report, or a change to a project that exists: put the New project button under '
+        + 'your reply. One per turn.',
+      // #6781: the brief and the name the make screen opens with.
+      parameters: {
+        type: 'object',
+        properties: {
+          idea: {
+            type: 'string',
+            description: 'The project as you and they agreed it in this thread, in plain words, with their answers '
+              + 'folded in: what it does, who it is for and how it works. At most 4000 characters. Say what they '
+              + 'want, and leave out any limit you said was not possible.',
+          },
+          name: { type: 'string', description: 'A short name for the project, at most 60 characters.' },
+        },
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -3205,6 +3254,11 @@ async function runTool(pool, ctx, name, args) {
         // thread that is an idea for a project of its own.
         if (!ctx.deps.threadRootId) return { ok: false, error: 'Only in a private thread with no project.' };
         ctx.newProjectOffer = true;
+        // #6781: the make screen opens from the brief and name the bot agreed
+        // here, never from the person's first line alone.
+        const idea = typeof args.idea === 'string' ? args.idea.trim().slice(0, 4000) : '';
+        const name = typeof args.name === 'string' ? args.name.trim().slice(0, 60) : '';
+        ctx.newProjectBrief = { ...(idea ? { idea } : {}), ...(name ? { name } : {}) };
         return { ok: true, note: 'New project shows under your reply.' };
       }
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
@@ -3734,6 +3788,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
     // reply carries `newProject` and the thread's foot shows New project.
     newProjectOffer: false,
+    // #6781: the brief and suggested name offered with it, if it gave any.
+    newProjectBrief: null,
     // Their Stop (homeroom-bot-stop.js), for a tool that waits (look_into).
     stopSignal: deps.stop?.signal || null,
   };
@@ -4142,8 +4198,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
   const extra = {
     ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}),
-    // #6523: the thread's foot reads this to show New project.
+    // #6523: the thread's foot reads this to show New project. #6781: the
+    // brief and name travel with it, too.
     ...(ctx.newProjectOffer ? { newProject: true } : {}),
+    ...(ctx.newProjectBrief?.idea ? { projectIdea: ctx.newProjectBrief.idea } : {}),
+    ...(ctx.newProjectBrief?.name ? { projectName: ctx.newProjectBrief.name } : {}),
   };
   // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
   // offers follow it as cards of their own (MAX_OFFERS), each said once.
@@ -4536,12 +4595,16 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     sessionId: withdraw || (post && o.sessionId) ? o.sessionId : null,
     sourceIssueNumber: move || copy || close || post ? o.issueNumber : null,
     targetMessageId: post && o.targetMessageId ? Number(o.targetMessageId) : null,
+    // #6771: a move to another project names it (NULL means Homeroom), and
+    // its card carries the target so a redrawn button says the same.
+    ...(move && o.targetAppId ? { targetAppId: Number(o.targetAppId) } : {}),
+    ...(move && o.targetName ? { args: { issueNumber: o.issueNumber, targetName: o.targetName, join: !!o.join } } : {}),
   };
   const moveSvc = require('./homeroom-bot-move');
   const body = post
     ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
     : move
-    ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details, targetName: o.targetName })
     : copy
     ? moveSvc.copyOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : close
@@ -4592,7 +4655,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
         app: o.app, name, actionId: null,
         question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
       })
-        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null })
+        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null, targetName: o.targetName, join: o.join })
         : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: null })
         : close ? closeOfferMeta({ app: o.app, name, actionId: null, issueNumber: o.issueNumber })
         : o.guess ? guessMeta({ app: o.app, name, actionId: null })
@@ -4959,6 +5022,8 @@ function typedDecision(content) {
     if (words.yes.has(text)) return { yes: true, plain: false, kind };
     if (words.no.has(text)) return { yes: false, plain: false, kind };
   }
+  // #6771: "move it to Bread Bot" answers a move offer to that project.
+  if (/^move it to .+$/.test(text)) return { yes: true, plain: false, kind: 'move_request' };
   if (PLAIN_YES.has(text)) return { yes: true, plain: true };
   if (PLAIN_NO.has(text)) return { yes: false, plain: true };
   return null;
@@ -5851,18 +5916,25 @@ async function startRequest(pool, ctx, args) {
   // named who. A go-ahead from that person is the decision the note asked
   // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
-    `SELECT verdict, reason, go_ahead_decides, first_step FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, go_ahead_blocker, first_step FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
   // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
   // a go-ahead cannot settle it (operator work outside the app, or a
-  // non-append-only database change). Queueing would only read it to the same answer.
-  if (lastLook[0]?.verdict === 'person' && lastLook[0].go_ahead_decides === false) {
+  // database change that could lose data already stored). Queueing would only
+  // read it to the same answer.
+  // 17 Nov 2026: only a read that named which of the two it is
+  // (go_ahead_blocker) is said again. One stored before the read had to name
+  // it was often neither (a sign-in fix, a large request), so its go-ahead
+  // queues a fresh read below instead of the old refusal.
+  if (liveModule(deps).cannotStands(lastLook[0])) {
     return {
       ok: false,
       code: 'go_ahead_cannot',
-      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username }),
+      said: liveModule(deps).goAheadCannotText({
+        reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username, blocker: lastLook[0].go_ahead_blocker,
+      }),
       next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
     };
   }
@@ -6362,20 +6434,31 @@ async function offerMoveRequest(pool, ctx, args) {
   const moveSvc = require('./homeroom-bot-move');
   const gate = await moveSvc.moveGate(pool, { app, issueNumber: args.number, user, deps });
   if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was moved.` };
-  const target = await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
-  if (!target) return { ok: false, error: 'Homeroom\'s own board is not available. Nothing was moved.' };
-  if (!(await canFile(pool, target, user))) {
-    return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was moved.' };
-  }
+  // #6771: `to` names the project it belongs on; Homeroom's own board when
+  // it is left out.
+  const to = typeof args.to === 'string' ? args.to.trim() : '';
+  const target = to ? await findApp(pool, to) : await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
+  if (!target) return { ok: false, error: `There is no project called ${to || 'Homeroom'}. Nothing was moved.` };
+  if (Number(target.id) === Number(app.id)) return { ok: false, error: 'That request is already on that project\'s board. Nothing was moved.' };
+  if (!(await canView(pool, target, user))) return { ok: false, error: 'No such project they can see. Check my_projects. Nothing was moved.' };
+  const targetName = target.name || target.slug;
+  const isPlatform = target.slug === botModule(deps).PLATFORM_SELF_APP_SLUG;
+  // A non-member may move it when the target can be joined: the card then
+  // says Join <project> and move it.
+  const join = !(await canFile(pool, target, user));
   if (!addOffer(ctx, {
     kind: 'move_request', app, issueNumber: gate.issueNumber,
     title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
     details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+    targetName: isPlatform ? null : targetName, join: isPlatform ? false : join,
+    targetAppId: isPlatform ? null : Number(target.id),
   })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
-    shown: 'They see it under your reply with Move it to Homeroom and Keep it here. Nothing moves until they tap Move it to Homeroom: ask them to, and never say it was moved.',
+    shown: isPlatform
+      ? 'They see it under your reply with Move it to Homeroom and Keep it here. Nothing moves until they tap Move it to Homeroom: ask them to, and never say it was moved.'
+      : `They see it under your reply with ${join ? `Join ${targetName} and move it` : `Move it to ${targetName}`} and Keep it here. Nothing moves until they tap it: ask them to, and never say it was moved.`,
   };
 }
 

@@ -514,6 +514,7 @@ function moveOffersOf(m) {
     days: num(m.days) || 7,
     sent: num(m.sent) || 0, moved: num(m.moved) || 0, kept: num(m.kept) || 0,
     open: num(m.open) || 0, failed: num(m.failed) || 0,
+    toOtherProjects: num(m.toOtherProjects) || 0, movedToOther: num(m.movedToOther) || 0,
     notOffered: num(m.notOffered) || 0,
     notOfferedByWhy: Object.fromEntries(NOT_OFFERED.filter((k) => num(whys[k])).map((k) => [k, num(whys[k])])),
     notOfferedRecent: (m.notOfferedRecent || []).slice(0, 10).map((r) => ({

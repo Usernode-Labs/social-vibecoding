@@ -6574,5 +6574,409 @@
   "topic.thread.page.claimConfirmed": {
     "text": "You confirmed this closes it",
     "description": "Line in place of the Confirm and \"This doesn't close it\" buttons on the card for a change that says it closes the viewer's request, after the filer pressed Confirm. Shown only to the filer."
+  },
+  "topic.rail.title": {
+    "text": "How it got here",
+    "description": "Heading over the timeline of a thread's big events on a request's or a change's page: who asked, the plan, each change built, its tests, and where it stands now. Also the section's accessible name."
+  },
+  "topic.rail.asked": {
+    "text": "Asked",
+    "description": "Name of the first step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the request was filed."
+  },
+  "topic.rail.planned": {
+    "text": "Planned",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): a plan was posted for the request."
+  },
+  "topic.rail.plannedVersion": {
+    "text": "Planned, v{{version}}",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the newest plan is a later version than the first. {{version}} is its number, 2 or more."
+  },
+  "topic.rail.built": {
+    "text": "Built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): a change was built."
+  },
+  "topic.rail.builtNumbered": {
+    "text": "Change #{{number}} built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) when the request has more than one change: which change was built. {{number}} is the change's number."
+  },
+  "topic.rail.tested": {
+    "text": "Tested",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the change's tests ran and passed."
+  },
+  "topic.rail.testedAll": {
+    "text": "All checks passed.",
+    "description": "Line under the Tested step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card)."
+  },
+  "topic.rail.testsFailed_one": {
+    "text": "{{count}} test failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red: how many of the change's tests failed. One test."
+  },
+  "topic.rail.testsFailed_other": {
+    "text": "{{count}} tests failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red: how many of the change's tests failed. Several tests."
+  },
+  "topic.rail.testsFailedPlain": {
+    "text": "Tests failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red, when the number of failed tests is not known."
+  },
+  "topic.card.foot.stoppedTests": {
+    "text": "Stopped: its tests still fail",
+    "description": "Headline at the foot of a change's card, in red, when its tests failed and Homeroom bot has stopped trying to fix them."
+  },
+  "topic.card.foot.tally": {
+    "text": "{{yes}} of {{needed}}",
+    "description": "Short fact at the foot of a change's card while it is up for a vote: the yes votes so far out of the number needed, for example \"0 of 2\". It is followed by a dot and the viewer's own line (\"You haven't voted\")."
+  },
+  "topic.card.foot.since": {
+    "text": "Since {{when}}",
+    "description": "Short fact at the foot of a change's card once it is live: the day it went live, for example \"Since Nov 14\"."
+  },
+  "topic.rail.fixing": {
+    "text": "Fixing",
+    "description": "Name of the current step in the \"How it got here\" timeline on a change's page while Homeroom bot is fixing the change's failed tests."
+  },
+  "topic.rail.waitingFix": {
+    "text": "Waiting for a fix",
+    "description": "Name of the current step in the \"How it got here\" timeline on a change's page when its tests failed and its author has to fix them."
+  },
+  "topic.rail.testing": {
+    "text": "Testing",
+    "description": "Name of the current step in the \"How it got here\" timeline on a change's page while its tests are running."
+  },
+  "topic.rail.note.fixing": {
+    "text": "Homeroom bot is fixing what its tests found. It is tested again after that.",
+    "description": "Note under the Fixing step of the \"How it got here\" timeline on a change's page."
+  },
+  "topic.rail.note.waitingFix": {
+    "text": "Its tests have to pass before it can go live. A new version is tested again when it arrives.",
+    "description": "Note under the Waiting for a fix step of the \"How it got here\" timeline on a change's page."
+  },
+  "topic.rail.note.approved": {
+    "text": "It has the yes it needs. Homeroom syncs it with main, then it goes live.",
+    "description": "Note under the Approved step of the \"How it got here\" timeline on a change's page: the change has enough yes votes and its tests passed, and its merge is next."
+  },
+  "topic.rail.note.stoppedTests": {
+    "text": "Its tests still fail and nobody is fixing them. It moves on when a new version arrives.",
+    "description": "Note under the Stopped step of the \"How it got here\" timeline on a change's page, when its tests failed and Homeroom bot stopped trying to fix them."
+  },
+  "topic.rail.voted": {
+    "text": "Approved",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the change got the yes votes it needed."
+  },
+  "topic.rail.yesVotes_one": {
+    "text": "{{count}} yes vote.",
+    "description": "Line under the Approved step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): how many members voted yes. One vote."
+  },
+  "topic.rail.yesVotes_other": {
+    "text": "{{count}} yes votes.",
+    "description": "Line under the Approved step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): how many members voted yes. Several votes."
+  },
+  "topic.rail.by": {
+    "text": "By {{name}}.",
+    "description": "Line under a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): who did it. {{name}} is a username or Homeroom bot."
+  },
+  "topic.rail.since": {
+    "text": "since {{when}}",
+    "description": "Stamp beside the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), the one that says where the thread stands now: how long it has stood there. {{when}} is a short date such as Nov 13 or Today."
+  },
+  "topic.rail.readRequest": {
+    "text": "Read the request",
+    "description": "Link on the Asked step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the request's own words, whole, in the reader beside the thread."
+  },
+  "topic.rail.readPlan": {
+    "text": "Read plan",
+    "description": "Link on the Planned step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the plan in the reader beside the thread."
+  },
+  "topic.rail.seeFailed": {
+    "text": "See what failed",
+    "description": "Link on the tests-failed step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the change's details, which list the failed tests."
+  },
+  "topic.rail.openChange": {
+    "text": "Open",
+    "description": "Link on a change's step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) when the request has more than one change: brings that change's section of the page into view."
+  },
+  "topic.rail.showEarlier_one": {
+    "text": "Show {{count}} earlier step",
+    "description": "Link beside the folded pile of step markers in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen: opens the earlier steps. One step."
+  },
+  "topic.rail.showEarlier_other": {
+    "text": "Show {{count}} earlier steps",
+    "description": "Link beside the folded pile of step markers in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen: opens the earlier steps. Several steps."
+  },
+  "topic.rail.showLess": {
+    "text": "Show less",
+    "description": "Link beside the heading in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen, once the earlier steps are open: folds them back into the pile."
+  },
+  "topic.rail.seeChecks": {
+    "text": "See checks",
+    "description": "Link on the Tested step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the change's votes and tests over the card."
+  },
+  "topic.rail.note.reading": {
+    "text": "Homeroom bot is reading the request and the project. It comes back with a plan or a question.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while Homeroom bot is reading a request that was just filed."
+  },
+  "topic.rail.note.planning": {
+    "text": "Homeroom bot is writing a plan for it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while Homeroom bot writes its plan for the request."
+  },
+  "topic.rail.note.question": {
+    "text": "Homeroom bot asked a question in the replies. Anyone can answer it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when Homeroom bot is waiting for an answer to a question it asked before planning."
+  },
+  "topic.rail.note.plan": {
+    "text": "The plan is ready. It is built once a member presses Build it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when a plan is posted and nobody has started the build. \"Build it\" is the button's label."
+  },
+  "topic.rail.note.waiting": {
+    "text": "It is waiting for an answer in the replies.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when the request is waiting for a person and no more specific reason is known."
+  },
+  "topic.rail.note.building": {
+    "text": "It is being built. Then it is tested and goes up for a vote.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while a change is being built for the request."
+  },
+  "topic.rail.note.checking": {
+    "text": "Its tests are running. Then the before and after screenshots are taken, and it goes up for a vote.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while the change's automated tests run."
+  },
+  "topic.rail.note.shots": {
+    "text": "Its tests passed. Only the before and after screenshots are left, then it goes up for a vote.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while the before and after screenshots are being taken, after the tests passed."
+  },
+  "topic.rail.note.vote": {
+    "text": "Members are voting on it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while the change is up for the group's vote and no tally line is known."
+  },
+  "topic.rail.note.goingLive": {
+    "text": "It has the yes it needs and is on its way to everyone.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, after the vote passed, while the change is being merged and released."
+  },
+  "topic.rail.note.live": {
+    "text": "Everyone has it now.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, once the change is live."
+  },
+  "topic.rail.note.stopped": {
+    "text": "It stopped before it was finished.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when the work stopped (a build that did not finish, or tests that still fail) and no more specific reason is known."
+  },
+  "topic.rail.note.closed": {
+    "text": "Nothing more happens here unless it is reopened.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, once the request or the change is closed."
+  },
+  "topic.card.ownWords": {
+    "text": "{{name}}’s own words.",
+    "description": "Small line under the request's text on a request's page: the text above is exactly what the person who asked wrote, not a summary. {{name}} is their username."
+  },
+  "topic.card.summaryBy": {
+    "text": "Summary by {{name}}.",
+    "description": "Small line under the summary on a change's page: who wrote the summary above. {{name}} is a username or Homeroom bot."
+  },
+  "topic.card.summaryByBot": {
+    "text": "Summary by Homeroom bot.",
+    "description": "Small line under the summary on a change's page when Homeroom bot wrote the summary above from the change itself."
+  },
+  "topic.card.summaryByBotPlan": {
+    "text": "Summary by Homeroom bot, from the request and the plan.",
+    "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here the request has a plan and no change built yet."
+  },
+  "topic.card.summaryByBotChange": {
+    "text": "Summary by Homeroom bot, from the request and its change.",
+    "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here one change has been built for the request."
+  },
+  "topic.card.summaryByBotChanges": {
+    "text": "Summary by Homeroom bot, from the request and its changes.",
+    "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here two or more changes have been built for the request."
+  },
+  "topic.card.layer.close": {
+    "text": "Close",
+    "description": "Accessible name of the × button, and of the dimmed area behind, on the panel that opens over a thread's card when a step of the \"How it got here\" timeline is pressed: closes the panel."
+  },
+  "topic.card.shots.chipIfPasses": {
+    "text": "If it passes · After",
+    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change is not live yet: this is what the app will look like if the change is approved."
+  },
+  "topic.card.shots.chipTodayBefore": {
+    "text": "Today · Before",
+    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change is not live yet: this is what the app looks like today."
+  },
+  "topic.card.shots.chipLive": {
+    "text": "Live now",
+    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change has gone live: this is what the app looks like now."
+  },
+  "topic.card.shots.chipWas": {
+    "text": "Before",
+    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change has gone live: this is what the app looked like before it."
+  },
+  "topic.card.shots.chipProposed": {
+    "text": "Proposed · not live",
+    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change was closed without going live: this is what it would have looked like."
+  },
+  "topic.card.shots.chipToday": {
+    "text": "Today",
+    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change was closed without going live: this is what the app looks like."
+  },
+  "topic.card.opt.name": {
+    "text": "{{letter}} · {{title}}",
+    "description": "Name of one of the competing changes in its row on a request's card: its letter on the ballot (A, B, C), then the change's own title."
+  },
+  "topic.card.opt.by": {
+    "text": "By {{name}}",
+    "description": "Start of the line under a competing change's name in its row on a request's card: who built it. {{name}} is a username."
+  },
+  "topic.card.opt.yes_one": {
+    "text": "{{count}} yes",
+    "description": "End of the line under a competing change's name in its row on a request's card: how many members have voted yes for it. This form is for exactly one vote."
+  },
+  "topic.card.opt.yes_other": {
+    "text": "{{count}} yes",
+    "description": "End of the line under a competing change's name in its row on a request's card: how many members have voted yes for it. This form is for no votes or several."
+  },
+  "topic.card.opt.look": {
+    "text": "Look",
+    "description": "Link at the end of a competing change's row on a request's card: opens that change over the card, with its summary, its before and after pictures and how its tests went."
+  },
+  "topic.card.opt.lookSub": {
+    "text": "{{who}} · one of {{count}} competing changes",
+    "description": "Second line in the header of the panel that opens over a request's card when one of its competing changes is looked at. {{who}} says who built the change and its number, for example 'sam · #6712'; {{count}} is how many changes compete."
+  },
+  "topic.rail.builtLettered": {
+    "text": "Change {{letter}} built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's page (the list of the thread's big events, beside its card) when the request has competing changes: which one was built, by its letter on the ballot (A, B, C)."
+  },
+  "topic.card.layer.checksSub": {
+    "text": "The tests on this version",
+    "description": "Second line in the header of the panel that opens over a change's card when its Tested or tests-failed step is pressed in the \"How it got here\" timeline: the panel holds how the change's automatic tests went."
+  },
+  "topic.card.layer.votesSub": {
+    "text": "The votes so far",
+    "description": "Second line in the header of the panel that opens over a change's card when its up-for-a-vote or voted step is pressed in the \"How it got here\" timeline: the panel holds who has voted on the change and how many more votes it needs."
+  },
+  "topic.card.layer.planBy": {
+    "text": "The plan, by {{name}}",
+    "description": "Second line in the header of the panel that opens over a thread's card when the Planned step is pressed in the \"How it got here\" timeline. {{name}} is who posted the plan: a username or Homeroom bot."
+  },
+  "topic.card.layer.planLoading": {
+    "text": "Loading the plan…",
+    "description": "Shown in the panel that opens over a thread's card while the plan's text is being fetched."
+  },
+  "topic.card.layer.planFailed": {
+    "text": "The plan could not be loaded. Close this and try again.",
+    "description": "Shown in the panel that opens over a thread's card when the plan's text could not be fetched."
+  },
+  "topic.card.layer.requestSub": {
+    "text": "The request, as {{name}} wrote it",
+    "description": "Second line in the header of the panel that opens over a request's card when the Asked step is pressed in the \"How it got here\" timeline: the panel shows the request's own text. {{name}} is the username of who asked."
+  },
+  "topic.card.layer.trackSub": {
+    "text": "Homeroom bot’s progress on it",
+    "description": "Second line in the header of the panel that opens over a request's card when its current step is pressed in the \"How it got here\" timeline while Homeroom bot is working on it: the panel shows the bot's progress card."
+  },
+  "topic.card.foot.seeProgress": {
+    "text": "See progress",
+    "description": "Button at the foot of a change's card while its tests are running: opens the change's Testing card over the card."
+  },
+  "topic.card.foot.readPlan": {
+    "text": "Read plan",
+    "description": "Button at the foot of a request's card when it has a plan: opens the plan over the card."
+  },
+  "topic.card.ballot.choosing_one": {
+    "text": "Choosing between {{count}} change",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote, before anyone has voted. One change (it competes with closing the request)."
+  },
+  "topic.card.ballot.choosing_other": {
+    "text": "Choosing between {{count}} changes",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote, before anyone has voted. Several changes."
+  },
+  "topic.card.ballot.leads": {
+    "text": "{{choice}} leads, {{yes}} to {{other}}",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote: which change has the most yes votes. {{choice}} is its letter (A, B, …), {{yes}} its yes votes and {{other}} the next change's."
+  },
+  "topic.card.ballot.levelTwo": {
+    "text": "{{a}} and {{b}} are level",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote when the two leading changes have the same number of yes votes. {{a}} and {{b}} are their letters."
+  },
+  "topic.card.ballot.level": {
+    "text": "The leading changes are level",
+    "description": "Headline at the foot of a request's card when two or more changes built for it compete for the group's vote when three or more changes share the most yes votes."
+  },
+  "topic.card.ballot.count": {
+    "text": "{{choice}} {{yes}}",
+    "description": "One choice's yes votes in the line under the headline at the foot of a request's card when two or more changes built for it compete for the group's vote, for example \"A 2\". {{choice}} is a change's letter, or the word for neither or for closing the request; {{yes}} its yes votes."
+  },
+  "topic.card.ballot.vote": {
+    "text": "Vote",
+    "description": "Button at the foot of a request's card when two or more changes built for it compete for the group's vote. Pressing it asks which change should go live."
+  },
+  "topic.card.ballot.change": {
+    "text": "Change my vote",
+    "description": "Link at the foot of a request's card when two or more changes built for it compete for the group's vote, once the viewer has voted. Pressing it asks again which change should go live."
+  },
+  "topic.card.ballot.which": {
+    "text": "Which one should go live?",
+    "description": "Question shown at the foot of a request's card when two or more changes built for it compete for the group's vote after Vote is pressed, over a button for each change and one for none of them."
+  },
+  "topic.card.ballot.notVoted": {
+    "text": "you haven’t voted",
+    "description": "Second part of the line at the foot of a request's card while its competing changes are up for one vote, after the counts and a dot, when the viewer has not voted yet. Lowercase: it follows a dot, as in \"A 2 · B 1 · Neither 0 · you haven’t voted\"."
+  },
+  "topic.card.ballot.cancel": {
+    "text": "Cancel",
+    "description": "Link beside the choices at the foot of a request's card when two or more changes built for it compete for the group's vote: puts the question away without voting."
+  },
+  "topic.card.shots.noneTitle": {
+    "text": "Nothing you can see changes",
+    "description": "Heading in the box where a change's before and after screenshots would be, on a change that alters nothing visible."
+  },
+  "topic.card.shots.noneText": {
+    "text": "This change is to how it works underneath, so there are no before and after screenshots. The summary above says what it does.",
+    "description": "Sentence under \"Nothing you can see changes\" in the box where a change's before and after screenshots would be."
+  },
+  "topic.card.shots.notYetTitle": {
+    "text": "No screenshots yet",
+    "description": "Title of the quiet box on a change's card where its before and after picture will be, while the change's tests have not passed yet."
+  },
+  "topic.card.shots.notYetText": {
+    "text": "The before and after screenshots are taken once its tests pass.",
+    "description": "Line under \"No screenshots yet\" on a change's card."
+  },
+  "topic.card.shots.neverTitle": {
+    "text": "No screenshots",
+    "description": "Title of the quiet box on a change's card where its before and after picture would be, when its tests failed and nothing is fixing them."
+  },
+  "topic.card.shots.neverText": {
+    "text": "This version never passed its tests, so none were taken.",
+    "description": "Line under \"No screenshots\" on a change's card whose tests failed and whose fix stopped."
+  },
+  "topic.card.checks.failed_one": {
+    "text": "{{count}} failed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests failed, for example \"1 failed\"."
+  },
+  "topic.card.checks.failed_other": {
+    "text": "{{count}} failed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests failed, for example \"2 failed\"."
+  },
+  "topic.card.checks.passed_one": {
+    "text": "{{count}} passed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests passed, for example \"1 passed\"."
+  },
+  "topic.card.checks.passed_other": {
+    "text": "{{count}} passed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests passed, for example \"736 passed\"."
+  },
+  "topic.card.look.yes_one": {
+    "text": "{{count}} yes",
+    "description": "Chip under a competing change's summary, in the layer Look opens over a request's card: how many members voted yes for it, for example \"1 yes\"."
+  },
+  "topic.card.look.yes_other": {
+    "text": "{{count}} yes",
+    "description": "Chip under a competing change's summary, in the layer Look opens over a request's card: how many members voted yes for it, for example \"2 yes\" or \"0 yes\"."
+  },
+  "topic.card.shots.tile": {
+    "text": "Screen {{index}} of {{total}}",
+    "description": "Accessible name of a small picture under a change's before and after picture on its page: pressing it shows that screen in the picture above. {{index}} is the screen's position and {{total}} how many screens the change has."
+  },
+  "topic.card.shots.screenOf": {
+    "text": "{{index}} of {{total}} screens",
+    "description": "Small line beside the row of screen pictures under a change's before and after picture: which screen the picture above is showing. {{total}} is 2 or more."
   }
 }

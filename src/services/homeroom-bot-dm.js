@@ -2014,12 +2014,19 @@ function requestNews(kind, dm, context) {
           + `can do it: ${clip(dm.reason, 600)}`;
       }
       if (dm.done) return doneText(line, dm);
+      // 17 Nov 2026 (#6770): a request that only asked for an explanation has
+      // the answer itself, and a close vote under it, not a Go ahead.
+      if (dm.explanation || dm.blocker === 'explanation') {
+        return `${line}\n\n${require('./homeroom-bot-live').cannotLead('explanation')}: ${clip(dm.reason, 600)}\n\n`
+          + 'Anyone in the project can propose to close it once this answers the question. '
+          + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+      }
       // 6 Nov 2026 (#6430): a go-ahead cannot settle this kind of change, so
       // it says a person has to build it, and never tells the person who just
       // approved that somebody needs to approve.
       if (dm.goAheadDecides === false) {
         return `${line}\n\nThis needs a person to build, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
-          + 'I don\'t build changes like this myself, even with a go-ahead. A person has to build it, '
+          + `${require('./homeroom-bot-live').cannotLead(dm.blocker)}. A person has to build it, `
           + 'for example you with a coding agent, and the group votes on it as usual. '
           + require('./homeroom-bot-live').canBuildPart(dm.firstStep);
       }
@@ -2412,7 +2419,7 @@ async function relayIssuePost({
   // so one verdict is one message and rings once (homeroom-bot-move.js).
   const move = require('./homeroom-bot-move');
   const offerKind = kind === 'person' && dm.platform ? 'move_request'
-    : (kind === 'person' || kind === 'empty') && dm.done ? 'close_request' : null;
+    : (kind === 'person' || kind === 'empty') && (dm.done || dm.explanation) ? 'close_request' : null;
   const offer = offerKind ? await move.foldOffer(pool, {
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
@@ -5106,6 +5113,17 @@ async function answerOwed(pool, config, {
   const sent = attempt > 0
     ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
     : await noteUserMessage(pool, config, { user, conversationId: Number(conversationId), message, deps: turnDeps });
+  // #6764 (17 Nov 2026): once the bot has answered in a new thread, name it
+  // with a short summary of the exchange, in the background, so the answer
+  // is never slower. It stores nothing when the thread has a name already,
+  // or when the exchange was only a greeting; a failure keeps the first words.
+  if (sent) {
+    const name = deps.autoTitle
+      || ((args) => require('./private-threads').autoTitle(pool, args));
+    Promise.resolve()
+      .then(() => name({ userId: Number(userId), conversationId: Number(conversationId), messageId: Number(messageId), deps }))
+      .catch(() => {});
+  }
   return { sent: !!sent, later };
 }
 

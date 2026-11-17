@@ -28,6 +28,9 @@
 //     TOO_NEW_DAYS they are 'new' as well.
 //   * A queued invite's join, applied by the platform the moment a person is
 //     let in, is not something they did, so it is not a first act.
+//   * Somebody off the waitlist who signed in came in after the last mail
+//     that had gone to them by then: the admit mail, or its first or last
+//     reminder (a nudge). See mailIn.
 
 const journey = require('./journey');
 
@@ -104,6 +107,29 @@ function classify(p) {
   let lane = 'none';
   if (live) lane = priv && pub ? 'both' : (priv ? 'share' : 'pub');
   return { ...p, priv: live && priv, pub: live ? pub : null, out, lane };
+}
+
+/**
+ * Pure: which mail somebody let off the waitlist came in after. The admit
+ * mail goes when they are let off; two reminders, the nudges, follow while
+ * they have not signed in (services/waitlist-reminders.js). Their first
+ * sign-in since being let off is dated by the admit link followed or a
+ * sign-in code asked for, else by an account made since. It came after the
+ * last mail sent before it: 'admit', 'nudge1' or 'nudge2'. 'had' is somebody
+ * who had an account before they were let off and whose sign-in since is not
+ * dated. null when they have not signed in, or did not come off the waitlist.
+ */
+function mailIn({ door, got, releasedAt, signedInAt, accountAt, nudgedAt, hadAccount }) {
+  if (door !== 'waitlist' || !releasedAt || (got !== 'in' && got !== 'acct')) return null;
+  const ms = (v) => (v ? new Date(v).getTime() : null);
+  const released = ms(releasedAt);
+  let at = ms(signedInAt);
+  if (at == null && ms(accountAt) != null && ms(accountAt) >= released) at = ms(accountAt);
+  if (at == null) return hadAccount ? 'had' : null;
+  const [first, last] = (nudgedAt || []).map(ms);
+  if (last != null && at >= last) return 'nudge2';
+  if (first != null && at >= first) return 'nudge1';
+  return 'admit';
 }
 
 /**
@@ -231,6 +257,9 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
       failed: m.failedAttempts || 0,
       taps: m.repeatedTaps || 0,
       mail: m.mail ? [m.mail.opened === true, m.mail.clicked === true] : null,
+      mailIn: mailIn({ door, got, releasedAt: m.releasedAt, signedInAt: m.signedInAt, accountAt: m.accountAt, nudgedAt: m.nudgedAt, hadAccount }),
+      nudges: door === 'waitlist' ? (m.nudgedAt || []).filter(Boolean).length : 0,
+      ask: m.hasAccount ? (m.firstAnswer || null) : null,
       signup: m.signupMethod || null,
       acct: day(m.accountAt),
       access: day(m.accessAt),
@@ -332,6 +361,7 @@ module.exports = {
   EARLY_SQL,
   channel,
   classify,
+  mailIn,
   assemble,
   earlySeason,
   reading,

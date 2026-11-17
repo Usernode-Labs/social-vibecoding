@@ -487,7 +487,10 @@
       // of the one frame (the 2026-11-06 screen tour), in the tour's order.
       // The same list is MENU_SKINS in src/lib/skin.ts and, less 'brand',
       // its FRAME_SKINS.
-      const SKINS = ['brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
+      // 'wip' is "Standard (WIP)": the standard look itself, where a change
+      // to it is tried before it is the standard's. It sets no data-skin (no
+      // rule of a look applies), only data-skin-wip for a rule of its own.
+      const SKINS = ['wip', 'brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
       const _listeners = [];
 
       let pinned = null;
@@ -497,6 +500,39 @@
         const want = new URLSearchParams(window.location.search).get('skin');
         if (want === 'standard' || SKINS.includes(want)) pinned = want;
       } catch {}
+
+      // Standard (WIP)'s token config: which set of --wip-* values draws it.
+      // 'current' is the look as it is drawn (nothing stored, no attribute);
+      // 'brand' is Homeroom's brand kit (cream, yellow, blue, Geist). Kept on
+      // the device like the look, and `?tokens=` pins one for this load.
+      const TOKENS_KEY = 'homeroom:wip-tokens';
+      const TOKEN_SETS = ['brand'];
+      let pinnedTokens = null;
+      let chosenTokens = null;
+      try {
+        const wantTokens = new URLSearchParams(window.location.search).get('tokens');
+        if (wantTokens === 'current' || TOKEN_SETS.includes(wantTokens)) pinnedTokens = wantTokens;
+      } catch {}
+      function getTokens() {
+        if (pinnedTokens) return pinnedTokens;
+        if (chosenTokens) return chosenTokens;
+        try {
+          const val = window.localStorage.getItem(TOKENS_KEY);
+          return TOKEN_SETS.includes(val) ? val : 'current';
+        } catch {
+          return 'current';
+        }
+      }
+      function setTokens(name) {
+        pinnedTokens = null;
+        chosenTokens = TOKEN_SETS.includes(name) ? name : 'current';
+        try {
+          if (TOKEN_SETS.includes(name)) window.localStorage.setItem(TOKENS_KEY, name);
+          else window.localStorage.removeItem(TOKENS_KEY);
+        } catch { /* unwritable storage: the pick still holds in memory */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
 
       function get() {
         if (pinned) return pinned;
@@ -515,7 +551,12 @@
       function apply() {
         const root = document.documentElement;
         const skin = get();
-        if (skin !== 'standard') {
+        if (skin === 'wip') root.setAttribute('data-skin-wip', '');
+        else root.removeAttribute('data-skin-wip');
+        const tokens = skin === 'wip' ? getTokens() : 'current';
+        if (tokens !== 'current') root.setAttribute('data-wip-tokens', tokens);
+        else root.removeAttribute('data-wip-tokens');
+        if (skin !== 'standard' && skin !== 'wip') {
           root.setAttribute('data-skin', skin);
         } else {
           root.removeAttribute('data-skin');
@@ -553,8 +594,9 @@
       // through the same listener). The in-memory pick is dropped first, so
       // a choice made in another tab still wins here.
       window.addEventListener('storage', function (e) {
-        if (e.key === SKIN_KEY) {
-          chosen = null;
+        if (e.key === SKIN_KEY || e.key === TOKENS_KEY) {
+          if (e.key === SKIN_KEY) chosen = null;
+          else chosenTokens = null;
           apply();
           _listeners.forEach(function (fn) { try { fn(); } catch {} });
         }
@@ -563,7 +605,7 @@
       // Apply before first paint: the no-flash guard.
       apply();
 
-      return { get, set, apply, onChange };
+      return { get, set, apply, onChange, getTokens, setTokens };
     }());
   </script>
   <script>

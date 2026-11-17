@@ -3,9 +3,11 @@
 // ordering contracts against a fake pool and a fake object store (no
 // Postgres, no MinIO). Contracts pinned here:
 //
-//  - images and audio only, magic-byte sniffed, extension must match
-//    the bytes (audio: Ogg/Opus and MP3);
-//  - the per-kind size caps (5 MB images, 25 MB audio) and the
+//  - images, audio, PDFs, video and text files only, magic-byte sniffed,
+//    extension must match the bytes (audio: Ogg/Opus and MP3; video:
+//    MP4 and WebM; text: UTF-8 with no NUL bytes, never markup/script);
+//  - the per-kind size caps (5 MB images and text, 25 MB audio and PDFs,
+//    100 MB video) and the
 //    app/user/staging quota caps with their structured error codes;
 //  - upload writes the OBJECT first and rolls it back if the metadata
 //    INSERT fails (no orphaned rows pointing at nothing);
@@ -36,6 +38,29 @@ const MP3_ID3 = Buffer.concat([Buffer.from('ID3'), Buffer.alloc(32, 0)]);
 // A bare MPEG Layer III frame sync (0xFF 0xFB is the common MP3 one).
 const MP3_FRAME = Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(32, 0)]);
 
+// A minimal, real PDF: the `%PDF-` header is what the sniff reads.
+const PDF = Buffer.from(
+  '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n'
+);
+// An MP4 `ftyp` box (24 bytes): major brand, minor version, compatible brands.
+function mp4(brand = 'isom', compatible = 'isomiso2avc1mp41') {
+  return Buffer.concat([
+    Buffer.from([0x00, 0x00, 0x00, 0x18]),
+    Buffer.from('ftyp'),
+    Buffer.from(brand),
+    Buffer.from([0x00, 0x00, 0x02, 0x00]),
+    Buffer.from(compatible),
+  ]);
+}
+// EBML magic + the header that names the DocType, as a WebM file carries it.
+function webm(docType = 'webm') {
+  return Buffer.concat([
+    Buffer.from([0x1a, 0x45, 0xdf, 0xa3]),
+    Buffer.from([0x42, 0x86, 0x81, 0x01]),
+    Buffer.from(docType),
+  ]);
+}
+
 // ── validateImageUpload ─────────────────────────────────────────────
 
 test('accepts a valid png with matching extension', () => {
@@ -53,7 +78,7 @@ test('accepts jpg/jpeg extensions for jpeg bytes', () => {
 });
 
 test('rejects non-image extensions with invalid_image', () => {
-  for (const name of ['notes.txt', 'page.html', 'vector.svg', 'noext']) {
+  for (const name of ['notes.wav', 'page.html', 'vector.svg', 'noext']) {
     const v = appFiles.validateImageUpload({ filename: name, data: PNG });
     assert.equal(v.ok, false, name);
     assert.equal(v.code, 'invalid_image');
@@ -146,16 +171,146 @@ test('rejects audio over 25 MB with file_too_large', () => {
 });
 
 test('unknown extensions are still invalid_image', () => {
-  for (const name of ['narration.wav', 'narration.txt']) {
+  for (const name of ['narration.wav', 'narration.aiff']) {
     const v = appFiles.validateUpload({ filename: name, data: OPUS });
     assert.equal(v.ok, false, name);
     assert.equal(v.code, 'invalid_image');
   }
 });
 
-test('UPLOAD_BODY_LIMIT sits above the audio file cap', () => {
+test('UPLOAD_BODY_LIMIT sits above the video file cap', () => {
   const bytes = parseInt(appFiles.UPLOAD_BODY_LIMIT, 10) * 1024 * 1024;
+  assert.ok(bytes > appFiles.MAX_VIDEO_FILE_BYTES);
   assert.ok(bytes > appFiles.MAX_AUDIO_FILE_BYTES);
+});
+
+// ── documents, video and text ───────────────────────────────────────
+
+test('accepts a real PDF as application/pdf', () => {
+  const v = appFiles.validateUpload({ filename: 'menu.pdf', data: PDF });
+  assert.equal(v.ok, true);
+  assert.equal(v.contentType, 'application/pdf');
+});
+
+test('accepts an MP4 whose ftyp box names a known brand', () => {
+  for (const brand of ['isom', 'mp42', 'avc1', 'M4V ']) {
+    const v = appFiles.validateUpload({ filename: 'clip.mp4', data: mp4(brand) });
+    assert.equal(v.ok, true, brand);
+    assert.equal(v.contentType, 'video/mp4');
+  }
+});
+
+test('refuses a QuickTime brand and an unknown brand named .mp4', () => {
+  const quicktime = appFiles.validateUpload({ filename: 'clip.mp4', data: mp4('qt  ') });
+  assert.equal(quicktime.ok, false);
+  assert.equal(quicktime.code, 'invalid_file');
+  assert.match(quicktime.error, /doesn't look like a valid MP4 video/);
+  // No known brand anywhere in the ftyp box.
+  const unknown = appFiles.validateUpload({
+    filename: 'clip.mp4', data: mp4('XXXX', 'XXXXXXXX'),
+  });
+  assert.equal(unknown.ok, false);
+  assert.equal(unknown.code, 'invalid_file');
+});
+
+test('accepts a WebM EBML header and refuses a Matroska one', () => {
+  const ok = appFiles.validateUpload({ filename: 'clip.webm', data: webm('webm') });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.contentType, 'video/webm');
+  const mkv = appFiles.validateUpload({ filename: 'clip.webm', data: webm('matroska') });
+  assert.equal(mkv.ok, false);
+  assert.equal(mkv.code, 'invalid_file');
+  assert.match(mkv.error, /doesn't look like a valid WebM video/);
+});
+
+test('refuses bytes a browser could run, whatever the name says', () => {
+  const html = Buffer.from('<!DOCTYPE html><html><body>hi</body></html>');
+  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>');
+  const js = Buffer.from('const x = 1;');
+  const pdfAsHtml = appFiles.validateUpload({ filename: 'menu.pdf', data: html });
+  assert.equal(pdfAsHtml.ok, false);
+  assert.equal(pdfAsHtml.code, 'invalid_file');
+  assert.match(pdfAsHtml.error, /doesn't look like a valid PDF/);
+  for (const data of [svg, html]) {
+    const v = appFiles.validateUpload({ filename: 'notes.txt', data });
+    assert.equal(v.ok, false);
+    assert.equal(v.code, 'invalid_file');
+  }
+  // An SVG renamed to a text extension is refused too (its bytes open `<`).
+  assert.equal(appFiles.validateUpload({ filename: 'data.csv', data: svg }).code, 'invalid_file');
+  // The risky extensions have no kind at all.
+  for (const name of ['page.html', 'page.htm', 'script.js', 'module.mjs', 'feed.xml', 'vector.svg']) {
+    const v = appFiles.validateUpload({ filename: name, data: html });
+    assert.equal(v.ok, false, name);
+    assert.equal(v.code, 'invalid_image', name);
+  }
+  assert.equal(appFiles.validateUpload({ filename: 'notes.txt', data: js }).ok, false);
+  assert.equal(appFiles.validateUpload({ filename: 'data.json', data: Buffer.from('</script>') }).ok, false);
+});
+
+test('accepts text, CSV, JSON and calendar files', () => {
+  const cases = [
+    ['notes.txt', Buffer.from('Buy milk\nCall Sam\n'), 'text/plain; charset=utf-8'],
+    ['rows.csv', Buffer.from('name,qty\napples,3\n'), 'text/csv; charset=utf-8'],
+    ['data.json', Buffer.from('{"name":"Plant Pal","count":3}'), 'application/json'],
+    ['event.ics', Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n')]), 'text/calendar; charset=utf-8'],
+  ];
+  for (const [name, data, type] of cases) {
+    const v = appFiles.validateUpload({ filename: name, data });
+    assert.equal(v.ok, true, name);
+    assert.equal(v.contentType, type, name);
+  }
+});
+
+test('refuses invalid UTF-8, NUL bytes, bad JSON and a non-calendar .ics', () => {
+  const cases = [
+    ['notes.txt', Buffer.from([0xc3, 0x28, 0x41])], // invalid UTF-8 sequence
+    ['notes.txt', Buffer.from('abc\u0000def')],
+    ['data.json', Buffer.from('{not json')],
+    ['event.ics', Buffer.from('BEGIN:VEVENT\nEND:VEVENT')],
+  ];
+  for (const [name, data] of cases) {
+    const v = appFiles.validateUpload({ filename: name, data });
+    assert.equal(v.ok, false, name);
+    assert.equal(v.code, 'invalid_file', name);
+  }
+});
+
+test('per-kind caps: PDF 25 MB, video 100 MB, text 5 MB', () => {
+  const pdfTooBig = Buffer.concat([PDF, Buffer.alloc(appFiles.MAX_PDF_FILE_BYTES, 0)]);
+  const pdfV = appFiles.validateUpload({ filename: 'big.pdf', data: pdfTooBig });
+  assert.equal(pdfV.ok, false);
+  assert.equal(pdfV.code, 'file_too_large');
+  assert.match(pdfV.error, /PDF too large \(max 25 MB\)/);
+
+  const videoTooBig = Buffer.concat([mp4(), Buffer.alloc(appFiles.MAX_VIDEO_FILE_BYTES, 0)]);
+  const videoV = appFiles.validateUpload({ filename: 'big.mp4', data: videoTooBig });
+  assert.equal(videoV.ok, false);
+  assert.equal(videoV.code, 'file_too_large');
+  assert.match(videoV.error, /Video too large \(max 100 MB\)/);
+
+  const textTooBig = Buffer.concat([Buffer.from('a,'), Buffer.alloc(appFiles.MAX_TEXT_FILE_BYTES, 0x61)]);
+  const textV = appFiles.validateUpload({ filename: 'big.csv', data: textTooBig });
+  assert.equal(textV.ok, false);
+  assert.equal(textV.code, 'file_too_large');
+  assert.match(textV.error, /File too large \(max 5 MB\)/);
+});
+
+test('accepts a 30 MB MP4, over the image cap but under the video cap', () => {
+  const clip = Buffer.concat([mp4(), Buffer.alloc(30 * 1024 * 1024, 0)]);
+  const v = appFiles.validateUpload({ filename: 'clip.mp4', data: clip });
+  assert.equal(v.ok, true);
+  assert.equal(v.contentType, 'video/mp4');
+});
+
+test('isInlineType renders only media inline', () => {
+  for (const type of ['image/png', 'audio/ogg', 'video/mp4', 'video/webm']) {
+    assert.equal(appFiles.isInlineType(type), true, type);
+  }
+  for (const type of ['application/pdf', 'text/csv; charset=utf-8', 'application/json',
+    'application/octet-stream', '', null, undefined]) {
+    assert.equal(appFiles.isInlineType(type), false, String(type));
+  }
 });
 
 // ── quotaVerdict ────────────────────────────────────────────────────

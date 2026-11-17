@@ -46,6 +46,8 @@ export interface WidgetStripState {
 export interface HomeChromeState {
   /** 0 hides "Show all N apps"; otherwise the count it names. */
   moreCount: number;
+  /** The grid is unfolded and folding it would hide rows: Standard (WIP)'s heading offers "Show less". */
+  canFold?: boolean;
   strip: WidgetStripState;
 }
 

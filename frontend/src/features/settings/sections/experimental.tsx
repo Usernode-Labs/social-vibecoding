@@ -66,6 +66,7 @@ export function ExperimentalSection() {
           <Label className="mb-1" htmlFor="settings-look">{t('settings:experimental.look.label')}</Label>
           <Select id="settings-look" variant="plain">
             <option value="">{t('settings:experimental.look.standard')}</option>
+            <option value="wip">{t('settings:experimental.look.wip')}</option>
             <option value="brand">{t('settings:experimental.look.brand')}</option>
             <option value="glass">{t('settings:experimental.look.glass')}</option>
             <option value="paper">{t('settings:experimental.look.paper')}</option>

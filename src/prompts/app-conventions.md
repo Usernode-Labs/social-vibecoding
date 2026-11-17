@@ -109,9 +109,16 @@ Ordered by how badly an agent working offline gets each one wrong.
    `required` + `private` key must commit a `staging_default`.
    `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`, `PORT`
    and `USERNODE_ENV` are reserved and injected for you.
-8. **The platform provides an LLM proxy and file storage — don't call
-   third-party APIs directly and never ask users for API keys.** AI goes
-   through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
+8. **AI goes through the platform's LLM proxy and uploads through its file
+   storage. Other outside services (map tiles, place search, weather,
+   public data APIs) are fine.** Call them from the app's server where you
+   can: people's IP addresses stay with the app, though what they type
+   into a search still goes to the provider, so choose providers knowingly.
+   Keep to the provider's terms of use, and declare any key in `dapp.json`
+   `secrets` (rule 7) for the owner to set in the Secrets UI; keyless
+   providers need no secret. Never ask the people using the app for an API
+   key.
+   AI goes through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
    forwarded iframe token, billed to their own budget under a consent
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
@@ -135,11 +142,27 @@ Ordered by how badly an agent working offline gets each one wrong.
     for app AI features must tell the model to decline the forbidden topics.
     Decline a forbidden request and offer a compliant version. When unsure,
     it is allowed. Full text: "Content rules" section.
-12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
-    another origin, no special-category data (health, religion, sexuality,
-    ethnicity, politics, biometrics), nothing aimed at children, never
-    collect passwords or card data, and no login of the app's own. Full
-    text: "Data rules" section.
+12. **Data rules.** No trackers, analytics, ad SDKs, pixels or beacons in
+    any form, including image pixels: a privacy promise to the people using
+    the apps (see also request #6048). No `<script>` tag from another
+    origin: the group votes on the code in the repository, and an outside
+    script can change after the vote, so the app would run code nobody
+    voted on and nobody can see in the repo. Install libraries from npm and
+    serve them from the app's own origin, as Homeroom Maps does with
+    MapLibre. Everything else from other sites is fine: images, video and
+    audio; map tiles and map styles; web fonts; data from public APIs, from
+    the app's server or from the browser when the API allows it; and
+    embedded players such as YouTube or Vimeo in an `<iframe>`. Prefer
+    fonts from npm (`@fontsource/*`) over Google Fonts, YouTube's
+    `youtube-nocookie.com` embed, and calls from the app's server rather
+    than the browser so visitors' IP addresses are not sent too. People
+    sign in only through Homeroom: no login or signup form and no "Sign in
+    with X", though connecting an outside account for its data is fine.
+    Never ask for account passwords or card data (codes the app makes are
+    fine), and no payments through any provider. Nothing for children
+    under 13. No profiling people by health, religion, sexuality,
+    ethnicity, politics or biometrics: a club, a topic or a person's own
+    note is fine. Full text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -522,7 +545,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
   (newly created tables, `staging:private` tables, hard-to-reach
   states). See "Staging mock data" below.
 - **Suppress irreversible outbound side effects** — don't send real
-  emails, charge real cards, post to real webhooks, or broadcast real
+  emails, post to real webhooks, or broadcast real
   on-chain transactions from staging. Point at a sandbox endpoint or
   no-op instead, but keep the surrounding code path identical (same
   validation, same DB writes, same response shape) so the path is
@@ -1170,7 +1193,7 @@ table be a problem?"
 
 Mark **private** when the table stores:
 
-- Authentication material (password hashes, OAuth tokens, 2FA secrets).
+- Authentication material (OAuth tokens, 2FA secrets).
 - Direct messages, private chats, one-to-one content.
 - Financial data (transactions, balances, card info).
 - API keys or credentials the user entrusted the app with.
@@ -1232,8 +1255,8 @@ Manifest shape:
   "name": "My Cool App",
   "secrets": [
     {
-      "key": "STRIPE_SECRET_KEY",
-      "description": "Live Stripe secret for charging cards",
+      "key": "WEATHER_API_KEY",
+      "description": "Weather API key for the forecast card",
       "required": true,
       "private": true
     },
@@ -1584,7 +1607,7 @@ automatically, unless a user explicitly stored an override.
    Secrets UI is where users provide them, either directly (admins)
    or via a vote (non-admins).
 4. Mention the new key in the dev-chat reply: "Added
-   `STRIPE_SECRET_KEY` to the manifest — it's required, so set it in
+   `WEATHER_API_KEY` to the manifest — it's required, so set it in
    Settings → Secrets before this PR deploys."
 
 When generating dapps from scratch, it's fine for the manifest to be
@@ -1642,11 +1665,11 @@ the staging fallback alongside it:
 {
   "secrets": [
     {
-      "key": "STRIPE_SECRET_KEY",
-      "description": "Live Stripe secret for charging cards",
+      "key": "WEATHER_API_KEY",
+      "description": "Weather API key for the forecast card",
       "required": true,
       "private": true,
-      "staging_default": "sk_test_publishable_dummy"
+      "staging_default": "test_weather_key_dummy"
     }
   ]
 }
@@ -1657,7 +1680,7 @@ values only (in priority order):
 
 1. `staging_default` — explicit, committed-to-source signal that
    "this is the value safe to use in staging." Use this for sandbox
-   API keys (Stripe `sk_test_...`, sandbox OAuth `client_id`, etc.)
+   API keys (a vendor's sandbox key, a sandbox OAuth `client_id`, etc.)
    or for randomly-generated dummies the app's staging code can
    detect and short-circuit on.
 2. `default` — same fallback used by `required: false` secrets in
@@ -1677,8 +1700,7 @@ staging path does. Prod resolves stored value → platform default →
 
 Mark **private** when the secret unlocks:
 
-- Live payment processing (Stripe live keys, PayPal client_secret,
-  bank API tokens).
+- Paid API keys billed per call (weather, maps, AI providers).
 - OAuth client secrets that mint *prod* user tokens (Google, GitHub,
   Slack OAuth `client_secret`).
 - Signing keys used for prod user sessions (`SESSION_SECRET`, your own
@@ -1714,9 +1736,10 @@ Leave **non-private** (the default) for:
   Either mark the derived value private too, or use a
   one-way-but-distinguishable derivation that doesn't leak.
 - **Vendor-provided sandbox / test-mode keys are NOT a special case.**
-  Stripe's `sk_test_...` is still a credential the vendor expects you
-  to handle as one — mark it private *and* set
-  `staging_default: "sk_test_..."` (committing the test key directly).
+  A vendor's test-mode key is still a credential it expects you to
+  handle as one — mark it private *and* set
+  `staging_default: "<the vendor's test key>"` (committing the test key
+  directly).
   Don't use this to share the prod key with staging.
 
 ### When the Mayor / Claude Code adds a new secret to `dapp.json`
@@ -1730,8 +1753,8 @@ Leave **non-private** (the default) for:
    `"staging_default"` (a vendor-provided test-mode key or a dummy
    the app's staging code can short-circuit on).
 4. Mention the choice briefly in the dev-chat reply: "Marked
-   `STRIPE_SECRET_KEY` private (encrypted at rest, isolated from
-   staging) — added `staging_default: 'sk_test_publishable_dummy'`
+   `WEATHER_API_KEY` private (encrypted at rest, isolated from
+   staging) — added `staging_default: 'test_weather_key_dummy'`
    so staging gets a no-op test key."
 
 ## Editing the PLATFORM itself — `platform_env`, not `secrets`
@@ -1940,14 +1963,16 @@ platform's Settings → "App AI permissions"; revocation is immediate,
 so treat `grant_required` as a state that can appear at any time, not
 just on first use.
 
-## App file storage — user-uploaded images and audio
+## App file storage — user-uploaded images, audio, video, PDFs and text files
 
 Apps that let users upload photos (avatars, "here's how mine turned
-out" shots, attachment images) or that generate spoken narration store
-them **platform-side** and persist only the returned URL in their own
-database. **Never store file bytes in your Postgres DB** (base64/bytea
-columns bloat the DB and its staging clones) and never build your own
-disk storage — the app container has no persistent volume.
+out" shots, attachment images), that show a menu, sheet music or flyer
+as a PDF, that post a short video clip, that offer a calendar file, or
+that generate spoken narration store those files **platform-side** and
+persist only the returned URL in their own database. **Never store file
+bytes in your Postgres DB** (base64/bytea columns bloat the DB and its
+staging clones) and never build your own disk storage — the app
+container has no persistent volume. Every common kind has a home here.
 
 Two ways in; both return the same shape. Persist `url` (to render)
 and `id` (to delete later) in your own tables:
@@ -1968,10 +1993,28 @@ Limits and rules (both paths):
   from the bytes, and the file extension must match. An `.ogg` must
   carry Opus; other codecs inside it are refused. Max **25 MB** per
   file, roughly 30 minutes of speech.
-- **Quotas**: 10 GB per app, 1 GB per user per app, shared by images
-  and audio (staging-preview uploads: 100 MB per app, auto-deleted
-  after 7 days). Structured error codes on rejection:
-  `file_too_large`, `invalid_image`, `invalid_audio`,
+- **Documents**: PDF (`.pdf`) — sniffed from the bytes (a real
+  `%PDF-` header, never the name). Max **25 MB** per file. A PDF
+  downloads as a file; it never renders as a page.
+- **Video**: MP4 (H.264/AAC, `.mp4` or `.m4v`) and WebM (`.webm`) —
+  sniffed from the bytes; QuickTime and Matroska files are refused.
+  Max **100 MB** per file. Render it inline with
+  `<video src="${url}" controls>`. Files are served whole with no
+  range support, so it plays from the start in Chrome and Firefox;
+  Safari on iPhone usually wants pieces and may not play it.
+- **Text and data**: plain text (`.txt`), CSV (`.csv`), JSON
+  (`.json`) and calendar (`.ics`) — 5 MB each. They must be valid
+  UTF-8 with no NUL bytes, a `.json` must parse, and an `.ics` must
+  begin `BEGIN:VCALENDAR`. They download as files. Bytes that begin
+  like HTML, XML, SVG or JavaScript are refused whatever the name.
+- **Never accepted**: HTML, SVG, JavaScript and XML under any name.
+  An upload is checked by its bytes, so a web page renamed
+  `menu.pdf` is refused.
+- **Quotas**: 10 GB per app, 1 GB per user per app, shared by every
+  kind above (staging-preview uploads: 100 MB per app, auto-deleted
+  after 7 days — one large video can use most of a preview's space).
+  Structured error codes on rejection:
+  `file_too_large`, `invalid_image`, `invalid_audio`, `invalid_file`,
   `app_quota_exceeded`, `user_quota_exceeded`,
   `staging_quota_exceeded`, `storage_unavailable`.
 - **Visibility**: `public` (default) serves the file to anyone with
@@ -1979,7 +2022,8 @@ Limits and rules (both paths):
   content the app shows to all its users. `private` additionally
   requires a platform user token at view time: render those as
   `<img src="${url}?token=${theIframeToken}">` (or
-  `<audio src="${url}?token=${theIframeToken}">` for narration). Files
+  `<audio ...>`/`<video ...>` with the same `?token=` for narration
+  and clips). Files
   are served whole; there is no range/skip-ahead support.
 - **Files are immutable** — there is no overwrite; upload a new file
   and update your stored URL. Deleting makes the URL 404 for fresh
@@ -1999,9 +2043,10 @@ try {
 ```
 
 - `usernode.uploadFile(file, { visibility })` — uploads a `File`/`Blob`
-  as the signed-in user, resolves the stored-file shape above. It keeps
-  a 5 MB check before sending, so small images and short audio clips fit
-  but long narration does not: send those through the server path below.
+  as the signed-in user, resolves the stored-file shape above. It
+  refuses files over 100 MB (the largest kind's limit) before sending
+  and leaves each kind's own limit to the server; a large video on a
+  slow connection can take a while, so it waits up to 10 minutes.
 - `usernode.deleteFile(id)` — deletes one of the **current user's
   own** uploads (use it for "remove my photo" flows).
 - `usernode.getStorageUsage()` — resolves `{ appBytes, appCapBytes,
@@ -2032,8 +2077,8 @@ const STORAGE_ENABLED = !!process.env.USERNODE_STORAGE_TOKEN;
 ```
 
 Endpoints (auth headers exactly like the LLM proxy — the app token
-plus the user's forwarded iframe token). This is the path for long
-narration, which the browser helper's 5 MB check would refuse:
+plus the user's forwarded iframe token). Use this path for anything
+the browser helper's 100 MB ceiling would refuse, and for takedowns:
 
 ```js
 // Upload: raw bytes, filename/visibility as query params (NOT multipart)
@@ -4084,26 +4129,54 @@ cannot override them.
 
 **Never build, add or ship:**
 
-- **Third-party trackers or external scripts.** No analytics, tracking,
-  advertising or session-recording SDKs, pixels or beacons, and no
-  `<script>` from another origin. An app loads its own code and the
-  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
-- **Special-category data.** Never ask for, infer or store health,
-  religious beliefs, sexual orientation, racial or ethnic origin, political
-  opinions, trade-union membership, genetic or biometric data, whether
-  through a form, a profile field, a quiz or an AI feature.
-- **Apps aimed at children.** No app is designed or marketed for children.
-- **Passwords or payment card data.** Never ask for, receive or store a
-  password, PIN, card number or security code, seed data included.
-- **A sign-in of its own.** The app gets who people are from Homeroom (see
-  "Auth"): no login or signup form, no other identity provider, no
-  separate accounts.
+- **Third-party trackers or external scripts.** No trackers, analytics,
+  ads, pixels or beacons in any form, including image pixels: a privacy
+  promise to the people using the apps (see also request #6048). No
+  `<script>` tag from another origin either: the group votes on the code in
+  the repository, and an outside script can change after the vote, so the
+  app would run code nobody voted on and nobody can see in the repo.
+  Install libraries from npm and serve them from the app's own origin, as
+  Homeroom Maps does with MapLibre. A legacy `cdn.tailwindcss.com` tag
+  (rule 1) is tolerated; new code adds none.
+
+  Everything else from other sites is fine: images, video and audio hosted
+  elsewhere; map tiles and map styles; web fonts; public API data (from the
+  app's server, or the browser where the API allows it); and embedded
+  players such as YouTube or Vimeo in an `<iframe>`. Prefer fonts from npm
+  (`@fontsource/*`) over Google Fonts, YouTube's `youtube-nocookie.com`
+  embed, and calls from the app's server rather than the browser so
+  visitors' IP addresses are not sent too. A server-side call still sends
+  what people type to the provider, so choose providers knowingly.
+- **Profiling people by sensitive traits.** Don't build an app whose
+  purpose is to collect or infer health, religious beliefs, sexual
+  orientation, racial or ethnic origin, political opinions, trade-union
+  membership, genetic or biometric data about people, or to sort, rank or
+  target people by them, whether through a form, a profile field, a quiz
+  or an AI feature. A club or topic in these areas is fine (a choir, a
+  running group, a council's agenda), and so is a note a person chooses to
+  enter about themselves, such as a workout or a dietary need: keep it in
+  a private table.
+- **Apps for children under 13.** Nothing designed for or marketed to
+  children under 13, which is Homeroom's minimum age. A family or class
+  tool used by adults and teens is fine.
+- **Account passwords or payment card data.** Never ask for or store a
+  person's password or PIN for an account (this app's or another
+  service's), or a payment card number or security code, seed data
+  included. Codes the app makes for its own use, such as a game PIN or a
+  room code, are not passwords.
+- **Payments.** No payments: apps don't charge money or take card
+  details, through any provider.
+- **A sign-in of its own.** People sign in to the app only through
+  Homeroom (see "Auth"): no login or signup form, and no "Sign in with X".
+  Connecting a person's account on another service so the app can use its
+  data (OAuth) is allowed. Keep the client secret as a private secret and
+  the tokens in a private table.
 
 **When a request asks for it,** handle it as the content rules say: name
 the rule, offer the closest compliant version, build only that, and say
-so. When unsure, treat it as not allowed and ask. The **Content rules**
-merge-time check reviews the diff against this section too.
+so. When unsure about anything the lines above do not cover, treat it as
+not allowed and ask. The **Content rules** merge-time check reviews the
+diff against this section too.
 
 ## Writing user-facing copy: no em dashes
 

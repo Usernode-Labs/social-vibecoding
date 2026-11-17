@@ -55,7 +55,7 @@ function makePool({ epoch = 2 } = {}) {
   const queries = [];
   const inserted = [];
   const state = { epoch };
-  return {
+  const pool = {
     queries,
     inserted,
     state,
@@ -65,7 +65,9 @@ function makePool({ epoch = 2 } = {}) {
       if (/cs\.status IN \('promoted', 'merging'\)/.test(text)) {
         return { rows: [{ ...nativeRow(), approval_epoch: state.epoch }], rowCount: 1 };
       }
-      if (/cs\.approval_epoch AS current_epoch/.test(text)) return { rows: [], rowCount: 0 };
+      // recordVote's own row lock (#6736): the proposal is still up for a
+      // vote, and this is the epoch the vote is stamped with. Checked after
+      // the INSERT branch: the upsert carries a similar CTE.
       if (/INSERT INTO pr_votes/.test(text)) {
         // The statement's own predicate, in miniature: the row is written
         // only while the session is still at the epoch the voter was shown.
@@ -74,12 +76,20 @@ function makePool({ epoch = 2 } = {}) {
         inserted.push(params);
         return { rows: [{ id: 1, reason: params[4] }], rowCount: 1 };
       }
+      if (/SELECT id, approval_epoch\s+FROM chat_sessions/.test(text)) {
+        return { rows: [{ id: nativeRow().id, approval_epoch: state.epoch }], rowCount: 1 };
+      }
+      if (/cs\.approval_epoch AS current_epoch/.test(text)) return { rows: [], rowCount: 0 };
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: HEAD, approval_epoch: state.epoch }], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };
     },
   };
+  // recordVote is one transaction now: the client delegates to the same
+  // recorder, so a test that overrides pool.query still sees it.
+  pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
+  return pool;
 }
 
 function loadVotes({ pool, mirror, move = 'authored' }) {

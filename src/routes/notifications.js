@@ -248,6 +248,34 @@ function stagingMockNotifications() {
       sessionId: null, sessionTitle: null,
       prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
+    // #6665: a vote on somebody's change, which real data cannot stage — it
+    // needs one person to propose a change and another to vote on it. Both
+    // rows are in a mock project of their own so they are a card of their
+    // own, not news inside the demo project's stack: the row's first line
+    // names the voter ("@ada voted yes"), which is the whole change, and two
+    // voters are here so a preview shows the two directions and that their
+    // differing lines do not fold into one row.
+    {
+      ...base,
+      id: 990240, kind: 'proposal_vote', detail: 'yes',
+      createdAt: new Date(now - 50 * 60 * 1000).toISOString(),
+      appId: 990006, appSlug: 'staging-demo-votes', appName: 'Staging demo votes',
+      sourceUsername: 'staging-demo-reviewer',
+      sessionId: 990115, prNumber: 9906,
+      sessionTitle: '[Mock] A pause button for the game',
+      prTitle: '[Mock] A pause button for the game',
+      voteReason: 'The smaller version is enough for now.',
+    },
+    {
+      ...base,
+      id: 990241, kind: 'proposal_vote', detail: 'no',
+      createdAt: new Date(now - 51 * 60 * 1000).toISOString(),
+      appId: 990006, appSlug: 'staging-demo-votes', appName: 'Staging demo votes',
+      sourceUsername: 'staging-demo-user',
+      sessionId: 990115, prNumber: 9906,
+      sessionTitle: '[Mock] A pause button for the game',
+      prTitle: '[Mock] A pause button for the game',
+    },
     // #5929: the two other chips, each in a mock project of its own so it is
     // a card on screen rather than folded under the demo project's closed
     // stack. Votes met and the merge stuck: the red chip and its reason.

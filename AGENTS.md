@@ -363,8 +363,9 @@ is no replay plan to write and nothing to verify locally.
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
   for and who was active this week, the actions, For you: votes owed, your
   work and the chat's last line, then Recently live; no charts),
-  **Needs you** and **Workshop**, a line, then **Channels** (**#general**) and **Topics**
-  (each topic's channel), each group under its heading. Place keys are
+  **Needs you** and **Workshop**, a line, then **Channels** (**#general**)
+  under its heading; a topic's channel is reached from the Hub's Topics card
+  and its own address. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   Above Hub, the list's first row is **App**, the project's own app
@@ -439,6 +440,16 @@ is no replay plan to write and nothing to verify locally.
   its changes' replies and what happened to them are read with it
   (`routes/chat.js` selectStream), each tagged with its change; a new reply
   there goes to the request. A change with no request keeps its own page.
+  **How it got here** (15 Nov 2026) is the thread's big events down a line:
+  asked, planned, built, tested, then where it stands, which is the standing
+  the server worded (`features/dev-board/topic/rail-model.ts`, drawn by
+  `thread-rail.tsx` into the shell's `#gc-thread-rail`). In the standard look
+  and the brand look a wide page stands it beside the root post and the
+  replies, each a card; a narrow page, a side panel, or a page with the
+  reader open keeps one column, the rail between the post and the replies
+  with its earlier steps folded into a pile. A step's link opens what the
+  page already has (the reader, a change's details, its section). The
+  frame's looks draw none: they have their own context column.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a

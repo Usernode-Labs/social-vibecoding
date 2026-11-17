@@ -278,6 +278,12 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
   function rememberScope(res: Response, label: string): boolean {
     const expiry = Date.parse(res.headers.get(EXPIRY_HEADER) || '');
     if (!Number.isFinite(expiry) || expiry <= Date.now()) return false;
+    // The server writes the hint with every session it mints or renews, so
+    // it is usually here already. Writing it again then only adds a copy: a
+    // Homeroom preview's hint is partitioned (browser-session-cookies.js),
+    // and this unpartitioned Lax one beside it puts the name in the jar
+    // twice, which reads as no hint at all and fences every read in flight.
+    if (scope() === label) return true;
     try {
       win.document.cookie = `${cookieName}=${label}; Path=/; SameSite=Lax; Expires=${new Date(expiry).toUTCString()}${secure ? '; Secure' : ''}`;
     } catch { /* unavailable cookies disable the offline partition */ }

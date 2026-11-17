@@ -186,6 +186,20 @@ test('the read is told a posted plan is the specification, and that not reading 
   }
 });
 
+test('#6768: a project\'s description is a dapp.json line, never a reason to leave its board', () => {
+  // A project's name, description and icon are top-level lines in its own
+  // dapp.json, so a change on its own board makes them. The platform examples
+  // name only what Homeroom itself draws or runs around every app.
+  const triage = read('src/prompts/homeroom-bot-triage.md');
+  const platformLine = triage.split('\n').find((line) => line.startsWith('- `platform`:'));
+  assert.ok(platformLine, 'the platform rule is still named');
+  const examples = platformLine.slice(platformLine.indexOf('(') + 1, platformLine.indexOf(')'));
+  assert.doesNotMatch(examples, /description/, 'a project\'s description is not a Homeroom example');
+  assert.match(platformLine, /name, description and icon are lines in its own dapp\.json/);
+  // The chat bot's rule and its move offer said the same thing.
+  assert.doesNotMatch(read('src/services/homeroom-bot-mayor.js'), /description or invite/);
+});
+
 test('#6407: the triage reads which version of a multi-version plan is marked', () => {
   // The rule rides with the plan it is about (personPlanTriageNote), so a
   // request with no plan carries none of it and its prompt stays small.

@@ -976,7 +976,11 @@ html.web-browser-chrome.platform-kb-short {
   width: 220px;
   padding: 6px;
   border-radius: 16px;
-  background: var(--messages-surface);
+  /* #6765: the tokens are declared only where Messages is drawn, so a menu
+     drawn anywhere else (a bot page's thread rows) had no fill and the page
+     read through it. The menu carries its own fallback; a host that declares
+     the tokens still wins, since a fallback is used only when it is unset. */
+  background: var(--messages-surface, #ffffff);
   box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
 }
 .messages-thread-menu button {
@@ -988,7 +992,12 @@ html.web-browser-chrome.platform-kb-short {
   font-size: 15px;
   text-align: start;
 }
-.messages-thread-menu button:hover { background: var(--messages-surface-2); }
+.messages-thread-menu button:hover { background: var(--messages-surface-2, var(--bg-secondary)); }
+/* #6765: the dark look's fallback is the ladder's raised step, as the tokens
+   themselves are where a chat is drawn, so a card is one step lighter than
+   the sheet rather than a hole in it. */
+.dark .messages-thread-menu { background: var(--messages-surface, var(--dc-raised)); }
+.dark .messages-thread-menu button:hover { background: var(--messages-surface-2, #3a3a3c); }
 
 /* A pending invitation, inside the sheet above the (empty) transcript: a
    tinted card with the language's filled pills — Accept in the accent,
@@ -2530,28 +2539,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-jump-present:hover,
 .messages-jump-present:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
-/* 16 Oct 2026: the changes nobody touched this week behind a quiet link
-   at the foot of Agents. Muted words in the
-   titles' column (16px of padding + the 44px avatar + the 14px gap), and no
-   chevron: a chevron there matched the sections' own folds and read as a
-   third heading. */
-.messages-inbox-older {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  padding-block: 12px 12px; padding-inline: 74px 16px;
-  border: 0;
-  color: var(--text-muted);
-  background: transparent;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  text-align: start;
-  cursor: pointer;
-}
-.messages-inbox-older:hover,
-.messages-inbox-older:focus-visible { color: var(--text-primary); text-decoration: underline; outline: none; }
-
 /* #2883: THE TRANSCRIPT READS ONE STEP DOWN ON A DESKTOP. 17px is the phone's
    reading size, and the phone keeps it; beside a 22rem list whose previews
    and cards are already at 15px, a 17px body and a 17px bold name were the
@@ -2588,16 +2575,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    the height of. */
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
-/* #5378: A CHANGE IN FLIGHT TAKES THE INBOX'S OWN ROW GEOMETRY on the
-   cards: a conversation row's 16px of padding and 14px gap around the 44px
-   tile, so its tile shares the avatars' left edge and its title their 74px
-   column (where the separators and "N older chats" already sit), in the
-   rows' 15 over 13 (AGENTS.md). ../improve/session-row.tsx is the bell's row
-   too, with Tailwind's own spacing, so this is scoped to the wrapper Messages
-   puts round it; the desktop's one-line column overrides it below. */
-.messages-inbox-session > a { min-height: 66px; gap: 14px; padding: 13px 16px; }
-.messages-inbox-session > a > .min-w-0 > :first-child { font-size: 15px; font-weight: 650; line-height: 20px; }
-.messages-inbox-session > a > .min-w-0 > :first-child + * { margin-top: 2px; font-size: 13px; line-height: 18px; }
 
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
@@ -5482,6 +5459,609 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
 html[data-browser-scroller="home-screen"] .home-body-fill {
   /* The header overlaps its content by .5rem (its rounded lower edge). */
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
+}
+
+/* ============================================================
+   STANDARD (WIP): the standard look with the changes still being tried on
+   it (head.html window.Skin 'wip', which sets data-skin-wip and no
+   data-skin, so no other look's rule applies and every screen is the
+   standard one unless a rule below says otherwise).
+
+   THE RULES OF THIS BLOCK (tests/standard-wip-look.test.js holds them):
+     1. Every value is a token. The `--wip-*` tokens are declared once, in
+        the first rule, from the shell's own tokens where one exists; no
+        rule after it writes a colour of its own.
+     2. Every rule is scoped to html[data-skin-wip] or is a `.wip-*`
+        component class (features/home/wip-kit.tsx), which only that look
+        mounts.
+     3. Nothing of the standard look is hidden here except what WIP_HIDES
+        in that test lists, so a feature added to Standard shows under
+        this look too unless somebody decides otherwise there.
+   ============================================================ */
+html[data-skin-wip] {
+  /* The page: its ground and its typeface. This config leaves both to the
+     shell; another config may name its own. */
+  --wip-page-bg: transparent;
+  --wip-font: inherit;
+  /* Space */
+  --wip-gutter: 12px;          /* the page's side gutter, a section's px-3 */
+  --wip-row-gap: 2rem;         /* between Home's rows */
+  --wip-card-gap: 1rem;        /* between two cards of one row */
+  --wip-card-pad: 12px;
+  --wip-col-gap: 1rem;         /* between two columns of a list */
+  /* Corners: three steps and the pill. A card; what sits inside a card (an
+     icon, an inner card, a field); a small mark (a count, a status). The
+     pill is for what is pressed (a button, a chip) and nothing else. An
+     inner corner is always tighter than the one round it. */
+  --wip-radius-card: 16px;
+  --wip-radius-inner: 10px;
+  --wip-radius-small: 6px;
+  --wip-radius-pill: 9999px;
+  /* The card */
+  --wip-card-bg: var(--dc-sheet-solid);
+  --wip-card-line: var(--app-sheet-line);
+  --wip-card-radius: var(--wip-radius-card);
+  /* Type: a row is 15 over 12, with an 11px line of facts */
+  --wip-title-size: 0.9375rem;
+  --wip-title-weight: 650;
+  --wip-body-size: 0.75rem;
+  --wip-meta-size: 0.6875rem;
+  --wip-link-size: 0.875rem;
+  --wip-ink-muted: var(--text-muted);
+  --wip-ink-action: var(--accent);
+  /* A project's tile */
+  --wip-tile-h: 6.25rem;       /* p-3 12 + icon 72 + p-3 12, and the text's 94 */
+  --wip-tile-gap: 0.75rem;
+  --wip-icon: 4.5rem;
+  --wip-icon-radius: 0.875rem;  /* 14px: an icon is a step rounder than the things beside it, about a fifth of its side */
+  --wip-icon-glyph: 2rem;      /* an emoji icon's size */
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 6px 14px -4px rgb(0 0 0 / 0.2);
+  --wip-icon-edge: var(--wip-card-line); /* a hairline round an icon's tile, so a white icon keeps its shape on a white card */
+  --wip-icon-tile: var(--bg-primary); /* the tile under an emoji or a letter */
+  --wip-sheen: rgb(255 255 255 / 0.55);
+  --wip-sheen-time: 650ms;
+  /* The filled action */
+  --wip-cta-h: 2.5rem;
+  --wip-cta-from: #5aa9ff;
+  --wip-cta-via: var(--accent);
+  --wip-cta-to: #0062cc;
+  --wip-cta-ink: #ffffff;
+  --wip-cta-glow: color-mix(in srgb, var(--accent) 40%, transparent);
+  /* A panel's row of items (Needs you) */
+  --wip-item-radius: var(--wip-radius-inner);
+  --wip-item-icon: 2.25rem;
+  --wip-item-icon-radius: 0.5rem; /* 8px, the same fifth of a small icon's side */
+  --wip-ink: var(--text-primary);
+  --wip-ink-soft: var(--text-secondary);
+  --wip-pill-bg: var(--accent);
+  --wip-pill-ink: var(--wip-cta-ink);
+  --wip-count-bg: var(--accent-tint);
+  --wip-count-ink: var(--accent-tint-ink);
+  /* A community card's own colour, lifted: lighter and fuller, so a row of them is not a row of dark blocks */
+  --wip-cover-lift: brightness(1.5) saturate(1.35);
+  /* A challenge picture's band: how much of its pale tone it wears and, under
+     that, how much of the tone's deeper line colour over the card. The light
+     is all pale tone; the dark is none of it and a third of the deep one,
+     since a pastel over black is only grey. */
+  --wip-poster-tone: 100%;
+  --wip-poster-deep: 0%;
+  /* A meter's fill, and a hairline round a count */
+  --wip-meter: var(--wip-ink-action);
+  --wip-count-line: transparent;
+  /* A thing done */
+  --wip-ok: var(--state-ok);
+  /* Widths */
+  --wip-search-w: 24rem;
+}
+/* ── Token configs ──────────────────────────────────────────
+   The rule above is the config called Current. Another config is the same
+   list with other values, on html[data-wip-tokens="<name>"] (head.html
+   window.Skin.getTokens; the look picker beside the bell, for admins). Only the
+   values differ: no rule of the look knows which config is on.
+
+   BRAND: Homeroom's brand kit (Baked Design Studio, 2026). Cream is the
+   page and black the ink; yellow is the filled action and a count, with
+   black on it; blue marks what asks for the viewer, also under black (the
+   kit's own contrast table: black on blue 6.2:1, white would fail). Type is
+   Geist, the kit's typeface for interface text; its serif is for headlines,
+   and Home has none. */
+html[data-skin-wip][data-wip-tokens="brand"] {
+  --wip-page-bg: #fffeea;
+  --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --wip-card-bg: #ffffff;
+  --wip-card-line: rgb(0 0 0 / 0.1);
+  --wip-ink: #000000;
+  --wip-ink-soft: rgb(0 0 0 / 0.72);
+  --wip-ink-muted: rgb(0 0 0 / 0.6);
+  --wip-ink-action: #000000;
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.05), 0 6px 14px -6px rgb(0 0 0 / 0.16);
+  /* The filled action is the kit's Cream + Black: yellow on a cream page
+     would be the quietest thing on it. */
+  --wip-cta-from: #000000;
+  --wip-cta-via: #000000;
+  --wip-cta-to: #000000;
+  --wip-cta-ink: #fffeea;
+  --wip-cta-glow: rgb(0 0 0 / 0.22);
+  --wip-pill-bg: #3090e1;
+  --wip-pill-ink: #000000;
+  --wip-count-bg: #ffee6f;
+  --wip-count-ink: #000000;
+  --wip-count-line: rgb(0 0 0 / 0.2);
+  --wip-meter: #3090e1;
+  /* The shell's own marks on a page of this config: where you are, in the
+     kit's ink on a wash of it, not the standard blue. */
+  --lit-ink: #000000;
+  --lit-tint: rgb(0 0 0 / 0.07);
+  --lit-line: rgb(0 0 0 / 0.14);
+}
+/* In the dark it is the kit's other pairing, cream on black. */
+html[data-skin-wip][data-wip-tokens="brand"].dark {
+  --wip-page-bg: #0b0b0c; /* the shell's own dark ground, so the page and its frame are one black */
+  --wip-card-bg: #171715;
+  --wip-card-line: rgb(255 254 234 / 0.14);
+  --wip-ink: #fffeea;
+  --wip-ink-soft: rgb(255 254 234 / 0.78);
+  --wip-ink-muted: rgb(255 254 234 / 0.62);
+  --wip-ink-action: #fffeea;
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
+  /* On black the filled action is the kit's Black + Yellow. */
+  --wip-cta-from: #ffee6f;
+  --wip-cta-via: #ffee6f;
+  --wip-cta-to: #ffee6f;
+  --wip-cta-ink: #000000;
+  --wip-cta-glow: rgb(255 238 111 / 0.18);
+  --wip-count-line: transparent;
+  --lit-ink: #fffeea;
+  --lit-tint: rgb(255 254 234 / 0.1);
+  --lit-line: rgb(255 254 234 / 0.18);
+}
+/* How many columns a list of the look has, by the room there is: one, two
+   from 640px, three from 1024px, four from 1440px. Needs you's rows and
+   Challenges' cards read the same number, so their columns line up. */
+html[data-skin-wip] { --wip-cols: 1; }
+@media (min-width: 640px) { html[data-skin-wip] { --wip-cols: 2; } }
+@media (min-width: 1024px) { html[data-skin-wip] { --wip-cols: 3; } }
+@media (min-width: 1440px) { html[data-skin-wip] { --wip-cols: 4; } }
+/* In the dark (either config): an icon's tile is a step lighter than the
+   card and edged, so a dark picture stays a shape; a community's colour is
+   lifted less; a challenge's band wears a third of its tone's deep colour. */
+html[data-skin-wip].dark {
+  --wip-cover-lift: brightness(1.2) saturate(1.25);
+  --wip-poster-tone: 0%;
+  --wip-poster-deep: 34%;
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 14px -4px rgb(0 0 0 / 0.55);
+  --wip-icon-edge: rgb(255 255 255 / 0.14);
+  --wip-icon-tile: #2a2a2d;
+}
+
+/* ── Components (features/home/wip-kit.tsx) ─────────────────── */
+/* The card. */
+.wip-card {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+/* The page's one filled action. */
+.wip-cta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--wip-cta-h);
+  padding-inline: 1.25rem;
+  border-radius: var(--wip-radius-pill);
+  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 50%, var(--wip-cta-to));
+  color: var(--wip-cta-ink);
+  font-size: var(--wip-link-size);
+  font-weight: 600;
+  box-shadow: 0 10px 15px -3px var(--wip-cta-glow), 0 4px 6px -4px var(--wip-cta-glow), inset 0 0 0 1px rgb(255 255 255 / 0.2);
+  transition: transform 150ms, filter 150ms, box-shadow 150ms;
+}
+.wip-cta:hover { transform: translateY(-1px); filter: brightness(1.1); }
+.wip-cta:active { transform: scale(0.98); }
+.wip-cta-glyph { width: 1.125rem; height: 1.125rem; }
+/* A section's label as the way to all of it: the label's words (a count
+   beside them), then a chevron, one thing to press. The words keep the
+   label's own type, which it inherits; under the pointer they take the ink
+   and the chevron a soft disc. */
+.wip-head-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  max-width: 100%;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: color 150ms;
+}
+.wip-head-more:hover { color: var(--wip-ink); }
+.wip-head-chevron {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  margin-inline-start: -0.125rem;
+  border-radius: var(--wip-radius-pill);
+  color: var(--wip-ink-action);
+  transition: background-color 150ms;
+}
+.wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-count-bg); }
+.wip-head-chevron-glyph { width: 0.875rem; height: 0.875rem; }
+/* Rows: one thing a line, a hairline between them. */
+.wip-rows { display: grid; min-width: 0; margin-top: 0.25rem; overflow: hidden; }
+.wip-rows > li { min-width: 0; }
+/* The hairline is drawn above each row, and the list clips the first line's,
+   so it holds however many columns there are. */
+.wip-rows > li { box-shadow: 0 -1px 0 var(--wip-card-line); }
+/* In as many columns as the look has room for (--wip-cols). */
+.wip-rows-cols { grid-template-columns: repeat(var(--wip-cols, 1), minmax(0, 1fr)); column-gap: var(--wip-col-gap); }
+.wip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 3.25rem;
+  padding: 0.5rem 0.25rem;
+  border-radius: var(--wip-item-radius);
+}
+.wip-row:hover .wip-item-title { color: var(--wip-ink-action); }
+/* A panel: a card's inside, padded, for a list (Needs you). */
+.wip-panel { padding: var(--wip-card-pad); min-width: 0; }
+.wip-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.5rem;
+  height: 1.5rem;
+  padding-inline: 0.375rem;
+  border-radius: var(--wip-radius-small);
+  background-color: var(--wip-count-bg);
+  color: var(--wip-count-ink);
+  font-size: var(--wip-body-size);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0 0 1px var(--wip-count-line);
+}
+.wip-item-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--wip-item-icon);
+  height: var(--wip-item-icon);
+  overflow: hidden;
+  border-radius: var(--wip-item-icon-radius);
+  object-fit: cover;
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: var(--wip-ink-soft);
+}
+.wip-item-text { display: flex; flex: 1 1 0; flex-direction: column; min-width: 0; }
+.wip-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wip-link-size);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--wip-ink);
+}
+.wip-item-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wip-body-size);
+  line-height: 1.3;
+  color: var(--wip-ink-muted);
+}
+/* A row's one pill: filled in the accent when it asks for the viewer. */
+.wip-pill {
+  flex: none;
+  padding: 0.1875rem 0.625rem;
+  border-radius: var(--wip-radius-small);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  font-size: var(--wip-body-size);
+  font-weight: 600;
+  color: var(--wip-ink-soft);
+}
+.wip-pill-action {
+  border-radius: var(--wip-radius-pill); /* it is what the row is pressed for */
+  box-shadow: none;
+  background-color: var(--wip-pill-bg);
+  color: var(--wip-pill-ink);
+}
+/* Posters: things side by side in one card with no card of their own, each
+   as wide as one of the look's columns; the row scrolls sideways for what
+   does not fit (Challenges). A poster's picture runs across its top on the
+   picture's own tone. */
+.wip-posters {
+  display: flex;
+  gap: var(--wip-col-gap);
+  padding: var(--wip-card-pad);
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scroll-padding-inline: var(--wip-card-pad);
+  scrollbar-width: none;
+}
+.wip-posters::-webkit-scrollbar { width: 0; height: 0; }
+.wip-poster {
+  display: flex;
+  flex: 0 0 calc((100% - (var(--wip-cols, 1) - 1) * var(--wip-col-gap)) / var(--wip-cols, 1));
+  flex-direction: column;
+  min-width: 0;
+  text-align: start;
+  scroll-snap-align: start;
+}
+.wip-poster:hover .wip-item-title { color: var(--wip-ink-action); }
+.wip-poster-art {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 4.25rem;
+  margin-bottom: 0.625rem;
+  overflow: hidden;
+  /* The picture's own tone (.home-tone-* sets --tone-50 and its deeper
+     --tone-light-line) over the card, in the parts the tokens say: the pale
+     tone in the light, a third of the deep one in the dark, where the
+     shell's own dark tone is too near black to read as a colour. A
+     hairline's grey without a tone. */
+  background-color: color-mix(
+    in srgb,
+    var(--tone-50, var(--wip-card-line)) var(--wip-poster-tone),
+    color-mix(in srgb, var(--tone-light-line, var(--wip-card-line)) var(--wip-poster-deep), var(--wip-card-bg))
+  );
+  border-radius: var(--wip-radius-inner);
+  font-size: 2rem;
+}
+.wip-poster-art > img { width: 3.75rem; height: 3.75rem; object-fit: contain; transition: transform 200ms; } /* the band's height but a breath */
+.wip-poster:hover .wip-poster-art > img { transform: scale(1.06); }
+.wip-poster-facts { display: flex; align-items: baseline; gap: 0.5rem; }
+.wip-poster-facts > .wip-item-meta { flex: 1 1 0; min-width: 0; }
+/* What it is worth is the line's strong half: a step larger than where the
+   viewer stands, in the ink. Earned, it is in the done colour. */
+.wip-poster-worth {
+  flex: none;
+  font-size: var(--wip-link-size);
+  font-weight: 700;
+  color: var(--wip-ink);
+}
+.wip-poster-worth-ok { color: var(--wip-ok); }
+/* A meter: a track, and the accent as far as the thing has come; green once
+   it is done. */
+.wip-meter {
+  display: block;
+  height: 0.375rem;
+  margin-top: 0.5rem;
+  overflow: hidden;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-card-line);
+}
+.wip-meter > span { display: block; height: 100%; border-radius: inherit; background-color: var(--wip-meter); }
+.wip-poster[data-state="done"] .wip-meter > span { background-color: var(--wip-ok); }
+/* Before it is started there is nothing to measure: the meter keeps its
+   place, so the posters stay level, and draws no track that would read as a
+   rule under the words. */
+.wip-poster[data-state="new"] .wip-meter { background-color: transparent; }
+/* A filter line: the choices at its start (they scroll sideways when they
+   do not fit) and one menu at its end, close over the list they filter. */
+.wip-filterbar {
+  display: flex;
+  align-items: center;
+  gap: var(--wip-card-gap);
+  padding-bottom: 0.625rem;
+}
+/* Its menu is one of the line's own: a chip's height, shape and type, on the
+   card's colour under a hairline, at the line's end. */
+html[data-skin-wip] .wip-filterbar > select {
+  flex: none;
+  width: auto;
+  height: 2.75rem;
+  margin-inline-start: auto;
+  padding-block: 0;
+  padding-inline-start: 1rem;
+  border: 0;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  font-size: var(--wip-title-size);
+  font-weight: 500;
+  color: var(--wip-ink);
+}
+/* The search row: a short field, then the filled action at its end, the
+   same distance from the header as from the first label. */
+.wip-topbar > .wip-cta { margin-inline-start: auto; }
+.wip-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem var(--wip-gutter) 0;
+}
+@media (min-width: 768px) { .wip-topbar { padding-top: 1.75rem; } }
+.wip-search { width: 100%; max-width: var(--wip-search-w); }
+/* A project tile's sentence and its line of facts (app-grid.tsx). */
+.app-card-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.25rem;
+  font-size: var(--wip-body-size);
+  line-height: 1.25;
+  color: var(--wip-ink-muted);
+  overflow-wrap: anywhere;
+}
+.app-card-people {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 0;
+  margin-top: 0.25rem;
+  font-size: var(--wip-meta-size);
+  line-height: 0.9375rem;
+  font-weight: 500;
+  color: var(--wip-ink-muted);
+}
+
+/* ── A project's tile ───────────────────────────────────────── */
+/* From 1024px it is a row: the icon in the first column and, beside it, the
+   name on one line, the app's sentence on two, then how many people made it.
+   A tile with no sentence is the name and the people, nothing held open. The
+   drag overlay's rows follow the same height token. Narrower, the tile is
+   the grid's own: the icon and, under it, the name alone. */
+@media (max-width: 1023.98px) {
+  html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people) { display: none; }
+}
+@media (min-width: 1024px) {
+  html[data-skin-wip] { --home-cell-h: var(--wip-tile-h); }
+  html[data-skin-wip] #app-list > .app-card {
+    flex-direction: row;
+    align-items: center; /* a tile with no sentence keeps its two lines beside the icon's middle */
+    gap: var(--wip-tile-gap);
+    text-align: start;
+  }
+  html[data-skin-wip] #app-list > .app-card > .min-w-0 { flex: 1 1 0; width: auto; }
+  html[data-skin-wip] #app-list > .app-card > .relative,
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
+  html[data-skin-wip] #app-list .app-card-people { justify-content: flex-start; }
+  html[data-skin-wip] #app-list .app-card-title {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    min-height: 0;
+    text-align: start;
+    font-size: var(--wip-title-size);
+    line-height: 1.3;
+    font-weight: var(--wip-title-weight);
+  }
+}
+/* The icon sits a little above the card: one soft shadow, at every width,
+   and in the dark a hairline round a tile a step lighter than the card, so
+   a dark picture or glyph stays a shape. (No gloss: it read as a grey cap
+   on a dark icon and as nothing on a light one.) */
+html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile {
+  position: relative;
+  border-color: transparent;
+  background-color: var(--wip-icon-tile);
+  box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow);
+}
+/* A sheen: one band of light crosses the icon when the pointer comes over
+   its tile. Only where a pointer hovers, never while the tiles are being
+   arranged, and not with reduced motion. */
+@media (hover: hover) {
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::after {
+    content: "";
+    position: absolute;
+    inset: -20% auto -20% 0;
+    width: 60%;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
+    transform: translateX(-180%) skewX(-12deg);
+  }
+  html[data-skin-wip] #app-list:not([data-editing]) > .app-card:hover > .relative > .app-icon-tile::after {
+    transform: translateX(280%) skewX(-12deg);
+    transition: transform var(--wip-sheen-time) ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
+
+/* ── Home's page ────────────────────────────────────────────── */
+/* It takes the page's whole width: no 1024px cap on its column (the search
+   row's and the body's). */
+html[data-skin-wip] #home-screen .home-column { max-width: none; }
+/* Its ground and typeface are the config's, and so is the accent the
+   shell's own pieces on it read (Edit, a focus ring): one action colour on
+   the page whichever config is on. */
+html[data-skin-wip] #home-screen {
+  background-color: var(--wip-page-bg);
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+/* While Home is the screen on show, a config that names a page colour gives
+   it to the frame too (the header and the sidebar are clear over the body),
+   so the page and its frame are one ground with no seam. */
+html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)) {
+  background-color: var(--wip-page-bg);
+  background-image: none;
+}
+/* One column, in this order: Pinned projects, Needs you, Challenges, Featured
+   (lifted out of Communities to join), then the rest of Communities to join. The markup keeps its own order; the column is a flex
+   column, and both Communities to join and the row that holds Needs you
+   and Challenges give up their boxes (display: contents) so each part can be
+   placed on its own.
+   ANYTHING ELSE on Home, a section added to the standard look among them,
+   takes the last place and is drawn. */
+html[data-skin-wip] #home-screen .home-main { display: flex; flex-direction: column; }
+html[data-skin-wip] #home-screen .home-main > * { order: 4; }
+/* Pinned projects, what is above it (the phone app's widget strip) and the
+   line right under it (a search nothing answers) stay first. */
+html[data-skin-wip] #home-screen .home-main > :is(#home-apps-section, :has(~ #home-apps-section), #home-apps-section + :not(.home-row)) { order: 0; }
+html[data-skin-wip] #home-screen .home-main > .home-row { display: contents; }
+html[data-skin-wip] #home-screen .home-row > .home-aside { order: 1; }
+html[data-skin-wip] #home-screen .home-row > #home-challenges-section { order: 2; }
+html[data-skin-wip] #home-screen #home-join-section:not([hidden]) { display: contents; }
+html[data-skin-wip] #home-screen #home-join-section > * {
+  order: 4;
+  margin-inline: 0;
+  padding-inline: var(--wip-gutter); /* the section's own gutter, which its box no longer gives */
+}
+html[data-skin-wip] #home-screen #home-join-section > [data-home-join-featured] {
+  order: 3;
+  padding-top: var(--wip-row-gap);
+  padding-bottom: 0;
+}
+/* Its rows stand one row gap apart, and nothing is drawn between them. A
+   section's label brings one card gap of its own. */
+html[data-skin-wip] #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
+/* Needs you is a row of its own, as wide as the column, right under Pinned
+   projects, and Challenges the row after it. Each is a section as Pinned
+   projects is: its label line on the page, then one card. The label brings
+   one card gap of its own above it. */
+html[data-skin-wip] .home-row > .home-aside {
+  display: flex;
+  padding: calc(var(--wip-row-gap) - var(--wip-card-gap)) var(--wip-gutter) 0;
+}
+html[data-skin-wip] .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
+html[data-skin-wip] .home-row > #home-challenges-section { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
+/* A pinned project's press area, the search field and the sort menu: inside
+   a card, or a field. */
+html[data-skin-wip] #app-list > .app-card,
+html[data-skin-wip] .wip-search > input,
+html[data-skin-wip] #home-join-section select { border-radius: var(--wip-radius-inner); }
+/* A community's card, and the placeholders that stand for one while it
+   loads, are cards on the page. */
+html[data-skin-wip] #home-join-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
+/* A community's card with no picture of its own wears its colour, which is
+   picked to carry white text elsewhere and is dark for a field this size.
+   Here a copy of that colour lies on it, lifted (lighter and fuller, not
+   washed toward grey), under the glow and the icon, which keep their own
+   strength. (A card with a picture has no colour laid on it, and no lift.) */
+html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  filter: var(--wip-cover-lift);
+}
+/* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
+   Pinned communities: the section stays mounted, since it loads the pins
+   other parts of Home read, and is not displayed. */
+html[data-skin-wip] #home-communities-section { display: none; }
+
+
+/* END OF STANDARD (WIP). */
+
+/* Home's lists (features/home/index.tsx `.home-main`): a flex child that may
+   shrink, so a long line is cut and never widens the page. */
+.home-main {
+  min-width: 0;
 }
 
 /* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
@@ -10674,6 +11254,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
 #admin-onboarding-flows {
   --bg:#f5f5f7; --surface:#ffffff; --fg:#1c1c1e; --muted:#68686c; --faint:#8e8e93; --rule:#e3e3e6; --node:#2c2c2e;
   --share:#12876B; --pub:#5B50C8; --drop:#C2410C; --ok:#2E7D32;
+  --go:#3b3f8f; --early:#c6c6cd; --on-fill:#ffffff;
   --share-fill:#E1F5EE; --pub-fill:#EEEDFE; --drop-fill:#FBEBE2;
   --sel:#1c1c1e; --thread-op:.8;
   --font-display:inherit; --font-body:inherit; --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -10683,6 +11264,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
 html.dark #admin-onboarding-flows {
   --bg:#0b0b0c; --surface:#1c1c1e; --fg:#f5f5f7; --muted:#a1a1a6; --faint:#68686c; --rule:#2c2c2e; --node:#e3e3e6;
   --share:#27A17E; --pub:#8A80E8; --drop:#DC6B30; --ok:#6CC070;
+  --go:#8f93e8; --early:#4a4a52; --on-fill:#0b0b0c;
   --share-fill:#0C3A2C; --pub-fill:#2A2562; --drop-fill:#43200F;
   --sel:#f5f5f7; --thread-op:.85;
 }
@@ -10698,22 +11280,13 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .ctl .tab{white-space:nowrap;flex:none}
 #admin-onboarding-flows .ctl .legend{padding:0 8px 3px;flex:1 1 auto;min-width:0}
 #admin-onboarding-flows .ctlrow{display:flex;align-items:center;justify-content:space-between;gap:8px 14px;min-width:0}
-#admin-onboarding-flows .tgl{flex:none;display:inline-flex;align-items:center;gap:7px;font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;height:28px;padding:0 10px 0 6px;margin:0 2px 2px 0;border:1px solid var(--rule);border-radius:999px;background:var(--bg);color:var(--muted);cursor:pointer;white-space:nowrap}
-#admin-onboarding-flows .tgl .knob{width:22px;height:14px;border-radius:999px;background:var(--rule);position:relative;transition:background .15s}
-#admin-onboarding-flows .tgl .knob::after{content:'';position:absolute;top:2px;inset-inline-start:2px;width:10px;height:10px;border-radius:50%;background:var(--surface);transition:transform .15s}
-#admin-onboarding-flows .tgl[aria-pressed="true"]{color:var(--fg);border-color:var(--fg);background:var(--surface)}
-#admin-onboarding-flows .tgl[aria-pressed="true"] .knob{background:var(--fg)}
-#admin-onboarding-flows .tgl[aria-pressed="true"] .knob::after{transform:translateX(8px)}
-#admin-onboarding-flows .tgl:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+#admin-onboarding-flows .whobox{flex:none;display:inline-flex;align-items:center;gap:6px;margin:0 2px 2px 0;font-size:12.5px;color:var(--muted)}
+#admin-onboarding-flows .whobox select{font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;height:28px;max-width:220px;padding:0 8px;border:1px solid var(--rule);border-radius:999px;background:var(--bg);color:var(--fg);cursor:pointer}
+#admin-onboarding-flows .whobox select:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 @media (max-width:640px){
   #admin-onboarding-flows .ctlrow{flex-wrap:wrap}
   #admin-onboarding-flows .ctlrow .legend{flex-basis:100%}
 }
-@media (prefers-reduced-motion: reduce){
-  #admin-onboarding-flows .tgl .knob,#admin-onboarding-flows .tgl .knob::after{transition:none}
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) #admin-onboarding-flows .tgl .knob,:where(html[data-motion="reduce"]) #admin-onboarding-flows .tgl .knob::after{transition:none}
 @media (max-width:640px){
   #admin-onboarding-flows .ctl .legend{flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
   #admin-onboarding-flows .ctl .legend::-webkit-scrollbar{display:none}
@@ -10777,8 +11350,14 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .thread.both{stroke:url(#of-bothStripe)}
 #admin-onboarding-flows .of-flow.dim .thread{opacity:.1}
 #admin-onboarding-flows .of-flow.dim .thread.hl{opacity:1}
-#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub{opacity:.45}
+/* A selection, or a box or thread pointed at, keeps its own threads and cards and sends the rest to the background. */
+#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nbox,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .caption{opacity:.3}
 #admin-onboarding-flows .nodeg{cursor:pointer;outline:none}
+/* The native kit presses every [role="button"]: a CSS transform (scale), a dimming and a spring back. Inside the
+   drawing a CSS transform replaces an SVG shape's own position, so a pressed card flew to the corner. Cards and
+   marks are placed by an inline style the press cannot outrank (engine.js `at`), and here the press does nothing. */
+#admin-onboarding-flows svg [role="button"],#admin-onboarding-flows svg [role="button"]:active{transition:none;filter:none}
+#admin-onboarding-flows svg text[role="button"]:active{transform:none}
 #admin-onboarding-flows .nodeg rect.nbox{fill:var(--node)}
 #admin-onboarding-flows .nodeg.ghost rect.nbox{fill:url(#of-hatch);stroke:var(--node);stroke-width:1}
 #admin-onboarding-flows .nodeg.inferred rect.nbox{fill:var(--surface);stroke:var(--node);stroke-width:1.5;stroke-dasharray:3 2.5}
@@ -10790,6 +11369,23 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .nodeg.card.inferred rect.nbox{fill:var(--surface);stroke-width:1.4;stroke-dasharray:5 4}
 #admin-onboarding-flows .nodeg.card.team rect.nbox{fill:var(--bg);stroke:var(--faint)}
 #admin-onboarding-flows .nodeg.card.sel rect.nbox{stroke-width:2.4;stroke-dasharray:none}
+/* Steps of the whole funnel. A folded step is one bar, a card in an open step is a slice of its bar: both are drawn
+   in the colours of what became of their people there (carries on, too early to say, stopped), with no card face. */
+#admin-onboarding-flows .nodeg .part{shape-rendering:crispEdges}
+#admin-onboarding-flows .nodeg .part.go{fill:var(--go)}
+#admin-onboarding-flows .nodeg .part.early{fill:var(--early)}
+#admin-onboarding-flows .nodeg .part.stop{fill:var(--drop)}
+#admin-onboarding-flows .nodeg.card.inbar rect.nbox,#admin-onboarding-flows .nodeg.card.fold rect.nbox{fill:none;stroke:none}
+#admin-onboarding-flows .nodeg.card.inbar.sel rect.nbox{stroke:var(--sel);stroke-width:2.4}
+#admin-onboarding-flows .nodeg.card.inbar.ghost .part{opacity:.6}
+#admin-onboarding-flows .nodeg.card.inbar .nlabel,#admin-onboarding-flows .nodeg.card.inbar .nsub,#admin-onboarding-flows .nodeg.card.fold .nsub{fill:var(--on-fill)}
+#admin-onboarding-flows .nodeg.card.inbar.earlyish .nlabel,#admin-onboarding-flows .nodeg.card.inbar.earlyish .nsub,#admin-onboarding-flows .nodeg.card.fold.earlyish .nsub{fill:var(--fg)}
+#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .part{opacity:.3}
+#admin-onboarding-flows .stepbox{fill:color-mix(in srgb,var(--go) 7%,var(--surface));stroke:color-mix(in srgb,var(--go) 24%,var(--surface));stroke-width:1}
+#admin-onboarding-flows .stephead{font-size:13.5px;font-weight:650;fill:var(--fg);cursor:pointer;outline:none}
+#admin-onboarding-flows .stephead:hover,#admin-onboarding-flows .stephead:focus-visible{text-decoration:underline}
+#admin-onboarding-flows .stepsum{font-family:var(--font-mono);font-size:10.5px;fill:var(--muted)}
+#admin-onboarding-flows .stepsum.lost{fill:var(--drop)}
 #admin-onboarding-flows .nodeg.card .nlabel{font-size:12.5px;font-weight:600;stroke:none}
 #admin-onboarding-flows .nodeg.card.small .nlabel{font-size:12px;font-weight:500}
 #admin-onboarding-flows .nodeg.card .nsub{font-size:10.5px;stroke:none}
@@ -10811,6 +11407,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .nsub{font-family:var(--font-mono);font-size:11px;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;font-variant-numeric:tabular-nums}
 #admin-onboarding-flows .nodeg.small .nlabel{font-size:12px;font-weight:500}
 #admin-onboarding-flows .ctitle{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;fill:var(--muted)}
+#admin-onboarding-flows .ctot{font-family:var(--font-mono);font-size:10.5px;font-weight:600;fill:var(--fg);font-variant-numeric:tabular-nums}
 #admin-onboarding-flows .ztitle{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;fill:var(--faint)}
 #admin-onboarding-flows .zline{stroke:var(--faint);stroke-width:1;stroke-dasharray:5 6;opacity:.7}
 #admin-onboarding-flows .caption{font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px}
@@ -10828,7 +11425,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .leak.strong text{fill:var(--surface)}
 #admin-onboarding-flows .leak.on rect{stroke:var(--fg);stroke-width:2}
 #admin-onboarding-flows .leak:focus-visible rect{stroke:var(--fg);stroke-width:2}
-#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.5}
+#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.35}
 #admin-onboarding-flows .legend .stop{width:4px;height:14px;border-radius:2px;background:var(--drop)}
 #admin-onboarding-flows .loop path{fill:none;stroke:var(--share);stroke-width:1.6;stroke-dasharray:5 4}
 #admin-onboarding-flows .loop text{font-family:var(--font-body);font-size:12.5px;font-weight:500;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:5px}
@@ -10876,6 +11473,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .linkbtn:hover{border-color:var(--muted)}
 #admin-onboarding-flows .tablewrap{overflow-x:auto}
 #admin-onboarding-flows table{width:100%;border-collapse:collapse;font-size:14px;min-width:640px}
+#admin-onboarding-flows table.compact{min-width:0}
 #admin-onboarding-flows thead th{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:start;padding:0 14px 8px 0;border-bottom:1px solid var(--rule);white-space:nowrap}
 #admin-onboarding-flows tbody th{text-align:start;font-weight:600;padding:9px 14px 9px 0;vertical-align:top}
 #admin-onboarding-flows tbody td{padding:9px 14px 9px 0;vertical-align:top}
@@ -11770,10 +12368,15 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 .dev-vote-switch-opt svg { width: 14px; height: 14px; }
 .dev-vote-switch-opt .dev-vote-n {
+  display: inline-block;
+  flex: none;
+  min-width: 5ch;
+  text-align: start;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -14206,9 +14809,9 @@ p.dev-change-issue-pointer {
      name, figure and bar keep the card's width. */
   .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
   .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
-  .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
-  .dev-change-gate-name { min-width: 0; }
-  .dev-change-gate-figure { white-space: nowrap; }
+  .dev-change-gate-head { flex-wrap: nowrap; row-gap: 2px; }
+  .dev-change-gate-name { flex: none; min-width: 0; }
+  .dev-change-gate-figure { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   /* #6419: the stuck pair keeps only the heading, the figure and the vote,
      a little tighter; its note stays on the full card in the thread. The
      Vote button goes back on the card's own line, so the card stays one
@@ -22332,11 +22935,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
     background: var(--text-faint, #8e8e93);
   }
-  .platform-rail-nest .dev-ws-places-more {
-    padding-inline-start: 30px;
-    color: var(--text-muted);
-    font-size: 12.5px;
-  }
   .platform-rail-nest :is(.dev-ws-places-head, .platform-rail-subhead),
   .platform-rail-nest .dev-ws-places-group + .dev-ws-places-group .dev-ws-places-head {
     flex: none;
@@ -22575,9 +23173,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 .messages-new-option-label { display: block; font-size: 14px; font-weight: 600; }
 .messages-new-option-hint { display: block; font-size: 12px; color: var(--text-muted); }
 
-/* THE SECTION HEADS (#2783): "Chats" over the people and agents, "Channels"
-   over #general and the apps — Discord's two headings, small and muted so
-   they divide the list without competing with its rows. */
+/* THE SECTION HEAD (#2783): People over the conversations, small and muted
+   so it heads the list without competing with its rows. */
 .messages-section-head {
   display: flex;
   align-items: center;
@@ -22589,30 +23186,9 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   text-transform: uppercase;
   color: var(--text-muted);
 }
-/* 16 Oct 2026: Agents and People fold from their heading, which is one
-   button the width of the list, so the whole line is the target. What in
-   the section asks for you ("1 working", "3 unread") sits at its trailing
-   edge in the row's own case, and stays there folded; a count of unread
-   messages from people is the accent, a number that asks for the viewer. */
-.messages-section-toggle {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin: -6px 0;
-  padding: 6px 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-align: start;
-  text-transform: inherit;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.messages-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* 16 Oct 2026: how many messages from people are unread ("3 unread") sits
+   at the heading's trailing edge in the row's own case, grey: new to read,
+   not waiting on you (#18). */
 .messages-section-name { min-width: 0; }
 .messages-section-aside {
   margin-inline-start: auto;
@@ -22622,18 +23198,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   text-transform: none;
   white-space: nowrap;
 }
-.messages-section-aside-ask { color: var(--accent); }
-.messages-section-chevron {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.5;
-  transition: transform 150ms;
-}
-.messages-section-name + .messages-section-chevron { margin-inline-start: auto; }
-@media (prefers-reduced-motion: reduce) { .messages-section-chevron { transition: none; } }
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .messages-section-chevron { transition: none; }
 /* A SECTION'S ROWS ARE A CARD: the grouped list's shape (@/components/ui/
    grouped-list.tsx), spelled here because these rows are app.css's. The same
    plane colour, the same 20px radius and the same inset hairline in the
@@ -22678,26 +23242,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   justify-content: center;
   font-size: 18px;
   font-weight: 700;
-}
-/* A change in flight (16 Oct 2026): an agent's pencil on a tint of its
-   project's colour (--change-ink, lib/community-color.ts), in the place of
-   the project's own icon, which for Homeroom is the bot's face. #5378: at
-   the avatars' 44px and 12px radius, so the column's tiles line up. */
-.messages-inbox-change-tile {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  color: var(--change-ink, var(--text-muted));
-  background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 14%, transparent);
-}
-.messages-inbox-change-tile svg { width: 22px; height: 22px; }
-html.dark .messages-inbox-change-tile {
-  color: color-mix(in srgb, var(--change-ink, var(--text-muted)) 45%, white);
-  background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 35%, transparent);
 }
 
 
@@ -23856,6 +24400,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-desc { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; max-height: calc(100% - 48px); overflow-y: auto; padding-block: 6px 16px; padding-inline: 46px 16px; background: var(--rf-page); border-start-start-radius: 0; border-start-end-radius: 0; border-end-end-radius: 24px; border-end-start-radius: 24px; transform: translateY(-104%); transition: transform .32s cubic-bezier(0.22,1,0.36,1), box-shadow .32s; }
 .rf-desc-wrap[data-open] .rf-desc { transform: none; box-shadow: 0 16px 40px rgba(0,0,0,.18); }
 .rf-desc-text { margin: 0; font-size: 15px; line-height: 21px; color: var(--rf-muted); white-space: pre-line; overflow-wrap: anywhere; }
+/* Across all projects the card opens on the project's name: the same type as
+   the title, before the description's lighter grey. */
+.rf-desc-app { margin: 0 0 4px; font-size: 15px; line-height: 21px; font-weight: 650; color: var(--rf-ink); overflow-wrap: anywhere; }
 .rf-desc-foot { display: flex; margin-top: 16px; margin-inline-start: -30px; }
 .rf-desc-go { flex: 1; display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 600; text-decoration: none; }
 .rf-desc-by { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
@@ -23867,6 +24414,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-help-row + .rf-help-row::before { content: ''; position: absolute; inset-inline-start: 46px; inset-inline-end: 0; top: 0; height: 1px; background: var(--rf-line); }
 .rf-help-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rf-claim { flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var(--rf-muted); text-wrap: pretty; animation: rf-claim-in .36s cubic-bezier(0.22,1,0.36,1); }
+/* The project's name leads the line across all projects, in the same bold ink
+   as the title; inline, so the line keeps its two-line height. */
+.rf-claim-app { font-weight: 650; color: var(--rf-ink); }
 @keyframes rf-claim-in { from { opacity: 0; transform: translateY(4px); } }
 .rf-hero-quiet { width: 100%; }
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
@@ -25913,8 +26463,9 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-request-status:empty { dis
    beside Open app broke onto two lines. */
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
-html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
-html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { white-space: nowrap; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: nowrap; row-gap: 2px; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-name { flex: none; min-width: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* The card's buttons (Open app; an act in the accent's tint) are the kit's
    small ones, as "Ask Homeroom bot privately" beside the words is. */
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act .gc-vote-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font: 650 13px/1 var(--fr-f); }
@@ -26138,8 +26689,7 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-fr
    the browser's own anchoring is off here as on the standard scroller,
    which dragged the list with a row that had moved), and "Oldest chats"
    (./inbox-to-end.tsx) stays at its foot: the product's own button as the
-   kit's small quiet one, over the phone's tab bar. A change in flight with
-   news not seen yet ends in the accent's dot, as the standard row does. */
+   kit's small quiet one, over the phone's tab bar. */
 html[data-skin] .messages-list-pane[data-frame-list] { overflow-anchor: none; }
 html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] { position: sticky; bottom: 0; height: 0; }
 html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] > div { bottom: calc(var(--fr-shell-bottom, 0px) + 12px) !important; }
@@ -26149,7 +26699,6 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-list-pane[data-frame-
   box-shadow: var(--fr-soft, 0 0 0 0 transparent), inset 0 0 0 1px var(--fr-line);
   font-family: var(--fr-f); font-size: 13px; font-weight: 650;
 }
-html[data-skin] [data-messages-frame-list] [data-inbox-unseen] { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fr-acc); }
 /* NEW MESSAGE'S DIALOG (features/messages/create-dialog.tsx; the tour's
    s16). The kit's sheet offers the three kinds; Direct message and Group
    chat hand over to this, the product's own dialog, dressed: its title, its
@@ -26607,6 +27156,499 @@ html[data-skin]:where(:not([data-skin="brand"])) #app-menu-row-workshop { paddin
    your home screen" on a phone): the kit's larger text and gutters left
    the standard sheet's one line 20px short. */
 html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-row-"] .truncate { white-space: normal; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE THREAD'S RAIL: "How it got here" (dev-board/topic/thread-rail.tsx).
+   A request's and a change's page say their big events down a line: asked,
+   planned, built, tested, and last where the thread stands now. The shell
+   renders the rail's host between the root post and the replies
+   (`#gc-thread-rail`, group-chat/thread-shell.tsx), which is where a narrow
+   page reads it; a wide page stands it beside them as its own card, and the
+   root post and the replies become cards too, on the page's ground.
+
+   The standard look and "Paper, simplified, with brand styling" only: the
+   frame's looks keep their own context column and draw no rail
+   (request-head.tsx), and every rule here is scoped away from them. A
+   decision's page has no rail host.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dev-request-rail:empty { display: none; }
+.dev-rail {
+  --rail-ink: var(--text-primary);
+  --rail-mut: var(--text-secondary);
+  --rail-faint: var(--text-muted);
+  --rail-line: var(--messages-hair);
+  --rail-done: var(--state-ok);
+  --rail-done-tint: color-mix(in srgb, var(--state-ok) 14%, transparent);
+  --rail-bad: var(--state-blocked);
+  --rail-bad-tint: color-mix(in srgb, var(--state-blocked) 13%, transparent);
+  --rail-now: var(--text-primary);
+  --rail-now-ink: var(--messages-surface);
+  --rail-now-ring: color-mix(in srgb, var(--lit-ink) 22%, transparent);
+  --rail-note: var(--lit-tint);
+  --rail-well: var(--messages-surface-2);
+  margin: 4px 0 14px;
+  padding: 12px 10px 6px;
+  border-radius: 16px;
+  background: var(--rail-well);
+}
+.dev-rail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 6px 8px; }
+.dev-rail-title { margin: 0; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--rail-faint); }
+.dev-rail-less { display: none; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.dev-rail-steps { list-style: none; margin: 0; padding: 0; }
+.dev-rail-step { position: relative; display: flex; gap: 12px; padding: 6px 6px 12px; }
+.dev-rail-step::before { content: ""; position: absolute; inset-inline-start: 18px; top: 34px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--rail-line); }
+.dev-rail-step:last-child { padding-bottom: 6px; }
+.dev-rail-step:last-child::before { display: none; }
+.dev-rail-mark {
+  position: relative; z-index: 1; flex: none;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--rail-done-tint); color: var(--rail-done);
+}
+.dev-rail-glyph { width: 14px; height: 14px; }
+.dev-rail-mark[data-rail-tone="bad"] { background: var(--rail-bad-tint); color: var(--rail-bad); }
+.dev-rail-mark[data-rail-tone="muted"] { background: var(--rail-line); color: var(--rail-faint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark { background: var(--rail-now); color: var(--rail-now-ink); box-shadow: 0 0 0 4px var(--rail-now-ring); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="bad"] { background: var(--rail-bad); color: #fff; box-shadow: 0 0 0 4px var(--rail-bad-tint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="ok"] { background: var(--rail-done); color: #fff; box-shadow: 0 0 0 4px var(--rail-done-tint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="muted"] { background: var(--rail-faint); color: var(--rail-now-ink); box-shadow: 0 0 0 4px var(--rail-line); }
+.dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: dev-rail-turn 1.4s linear infinite; }
+@keyframes dev-rail-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: none; } }
+:where(html[data-motion="reduce"]) .dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: none; }
+.dev-rail-body { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.dev-rail-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; line-height: 22px; }
+.dev-rail-name { font-size: 15px; font-weight: 650; color: var(--rail-ink); overflow-wrap: anywhere; }
+.dev-rail-step[data-rail-tone="bad"] .dev-rail-name { color: var(--rail-bad); }
+.dev-rail-time { margin-inline-start: auto; font-size: 12.5px; color: var(--rail-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-rail-desc { margin: 0; font-size: 13px; line-height: 19px; color: var(--rail-mut); overflow-wrap: anywhere; }
+.dev-rail-link { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.dev-rail-link:hover { text-decoration: underline; }
+.dev-rail-note { margin: 8px 0 0; padding: 9px 12px; border-radius: 12px; background: var(--rail-note); font-size: 13px; line-height: 19px; color: var(--rail-ink); overflow-wrap: anywhere; }
+/* Three tones (17 Nov 2026): the wash only when somebody has to act; a wait
+   that needs nobody is plain, and a stop is tinted red. */
+.dev-rail-note[data-rail-note="plain"] { background: var(--rail-note-plain, color-mix(in srgb, var(--rail-line) 55%, transparent)); }
+.dev-rail-note[data-rail-note="bad"] { background: var(--rail-bad-tint); }
+
+/* The folded pile: the earlier steps' markers, one over the next down the
+   line, the newest on top with its glyph, and the link that opens them. A
+   narrow page only (below); here it is put away. */
+.dev-rail-pile { display: none; position: relative; align-items: center; gap: 12px; width: 100%; padding: 4px 6px 10px; text-align: start; }
+.dev-rail-pile::before { content: ""; position: absolute; inset-inline-start: 18px; top: 28px; bottom: -6px; width: 2px; border-radius: 1px; background: var(--rail-line); }
+.dev-rail-pile-marks { position: relative; flex: none; width: 26px; }
+.dev-rail-pile-mark { position: absolute; inset-inline-start: 0; display: inline-flex; border-radius: 50%; box-shadow: 0 0 0 2px var(--rail-well); background: var(--rail-well); }
+.dev-rail-pile-more { font-size: 14px; font-weight: 600; color: var(--accent); }
+
+/* NARROW: one column. The rail sits between the root post and the replies,
+   its earlier steps folded into the pile until the reader opens them, and
+   the open steps tighter than a wide page's. */
+@media (max-width: 1179.98px) {
+  .dev-rail[data-rail-fold="shut"] .dev-rail-pile { display: flex; }
+  .dev-rail[data-rail-fold="shut"] .dev-rail-step:not([data-rail-now]) { display: none; }
+  .dev-rail[data-rail-fold="open"] .dev-rail-less { display: inline-flex; }
+  .dev-rail-step { padding: 4px 6px 6px; }
+  .dev-rail-step::before { top: 32px; bottom: -2px; }
+  .dev-rail-step[data-rail-now] { padding-top: 8px; }
+  .dev-rail-step[data-rail-now]::before { top: 36px; }
+  .dev-rail-line { line-height: 20px; }
+  .dev-rail-desc { line-height: 18px; }
+  .dev-rail-note { margin-top: 6px; padding: 8px 12px; }
+}
+
+/* THE CARDS, at every width: the root post, the timeline and the replies
+   are three cards on the page's ground, as the thread design drew them, on
+   a phone as on a desktop. A side panel (the Workshop's, or the embedded
+   one) and the page while the reader beside it is open are drawn by the
+   next block, on their own ground. A look paints them through the `-look`
+   variables (the brand look's are white); without one they are the
+   standard sheet. */
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+}
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet {
+  background: none;
+  border-top-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  min-width: 0;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+  backdrop-filter: var(--dc-frost);
+  -webkit-backdrop-filter: var(--dc-frost);
+}
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { padding: 8px 0 0; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { margin-top: 14px; padding: 6px 4px 8px; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail { margin-top: 14px; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
+  --rail-well: transparent;
+  margin: 0;
+  padding: 14px 10px 8px;
+  border-radius: 0;
+}
+/* The pile's markers lie over each other, so each needs an opaque ground. */
+html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail-pile-mark { background: var(--thread-card-solid); box-shadow: 0 0 0 2px var(--thread-card-solid); }
+
+/* IN A PANEL TOO (17 Nov 2026): the Workshop's side panel, the column
+   beside Homeroom bot's list and the page with the reader open beside it
+   drew the same page as one flat sheet, with the timeline a tinted block
+   inside it. They are the same three cards there, on the panel's own
+   ground (a look names it: `--thread-ground-look`). `#dev-topic-thread`
+   is in the scope so the replies' card outranks the thread's own rules. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: var(--thread-ground-look, transparent); }
+html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  min-width: 0;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { padding: 8px 0 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { margin-top: 14px; padding: 6px 4px 8px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail { margin-top: 14px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll { padding-top: 12px; padding-bottom: 12px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
+  --rail-well: transparent;
+  margin: 0;
+  padding: 14px 10px 8px;
+  border-radius: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail-pile-mark { background: var(--thread-card-solid); box-shadow: 0 0 0 2px var(--thread-card-solid); }
+/* The panel's own head names the project and the number, so the card's
+   kicker would say it twice. */
+html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
+
+/* WIDE: two columns. The page's header row runs across both; under it the
+   root post and the replies are cards in the first column, and the rail is
+   a card that stays put beside them. */
+@media (min-width: 1180px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
+    --thread-rail-w: 332px;
+    --thread-rail-gap: 20px;
+    max-width: 1132px;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--thread-rail-w);
+    column-gap: var(--thread-rail-gap);
+    align-content: start;
+    padding-bottom: 12px;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages) { grid-column: 1; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { grid-row: 1; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { grid-row: 2; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+    position: sticky;
+    top: 0;
+    max-height: 100%;
+    margin-top: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail { padding: 16px 10px 8px; }
+  /* The card says the title; the header row keeps the number, the pill and ⋯. */
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar .dev-request-bar-title { display: none; }
+  /* …and ends where the card does, so ⋯ is on the card and not over the timeline. */
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar { margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap)); }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) {
+    margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE THREAD'S CARD (dev-board/topic/thread-card.tsx). Beside "How it got
+   here", a request's and a change's page draw the thread as one card: a
+   kicker (the project, then "Request #N" or "Change #N"), the title, the
+   words and whose they are, the picture, and a foot that says where it
+   stands and holds the action. A step of the timeline opens its content
+   over the card, as a layer that never changes the card's height.
+
+   The pieces are rendered only under the standard look and the brand look
+   (the frame's looks keep their own page), so nothing here needs a look in
+   its selector: every rule hangs off a class those pages alone render.
+   ═══════════════════════════════════════════════════════════════════════ */
+/* THE ⋯ ON THE CARD'S FIRST LINE (17 Nov 2026). The sheet's header row
+   held only the topic's name and ⋯ under the card look: a band about 70px
+   tall above every card, on a phone too. The header keeps its markup (the
+   ⋯ and what selects on it), takes no height, and its ⋯ sits over the end
+   of the card's kicker line; the topic is said in the kicker instead. */
+.dev-request:has(.dev-thread-card) .dev-request-bar { height: 0; position: relative; z-index: 5; box-shadow: none; }
+.dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { padding: 6px 10px 0; pointer-events: none; }
+.dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action { pointer-events: auto; }
+.dev-request:has(.dev-thread-card) .dev-request-bar :is([data-request-category], [data-change-category]) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.dev-request:has(.dev-request-bar [data-card-menu]) .dev-thread-kicker { padding-inline-end: 44px; }
+/* THE REPLY BOX FOLLOWS THE REPLIES (17 Nov 2026). The scroller filled the
+   sheet, so the box was pinned to the bottom of the window however short
+   the thread: far under a card with two replies. The scroller is now only
+   as tall as what it holds, so the box sits right under the replies, and
+   it is pinned again (the scroller shrinks and scrolls) once the thread is
+   taller than the window. */
+.dev-request:has(.dev-thread-card) .dev-request-scroll { flex-grow: 0; }
+/* The author row gives way to the kicker; the timeline says who and when. */
+.dev-thread-card { position: relative; --foot-x: 16px; --foot-b: 16px; }
+/* The card's own gutters, so the foot's band can reach its edges exactly. */
+.dev-request-root.dev-thread-card { padding: 4px var(--foot-x) var(--foot-b); }
+@media (min-width: 1180px) { .dev-thread-card { --foot-x: 20px; --foot-b: 18px; } }
+.dev-thread-card > :first-child:not(.min-w-0) { display: none; }
+.dev-thread-card .messages-message-head { display: none; }
+.dev-thread-kicker { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 13px; line-height: 20px; font-weight: 500; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-kicker-tile { flex: none; width: 20px; height: 20px; border-radius: 6px; font-size: 11px; overflow: hidden; }
+/* The sheet's header keeps the category and ⋯; the card says the rest. */
+.dev-request:has(.dev-thread-card) #gc-thread-bar :is(.messages-thread-kicker, .messages-thread-name, [data-request-status], [data-change-status]) { display: none; }
+.dev-thread-card .dev-request-title { font-size: 22px; line-height: 28px; letter-spacing: -0.01em; text-wrap: balance; }
+/* The words are the card's own, not a quote of somebody. */
+.dev-thread-card .dev-request-ask { margin-top: 6px; padding-inline: 0; border-inline-start: 0; }
+.dev-thread-card .dev-request-ask-text { font-size: 15.5px; line-height: 24px; max-width: 70ch; }
+.dev-thread-by { display: flex; align-items: center; gap: 6px; margin: 6px 0 0; font-size: 12.5px; line-height: 18px; color: var(--text-muted); }
+.dev-thread-by-glyph { flex: none; width: 14px; height: 14px; }
+
+/* The foot: where it stands, once, and the action. */
+/* A band across the card: its line and its ground reach the card's edges,
+   and where the foot ends the card (thread-card.tsx marks it) the band runs
+   to the card's own rounded end. */
+.dev-thread-foot {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+  margin: 16px calc(-1 * var(--foot-x)) 0; padding: 14px var(--foot-x);
+  border-top: 1px solid var(--app-sheet-line);
+  background: var(--thread-foot, transparent);
+}
+.dev-thread-foot[data-thread-foot-end] {
+  margin-bottom: calc(-1 * var(--foot-b)); padding-bottom: 16px;
+  border-radius: 0 0 var(--thread-card-r, 0px) var(--thread-card-r, 0px);
+}
+.dev-thread-foot-st { flex: 1 1 180px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dev-thread-foot-head { font-size: 17px; line-height: 22px; font-weight: 700; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-thread-foot[data-thread-foot-tone="bad"] .dev-thread-foot-head { color: var(--state-blocked); }
+.dev-thread-foot[data-thread-foot-tone="ok"] .dev-thread-foot-head { color: var(--state-ok); }
+.dev-thread-foot[data-thread-foot-tone="muted"] .dev-thread-foot-head { color: var(--text-secondary); }
+.dev-thread-foot-sub { font-size: 13px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-foot-bar { display: block; height: 4px; max-width: 280px; margin-top: 6px; border-radius: 2px; background: var(--messages-hair); overflow: hidden; }
+.dev-thread-foot-bar > i { display: block; height: 100%; border-radius: 2px; background: var(--lit-ink); }
+.dev-thread-foot-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* The foot's actions are full pills: the one to press, and the quieter ones
+   beside it. The vote's caret is put away: one Vote, and the question after. */
+.dev-thread-foot-acts :is(button, a):not(.dev-change-gate-link) {
+  height: 40px; min-height: 40px; padding-block: 0; padding-inline: 18px; border-radius: 999px;
+  font-size: 15px; font-weight: 650; line-height: 1;
+}
+.dev-thread-foot-acts .dev-vote-caret { display: none; }
+.dev-thread-foot-extra { flex-basis: 100%; min-width: 0; }
+.dev-thread-foot-ask { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.dev-thread-foot-q { flex-basis: 100%; margin: 0; font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-foot-also { margin: 0; font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-foot-also[data-thread-foot-also="bad"] > span { color: var(--state-blocked); }
+@media (max-width: 520px) {
+  .dev-thread-foot-acts { flex-basis: 100%; }
+  /* On a phone the one to press takes the row it is on. */
+  .dev-thread-foot-acts > :is(.dev-vote-btn, .dev-request-primary, :has(> .dev-vote-btn)):last-child { flex: 1 1 auto; }
+  .dev-thread-foot-acts > :has(> .dev-vote-btn):last-child > .dev-vote-btn { width: 100%; }
+  /* …and the others share it, so none is a small pill beside empty space. */
+  .dev-thread-foot-acts > :is(button, a), .dev-thread-foot-acts > [data-thread-foot-next] > :is(button, a) { flex: 1 1 auto; justify-content: center; }
+  .dev-thread-foot-acts > :has(> .dev-vote-btn) { flex: 1 1 auto; }
+  .dev-thread-foot-acts > :has(> .dev-vote-btn) > .dev-vote-btn { width: 100%; }
+}
+
+/* Where the picture will be, before there is one. */
+.dev-thread-wait,
+.dev-thread-card .dev-change-shots-plain {
+  margin-top: 14px; min-height: 132px; padding: 20px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  border-radius: 16px; text-align: center;
+  background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-secondary);
+}
+/* The card's picture: the shots viewer read as one picture. The Before and
+   After switch lies over the picture's foot, the side's name is a chip at
+   its top end, and the screens are tiles under it with the legend of the
+   one showing. Expanded to the window (its popover) the viewer is its usual
+   self, so every rule here leaves the open popover alone. */
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-view { position: relative; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar {
+  position: absolute; z-index: 4; inset-inline: 0; bottom: 10px;
+  display: flex; justify-content: center; align-items: center; gap: 8px;
+  margin: 0; padding: 0; pointer-events: none;
+}
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-bar > * { pointer-events: auto; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.dev-change-card-name, .shots-seg-both, .shots-screen-nav, .shots-view-notes) { display: none; }
+/* The switch is a white pill over the picture in either scheme, so its
+   resting label keeps a dark ink; :where keeps the viewer's own rule for
+   the side that is showing on top. */
+:where([data-thread-picture] .dev-change-viewer:not(:popover-open)) .shots-seg-side .shots-seg-btn { color: #52525b; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-seg-side { margin-inline: auto; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-expand { position: absolute; inset-inline-end: 10px; bottom: 0; margin: 0; }
+[data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { inset-inline-start: auto; inset-inline-end: 10px; }
+/* One picture, one switch (17 Nov 2026): the screen-size switch and the
+   light and dark flip are the expanded viewer's, a press on Expand away. */
+[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.shots-seg-size, .shots-theme-flip) { display: none; }
+/* The caption under the tiles is one quiet line a screen, not a heading:
+   the viewer's own bold claim and its key to the outlines are for the
+   expanded view. */
+.dev-thread-tiles-legend .shots-change strong { font-size: 13.5px; line-height: 19px; font-weight: 400; color: var(--text-secondary); }
+.dev-thread-tiles-legend .shots-change-n { width: 18px; height: 18px; font-size: 11px; }
+.dev-thread-tiles-legend .shots-key { display: none; }
+/* The chip says what the side is for this change ("If it passes · After"):
+   the page hands the words as CSS strings (change-head.tsx), drawn in place
+   of the viewer's own one word. */
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip { font-size: 0; letter-spacing: 0.04em; text-transform: uppercase; }
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip::after { font-size: 11px; line-height: 14px; font-weight: 700; }
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-after::after { content: var(--thread-chip-after); }
+[data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-before::after { content: var(--thread-chip-before); }
+/* The same picture where the run worked out its screens: the Needs you
+   page's slider (.rf-compare), in the card's own colours. No outline and no
+   tint: the seam is what tells the two sides apart. Expand opens the full
+   viewer in the detail column. */
+.dev-thread-picture { margin-top: 14px; overflow: visible; background: none; }
+.dev-thread-compare {
+  --rf-black: var(--text-primary); --rf-cream: var(--bg-primary); --rf-line: var(--app-sheet-line);
+  position: relative; min-height: 120px; border-radius: 16px; overflow: hidden; isolation: isolate;
+  background: var(--messages-surface-2);
+}
+.dev-thread-compare::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--app-sheet-line); pointer-events: none; }
+.dev-thread-compare-expand {
+  position: absolute; z-index: 5; inset-inline-end: 12px; bottom: 12px; width: 40px; height: 40px; padding: 0;
+  display: grid; place-items: center; border: 1.5px solid var(--rf-black); border-radius: 999px;
+  background: var(--rf-cream); color: var(--rf-black); cursor: pointer;
+}
+.dev-thread-compare-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
+.dev-thread-tiles-said > li + li { margin-top: 4px; }
+.dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
+.dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
+.dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.dev-thread-tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--messages-surface), 0 0 0 4px var(--text-primary); }
+.dev-thread-tiles-cap { flex: 1 1 auto; min-width: 0; }
+.dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-tiles-legend { display: block; }
+@media (max-width: 520px) { .dev-thread-tiles { flex-wrap: wrap; } .dev-thread-tiles-cap { flex-basis: 100%; } }
+.dev-thread-wait > b { font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-thread-wait > span { max-width: 46ch; font-size: 13.5px; line-height: 20px; }
+
+/* A step's content, over the card. */
+.dev-step-layer { position: absolute; inset: 0; z-index: 6; }
+.dev-step-scrim { position: absolute; inset: -6px; top: var(--step-floor, -6px); border-radius: 14px; background: var(--messages-surface); opacity: 0.78; cursor: default; }
+.dev-step-sheet {
+  position: absolute; inset-inline: 0; top: 8px;
+  overflow: auto; overscroll-behavior: contain;
+  padding: 0 16px 16px; border-radius: 16px;
+  background: var(--messages-surface-2);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 14px 36px rgba(0, 0, 0, 0.2);
+  animation: dev-step-rise 0.16s ease-out;
+}
+@keyframes dev-step-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .dev-step-sheet { animation: none; } }
+:where(html[data-motion="reduce"]) .dev-step-sheet { animation: none; }
+.dev-step-head {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px;
+  margin: 0 -16px; padding: 12px 16px 8px;
+  background: var(--messages-surface-2); box-shadow: 0 1px 0 var(--app-sheet-line);
+  border-radius: 16px 16px 0 0;
+}
+.dev-step-title { display: block; font-size: 15px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-step-sub { display: block; font-size: 13px; line-height: 18px; color: var(--text-secondary); }
+.dev-step-when { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
+.dev-step-close {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--messages-surface); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-primary);
+}
+.dev-step-body { padding-top: 12px; }
+.dev-step-doc { font-size: 15px; line-height: 24px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-step-doc .dev-issue-body { font-size: inherit; color: inherit; }
+.dev-step-plain { margin: 0; font-size: 14px; line-height: 20px; color: var(--text-secondary); }
+.dev-step-who { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 14px; color: var(--text-secondary); }
+.dev-step-who > b { font-weight: 650; color: var(--text-primary); }
+@media (max-width: 520px) { .dev-step-when { display: none; } .dev-step-sheet { padding-inline: 12px; } .dev-step-head { margin-inline: -12px; padding-inline: 12px; } }
+
+/* One step, one thing: the Tested step's layer shows the tests, the vote's
+   step its votes (change-head.tsx ChangeGates). */
+/* The tests as counts and rows (change-head.tsx ChecksSummary); the Testing
+   card under it is put away while they are drawn. */
+[data-gates-show="checks"]:has(> [data-checks-summary]) .dev-change-pair [data-change-gate="testing"] { display: none; }
+.dev-thread-facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.dev-thread-fact {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 10px; border-radius: 999px;
+  background: var(--thread-fact, var(--messages-surface)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 13px; line-height: 18px; font-weight: 600; color: var(--text-secondary);
+}
+.dev-thread-fact[data-tone="bad"] { background: color-mix(in srgb, var(--state-blocked) 12%, transparent); box-shadow: none; color: var(--state-blocked); }
+.dev-thread-fact[data-tone="ok"] { background: color-mix(in srgb, var(--state-ok) 14%, transparent); box-shadow: none; color: var(--state-ok); }
+.dev-checks-sum > .dev-thread-facts { margin-top: 0; }
+.dev-checks-why { margin: 10px 0 0; font-size: 13.5px; line-height: 20px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-checks-rows { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dev-checks-row {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px;
+  background: var(--thread-fact, var(--messages-surface)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere;
+}
+.dev-checks-row > b { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-checks-row > b > svg { margin-top: 3px; color: var(--state-blocked); }
+.dev-checks-row[data-checks-row="advisory"] > b > svg { color: var(--text-muted); }
+.dev-checks-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.dev-checks-acts:empty { display: none; }
+[data-gates-show="checks"] .dev-change-pair [data-change-gate="votes"],
+[data-gates-show="votes"] .dev-change-pair :is([data-change-gate="testing"], [data-change-gate="merge"]) { display: none; }
+
+/* A request with competing changes: a row each, its picture first, then its
+   letter and name, what its tests say and its yes votes, and Look, which
+   opens the change over the card. */
+.dev-thread-opts { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.dev-thread-opt {
+  display: flex; align-items: center; gap: 14px; width: 100%; padding: 10px; border-radius: 16px; text-align: start;
+  background: var(--thread-opt, var(--messages-surface)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+@media (hover: hover) { .dev-thread-opt:hover { box-shadow: inset 0 0 0 1px var(--text-muted); } }
+.dev-thread-opt-pic {
+  flex: none; width: 132px; height: 84px; border-radius: 10px; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 22px; font-weight: 700; color: var(--text-muted);
+}
+.dev-thread-opt-pic > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.dev-thread-opt-main { flex: 1 1 auto; min-width: 0; }
+.dev-thread-opt-name { display: block; font-size: 15.5px; line-height: 21px; font-weight: 650; color: var(--text-primary); overflow-wrap: anywhere; }
+.dev-thread-opt-line { display: block; margin-top: 2px; font-size: 13px; line-height: 18px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-thread-opt-line [data-opt-tests="bad"] { color: var(--state-blocked); font-weight: 600; }
+.dev-thread-opt-look { flex: none; display: inline-flex; align-items: center; gap: 4px; padding-inline: 4px 6px; font-size: 14.5px; font-weight: 650; color: var(--accent); white-space: nowrap; }
+@media (max-width: 520px) { .dev-thread-opt-pic { width: 84px; height: 60px; font-size: 18px; } .dev-thread-opt { gap: 10px; } }
+/* A change opened over the card from its row: the section its fold held. */
+.dev-step-body > [data-thread-look] { padding-bottom: 4px; }
+
+/* The timeline: a step with something to show is one press, the whole step. */
+.dev-rail-step { display: block; padding: 0; }
+.dev-rail-press { display: flex; gap: 12px; width: 100%; padding: 6px 6px 12px; border-radius: 12px; text-align: start; }
+.dev-rail-step:last-child .dev-rail-press { padding-bottom: 6px; }
+.dev-rail-desc, .dev-rail-note { display: block; }
+@media (hover: hover) { button.dev-rail-press:hover { background: color-mix(in srgb, var(--rail-line) 55%, transparent); } }
+/* The step the thread stands on is boxed, so the eye lands on it. */
+.dev-rail-step[data-rail-now] .dev-rail-press { background: var(--rail-now-box, transparent); box-shadow: inset 0 0 0 1px var(--rail-now-box-line, transparent); }
+.dev-rail-step[data-rail-on] .dev-rail-press { background: color-mix(in srgb, var(--rail-line) 55%, transparent); box-shadow: inset 0 0 0 1px var(--rail-line); }
+@media (max-width: 1179.98px) {
+  .dev-rail-step { padding: 0; }
+  .dev-rail-press { padding: 4px 6px 6px; }
+  .dev-rail-step[data-rail-now] { padding-top: 0; }
+  .dev-rail-step[data-rail-now] .dev-rail-press { padding-top: 8px; }
+}
 
 /* THE BELL'S SHEET (features/notifications/notifications-sheet.tsx, the
    bar's bell). The sheet stays the product's: its search, its Unread and
@@ -27865,6 +28907,10 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-on-solid: #ffffff;
   --bl-tint-sun: #fff6ac;
   --bl-tint-sky: #e3eefb;
+  /* The line round a message's bubble, and round your own on sky. */
+  --bl-bubble-line: rgba(18, 26, 14, 0.14);
+  --bl-bubble-line-own: rgba(26, 99, 196, 0.24);
+  --bl-card-line: rgba(18, 26, 14, 0.2);
   --bl-tint-leaf: #e2f2dc;
   --bl-on-tint: #121a0e;
   --bl-edge: rgba(18, 26, 14, 0.07);
@@ -27947,6 +28993,9 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-bubble-line: rgba(220, 230, 248, 0.2);
+  --bl-bubble-line-own: rgba(127, 188, 247, 0.42);
+  --bl-card-line: rgba(220, 230, 248, 0.26);
   --bl-tint-leaf: rgba(150, 184, 133, 0.22);
   --bl-on-tint: #eef2f8;
   --bl-edge: rgba(220, 230, 248, 0.08);
@@ -28471,3 +29520,103 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   margin: 2px 0 10px;
   background: url('/illustrations/people/log.png') center / contain no-repeat;
 }
+
+/* A THREAD'S PAGE. Its cards on a wide page (the root post, the replies and
+   "How it got here": the block "THE THREAD'S RAIL" lays them out) are this
+   look's cards: opaque on the page, with the lift every card here has. The
+   step the thread stands on is the ink marker in a sun ring, and its second
+   line is on the sun wash, as a thing to do is. The rail's heading is a
+   sentence, as every label over a group is. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request {
+  --thread-card-look: var(--bl-card);
+  --thread-card-solid-look: var(--bl-card);
+  --thread-card-edge-look: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  --thread-card: var(--bl-card);
+  --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  /* The foot's band: the card with a breath of sun in it. */
+  --thread-foot: color-mix(in srgb, var(--bl-sun) 9%, var(--bl-card));
+  --thread-opt: var(--bl-card);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail {
+  --rail-now-ring: var(--bl-sun);
+  --rail-note: var(--bl-wash);
+  --rail-well: var(--bl-page);
+  --rail-done-tint: var(--bl-tint-leaf);
+}
+/* The note under the step it stands on is a pale wash on the white card,
+   not the header's yellow. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-rail { --rail-now: var(--bl-solid); --rail-now-ink: var(--bl-on-solid); --rail-note: color-mix(in srgb, var(--bl-wash) 50%, var(--bl-card)); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dev-rail { --rail-now: var(--bl-sun); --rail-now-ink: var(--bl-on-sun); --rail-now-ring: rgba(255, 238, 111, 0.3); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail-title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bl-label);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-rail-link, .dev-rail-less, .dev-rail-pile-more) { color: var(--bl-sky); }
+/* The foot's one action is the look's sun pill, and the quieter ones beside
+   it are white pills on a line, as the website's two buttons are. The step
+   the thread stands on is boxed on the page's cream. The picture's switch
+   is ink where it is on, and its chip ink too: green and red said "good"
+   and "bad" about a before and an after, which are neither. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary),
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-ask .dev-vote-btn[aria-checked="true"] {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary, .dev-change-gate-link) {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); --rail-note-plain: transparent; }
+/* A fact chip and a failed test's row are white on the layer's cream. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-card { --thread-fact: var(--bl-card); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-before:checked) .shots-seg-before,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-after:checked) .shots-seg-after {
+  background: var(--bl-solid);
+  color: var(--bl-on-solid);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { background: rgba(18, 26, 14, 0.82); color: #ffffff; }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-opt-look { color: var(--bl-sky); }
+/* A thread in a panel: the panel's ground is the page's cream, so its three
+   cards are white on it as a full page's are. The column beside Homeroom
+   bot's list paints its body (#6432), so the body is named too. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request { --thread-ground-look: var(--bl-page); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])).in-side-panel.side-panel-beside-ai body:has(.dev-thread-card) { background: var(--bl-page) !important; }
+/* Failed tests: the foot's one sun pill is what moves it on (Fix it, or the
+   re-run), and Vote steps back to a white pill beside See what failed. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot[data-thread-foot="failed"] .dev-thread-foot-acts .dev-vote-btn {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts [data-thread-foot-next] :is(button, a) {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+/* A CONVERSATION'S BUBBLES (17 Nov 2026). A thread is a white card in this
+   look, as a request's replies and Homeroom bot's thread list are, and a
+   bubble from the other side was white on it (--messages-surface), your own
+   a grey one shade off (--accent-tint), and a card of the bot's a third
+   white: nothing had an edge. Inside the card, then: the other side's words
+   sit on the page's cream and yours on the sky tint, each with a thin line
+   round it, and the bot's cards keep their white with a firmer line, so a
+   card is the one white thing among the bubbles. A saved message keeps its
+   accent outline. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.messages-bubble, .gc-bubble) { background: var(--bl-page); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-self .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { background: var(--bl-tint-sky); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-bubble:not(.messages-message-saved) .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble { box-shadow: inset 0 0 0 1px var(--bl-bubble-line); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-bubble.messages-message-self:not(.messages-message-saved) .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { box-shadow: inset 0 0 0 1px var(--bl-bubble-line-own); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-bot-card-state] { box-shadow: inset 0 0 0 1px var(--bl-card-line); }

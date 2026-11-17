@@ -390,6 +390,31 @@
       "id": "moved-chats",
       "sha256": "c8c6b9518cd824e77b7f819f1e910533c4b725e0228e1995f6fa379b1cdccf81",
       "schemaSha256": "61b3ca527e4f285f860e86637b0ae0b4b6da4c6f6d1740a034010389ec81e64b"
+    },
+    {
+      "id": "chat-messages-client-key",
+      "sha256": "4d6a76708d16d32917100be4cd74422011fa39c348d1d55312a6af83e38567f4",
+      "schemaSha256": "bfefb0ba5730958609baaa51e29f0eeb2cc2bb1a13738152cbbb273cddf582f9"
+    },
+    {
+      "id": "request-summaries",
+      "sha256": "e5c30240f6771f3dbceae9da6540e2cefa4dab0fe961f8f84833958562759d93",
+      "schemaSha256": "6b2e5fe4998f0fdae27de7ec26bfb939a577280227a1c73197d6f2ff4f7755a3"
+    },
+    {
+      "id": "homeroom-bot-run-go-ahead-blocker",
+      "sha256": "df1654bbf2ff6ddfd3fb37fbb15eee15c95c4d64bffcf14a57596f1c9606e4e1",
+      "schemaSha256": "abb00afd2ad35eb1f854174240050bd46c011101d2de248d57d5130721853179"
+    },
+    {
+      "id": "private-thread-titles",
+      "sha256": "93ec3bcb9839de4fdc2a0ce7cea2eb3973224e22b51882fbb59fe1913675637e",
+      "schemaSha256": "7b054a8ea97e1cf59dd97945b0bbc7bfc701cdebeaad5046a0914d6c8cc56afb"
+    },
+    {
+      "id": "bot-cards-target-app",
+      "sha256": "4f24f85148bc4953343a0d2ed40002503eb33611adaf3c1a8c3a6db3225d0f13",
+      "schemaSha256": "b83e961322ac8ab1972aa5195c9523264663fce1bb4c0efde48606ec32a20005"
     }
   ]
 }

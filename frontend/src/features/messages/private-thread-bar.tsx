@@ -40,6 +40,10 @@
  * request or a change to a project that exists has no door, even when the
  * thread is not tied to a project.
  *
+ * 17 Nov 2026 (#6763): a "+" thread's project is the chip's preset (New chat
+ * starts on the project you were on), not what the idea is about, so the
+ * bot's offer opens New project there too, project set or not.
+ *
  * The first render is nothing: where the thread stands is read in an effect
  * (`usePrivateThread`, held by the thread's pane for its head and its foot).
  *
@@ -81,6 +85,12 @@ export interface PrivateThreadState {
    */
   title?: string | null;
   /**
+   * #6764 (17 Nov 2026): the thread's name is a stored one, an automatic
+   * summary ('auto') or the person's own ('person'), so the row and this
+   * head both take it ahead of the first words.
+   */
+  titled?: 'auto' | 'person';
+  /**
    * 1 Nov 2026: whether it is the viewer's private thread at all: a row of
    * theirs, or a root that is their own message (services/private-threads.js
    * stateOf). Absent from an older server (isOwnPrivateThread).
@@ -113,6 +123,9 @@ export function doorsFor(where: PrivateThreadState | null, botReplied: boolean, 
   if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
   // B04: a screen drawn for no project yet is made into one, with its drawing.
   if (where.design && !where.app && where.kind !== 'draft_request' && where.kind !== 'draft_reply') return ['new'];
+  // #6763: a "+" thread's project is the chip's preset, not what the idea is
+  // about, so the bot's offer opens New project there even with one set.
+  if (where.kind === 'ask' && invited) return ['new'];
   // A design thread's bot offers the project itself (design-bot.js offer_project).
   if (where.kind === 'draft_request' || where.kind === 'draft_reply' || where.kind === 'design' || where.app) return [];
   return invited ? ['new'] : [];
@@ -123,7 +136,7 @@ interface ThreadMessage {
   sender: { id: number; bot?: boolean };
   metadata?: {
     homeroomBot?: {
-      kind?: string; designTitle?: string; projectIdea?: string; draftTitle?: string;
+      kind?: string; designTitle?: string; projectIdea?: string; projectName?: string; draftTitle?: string;
       aboutKind?: 'request' | 'change'; aboutNumber?: number; aboutTitle?: string;
       /** #6523: the kind of thread the bot opened here; 'project' for a new one. */
       changeKind?: string;
@@ -209,17 +222,54 @@ export function privateThreadTitle(root: ThreadMessage | null | undefined, repli
 }
 
 /**
- * Pure: the words File it and Post it start from: the root's, when it is
- * the viewer's own message; else (1 Nov 2026: a thread off a line of the
- * bot's) their first message in it, as the server takes them.
+ * Pure: the words File it and Post it start from: the brief Homeroom bot
+ * wrote when it offered New project (17 Nov 2026, #6781: the project as
+ * agreed, with their answers folded in); else (1 Nov 2026: a thread off a
+ * line of the bot's) the idea it opened for; else everything the viewer
+ * wrote in the thread, in order, not only their first message.
  */
 export function privateThreadWords(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string {
-  if (root && !root.sender.bot && root.sender.id === meId) return root.content || '';
+  // #6781: the newest offer's brief wins, over the root's words and theirs.
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const message = replies[i];
+    if (!message.sender.bot) continue;
+    const brief = message.metadata?.homeroomBot?.projectIdea;
+    if (brief && brief.trim()) return brief;
+  }
   // B04 (audit 2 Nov 2026): a new project's thread starts from its idea,
   // not from whatever they answered the bot with first.
   const idea = root?.sender.bot && root.metadata?.homeroomBot?.kind === 'opened_thread' ? root.metadata.homeroomBot.projectIdea : null;
   if (idea) return idea;
-  return firstOwn(replies, meId)?.content || '';
+  return ownWords(root, replies, meId);
+}
+
+/**
+ * Pure (#6781): every message the viewer wrote in the thread, in order, a
+ * blank line between them, cut at 4000 characters (BRIEF_MAX): the make
+ * screen's start when no brief was offered.
+ */
+function ownWords(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string {
+  const mine: string[] = [];
+  if (root && !root.sender.bot && !!meId && root.sender.id === meId) mine.push(String(root.content || ''));
+  for (const message of replies) {
+    if (message.sender.bot || !meId || message.sender.id !== meId) continue;
+    mine.push(String(message.content || ''));
+  }
+  return mine.map((part) => part.trim()).filter(Boolean).join('\n\n').slice(0, 4000);
+}
+
+/**
+ * Pure (#6781): the name Homeroom bot suggested with its newest offer, for
+ * the make screen's "What should we call it?"; '' when it named none.
+ */
+export function privateThreadName(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[]): string {
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const message = replies[i];
+    if (!message.sender.bot) continue;
+    const name = message.metadata?.homeroomBot?.projectName;
+    if (name && name.trim()) return name;
+  }
+  return '';
 }
 
 // ── A thread the server names (14 Nov 2026) ─────────────────────────────
@@ -243,10 +293,10 @@ export function noteThreadName(rootId: number | null | undefined, name: string |
   if (rootId && said) serverNames.set(rootId, said);
 }
 
-/** Keep the names of the rows the server names by kind (the Homeroom bot page's read of its lists). */
-export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null }> | null | undefined): void {
+/** Keep the names of the rows the server names itself: by kind, or by a stored title (#6764). */
+export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null; titled?: string | null }> | null | undefined): void {
   for (const row of rows || []) {
-    if (row && KINDS_NAMED.has(String(row.kind))) noteThreadName(row.rootId, row.title);
+    if (row && (KINDS_NAMED.has(String(row.kind)) || row.titled)) noteThreadName(row.rootId, row.title);
   }
 }
 
@@ -263,15 +313,24 @@ export function usePrivateThread(rootId: number | null): [PrivateThreadState | n
     setWhere(null);
     if (!rootId) return undefined;
     let live = true;
-    fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data || typeof data.state !== 'string') return;
-        noteThreadName(rootId, data.title);
-        if (live) setWhere(data);
-      })
-      .catch(() => {});
-    return () => { live = false; };
+    const read = () => {
+      fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data || typeof data.state !== 'string') return;
+          noteThreadName(rootId, data.title);
+          if (live) setWhere(data);
+        })
+        .catch(() => {});
+    };
+    read();
+    // #6764: an automatic title written after the bot's answer reaches an
+    // open head without a reload, as the lists re-read on the same push.
+    window.addEventListener('homeroom-bot-work-changed', read);
+    return () => {
+      live = false;
+      window.removeEventListener('homeroom-bot-work-changed', read);
+    };
   }, [rootId]);
   return [where, setWhere];
 }
@@ -358,9 +417,11 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
 }
 
 /** The thread's foot: New project, when Homeroom bot offers one, and who it is for. */
-export function PrivateThreadDoors({ rootId, text, where, botReplied, invited = false, working = false }: {
+export function PrivateThreadDoors({ rootId, text, name = '', where, botReplied, invited = false, working = false }: {
   rootId: number;
   text: string;
+  /** #6781: the name Homeroom bot suggested with its offer, when it did. */
+  name?: string;
   where: PrivateThreadState | null;
   /** Homeroom bot has answered in the thread. */
   botReplied: boolean;
@@ -395,7 +456,7 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied, invited = 
 
   const startProject = (audience: Audience) => {
     const app = typeof window !== 'undefined' ? (window as any).App : null;
-    app?.showCreateModal?.({ idea: text, audience });
+    app?.showCreateModal?.({ idea: text, name, audience });
   };
   return (
     <div className="px-4 py-2" data-private-doors={doors.join(' ')}>
