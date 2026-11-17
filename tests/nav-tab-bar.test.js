@@ -1016,7 +1016,7 @@ test('a plain press on another tab lights it and slides first; the router answer
     'the pressed tab is lit until the router answers');
   const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
   assert.match(click, /if \(nav\?\.isNativeClick\?\.\(event\)\) return;/, 'a modified click stays the browser\'s');
-  assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, target\), fallback\)\) \{\s*event\.preventDefault\(\);/);
+  assert.match(click, /if \(key !== lit && press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)\) \{\s*event\.preventDefault\(\);/);
   const press = src.slice(src.indexOf('const press = (el: HTMLElement'), src.indexOf('return { box, lit, markerRef, press };'));
   assert.ok(press.indexOf('place(el, true);') < press.indexOf('schedulePress('), 'the pill moves in the press\'s own task');
   assert.match(press, /schedulePress\(pending, key, go, \(\) => setPressed\(null\), undefined, undefined, undefined, fallback\);/);
@@ -1040,8 +1040,11 @@ test('#6714: the AI tab pressed from a project carries the project, and nothing 
   assert.match(href, /\.App\?\.currentApp;/, 'the project on screen');
   assert.match(href, /return botTabAddress\(slug \|\| null\);/, 'its chip, chosen');
   const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
-  assert.match(click, /const target = tabHref\(key, href\);/);
-  assert.match(click, /if \(target !== href\) \{\s*event\.preventDefault\(\);\s*window\.location\.assign\(target\);\s*return;\s*\}/,
+  assert.match(click, /const ask = href;\s*href = tabHref\(key, href\);/,
+    'the press resolves its destination, the rendered href kept to tell them apart');
+  assert.match(click, /press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)/,
+    'the press navigates to the addressed destination');
+  assert.match(click, /if \(href !== ask\) \{\s*event\.preventDefault\(\);\s*window\.location\.assign\(href\);\s*return;\s*\}/,
     'a press the pill cannot slide takes the addressed destination');
   // The rendered href stays the bare tab: the prerender and a modified click
   // (a new tab) are unchanged.
@@ -1151,7 +1154,7 @@ test('#5730: only a Communities press carries a fallback, guarded on the screen 
   const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
   assert.match(click, /const left = navStore\.get\(\)\.screen;\s*const fallback = key === 'workshop'\s*\? \(\) => \{ if \(navStore\.get\(\)\.screen === left\) openCommunitiesPage\(\); \}\s*: undefined;/,
     'captured at press time, and it acts only if that is still the screen on show');
-  assert.match(click, /press\(event\.currentTarget, key, \(\) => goToTab\(key, target\), fallback\)/,
+  assert.match(click, /press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)/,
     'the press is given it; every other tab passes none');
   // The fallback is the page, not the drawer's road that just failed.
   const open = src.slice(src.indexOf('function openCommunitiesPage('), src.indexOf('export function PlatformTabs()'));

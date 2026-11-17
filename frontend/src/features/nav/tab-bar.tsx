@@ -1083,16 +1083,23 @@ export function PlatformTabs() {
     const fallback = key === 'workshop'
       ? () => { if (navStore.get().screen === left) openCommunitiesPage(); }
       : undefined;
-    const target = tabHref(key, href);
-    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, target), fallback)) {
+    // WHERE THIS PRESS GOES (#6714). Usually the tab's own href, but the AI
+    // tab pressed from a project's page names that project, so its filter
+    // offers it and starts on it. The anchor keeps the bare tab as its href
+    // (a modified click opens the tab unfiltered, and the prerender is
+    // untouched); `ask` is that rendered address, kept to tell the two apart
+    // where no pill can slide.
+    const ask = href;
+    href = tabHref(key, href);
+    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href), fallback)) {
       event.preventDefault();
       return;
     }
-    // The pill cannot slide: the tab's destination is taken directly, and it
-    // is the addressed one (#6714).
-    if (target !== href) {
+    // No pill to slide (a phone's bar, or motion reduced): the press navigates
+    // at once, and to the addressed destination rather than the bare tab.
+    if (href !== ask) {
       event.preventDefault();
-      window.location.assign(target);
+      window.location.assign(href);
       return;
     }
     const now = key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined;
