@@ -139,6 +139,8 @@ export interface RequestRailInput {
   words?: boolean;
   /** Homeroom bot's progress on it is known, so the last step can open it. */
   track?: boolean;
+  /** The letter each competing change has on the ballot (A, B, C), by its id: its step is named by it. */
+  letters?: ReadonlyMap<number, string> | null;
 }
 
 /** A request's page: asked, planned, each change built, its tests, then where it stands. */
@@ -160,12 +162,15 @@ export function requestRail(input: RequestRailInput): RailStep[] {
   for (const item of changes) {
     // A change still being built is the now step's to say, not an event yet.
     if (item.state === 'underway' && !item.ready) continue;
+    const letter = input.letters?.get(item.id) || null;
     steps.push(step({
       key: `built:${item.id}`,
       icon: 'built',
-      title: many && item.number != null
-        ? { id: 'project:topic.rail.builtNumbered', values: { number: item.number } }
-        : { id: 'project:topic.rail.built' },
+      title: letter
+        ? { id: 'project:topic.rail.builtLettered', values: { letter } }
+        : many && item.number != null
+          ? { id: 'project:topic.rail.builtNumbered', values: { number: item.number } }
+          : { id: 'project:topic.rail.built' },
       at: item.at || null,
       desc: item.by ? { id: 'project:topic.rail.by', values: { name: item.by } } : null,
       link: many ? { label: { id: 'project:topic.rail.openChange' }, open: { kind: 'change', changeId: item.id } } : null,

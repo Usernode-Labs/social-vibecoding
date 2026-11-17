@@ -39,7 +39,7 @@
  * clashes with the version's own changes, Ask Homeroom bot to fit it.
  */
 
-import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, forwardRef, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 
 import { Html } from '../../../lib/html';
@@ -559,10 +559,12 @@ export function StackNotice({ v }: { v: ChangeThreadView }): ReactNode {
 }
 
 /** The Before and after card: the shots, or the line that says where they are. */
-function ShotsCard({ s, single = false }: {
+export function ShotsCard({ s, single = false, status = null }: {
   s: NonNullable<ChangeThreadView['shots']>;
   /** The card's picture: it opens on After alone, one picture with the switch, not side by side. */
   single?: boolean;
+  /** The change's status key, for what the picture's two sides are called. */
+  status?: string | null;
 }): ReactNode {
   const t = useMessages('project');
   const box = useRef<HTMLElement>(null);
@@ -600,6 +602,16 @@ function ShotsCard({ s, single = false }: {
     return () => el.removeEventListener('change', read);
   }, [single, s.state, s.html]);
   const legendInner = useMemo(() => ({ __html: legend }), [legend]);
+  // What each side of the one picture is for this change: what the app does
+  // today and what it will do if the change passes; once live, what it did
+  // and what it does now; closed, what was proposed. The viewer's own chip
+  // says only "Before" or "After" (app.css draws these in its place).
+  const chips = !single ? null
+    : status === 'merged' || status === 'live' || status === 'deployed_reload' || status === 'merged_reload'
+      ? { before: t('project:topic.card.shots.chipWas'), after: t('project:topic.card.shots.chipLive') }
+      : status === 'closed' || status === 'archived'
+        ? { before: t('project:topic.card.shots.chipToday'), after: t('project:topic.card.shots.chipProposed') }
+        : { before: t('project:topic.card.shots.chipTodayBefore'), after: t('project:topic.card.shots.chipIfPasses') };
   const pickScreen = (id: string) => {
     const pick = box.current?.querySelector<HTMLInputElement>(`#${CSS.escape(id)}`);
     if (!pick) return;
@@ -608,7 +620,14 @@ function ShotsCard({ s, single = false }: {
   };
   if (s.state === 'verified') {
     return (
-      <section ref={box} className="dev-change-shots" data-change-shots="verified" data-thread-picture={single ? '' : undefined}>
+      <section
+        ref={box}
+        className="dev-change-shots"
+        data-change-shots="verified"
+        data-thread-picture={single ? '' : undefined}
+        data-thread-chips={chips ? '' : undefined}
+        style={chips ? ({ '--thread-chip-after': JSON.stringify(chips.after), '--thread-chip-before': JSON.stringify(chips.before) } as CSSProperties) : undefined}
+      >
         {/* AppView.shotsHtml's `thread` reading — escaped where it is built. */}
         <Html className="dev-change-shots-html" html={s.html} />
         {single && (tiles.length || legend) ? (
@@ -806,10 +825,15 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
       open={isGates(openNow, id)}
       name="gates"
       title={openNow?.kind === 'checks' ? v.testing.name : v.votes.name}
-      sub={t('project:topic.card.layer.gatesSub')}
+      sub={openNow?.kind === 'checks' ? t('project:topic.card.layer.checksSub') : t('project:topic.card.layer.votesSub')}
       onClose={closeStep}
     >
-      {drawn}
+      {/* One step, one thing: the Tested step shows its tests, and the vote's
+          step its votes (app.css puts the other card away while it is open).
+          Shut, both stay in the page for the doors and the declared checks. */}
+      <div data-gates-show={isGates(openNow, id) ? (openNow?.kind === 'checks' ? 'checks' : 'votes') : undefined}>
+        {drawn}
+      </div>
     </StepLayer>
     </GatesShut.Provider>
   );
@@ -822,8 +846,10 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
  * themselves are a press away, in the layer the timeline's steps open
  * (`page` is the page whose layer that is, ./step-store.ts).
  */
-export function ChangeFoot({ id, card, v, page, ballot = false }: {
+export function ChangeFoot({ id, card, v, page, ballot = false, tail = null }: {
   id: number | null; card: DevCardModel; v: ChangeThreadView; page: string; ballot?: boolean;
+  /** A quiet row at the foot's end, inside its band (the private suggestion). */
+  tail?: ReactNode;
 }): ReactNode {
   const t = useMessages('project');
   const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
@@ -849,7 +875,8 @@ export function ChangeFoot({ id, card, v, page, ballot = false }: {
       tone={foot.tone}
       progress={foot.progress}
       busy={foot.key === 'testing'}
-      extra={also ? (
+      extra={also || tail ? (<>
+        {also ? (
         <p className="dev-thread-foot-also" data-thread-foot-also={also.bad ? 'bad' : 'running'}>
           {/* The space before the link is in the sentence's own run: a bare
               whitespace expression between text runs cannot survive hydration. */}
@@ -858,7 +885,9 @@ export function ChangeFoot({ id, card, v, page, ballot = false }: {
             {also.bad ? t('project:topic.rail.seeFailed') : t('project:topic.card.foot.seeProgress')}
           </button>
         </p>
-      ) : null}
+        ) : null}
+        {tail}
+      </>) : null}
     >
       {tests ? (
         <button type="button" className="gc-vote-btn" data-thread-foot-see="checks" onClick={() => see('checks')}>
@@ -963,6 +992,16 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     openStep(page, open);
   };
   const cardContext = useMemo(() => ({ card: cardLook, page }), [cardLook, page]);
+  // 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
+  // words say so, and the bot building or fixing it leaves this out.
+  const workWithBot = (
+    <WorkWithBotButton
+      slug={slug}
+      number={v.number}
+      voting={!!v.votes.facts?.length}
+      botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
+    />
+  );
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
@@ -1034,27 +1073,21 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {v.waitsFor || v.baseNotMain ? <StackNotice v={v} /> : null}
           <ChangeGates ref={pair} id={id} card={card} v={v} />
           {v.upstream ? <UpstreamDecline u={v.upstream} id={id} /> : null}
-          {v.shots ? <ShotsCard s={v.shots} single={cardLook} /> : null}
+          {v.shots ? <ShotsCard s={v.shots} single={cardLook} status={v.status?.key || null} /> : null}
           {/* The card look: with nothing to picture it says so; then the foot,
               which says where it stands once. Votes and Testing above are the
               content of the layer their steps open, kept in the page. */}
           {cardLook && !v.shots && v.shotsNone ? (
             <ShotsWait state="none" title={t('project:topic.card.shots.noneTitle')} text={t('project:topic.card.shots.noneText')} />
           ) : null}
-          {cardLook ? <ChangeFoot id={id} card={card} v={v} page={page} /> : null}
+          {/* The private suggestion rides at the foot's end, inside its band. */}
+          {cardLook ? <ChangeFoot id={id} card={card} v={v} page={page} tail={workWithBot} /> : null}
           {cardLook && body.plan && openNow?.kind === 'plan' ? (
             <StepLayer open name="plan" title={body.plan.title || t('project:topic.rail.planned')} sub={body.plan.by && !body.plan.byUnknown && !body.plan.bySystem ? t('project:topic.card.layer.planBy', { name: body.plan.by }) : null} when={body.plan.time || null} onClose={closeStep}>
               <PlanWords plan={body.plan} />
             </StepLayer>
           ) : null}
-          {/* 1 Nov 2026: ask about it, or sketch a revision, privately. #6392:
-              the words say so, and the bot building or fixing it leaves this out. */}
-          <WorkWithBotButton
-            slug={slug}
-            number={v.number}
-            voting={!!v.votes.facts?.length}
-            botAtWork={v.testing.botFix === 'fixing' || v.testing.botFix === 'queued'}
-          />
+          {cardLook ? null : workWithBot}
         </div>
       </article>
       </ThreadCardContext.Provider>

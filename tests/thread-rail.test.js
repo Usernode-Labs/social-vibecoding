@@ -248,5 +248,13 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   for (const line of rules) assert.ok(line.trim().startsWith(scope), `scoped to the two looks, a page, and no open reader: ${line.trim().slice(0, 80)}`);
   assert.match(wide, /\.dev-request-scroll \{\s*display: grid;\s*grid-template-columns: minmax\(0, 1fr\) var\(--thread-rail-w\);/);
   assert.match(wide, /\.dev-request-rail \{\s*grid-column: 2;\s*grid-row: 1 \/ span 2;\s*align-self: start;\s*position: sticky;/);
-  assert.match(css.slice(brand), /\.dev-request \{\s*--thread-card: var\(--bl-card\);\s*--thread-card-edge: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
+  // The cards are cards at every width (a phone's three, a desktop's two
+  // columns): their paint sits outside the wide rule, on the same scope, and
+  // a look paints them through the `-look` variables.
+  const cards = block.slice(block.indexOf('/* THE CARDS, at every width'), block.indexOf('/* WIDE: two columns.'));
+  assert.ok(cards.length > 0, 'the cards have their own part of the block');
+  for (const line of cards.split('\n').filter((l) => /^html/.test(l))) assert.ok(line.startsWith(scope), `scoped as the wide layout is: ${line.slice(0, 80)}`);
+  assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
+  assert.match(cards, /:is\(#gc-thread-head, #gc-thread-messages, \.dev-request-rail\) \{\s*min-width: 0;\s*border-radius: var\(--thread-card-r\);\s*background: var\(--thread-card\);/);
+  assert.match(css.slice(brand), /\.dev-request \{\s*--thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
 });

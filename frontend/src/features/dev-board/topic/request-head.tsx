@@ -66,8 +66,8 @@ import { requestFoot } from './card-model';
 import { closeStep, openStep, useOpenStep } from './step-store';
 import { PlanWords, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
-import { ThreadChanges, ChangeSectionSkeleton } from './thread-changes';
-import { requestPill, threadLayout, type ThreadHere } from './thread-model';
+import { ThreadChanges, ChangeSectionSkeleton, letterOf } from './thread-changes';
+import { ballotOf, requestPill, threadLayout, type ThreadHere } from './thread-model';
 import { ThreadRail } from './thread-rail';
 import { rereadOnChangeNews } from './change-detail-refresh';
 import { TopicBack } from './topic-back';
@@ -764,6 +764,12 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
   // have their own context column, so they draw none.
   const rail = frame ? null : host('gc-thread-rail');
+  // The changes that compete are named by their letter on the ballot, in the
+  // timeline as on the card ("Change A built").
+  const letters = useMemo(() => {
+    const ballot = threadRead.data ? ballotOf(threadRead.data, [r.number]) : null;
+    return ballot && ballot.options.length ? new Map(ballot.options.map((o, i) => [o.id, letterOf(i)] as const)) : null;
+  }, [threadRead.data, r.number]);
   const railSteps = useMemo(() => requestRail({
     asker: r.asker || null,
     askedAt: r.askedAt || null,
@@ -773,7 +779,8 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     yours: (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
     words: !!r.bodyMarkdown?.trim(),
     track: !!track,
-  }), [r.asker, r.askedAt, r.bodyMarkdown, r.standing, specs, layout.changes, standing, track]);
+    letters,
+  }), [r.asker, r.askedAt, r.bodyMarkdown, r.standing, specs, layout.changes, standing, track, letters]);
   // The standard look and the brand look draw the card the thread design
   // agreed (./thread-card.tsx), and a step of the timeline opens over it.
   const cardLook = !frame;
@@ -783,17 +790,25 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   const cardContext = useMemo(() => ({ card: cardLook, page }), [cardLook, page]);
   const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
   const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
+  /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
+  const competes = (id: number) => typeof document !== 'undefined' && !!document.querySelector(`#gc-thread-head [data-thread-look="${id}"]`);
   const openRail = (open: RailOpen) => {
     if (cardLook && (open.kind === 'request' || open.kind === 'plan' || open.kind === 'track')) {
       openStep(page, open);
       return;
     }
     if (cardLook && (open.kind === 'checks' || open.kind === 'votes')) {
-      // A change on its own holds its votes and tests in a layer; one folded
-      // under a ballot is voted on there, so its section is brought into view.
+      // A change on its own holds its votes and tests in a layer; one that
+      // competes is voted on in the ballot, so the change itself is opened
+      // over the card, where its tests are.
       const layer = typeof document === 'undefined' ? null : document.querySelector(`[data-thread-change="${open.changeId}"] [data-step-layer="gates"]`);
       if (layer) openStep(page, open);
+      else if (competes(open.changeId)) openStep(page, { kind: 'change', changeId: open.changeId });
       else showChangeSection(open.changeId);
+      return;
+    }
+    if (cardLook && open.kind === 'change' && competes(open.changeId)) {
+      openStep(page, open);
       return;
     }
     if (open.kind === 'track' || open.kind === 'votes') return;

@@ -1089,7 +1089,7 @@ test('the picture: verified shots are the viewer specs use, a run under way is a
       { storyId: 's1', viewport: 'desktop', side: 'head', variant: 'context', url: url('b') }] };
   const verified = render(av, { ...PR, shots }).page;
   // `data-thread-picture`: under the card look it is read as one picture (thread-card.test.js).
-  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified" data-thread-picture=""><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer" id="shots-4090-viewer" popover="auto">/);
+  assert.match(verified, /<section class="dev-change-shots" data-change-shots="verified" data-thread-picture="" data-thread-chips="" style="[^"]*"><div class="dev-change-shots-html"><section data-shots="1" data-shots-state="verified" aria-label="Before and after" class="dev-change-shots-body"><div class="shots-viewer shots-viewer-spec dev-change-viewer" id="shots-4090-viewer" popover="auto">/);
   assert.match(verified, /<div class="shots-bar"><span class="dev-change-card-name">Before and after<\/span><span class="shots-seg shots-seg-side"/);
   assert.match(verified, /shots-seg-both/, 'side by side is one of its sides');
   assert.match(verified, /shots-side-auto/, 'and it starts side by side when there is room');

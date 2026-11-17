@@ -6755,9 +6755,65 @@
     "text": "Close",
     "description": "Accessible name of the × button, and of the dimmed area behind, on the panel that opens over a thread's card when a step of the \"How it got here\" timeline is pressed: closes the panel."
   },
-  "topic.card.layer.gatesSub": {
-    "text": "Its votes and its tests",
-    "description": "Second line in the header of the panel that opens over a change's card when its Tested, tests-failed or up-for-a-vote step is pressed in the \"How it got here\" timeline: the panel holds the change's Votes and Testing cards."
+  "topic.card.shots.chipIfPasses": {
+    "text": "If it passes · After",
+    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change is not live yet: this is what the app will look like if the change is approved."
+  },
+  "topic.card.shots.chipTodayBefore": {
+    "text": "Today · Before",
+    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change is not live yet: this is what the app looks like today."
+  },
+  "topic.card.shots.chipLive": {
+    "text": "Live now",
+    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change has gone live: this is what the app looks like now."
+  },
+  "topic.card.shots.chipWas": {
+    "text": "Before",
+    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change has gone live: this is what the app looked like before it."
+  },
+  "topic.card.shots.chipProposed": {
+    "text": "Proposed · not live",
+    "description": "Small label on the picture in a change's card, at its top corner, while the After side is showing and the change was closed without going live: this is what it would have looked like."
+  },
+  "topic.card.shots.chipToday": {
+    "text": "Today",
+    "description": "Small label on the picture in a change's card, at its top corner, while the Before side is showing and the change was closed without going live: this is what the app looks like."
+  },
+  "topic.card.opt.name": {
+    "text": "{{letter}} · {{title}}",
+    "description": "Name of one of the competing changes in its row on a request's card: its letter on the ballot (A, B, C), then the change's own title."
+  },
+  "topic.card.opt.by": {
+    "text": "By {{name}}",
+    "description": "Start of the line under a competing change's name in its row on a request's card: who built it. {{name}} is a username."
+  },
+  "topic.card.opt.yes_one": {
+    "text": "{{count}} yes",
+    "description": "End of the line under a competing change's name in its row on a request's card: how many members have voted yes for it. This form is for exactly one vote."
+  },
+  "topic.card.opt.yes_other": {
+    "text": "{{count}} yes",
+    "description": "End of the line under a competing change's name in its row on a request's card: how many members have voted yes for it. This form is for no votes or several."
+  },
+  "topic.card.opt.look": {
+    "text": "Look",
+    "description": "Link at the end of a competing change's row on a request's card: opens that change over the card, with its summary, its before and after pictures and how its tests went."
+  },
+  "topic.card.opt.lookSub": {
+    "text": "{{who}} · one of {{count}} competing changes",
+    "description": "Second line in the header of the panel that opens over a request's card when one of its competing changes is looked at. {{who}} says who built the change and its number, for example 'sam · #6712'; {{count}} is how many changes compete."
+  },
+  "topic.rail.builtLettered": {
+    "text": "Change {{letter}} built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's page (the list of the thread's big events, beside its card) when the request has competing changes: which one was built, by its letter on the ballot (A, B, C)."
+  },
+  "topic.card.layer.checksSub": {
+    "text": "The tests on this version",
+    "description": "Second line in the header of the panel that opens over a change's card when its Tested or tests-failed step is pressed in the \"How it got here\" timeline: the panel holds how the change's automatic tests went."
+  },
+  "topic.card.layer.votesSub": {
+    "text": "The votes so far",
+    "description": "Second line in the header of the panel that opens over a change's card when its up-for-a-vote or voted step is pressed in the \"How it got here\" timeline: the panel holds who has voted on the change and how many more votes it needs."
   },
   "topic.card.layer.planBy": {
     "text": "The plan, by {{name}}",

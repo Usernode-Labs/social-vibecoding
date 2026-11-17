@@ -107,8 +107,27 @@ export function ThreadFoot({ what, headline, sub, tone = null, progress = null, 
   extra?: ReactNode;
 }): ReactNode {
   const pct = progress == null ? null : Math.round(Math.max(0, Math.min(1, progress)) * 100);
+  // Whether the foot ends its card: nothing drawn follows it, at any level
+  // up to the card. app.css runs the foot's band to the card's rounded end
+  // then; with something under it (another change, the thread's list) the
+  // band stops at its own line. Read after every render: what follows a foot
+  // comes and goes with the thread's reads.
+  const box = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    const card = el?.closest<HTMLElement>('[data-thread-card]');
+    if (!el || !card) return;
+    let end = true;
+    for (let node: HTMLElement | null = el; node && node !== card && end; node = node.parentElement) {
+      for (let next = node.nextElementSibling as HTMLElement | null; next; next = next.nextElementSibling as HTMLElement | null) {
+        if (next.hidden || next.classList.contains('dev-step-layer')) continue;
+        if (next.offsetHeight > 0) { end = false; break; }
+      }
+    }
+    el.toggleAttribute('data-thread-foot-end', end);
+  });
   return (
-    <div className="dev-thread-foot" data-thread-foot={what} data-thread-foot-tone={tone || undefined} role="group">
+    <div ref={box} className="dev-thread-foot" data-thread-foot={what} data-thread-foot-tone={tone || undefined} role="group">
       <div className="dev-thread-foot-st" role="status">
         <b className="dev-thread-foot-head">{headline}</b>
         {sub ? <span className="dev-thread-foot-sub">{sub}</span> : null}
@@ -130,7 +149,9 @@ export function ThreadFoot({ what, headline, sub, tone = null, progress = null, 
  *
  * The card it lies over is its nearest `[data-thread-card]`, which app.css
  * makes its containing block. It is placed in the part of the card that is
- * on screen, centred there when it fits; over a short card it may hang past
+ * on screen, centred there when it fits, and never over the card's kicker
+ * and title: they say what the layer belongs to. Over a short card (a
+ * request with two lines of words) it starts under the title and hangs past
  * the card's end.
  */
 export function StepLayer({ open, keep = false, name, title, sub = null, when = null, mark = null, onClose, children }: {
@@ -162,15 +183,19 @@ export function StepLayer({ open, keep = false, name, title, sub = null, when = 
       const rect = card.getBoundingClientRect();
       const scroller = card.closest<HTMLElement>('#gc-thread-scroll');
       const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: typeof window === 'undefined' ? 800 : window.innerHeight };
-      const from = Math.min(Math.max(view.top - rect.top, 0), room);
+      // Under the title, which stays in view above the layer.
+      const title = card.querySelector<HTMLElement>('.dev-request-title');
+      const floor = title ? Math.max(8, Math.round(title.getBoundingClientRect().bottom - rect.top) + 8) : 8;
+      const from = Math.min(Math.max(view.top - rect.top, floor), room);
       const to = Math.min(Math.max(view.bottom - rect.top, 0), room);
-      const seen = to - from;
-      const max = Math.round(Math.max(200, Math.min(room >= 320 ? room - 16 : 600, view.bottom - view.top - 24)));
+      const seen = Math.max(0, to - from);
+      const left = room - floor;
+      const max = Math.round(Math.max(200, Math.min(left >= 320 ? left - 8 : 600, view.bottom - view.top - 24)));
       el.style.maxHeight = `${max}px`;
       const height = el.offsetHeight;
       // Centred in what is seen when it fits there; else at its near edge.
-      const wanted = seen >= height ? from + (seen - height) / 2 : from > 0 ? from + 8 : to - height - 8;
-      const top = Math.round(Math.max(8, Math.min(wanted, Math.max(8, room - height - 8))));
+      const wanted = seen >= height ? from + (seen - height) / 2 : from > floor ? from + 8 : to - height - 8;
+      const top = Math.round(Math.max(floor, Math.min(wanted, Math.max(floor, room - height - 8))));
       setPlace((was) => (was && was.top === top && was.max === max ? was : { top, max }));
     };
     fit();

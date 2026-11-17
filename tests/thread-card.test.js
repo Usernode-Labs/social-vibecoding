@@ -197,7 +197,10 @@ test('both heads draw the card only outside the frame\'s looks, and keep Votes, 
   assert.match(change, /if \(!layer\) return drawn;\s*return \(\s*<GatesShut\.Provider value=\{shut\}>\s*<StepLayer\s+keep\s+open=\{isGates\(openNow, id\)\}\s+name="gates"/);
   assert.match(change, /const voteAction = shut \? null : acts\.voteAction;/);
   assert.match(change, /if \(useContext\(GatesShut\)\) return null;/, 'Fix it is the foot\'s while the layer is shut');
-  assert.match(change, /\{cardLook \? <ChangeFoot id=\{id\} card=\{card\} v=\{v\} page=\{page\} \/> : null\}/);
+  // The private suggestion rides at the foot's end, inside its band, so the
+  // foot is the last thing in the card.
+  assert.match(change, /\{cardLook \? <ChangeFoot id=\{id\} card=\{card\} v=\{v\} page=\{page\} tail=\{workWithBot\} \/> : null\}/);
+  assert.match(change, /\{cardLook \? null : workWithBot\}/);
   assert.match(change, /\{cardLook && body\.summaryBy \? <WordsBy who=\{body\.summaryBy\}/);
   assert.match(change, /<ThreadCardContext\.Provider value=\{cardContext\}>/);
   // A request: the old status box gives way to the foot, and the bot's
@@ -209,7 +212,7 @@ test('both heads draw the card only outside the frame\'s looks, and keep Votes, 
   // A lone change under a request draws the same foot, over the same pair.
   const changes = read(CHANGES);
   assert.match(changes, /const lone = thread\.card && !ballot;/);
-  assert.match(changes, /\{lone && view && item\.state !== 'underway' && hasCards\(item\)\s*\? <ChangeFoot id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} page=\{thread\.page\} \/> : null\}/);
+  assert.match(changes, /\{lone && view && item\.state !== 'underway' && hasCards\(item\)\s*\? <ChangeFoot id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} page=\{thread\.page\} tail=\{tail\} \/> : null\}/);
 });
 
 test('the layer: over the card, × on its right, Escape and the dimmed card close it', () => {
@@ -233,7 +236,7 @@ test('the stylesheet: the card\'s block sits after the rail\'s and before the be
   assert.ok(rail > 0 && card > rail && bell > card);
   const block = css.slice(card, bell);
   assert.match(block, /\.dev-thread-card > :first-child:not\(\.min-w-0\) \{ display: none; \}/, 'the author\'s avatar gives way to the kicker');
-  assert.match(block, /\.dev-thread-card \{ position: relative; \}/, 'the card is the layer\'s containing block');
+  assert.match(block, /\.dev-thread-card \{ position: relative; --foot-x: 16px; --foot-b: 16px; \}/, 'the card is the layer\'s containing block, and names its own gutters');
   assert.match(block, /\.dev-step-layer \{ position: absolute; inset: 0;/, 'the layer lies over the card and adds no height');
   assert.match(block, /@media \(prefers-reduced-motion: reduce\) \{ \.dev-step-sheet \{ animation: none; \} \}/);
   assert.match(block, /:where\(html\[data-motion="reduce"\]\) \.dev-step-sheet \{ animation: none; \}/);
@@ -316,7 +319,7 @@ test('the card\'s picture is the viewer read as one picture: After first, tiles 
   const change = read(CHANGE);
   assert.match(change, /if \(auto && after\) after\.checked = true;/, 'it starts on After, not side by side');
   assert.match(change, /pick\.dispatchEvent\(new Event\('change', \{ bubbles: true \}\)\);/, 'a tile presses the viewer\'s own screen pick');
-  assert.match(change, /<ShotsCard s=\{v\.shots\} single=\{cardLook\} \/>/);
+  assert.match(change, /<ShotsCard s=\{v\.shots\} single=\{cardLook\} status=\{v\.status\?\.key \|\| null\} \/>/);
   assert.match(change, /className="dev-thread-tile"\s+aria-pressed=\{i === at\}/);
   assert.equal(message('project:topic.card.shots.screenOf', { index: 2, total: 3 }), '2 of 3 screens');
   const css = read('public/css/app.css');
@@ -324,4 +327,105 @@ test('the card\'s picture is the viewer read as one picture: After first, tiles 
   assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.dev-change-card-name, \.shots-seg-both, \.shots-screen-nav, \.shots-view-notes\) \{ display: none; \}/,
     'side by side, the pager and the viewer\'s own legend give way; expanded to the window it is its usual self');
   assert.match(block, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) \.shots-bar \{\s*position: absolute;/, 'the switch lies over the picture');
+});
+
+// ── 17 Nov 2026: closer to the prototype ────────────────────────────────
+
+test('a request with competing changes is one card: a row each with Look, one foot, and each change opened over the card', () => {
+  const changes = read(CHANGES);
+  // The row: its picture (the After shot, else its letter), its letter and
+  // name, who built it, its tests and its yes votes, and Look. The whole row
+  // is the press, and it opens the change through the step store.
+  assert.match(changes, /function OptionRow\(\{ item, i, view, yes, on, onLook \}/);
+  assert.match(changes, /const pic = shots \? \(shots\.after \|\| shots\.before \|\| null\) : null;/);
+  assert.match(changes, /<button\s+type="button"\s+role="listitem"\s+className="dev-thread-opt"\s+data-change-row=\{letter\}\s+data-thread-change-row=\{item\.id\}\s+data-change-row-open=\{item\.id\}\s+aria-expanded=\{on\}\s+onClick=\{onLook\}/);
+  assert.match(changes, /onLook=\{\(\) => openStep\(thread\.page, \{ kind: 'change', changeId: o\.id \}\)\}/);
+  // Nothing is drawn under the foot: the folds are the standard page's, and
+  // under the card look each change is a layer kept in the page while shut,
+  // so a door to it still finds it.
+  assert.match(changes, /\{thread\.card \? \(\s*\/\/ The card look: nothing under the foot\.[\s\S]*?<StepLayer\s+key=\{o\.id\}\s+keep\s+open=\{looked === o\.id\}\s+name="look"/);
+  assert.match(changes, /<LookedChange item=\{o\} i=\{i\} view=\{views\[i\]\}/);
+  assert.match(changes, /data-thread-look=\{item\.id\} data-thread-fold=\{open \? 'open' : 'shut'\}/);
+  // It is voted on in the ballot, the card's foot: the opened change draws
+  // its section as a ballot's change, whose Votes card has no button.
+  assert.match(changes, /\{open \? <ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} \/> : null\}/);
+  // The timeline names a competing change by its letter, as the card does,
+  // and its step opens it over the card.
+  const { requestRail } = loadTsx('frontend/src/features/dev-board/topic/rail-model.ts');
+  const steps = requestRail({
+    asker: 'maya', askedAt: '2026-11-07T10:00:00Z', specs: [], standing: null, yours: false,
+    changes: [
+      { type: 'change', id: 7, number: 70, by: 'sam', at: '2026-11-08T10:00:00Z', state: 'review' },
+      { type: 'change', id: 8, number: 80, by: 'ana', at: '2026-11-09T10:00:00Z', state: 'review' },
+    ],
+    letters: new Map([[7, 'A'], [8, 'B']]),
+  });
+  const built = steps.filter((s) => s.icon === 'built');
+  assert.deepEqual(built.map((s) => s.title), [
+    { id: 'project:topic.rail.builtLettered', values: { letter: 'A' } },
+    { id: 'project:topic.rail.builtLettered', values: { letter: 'B' } },
+  ]);
+  assert.deepEqual(built[0].link.open, { kind: 'change', changeId: 7 });
+  assert.equal(message('project:topic.rail.builtLettered', { letter: 'A' }), 'Change A built');
+  const request = read(REQUEST);
+  assert.match(request, /if \(cardLook && open\.kind === 'change' && competes\(open\.changeId\)\) \{\s*openStep\(page, open\);/);
+  assert.match(request, /else if \(competes\(open\.changeId\)\) openStep\(page, \{ kind: 'change', changeId: open\.changeId \}\);/);
+});
+
+test('a request\'s one change is the card\'s own: one picture with the switch, no second title and no pill', () => {
+  const changes = read(CHANGES);
+  assert.match(changes, /\{view\?\.v\.shots \? \(thread\.card\s*\? <ShotsCard s=\{view\.v\.shots\} single status=\{view\.v\.status\?\.key \|\| null\} \/>\s*: <ShotsPair/);
+  assert.match(changes, /const footed = thread\.card && !!view && item\.state !== 'underway' && hasCards\(item\);/);
+  assert.match(changes, /<ChangeLine item=\{item\} view=\{view\} propose=\{propose\} footed=\{footed\} sole=\{thread\.card && sole\} \/>/);
+  assert.match(changes, /\{status && !footed \? <span className="shrink-0" data-thread-change-status=/, 'the foot says where it stands');
+  assert.match(changes, /<h3 className=\{sole \? 'sr-only' :/, 'the title stays for a screen reader and the declared checks');
+  assert.match(changes, /sole=\{!ballot && changes\.length === 1\}/);
+});
+
+test('one step, one thing: the Tested step shows the tests, the vote\'s step the votes', () => {
+  const change = read(CHANGE);
+  assert.match(change, /sub=\{openNow\?\.kind === 'checks' \? t\('project:topic\.card\.layer\.checksSub'\) : t\('project:topic\.card\.layer\.votesSub'\)\}/);
+  assert.match(change, /<div data-gates-show=\{isGates\(openNow, id\) \? \(openNow\?\.kind === 'checks' \? 'checks' : 'votes'\) : undefined\}>/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\[data-gates-show="checks"\] \.dev-change-pair \[data-change-gate="votes"\],\s*\[data-gates-show="votes"\] \.dev-change-pair :is\(\[data-change-gate="testing"\], \[data-change-gate="merge"\]\) \{ display: none; \}/);
+  assert.equal(message('project:topic.card.layer.checksSub'), 'The tests on this version');
+  assert.equal(message('project:topic.card.layer.votesSub'), 'The votes so far');
+});
+
+test('a step\'s layer never covers the card\'s title', () => {
+  const card = read('frontend/src/features/dev-board/topic/thread-card.tsx');
+  assert.match(card, /const title = card\.querySelector<HTMLElement>\('\.dev-request-title'\);/);
+  assert.match(card, /const floor = title \? Math\.max\(8, Math\.round\(title\.getBoundingClientRect\(\)\.bottom - rect\.top\) \+ 8\) : 8;/);
+  assert.match(card, /const top = Math\.round\(Math\.max\(floor, Math\.min\(wanted, Math\.max\(floor, room - height - 8\)\)\)\);/);
+});
+
+test('the foot is a band that runs to the card\'s end when it ends the card, with the one action as a full pill', () => {
+  const card = read('frontend/src/features/dev-board/topic/thread-card.tsx');
+  // The foot reads whether anything drawn follows it, up to the card.
+  assert.match(card, /el\.toggleAttribute\('data-thread-foot-end', end\);/);
+  assert.match(card, /if \(next\.hidden \|\| next\.classList\.contains\('dev-step-layer'\)\) continue;/);
+  const css = read('public/css/app.css');
+  const block = css.slice(css.indexOf("THE THREAD'S CARD"), css.indexOf("THE BELL'S SHEET"));
+  assert.match(block, /\.dev-request-root\.dev-thread-card \{ padding: 4px var\(--foot-x\) var\(--foot-b\); \}/);
+  assert.match(block, /\.dev-thread-foot \{[^}]*margin: 16px calc\(-1 \* var\(--foot-x\)\) 0; padding: 14px var\(--foot-x\);[^}]*background: var\(--thread-foot, transparent\);\s*\}/);
+  assert.match(block, /\.dev-thread-foot\[data-thread-foot-end\] \{\s*margin-bottom: calc\(-1 \* var\(--foot-b\)\);/);
+  assert.match(block, /\.dev-thread-foot-acts :is\(button, a\):not\(\.dev-change-gate-link\) \{\s*height: 40px;/);
+  assert.match(block, /\.dev-thread-foot-acts \.dev-vote-caret \{ display: none; \}/, 'one Vote, and the question after');
+  // The brand look: the sun pill, white pills beside it, the foot's band.
+  const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
+  assert.match(brand, /--thread-foot: color-mix\(in srgb, var\(--bl-sun\) 9%, var\(--bl-card\)\);/);
+  assert.match(brand, /\.dev-thread-foot-acts :is\(\.dev-vote-btn:not\(\.dev-vote-btn-yes\), \.dev-request-primary\),[^{]*\{\s*background: var\(--bl-sun\);\s*color: var\(--bl-on-sun\);\s*box-shadow: var\(--bl-pill-edge\);/);
+  assert.match(brand, /\.dev-rail \{ --rail-now-box: var\(--bl-page\); --rail-now-box-line: var\(--app-sheet-line\); \}/);
+});
+
+test('the picture\'s chip says what the side is for this change', () => {
+  const change = read(CHANGE);
+  assert.match(change, /data-thread-chips=\{chips \? '' : undefined\}/);
+  assert.match(change, /'--thread-chip-after': JSON\.stringify\(chips\.after\), '--thread-chip-before': JSON\.stringify\(chips\.before\)/);
+  assert.equal(message('project:topic.card.shots.chipIfPasses'), 'If it passes · After');
+  assert.equal(message('project:topic.card.shots.chipTodayBefore'), 'Today · Before');
+  assert.equal(message('project:topic.card.shots.chipLive'), 'Live now');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.shots-flip-chip-after::after \{ content: var\(--thread-chip-after\); \}/);
+  assert.match(css, /\.shots-flip-chip-before::after \{ content: var\(--thread-chip-before\); \}/);
 });
