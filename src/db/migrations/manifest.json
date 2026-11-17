@@ -395,6 +395,11 @@
       "id": "chat-messages-client-key",
       "sha256": "4d6a76708d16d32917100be4cd74422011fa39c348d1d55312a6af83e38567f4",
       "schemaSha256": "bfefb0ba5730958609baaa51e29f0eeb2cc2bb1a13738152cbbb273cddf582f9"
+    },
+    {
+      "id": "private-thread-titles",
+      "sha256": "93ec3bcb9839de4fdc2a0ce7cea2eb3973224e22b51882fbb59fe1913675637e",
+      "schemaSha256": "282af9a1f4004c323065bc299bc037debabeb0f2bf084d06df9023bc04bd9ac9"
     }
   ]
 }

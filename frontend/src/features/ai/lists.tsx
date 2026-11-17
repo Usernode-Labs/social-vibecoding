@@ -117,7 +117,7 @@ function LineRow({ line, quiet = false, freshTitles = false }: { line: Line; qui
     return (
       <div className="flex min-w-0 items-center gap-1" data-ai-line-done="">
         <div className="min-w-0 flex-1"><LineButton line={line} quiet={quiet} freshTitles={freshTitles} /></div>
-        <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
+        <ThreadDoneMenu rootId={rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') mark(); }} className="shrink-0" />
       </div>
     );
   }

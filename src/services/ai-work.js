@@ -281,6 +281,10 @@ const ABOUT_CHANGE_END_SQL = `SELECT ended.at, ended.outcome FROM (
 const PRIVATE_SQL = `
 SELECT m.id AS root_id, m.content, m.created_at, p.kind, p.state, p.result_ref, p.done_at, a.slug, a.name,
        a.icon_emoji, a.icon_image_id, a.repo_url,
+       -- #6764 (17 Nov 2026): a short summary written after the bot's first
+       -- answer, or the name the person set. It is the thread's name ahead of
+       -- anything below; title_source says which (auto or person).
+       p.title, p.title_source,
        -- A thread started from the bot's "+" is named by their first words in it.
        (SELECT f.content FROM conversation_messages f
          WHERE f.thread_root_id = m.id AND f.sender_id = $1 AND f.deleted_at IS NULL
@@ -664,16 +668,23 @@ function shapePrivate(row) {
   const about = row.about_kind && Number(row.about_number) > 0
     ? { kind: row.about_kind, number: Number(row.about_number) } : null;
   const byKind = require('./private-threads').kindTitle({ kind: row.kind, appName: row.name || row.root_app_name || null });
-  const named = byKind ? byKind
-    : about && row.about_title ? row.about_title
-    : row.moved_title ? row.moved_title
-    : row.project_idea ? row.project_idea
-      : row.draft_title ? row.draft_title
-        : row.kind === 'ask' && row.first_own ? row.first_own
-          : row.design_title || row.content;
+  // #6764 (17 Nov 2026): a stored title, the summary or the person's own
+  // name, is what the thread is called, ahead of what it is.
+  const named = row.title
+    || byKind
+    || (about && row.about_title)
+    || row.moved_title
+    || row.project_idea
+    || row.draft_title
+    || (row.kind === 'ask' && row.first_own)
+    || row.design_title
+    || row.content;
   return {
     rootId: Number(row.root_id),
     title: firstLine(named),
+    // #6764: the row's name is a stored one (an automatic summary or the
+    // person's), so the open thread's head takes it too (private-thread-bar.tsx).
+    ...(row.title_source ? { titled: row.title_source } : {}),
     kind: row.kind || 'idea',
     app: appOf(row),
     at: iso(row.last_at || row.created_at),

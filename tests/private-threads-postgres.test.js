@@ -225,6 +225,83 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     assert.equal(privateThreads.startLine({ kind: 'any', appName: 'Seed swap' }), 'New thread, about Seed swap.');
   });
 
+  // #6764 (17 Nov 2026): a new thread is named by a short summary of its
+  // first exchange, after the bot answers, once; a name the person set is
+  // never replaced, and a thread named by what it is is left alone.
+  await t.test('#6764: an automatic title from the first exchange, once, and a person\'s name wins', async () => {
+    const made = await privateThreads.startThread(pool, { user: ada, project: app.slug, kind: 'fix' });
+    const first = await say(ada, 'Hi homeroom bot. I want to work on a new app, can you help', { thread_root_id: made.rootId });
+    let calls = 0;
+    const asked = { title: async () => { calls += 1; return { title: 'New app: shared map place lists', greeting: false }; } };
+    const at = (deps = asked) => privateThreads.autoTitle(pool, { userId: ada.id, conversationId: opened.conversationId, messageId: first.id, deps });
+    assert.equal((await at()).titled, false, 'nothing to summarise before the bot answers');
+    assert.equal(calls, 0);
+    await say(bot, 'Sure. What should it do?', { thread_root_id: made.rootId });
+    const named = await at();
+    assert.deepEqual({ titled: named.titled, title: named.title }, { titled: true, title: 'New app: shared map place lists' });
+    assert.equal(calls, 1);
+    const { rows: [row] } = await pool.query('SELECT title, title_source, title_runs FROM private_threads WHERE root_message_id = $1', [made.rootId]);
+    assert.deepEqual(row, { title: 'New app: shared map place lists', title_source: 'auto', title_runs: 1 });
+    // The row and the open thread's head say the same name.
+    const where = await privateThreads.stateOf(pool, { user: ada, rootId: made.rootId });
+    assert.deepEqual({ title: where.title, titled: where.titled }, { title: 'New app: shared map place lists', titled: 'auto' });
+    const aiWork = require('../src/services/ai-work');
+    const { rows } = await pool.query(aiWork.PRIVATE_SQL, [ada.id, bot.id, aiWork.PRIVATE_MAX, aiWork.LIVE_DAYS]);
+    const listed = aiWork.shapePrivate(rows.find((r) => Number(r.root_id) === made.rootId));
+    assert.deepEqual({ title: listed.title, titled: listed.titled }, { title: where.title, titled: where.titled }, 'the row matches the head');
+    // A second run does not rename it again.
+    assert.equal((await at()).titled, false);
+    assert.equal(calls, 1);
+    // A name they set by hand stays, whatever the automatic title would say.
+    await privateThreads.rename(pool, { user: ada, rootId: made.rootId, title: 'Map place lists' });
+    await pool.query('UPDATE private_threads SET title_runs = 0 WHERE root_message_id = $1', [made.rootId]);
+    assert.equal((await at()).titled, false, 'a person\'s name is never replaced');
+    assert.equal((await privateThreads.stateOf(pool, { user: ada, rootId: made.rootId })).title, 'Map place lists');
+    assert.equal(calls, 1);
+  });
+
+  await t.test('#6764: a greeting-only exchange stores nothing; the next one titles it, then never again', async () => {
+    const made = await privateThreads.startThread(pool, { user: ada, project: null, kind: 'any' });
+    const first = await say(ada, 'Hi there', { thread_root_id: made.rootId });
+    await say(bot, 'Hello. What would you like to work on?', { thread_root_id: made.rootId });
+    let said = { title: 'Chat with Homeroom bot', greeting: true };
+    let calls = 0;
+    const deps = { title: async () => { calls += 1; return said; } };
+    const at = () => privateThreads.autoTitle(pool, { userId: ada.id, conversationId: opened.conversationId, messageId: first.id, deps });
+    assert.equal((await at()).titled, false);
+    let { rows: [row] } = await pool.query('SELECT title, title_source, title_runs FROM private_threads WHERE root_message_id = $1', [made.rootId]);
+    assert.deepEqual(row, { title: null, title_source: null, title_runs: 1 }, 'a greeting keeps the first words, and is counted');
+    // Their next message says what the chat is about.
+    await say(ada, 'I want a shared map of place lists', { thread_root_id: made.rootId });
+    await say(bot, 'Here is a plan for it.', { thread_root_id: made.rootId });
+    said = { title: 'Shared map place lists', greeting: false };
+    const named = await at();
+    assert.equal(named.titled, true);
+    ({ rows: [row] } = await pool.query('SELECT title, title_source, title_runs FROM private_threads WHERE root_message_id = $1', [made.rootId]));
+    assert.deepEqual(row, { title: 'Shared map place lists', title_source: 'auto', title_runs: 2 });
+    // Two runs is the stop: never a third.
+    assert.equal((await at()).titled, false);
+    assert.equal(calls, 2);
+  });
+
+  await t.test('#6764: a thread named by what it is is never titled, and nobody else\'s is', async () => {
+    const made = await privateThreads.startThread(pool, { user: ada, project: app.slug, kind: 'any' });
+    await pool.query(
+      `UPDATE private_threads SET about_kind = 'request', about_number = 41 WHERE root_message_id = $1`, [made.rootId]);
+    const first = await say(ada, 'About that request', { thread_root_id: made.rootId });
+    await say(bot, 'Yes?', { thread_root_id: made.rootId });
+    let calls = 0;
+    const deps = { title: async () => { calls += 1; return { title: 'Something else', greeting: false }; } };
+    assert.equal((await privateThreads.autoTitle(pool, {
+      userId: ada.id, conversationId: opened.conversationId, messageId: first.id, deps,
+    })).titled, false, 'a thread about a request keeps its number and title');
+    assert.equal(calls, 0);
+    assert.equal((await privateThreads.autoTitle(pool, {
+      userId: sam.id, conversationId: opened.conversationId, messageId: first.id, deps,
+    })).titled, false, 'somebody else\'s thread is not theirs to name');
+    assert.equal(calls, 0);
+  });
+
   await t.test('B04: a thread holding a screen drawn for no project says so, with its newest version', async () => {
     const made = await privateThreads.startThread(pool, { user: ada, project: null, kind: 'any' });
     assert.equal(made.ok, true, made.error);

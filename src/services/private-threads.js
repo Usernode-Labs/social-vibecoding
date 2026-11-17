@@ -91,7 +91,8 @@ async function ownRoot(pool, { user, bot, rootId }) {
  */
 async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [row] } = await pool.query(
-    `SELECT p.state, p.result_ref, p.kind, a.slug, a.name, t.number AS target_number,
+    `SELECT p.state, p.result_ref, p.kind, p.title AS own_title, p.title_source,
+            a.slug, a.name, t.number AS target_number,
             d.title AS design_title,
             (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version,
             (SELECT m.metadata->'homeroomBot'->>'appName' FROM conversation_messages m
@@ -112,13 +113,17 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
   // The project's name, or the one the thread's first message names when
   // the project itself is gone: the name its row has on the Homeroom bot
   // page (ai-work.js shapePrivate), so the open thread's head says the same.
-  const title = kindTitle({ kind: row.kind, appName: app?.name || row.root_app_name || null });
+  // #6764 (17 Nov 2026): a stored title (an automatic summary, or the name
+  // the person set) is the thread's name, ahead of what the thread is.
+  const ownTitle = typeof row.own_title === 'string' ? row.own_title.trim() : '';
+  const title = ownTitle || kindTitle({ kind: row.kind, appName: app?.name || row.root_app_name || null });
   return {
     state: row.state,
     kind: row.kind,
     // 14 Nov 2026: Earlier chat and a first version's thread are named by
     // what they are, never by their first words.
     ...(title ? { title } : {}),
+    ...(row.title_source ? { titled: row.title_source } : {}),
     number: row.result_ref == null ? null : Number(row.result_ref),
     app,
     target: row.target_number == null ? null : Number(row.target_number),
@@ -655,6 +660,121 @@ async function markDone(pool, { user, rootId, bot = null, deps = {} }) {
   return { ok: true, state: 'done' };
 }
 
+// ── A thread's own name (#6764, 17 Nov 2026) ─────────────────────────────
+//
+// A new chat is named by the person's first words until the bot has answered
+// for the first time; then it is renamed to a short summary of what it is
+// about, so a row that started "Hi homeroom bot, can you hel…" says "New app:
+// shared map place lists". The summary is one cheap helper call
+// (llm.generateThreadTitle), run in the background after the answer so the
+// answer is never slower (homeroom-bot-dm.js answerOwed). A greeting-only
+// first exchange stores nothing; the next one titles it, once (title_runs
+// caps it at two). A name the person set is never replaced.
+
+/** Pure: whether this thread's name is its first words today (ai-work.js shapePrivate), so a summary may replace it. */
+function namedByFirstWords(row, meta) {
+  if (row.about_kind || row.design) return false;
+  if (meta?.projectIdea || meta?.draftTitle || meta?.movedChat) return false;
+  return row.kind === 'ask' || (row.kind === 'idea' && !!row.own_root);
+}
+
+/**
+ * Name the person's thread that message `messageId` is in with a short
+ * summary of its first exchange, once the bot has answered. Resolves
+ * { titled, title } (what was stored, if anything); never throws. Started
+ * without awaiting by answerOwed; `deps.title` overrides the model call.
+ */
+async function autoTitle(pool, { userId, conversationId, messageId, deps = {} }) {
+  const uid = Number(userId);
+  const mid = Number(messageId);
+  if (!Number.isSafeInteger(uid) || uid <= 0 || !Number.isSafeInteger(mid) || mid <= 0) return { titled: false };
+  try {
+    const { rows: [message] } = await pool.query(
+      'SELECT id, thread_root_id FROM conversation_messages WHERE id = $1 AND conversation_id = $2 AND deleted_at IS NULL',
+      [mid, Number(conversationId)],
+    );
+    if (!message) return { titled: false };
+    const rootId = Number(message.thread_root_id) || Number(message.id);
+    const { rows: [row] } = await pool.query(
+      `SELECT p.id, p.kind, p.about_kind, p.title_source, p.title_runs,
+              (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id) AS design,
+              (m.sender_id = $2) AS own_root,
+              m.metadata->'homeroomBot' AS meta
+         FROM private_threads p
+         JOIN conversation_messages m ON m.id = p.root_message_id
+        WHERE p.root_message_id = $1 AND p.user_id = $2`,
+      [rootId, uid],
+    );
+    if (!row) return { titled: false };
+    if (row.title_source || Number(row.title_runs) >= 2) return { titled: false };
+    if (!namedByFirstWords(row, row.meta)) return { titled: false };
+    // The bot must have answered after the person wrote: nothing to summarise before that.
+    const { rows: [replied] } = await pool.query(
+      `SELECT 1 FROM conversation_messages r
+        WHERE (r.id = $1 OR r.thread_root_id = $1) AND r.deleted_at IS NULL
+          AND r.sender_id IS DISTINCT FROM $2
+          AND r.id > (SELECT MIN(f.id) FROM conversation_messages f
+                       WHERE (f.id = $1 OR f.thread_root_id = $1) AND f.sender_id = $2 AND f.deleted_at IS NULL)
+        LIMIT 1`,
+      [rootId, uid],
+    );
+    if (!replied) return { titled: false };
+    const { rows: said } = await pool.query(
+      `SELECT sender_id, content FROM conversation_messages
+        WHERE (id = $1 OR thread_root_id = $1) AND deleted_at IS NULL AND msg_type = 'message'
+        ORDER BY id LIMIT 6`,
+      [rootId],
+    );
+    const messages = said.map((m) => ({
+      who: Number(m.sender_id) === uid ? 'person' : 'bot',
+      text: clip(m.content, 600),
+    }));
+    const llm = deps.llm || require('./llm');
+    const title = await (typeof deps.title === 'function' ? deps.title : llm.generateThreadTitle)({ messages });
+    const read = Number(row.title_runs);
+    const { rows: [stored] } = await pool.query(
+      `UPDATE private_threads
+          SET title_runs = title_runs + 1,
+              title = CASE WHEN $2 THEN title ELSE $3 END,
+              title_source = CASE WHEN $2 THEN title_source ELSE 'auto' END,
+              updated_at = NOW()
+        WHERE id = $1 AND title_source IS NULL AND title_runs = $4
+        RETURNING title, title_source`,
+      [row.id, title.greeting === true, title.title, read],
+    );
+    if (!stored || stored.title_source !== 'auto') return { titled: false };
+    workChanged(uid, deps);
+    log.info('private-threads', 'Named a private thread from its first exchange', { rootId, userId: uid });
+    return { titled: true, title: stored.title };
+  } catch (err) {
+    log.warn('private-threads', 'Could not name a private thread (it keeps its first words)', { rootId: messageId, err: err.message });
+    return { titled: false };
+  }
+}
+
+/**
+ * Rename the person's own private thread `rootId` (#6764). A name set here
+ * is theirs: `title_source` 'person', which the automatic title never
+ * replaces. Resolves { ok: true, ...stateOf } or a 404 for a root that is not
+ * a thread of theirs, and 400 for a name outside 1 to 80 characters.
+ */
+async function rename(pool, { user, rootId, title, deps = {} }) {
+  const name = String(title || '').replace(/\s+/g, ' ').trim();
+  if (!name || name.length > 80) return { ok: false, status: 400, error: 'A name is 1 to 80 characters' };
+  const who = deps.bot || await (deps.dm || require('./homeroom-bot-dm')).botAccount(pool);
+  const root = await ownRoot(pool, { user, bot: who, rootId });
+  if (!root) return { ok: false, status: 404, error: 'No such thread' };
+  await pool.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, kind, state, title, title_source)
+     VALUES ($1, $2, $3, 'idea', 'open', $4, 'person')
+     ON CONFLICT (root_message_id) DO UPDATE
+       SET title = EXCLUDED.title, title_source = 'person', updated_at = NOW()`,
+    [user.id, root.conversation_id, root.id, name],
+  );
+  workChanged(user.id, deps);
+  return { ok: true, ...(await stateOf(pool, { user, rootId: root.id, bot: who })) };
+}
+
 /** Reopen the person's own done thread: back where it was. Resolves { ok, state } or a 404. */
 async function reopen(pool, { user, rootId, deps = {} }) {
   const { rows: [row] = [] } = await pool.query(
@@ -959,5 +1079,5 @@ module.exports = {
   earlierRootFor, firstVersionRootFor, threadOfMessage, whereFor,
   ownRoot, stateOf, fileIt, postIt, startThread, startLine, CHANGE_KINDS, MAX_TEXT, MAX_TITLE,
   ABOUT_KINDS, aboutLine, aboutTarget, startAbout, liftHold, holdsFor, aboutContext, threadHref,
-  markDone, reopen, reopenOnReply, finishForRequest,
+  markDone, reopen, reopenOnReply, finishForRequest, autoTitle, rename,
 };

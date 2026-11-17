@@ -324,8 +324,36 @@ test('a done thread says so under its head, with Reopen; its ⋯ has Mark done, 
   assert.match(source, /`\/api\/conversations\/homeroom-bot\/threads\/\$\{rootId\}\/\$\{door\}`/);
   // Its row on the Homeroom bot page has the same ⋯, and leaves the lists at once.
   const lists = read('frontend/src/features/ai/lists.tsx');
-  assert.match(lists, /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} onChanged=\{\(state\) => \{ if \(state === 'done'\) mark\(\); \}\} className="shrink-0" \/>/);
+  assert.match(lists, /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} name=\{line\.title\} onChanged=\{\(state\) => \{ if \(state === 'done'\) mark\(\); \}\} className="shrink-0" \/>/);
   assert.match(read('frontend/src/features/ai/model.ts'), /if \(p\.state === 'done'\) continue;/);
+});
+
+// #6764 (17 Nov 2026): Rename joins Mark done in the thread's ⋯, above it,
+// with the same prompt a group chat's rename uses (1 to 80 characters). The
+// head starts the prompt from the name it is showing.
+test('#6764: Rename is the first item in a private thread\'s ⋯, and a name set there is kept', () => {
+  const DONE = 'frontend/src/features/messages/private-thread-done.tsx';
+  const source = read(DONE);
+  assert.match(source, /data-private-thread-act="rename"/);
+  assert.match(source, /title: t\('messages:privateThread\.renameTitle'\)/);
+  assert.match(source, /placeholder: t\('messages:privateThread\.renamePlaceholder'\)/);
+  assert.match(source, /confirmLabel: t\('core:common\.save'\)/);
+  assert.match(source, /maxLength: 80/);
+  assert.match(source, /method: 'PATCH'/);
+  assert.match(source, /noteThreadName\(rootId, where\.title\)/);
+  assert.equal(message('messages:privateThread.rename'), 'Rename');
+  assert.equal(message('messages:privateThread.renameTitle'), 'Rename thread');
+  assert.equal(message('messages:privateThread.renamePlaceholder'), 'Thread name');
+  assert.equal(message('messages:privateThread.renameFailed'), 'Couldn’t rename this thread.');
+  // The open thread's head passes the name it shows, and takes the new one at once.
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /<ThreadDoneMenu rootId=\{privateRoot\} done=\{privateWhere\.state === 'done'\} name=\{aloneTitle\}/);
+  assert.match(read('frontend/src/features/messages/index.tsx'), /onRenamed=\{\(title\) => setPrivateWhere\(\{ \.\.\.privateWhere, title, titled: 'person' \}\)\}/);
+  // Its row on the page and in the app frame offers the same menu with the row's name.
+  assert.match(read('frontend/src/features/ai/frame-list.tsx'), /<ThreadDoneMenu rootId=\{rootId\} done=\{false\} name=\{line\.title\}/);
+  // The PATCH is the owner's, behind the same limiter as the other doors.
+  assert.match(read('src/routes/conversations.js'),
+    /router\.patch\('\/api\/conversations\/homeroom-bot\/threads\/:rootId', conversationActionLimiter, sameOriginBrowserOnly,/);
 });
 
 // 14 Nov 2026: THE HEAD SAYS WHAT THE ROW SAYS. Earlier chat and a project's
@@ -347,12 +375,16 @@ test('a thread the server names is headed by that name, from its row or from whe
     { rootId: 42, kind: 'first_version', title: 'Plant Pal, first version' },
     { rootId: 43, kind: 'ask', title: 'could you add a dark mode' },
     { rootId: 44, kind: 'hello', title: 'Hi, I\'m Homeroom bot' },
+    { rootId: 46, kind: 'ask', title: 'Shared map place lists', titled: 'auto' },
+    { rootId: 47, kind: 'idea', title: 'My own name', titled: 'person' },
     { rootId: null, kind: 'earlier', title: 'no thread' },
   ]);
   assert.equal(bar.serverThreadName(41), 'Earlier chat');
   assert.equal(bar.serverThreadName(42), 'Plant Pal, first version');
   assert.equal(bar.serverThreadName(43), null, 'any other thread keeps the name its words give it');
   assert.equal(bar.serverThreadName(44), null);
+  assert.equal(bar.serverThreadName(46), 'Shared map place lists', '#6764: a stored automatic title is the row\'s name');
+  assert.equal(bar.serverThreadName(47), 'My own name', '#6764: and so is the person\'s own name');
   assert.equal(bar.serverThreadName(null), null);
   // Where the thread stands says it too, and wins (a project renamed since the lists were read).
   assert.equal(bar.serverThreadName(42, { state: 'open', title: 'Plant Pals, first version' }), 'Plant Pals, first version');
@@ -361,11 +393,12 @@ test('a thread the server names is headed by that name, from its row or from whe
   // The name is over the thread's own words in the head, and both reads feed it.
   const src = read(BAR);
   assert.match(src, /\.then\(\(data\) => \{\s+if \(!data \|\| typeof data\.state !== 'string'\) return;\s+noteThreadName\(rootId, data\.title\);\s+if \(live\) setWhere\(data\);/);
-  const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const aloneTitle = alone\s+\? serverThreadName\(privateRoot, privateWhere\)\s+\|\| privateThreadTitle\(root, replies, meId\)/);
+  assert.match(src, /window\.addEventListener\('homeroom-bot-work-changed', read\);/);
+  assert.match(read('frontend/src/features/messages/index.tsx'),
+    /const aloneTitle = alone\s+\? serverThreadName\(privateRoot, privateWhere\)\s+\|\| privateThreadTitle\(root, replies, meId\)/);
   assert.match(read('frontend/src/features/ai/index.tsx'), /useEffect\(\(\) => \{ noteThreadNames\(work\?\.private\); \}, \[work\]\);/);
   // The server names it the same in all three reads: the row, the open thread and History.
   const server = read('src/services/private-threads.js');
-  assert.match(server, /const title = kindTitle\(\{ kind: row\.kind, appName: app\?\.name \|\| row\.root_app_name \|\| null \}\);/);
+  assert.match(server, /const title = ownTitle \|\| kindTitle\(\{ kind: row\.kind, appName: app\?\.name \|\| row\.root_app_name \|\| null \}\);/);
   assert.match(read('src/services/ai-history.js'), /m\.metadata->'homeroomBot'->>'appName' AS root_app_name,/);
 });

@@ -88,7 +88,7 @@ function LineRow({ line, plain = false, where = false }: { line: Line; plain?: b
   return (
     <div className={k('rowx')} data-ai-line-done="">
       {row}
-      <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} />
+      <ThreadDoneMenu rootId={rootId} done={false} name={line.title} onChanged={(state) => { if (state === 'done') mark(); }} />
     </div>
   );
 }
