@@ -2826,13 +2826,12 @@ async function updateChange(pool, ctx, args) {
     const out = await retry.grant(pool, { sessionId: change.id, user, deps });
     if (out.ok) {
       ctx.revised = true;
-      return {
-        ok: true,
-        said: 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.',
-      };
+      return { ok: true, said: retry.grantDoneText(out) };
     }
-    if (out.why === 'not_allowed') return { ok: false, error: retry.grantRefusalText(out.why) };
-    // Not stopped (or a try is already waiting): their words are an ask.
+    // #6776: everything but "not stopped" is answered in the bot's own
+    // words: already queued, re-queued, or why it cannot be.
+    if (out.why !== 'not_stopped') return { ok: false, error: retry.grantRefusalText(out.why, out) };
+    // Not stopped: their words are an ask.
   }
   const asked = await recordAsk(pool, {
     appId: app.id, sessionId: change.id, issueNumber: gate.issueNumber, askerId: user.id, instruction,
@@ -2911,11 +2910,8 @@ async function letTryAgain(pool, ctx, args) {
   const out = await require('./homeroom-bot-retry-grants').grant(pool, {
     sessionId: Number(sessionId), user, deps,
   });
-  if (!out.ok) return { ok: false, error: require('./homeroom-bot-retry-grants').grantRefusalText(out.why) };
-  return {
-    ok: true,
-    said: 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.',
-  };
+  if (!out.ok) return { ok: false, error: require('./homeroom-bot-retry-grants').grantRefusalText(out.why, out) };
+  return { ok: true, said: require('./homeroom-bot-retry-grants').grantDoneText(out) };
 }
 
 /**
@@ -3633,9 +3629,9 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
       sessionId: Number(args.sessionId), user, deps,
     });
     if (!out.ok) {
-      return settle('failed', { error: out.why }, require('./homeroom-bot-retry-grants').grantRefusalText(out.why));
+      return settle('failed', { error: out.why }, require('./homeroom-bot-retry-grants').grantRefusalText(out.why, out));
     }
-    return settle('done', { sessionId: Number(args.sessionId) }, 'Done: I try once more at getting its checks to pass. If it still does not pass, I stop again and say so.');
+    return settle('done', { sessionId: Number(args.sessionId) }, require('./homeroom-bot-retry-grants').grantDoneText(out));
   }
   if (offer.kind === 'run_shots') {
     // #6533: the same rules POST .../shots/rerun keeps: its author or an admin.

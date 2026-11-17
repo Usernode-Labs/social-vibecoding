@@ -21225,7 +21225,9 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
         return;
       }
-      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.done'));
+      // #6776: the bot's own sentence, so "queued it again" is heard too.
+      const data = await resp.json().catch(() => ({}));
+      PlatformUI.toast(data.said || PlatformI18n.t('changes:tryAgain.done'));
       AppView.refreshDevData('tryAgain');
       if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
       return true;
