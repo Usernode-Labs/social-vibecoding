@@ -51,7 +51,7 @@ import { useReleaseNow } from '../../../lib/use-release-now';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
-import { CheckIcon, EllipsisHorizontalIcon } from '@/components/ui/icons';
+import { CheckIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../group-chat/swatch';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToFit, upstreamAction } from '../../versions/upstream';
@@ -59,10 +59,11 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import { shortDate } from '../../../lib/timestamp';
 import { changeRail, type RailOpen } from './rail-model';
-import { alsoTests, changeFoot } from './card-model';
+import { changeFoot, changePhase, fixStanding, type ChangePhase } from './card-model';
 import { closeStep, isGates, openStep, useOpenStep } from './step-store';
-import { PlanWords, ShotsWait, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
+import { NoPicture, PlanWords, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
 import { askFix, useChecksExplanation } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
 import { openRequestSpec } from './request-model';
@@ -824,7 +825,9 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
       keep
       open={isGates(openNow, id)}
       name="gates"
-      title={openNow?.kind === 'checks' ? v.testing.name : v.votes.name}
+      title={openNow?.kind === 'checks'
+        ? (v.checks && v.checks.failed ? t('project:topic.rail.testsFailed', { count: v.checks.failed }) : v.testing.name)
+        : v.votes.name}
       sub={openNow?.kind === 'checks' ? t('project:topic.card.layer.checksSub') : t('project:topic.card.layer.votesSub')}
       onClose={closeStep}
     >
@@ -832,6 +835,12 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
           step its votes (app.css puts the other card away while it is open).
           Shut, both stay in the page for the doors and the declared checks. */}
       <div data-gates-show={isGates(openNow, id) ? (openNow?.kind === 'checks' ? 'checks' : 'votes') : undefined}>
+        {/* The tests, as counts and one row per failure. The Testing card
+            stays in the page under it (app.css puts it away), for the doors
+            that reach into it. */}
+        {openNow?.kind === 'checks' && isGates(openNow, id) && v.checks ? (
+          <ChecksSummary v={v} actions={<>{testingActions}{testAction}</>} />
+        ) : null}
         {drawn}
       </div>
     </StepLayer>
@@ -846,64 +855,104 @@ export const ChangeGates = forwardRef<HTMLDivElement, {
  * themselves are a press away, in the layer the timeline's steps open
  * (`page` is the page whose layer that is, ./step-store.ts).
  */
+/**
+ * What a finished run of the change's tests came to, in the layer See what
+ * failed (or See checks) opens: how many failed and passed as chips, each
+ * failure as a row with its name and its own reason, the plain-words account
+ * when there is one, and the run's actions.
+ */
+function ChecksSummary({ v, actions }: { v: ChangeThreadView; actions: ReactNode }): ReactNode {
+  const t = useMessages('project');
+  const explanation = useChecksExplanation(v.testing.explain);
+  const c = v.checks;
+  if (!c) return null;
+  const why = c.failed ? (explanation || v.testing.explain?.fallback || '') : '';
+  return (
+    <div className="dev-checks-sum" data-checks-summary={c.failed ? 'failed' : 'passed'}>
+      <p className="dev-thread-facts">
+        {c.failed ? (
+          <span className="dev-thread-fact" data-tone="bad"><XIcon className="h-3.5 w-3.5" aria-hidden="true" />{t('project:topic.card.checks.failed', { count: c.failed })}</span>
+        ) : null}
+        <span className="dev-thread-fact" data-tone="ok"><CheckIcon className="h-3.5 w-3.5" aria-hidden="true" />{t('project:topic.card.checks.passed', { count: c.passed })}</span>
+      </p>
+      {why ? <p className="dev-checks-why">{why}</p> : null}
+      {c.fails.length ? (
+        <ul className="dev-checks-rows">
+          {c.fails.map((row) => (
+            <li key={row.key} className="dev-checks-row" data-checks-row={row.advisory ? 'advisory' : 'failed'}>
+              <b><XIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /><span>{row.name}</span></b>
+              {row.reason ? <span>{row.reason}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <div className="dev-checks-acts">{actions}</div>
+    </div>
+  );
+}
+
+/** The one phase a change is in (./card-model.ts), from its page's view. */
+export function phaseOf(v: ChangeThreadView): ChangePhase {
+  return changePhase({ status: v.status ? { key: v.status.key, label: v.status.label } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
+}
+
 export function ChangeFoot({ id, card, v, page, ballot = false, tail = null }: {
   id: number | null; card: DevCardModel; v: ChangeThreadView; page: string; ballot?: boolean;
   /** A quiet row at the foot's end, inside its band (the private suggestion). */
   tail?: ReactNode;
 }): ReactNode {
   const t = useMessages('project');
-  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
-  const { voteAction, testAction, testingActions, withFix, stopped } = gateActions(card, v);
+  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
+  const { voteAction, testAction, testingActions } = gateActions(card, v);
   const now = useReleaseNow(v.votes.release);
   const release = v.votes.release ? releaseSentence(v.votes.release, now) : null;
-  const explanation = useChecksExplanation(v.testing.explain);
+  const failed = foot.key === 'failed';
+  // The line under the headline: short facts, then the card's own sentences.
+  // The long account of what failed is in the layer See what failed opens,
+  // and what an approved change waits on is the timeline's note.
   let lines = foot.sub;
-  if (foot.key === 'failed' && v.testing.explain) lines = [...v.testing.note, explanation || v.testing.explain.fallback || ''].filter(Boolean);
   if (foot.gate === 'votes' && release) lines = [...lines, t('project:topic.change.gate.release', { release })];
+  const facts = foot.facts.map((f) => (typeof f === 'string' ? f : t(f.id, f.values)));
+  // "Live · Since Nov 14": the day it went live leads its line.
+  if (foot.key === 'live' && v.liveAt) facts.unshift(t('project:topic.card.foot.since', { when: shortDate(v.liveAt) }));
   const see = (kind: 'checks' | 'votes') => { if (id != null) openStep(page, { kind, changeId: id }); };
   const tests = foot.gate === 'testing';
-  const also = alsoTests(foot, v.testing);
-  const bad = foot.key === 'failed' || !!also?.bad;
-  const alsoLines = also && also.bad && v.testing.explain ? [...v.testing.note, explanation || v.testing.explain.fallback || ''].filter(Boolean) : also?.lines;
+  // Settled by the group: nothing asks for a vote any more.
+  const decided = foot.key === 'approved' || foot.key === 'merging' || foot.key === 'live' || foot.key === 'closed';
   // Short facts lead, a dot between them; the sentences follow.
-  const line = (facts: string[], rest: string[]) => dotLine([...facts.map((f) => f.replace(/[.\s]+$/, '')), sentences(rest)]);
+  const line = (lead: string[], rest: string[]) => dotLine([...lead.map((f) => f.replace(/[.\s]+$/, '')), sentences(rest)]);
   return (
     <ThreadFoot
       what={foot.key}
-      headline={foot.headline}
-      sub={line(foot.facts, lines) || null}
+      headline={foot.title ? t(foot.title.id, foot.title.values) : foot.headline}
+      sub={line(facts, lines) || null}
       tone={foot.tone}
       progress={foot.progress}
       busy={foot.key === 'testing'}
-      extra={also || tail ? (<>
-        {also ? (
-        <p className="dev-thread-foot-also" data-thread-foot-also={also.bad ? 'bad' : 'running'}>
-          {/* The space before the link is in the sentence's own run: a bare
-              whitespace expression between text runs cannot survive hydration. */}
-          <span>{`${t('project:topic.card.foot.alsoTests', { what: line([also.figure], alsoLines || []) })} `}</span>
-          <button type="button" className="dev-change-gate-link" data-thread-foot-see="checks" onClick={() => see('checks')}>
-            {also.bad ? t('project:topic.rail.seeFailed') : t('project:topic.card.foot.seeProgress')}
-          </button>
-        </p>
-        ) : null}
-        {tail}
-      </>) : null}
+      extra={tail}
     >
       {tests ? (
         <button type="button" className="gc-vote-btn" data-thread-foot-see="checks" onClick={() => see('checks')}>
-          {foot.key === 'failed' ? t('project:topic.rail.seeFailed') : t('project:topic.card.foot.seeProgress')}
+          {failed ? t('project:topic.rail.seeFailed') : t('project:topic.card.foot.seeProgress')}
         </button>
       ) : null}
-      {bad && v.testing.fix ? (
-        <button type="button" className="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks={v.testing.fix.changeId} onClick={() => askFix(v.testing.fix!)}>
-          {t('project:topic.change.gate.fix')}
-        </button>
+      {/* Failed: See what failed, Vote when the viewer has one to cast, and
+          the one action that moves it on (Fix it, else the re-run). Preview
+          and the other re-run are in the layer, with what failed. */}
+      {failed && !ballot && v.votes.tone === 'ask' ? voteAction : null}
+      {failed && v.testing.fix ? (
+        <span className="contents" data-thread-foot-next="">
+          <button type="button" className="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks={v.testing.fix.changeId} onClick={() => askFix(v.testing.fix!)}>
+            {t('project:topic.change.gate.fix')}
+          </button>
+        </span>
       ) : null}
-      {/* Beside Fix it, or under a bot that stopped: the re-run. Otherwise
+      {/* With no Fix it, or under a bot that stopped: the re-run. Otherwise
           it rides with Preview (gateActions). */}
-      {bad && (withFix || stopped) ? testingActions : null}
-      {testAction}
-      {ballot ? null : voteAction}
+      {failed && !v.testing.fix && testingActions.length ? <span className="contents" data-thread-foot-next="">{testingActions}</span> : null}
+      {failed ? null : testAction}
+      {/* Tests still running: the vote is open meanwhile, beside See progress. */}
+      {failed || ballot || decided ? null : voteAction}
     </ThreadFoot>
   );
 }
@@ -971,10 +1020,13 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     author: v.author || null,
     at: v.at || null,
     plan: body.plan || null,
-    testing: v.testing ? { tone: v.testing.tone, done: !!v.testing.done, figure: v.testing.figure || null } : null,
-    status: v.status ? { key: v.status.key, label: v.status.label } : null,
-    votes: v.votes ? { figure: v.votes.figure || null, done: !!v.votes.done, asking: v.votes.tone === 'ask' } : null,
-  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes]);
+    testing: v.testing || null,
+    status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null,
+    votes: v.votes || null,
+    merge: v.merge || null,
+    fixNote: v.testing?.authorNote || null,
+    liveAt: v.liveAt || null,
+  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes, v.merge, v.liveAt]);
   // The standard look and the brand look draw the card the thread design
   // agreed (./thread-card.tsx): a kicker, the summary and whose words it is,
   // the picture, and a foot that says where it stands. A step of the
@@ -1014,7 +1066,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {(v.author || '?').charAt(0).toUpperCase()}
         </Avatar>
         <div className="min-w-0 flex-1" {...images.scope}>
-          {cardLook ? <ThreadKicker kind="change" number={v.number} /> : null}
+          {cardLook ? <ThreadKicker kind="change" number={v.number} category={v.category} /> : null}
           <div className="messages-message-head">
             <span className="messages-message-author">{v.author}</span>
             {v.time ? <time dateTime={v.at || undefined} title={v.timeTitle}>{v.time}</time> : null}
@@ -1077,9 +1129,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* The card look: with nothing to picture it says so; then the foot,
               which says where it stands once. Votes and Testing above are the
               content of the layer their steps open, kept in the page. */}
-          {cardLook && !v.shots && v.shotsNone ? (
-            <ShotsWait state="none" title={t('project:topic.card.shots.noneTitle')} text={t('project:topic.card.shots.noneText')} />
-          ) : null}
+          {cardLook && !v.shots ? <NoPicture none={!!v.shotsNone} phase={phaseOf(v)} stopped={fixStanding(v.testing) === 'stopped'} /> : null}
           {/* The private suggestion rides at the foot's end, inside its band. */}
           {cardLook ? <ChangeFoot id={id} card={card} v={v} page={page} tail={workWithBot} /> : null}
           {cardLook && body.plan && openNow?.kind === 'plan' ? (

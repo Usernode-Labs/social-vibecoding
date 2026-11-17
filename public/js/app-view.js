@@ -8051,6 +8051,12 @@ const AppView = {
       merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
       shotsNone: AppView._shotsNotNeeded(item),
+      // When it went live, for "Since …" in the card's foot and the
+      // timeline's Live step (frontend topic/card-model.ts, rail-model.ts).
+      liveAt: item.status === 'merged' ? (item.live_at || item.merged_at || null) : null,
+      // The last run's counts and its failures by name, for the layer See
+      // what failed opens over the card (change-head.tsx ChecksSummary).
+      checks: AppView._checksSummary(item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
@@ -8063,6 +8069,27 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // What a finished run of a change's tests came to: how many passed, how
+  // many failed, and each failure by its name and its own reason. Null while
+  // nothing has finished. The card look's layer draws it as chips and rows
+  // in place of the Testing card's bar and paragraph.
+  _checksSummary(item) {
+    if (!item || (item.check_state !== 'failing' && item.check_state !== 'passing')) return null;
+    const v = AppView._checksVerdictView(item);
+    if (!v) return null;
+    const failures = Array.isArray(v.failures) ? v.failures.filter(Boolean) : [];
+    // The count is of the failures that block: an advisory one is listed,
+    // quieter, and never counted as a failed test.
+    const blocking = failures.filter((row) => !row.advisory);
+    return {
+      passed: Number(v.passCount) || 0,
+      failed: blocking.length || (item.check_state === 'failing' ? failures.length : 0),
+      fails: failures.slice(0, 12).map((row) => ({
+        key: String(row.key || row.name || ''), name: String(row.name || ''), reason: row.reason ? String(row.reason) : null, advisory: !!row.advisory,
+      })),
     };
   },
 

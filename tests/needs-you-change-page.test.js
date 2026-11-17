@@ -564,11 +564,12 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
 
   const { page, details } = render(own, FAILED);
   const testing = unescape(page.slice(page.indexOf('data-change-gate="testing"')));
-  // Preview stays in the corner; the re-run moves beside Fix it, under the sentence.
   // Under the card look the Testing card is put away in the layer its step
-  // opens; the card's foot offers Fix it, the quieter re-run beside it, then
-  // Preview.
-  assert.match(testing, /<div class="dev-thread-foot-acts">(?:<button[^>]*data-thread-foot-see="checks"[^>]*>See what failed<\/button>)?<button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
+  // opens, with the re-run and Preview. 17 Nov 2026: the card's foot says the
+  // failure plainly and offers See what failed, then the one action that
+  // moves it on, Fix it (the foot had four buttons and a red paragraph).
+  assert.match(testing, /<div class="dev-thread-foot-acts"><button[^>]*data-thread-foot-see="checks"[^>]*>See what failed<\/button>(?:<[^>]*data-vote-btn[^>]*>[\s\S]*?)?<span class="contents" data-thread-foot-next=""><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><\/span><\/div>/);
+  assert.match(testing, /<div class="dev-thread-foot" data-thread-foot="failed" data-thread-foot-tone="bad" role="group"><div class="dev-thread-foot-st" role="status"><b class="dev-thread-foot-head">Tests failed<\/b>/);
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
   assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-thread-foot')), /dev-change-gate-fix/, 'the card offers them itself only once its layer is open');
