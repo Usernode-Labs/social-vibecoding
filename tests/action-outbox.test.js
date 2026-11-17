@@ -189,7 +189,9 @@ test('no answer keeps the rest for later, in order, and tries again on a slow lo
   h.answer(() => Promise.resolve(answer(200)));
   h.sent.length = 0;
   h.timers[0].fn();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The flush returns the pass the timer started: wait for it rather than
+  // for a fixed delay, which a busy runner could fire before the second send.
+  await h.outbox.flush();
   assert.deepEqual(h.sent.map((item) => item.url), ['/api/sessions/21/vote', '/api/sessions/22/vote']);
 });
 
