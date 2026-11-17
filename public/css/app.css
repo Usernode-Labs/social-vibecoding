@@ -27371,6 +27371,25 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 [data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip::after { font-size: 11px; line-height: 14px; font-weight: 700; }
 [data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-after::after { content: var(--thread-chip-after); }
 [data-thread-picture][data-thread-chips] .dev-change-viewer:not(:popover-open) .shots-flip-chip-before::after { content: var(--thread-chip-before); }
+/* The same picture where the run worked out its screens: the Needs you
+   page's slider (.rf-compare), in the card's own colours. No outline and no
+   tint: the seam is what tells the two sides apart. Expand opens the full
+   viewer in the detail column. */
+.dev-thread-picture { margin-top: 14px; overflow: visible; background: none; }
+.dev-thread-compare {
+  --rf-black: var(--text-primary); --rf-cream: var(--bg-primary); --rf-line: var(--app-sheet-line);
+  position: relative; min-height: 120px; border-radius: 16px; overflow: hidden; isolation: isolate;
+  background: var(--messages-surface-2);
+}
+.dev-thread-compare::after { content: ''; position: absolute; inset: 0; z-index: 4; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--app-sheet-line); pointer-events: none; }
+.dev-thread-compare-expand {
+  position: absolute; z-index: 5; inset-inline-end: 12px; bottom: 12px; width: 40px; height: 40px; padding: 0;
+  display: grid; place-items: center; border: 1.5px solid var(--rf-black); border-radius: 999px;
+  background: var(--rf-cream); color: var(--rf-black); cursor: pointer;
+}
+.dev-thread-compare-expand:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.dev-thread-tiles-said { margin: 0; padding: 0; list-style: none; font-size: 13.5px; line-height: 19px; color: var(--text-secondary); }
+.dev-thread-tiles-said > li + li { margin-top: 4px; }
 .dev-thread-tiles { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; padding: 0 2px 4px; }
 .dev-thread-tile { flex: none; width: 64px; height: 48px; border-radius: 10px; overflow: hidden; background: var(--messages-surface-2); box-shadow: inset 0 0 0 1px var(--app-sheet-line); }
 .dev-thread-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
