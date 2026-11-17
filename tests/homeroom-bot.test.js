@@ -1815,8 +1815,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // to a person. The request's follow-up added the allowed-content list and
   // the two bans with their reasons to the data rules (about 700 more).
   // #6769: the data rules also say what is allowed as well as banned (about
-  // 900 more), so the cap moves to 30,500.
-  assert.ok(prompt.length < 30500, `a triage prompt stays small: ${prompt.length} chars`);
+  // 900 more). Those counts left no room: the reference sits at 30,604
+  // characters once both ride in it, so the cap moves to 31,000.
+  assert.ok(prompt.length < 31000, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db"\}$/);
 });
