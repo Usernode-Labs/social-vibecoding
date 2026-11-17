@@ -3,7 +3,7 @@
  *
  * It replaced the four tabs (Hub · Discussion · Needs you · Workshop, the
  * retired project-band.tsx). The pages first, a line, then the project's
- * channels under their headings:
+ * channels under their heading:
  *
  *   Hub
  *   Needs you              29
@@ -11,25 +11,22 @@
  *   ─────────────
  *   CHANNELS
  *   # general
- *   TOPICS
- *   # onboarding            3
- *   # homeroom-bot
  *
- * A project with no topics has no Topics heading: Hub, Needs you, Workshop
- * and #general.
+ * A topic's channel is not one of these places (#6709): the Hub's Topics
+ * card and the channel's own address reach it, and a retired topic stays
+ * readable by its links (a merge's card, a `#name` in a message).
  *
  * ITS APP LEADS (18 Oct 2026, `app`): App, above Hub, with the green "still
  * open" dot while it runs in a kept frame, in the tray and the phone's
  * drawer, as in the desktop sidebar (which draws its own, outside this list,
  * so a running app's row can stay when the places fold away). Not for
- * Homeroom's own project, whose app is the platform you are in. Retired topics are not listed; their channels stay readable
- * by their links (a merge's card, a `#name` in a message).
+ * Homeroom's own project, whose app is the platform you are in.
  *
  * A `<nav>` of links, because each entry is somewhere to go: an anchor with
  * the place's own address (./places.ts placeHref), so a new tab opens it
  * too, and a plain press moves the page in place (`onPlace`). The open place
  * carries `aria-current="page"` and the left rail's lit-row treatment
- * (`--lit-tint`, `--lit-ink`). Channels and Topics are each a `role="group"`
+ * (`--lit-tint`, `--lit-ink`). Channels is a `role="group"`
  * labelled by its heading. A count says what it counts: on screen a
  * channel's pill reads "3 unread", its hover text the same (the channel
  * you are reading draws none), and to a screen reader an `sr-only`
@@ -40,12 +37,10 @@
  * (./places-tray.tsx) on a phone or with the sidebar folded, which adds
  * "Switch community" at its foot, and on the phone's drawer. (The section
  * column beside the 76px strip drew it too, until the sidebar started at
- * 768px and no width had the strip.) The sidebar keeps its list short: topics
- * after the first `fold` wait behind "Show N more", less the one you are on,
- * which is always drawn.
+ * 768px and no width had the strip.)
  */
 
-import { useId, useState, type MouseEvent, type ReactNode } from 'react';
+import { useId, type MouseEvent, type ReactNode } from 'react';
 
 import { AppWindowIcon, BallotIcon, BoardIcon, HashIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
@@ -177,7 +172,7 @@ function AppPlace({ slug, name }: { slug: string; name: string }) {
   );
 }
 
-export function ProjectPlaces({ slug, name, place, owed, places, filtered = false, fold, app = false, onPlace, onSwitch }: {
+export function ProjectPlaces({ slug, name, place, owed, places, filtered = false, app = false, onPlace, onSwitch }: {
   slug: string;
   /** The project's name, which names the list for a screen reader. */
   name: string;
@@ -188,8 +183,6 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
   places: PlacesPayload | null | undefined;
   /** All items' search or filters are on: a dot on the Workshop (#2915). */
   filtered?: boolean;
-  /** v3's sidebar: how many topics to draw before "Show N more". All of them when absent. */
-  fold?: number;
   /** Lead with the project's App row (the tray, the phone's drawer; never Homeroom's own). */
   app?: boolean;
   onPlace: (key: PlaceKey) => void;
@@ -200,14 +193,7 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
   const id = useId();
   const lit = place ? litPlace(place) : null;
   const rows = placeRows(places, owed);
-  // Shown in full once asked, for as long as the list is up for this project.
-  const [unfolded, setUnfolded] = useState<string | null>(null);
-  const topics = fold != null && unfolded !== slug
-    ? rows.topics.filter((topic, i) => i < fold || topic.key === lit)
-    : rows.topics;
-  const more = rows.topics.length - topics.length;
   const channelsId = `${id}-channels`;
-  const topicsId = `${id}-topics`;
   return (
     <div className="dev-ws-places" data-places={slug}>
       <nav className="dev-ws-places-nav" aria-label={name ? t('project:places.list.name', { project: name }) : t('project:places.list.nameUnnamed')}>
@@ -241,28 +227,6 @@ export function ProjectPlaces({ slug, name, place, owed, places, filtered = fals
             onPlace={onPlace}
           />
         </div>
-        {rows.topics.length ? (
-          <div className="dev-ws-places-group" role="group" aria-labelledby={topicsId} data-places-group="topics">
-            <div id={topicsId} className="dev-ws-places-head">{t('project:places.list.topics')}</div>
-            {topics.map((t) => (
-              <PlaceLink
-                key={t.key}
-                slug={slug}
-                k={t.key}
-                label={t.label}
-                title={t.name}
-                count={t.count}
-                lit={lit === t.key}
-                onPlace={onPlace}
-              />
-            ))}
-            {more > 0 ? (
-              <button type="button" className="dev-ws-place dev-ws-places-more" data-places-more="" onClick={() => setUnfolded(slug)}>
-                <span className="dev-ws-place-label">{t('project:places.list.showMore', { count: more })}</span>
-              </button>
-            ) : null}
-          </div>
-        ) : null}
       </nav>
       {onSwitch ? (
         <div className="dev-ws-places-foot">

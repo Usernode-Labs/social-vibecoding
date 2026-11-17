@@ -464,6 +464,7 @@
   function isTemp(id) { return id < 0; }
   function opId() { return 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
   var generation = 0; // bumped by every local change, so a stale read is dropped
+  var readSeq = 0; // bumped by every read that actually starts
 
   // Saves the change (already on screen) and starts sending. False when it
   // could not be saved, and the caller puts the screen back.
@@ -539,8 +540,45 @@
     return payload;
   }
 
+  // A change the server has acknowledged, remembered against the reads that
+  // had already started when its answer arrived. One of those reads may have
+  // left before the change was saved, so its copy of the item is older than
+  // what the server now holds: drawing it would put the tick back.
+  //   id -> { after: readSeq when acknowledged, type, item (the server's copy) }
+  var settled = {};
+
+  function markSettled(id, type, item) {
+    settled[id] = { after: readSeq, type: type, item: item };
+  }
+
+  // A read's own copy, with every acknowledged-but-not-yet-re-read change put
+  // back over it. A read that started after the answer (n > after) has the
+  // server as it is now, so that guard is done and goes.
+  function applySettled(payload, n) {
+    if (!payload || !Array.isArray(payload.items)) return payload;
+    Object.keys(settled).forEach(function (key) {
+      var id = Number(key);
+      var guard = settled[key];
+      if (n > guard.after) { delete settled[key]; return; }
+      if (guard.type === 'delete') {
+        payload.items = payload.items.filter(function (x) { return x.id !== id; });
+        return;
+      }
+      if (!guard.item) { delete settled[key]; return; }
+      var kept = false;
+      for (var i = 0; i < payload.items.length; i++) {
+        if (payload.items[i].id !== id) continue;
+        payload.items[i] = copy(guard.item);
+        kept = true;
+      }
+      if (!kept && guard.type === 'add') payload.items.push(copy(guard.item));
+    });
+    return payload;
+  }
+
   // A change the server refused for good comes off the screen too.
   function applyUndo(op) {
+    delete settled[op.itemId];
     if (!data) return;
     if (op.type === 'add') {
       data.items = data.items.filter(function (i) { return i.id !== op.itemId; });
@@ -573,7 +611,9 @@
   function drain(force) { attemptReplay(force).catch(function () {}); }
 
   // One change, sent. An add's answer points every change queued behind it,
-  // and the row on screen, at the item's real id.
+  // and the row on screen, at the item's real id. Every answer is also kept
+  // against the reads already on their way (applySettled), so one that left
+  // before the change was saved cannot draw over it.
   function runOp(op) {
     if (op.type === 'add') {
       return api('POST', op.path, op.body, WRITE_TIMEOUT_MS).then(function (d) {
@@ -584,12 +624,18 @@
           return moved;
         }));
         adopt(op.itemId, d.item);
+        delete settled[op.itemId];
+        markSettled(d.item.id, 'add', d.item);
       });
     }
     if (isTemp(op.itemId)) { saveQueue(queue().slice(1)); return Promise.resolve(); }
     var path = '/api/items/' + op.itemId;
     return api(op.type === 'delete' ? 'DELETE' : 'PATCH', path, op.type === 'delete' ? null : op.body, WRITE_TIMEOUT_MS)
-      .then(function () { saveQueue(queue().slice(1)); });
+      .then(function (d) {
+        saveQueue(queue().slice(1));
+        if (op.type === 'delete') markSettled(op.itemId, 'delete', null);
+        else if (d && d.item) markSettled(op.itemId, 'patch', d.item);
+      });
   }
 
   function attemptReplay(force) {
@@ -670,6 +716,7 @@
 
   // The server's answer to an add: the item's real id, everywhere it is used.
   function adopt(tempId, item) {
+    if (settled[tempId]) { settled[item.id] = settled[tempId]; delete settled[tempId]; }
     if (!data) return;
     var local = findItem(tempId);
     if (local) {
@@ -1780,6 +1827,7 @@
     // read again once things are quiet (public/live-updates.js).
     if (loading) { if (live) live.changed(); return loading; }
     var asked = generation;
+    var n = ++readSeq;
     loading = api('GET', '/api/list', null, LOAD_TIMEOUT_MS)
       .then(function (d) {
         // A change made while this was on its way would be undone by it:
@@ -1787,7 +1835,9 @@
         if (loaded && !force && asked !== generation) { if (live) live.changed(); return; }
         loaded = true;
         showingSaved = false;
-        data = project(d);
+        // A change the server acknowledged after this read left is newer
+        // than what it carries, even for a forced read: keep the saved copy.
+        data = project(applySettled(d, n));
         saveCopy();
         render();
       })

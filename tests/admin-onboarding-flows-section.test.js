@@ -72,8 +72,58 @@ test('nothing is drawn as inferred: the reading settles private or public, lapse
   assert.match(engine, /order:\['got:in','got:mail','got:away','got:waiting','got:nomail','got:new'\]/);
   assert.match(engine, /function isIn\(p\)\{return p\.got==='in'\|\|p\.got==='acct';\}/, 'so their thread stops there');
   assert.match(engine, /var EARLY=\(DATA\.early&&DATA\.early\.label\)\|\|'Earlier members';/, 'the early group is named by the reading');
-  assert.match(engine, /s1Btn\.hidden=!count\(ALL,function\(p\)\{return p\.s1;\}\);/, 'no toggle when nobody is early');
+  assert.match(engine, /if\(count\(ALL,function\(p\)\{return p\.s1;\}\)\)\{\s*out\.push\(\{id:'late'/, 'no early choices when nobody is early');
   for (const view of ['whole', 'priv', 'pub', 'share', 'drop']) assert.match(engine, new RegExp(`id:'${view}'`), `the ${view} view`);
+});
+
+test('the Who menu draws everyone, a season, one day\'s admits or an invite\'s people', () => {
+  const engine = read(ENGINE);
+  const src = read(SECTION);
+  assert.match(src, /<select data-of="who" aria-label="[^"]+" \/>/, 'a named control, filled by the engine');
+  assert.doesNotMatch(src, /s1Toggle/, 'the switch it replaced is gone');
+  // A cohort is the people let off the waitlist on one day: one batch of admit mails.
+  assert.match(engine, /out\.push\(\{id:'c:'\+c\[0\],g:'Let off the waitlist on',l:dayWords\(c\[0\]\)/);
+  assert.match(engine, /f:function\(p\)\{return p\.door==='waitlist'&&p\.cohort===c\[0\];\}/);
+  assert.match(engine, /function setWho\(id,animate\)\{\s*var w=WBY\[id\]\|\|WBY\.all; WHO=w\.id; P=ALL\.filter\(w\.f\);/);
+  // The box of people still waiting belongs to everyone, not to a day's admits.
+  assert.match(engine, /if\(mode==='cards'&&\(WHO==='all'\|\|WHO==='late'\)&&!col\.nodes\[id\]\)/);
+  // The switch's old choice carries over.
+  assert.match(engine, /if\(sw==null&&localStorage\.getItem\('admin\.onboardingFlows\.noEarly'\)==='1'\)sw='late';/);
+});
+
+test('who came in from the admit mail or a nudge, and what they chose to make first', () => {
+  const engine = read(ENGINE);
+  // Made an account, off the waitlist: split by the mail they came in after.
+  assert.match(engine, /if\(g==='got:in'\)return p\.door==='waitlist'\?'gi:'\+\(p\.mailIn\|\|'unk'\):'gmp:in';/);
+  for (const id of ['gi:admit', 'gi:nudge1', 'gi:nudge2', 'gi:had', 'ask:template', 'ask:custom', 'ask:look', 'ask:none']) {
+    assert.match(engine, new RegExp(`'${id}':\\{l:`), id);
+  }
+  // "What do you want to make?" breaks Made an account down, like the admit mail: not a step of its own.
+  assert.match(engine, /\{t:'What to make\?',short:'w',detail:true,node:function\(p\)\{ var f=firstNode\(p\); if\(!f\)return null; if\(f==='first:never'\)return 'askp:never';/);
+  assert.match(read(SECTION), /\(Time on waitlist, Admit mail, What to make\?\) are not steps of their own/);
+  assert.match(engine, /gridAt:9,/, 'the grid moved one column right');
+});
+
+test('too early to say is read by the admit mail, and none of it is a loss', () => {
+  const engine = read(ENGINE);
+  // Let off this week and not in: split by what the mail shows so far, in the Admit mail column.
+  assert.match(engine, /if\(g==='got:new'\)return newMail\(p\);/);
+  assert.match(engine, /function newMail\(p\)\{ if\(p\.noAccount&&p\.stuck==='mail_sent'\)return 'gn:nomail'; if\(!p\.mail\|\|p\.mail\[0\]==null\)return 'gn:untracked'; return p\.mail\[1\]\?'gn:clicked':\(p\.mail\[0\]\?'gn:opened':'gn:unopened'\); \}/);
+  for (const id of ['gn:unopened', 'gn:opened', 'gn:clicked', 'gn:untracked', 'gn:nomail']) {
+    assert.match(engine, new RegExp(`'${id}':\\{l:["']Too early: [^}]*neutral:true\\}`), `${id} is too early to judge, never lost`);
+  }
+  // The findings and the admit-day table say the same.
+  assert.match(engine, /' more were let off this week and are too early to say: '\+earlyMail\(/);
+  assert.match(engine, /\['Opened the admit mail','num'\],\['Clicked it','num'\]/);
+});
+
+test('each column title says how many people reach that step', () => {
+  const engine = read(ENGINE);
+  assert.match(engine, /function reach\(L,ci\)\{var n=0,k=0;L\.nodes\.forEach\(function\(nd\)\{if\(nd\.col!==ci\|\|nd\.meta\.pass\|\|nd\.meta\.phantom\)return;/,
+    'a pass-through and the waiting box are not people reaching a step');
+  assert.match(engine, /txt=REL\?\(r\.k\+' of '\+REL\.n\+' selected'\):\(r\.n\+' \\u00b7 '\+pct\(r\.n,all\)\)/, 'of the selection while one is made');
+  assert.match(engine, /function refreshLabels\(\)\{\s*if\(!cur\)return;\s*drawZones\(cur,1\);/, 'so a selection redraws them');
+  assert.match(engine, /tables\(id\); stepsTable\(L\); onboardingTables\(id\);/, 'and Notes has the same numbers');
 });
 
 test('its styles are scoped to the section and use no untuned palette', () => {
@@ -104,6 +154,12 @@ test('its styles are scoped to the section and use no untuned palette', () => {
   assert.match(block, /#admin-onboarding-flows \.scroller\{[^}]*overflow:hidden;overflow:clip;/);
   assert.match(read(ENGINE), /\[sc,root\]\.forEach\(function\(box\)\{listen\(box,'scroll',function\(\)\{if\(box\.scrollLeft\|\|box\.scrollTop\)\{box\.scrollLeft=0;box\.scrollTop=0;\}\}\);\}\);/,
     'and where a browser scrolls it anyway, it is put back');
+  // Nor the admin page around it: a press moves no focus, and keyboard focus puts every scrolled box back.
+  const engine = read(ENGINE);
+  assert.match(engine, /sc\.addEventListener\('mousedown',function\(e\)\{\s*var f=e\.target\.closest&&e\.target\.closest\('\[tabindex\]'\);if\(!f\|\|!sc\.contains\(f\)\)return;\s*e\.preventDefault\(\);/);
+  assert.match(engine, /listen\(document,'scroll',function\(e\)\{[^}]*hold\(b\);\},true\);/, 'where each box belongs, from its own scroll events');
+  assert.match(engine, /sc\.addEventListener\('focusin',function\(e\)\{\s*around\(\)\.forEach\(function\(b\)\{var at=held\.get\(b\);[^\n]*b\.scrollTop=at\[1\];\}\}\);\s*reveal\(e\.target\);/,
+    'and the chart moves to the card instead');
   for (const src of [read(SECTION), read(ENGINE)]) assert.doesNotMatch(src, /\b(gray|indigo)-\d/);
 });
 
