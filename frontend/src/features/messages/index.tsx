@@ -2310,8 +2310,9 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
         ) : null}
         {/* #6159: Mark done, or Reopen, in the thread's own ⋯. */}
         {privateMine && privateRoot && privateWhere ? (
-          <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'}
-            onChanged={(state) => setPrivateWhere({ ...privateWhere, state })} />
+          <ThreadDoneMenu rootId={privateRoot} done={privateWhere.state === 'done'} name={aloneTitle}
+            onChanged={(state) => setPrivateWhere({ ...privateWhere, state })}
+            onRenamed={(title) => setPrivateWhere({ ...privateWhere, title, titled: 'person' })} />
         ) : null}
         {/* On a phone the Messages screen's header bar has the way back
             (app.css hides this one there, polish N16), and in the bot tab's
