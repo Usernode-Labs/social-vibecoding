@@ -4108,7 +4108,7 @@ function describeStagingFailure(stagingErr) {
       `build refuses to start. ` +
       `\n\nFix: add \`"staging_default": "<value>"\` to each ${missingKeys.length === 1 ? 'entry' : 'entry'} in \`dapp.json\`. ` +
       `If the app's code degrades gracefully when the secret is unset, use the empty string \`""\`. ` +
-      `For paid services use a vendor sandbox key (e.g. Stripe \`sk_test_...\`). ` +
+      `For paid services use a vendor sandbox key (e.g. a mapping API's test key). ` +
       `Never copy the prod value into \`staging_default\`. ` +
       `See \`app-conventions.md\` "Public vs private secrets" for the full rubric. ` +
       `\n\nThe agent can apply this fix directly: dispatch \`dispatch_claude_code\` with a prompt ` +

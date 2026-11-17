@@ -28,14 +28,16 @@ const item = (id, slug, extra = {}) => ({
   kind: 'proposal', id, title: `Change ${id}`, app: { slug, name: slug.toUpperCase() }, ...extra,
 });
 
-test('the island mounts it in the side column, after the New project card', () => {
+test('the island mounts it under Standard (WIP), in the row it shares with Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  assert.match(island, /<aside id="home-aside" className="home-aside">\s*<NewProjectCard \/>\s*<NeedsYouCard \/>\s*<\/aside>/);
-  // The column's cards are spaced by the column, and a long line is cut
-  // rather than widening it.
+  assert.match(island, /const aside = wip && grid\.ready && !!grid\.create;/);
+  assert.match(island, /\{wip \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
+  assert.match(island, /\{wip \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
+  // Beside Challenges from 1280px at the card's own width; narrower, a row
+  // of its own as wide as the column.
   const css = read('public/css/app.css');
-  const wide = css.slice(css.indexOf("HOME'S SIDE COLUMN"));
-  assert.match(wide, /\.home-aside \{\s*display: flex;\s*flex-direction: column;\s*gap: 12px;[^}]*min-width: 0;[^}]*max-width: 304px;/);
+  assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 0 0 auto; width: var\(--wip-needs-w\); \}/);
+  assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
 });
 
 test('the card is one link to Needs you, drawn from the waiting count', () => {
@@ -49,14 +51,12 @@ test('the card is one link to Needs you, drawn from the waiting count', () => {
   assert.equal(message('home:needsCard.waiting_other'), '{{count}} decisions waiting for your vote');
 });
 
-test('the feed is read only where the column is displayed, and again when the count moves', () => {
+test('the feed is read at every width, and again when the count moves', () => {
   const src = read(CARD);
-  assert.match(src, /window\.matchMedia\?\.\('\(min-width: 1280px\)'\)\.matches/);
-  assert.match(src, /if \(!shown\) return undefined;/);
+  assert.doesNotMatch(src, /matchMedia/, 'the card is drawn at every width, so nothing waits on one');
+  assert.match(src, /if \(!waiting\) \{ setFeed\(null\); return undefined; \}/, 'nothing waits: nothing is read');
   assert.match(src, /sharedJson<\{ items\?: NeedsCardItem\[\] \}>\(`\/api\/workshop\/needs-feed\$\{demoQuery\(\)\}`, \{ fresh: true \}\)/);
-  assert.match(src, /\}, \[waiting, shown\]\);/);
-  // A window widened past 1280px reads the feed it had no use for before.
-  assert.match(src, /query\.addEventListener\?\.\('change', onChange\);/);
+  assert.match(src, /\}, \[waiting\]\);/);
 });
 
 test('the numbers: the count until the feed is read, then the feed\'s own split', () => {

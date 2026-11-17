@@ -145,6 +145,37 @@ const DRAWING_CLAIM = new RegExp(
   'i',
 );
 
+// 17 Nov 2026 (#6763): a reply that points at the New project button under
+// it ("tap New project", "New project below", "the New project button"), when
+// none is showing. Only words that tell them to tap it, or say it is under the
+// reply, count: "a new project of its own" is an idea, not a door.
+const NEW_PROJECT_CLAIM = new RegExp(
+  String.raw`\b(?:tap|press|click|hit|use)\s+(?:the\s+)?\**["“]?New project\b`
+  + String.raw`|\bNew project\b[^.!?\n]{0,80}\b(?:appear|show(?:s|n)? up|below|under (?:this|my|the|that) (?:message|reply))\b`
+  + String.raw`|\bNew project button\b`,
+  'i',
+);
+
+/** Pure (#6763): a reply's leftover words for the button, cut with a false claim about it. */
+const NEW_PROJECT_WORDS_RE = /\bNew project\b/;
+
+/**
+ * Pure (#6763): does this turn's thread already show New project at its foot,
+ * or does the turn itself offer one? True when it called offer_new_project
+ * (newProjectOffer); in the thread the bot opened for a new project
+ * (threadDraft changeKind 'project'); or in a thread that holds a drawn
+ * screen for no project yet (threadDesign with no app), which the thread bar
+ * draws the door for (private-thread-bar.tsx doorsFor).
+ */
+function newProjectDoorShown(t) {
+  if (!t) return false;
+  if (t.newProjectOffer) return true;
+  const draft = t.deps?.threadDraft || null;
+  if (draft?.kind === 'ask' && draft.changeKind === 'project') return true;
+  const design = t.deps?.threadDesign || null;
+  return !!(design && !design.app?.slug && design.surface !== 'platform');
+}
+
 /**
  * #6159 (3 Nov 2026): "close it from your side", "I can't close threads":
  * there is no such control on their side, and the bot can close a private
@@ -229,6 +260,17 @@ const CLAIMS = Object.freeze([
       return s.unsure('drafted') ? null : false;
     },
     said: 'says a drafted request with File it is under it',
+  },
+  {
+    // #6763: "Tap New project under this reply" when no New project is
+    // showing. The button is the chat's to offer, so only a turn that carries
+    // the flag can be checked here (the design bot's turn does not).
+    kind: 'new_project',
+    proof: 'turn',
+    re: NEW_PROJECT_CLAIM,
+    applies: (t) => 'newProjectOffer' in t,
+    turn: (t) => newProjectDoorShown(t),
+    said: 'points at a New project button under it',
   },
   {
     // #6682: the wrong card described as the right one. A design thread's
@@ -1326,6 +1368,10 @@ function repairNote(problems, { tools = null } = {}) {
   const drafted = kinds.has('drafted')
     ? ` Your reply says a draft with File it and Not now is under it, but no draft is open in this conversation, so nothing is under it.${offered('offer_request') ? ' Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it.' : ' Do not mention File it.'} Then reply with one short line about the draft at most: the card under it shows its title and words, so never write them in your reply.`
     : '';
+  // 17 Nov 2026 (#6763): a New project pointed at with none under the reply.
+  const newProject = kinds.has('new_project')
+    ? ` Your reply points at a New project button under it, but none is there.${offered('offer_new_project') ? ' If they want to make a new app of its own, call offer_new_project now, then reply; otherwise ask what the app is for and do not mention New project.' : ' Do not mention New project.'}`
+    : '';
   // 1 Nov 2026: a screen said to be drawing with nothing drawn.
   const drawWith = offered('write_screen') ? 'write_screen (or edit_design)' : null;
   const drawing = kinds.has('drawing') || kinds.has('design_done')
@@ -1353,7 +1399,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${drawing}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${drawing}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1390,6 +1436,8 @@ function cut(text, problems, ctx = null) {
       if (p.all !== false || !numbers.length || named.some((n) => numbers.includes(n)) || !named.length) return true;
     }
     if (kinds.has('drafted') && DRAFT_PROMISE_RE.test(sentence)) return true;
+    // #6763: with the false pointer go the rest of its words for the button.
+    if (kinds.has('new_project') && NEW_PROJECT_WORDS_RE.test(sentence)) return true;
     if (unknownProjectNames.length && projectMentions(sentence).some((mention) => {
       const key = squashWords(mention.name);
       return key && unknownProjectNames.some((u) => u === key || u.startsWith(`${key} `) || key.startsWith(`${u} `));
@@ -1442,6 +1490,8 @@ async function checkedNote(pool, ctx, text) {
 module.exports = {
   CLAIMS,
   DRAWING_CLAIM,
+  NEW_PROJECT_CLAIM,
+  newProjectDoorShown,
   NO_CONTROL_CLAIM,
   DESIGN_DONE,
   NOT_BUILT,

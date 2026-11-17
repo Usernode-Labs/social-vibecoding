@@ -287,6 +287,16 @@ test('the console says why each row waits, counts waiting and running alike, and
     moveOffersLine({ days: 7, sent: 3, moved: 1, kept: 1, open: 1, failed: 0, notOffered: 2, notOfferedByWhy: { no_bot: 1, repeat_held: 1 } }),
     '3 offers to move a request to Homeroom in the last 7 days (1 moved, 1 kept, 1 not answered yet); 2 about Homeroom with no offer (1 its requester does not have the bot, 1 the note was not repeated).',
   );
+  // #6771: an offer that named another project is one of the offers sent, so
+  // it is said there, not counted again among the decisions.
+  assert.equal(
+    moveOffersLine({ days: 7, sent: 3, moved: 1, kept: 0, open: 1, failed: 0, toOtherProjects: 2, movedToOther: 1, notOffered: 0, notOfferedByWhy: {} }),
+    "3 offers to move a request to Homeroom in the last 7 days, 2 of them to another project's board (1 moved, 1 not answered yet).",
+  );
+  assert.equal(
+    moveOffersLine({ days: 7, sent: 1, moved: 1, kept: 0, open: 0, failed: 0, toOtherProjects: 1, movedToOther: 1, notOffered: 0, notOfferedByWhy: {} }),
+    "1 offer to move a request to Homeroom in the last 7 days, 1 of them to another project's board (1 moved).",
+  );
 
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   assert.match(tsx, /id="admin-homeroom-bot-queue-depth">\s*\{queueCountLine\(payload\?\.queue\)\}/);

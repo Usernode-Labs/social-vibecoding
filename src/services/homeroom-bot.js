@@ -1593,6 +1593,8 @@ function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
     reason: plain(v.reason),
     firstStep: plain(v.firstStep),
     planVariant: plain(v.planVariant),
+    elsewhere: plain(v.elsewhere),
+    elsewhereCandidates: Array.isArray(v.elsewhereCandidates) ? v.elsewhereCandidates.map(plain) : v.elsewhereCandidates,
   };
 }
 
@@ -1754,12 +1756,22 @@ function readVerdict(text) {
         plan = { bullets: [], questions: [first, second] };
       }
     }
+    // #6771: a request that is about another project: the app's name as the
+    // request names it, or up to three names when the read is unsure. Like
+    // `platform`, only a person verdict carries them, and the read never
+    // carries both. A resolved project is offered a move to its board.
+    const elsewhere = verdict === 'person' && obj.platform !== true
+      ? (clip(String(obj.elsewhere || '').replace(/\s+/g, ' ').trim(), 80) || null) : null;
+    const elsewhereCandidates = verdict === 'person' && obj.platform !== true
+      ? (Array.isArray(obj.elsewhere_candidates) ? obj.elsewhere_candidates : [])
+        .map((c) => clip(String(c || '').replace(/\s+/g, ' ').trim(), 80)).filter(Boolean).slice(0, 3)
+      : [];
     // #6413: its requester, or somebody who decides on the project, said in
     // the discussion to close, drop or withdraw it. It gets the same close
     // offer a done request does, and no Go ahead. A person or empty verdict
     // carries it; one about Homeroom itself does not.
     const withdrawn = (verdict === 'person' || verdict === 'empty')
-      && obj.withdrawn === true && obj.platform !== true;
+      && obj.withdrawn === true && obj.platform !== true && !elsewhere;
     return {
       verdict,
       determined: typeof obj.determined === 'boolean' ? obj.determined : null,
@@ -1792,11 +1804,16 @@ function readVerdict(text) {
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
+      // #6771: a request it leaves because it is about another project, whose
+      // name it names, and up to three likely projects when it is unsure
+      // which. Only a person verdict carries them, never with `platform`.
+      elsewhere,
+      elsewhereCandidates,
       // A request whose ask is already there (in the app, or done by a merged
       // change): its requester is offered a vote on closing it, not left at a
       // "person decides" with nothing to decide. A person or empty verdict
       // carries it; one about Homeroom itself is offered the move instead.
-      done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
+      done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true && !elsewhere,
       // #6413: asked to close or withdraw by its requester or a decider. Done
       // wins when both say so (actOnVerdict).
       withdrawn,
@@ -1811,8 +1828,8 @@ function readVerdict(text) {
       firstStep: verdict === 'person' && !withdrawn ? firstStepOf(obj.first_step) : null,
       // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
       // can settle this, or it still fails `ready` for somebody else to act
-      // on (operator work outside the app, or a non-append-only database
-      // change). Only a person verdict that is
+      // on (operator work outside the app, or a database change that could
+      // lose data already stored). Only a person verdict that is
       // neither about Homeroom itself nor already done nor withdrawn carries
       // it; a missing key is today's behaviour.
       // 17 Nov 2026: and only with the blocker it names in `cannot_because`,
@@ -1820,9 +1837,9 @@ function readVerdict(text) {
       // The bare false was set far beyond them (sign-in fixes, large
       // requests, product direction), and nothing checked it: without a
       // blocker it is a request a go-ahead can settle.
-      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && obj.done !== true
+      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
         ? !(obj.go_ahead === false && live.blockerOf(obj.cannot_because)) : null,
-      blocker: verdict === 'person' && !withdrawn && obj.platform !== true && obj.done !== true
+      blocker: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
         && obj.go_ahead === false ? live.blockerOf(obj.cannot_because) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
@@ -2629,7 +2646,7 @@ ${designGuidance}
 // it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
 // without it, a re-read answered in keys of its own (`next_step`,
 // `ask_reporter`) that nothing reads, and so did the ask to repair it.
-const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db"}';
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db" | "explanation"}';
 const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
 
 function triageClosing(issueNumber) {
@@ -2858,7 +2875,7 @@ function deciderNote(decider) {
       who,
       '- A request that fails a `ready` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is a `question` to them, not `person`. Ask it plainly, say what it would change, and give `answers` they can tap: "Go ahead" first, then "Leave it".',
       '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
-      '- Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where.',
+      '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
       rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
     ].join('\n');
   }
@@ -2872,7 +2889,7 @@ function deciderNote(decider) {
     `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
     `- A request that fails a \`ready\` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
     `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
-    '- Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where.',
+    '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
     rulesLine(`${either} can`),
   ].join('\n');
 }
@@ -2896,7 +2913,7 @@ function goAheadNote(goAhead) {
     '',
     `@${by}, who your last note on this request named, said to go ahead ${inThread
       ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
-      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that are not append-only are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work". Nothing else is \`go_ahead\` false.`,
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that could lose data already stored are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work". So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
   ].join('\n');
 }
 
@@ -7987,10 +8004,26 @@ async function actOnVerdict({
     const suggestFor = deciders.length
       ? await idsOfUsernames(pool, deciders)
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
+    // #6771: a request about another project has that project resolved
+    // against what its requester can see (a private one they cannot see is
+    // never named), so its note can offer the move there.
+    const moveSvc = require('./homeroom-bot-move');
+    const elsewhere = (parsed.elsewhere || (parsed.elsewhereCandidates || []).length)
+      ? await moveSvc.resolveElsewhere(pool, {
+        app, name: parsed.elsewhere, candidates: parsed.elsewhereCandidates,
+        requester: Number(requester?.userId) > 0 ? { id: Number(requester.userId), username: requester.username } : null,
+      }).catch(() => null)
+      : null;
+    const moveTarget = elsewhere?.target || null;
+    const moveCandidates = elsewhere?.candidates || [];
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
-      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides,
+      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
+      elsewhere: !!(moveTarget || moveCandidates.length), candidates: moveCandidates,
     });
+    // #6770: a request that only asks for an explanation has its answer in the
+    // note and nothing to build, so it takes the close vote instead.
+    const explanationNote = parsed.blocker === 'explanation';
     // #6413: done wins when the read says both, so a withdrawn note is only
     // the one without a "done".
     const withdrawnNote = parsed.withdrawn && !parsed.done;
@@ -8002,7 +8035,11 @@ async function actOnVerdict({
       ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by, blocker: parsed.blocker })
       : withdrawnNote
         ? live.withdrawnHomeroomText(parsed)
-        : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+        : live.personHomeroomText({
+          ...parsed, project, requester: asker?.username || null, deciders,
+          elsewhere: moveTarget ? (moveTarget.name || moveTarget.slug) : null,
+          elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
+        });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -8025,17 +8062,27 @@ async function actOnVerdict({
       // A note about Homeroom itself held so offers no move: the run says why.
       if (parsed.platform) await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
     } else {
-      // #6311: a platform note carries an offer in the thread, for the person
-      // who asked for the request. 5 Nov 2026: the move itself, which their
-      // chat with the bot offered when the request's news went there (a
-      // first version's still does: homeroom-bot-dm.js relayIssuePost).
-      const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
-        ? { kind: requester.firstVersion ? 'copy_request' : 'move_request', forUserId: Number(requester.userId), args: { issueNumber } }
+      // A note about Homeroom itself, or another project's, carries the
+      // offer in the thread for the person who asked. #6771: the target's
+      // name, whether they must join first, and the project's id are on it.
+      const moveWanted = (parsed.platform || moveTarget) && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0;
+      const copyOffer = moveWanted
+        ? {
+          kind: parsed.platform && requester.firstVersion ? 'copy_request' : 'move_request',
+          forUserId: Number(requester.userId),
+          args: {
+            issueNumber,
+            ...(moveTarget ? {
+              targetSlug: moveTarget.slug, targetName: moveTarget.name || moveTarget.slug, join: !!elsewhere.join,
+            } : {}),
+          },
+          ...(moveTarget ? { targetAppId: Number(moveTarget.id) } : {}),
+        }
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
       // #6413: a withdrawn request gets the same close offer. The card is
       // written with the note (live.post `card`), so its buttons always work.
-      const threadCard = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
+      const threadCard = copyOffer || (parsed.done || withdrawnNote || explanationNote ? await doneCloseOffer() : null);
       const noteMeta = threadCard
         ? null
         : (suggestActions.length && suggestFor.length
@@ -8044,13 +8091,19 @@ async function actOnVerdict({
             actions: suggestActions, othersActions: suggestOthers,
           }
           : null);
-      await say('person', live.personText({ ...parsed, project }), {
+      await say('person', live.personText({
+        ...parsed, project,
+        // #6771: GitHub's copy never names a private project.
+        elsewhere: moveTarget && moveTarget.view_visibility === 'public' ? (moveTarget.name || moveTarget.slug) : null,
+        elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
+      }), {
         homeroomText: noteText,
         ...(noteMeta ? { metadata: { homeroomBot: noteMeta } } : {}),
         ...(threadCard ? { card: threadCard } : {}),
         dm: {
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
+          ...(explanationNote ? { explanation: true } : {}),
           // 6 Nov 2026 (#6430): the DM says a person has to build it, not
           // that a go-ahead can settle it, and names the smaller part.
           ...(parsed.goAheadDecides === false ? { goAheadDecides: false, blocker: parsed.blocker } : {}),

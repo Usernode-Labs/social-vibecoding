@@ -89,6 +89,15 @@ function offerActions(kind, offerId, args = {}) {
   }
   const words = OFFER_WORDS[kind];
   if (!words) return [];
+  // #6771: a move to another project names it, and offers to join first when
+  // they are not a member there.
+  if (kind === 'move_request' && args.targetName) {
+    const name = String(args.targetName);
+    return [
+      { id: 'yes', label: args.join ? `Join ${name} and move it` : `Move it to ${name}`, style: 'primary', offerId: Number(offerId) },
+      { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },
+    ];
+  }
   // #6533: the plan offer names its request, as the change page does.
   const yes = kind === 'post_pictures_plan' && Number(args.issueNumber) > 0
     ? `${words.yes} on request #${Number(args.issueNumber)}` : words.yes;
@@ -159,14 +168,14 @@ async function insertCard(db, spec) {
   const thread = spec.place === 'thread';
   const { rows: [row] } = await db.query(
     `INSERT INTO bot_cards (place, app_id, kind, args, user_id, conversation_id, title, details, session_id,
-                           source_issue_number, target_message_id, private_thread_id, design_version)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                           source_issue_number, target_message_id, private_thread_id, design_version, target_app_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
      RETURNING id, kind, args, user_id`,
     [thread ? 'thread' : 'dm', positive(spec.appId), String(spec.kind), JSON.stringify(spec.args || {}),
       thread ? positive(spec.forUserId) : positive(spec.userId), thread ? null : positive(spec.conversationId),
       String(spec.title || ''), spec.details == null ? null : String(spec.details),
       positive(spec.sessionId), positive(spec.sourceIssueNumber), positive(spec.targetMessageId),
-      positive(spec.privateThreadId), positive(spec.designVersion)],
+      positive(spec.privateThreadId), positive(spec.designVersion), positive(spec.targetAppId)],
   );
   return row;
 }

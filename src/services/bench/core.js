@@ -53,6 +53,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isDeepStrictEqual } = require('node:util');
 const log = require('../logger');
 const suites = require('./suites');
 const backfill = require('./backfill');
@@ -834,6 +835,47 @@ async function repairUnrepaired(pool, suiteId, deps, rateMs) {
 }
 
 /**
+ * A done suite's authored references, re-read from the definition. An
+ * authored (synthetic) task's expected answer is written in the definition,
+ * and once a task exists materialization inserts nothing new: a stored task
+ * keeps the reference it was made with. When the definition's answer is
+ * corrected, as the content rules' betting item was (#6767), the old answer
+ * would go on grading trials. This rewrites each stored task whose reference
+ * differs and re-grades its finished trials (graders.regradeTask). Never on
+ * a frozen suite, never throws.
+ */
+async function repairAuthoredReferences(pool, suiteId, definition, deps = {}) {
+  if (!suiteId || !Array.isArray(definition?.tasks)) return null;
+  try {
+    const suite = await suites.suiteRow(pool, suiteId);
+    if (!suite || suite.frozen_at) return null;
+    const graders = deps.graders || require('./graders');
+    let tasks = 0;
+    let trials = 0;
+    for (const spec of definition.tasks) {
+      if (!spec || !spec.synthetic || !spec.reference || !spec.ref) continue;
+      // eslint-disable-next-line no-await-in-loop
+      const { rows } = await pool.query(
+        "SELECT id, reference FROM bench_tasks WHERE suite_id = $1 AND tags->>'core_ref' = $2",
+        [suiteId, spec.ref],
+      );
+      for (const task of rows) {
+        if (isDeepStrictEqual(task.reference, spec.reference)) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await pool.query('UPDATE bench_tasks SET reference = $2::jsonb WHERE id = $1', [task.id, JSON.stringify(spec.reference)]);
+        tasks += 1;
+        // eslint-disable-next-line no-await-in-loop
+        trials += await graders.regradeTask(pool, task.id);
+      }
+    }
+    return tasks ? { tasks, trials } : null;
+  } catch (err) {
+    log.warn('bench', 'Repairing the authored references failed', { suiteId, err: err.message });
+    return null;
+  }
+}
+
+/**
  * Materialize a definition: its suite and every task it can resolve. A
  * no-op once done (unless `force`, which retries only what is missing),
  * except that build tasks imported before their references were read from
@@ -852,9 +894,12 @@ async function materialize(pool, config = {}, {
   if (!row) {
     const current = await statusRow(pool, definition);
     const references = current?.status === 'done' ? await repairUnrepaired(pool, current.suite_id, deps, rateMs) : null;
+    const authoredReferences = current?.status === 'done'
+      ? await repairAuthoredReferences(pool, current.suite_id, definition, deps) : null;
     return {
       ok: true, noop: true, status: current?.status || null, suiteId: current?.suite_id || null, summary: current?.summary || null,
       ...(references ? { references } : {}),
+      ...(authoredReferences ? { authoredReferences } : {}),
     };
   }
   const startedMs = Date.now();
@@ -865,6 +910,7 @@ async function materialize(pool, config = {}, {
     const ctx = { pool, config, github, deps, definition, suite, skipped: [], rateMs: Number(rateMs) || 0 };
     const rules = [];
     let references = null;
+    let authoredReferences = null;
     if (suite.frozen_at) {
       ctx.skipped.push({ ref: definition.key, stage: null, app: null, reason: 'the suite is frozen: nothing more can be added to it' });
     } else {
@@ -886,10 +932,15 @@ async function materialize(pool, config = {}, {
         // eslint-disable-next-line no-await-in-loop
         rules.push(await materializeRule(ctx, rule));
       }
+      // An authored reference that changed since the tasks were made (a
+      // retried pass can meet tasks stored by an older definition).
+      // eslint-disable-next-line no-await-in-loop
+      authoredReferences = await repairAuthoredReferences(pool, suite.id, definition, deps);
     }
     const summary = {
       ...(await summarize(pool, suite.id, definition, ctx.skipped)), rules,
       ...(references ? { references } : {}),
+      ...(authoredReferences ? { authoredReferences } : {}),
       durationMs: Date.now() - startedMs,
     };
     await pool.query(
@@ -900,6 +951,7 @@ async function materialize(pool, config = {}, {
     log.info('bench', 'Core suite materialized', {
       definition: `${definition.key}@${definition.version}`, suiteId: suite.id, ready: summary.ready,
       skipped: summary.skipped.length,
+      ...(authoredReferences ? { authoredReferences } : {}),
       perStage: Object.fromEntries(Object.entries(summary.stages).map(([k, x]) => [k, `${x.ready} ready, ${x.skipped} skipped`])),
       seconds: Math.round(summary.durationMs / 1000),
     });
@@ -987,6 +1039,7 @@ module.exports = {
   pickDistinctApps,
   materialize,
   materializeOne,
+  repairAuthoredReferences,
   coreStatus,
   coreSuiteId,
   materializeInBackground,
