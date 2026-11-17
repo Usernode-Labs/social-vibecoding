@@ -3082,7 +3082,7 @@
     {
       "name": "#6785: Recent threads is the middle tab, and its link lands on it",
       "path": "/?shot=notifications-threads&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread + #notifications-tab-threads[aria-selected=\"true\"] + #notifications-tab-all",
+      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-tab-threads[aria-selected=\"true\"]) #notifications-threads-list .notifications-row .app-icon-tile",
       "expectText": "Recent threads"
     },
     {

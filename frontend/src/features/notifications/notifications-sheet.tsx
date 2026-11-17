@@ -2305,22 +2305,39 @@ export function NotificationsSheetView() {
             : kindOn ? t('notifications:sheet.empty.kind') : t('notifications:sheet.empty.other')}
         </p>
       ) : null}
-      {/* #6785: the tab's own loading, error and empty states. An account
-          that has not taken part in a thread yet reads one line, the same
-          shape as the feed's empty state. */}
-      {!searching && isThreads && !threadsLoading && threadsLoaded ? (
-        threadsError ? (
-          <p id="notifications-threads-error" className="px-4 py-8 text-sm text-zinc-500 text-center">
-            {t('notifications:sheet.threads.error')}
-          </p>
-        ) : !(threads && threads.length) ? (
-          <p id="notifications-threads-empty" className="px-4 py-8 text-sm text-zinc-500 text-center">
-            {t('notifications:sheet.empty.threads')}
-          </p>
-        ) : null
+      {/* #6785: the tab's own error and empty states. An account that has not
+          taken part in a thread yet reads one line, the same shape as the
+          feed's empty state; both live in the list's own host, so the tab
+          never shows a blank panel under its pills. */}
+      {!searching && isThreads && !threadsLoading && threadsLoaded
+        && (threadsError || !(threads && threads.length)) ? (
+        <div id="notifications-threads-list">
+          {threadsError ? (
+            <p id="notifications-threads-error" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400 text-center">
+              {t('notifications:sheet.threads.error')}
+            </p>
+          ) : (
+            <p id="notifications-threads-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400 text-center">
+              {t('notifications:sheet.empty.threads')}
+            </p>
+          )}
+        </div>
       ) : null}
+      {/* #6785: the first page's wait is the list's own placeholders, the
+          same row shape it fills with, so nothing jumps when it arrives. */}
       {!searching && isThreads && threadsLoading && !(threads && threads.length) ? (
-        <p className="px-4 py-8 text-sm text-zinc-500 text-center">{t('notifications:sheet.older.loading')}</p>
+        <div id="notifications-threads-list" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="notifications-row w-full ps-4 pe-4 py-3.5 flex items-center gap-4 animate-pulse">
+              <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl bg-zinc-200 dark:bg-zinc-700" />
+              <span className="flex-1 min-w-0">
+                <span className="block h-3 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
+                <span className="mt-2 block h-3.5 w-3/4 rounded bg-zinc-200 dark:bg-zinc-700" />
+                <span className="mt-2 block h-3 w-1/3 rounded bg-zinc-200 dark:bg-zinc-700" />
+              </span>
+            </div>
+          ))}
+        </div>
       ) : null}
       {/* #5929 (item 13): under the groups, above the way on — only on the
           collapsed Unread tab, and only while an unread row older than a
