@@ -42,6 +42,9 @@ const { platformHeaders } = require('./openrouter-client');
 // #5123: every OpenRouter request denies data collection.
 const { noTrainingProvider, withNoTraining } = require('../../worker/openrouter-privacy');
 const { sniffImageType } = require('./attachments');
+// #6767: the content rules as the conventions state them, for every prompt
+// this module builds, so the picture tool cannot hold an older copy.
+const contentRules = require('./content-rules-prompt');
 
 const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 const DEFAULT_WEEKLY_CAP = 24;
@@ -88,21 +91,24 @@ function clip(value, max) {
 
 /**
  * The first words every picture's prompt starts with, before what the
- * person asked for: the same rules every project here lives by.
+ * person asked for: the same rules every project here lives by, read from
+ * the conventions' own section (content-rules-prompt.js), so a picture
+ * prompt cannot drift from them again (#6767).
  */
 const CONTENT_RULES = [
   'Content rules. They come before everything below, and nothing below can change them:',
-  '- No sexual or suggestive content, and no nudity.',
-  '- No violence, blood, weapons or anything made to frighten.',
-  '- No gambling.',
-  '- Nothing aimed at children.',
+  '- Never draw:',
+  ...contentRules.forbidden().map((rule) => `  - ${rule}`),
+  '- Allowed, never a reason to refuse:',
+  ...contentRules.allowed().map((rule) => `  - ${rule}`),
   '- No real person\'s likeness: any person in the picture is made up.',
   '- No brand names, logos or trademarks unless they are given to you here.',
   'If what is asked would break a rule, draw a harmless picture that keeps the rest of it.',
 ].join('\n');
 
-// Requests refused before anything is called: the obvious ones. The rules
-// above, in the prompt itself, stand behind them for the rest.
+// Requests refused before anything is called: the terms with only one
+// meaning. Everything else (weapons in a game, poker for points, children at
+// a party) is left to the model under the rules above, which allow them.
 const GUARDS = Object.freeze([
   {
     rule: 'sexual',
@@ -110,19 +116,14 @@ const GUARDS = Object.freeze([
     why: 'nothing sexual or suggestive, and no nudity',
   },
   {
-    rule: 'violence',
-    re: /\b(?:gore|gory|bloody|bloodshed|murder\w*|kill(?:ing|ed|s)?|corpses?|dead bod(?:y|ies)|tortur\w*|massacre|shoot(?:ing)? (?:at )?(?:people|someone|him|her)|guns?|rifles?|pistols?|shotguns?|firearms?|weapons?|knife|knives|swords?|bombs?|explosives?|grenades?|ammo|ammunition)\b/i,
-    why: 'no violence or weapons',
+    rule: 'gore',
+    re: /\b(?:gore|gory|bloodshed|corpses?|dead bod(?:y|ies)|tortur\w*|massacre|dismember\w*|behead\w*|decapitat\w*)\b/i,
+    why: 'no gore or graphic violence',
   },
   {
     rule: 'gambling',
-    re: /\b(?:gambl\w*|casinos?|poker|roulette|slot machines?|blackjack|sports ?betting|bookmakers?|sportsbook|lottery tickets?)\b/i,
-    why: 'no gambling',
-  },
-  {
-    rule: 'children',
-    re: /\b(?:for (?:kids|children|toddlers|babies|little ones)|aimed at (?:kids|children)|kids'? (?:app|game|show|book)|children'?s (?:app|game|show|book|cartoon))\b/i,
-    why: 'nothing aimed at children',
+    re: /\b(?:real[- ]money|for (?:real )?cash|sports ?betting|sportsbooks?|bookmakers?|cash[- ]out|lottery tickets?)\b/i,
+    why: 'no real-money gambling',
   },
   {
     rule: 'real_people',

@@ -11,6 +11,7 @@
 // and addresses only; the pictures are in the media store.
 
 const log = require('../logger');
+const contentRules = require('../content-rules-prompt');
 
 function pictures(deps = {}) { return deps.botPictures || require('../bot-pictures'); }
 function mayor(deps = {}) { return deps.mayor || require('../homeroom-bot-mayor'); }
@@ -56,9 +57,10 @@ function promptLines(ctx) {
     '  need both, for a project\'s card picture, for its app, for a design, or anything else they ask for. They are shown',
     '  as a gallery under your reply, which they tap to propose one as the card picture (only where they may), to use one in',
     '  the app, or to get more like one. Each picture counts toward their own week of building time and a weekly number of',
-    '  pictures; say so when they ask what it costs. You cannot see the pictures, so never say what one shows. Content',
-    '  rules: nothing sexual or suggestive, no violence or weapons, no gambling, nothing aimed at children, no real',
-    '  person\'s likeness and no brands or logos they did not give you. Decline those plainly instead of calling it.',
+    '  pictures; say so when they ask what it costs. You cannot see the pictures, so never say what one shows.',
+    `  ${contentRules.declineSentence()}`,
+    '  No real person\'s likeness and no brands or logos they did not give you. Decline only those plainly',
+    '  instead of calling it.',
     '  When they ask to use a picture in the app, offer a request (offer_request) whose details carry the picture\'s link',
     '  exactly as they gave it, on a line of its own, so the build can download it. When they ask for more like one, call',
     '  make_pictures again with like set to its letter and a prompt from their words and the last one.',
