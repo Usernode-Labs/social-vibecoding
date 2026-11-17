@@ -2,12 +2,14 @@
 
 // #4239: moving a request about Homeroom itself to Homeroom's own board.
 //
-// People file problems with the platform (its header, its suggestion form, a
-// project's description or invite message) on a project's board, where no
-// change to the project can fix them. The triage says so (its `platform`
-// flag on a person verdict, stored on the run as about_platform) and the
-// DM's chat model can say so too (offer_move_request). Either way the
-// requester is offered a move, decided by a tap like any offer:
+// People file problems with the platform (its header, its suggestion form, the
+// invite email it sends) on a project's board, where no change to the project
+// can fix them. A project's name, description and icon are lines in its own
+// dapp.json, so a change to them stays on its board and never moves here.
+// The triage says so (its `platform` flag on a person verdict, stored on the
+// run as about_platform) and the DM's chat model can say so too
+// (offer_move_request). Either way the requester is offered a move, decided
+// by a tap like any offer:
 //
 //   Move it to Homeroom  files the request on Homeroom's board with its
 //                        original title and words and a footer naming where
@@ -54,6 +56,59 @@ function domainOf(deps) {
 function requestLink(domain, appSlug, issueNumber) {
   return `https://${domain}/#app/${encodeURIComponent(appSlug)}/dev/issues/${Number(issueNumber)}`;
 }
+
+// ── Where a request belongs (#6771) ─────────────────────────────────────
+//
+// A request on one project's board that is about another app is offered a
+// move there. The triage names the app (`elsewhere`, or a few candidates
+// when it is unsure) and the server resolves it against what the requester
+// can see: a project they cannot see is never named, and one they can see
+// but have not joined is offered to join first.
+
+/** Pure: how a target project is named on screen. */
+function targetNameOf(app) {
+  return app?.name || app?.slug || '';
+}
+
+/** Pure: whose board something lands on, as a sentence names it. */
+function boardPhrase(app, deps = {}) {
+  return app && app.slug === botModule(deps).PLATFORM_SELF_APP_SLUG
+    ? 'Homeroom\'s own board' : `${targetNameOf(app)}'s board`;
+}
+
+/**
+ * #6771: the project a request is about, resolved against what its requester
+ * can see. `name` is the app's name as the request names it; `candidates`
+ * are up to three names the triage offered when it was unsure. `requester` is
+ * `{ id }` of the person who filed or first asked (a guest view when there is
+ * none). Resolves { target, join } when one project fits (join true when they
+ * can see it but must join before filing), { candidates } when none can be
+ * resolved but some can be suggested, or null. Never throws.
+ */
+async function resolveElsewhere(pool, { app, name = null, candidates = [], requester = null, deps = {} }) {
+  const mayor = mayorModule();
+  const viewer = requester && Number(requester.id) > 0 ? requester : null;
+  const usable = async (named) => {
+    const found = await mayor.findApp(pool, named).catch(() => null);
+    if (!found || Number(found.id) === Number(app?.id)) return null;
+    return (await mayor.canView(pool, found, viewer)) ? found : null;
+  };
+  const wanted = typeof name === 'string' ? name.trim() : '';
+  if (wanted) {
+    const target = await usable(wanted);
+    if (target) {
+      const join = !(await mayor.canFile(pool, target, viewer));
+      return { target, join };
+    }
+  }
+  const seen = [];
+  for (const candidate of Array.isArray(candidates) ? candidates.slice(0, 3) : []) {
+    const found = await usable(candidate);
+    if (found && !seen.some((s) => Number(s.id) === Number(found.id))) seen.push(found);
+  }
+  return seen.length ? { candidates: seen.map(targetNameOf) } : null;
+}
+
 
 /** Homeroom's own project, where a request about the platform belongs, or null. */
 async function platformApp(pool, deps = {}) {
@@ -125,19 +180,60 @@ function copiedFooter({ app, issueNumber, link, author, asked }) {
 }
 
 /**
- * The request a move is about, read fresh: an open issue (not a pull
- * request) on a project that is not Homeroom's own, which this person asked
- * for (homeroom_bot_requesters) or filed, or whose project they run (its
- * creator or an admin: app-admins.js canManageApp). Resolves { ok: true, app, repo,
- * issue: { title, body, login }, author: { userId, username } | null } or
- * { ok: false, code, error }.
+ * #6771: what people said on the request being moved, as part of the new
+ * one's body: the people's messages, oldest first, each as "@name: words".
+ * A private project's discussion is left out, as its name is: the target's
+ * board may be more public than where it came from. Pure.
  */
-async function moveGate(pool, { app, issueNumber, user, deps = {} }) {
+function discussionSection({ app, messages = [] }) {
+  if (!app || (app.view_visibility && app.view_visibility !== 'public')) return '';
+  const lines = (Array.isArray(messages) ? messages : [])
+    .filter((m) => m && m.username && String(m.content || '').trim())
+    .map((m) => `@${m.username}: ${String(m.content).trim()}`);
+  return lines.length ? `\n\n---\nDiscussion on the original:\n\n${lines.join('\n\n')}` : '';
+}
+
+/**
+ * #6771: the discussion a moved request carries, read from its issue thread:
+ * the people's own messages, never the bot's. Empty for a private project.
+ * Never throws.
+ */
+async function discussionOf(pool, { app, issueNumber, bot = null }) {
+  try {
+    if (!app || (app.view_visibility && app.view_visibility !== 'public')) return [];
+    const { rows } = await pool.query(
+      `SELECT u.username, m.content
+         FROM chat_messages m JOIN users u ON u.id = m.user_id
+        WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.thread_ref = $2
+          AND m.msg_type = 'message' AND m.deleted_at IS NULL
+          AND m.user_id IS NOT NULL AND m.user_id IS DISTINCT FROM $3::int
+        ORDER BY m.id`,
+      [app.id, Number(issueNumber), bot?.id == null ? null : Number(bot.id)],
+    );
+    return rows;
+  } catch (err) {
+    log.warn('homeroom-bot-move', 'Could not read a moved request\'s discussion', {
+      app: app?.slug, issueNumber, err: err.message,
+    });
+    return [];
+  }
+}
+
+/**
+ * The request a move is about, read fresh: an open issue (not a pull
+ * request) on a project that is not the one it would move to, which this
+ * person asked for (homeroom_bot_requesters) or filed, or whose project they
+ * run (its creator or an admin: app-admins.js canManageApp). Without `target`
+ * the move is to Homeroom, so a request already there cannot move. Resolves
+ * { ok: true, app, repo, issue: { title, body, login }, author: { userId,
+ * username } | null } or { ok: false, code, error }.
+ */
+async function moveGate(pool, { app, issueNumber, user, target = null, deps = {} }) {
   const github = deps.github || require('./github');
   const n = Number(issueNumber);
   if (!app || !Number.isInteger(n) || n <= 0) return { ok: false, code: 'not_found', error: 'There is no such request.' };
-  if (await isPlatformApp(pool, app, deps)) {
-    return { ok: false, code: 'already_there', error: 'It is already on Homeroom\'s own board.' };
+  if (target ? Number(target.id) === Number(app.id) : await isPlatformApp(pool, app, deps)) {
+    return { ok: false, code: 'already_there', error: 'It is already on that project\'s board.' };
   }
   const repo = repoOf(app);
   if (!repo || !github.isEnabled()) return { ok: false, code: 'unreadable', error: 'Its request cannot be read right now.' };
@@ -306,7 +402,7 @@ async function proposeClose(pool, { app, user, issueNumber, issueTitle, reason, 
  * Close request `issueNumber` of `app` at once, for its author, when nobody
  * else is involved. Resolves { ok }.
  */
-async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = {} }) {
+async function closeNow(pool, { app, repo, issueNumber, user, newNumber, targetName = 'Homeroom', deps = {} }) {
   const github = deps.github || require('./github');
   const ws = deps.ws || require('./ws');
   const n = Number(issueNumber);
@@ -325,7 +421,7 @@ async function closeNow(pool, { app, repo, issueNumber, user, newNumber, deps = 
   await require('./work-state').touched(pool, [{ appId: app.id, issueNumber: n }]);
   await movedLine(pool, {
     app, thread: { type: 'issue', ref: n }, kind: 'moved', version: `to-${Number(newNumber)}`, deps,
-    words: `${user.username} moved this request to Homeroom as #${newNumber} and closed it here`,
+    words: `${user.username} moved this request to ${targetName} as #${newNumber} and closed it here`,
   });
   try {
     ws.pushIssueUpdate?.({ action: 'github_synced', appSlug: app.slug, appId: app.id, source: 'moved' });
@@ -347,46 +443,65 @@ function closedWords({ how, appName, reasons = [], author }) {
 }
 
 /**
- * Move a request about Homeroom itself to Homeroom's own board: file it
- * there with its title and words and a footer naming where it came from and
+ * Move a request to a project's board: file it there with its title and
+ * words, the discussion so far, and a footer naming where it came from and
  * who asked (credited to its author when they are on Homeroom), link it from
  * the original, and close the original: at once for its author when nobody
- * else is in it, else by a vote of its group. `fileKey` files it once per
- * move, whoever retries. Resolves { ok: true, target, issueNumber, title,
- * how ('closed' | 'vote' | 'already_proposed' | 'failed'), reasons, mine,
- * appName } or { ok: false, code, error }. Throws only what a retry can
- * cure (mayor.retryAct), so the caller's work tries again.
+ * else is in it, else by a vote of its group. `target` is the project it
+ * moves to (Homeroom's own board when left out, or when it is Homeroom).
+ * `fileKey` files it once per move, whoever retries. A person who may see
+ * the target but is not yet a member joins it first, as the target's own
+ * rules allow. Resolves { ok: true, target, issueNumber, title, how
+ * ('closed' | 'vote' | 'already_proposed' | 'failed'), reasons, mine,
+ * appName } or { ok: false, code, error }. Throws only what a retry can cure
+ * (mayor.retryAct), so the caller's work tries again.
  */
-async function moveToHomeroom(pool, config, {
-  bot = null, user, app, issueNumber, fileKey, fallbackTitle = null, settings, deps = {},
+async function moveRequest(pool, config, {
+  bot = null, user, app, issueNumber, target = null, fileKey, fallbackTitle = null, settings, deps = {},
 }) {
   const github = deps.github || require('./github');
   const mayor = mayorModule();
-  const gate = await moveGate(pool, { app, issueNumber, user, deps });
+  const to = target || await platformApp(pool, deps);
+  if (!to) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
+  const gate = await moveGate(pool, { app, issueNumber, user, target: to, deps });
   if (!gate.ok) return { ok: false, code: gate.code, error: gate.error };
-  const target = await platformApp(pool, deps);
-  if (!target) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
-  if (!(await mayor.canFile(pool, target, user))) {
-    return { ok: false, code: 'not_allowed', error: 'you need to join Homeroom\'s own community first. You can join it from its page.' };
+  const name = targetNameOf(to);
+  // The target's own rule for who may file there. A project they can see but
+  // have not joined is joined first (the project page's own Join).
+  let canFile = await mayor.canFile(pool, to, user);
+  if (!canFile && await mayor.canView(pool, to, user)) {
+    if (to.view_visibility === 'public' && await require('./usernames').isProvisional(pool, user.id)) {
+      return { ok: false, code: 'username_required', error: `you need to pick a username before joining ${name}. You can do that on its page.` };
+    }
+    await require('./communities').join(pool, to, user.id);
+    canFile = await mayor.canFile(pool, to, user);
+  }
+  if (!canFile) {
+    return { ok: false, code: 'not_allowed', error: `you need to join ${name} first. You can join it from its page, or ask its people to invite you.` };
   }
   const appName = app.name || app.slug;
   const n = gate.issueNumber;
   const domain = domainOf(deps);
+  const link = requestLink(domain, app.slug, n);
   // Its GitHub author when nobody on Homeroom filed it: never the
   // platform's own account, which files for everybody.
   const login = /\[bot\]$|^usernode-bot$/i.test(String(gate.issue.login || '')) ? null : gate.issue.login;
   const author = gate.author?.username || login || null;
   // Credited to whoever first asked, when they are on Homeroom.
   const credited = gate.author ? { id: gate.author.userId, username: gate.author.username } : user;
+  const footer = movedFooter({ app, issueNumber: n, link, author });
+  // #6771: the discussion goes with it, when both boards may show it.
+  const discussion = discussionSection({ app, messages: await discussionOf(pool, { app, issueNumber: n, bot }) });
+  const room = Math.max(2000, MAX_BODY_CHARS - footer.length - discussion.length - 8);
   let filed;
   try {
     filed = await mayor.fileRequest(pool, config, {
-      user: credited, app: target, settings, deps,
+      user: credited, app: to, settings, deps,
       fileKey,
       title: clip(gate.issue.title || fallbackTitle, MAX_TITLE_CHARS),
-      details: clip(gate.issue.body, MAX_BODY_CHARS),
+      details: clip(gate.issue.body, room) + discussion,
       askedText: gate.issue.title || fallbackTitle,
-      footer: movedFooter({ app, issueNumber: n, link: requestLink(domain, app.slug, n), author }),
+      footer,
       reason: 'moved_request',
     });
   } catch (err) {
@@ -395,11 +510,13 @@ async function moveToHomeroom(pool, config, {
     if (mayor.retryAct(err, deps.actKey)) throw err;
     return { ok: false, code: 'file_failed', error: 'it could not be filed just now. Try again in a minute.' };
   }
-  const newLink = requestLink(domain, target.slug, filed.issueNumber);
+  const newLink = requestLink(domain, to.slug, filed.issueNumber);
   try {
     await github.createIssueComment(gate.repo.owner, gate.repo.repo, n,
-      `Moved to Homeroom's own board as request #${filed.issueNumber}: ${newLink}\n\n`
-      + `It is about the Homeroom platform itself rather than ${appName}, so it is followed up there.`);
+      `Moved to ${boardPhrase(to, deps)} as request #${filed.issueNumber}: ${newLink}\n\n`
+      + (to.slug === botModule(deps).PLATFORM_SELF_APP_SLUG
+        ? `It is about the Homeroom platform itself rather than ${appName}, so it is followed up there.`
+        : `It is about ${name} rather than ${appName}, so it is followed up there.`));
   } catch (err) {
     log.warn('homeroom-bot-move', 'Could not link a moved request from the original', { app: app.slug, issueNumber: n, err: err.message });
   }
@@ -413,12 +530,17 @@ async function moveToHomeroom(pool, config, {
     : [];
   let how;
   if (mine && !reasons.length) {
-    how = (await closeNow(pool, { app, repo: gate.repo, issueNumber: n, user, newNumber: filed.issueNumber, deps })).ok ? 'closed' : 'failed';
+    how = (await closeNow(pool, {
+      app, repo: gate.repo, issueNumber: n, user, newNumber: filed.issueNumber, targetName: name, deps,
+    })).ok ? 'closed' : 'failed';
   }
   if (!how || how === 'failed') {
+    const why = to.slug === botModule(deps).PLATFORM_SELF_APP_SLUG
+      ? 'it is about the Homeroom platform itself'
+      : `it is about ${name}`;
     const proposed = await proposeClose(pool, {
       app, user, issueNumber: n, issueTitle: gate.issue.title,
-      reason: `Moved to Homeroom's own board as request #${filed.issueNumber} (${newLink}): it is about the Homeroom platform itself, not ${appName}.`,
+      reason: `Moved to ${boardPhrase(to, deps)} as request #${filed.issueNumber} (${newLink}): ${why}, not ${appName}.`,
       deps,
     }).catch((err) => {
       log.warn('homeroom-bot-move', 'Could not propose closing a moved request', { app: app.slug, issueNumber: n, err: err.message });
@@ -426,10 +548,17 @@ async function moveToHomeroom(pool, config, {
     });
     how = proposed.ok ? 'vote' : proposed.code === 'already_proposed' ? 'already_proposed' : 'failed';
   }
-  log.info('homeroom-bot-move', 'Moved a request to Homeroom', {
-    app: app.slug, issueNumber: n, movedTo: filed.issueNumber, original: how, userId: user.id,
+  log.info('homeroom-bot-move', 'Moved a request to another board', {
+    app: app.slug, issueNumber: n, movedTo: filed.issueNumber, target: to.slug, original: how, userId: user.id,
   });
-  return { ok: true, target, issueNumber: filed.issueNumber, title: gate.issue.title, how, reasons, mine, appName };
+  return { ok: true, target: to, issueNumber: filed.issueNumber, title: gate.issue.title, how, reasons, mine, appName };
+}
+
+/** #4239: a move to Homeroom's own board. */
+async function moveToHomeroom(pool, config, opts) {
+  const target = await platformApp(pool, opts.deps || {});
+  if (!target) return { ok: false, code: 'no_platform', error: 'Homeroom\'s own board isn\'t available right now.' };
+  return moveRequest(pool, config, { ...opts, target });
 }
 
 /**
@@ -440,8 +569,16 @@ async function moveToHomeroom(pool, config, {
 async function decideMove(pool, config, { bot = null, user, settings, action, yes, ack, deps = {} }) {
   if (!yes) return ack('OK, I\'ll leave it where it is.');
   const app = await appById(pool, action.app_id);
-  const moved = await moveToHomeroom(pool, config, {
-    bot, user, app, issueNumber: action.source_issue_number, fileKey: `dm-action:${action.id}`,
+  let target = null;
+  if (action.target_app_id) {
+    target = await appById(pool, action.target_app_id);
+    if (!target) {
+      await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'target_gone']);
+      return ack('I couldn\'t move it: the project it belongs on is no longer there.');
+    }
+  }
+  const moved = await moveRequest(pool, config, {
+    bot, user, app, issueNumber: action.source_issue_number, target, fileKey: `dm-action:${action.id}`,
     fallbackTitle: action.title, settings, deps,
   });
   if (!moved.ok) {
@@ -451,7 +588,7 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, moved.issueNumber]);
   const line = dmModule(deps).requestLine({ appName: moved.target.name || moved.target.slug, issueNumber: moved.issueNumber, issueTitle: moved.title });
   return ack(
-    `${line}\n\nMoved. It's on Homeroom's own board now, with a link to it left on the original. `
+    `${line}\n\nMoved. It's on ${boardPhrase(moved.target, deps)} now, with a link to it left on the original. `
       + closedWords({ how: moved.how, appName: moved.appName, reasons: moved.reasons, author: moved.mine }),
     {
       objects: [{ type: 'issue', appId: Number(moved.target.id), issueNumber: moved.issueNumber }],
@@ -627,7 +764,9 @@ async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
             COUNT(*) FILTER (WHERE status = 'done')::int AS moved,
             COUNT(*) FILTER (WHERE status = 'declined')::int AS kept,
             COUNT(*) FILTER (WHERE status = 'open')::int AS open,
-            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+            COUNT(*) FILTER (WHERE target_app_id IS NOT NULL)::int AS to_other_projects,
+            COUNT(*) FILTER (WHERE target_app_id IS NOT NULL AND status = 'done')::int AS moved_to_other
        FROM bot_cards
       WHERE kind = 'move_request' AND created_at > NOW() - make_interval(days => $1)`,
     [days],
@@ -654,6 +793,8 @@ async function moveOfferSummary(pool, { days = MOVE_OFFER_DAYS } = {}) {
     kept: o?.kept || 0,
     open: o?.open || 0,
     failed: o?.failed || 0,
+    toOtherProjects: o?.to_other_projects || 0,
+    movedToOther: o?.moved_to_other || 0,
     notOffered: missed.length,
     notOfferedByWhy: byWhy,
     notOfferedRecent: missed.slice(0, 10).map((m) => ({
@@ -683,12 +824,16 @@ const DONE_ACTIONS = Object.freeze([
  * `card`), and what came of it is noted after (foldedOfferSent). Null when
  * there is nothing to offer. Never throws.
  */
-async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason = null, runId = null, deps = {} }) {
+async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason = null, runId = null, target = null, deps = {} }) {
   try {
     const n = Number(issueNumber);
     if (!userId || !app?.id || !Number.isInteger(n)) return null;
     const move = kind === 'move_request';
-    if (move && (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps)))) {
+    // A move to another project (#6771) needs no Homeroom board; a move with
+    // no target still needs Homeroom's own one.
+    if (move && (target
+      ? Number(target.id) === Number(app.id) || !(await mayorModule().canFile(pool, target, { id: userId }))
+      : (await isPlatformApp(pool, app, deps) || !(await platformApp(pool, deps))))) {
       await noteMoveOffer(pool, runId, 'not_sent');
       return null;
     }
@@ -713,6 +858,7 @@ async function foldOffer(pool, { kind, userId, app, issueNumber, title, reason =
       card: {
         kind, appId: app.id, title: clip(title || `Request #${n}`, MAX_TITLE_CHARS),
         details: reason ? clip(reason, 600) : null, sourceIssueNumber: n,
+        ...(move && target ? { targetAppId: Number(target.id) } : {}),
       },
       metadata: { actions, answers: actions.map((a) => a.label), status: 'open' },
     };
@@ -735,9 +881,10 @@ async function foldedOfferSent(pool, offer, sent) {
 }
 
 /** Pure: the words of a move offer. */
-function moveOfferText({ name, issueNumber, text = null, title = null, why = null }) {
+function moveOfferText({ name, issueNumber, text = null, title = null, why = null, targetName = null }) {
+  const to = targetName ? `${targetName}'s board` : 'Homeroom\'s own board';
   return [
-    text || `Want me to move request #${issueNumber} to Homeroom's own board? The people who work on Homeroom look there.`,
+    text || `Want me to move request #${issueNumber} to ${to}? The people who work on ${targetName || 'Homeroom'} look there.`,
     '',
     `**${name}** · request #${issueNumber}${title ? `: ${clip(title, 140)}` : ''}`,
     ...(why ? ['', `Why: ${clip(why, 600)}`] : []),
@@ -747,13 +894,19 @@ function moveOfferText({ name, issueNumber, text = null, title = null, why = nul
 }
 
 /** Pure: a move offer's metadata: its question and buttons (homeroom-bot-mayor.js offerActions). */
-function moveOfferMeta({ app, actionId }) {
+function moveOfferMeta({ app, actionId, targetName = null, join = false }) {
   const name = app.name || app.slug;
+  const args = { ...(targetName ? { targetName, join } : {}) };
+  // A DM's buttons are the server's own (a tap, never words typed back).
+  const actions = require('./bot-cards').offerActions('move_request', undefined, args)
+    .map(({ id, label, style }) => ({ id, label, style, type: 'server' }));
   return {
     kind: 'confirm', appSlug: app.slug, appName: name, actionId: Number(actionId),
-    question: `Move this request from ${name} to Homeroom's own board?`,
+    question: targetName
+      ? `Move this request from ${name} to ${targetName}?`
+      : `Move this request from ${name} to Homeroom's own board?`,
     // `answers` for a client that predates `actions`.
-    answers: [...mayorModule().OFFER_ANSWERS.move_request], actions: mayorModule().offerActions('move_request'),
+    answers: actions.map((a) => a.label), actions,
     status: 'open', mirrors: false,
   };
 }
@@ -768,9 +921,13 @@ module.exports = {
   requestLink,
   movedFooter,
   copiedFooter,
+  discussionSection,
+  discussionOf,
+  resolveElsewhere,
   moveGate,
   asksForRequest,
   platformApp,
+  appById,
   copyToHomeroom,
   decideCopy,
   copyOfferText,
@@ -779,6 +936,7 @@ module.exports = {
   proposeClose,
   closeNow,
   closedWords,
+  moveRequest,
   moveToHomeroom,
   decideMove,
   moveOfferText,

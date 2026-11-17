@@ -976,7 +976,11 @@ html.web-browser-chrome.platform-kb-short {
   width: 220px;
   padding: 6px;
   border-radius: 16px;
-  background: var(--messages-surface);
+  /* #6765: the tokens are declared only where Messages is drawn, so a menu
+     drawn anywhere else (a bot page's thread rows) had no fill and the page
+     read through it. The menu carries its own fallback; a host that declares
+     the tokens still wins, since a fallback is used only when it is unset. */
+  background: var(--messages-surface, #ffffff);
   box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
 }
 .messages-thread-menu button {
@@ -988,7 +992,12 @@ html.web-browser-chrome.platform-kb-short {
   font-size: 15px;
   text-align: start;
 }
-.messages-thread-menu button:hover { background: var(--messages-surface-2); }
+.messages-thread-menu button:hover { background: var(--messages-surface-2, var(--bg-secondary)); }
+/* #6765: the dark look's fallback is the ladder's raised step, as the tokens
+   themselves are where a chat is drawn, so a card is one step lighter than
+   the sheet rather than a hole in it. */
+.dark .messages-thread-menu { background: var(--messages-surface, var(--dc-raised)); }
+.dark .messages-thread-menu button:hover { background: var(--messages-surface-2, #3a3a3c); }
 
 /* A pending invitation, inside the sheet above the (empty) transcript: a
    tinted card with the language's filled pills — Accept in the accent,
@@ -5455,53 +5464,278 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
 /* ============================================================
    STANDARD (WIP): the standard look with the changes still being tried on
    it (head.html window.Skin 'wip', which sets data-skin-wip and no
-   data-skin). Home's Pinned communities grid is a card, as Pinned apps'
-   grid and its "Show all" line are one (PINS_CARD, features/home).
+   data-skin, so no other look's rule applies and every screen is the
+   standard one unless a rule below says otherwise).
+
+   THE RULES OF THIS BLOCK (tests/standard-wip-look.test.js holds them):
+     1. Every value is a token. The `--wip-*` tokens are declared once, in
+        the first rule, from the shell's own tokens where one exists; no
+        rule after it writes a colour of its own.
+     2. Every rule is scoped to html[data-skin-wip] or is a `.wip-*`
+        component class (features/home/wip-kit.tsx), which only that look
+        mounts.
+     3. Nothing of the standard look is hidden here except what WIP_HIDES
+        in that test lists, so a feature added to Standard shows under
+        this look too unless somebody decides otherwise there.
    ============================================================ */
-html[data-skin-wip] #home-communities-section > .grid {
-  padding: 16px 8px 14px;
-  border-radius: 20px;
-  background-color: var(--dc-sheet-solid);
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+html[data-skin-wip] {
+  /* Space */
+  --wip-gutter: 12px;          /* the page's side gutter, a section's px-3 */
+  --wip-row-gap: 2rem;         /* between Home's rows */
+  --wip-card-gap: 1rem;        /* between two cards of one row */
+  --wip-card-pad: 12px;
+  /* The card */
+  --wip-card-bg: var(--dc-sheet-solid);
+  --wip-card-line: var(--app-sheet-line);
+  --wip-card-radius: 20px;
+  /* Type: a row is 15 over 12, with an 11px line of facts */
+  --wip-title-size: 0.9375rem;
+  --wip-title-weight: 650;
+  --wip-body-size: 0.75rem;
+  --wip-meta-size: 0.6875rem;
+  --wip-link-size: 0.875rem;
+  --wip-ink-muted: var(--text-muted);
+  --wip-ink-action: var(--accent);
+  /* A project's tile */
+  --wip-tile-h: 6.25rem;       /* p-3 12 + icon 72 + p-3 12, and the text's 94 */
+  --wip-tile-gap: 0.75rem;
+  --wip-icon: 4.5rem;
+  --wip-icon-radius: 1.25rem;
+  --wip-icon-glyph: 2rem;      /* an emoji icon's size */
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 6px 14px -4px rgb(0 0 0 / 0.2);
+  --wip-gloss: rgb(255 255 255 / 0.5);
+  --wip-gloss-edge: rgb(255 255 255 / 0.14);
+  --wip-sheen: rgb(255 255 255 / 0.55);
+  --wip-sheen-time: 650ms;
+  /* The filled action */
+  --wip-cta-h: 2.5rem;
+  --wip-cta-from: #5aa9ff;
+  --wip-cta-via: var(--accent);
+  --wip-cta-to: #0062cc;
+  --wip-cta-ink: #ffffff;
+  --wip-cta-glow: color-mix(in srgb, var(--accent) 40%, transparent);
+  /* Widths */
+  --wip-search-w: 24rem;
+  --wip-needs-w: 18.5rem;
+}
+html[data-skin-wip].dark {
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 6px 14px -4px rgb(0 0 0 / 0.55);
 }
 
-/* HOME'S SIDE COLUMN (features/home/index.tsx, new-project-card.tsx,
-   needs-you-card.tsx). The
-   New project card sits in `#home-aside`, the first child of #home-body, and
-   the lists follow in `.home-main`. On a phone and a narrow window they are
-   one column, the card on top inside the lists' own 12px gutter. From 1280px,
-   and only while the root says the column is drawn (`data-home-aside`), the
-   page widens from 1024px to 1320px and the two sit side by side, the card
-   on the trailing side at 280px. The lists keep about the width they had. */
-.home-aside {
-  display: none; /* one column draws no card: nothing to hold a place for */
-  box-sizing: border-box;
-  padding: 12px 12px 0;
+/* ── Components (features/home/wip-kit.tsx) ─────────────────── */
+/* The card. Challenges is drawn by its own section, so it takes the same
+   rule by its place rather than by the class. */
+.wip-card,
+html[data-skin-wip] .home-row > #home-challenges-section {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
 }
+/* The page's one filled action. */
+.wip-cta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--wip-cta-h);
+  margin-inline-start: auto;
+  padding-inline: 1.25rem;
+  border-radius: 9999px;
+  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 50%, var(--wip-cta-to));
+  color: var(--wip-cta-ink);
+  font-size: var(--wip-link-size);
+  font-weight: 600;
+  box-shadow: 0 10px 15px -3px var(--wip-cta-glow), 0 4px 6px -4px var(--wip-cta-glow), inset 0 0 0 1px rgb(255 255 255 / 0.2);
+  transition: transform 150ms, filter 150ms, box-shadow 150ms;
+}
+.wip-cta:hover { transform: translateY(-1px); filter: brightness(1.1); }
+.wip-cta:active { transform: scale(0.98); }
+.wip-cta-glyph { width: 1.125rem; height: 1.125rem; }
+/* A link riding a section's heading. */
+.wip-head-link {
+  display: flex;
+  flex: none;
+  align-items: center;
+  white-space: nowrap;
+  font-size: var(--wip-link-size);
+  font-weight: 600;
+  color: var(--wip-ink-action);
+}
+.wip-head-link:hover { text-decoration: underline; }
+/* The search row: a short field, then the filled action at its end, the
+   same distance from the header as from the first label. */
+.wip-topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem var(--wip-gutter) 0;
+}
+@media (min-width: 768px) { .wip-topbar { padding-top: 1.75rem; } }
+.wip-search { width: 100%; max-width: var(--wip-search-w); }
+/* A project tile's sentence and its line of facts (app-grid.tsx). */
+.app-card-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  margin-top: 0.25rem;
+  font-size: var(--wip-body-size);
+  line-height: 1.25;
+  color: var(--wip-ink-muted);
+  overflow-wrap: anywhere;
+}
+.app-card-people {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 0;
+  margin-top: 0.25rem;
+  font-size: var(--wip-meta-size);
+  line-height: 0.9375rem;
+  font-weight: 500;
+  color: var(--wip-ink-muted);
+}
+
+/* ── A project's tile ───────────────────────────────────────── */
+/* From 1024px it is a row: the icon in the first column and, beside it, the
+   name on one line, the app's sentence on two, then how many people made it.
+   A tile with no sentence is the name and the people, nothing held open. The
+   drag overlay's rows follow the same height token. Narrower, the tile is
+   the grid's own: the icon and, under it, the name alone. */
+@media (max-width: 1023.98px) {
+  html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people) { display: none; }
+}
+@media (min-width: 1024px) {
+  html[data-skin-wip] { --home-cell-h: var(--wip-tile-h); }
+  html[data-skin-wip] #app-list > .app-card {
+    flex-direction: row;
+    align-items: center; /* a tile with no sentence keeps its two lines beside the icon's middle */
+    gap: var(--wip-tile-gap);
+    text-align: start;
+  }
+  html[data-skin-wip] #app-list > .app-card > .min-w-0 { flex: 1 1 0; width: auto; }
+  html[data-skin-wip] #app-list > .app-card > .relative,
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
+  html[data-skin-wip] #app-list .app-card-people { justify-content: flex-start; }
+  html[data-skin-wip] #app-list .app-card-title {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+    min-height: 0;
+    text-align: start;
+    font-size: var(--wip-title-size);
+    line-height: 1.3;
+    font-weight: var(--wip-title-weight);
+  }
+}
+/* The icon sits a little above the card (one soft shadow), under a fixed
+   gloss over its top half, at every width. */
+html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile {
+  position: relative;
+  box-shadow: var(--wip-icon-shadow);
+}
+html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(130% 75% at 50% -12%, var(--wip-gloss) 0%, var(--wip-gloss-edge) 62%, transparent 63%);
+}
+/* A sheen: one band of light crosses the icon when the pointer comes over
+   its tile. Only where a pointer hovers, never while the tiles are being
+   arranged, and not with reduced motion. */
+@media (hover: hover) {
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::after {
+    content: "";
+    position: absolute;
+    inset: -20% auto -20% 0;
+    width: 60%;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
+    transform: translateX(-180%) skewX(-12deg);
+  }
+  html[data-skin-wip] #app-list:not([data-editing]) > .app-card:hover > .relative > .app-icon-tile::after {
+    transform: translateX(280%) skewX(-12deg);
+    transition: transform var(--wip-sheen-time) ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) #app-list > .app-card > .relative > .app-icon-tile::after { content: none; }
+
+/* ── Home's page ────────────────────────────────────────────── */
+/* It takes the page's whole width: no 1024px cap on its column (the search
+   row's and the body's). */
+html[data-skin-wip] #home-screen .home-column { max-width: none; }
+/* One column, in this order: Pinned projects, then Featured (lifted out of
+   Communities to join), then the Needs you card with Challenges, then the
+   rest of Communities to join. The markup keeps its own order; the column
+   is a flex column and Communities to join gives up its box
+   (display: contents) so its Featured row can be placed on its own.
+   ANYTHING ELSE on Home, a section added to the standard look among them,
+   takes the last place and is drawn. */
+html[data-skin-wip] #home-screen .home-main { display: flex; flex-direction: column; }
+html[data-skin-wip] #home-screen .home-main > * { order: 3; }
+/* Pinned projects, what is above it (the phone app's widget strip) and the
+   line right under it (a search nothing answers) stay first. */
+html[data-skin-wip] #home-screen .home-main > :is(#home-apps-section, :has(~ #home-apps-section), #home-apps-section + :not(.home-row)) { order: 0; }
+html[data-skin-wip] #home-screen .home-main > .home-row { order: 2; }
+html[data-skin-wip] #home-screen #home-join-section:not([hidden]) { display: contents; }
+html[data-skin-wip] #home-screen #home-join-section > * {
+  order: 3;
+  margin-inline: 0;
+  padding-inline: var(--wip-gutter); /* the section's own gutter, which its box no longer gives */
+}
+html[data-skin-wip] #home-screen #home-join-section > [data-home-join-featured] {
+  order: 1;
+  padding-top: var(--wip-row-gap);
+  padding-bottom: 0;
+}
+/* Its rows stand one row gap apart, and nothing is drawn between them. A
+   row's cards and a section's label each bring one card gap of their own. */
+html[data-skin-wip] #home-screen .home-row { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
+html[data-skin-wip] #home-screen #home-join-section > .home-area-label { margin-top: calc(var(--wip-row-gap) - var(--wip-card-gap)); }
+/* The Needs you card and Challenges share a row from 1280px, level with each
+   other; narrower, the card is a row of its own above Challenges, as wide as
+   the column. */
+html[data-skin-wip] .home-row > .home-aside {
+  display: flex;
+  padding: var(--wip-card-gap) var(--wip-gutter) 0;
+}
+html[data-skin-wip] .home-row > .home-aside > * { flex: 1 1 auto; min-width: 0; }
+html[data-skin-wip] .home-row > #home-challenges-section {
+  margin: var(--wip-card-gap) var(--wip-gutter) 0;
+  padding: 0 var(--wip-card-pad) var(--wip-card-pad);
+  overflow: hidden; /* the row scrolls sideways inside the card */
+}
+html[data-skin-wip] .home-row > #home-challenges-section > .home-area-label { padding-top: var(--wip-card-pad); }
+@media (min-width: 1280px) {
+  html[data-skin-wip] .home-row {
+    display: flex;
+    align-items: stretch;
+  }
+  html[data-skin-wip] .home-row > .home-aside {
+    flex: 0 0 auto;
+    padding-inline-end: 0;
+  }
+  html[data-skin-wip] .home-row > .home-aside > * { flex: 0 0 auto; width: var(--wip-needs-w); }
+  html[data-skin-wip] .home-row > .home-aside > #home-needs-card > a { height: 100%; }
+  html[data-skin-wip] .home-row > section { flex: 1 1 0; min-width: 0; }
+}
+/* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
+   Pinned communities: the section stays mounted, since it loads the pins
+   other parts of Home read, and is not displayed. */
+html[data-skin-wip] #home-communities-section { display: none; }
+
+/* END OF STANDARD (WIP). */
+
+/* Home's lists (features/home/index.tsx `.home-main`): a flex child that may
+   shrink, so a long line is cut and never widens the page. */
 .home-main {
   min-width: 0;
-}
-@media (min-width: 1280px) {
-  #home-screen[data-home-aside] .home-column {
-    max-width: 82.5rem; /* 1320px */
-  }
-  #home-screen[data-home-aside] .home-body-fill {
-    flex-direction: row-reverse;
-    align-items: flex-start;
-    gap: 20px;
-  }
-  #home-screen[data-home-aside] .home-main {
-    flex: 1 1 0;
-  }
-  #home-screen[data-home-aside] .home-aside {
-    display: flex;
-    flex-direction: column;
-    gap: 12px; /* between the column's cards */
-    min-width: 0; /* a long title is cut, never the column widened */
-    max-width: 304px;
-    flex: 0 0 304px; /* a 280px card and the 12px gutter each side */
-    padding-top: 16px;
-  }
 }
 
 /* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
@@ -28303,6 +28537,10 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-on-solid: #ffffff;
   --bl-tint-sun: #fff6ac;
   --bl-tint-sky: #e3eefb;
+  /* The line round a message's bubble, and round your own on sky. */
+  --bl-bubble-line: rgba(18, 26, 14, 0.14);
+  --bl-bubble-line-own: rgba(26, 99, 196, 0.24);
+  --bl-card-line: rgba(18, 26, 14, 0.2);
   --bl-tint-leaf: #e2f2dc;
   --bl-on-tint: #121a0e;
   --bl-edge: rgba(18, 26, 14, 0.07);
@@ -28385,6 +28623,9 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-bubble-line: rgba(220, 230, 248, 0.2);
+  --bl-bubble-line-own: rgba(127, 188, 247, 0.42);
+  --bl-card-line: rgba(220, 230, 248, 0.26);
   --bl-tint-leaf: rgba(150, 184, 133, 0.22);
   --bl-on-tint: #eef2f8;
   --bl-edge: rgba(220, 230, 248, 0.08);
@@ -28992,3 +29233,20 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   color: var(--bl-on-sun);
   box-shadow: var(--bl-pill-edge);
 }
+/* A CONVERSATION'S BUBBLES (17 Nov 2026). A thread is a white card in this
+   look, as a request's replies and Homeroom bot's thread list are, and a
+   bubble from the other side was white on it (--messages-surface), your own
+   a grey one shade off (--accent-tint), and a card of the bot's a third
+   white: nothing had an edge. Inside the card, then: the other side's words
+   sit on the page's cream and yours on the sky tint, each with a thin line
+   round it, and the bot's cards keep their white with a firmer line, so a
+   card is the one white thing among the bubbles. A saved message keeps its
+   accent outline. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.messages-bubble, .gc-bubble) { background: var(--bl-page); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-self .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { background: var(--bl-tint-sky); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-bubble:not(.messages-message-saved) .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble { box-shadow: inset 0 0 0 1px var(--bl-bubble-line); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-bubble.messages-message-self:not(.messages-message-saved) .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { box-shadow: inset 0 0 0 1px var(--bl-bubble-line-own); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-bot-card-state] { box-shadow: inset 0 0 0 1px var(--bl-card-line); }

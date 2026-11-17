@@ -8,8 +8,6 @@
  * once, by React, to an element that survives.
  */
 
-import { ChevronRightIcon } from '@/components/ui/icons';
-
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { chromeStore } from './chrome-store';
@@ -21,14 +19,6 @@ function controller(): any {
 /** The link treatment of the "Show all N apps" line. */
 const MORE_BTN = 'rounded-lg px-3 py-1.5 text-xs font-medium text-violet-700 '
   + 'dark:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors';
-
-/**
- * Inside Pinned apps' card (./index.tsx, Standard (WIP)) the line is the
- * card's last row: a hairline, then the words centred with a chevron.
- */
-const CARD_HOST = 'border-t border-[color:var(--app-sheet-line)]';
-const CARD_BTN = 'flex h-12 w-full items-center justify-center gap-2 rounded-b-[20px] text-[14px] font-semibold '
-  + 'text-[color:var(--accent)] transition-colors hover:bg-zinc-500/5';
 
 /**
  * The host, as a pure function of what drives it: the count. Split from the
@@ -46,24 +36,8 @@ const CARD_BTN = 'flex h-12 w-full items-center justify-center gap-2 rounded-b-[
  * with the grid's right edge. The line's own host, id and padding are
  * unchanged.
  */
-export function AppsMoreBody({ moreCount, card = false }: { moreCount: number; card?: boolean }) {
+export function AppsMoreBody({ moreCount }: { moreCount: number }) {
   const t = useMessages('home');
-  const expand = () => {
-    const home = controller();
-    if (!home) return;
-    home._appsExpanded = true;
-    home.render();
-  };
-  if (card && moreCount) {
-    return (
-      <div id="home-apps-more" className={CARD_HOST}>
-        <button type="button" id="home-apps-more-btn" className={CARD_BTN} onClick={expand}>
-          {t('home:grid.showAll', { count: moreCount })}
-          <ChevronRightIcon className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </div>
-    );
-  }
   return (
     <div id="home-apps-more" className={moreCount ? 'px-2 pb-1 sm:px-3' : 'hidden px-2 pb-1 sm:px-3'}>
       {moreCount ? (
@@ -72,7 +46,12 @@ export function AppsMoreBody({ moreCount, card = false }: { moreCount: number; c
             type="button"
             id="home-apps-more-btn"
             className={`text-end ${MORE_BTN}`}
-            onClick={expand}
+            onClick={() => {
+              const home = controller();
+              if (!home) return;
+              home._appsExpanded = true;
+              home.render();
+            }}
           >
             {t('home:grid.showAll', { count: moreCount })}
           </button>
@@ -82,7 +61,7 @@ export function AppsMoreBody({ moreCount, card = false }: { moreCount: number; c
   );
 }
 
-export function AppsMore({ card = false }: { card?: boolean }) {
+export function AppsMore() {
   const { moreCount } = useStoreState(chromeStore);
-  return <AppsMoreBody moreCount={moreCount} card={card} />;
+  return <AppsMoreBody moreCount={moreCount} />;
 }

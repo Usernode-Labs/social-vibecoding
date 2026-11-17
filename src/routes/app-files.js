@@ -85,9 +85,14 @@ function appFileServeRoutes(config, deps = {}) {
       }
 
       const safeName = String(file.filename || 'file').replace(/["\\\r\n]/g, '_');
-      res.set('Content-Type', file.content_type || 'application/octet-stream');
+      const contentType = file.content_type || 'application/octet-stream';
+      // Media renders on the page; everything else (PDFs, text kinds, an
+      // unknown stored type) downloads, so nothing but media can act as a
+      // document on the platform's own origin.
+      const disposition = appFiles.isInlineType(file.content_type) ? 'inline' : 'attachment';
+      res.set('Content-Type', contentType);
       res.set('X-Content-Type-Options', 'nosniff');
-      res.set('Content-Disposition', `inline; filename="${safeName}"`);
+      res.set('Content-Disposition', `${disposition}; filename="${safeName}"`);
       // Rows are immutable (no overwrite API): a deleted id 404s for
       // fresh fetchers, so the year-long immutable header is safe for
       // public files. Private URLs carry the ?token= in the cache key
@@ -121,8 +126,9 @@ function appFileShellRoutes(config, deps = {}) {
   // guarded parent. This protocol header grants no user/app authority.
   router.use('/api/apps/:slug/files', currentAppBridge);
 
-  // Limit must exceed MAX_AUDIO_FILE_BYTES so the service's structured
-  // file_too_large error fires before the parser's PayloadTooLarge.
+  // Limit must exceed MAX_VIDEO_FILE_BYTES (the largest per-kind cap) so
+  // the service's structured file_too_large error fires before the
+  // parser's PayloadTooLarge.
   const rawBody = express.raw({ type: 'application/octet-stream', limit: appFiles.UPLOAD_BODY_LIMIT });
 
   // Upload on behalf of the app iframe. Uploading requires the same

@@ -41,9 +41,9 @@ function appStorageRoutes(config, deps = {}) {
     },
   });
 
-  // Limit must exceed MAX_AUDIO_FILE_BYTES so the service's own size
-  // check (with its structured file_too_large code) fires before the
-  // parser's.
+  // Limit must exceed MAX_VIDEO_FILE_BYTES (the largest per-kind cap) so
+  // the service's own size check (with its structured file_too_large code)
+  // fires before the parser's.
   const rawBody = express.raw({ type: 'application/octet-stream', limit: appFiles.UPLOAD_BODY_LIMIT });
 
   router.post('/api/app-storage/files', auth, uploadLimiter, rawBody, async (req, res) => {

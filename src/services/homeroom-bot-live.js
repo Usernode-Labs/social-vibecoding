@@ -216,7 +216,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -224,6 +224,19 @@ function personText({ reason, platform = false, project = null, done = false, wi
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
       + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have it filed on Homeroom's own board too, or moved there.`;
+  }
+  // #6771: about another project. Its board is named when it is public, and
+  // the person who asked is offered the move in the project's own thread.
+  if (elsewhere) {
+    return `Homeroom bot thinks this is about ${clipText(elsewhere, 80)}, not ${name}: ${reasonSentence(reason)}\n\n`
+      + `It can move it to ${clipText(elsewhere, 80)}'s board, with its discussion, and close it here.`
+      + (elsewhereJoin ? ` Whoever asked for it can join ${clipText(elsewhere, 80)} first.` : '');
+  }
+  if (Array.isArray(candidates) && candidates.length) {
+    const names = candidates.slice(0, 3).map((c) => clipText(c, 80));
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+    return `Homeroom bot thinks this is about another app, not ${name}: ${reasonSentence(reason)}\n\n`
+      + `Which one is it: ${list}? Reply here with its name and it offers to move it there.`;
   }
   // #6306: the ask is already there, so there is nothing to build and no
   // decision to make: it only waits to be closed.
@@ -238,10 +251,18 @@ function personText({ reason, platform = false, project = null, done = false, wi
       + 'Anyone in the project can propose to close it, or reply here to keep it going.';
   }
   // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (operator work
-  // outside the app, or a database change that is not append-only), so the copy
-  // names no Go ahead and ends with the part it can build. 17 Nov 2026: it
-  // says which of the two it is (cannotLead), not one sentence for both.
+  // outside the app, a database change that could lose data already stored, or a
+  // request that only asks for an explanation), so the copy names no Go ahead and
+  // ends with the part it can build. 17 Nov 2026: it says which of the three it
+  // is (cannotLead), not one sentence for all.
   if (goAheadDecides === false) {
+    // 17 Nov 2026 (#6770): an explanation's note is the answer itself, so it
+    // ends with the close vote and the way to turn it into a fix instead.
+    if (blockerOf(blocker) === 'explanation') {
+      return `${cannotLead(blocker)}: ${reasonSentence(reason)}\n\n`
+        + 'Anyone in the project can propose to close it once this answers the question. '
+        + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+    }
     return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
       + canBuildPart(firstStep);
@@ -252,13 +273,14 @@ function personText({ reason, platform = false, project = null, done = false, wi
     + 'Whoever decides here can say Go ahead in a chat with Homeroom bot, or reply here.';
 }
 
-// 17 Nov 2026: the two things a go-ahead cannot settle, as the read names
-// them (`blocker`). Anything else a read calls "cannot" is not one: its
-// go_ahead false is read as a request a go-ahead can settle (homeroom-bot.js
+// 17 Nov 2026: the things a go-ahead cannot settle, as the read names them
+// (`blocker`). Anything else a read calls "cannot" is not one: its go_ahead
+// false is read as a request a go-ahead can settle (homeroom-bot.js
 // parseVerdict), so a sign-in fix or a large request never gets this note.
-const GO_AHEAD_BLOCKERS = Object.freeze(['operator_work', 'destructive_db']);
+// #6770: `explanation` is a request whose answer the code already gives.
+const GO_AHEAD_BLOCKERS = Object.freeze(['operator_work', 'destructive_db', 'explanation']);
 
-/** Pure: a read's `blocker` when it is one of the two, else null. */
+/** Pure: a read's `blocker` when it is one of them, else null. */
 function blockerOf(value) {
   const key = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return GO_AHEAD_BLOCKERS.includes(key) ? key : null;
@@ -296,6 +318,7 @@ function cannotLead(blocker) {
   const key = blockerOf(blocker);
   if (key === 'operator_work') return 'This needs something set up outside this app, which I can\'t do from here';
   if (key === 'destructive_db') return 'This changes or removes data that is already saved, which I leave to a person';
+  if (key === 'explanation') return 'This asks for an explanation, not a change, so here is what the code says';
   return 'I can\'t build this one myself';
 }
 
@@ -314,13 +337,27 @@ function canBuildPart(firstStep) {
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
   if (platform) {
     return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
       + 'I can put it on Homeroom\'s own board too and keep this request open here.');
+  }
+  // #6771: about another project: its one job is to say where it belongs,
+  // and its one action (under the note, its card) moves it there.
+  if (elsewhere) {
+    const to = clipText(elsewhere, 80);
+    return firstPerson(`I think this is about ${to}, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
+      + `I can move it to ${to}'s board, with its discussion, and close it here.`
+      + (elsewhereJoin ? ` You are not a member of ${to} yet, so tapping below joins you first.` : ''));
+  }
+  if (Array.isArray(candidates) && candidates.length) {
+    const names = candidates.slice(0, 3).map((c) => clipText(c, 80));
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+    return firstPerson(`I think this is about another app, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
+      + `Which one is it: ${list}? Reply here with its name and I'll offer to move it there.`);
   }
   // #6306: already there: no Go ahead, only a close vote. #6321: its buttons
   // are under the note (homeroom-bot.js doneCloseOffer).
@@ -329,7 +366,14 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   }
   // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
   // as able to say it. It says what it can build here instead.
+  // 17 Nov 2026 (#6770): an explanation's note is the answer, with the close
+  // vote under it and the way to turn it into a fix.
   if (goAheadDecides === false) {
+    if (blockerOf(blocker) === 'explanation') {
+      return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
+        + 'Anyone in the project can tap Propose to close below once this answers it. '
+        + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+    }
     return firstPerson(`${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
       + canBuildPart(firstStep));
@@ -362,9 +406,11 @@ const NOT_NOW_LABEL = 'Not now';
  * in when it did not.
  * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
  * the request, so Go ahead is not offered and the smaller step is primary.
+ * 17 Nov 2026 (#6770): an explanation offers none at all: the close vote is
+ * under its note instead (homeroom-bot.js doneCloseOffer).
  */
-function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null } = {}) {
-  if (platform || done || withdrawn) return [];
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null, blocker = null, elsewhere = false, candidates: elsewhereCandidates = [] } = {}) {
+  if (platform || done || withdrawn || blockerOf(blocker) === 'explanation' || elsewhere || (Array.isArray(elsewhereCandidates) && elsewhereCandidates.length)) return [];
   const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
@@ -390,6 +436,14 @@ function personSuggestions({ firstStep = null, platform = false, done = false, w
  * then the part the bot can still build. Server text, like the labels.
  */
 function goAheadCannotText({ reason, firstStep = null, reader = null, blocker = null } = {}) {
+  // 17 Nov 2026 (#6770): a go-ahead changes nothing on a request that only
+  // asked for an explanation: the answer is already there, and the way on is
+  // to turn it into a fix or close it.
+  if (blockerOf(blocker) === 'explanation') {
+    return `A go-ahead can't change anything here. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
+      + 'Anyone in the project can propose to close it once this answers the question. '
+      + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+  }
   return `A go-ahead can't settle this one. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
     + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
     + canBuildPart(firstStep);
@@ -743,9 +797,10 @@ function stageGuidanceLines(stage, { firstVersion = false, guidance = null, revi
  * the same section).
  *
  * THE DATA RULES (#5117). Their section rides in the same block, read the
- * same way: no trackers or outside scripts, no special-category data,
- * nothing aimed at children, no passwords or card data, no login of the
- * app's own. The merge-time review holds a proposal to it as well.
+ * same way: no trackers or outside scripts, no profiling people by
+ * sensitive traits, nothing for under-13s, no account passwords or card
+ * data, no payments, no login of the app's own. The merge-time review
+ * holds a proposal to it as well.
  */
 const CONTENT_RULES_SLUG = 'content-rules-what-no-app-may-show';
 const DATA_RULES_SLUG = 'data-rules-what-no-app-may-collect-or-load';
