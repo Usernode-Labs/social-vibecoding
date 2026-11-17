@@ -761,6 +761,15 @@ test('start(): a play() that rejects still fails the capture and ends the share'
   assert.deepEqual(stopped, ['video']);
 });
 
+test('decoding a picked photo honours EXIF rotation, as the <img> fallback does', () => {
+  // #6721: a phone photo over the upload cap is re-encoded through a canvas,
+  // which carries no EXIF, so the camera's rotation must be applied at
+  // decode or the uploaded picture is sideways.
+  const src = fs.readFileSync(SRC, 'utf8');
+  const fn = src.slice(src.indexOf('async function loadPickedImage('));
+  assert.match(fn, /createImageBitmap\(file, \{ imageOrientation: 'from-image' \}\)/);
+});
+
 test('no capture path awaits video.play() without a bound (#3011)', () => {
   // Registration re-plays a paused or re-attached video too; any of these
   // waiting on a share that sends nothing is the same hang.

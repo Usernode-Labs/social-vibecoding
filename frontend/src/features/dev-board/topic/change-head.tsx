@@ -59,12 +59,15 @@ import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
 import type { ActionSpec, DevCardModel } from '../card/model';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
+import { changeRail, type RailOpen } from './rail-model';
 import { askFix, useChecksExplanation } from './failed-checks';
 import { RequestWords, SpecCard, sentences } from './request-head';
+import { openRequestSpec } from './request-model';
 import { TopicPageContext } from './topic-store';
 import { ThreadItems, pageSlug } from './thread-items';
 import type { ClosesRequest } from './thread-model';
 import { changeMenuKey } from './thread-menu';
+import { ThreadRail } from './thread-rail';
 import { usePanelHead } from '../../side-panel/head-store';
 import { TopicBack } from './topic-back';
 import { WorkWithBotButton } from './work-with-bot';
@@ -350,7 +353,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [], line
             {g.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
             {g.name}
           </span>
-          <span className="dev-change-gate-figure">{g.figure}</span>
+          <span className="dev-change-gate-figure" title={g.figure}>{g.figure}</span>
         </div>
         <div className="dev-change-bar" role="img" aria-label={g.label}>
           {g.segments.map((seg, i) => (
@@ -755,10 +758,28 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     const off = onVotesAsked(show);
     return () => { off(); release?.(); };
   }, [id]);
+  // "How it got here": the change's big events, beside its card on a wide
+  // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
+  // have their own context column, so they draw none.
+  const rail = frame ? null : host('gc-thread-rail');
+  const railSteps = useMemo(() => changeRail({
+    id,
+    author: v.author || null,
+    at: v.at || null,
+    plan: body.plan || null,
+    testing: v.testing ? { tone: v.testing.tone, done: !!v.testing.done, figure: v.testing.figure || null } : null,
+    status: v.status ? { key: v.status.key, label: v.status.label } : null,
+    votes: v.votes ? { figure: v.votes.figure || null, done: !!v.votes.done, asking: v.votes.tone === 'ask' } : null,
+  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes]);
+  const openRail = (open: RailOpen) => {
+    if (open.kind === 'plan' && body.plan) void openRequestSpec(body.plan);
+    else if (open.kind === 'checks') (window as any).AppView?.openTechnicalDetails?.(open.changeId);
+  };
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
       {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
+      {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} />, rail) : null}
       {images.viewer}
       <article className="messages-message dev-request-root dev-change-root" data-change-root={id ?? ''}>
         <Avatar shape="square" size="sm" color={swatchFor(v.author)} aria-hidden="true">

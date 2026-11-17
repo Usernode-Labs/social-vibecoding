@@ -22,6 +22,16 @@
  * record names the state it wants (`on`), not a toggle
  * (services/conversations.js toggleReaction).
  *
+ * A send removes its record BEFORE the pass moves on, and only when the
+ * record it sent is still the one kept (`dropIf` matches `savedAt`): a newer
+ * Yes/No saved under the same key while the older send was in flight stays
+ * for the next pass. Passes are serialized across tabs with Web Locks where
+ * the browser has them, so both tabs do not replay the same record. The
+ * server-side answer is the backstop when a browser cannot coordinate.
+ * Within one document a pass also remembers the `key:savedAt` pairs it has
+ * had answered, so a drop that failed cannot make the next pass post them
+ * again.
+ *
  * ── Who hears how it went ─────────────────────────────────────────────
  *
  * Each send that is answered fires ACTION_OUTBOX_EVENT on `window` with
@@ -144,6 +154,8 @@ interface Store {
   load(viewer: number): Promise<ActionRecord[]>;
   save(record: ActionRecord): Promise<boolean>;
   drop(key: string): void;
+  /** Forget `key` only if the record kept there is still the one sent. */
+  dropIf(key: string, savedAt: number): Promise<boolean>;
   clear(): void;
 }
 
@@ -201,6 +213,29 @@ function createStore(idb: IDBFactory | null | undefined): Store {
     },
     save(record) { return write((store) => { store.put(record); }); },
     drop(key) { void write((store) => { store.delete(key); }); },
+    dropIf(key, savedAt) {
+      return open().then((db) => {
+        if (!db) return false;
+        return new Promise<boolean>((resolve) => {
+          try {
+            const tx = db.transaction(STORE, 'readwrite');
+            const store = tx.objectStore(STORE);
+            let matched = false;
+            const request = store.get(key);
+            request.onsuccess = () => {
+              const kept = request.result as ActionRecord | undefined;
+              if (!kept || Number(kept.savedAt) !== Number(savedAt)) return;
+              matched = true;
+              store.delete(key);
+            };
+            request.onerror = () => { /* the newer record stays */ };
+            tx.oncomplete = () => resolve(matched);
+            tx.onerror = () => resolve(false);
+            tx.onabort = () => resolve(false);
+          } catch { resolve(false); }
+        });
+      });
+    },
     clear() { void write((store) => { store.clear(); }); },
   };
 }
@@ -213,6 +248,7 @@ interface Win {
   clearTimeout: typeof clearTimeout;
   App?: { user?: { id?: unknown } | null; _sessionFromSnapshot?: boolean };
   Offline?: { isOffline(): boolean };
+  navigator?: { locks?: { request<T>(name: string, callback: () => Promise<T>): Promise<T> } };
   UsernodeReact?: Record<string, unknown>;
 }
 
@@ -242,6 +278,9 @@ function viewerOf(win: Win): number | null {
   return positiveInt(id) ? id : null;
 }
 
+/** The cross-tab lock one outbox pass takes, where Web Locks exist. */
+const LOCK_NAME = 'homeroom-action-outbox';
+
 /** The outbox over a window and an IndexedDB factory. Exported for tests. */
 export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined, sendMs = ACTION_SEND_TIMEOUT_MS): ActionOutbox {
   const store = createStore(idb);
@@ -249,6 +288,10 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
   let again = false;
   let announcedFor: number | null = null;
   let retry: ReturnType<typeof setTimeout> | null = null;
+  // What this document has already had answered, so a drop that failed can
+  // never make a later pass post the same record again.
+  const answered = new Set<string>();
+  const pairOf = (record: ActionRecord): string => `${record.key}:${record.savedAt}`;
 
   function ready(): number | null {
     const viewer = viewerOf(win);
@@ -277,12 +320,16 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
     let data: unknown = null;
     try { data = await res.json(); } catch { data = null; }
     if (res.ok) {
-      store.drop(record.key);
+      // Awaited before the answer is announced and the pass moves on: the
+      // record is gone before another pass (or another tab) can reload it.
+      await store.dropIf(record.key, record.savedAt);
+      answered.add(pairOf(record));
       announce({ outcome: 'sent', record, status: res.status, data });
       return true;
     }
     if (!refusal(res.status)) return false;
-    store.drop(record.key);
+    await store.dropIf(record.key, record.savedAt);
+    answered.add(pairOf(record));
     announce({ outcome: 'refused', record, status: res.status, data });
     return true;
   }
@@ -293,6 +340,7 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
     const records = await store.load(viewer);
     for (const record of records) {
       if (ready() !== viewer) return;
+      if (answered.has(pairOf(record))) continue;
       if (!(await send(record))) {
         if (!retry) retry = win.setTimeout(() => { retry = null; void flush(); }, ACTION_RETRY_MS);
         return;
@@ -302,7 +350,12 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
 
   function flush(): Promise<void> {
     if (running) { again = true; return running; }
-    running = pass().catch(() => {}).finally(() => {
+    const run = () => pass().catch(() => {});
+    const locks = win.navigator?.locks;
+    // Web Locks, where the browser has them: one tab passes at a time, so
+    // the second tab loads the store after the first tab's drops. Without
+    // them the server's `unchanged` answer keeps the result to one vote.
+    running = (locks ? locks.request(LOCK_NAME, run) : run()).catch(() => {}).finally(() => {
       running = null;
       if (again) { again = false; void flush(); }
     });
@@ -329,6 +382,7 @@ export function createActionOutbox(win: Win, idb: IDBFactory | null | undefined,
     },
     clear() {
       if (retry) { win.clearTimeout(retry); retry = null; }
+      answered.clear();
       store.clear();
     },
   };

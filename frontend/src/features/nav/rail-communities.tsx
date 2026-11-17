@@ -16,10 +16,9 @@
  * ── The places, under the row (v3) ───────────────────────────────────
  *
  * The community whose page is up opens under its row: Hub, Needs you and
- * Workshop, then #general under Channels and the topics under Topics, the
- * first two and "Show N more" (../dev-board/workshop/project-places.tsx, the
- * list the phone's drawer and tray draw too). A press moves the page in
- * place.
+ * Workshop, then #general under Channels (../dev-board/workshop/
+ * project-places.tsx, the list the phone's drawer and tray draw too). A
+ * press moves the page in place.
  * The row itself keeps `aria-current` but gives its fill to the place lit
  * under it, and its count to Needs you, which says the same votes. A
  * community you are only visiting, which is not one of the five, has a row
@@ -133,9 +132,6 @@ import { useSidebarRows } from './sidebar-rows';
 
 /** How many communities the sidebar lists. */
 export const RAIL_COMMUNITIES = 5;
-
-/** How many of a community's topics its nested places draw before "Show N more". */
-export const RAIL_TOPICS = 2;
 
 /**
  * The rows the sidebar drags onto My apps (#6025): the communities under
@@ -272,7 +268,7 @@ export function useRailCommunities(): string[] {
   return shown;
 }
 
-/** A community's places, nested under its row: the project's own list, kept short. */
+/** A community's places, nested under its row: the project's own list. */
 function RailPlaces({ slug, onPage, needs = 0 }: { slug: string; onPage: boolean; needs?: number }) {
   const place = useStoreState(placeStore);
   const v = useStoreState(devWorkshopStore);
@@ -297,7 +293,6 @@ function RailPlaces({ slug, onPage, needs = 0 }: { slug: string; onPage: boolean
       places={community?.places}
       // #2915: the Workshop's dot, as the page's own list draws it.
       filtered={here && v.slug === slug && !!v.meta?.filtered && place.place !== 'all'}
-      fold={RAIL_TOPICS}
       onPlace={(key) => { openPlace(slug, key); }}
     />
   );

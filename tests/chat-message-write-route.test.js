@@ -271,6 +271,51 @@ test('POST accepts a decimal string thread ref and supports general chat', async
   }
 });
 
+test('POST forwards a client_key, and a retry answers 200 with the stored row (#6730)', async () => {
+  reset();
+  const server = await startServer();
+  try {
+    let res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'once', client_key: 'press-6730-route' }),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(handleCalls[0][2].clientKey, 'press-6730-route');
+    const first = await res.json();
+
+    // The same key again: the canonical handler reports the stored row.
+    handleCalls = [];
+    handleResult = { ok: true, duplicate: true, message: handleResult.message };
+    res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'once', client_key: 'press-6730-route' }),
+    });
+    assert.equal(res.status, 200);
+    const again = await res.json();
+    assert.equal(again.message.id, first.message.id);
+    assert.equal(handleCalls[0][2].clientKey, 'press-6730-route');
+
+    // A malformed key is still passed through: the handler treats it as
+    // absent rather than refusing the comment, and a new row is 201 again.
+    handleCalls = [];
+    handleResult = {
+      ok: true,
+      message: { ...handleResult.message, id: 32 },
+    };
+    res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'odd key', client_key: 'x' }),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(handleCalls[0][2].clientKey, 'x');
+  } finally {
+    server.close();
+  }
+});
+
 test('POST rejects empty content and malformed thread scopes after the access lookup', async () => {
   const invalidBodies = [
     [],

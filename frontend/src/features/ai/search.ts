@@ -133,6 +133,33 @@ export function markParts(snippet: string, ranges: readonly (readonly [number, n
   return parts;
 }
 
+/**
+ * Pure: every place `q` is in `text`, as [start, end) pairs, in order. Built
+ * like the server's own matcher (src/services/ai-search.js): the query's
+ * words escaped and joined by `\s+`, so a character a pattern would read
+ * ("c++") is matched as written and a phrase matches across a line break;
+ * Unicode case folding when the text allows it, plain case folding otherwise.
+ * A zero-length match is skipped, and an empty query marks nothing.
+ */
+export function matchRanges(text: string, q: string | null | undefined): [number, number][] {
+  const source = cleanQuery(q).split(' ').filter(Boolean)
+    .map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('\\s+');
+  if (!source) return [];
+  let pattern: RegExp | null = null;
+  try { pattern = new RegExp(source, 'giu'); } catch { /* a lone surrogate: without Unicode case folding */ }
+  if (!pattern) {
+    try { pattern = new RegExp(source, 'gi'); } catch { return []; }
+  }
+  const out: [number, number][] = [];
+  for (const found of String(text ?? '').matchAll(pattern)) {
+    if (!found[0]) continue;
+    const at = found.index as number;
+    out.push([at, at + found[0].length]);
+  }
+  return out;
+}
+
 /** Pure: the day a found message was written ("3 Nov"), with its year when that is another one. */
 export function foundDay(at: string | null | undefined, locale: string | undefined, now: Date = new Date()): string {
   const d = new Date(String(at || ''));

@@ -34,6 +34,7 @@ import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
 import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
 import { installHomeSearchShortcut } from './search-shortcut';
+import { NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden } from './new-project-dismiss';
 
 
 const Home = {
@@ -632,6 +633,8 @@ const Home = {
   // the thing it is protecting rather than as a row count that only happened
   // to protect it at one viewport.
   APPS_VIEWPORT_FRACTION: 1 / 2,
+  // The fewest rows Home shows (visibleRowBudget).
+  MIN_ROWS: 3,
 
   // The row count that fraction buys, measured rather than assumed.
   //
@@ -653,7 +656,9 @@ const Home = {
   // the floor, so navigating away and back does not collapse the grid to two
   // rows for one paint.
   visibleRowBudget() {
-    const floor = HomeLayout.DEFAULT_ROWS;
+    // 17 Nov 2026: the least Home shows is three rows at every width (it
+    // was the model's two).
+    const floor = Home.MIN_ROWS;
     const last = Home._rowBudget || floor;
     if (typeof document === 'undefined') return last;
     // ONE try/catch around the whole measurement, not one per read. Every
@@ -706,6 +711,29 @@ const Home = {
   _rowBudgetWired: false,
   _rowBudgetPending: 0,
 
+  // Whether Home has its side column, where the New project card is: from
+  // 1280px (app.css, HOME'S SIDE COLUMN), under Standard (WIP) only, the look
+  // it is being tried in, for a viewer who gets a tile.
+  hasSideCard() {
+    // Closed in this browser (./new-project-dismiss.ts): there is no column
+    // to hold, so Pinned apps ends with its own New project tile.
+    if (newProjectCardHidden()) return false;
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
+    if (window.App?.user?.privateMember) return false;
+    // The two shot links that exist to show the tile's treatments keep it in
+    // the grid at every width (the declared Create checks open them).
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot === 'create-enabled' || shot === 'create-disabled') return false;
+    } catch { /* no address to read */ }
+    let skin = 'standard';
+    try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
+    // Standard (WIP) alone has the column (lib/skin.ts 'wip'): every other
+    // look, Standard among them, ends Pinned apps with the tile.
+    if (skin !== 'wip') return false;
+    try { return !!window.matchMedia('(min-width: 1280px)').matches; } catch { return false; }
+  },
+
   _wireRowBudget() {
     if (Home._rowBudgetWired) return;
     // Not `typeof window === 'undefined'`: this module is unit-tested inside a
@@ -721,7 +749,8 @@ const Home = {
       // Same deferral the other re-render paths take: never yank the grid out
       // from under a live drag. The gesture's own end re-runs load().
       if (Home._dragActive) return;
-      if (Home.visibleRowBudget() === Home._rowBudget) return;
+      if (Home.visibleRowBudget() === Home._rowBudget
+        && Home.hasSideCard() === !!Home._sideCard) return;
       Home.render();
     };
     window.addEventListener('resize', () => {
@@ -730,6 +759,10 @@ const Home = {
         ? requestAnimationFrame(run)
         : setTimeout(run, 16);
     }, { passive: true });
+    // Closing the New project card changes the same answer: `run` compares
+    // `hasSideCard()` with the budget the last render used and re-renders, so
+    // the trailing New project tile comes back without a reload.
+    window.addEventListener(NEW_PROJECT_HIDDEN_EVENT, run);
   },
 
   // `_renderedCols`, `_wireViewport()` and `_applyColumnCount()` lived here:
@@ -1017,7 +1050,7 @@ const Home = {
       }
       const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
-      const shown = hiddenRows
+      let shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
       // THE CREATE TILE GOES BEHIND "SHOW ALL" TOO (#3047). When the last row
@@ -1026,9 +1059,29 @@ const Home = {
       // the hidden rows instead, and the expander appears for it even when
       // every app already fits: a launcher of exactly eight apps shows two
       // rows and "Show all 8 apps", and the tile ends the expanded grid.
-      const createHidden = !editing && !Home._appsExpanded
+      //
+      // 17 Nov 2026: THE COLLAPSED GRID ENDS WITH THE TILE INSTEAD. Holding
+      // it back left New project as a small button beside the heading. When
+      // the last shown row is full, the app in its last cell goes behind
+      // "Show all N apps" and the tile takes that cell: the last row shows
+      // three apps and New project. Nothing is re-placed: the app keeps its
+      // cell and is there again once the grid is expanded or edited.
+      //
+      // Only where Home is one column. From 1280px the New project card
+      // stands beside the lists (./new-project-card.tsx) and the grid draws
+      // no tile at all (`inCard`): four apps to the last row.
+      const inCard = Home.hasSideCard();
+      Home._sideCard = inCard;
+      const createTakesLast = !inCard && !editing && !Home._appsExpanded
         && HomeLayout.createTileCollapsed(shown, cols, rowBound);
-      const collapsed = hiddenRows || createHidden;
+      let createCell = null;
+      if (createTakesLast) {
+        const lastShown = shown[shown.length - 1]; // canvasItems is in reading order
+        createCell = { col: lastShown.col, row: lastShown.row };
+        shown = shown.slice(0, -1);
+      }
+      const createHidden = false;
+      const collapsed = hiddenRows || createTakesLast;
       const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
       const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
@@ -1077,9 +1130,12 @@ const Home = {
         enabled: canCreate,
         hint: message(Home.CREATE_DISABLED_HINT),
         heldBack: createHidden,
-        placement: createHidden || flows
-          ? null
-          : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+        inCard,
+        placement: createCell
+          ? { ...createCell, w: 1, h: 1 }
+          : createHidden || flows
+            ? null
+            : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
       };
       // A private member makes no apps until they are let in off the
       // waitlist (their Home's waitlist card says so), so no tile at all —

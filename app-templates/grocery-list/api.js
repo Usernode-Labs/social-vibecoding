@@ -298,10 +298,14 @@ function routes(app, pool) {
           [body.category_id, id]
         );
       }
-      if (typeof body.checked === 'boolean' && body.checked !== item.checked) {
+      if (typeof body.checked === 'boolean') {
+        // Compared against the request's own value, not an earlier SELECT:
+        // of two phones ticking and unticking at once, whichever UPDATE
+        // commits last wins, and a repeated tick changes nothing (so the
+        // first tick's time and person stay).
         await pool.query(
           `UPDATE grocery_items SET checked = $1, completed_at = CASE WHEN $1 THEN $4::timestamptz ELSE NULL END,
-             last_checked_by = $3 WHERE id = $2`,
+             last_checked_by = $3 WHERE id = $2 AND checked IS DISTINCT FROM $1`,
           [body.checked, id, req.user.username, req.now]
         );
       }

@@ -109,7 +109,7 @@ function FoundRow({ line }: { line: FoundLine }): ReactNode {
       href={line.href}
       title={line.name}
       aria-label={line.name}
-      onClick={(e) => followFound(e, line.href)}
+      onClick={(e) => followFound(e, line.href, { messageId: line.messageId, q: line.q })}
       data-ai-found={line.thread ? 'thread' : 'chat'}
     >
       <span className={k('ei')} aria-hidden="true"><Icon name="chat" size={18} /></span>

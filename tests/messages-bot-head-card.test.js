@@ -385,7 +385,7 @@ test('the row draws the card in place of the line, and not again under the words
   assert.match(row, /const objects = head \? message\.objects\.filter\(\(object\) => !isHeadCard\(head, object\)\) : message\.objects;/);
   // #6248: only in the bot's DM, and only for a draft.
   assert.match(row, /const draft = botChat && kind === 'direct'\n\s+\? draftPreviewOf\(head, botMeta\(message\), message\.threadRootId, message\.conversationId \|\| conversationId\)\n\s+: null;/);
-  assert.match(row, /<BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} \/>/);
+  assert.match(row, /<BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} marks=\{marks\} \/>/);
   assert.match(row, /\{objects\.length \? <div className="messages-object-list">\{objects\.map\(/);
   assert.doesNotMatch(row, /message\.objects\.map\(/);
 });

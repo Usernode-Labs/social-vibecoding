@@ -220,6 +220,63 @@ test('app channels against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(await messageCount(closed), 0);
   });
 
+  // #6730: one press of Send is one comment, even when the answer is lost
+  // and the composer tries again with the key it made at the press.
+
+  await t.test('one client key stores one comment; separate presses store two', async () => {
+    await joinCommunity(chan, alice);
+    await joinCommunity(chan, carol);
+    const key = 'press-6730-sequential';
+    const before = await messageCount(chan);
+    const roomBefore = roomFrames('chat').length;
+
+    const first = await post(alice, chan, 'Once, please', { clientKey: key });
+    assert.equal(first.ok, true);
+    assert.equal(first.duplicate, undefined);
+    const roomsAfterFirst = roomFrames('chat').length;
+
+    // Alone on the sender's socket: the retry is not broadcast again.
+    const sent = [];
+    const retry = await ws.handleMessage(pool, socketFor(alice, chan, sent), {
+      type: 'chat', content: 'Once, please', clientKey: key,
+    });
+    assert.equal(retry.ok, true);
+    assert.equal(retry.duplicate, true);
+    assert.equal(retry.message.id, first.message.id);
+    assert.deepEqual(sent, [{ type: 'chat_ack', clientKey: key, id: first.message.id }]);
+    assert.equal(await messageCount(chan), before + 1, 'stored once');
+    assert.equal(roomFrames('chat').length, roomsAfterFirst, 'not heard by the room twice');
+
+    // Two frames racing with one key: the unique index settles it, and both
+    // callers get the same row.
+    const raced = await Promise.all([
+      post(alice, chan, 'Raced', { clientKey: 'press-6730-race' }),
+      post(alice, chan, 'Raced', { clientKey: 'press-6730-race' }),
+    ]);
+    assert.deepEqual(raced.map((r) => r.ok), [true, true]);
+    assert.equal(raced[0].message.id, raced[1].message.id);
+    assert.equal(raced.filter((r) => r.duplicate).length, 1);
+    assert.equal(await messageCount(chan), before + 2, 'one row for the racing pair');
+
+    // Same words, two deliberate presses: two keys, two comments.
+    const one = await post(alice, chan, 'Twice on purpose', { clientKey: 'press-6730-a' });
+    const two = await post(alice, chan, 'Twice on purpose', { clientKey: 'press-6730-b' });
+    assert.notEqual(one.message.id, two.message.id);
+    assert.equal(await messageCount(chan), before + 4);
+
+    // A key someone else made never matches: the lookup is per app and user.
+    const theirs = await post(carol, chan, 'Once, please', { clientKey: key });
+    assert.equal(theirs.ok, true);
+    assert.equal(theirs.duplicate, undefined);
+    assert.notEqual(theirs.message.id, first.message.id);
+    assert.equal(await messageCount(chan), before + 5);
+
+    // A malformed key is treated as absent: stored, never refused.
+    const odd = await post(alice, chan, 'No usable key', { clientKey: 'x' });
+    assert.equal(odd.ok, true);
+    assert.equal(await messageCount(chan), before + 6);
+  });
+
   // ── Reply threads ────────────────────────────────────────────────────
 
   let rootId;

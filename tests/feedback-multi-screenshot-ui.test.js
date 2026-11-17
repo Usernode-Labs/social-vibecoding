@@ -111,6 +111,11 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
   const fetchCalls = [];
   const revoked = [];
   let uploads = 0;
+  // #6734: window keydown listeners, so a test can press Escape. native.js
+  // registers its modal listener on window (capture) before the shell
+  // bundle loads, so a stand-in for it is registered first below.
+  const windowListeners = {};
+  let kitDismissals = 0;
   const sandbox = {
     // The binding the controller's i18n import gives it (the import line is stripped above).
     t: englishPlatformI18n().t,
@@ -135,7 +140,13 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
         if (!els.has(id)) els.set(id, makeEl('div', id));
         return els.get(id);
       },
-      querySelector: () => null,
+      querySelector: (sel) => {
+        // native.js asks the document for an open [data-owns-escape] overlay.
+        if (sel === '[data-owns-escape]') {
+          for (const node of els.values()) if (node.hasAttribute('data-owns-escape')) return node;
+        }
+        return null;
+      },
       querySelectorAll: () => [],
       addEventListener: () => {},
       createElement: (tag) => makeEl(tag),
@@ -159,7 +170,7 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     setInterval: () => 0,
     clearInterval: () => {},
     requestAnimationFrame: () => 0,
-    addEventListener: () => {},
+    addEventListener: (ev, fn) => { (windowListeners[ev] = windowListeners[ev] || []).push(fn); },
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     sessionStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
     AppView: {
@@ -180,6 +191,16 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
     arrowStep,
   };
   if (unNative) sandbox.unNative = unNative;
+  // usernode-native/v1/native.js registers this on window before the shell
+  // bundle loads: Escape dismisses the top modal unless an element marked
+  // [data-owns-escape] is open. It is registered first (as the real one
+  // runs first) so a test can see whether the sheet would have been closed.
+  windowListeners.keydown = [(e) => {
+    if (!e || e.key !== 'Escape') return;
+    if (sandbox.document.querySelector('[data-owns-escape]')) return;
+    kitDismissals += 1;
+    e.preventDefault();
+  }];
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -253,6 +274,12 @@ function makeHarness({ offline = false, uploadPlan = null, prepareFile = null, f
       el('feedback-text').value = text;
       el('feedback-text').fire('input');
     },
+    // #6734: a key pressed with the page focused (native.js and the
+    // controller both listen on window, in the capture phase).
+    fireWindow(ev, arg) {
+      return Promise.all((windowListeners[ev] || []).map((fn) => fn(arg)));
+    },
+    kitDismissals: () => kitDismissals,
     async submit() {
       el('feedback-submit').fire('click');
       await flush();
@@ -522,6 +549,46 @@ test('#4127: Photo and Video sit behind one paperclip whose popover a choice clo
   await attach.click();
   h.close();
   assert.equal(menu.classList.contains('hidden'), true, 'closing the dialog closes the popover');
+});
+
+// #6734: "had a small dropdown open inside a sheet, pressed esc to close the
+// dropdown and it closed the entire sheet and threw away my text. esc should
+// only close the topmost thing." The paperclip menu owns Escape while it is
+// open, so the sheet under it keeps the draft.
+test('#6734: Escape closes the paperclip menu, not the whole sheet', async () => {
+  const h = makeHarness();
+  h.open();
+  const attach = h.el('feedback-attach-btn');
+  const menu = h.el('feedback-attach-menu');
+  const focusCalls = [];
+  attach.focus = (opts) => { focusCalls.push(opts); };
+  h.el('feedback-title').value = 'Bigger vote buttons';
+  h.type('The vote buttons are hard to hit on my phone.');
+
+  await attach.click();
+  assert.equal(menu.classList.contains('hidden'), false);
+  assert.equal(menu.hasAttribute('data-owns-escape'), true, 'the open menu owns Escape');
+
+  let prevented = 0;
+  await h.fireWindow('keydown', {
+    key: 'Escape',
+    preventDefault: () => { prevented += 1; },
+    stopPropagation: () => {},
+  });
+
+  assert.equal(menu.classList.contains('hidden'), true, 'only the menu closes');
+  assert.equal(attach.getAttribute('aria-expanded'), 'false');
+  assert.equal(menu.hasAttribute('data-owns-escape'), false, 'and it stops owning Escape');
+  assert.equal(prevented, 1, 'the controller took the press');
+  assert.equal(JSON.stringify(focusCalls), JSON.stringify([{ preventScroll: true }]), 'focus goes back to the paperclip');
+  assert.equal(h.kitDismissals(), 0, 'the sheet was not dismissed');
+  assert.equal(h.el('feedback-title').value, 'Bigger vote buttons', 'the title is kept');
+  assert.equal(h.el('feedback-text').value, 'The vote buttons are hard to hit on my phone.', 'the text is kept');
+
+  // With no menu open Escape is the sheet's again.
+  await h.fireWindow('keydown', { key: 'Escape', preventDefault: () => {}, stopPropagation: () => {} });
+  assert.equal(h.kitDismissals(), 1, 'the kit modal handles Escape when nothing is above it');
+  assert.equal(menu.classList.contains('hidden'), true);
 });
 
 // #5687: a 56px thumbnail is enough to see that something was attached, not

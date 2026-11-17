@@ -92,6 +92,22 @@ test('submission and row-navigation behavior stay on their existing seams', () =
     'using the composer does not open its Activity row');
 });
 
+test('a retried reply keeps its key, so the server stores it once (#6730)', () => {
+  const submit = SOURCE.slice(SOURCE.indexOf('const submit = useCallback'), SOURCE.indexOf('const hidden'));
+  assert.match(SOURCE, /function newClientKey\(\)/, 'each comment gets a key at the press');
+  assert.match(submit, /client_key: clientKey/, 'the key rides on the POST');
+  assert.match(submit, /pending\.content !== content/,
+    'an unchanged draft is the same comment; edited words are a new one');
+  assert.match(submit, /if \(!content \|\| readThread\(key\)\.posting\) return;/,
+    'a second press while one is in flight sends nothing');
+  // The key is cleared only once the POST answered, on 201 or 200 alike:
+  // a failure keeps it for the retry.
+  const cleared = submit.indexOf('pendingKeyRef.current = null');
+  const checked = submit.indexOf('if (!res.ok) throw');
+  assert.ok(checked !== -1 && cleared > checked,
+    'a failed send keeps its key; a successful one frees the next press');
+});
+
 test('a successfully posted reply survives the inline-thread reload', () => {
   const preview = mod().feedThreadPreview([
     {

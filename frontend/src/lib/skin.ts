@@ -26,16 +26,18 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
  */
 export const FRAME_SKINS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
-export type Skin = 'standard' | 'brand' | FrameSkin;
+export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
 
 /**
- * Every look the Look menu offers after Standard, in its order: 'brand'
+ * Every look the Look menu offers after Standard, in its order: 'wip'
+ * ("Standard (WIP)": the standard look, drawn with the changes still being
+ * tried on it; the head sets `data-skin-wip` for it and no `data-skin`), 'brand'
  * ("Paper, simplified, with brand styling", which keeps the standard pages
  * and, since 15 Nov 2026, is what a device with nothing stored is drawn in)
  * and then the looks of the frame. It is the head's SKINS, and the option
  * values of Settings › Experimental › Look and of the look picker.
  */
-export const MENU_SKINS = ['brand', ...FRAME_SKINS] as const;
+export const MENU_SKINS = ['wip', 'brand', ...FRAME_SKINS] as const;
 export type MenuSkin = typeof MENU_SKINS[number];
 
 /** True for a look that draws a page in the frame; 'brand' keeps the standard pages. */

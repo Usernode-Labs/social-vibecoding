@@ -537,7 +537,7 @@ export function AppGrid() {
           on the "Show all N apps" line before), outside this canvas, so the
           markup in every state is what it was.
       */}
-      {state.create && !state.create.heldBack ? (
+      {state.create && !state.create.heldBack && !state.create.inCard ? (
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
       ) : null}
     </div>

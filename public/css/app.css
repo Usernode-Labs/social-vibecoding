@@ -2530,28 +2530,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
 .messages-jump-present:hover,
 .messages-jump-present:focus-visible { color: var(--text-primary); text-decoration: underline; }
 
-/* 16 Oct 2026: the changes nobody touched this week behind a quiet link
-   at the foot of Agents. Muted words in the
-   titles' column (16px of padding + the 44px avatar + the 14px gap), and no
-   chevron: a chevron there matched the sections' own folds and read as a
-   third heading. */
-.messages-inbox-older {
-  display: block;
-  width: 100%;
-  min-height: 44px;
-  padding-block: 12px 12px; padding-inline: 74px 16px;
-  border: 0;
-  color: var(--text-muted);
-  background: transparent;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  text-align: start;
-  cursor: pointer;
-}
-.messages-inbox-older:hover,
-.messages-inbox-older:focus-visible { color: var(--text-primary); text-decoration: underline; outline: none; }
-
 /* #2883: THE TRANSCRIPT READS ONE STEP DOWN ON A DESKTOP. 17px is the phone's
    reading size, and the phone keeps it; beside a 22rem list whose previews
    and cards are already at 15px, a 17px body and a 17px bold name were the
@@ -2588,16 +2566,6 @@ html.dark .messages-markdown .gc-ref-issue.gc-ref-request { color: hsl(var(--req
    the height of. */
 .messages-discussion-host { display: flex; flex-direction: column; min-height: 0; }
 .messages-discussion-host > * { flex: 1 1 auto; min-height: 0; }
-/* #5378: A CHANGE IN FLIGHT TAKES THE INBOX'S OWN ROW GEOMETRY on the
-   cards: a conversation row's 16px of padding and 14px gap around the 44px
-   tile, so its tile shares the avatars' left edge and its title their 74px
-   column (where the separators and "N older chats" already sit), in the
-   rows' 15 over 13 (AGENTS.md). ../improve/session-row.tsx is the bell's row
-   too, with Tailwind's own spacing, so this is scoped to the wrapper Messages
-   puts round it; the desktop's one-line column overrides it below. */
-.messages-inbox-session > a { min-height: 66px; gap: 14px; padding: 13px 16px; }
-.messages-inbox-session > a > .min-w-0 > :first-child { font-size: 15px; font-weight: 650; line-height: 20px; }
-.messages-inbox-session > a > .min-w-0 > :first-child + * { margin-top: 2px; font-size: 13px; line-height: 18px; }
 
 /* Phone-width only. Each of these exists because a narrow column cannot lay
    the row out sideways; the thread pane on a desktop is up to ~59rem and can. */
@@ -5482,6 +5450,58 @@ html.first-paint-reserved #home-challenges-section.home-section-pending {
 html[data-browser-scroller="home-screen"] .home-body-fill {
   /* The header overlaps its content by .5rem (its rounded lower edge). */
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
+}
+
+/* ============================================================
+   STANDARD (WIP): the standard look with the changes still being tried on
+   it (head.html window.Skin 'wip', which sets data-skin-wip and no
+   data-skin). Home's Pinned communities grid is a card, as Pinned apps'
+   grid and its "Show all" line are one (PINS_CARD, features/home).
+   ============================================================ */
+html[data-skin-wip] #home-communities-section > .grid {
+  padding: 16px 8px 14px;
+  border-radius: 20px;
+  background-color: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+
+/* HOME'S SIDE COLUMN (features/home/index.tsx, new-project-card.tsx,
+   needs-you-card.tsx). The
+   New project card sits in `#home-aside`, the first child of #home-body, and
+   the lists follow in `.home-main`. On a phone and a narrow window they are
+   one column, the card on top inside the lists' own 12px gutter. From 1280px,
+   and only while the root says the column is drawn (`data-home-aside`), the
+   page widens from 1024px to 1320px and the two sit side by side, the card
+   on the trailing side at 280px. The lists keep about the width they had. */
+.home-aside {
+  display: none; /* one column draws no card: nothing to hold a place for */
+  box-sizing: border-box;
+  padding: 12px 12px 0;
+}
+.home-main {
+  min-width: 0;
+}
+@media (min-width: 1280px) {
+  #home-screen[data-home-aside] .home-column {
+    max-width: 82.5rem; /* 1320px */
+  }
+  #home-screen[data-home-aside] .home-body-fill {
+    flex-direction: row-reverse;
+    align-items: flex-start;
+    gap: 20px;
+  }
+  #home-screen[data-home-aside] .home-main {
+    flex: 1 1 0;
+  }
+  #home-screen[data-home-aside] .home-aside {
+    display: flex;
+    flex-direction: column;
+    gap: 12px; /* between the column's cards */
+    min-width: 0; /* a long title is cut, never the column widened */
+    max-width: 304px;
+    flex: 0 0 304px; /* a 280px card and the 12px gutter each side */
+    padding-top: 16px;
+  }
 }
 
 /* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
@@ -10698,22 +10718,13 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .ctl .tab{white-space:nowrap;flex:none}
 #admin-onboarding-flows .ctl .legend{padding:0 8px 3px;flex:1 1 auto;min-width:0}
 #admin-onboarding-flows .ctlrow{display:flex;align-items:center;justify-content:space-between;gap:8px 14px;min-width:0}
-#admin-onboarding-flows .tgl{flex:none;display:inline-flex;align-items:center;gap:7px;font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;height:28px;padding:0 10px 0 6px;margin:0 2px 2px 0;border:1px solid var(--rule);border-radius:999px;background:var(--bg);color:var(--muted);cursor:pointer;white-space:nowrap}
-#admin-onboarding-flows .tgl .knob{width:22px;height:14px;border-radius:999px;background:var(--rule);position:relative;transition:background .15s}
-#admin-onboarding-flows .tgl .knob::after{content:'';position:absolute;top:2px;inset-inline-start:2px;width:10px;height:10px;border-radius:50%;background:var(--surface);transition:transform .15s}
-#admin-onboarding-flows .tgl[aria-pressed="true"]{color:var(--fg);border-color:var(--fg);background:var(--surface)}
-#admin-onboarding-flows .tgl[aria-pressed="true"] .knob{background:var(--fg)}
-#admin-onboarding-flows .tgl[aria-pressed="true"] .knob::after{transform:translateX(8px)}
-#admin-onboarding-flows .tgl:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
+#admin-onboarding-flows .whobox{flex:none;display:inline-flex;align-items:center;gap:6px;margin:0 2px 2px 0;font-size:12.5px;color:var(--muted)}
+#admin-onboarding-flows .whobox select{font-family:var(--font-body);font-weight:500;font-size:12.5px;line-height:1;height:28px;max-width:220px;padding:0 8px;border:1px solid var(--rule);border-radius:999px;background:var(--bg);color:var(--fg);cursor:pointer}
+#admin-onboarding-flows .whobox select:focus-visible{outline:2px solid var(--fg);outline-offset:2px}
 @media (max-width:640px){
   #admin-onboarding-flows .ctlrow{flex-wrap:wrap}
   #admin-onboarding-flows .ctlrow .legend{flex-basis:100%}
 }
-@media (prefers-reduced-motion: reduce){
-  #admin-onboarding-flows .tgl .knob,#admin-onboarding-flows .tgl .knob::after{transition:none}
-}
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) #admin-onboarding-flows .tgl .knob,:where(html[data-motion="reduce"]) #admin-onboarding-flows .tgl .knob::after{transition:none}
 @media (max-width:640px){
   #admin-onboarding-flows .ctl .legend{flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;scrollbar-width:none}
   #admin-onboarding-flows .ctl .legend::-webkit-scrollbar{display:none}
@@ -10779,6 +10790,11 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .of-flow.dim .thread.hl{opacity:1}
 #admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub{opacity:.45}
 #admin-onboarding-flows .nodeg{cursor:pointer;outline:none}
+/* The native kit presses every [role="button"]: a CSS transform (scale), a dimming and a spring back. Inside the
+   drawing a CSS transform replaces an SVG shape's own position, so a pressed card flew to the corner. Cards and
+   marks are placed by an inline style the press cannot outrank (engine.js `at`), and here the press does nothing. */
+#admin-onboarding-flows svg [role="button"],#admin-onboarding-flows svg [role="button"]:active{transition:none;filter:none}
+#admin-onboarding-flows svg text[role="button"]:active{transform:none}
 #admin-onboarding-flows .nodeg rect.nbox{fill:var(--node)}
 #admin-onboarding-flows .nodeg.ghost rect.nbox{fill:url(#of-hatch);stroke:var(--node);stroke-width:1}
 #admin-onboarding-flows .nodeg.inferred rect.nbox{fill:var(--surface);stroke:var(--node);stroke-width:1.5;stroke-dasharray:3 2.5}
@@ -10811,6 +10827,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .nsub{font-family:var(--font-mono);font-size:11px;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px;stroke-linejoin:round;font-variant-numeric:tabular-nums}
 #admin-onboarding-flows .nodeg.small .nlabel{font-size:12px;font-weight:500}
 #admin-onboarding-flows .ctitle{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;fill:var(--muted)}
+#admin-onboarding-flows .ctot{font-family:var(--font-mono);font-size:10.5px;font-weight:600;fill:var(--fg);font-variant-numeric:tabular-nums}
 #admin-onboarding-flows .ztitle{font-family:var(--font-mono);font-size:10.5px;letter-spacing:.07em;text-transform:uppercase;fill:var(--faint)}
 #admin-onboarding-flows .zline{stroke:var(--faint);stroke-width:1;stroke-dasharray:5 6;opacity:.7}
 #admin-onboarding-flows .caption{font-family:var(--font-mono);font-size:10px;letter-spacing:.07em;text-transform:uppercase;fill:var(--muted);paint-order:stroke;stroke:var(--surface);stroke-width:4px}
@@ -10876,6 +10893,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .linkbtn:hover{border-color:var(--muted)}
 #admin-onboarding-flows .tablewrap{overflow-x:auto}
 #admin-onboarding-flows table{width:100%;border-collapse:collapse;font-size:14px;min-width:640px}
+#admin-onboarding-flows table.compact{min-width:0}
 #admin-onboarding-flows thead th{font-family:var(--font-mono);font-size:11px;font-weight:500;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:start;padding:0 14px 8px 0;border-bottom:1px solid var(--rule);white-space:nowrap}
 #admin-onboarding-flows tbody th{text-align:start;font-weight:600;padding:9px 14px 9px 0;vertical-align:top}
 #admin-onboarding-flows tbody td{padding:9px 14px 9px 0;vertical-align:top}
@@ -11770,10 +11788,15 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 .dev-vote-switch-opt svg { width: 14px; height: 14px; }
 .dev-vote-switch-opt .dev-vote-n {
+  display: inline-block;
+  flex: none;
+  min-width: 5ch;
+  text-align: start;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -14206,9 +14229,9 @@ p.dev-change-issue-pointer {
      name, figure and bar keep the card's width. */
   .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
   .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
-  .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
-  .dev-change-gate-name { min-width: 0; }
-  .dev-change-gate-figure { white-space: nowrap; }
+  .dev-change-gate-head { flex-wrap: nowrap; row-gap: 2px; }
+  .dev-change-gate-name { flex: none; min-width: 0; }
+  .dev-change-gate-figure { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   /* #6419: the stuck pair keeps only the heading, the figure and the vote,
      a little tighter; its note stays on the full card in the thread. The
      Vote button goes back on the card's own line, so the card stays one
@@ -22332,11 +22355,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   .platform-rail-nest :is(.platform-rail-sub-count, :is([data-place="discussion"], [data-place^="c:"]) > .dev-ws-place-count) {
     background: var(--text-faint, #8e8e93);
   }
-  .platform-rail-nest .dev-ws-places-more {
-    padding-inline-start: 30px;
-    color: var(--text-muted);
-    font-size: 12.5px;
-  }
   .platform-rail-nest :is(.dev-ws-places-head, .platform-rail-subhead),
   .platform-rail-nest .dev-ws-places-group + .dev-ws-places-group .dev-ws-places-head {
     flex: none;
@@ -22575,9 +22593,8 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 .messages-new-option-label { display: block; font-size: 14px; font-weight: 600; }
 .messages-new-option-hint { display: block; font-size: 12px; color: var(--text-muted); }
 
-/* THE SECTION HEADS (#2783): "Chats" over the people and agents, "Channels"
-   over #general and the apps — Discord's two headings, small and muted so
-   they divide the list without competing with its rows. */
+/* THE SECTION HEAD (#2783): People over the conversations, small and muted
+   so it heads the list without competing with its rows. */
 .messages-section-head {
   display: flex;
   align-items: center;
@@ -22589,30 +22606,9 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   text-transform: uppercase;
   color: var(--text-muted);
 }
-/* 16 Oct 2026: Agents and People fold from their heading, which is one
-   button the width of the list, so the whole line is the target. What in
-   the section asks for you ("1 working", "3 unread") sits at its trailing
-   edge in the row's own case, and stays there folded; a count of unread
-   messages from people is the accent, a number that asks for the viewer. */
-.messages-section-toggle {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin: -6px 0;
-  padding: 6px 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font: inherit;
-  letter-spacing: inherit;
-  text-align: start;
-  text-transform: inherit;
-  cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.messages-section-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+/* 16 Oct 2026: how many messages from people are unread ("3 unread") sits
+   at the heading's trailing edge in the row's own case, grey: new to read,
+   not waiting on you (#18). */
 .messages-section-name { min-width: 0; }
 .messages-section-aside {
   margin-inline-start: auto;
@@ -22622,18 +22618,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   text-transform: none;
   white-space: nowrap;
 }
-.messages-section-aside-ask { color: var(--accent); }
-.messages-section-chevron {
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  stroke-width: 2.5;
-  transition: transform 150ms;
-}
-.messages-section-name + .messages-section-chevron { margin-inline-start: auto; }
-@media (prefers-reduced-motion: reduce) { .messages-section-chevron { transition: none; } }
-/* Reduce motion setting (#6510): the same, when Settings asks for it. */
-:where(html[data-motion="reduce"]) .messages-section-chevron { transition: none; }
 /* A SECTION'S ROWS ARE A CARD: the grouped list's shape (@/components/ui/
    grouped-list.tsx), spelled here because these rows are app.css's. The same
    plane colour, the same 20px radius and the same inset hairline in the
@@ -22678,26 +22662,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
   justify-content: center;
   font-size: 18px;
   font-weight: 700;
-}
-/* A change in flight (16 Oct 2026): an agent's pencil on a tint of its
-   project's colour (--change-ink, lib/community-color.ts), in the place of
-   the project's own icon, which for Homeroom is the bot's face. #5378: at
-   the avatars' 44px and 12px radius, so the column's tiles line up. */
-.messages-inbox-change-tile {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  color: var(--change-ink, var(--text-muted));
-  background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 14%, transparent);
-}
-.messages-inbox-change-tile svg { width: 22px; height: 22px; }
-html.dark .messages-inbox-change-tile {
-  color: color-mix(in srgb, var(--change-ink, var(--text-muted)) 45%, white);
-  background: color-mix(in srgb, var(--change-ink, var(--text-muted)) 35%, transparent);
 }
 
 
@@ -23856,6 +23820,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-desc { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; max-height: calc(100% - 48px); overflow-y: auto; padding-block: 6px 16px; padding-inline: 46px 16px; background: var(--rf-page); border-start-start-radius: 0; border-start-end-radius: 0; border-end-end-radius: 24px; border-end-start-radius: 24px; transform: translateY(-104%); transition: transform .32s cubic-bezier(0.22,1,0.36,1), box-shadow .32s; }
 .rf-desc-wrap[data-open] .rf-desc { transform: none; box-shadow: 0 16px 40px rgba(0,0,0,.18); }
 .rf-desc-text { margin: 0; font-size: 15px; line-height: 21px; color: var(--rf-muted); white-space: pre-line; overflow-wrap: anywhere; }
+/* Across all projects the card opens on the project's name: the same type as
+   the title, before the description's lighter grey. */
+.rf-desc-app { margin: 0 0 4px; font-size: 15px; line-height: 21px; font-weight: 650; color: var(--rf-ink); overflow-wrap: anywhere; }
 .rf-desc-foot { display: flex; margin-top: 16px; margin-inline-start: -30px; }
 .rf-desc-go { flex: 1; display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 600; text-decoration: none; }
 .rf-desc-by { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
@@ -23867,6 +23834,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-help-row + .rf-help-row::before { content: ''; position: absolute; inset-inline-start: 46px; inset-inline-end: 0; top: 0; height: 1px; background: var(--rf-line); }
 .rf-help-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rf-claim { flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var(--rf-muted); text-wrap: pretty; animation: rf-claim-in .36s cubic-bezier(0.22,1,0.36,1); }
+/* The project's name leads the line across all projects, in the same bold ink
+   as the title; inline, so the line keeps its two-line height. */
+.rf-claim-app { font-weight: 650; color: var(--rf-ink); }
 @keyframes rf-claim-in { from { opacity: 0; transform: translateY(4px); } }
 .rf-hero-quiet { width: 100%; }
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
@@ -25913,8 +25883,9 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-request-status:empty { dis
    beside Open app broke onto two lines. */
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
-html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
-html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { white-space: nowrap; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: nowrap; row-gap: 2px; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-name { flex: none; min-width: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* The card's buttons (Open app; an act in the accent's tint) are the kit's
    small ones, as "Ask Homeroom bot privately" beside the words is. */
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act .gc-vote-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font: 650 13px/1 var(--fr-f); }
@@ -26138,8 +26109,7 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-layout:has(> [data-fr
    the browser's own anchoring is off here as on the standard scroller,
    which dragged the list with a row that had moved), and "Oldest chats"
    (./inbox-to-end.tsx) stays at its foot: the product's own button as the
-   kit's small quiet one, over the phone's tab bar. A change in flight with
-   news not seen yet ends in the accent's dot, as the standard row does. */
+   kit's small quiet one, over the phone's tab bar. */
 html[data-skin] .messages-list-pane[data-frame-list] { overflow-anchor: none; }
 html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] { position: sticky; bottom: 0; height: 0; }
 html[data-skin] .messages-list-pane[data-frame-list] > [data-inbox-to-end] > div { bottom: calc(var(--fr-shell-bottom, 0px) + 12px) !important; }
@@ -26149,7 +26119,6 @@ html[data-skin]:where(:not([data-skin="brand"])) .messages-list-pane[data-frame-
   box-shadow: var(--fr-soft, 0 0 0 0 transparent), inset 0 0 0 1px var(--fr-line);
   font-family: var(--fr-f); font-size: 13px; font-weight: 650;
 }
-html[data-skin] [data-messages-frame-list] [data-inbox-unseen] { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--fr-acc); }
 /* NEW MESSAGE'S DIALOG (features/messages/create-dialog.tsx; the tour's
    s16). The kit's sheet offers the three kinds; Direct message and Group
    chat hand over to this, the product's own dialog, dressed: its title, its
@@ -26607,6 +26576,168 @@ html[data-skin]:where(:not([data-skin="brand"])) #app-menu-row-workshop { paddin
    your home screen" on a phone): the kit's larger text and gutters left
    the standard sheet's one line 20px short. */
 html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-row-"] .truncate { white-space: normal; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   THE THREAD'S RAIL: "How it got here" (dev-board/topic/thread-rail.tsx).
+   A request's and a change's page say their big events down a line: asked,
+   planned, built, tested, and last where the thread stands now. The shell
+   renders the rail's host between the root post and the replies
+   (`#gc-thread-rail`, group-chat/thread-shell.tsx), which is where a narrow
+   page reads it; a wide page stands it beside them as its own card, and the
+   root post and the replies become cards too, on the page's ground.
+
+   The standard look and "Paper, simplified, with brand styling" only: the
+   frame's looks keep their own context column and draw no rail
+   (request-head.tsx), and every rule here is scoped away from them. A
+   decision's page has no rail host.
+   ═══════════════════════════════════════════════════════════════════════ */
+.dev-request-rail:empty { display: none; }
+.dev-rail {
+  --rail-ink: var(--text-primary);
+  --rail-mut: var(--text-secondary);
+  --rail-faint: var(--text-muted);
+  --rail-line: var(--messages-hair);
+  --rail-done: var(--state-ok);
+  --rail-done-tint: color-mix(in srgb, var(--state-ok) 14%, transparent);
+  --rail-bad: var(--state-blocked);
+  --rail-bad-tint: color-mix(in srgb, var(--state-blocked) 13%, transparent);
+  --rail-now: var(--text-primary);
+  --rail-now-ink: var(--messages-surface);
+  --rail-now-ring: color-mix(in srgb, var(--lit-ink) 22%, transparent);
+  --rail-note: var(--lit-tint);
+  --rail-well: var(--messages-surface-2);
+  margin: 4px 0 14px;
+  padding: 12px 10px 6px;
+  border-radius: 16px;
+  background: var(--rail-well);
+}
+.dev-rail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 6px 8px; }
+.dev-rail-title { margin: 0; font-size: 12px; line-height: 16px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--rail-faint); }
+.dev-rail-less { display: none; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--accent); }
+.dev-rail-steps { list-style: none; margin: 0; padding: 0; }
+.dev-rail-step { position: relative; display: flex; gap: 12px; padding: 6px 6px 12px; }
+.dev-rail-step::before { content: ""; position: absolute; inset-inline-start: 18px; top: 34px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--rail-line); }
+.dev-rail-step:last-child { padding-bottom: 6px; }
+.dev-rail-step:last-child::before { display: none; }
+.dev-rail-mark {
+  position: relative; z-index: 1; flex: none;
+  width: 26px; height: 26px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--rail-done-tint); color: var(--rail-done);
+}
+.dev-rail-glyph { width: 14px; height: 14px; }
+.dev-rail-mark[data-rail-tone="bad"] { background: var(--rail-bad-tint); color: var(--rail-bad); }
+.dev-rail-mark[data-rail-tone="muted"] { background: var(--rail-line); color: var(--rail-faint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark { background: var(--rail-now); color: var(--rail-now-ink); box-shadow: 0 0 0 4px var(--rail-now-ring); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="bad"] { background: var(--rail-bad); color: #fff; box-shadow: 0 0 0 4px var(--rail-bad-tint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="ok"] { background: var(--rail-done); color: #fff; box-shadow: 0 0 0 4px var(--rail-done-tint); }
+.dev-rail-step[data-rail-now] .dev-rail-mark[data-rail-tone="muted"] { background: var(--rail-faint); color: var(--rail-now-ink); box-shadow: 0 0 0 4px var(--rail-line); }
+.dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: dev-rail-turn 1.4s linear infinite; }
+@keyframes dev-rail-turn { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: none; } }
+:where(html[data-motion="reduce"]) .dev-rail-mark[data-rail-busy] .dev-rail-glyph { animation: none; }
+.dev-rail-body { flex: 1 1 auto; min-width: 0; padding-top: 2px; }
+.dev-rail-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; line-height: 22px; }
+.dev-rail-name { font-size: 15px; font-weight: 650; color: var(--rail-ink); overflow-wrap: anywhere; }
+.dev-rail-step[data-rail-tone="bad"] .dev-rail-name { color: var(--rail-bad); }
+.dev-rail-time { margin-inline-start: auto; font-size: 12.5px; color: var(--rail-faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dev-rail-desc { margin: 0; font-size: 13px; line-height: 19px; color: var(--rail-mut); overflow-wrap: anywhere; }
+.dev-rail-link { font-weight: 600; color: var(--accent); white-space: nowrap; }
+.dev-rail-link:hover { text-decoration: underline; }
+.dev-rail-note { margin: 8px 0 0; padding: 9px 12px; border-radius: 12px; background: var(--rail-note); font-size: 13px; line-height: 19px; color: var(--rail-ink); overflow-wrap: anywhere; }
+
+/* The folded pile: the earlier steps' markers, one over the next down the
+   line, the newest on top with its glyph, and the link that opens them. A
+   narrow page only (below); here it is put away. */
+.dev-rail-pile { display: none; position: relative; align-items: center; gap: 12px; width: 100%; padding: 4px 6px 10px; text-align: start; }
+.dev-rail-pile::before { content: ""; position: absolute; inset-inline-start: 18px; top: 28px; bottom: -6px; width: 2px; border-radius: 1px; background: var(--rail-line); }
+.dev-rail-pile-marks { position: relative; flex: none; width: 26px; }
+.dev-rail-pile-mark { position: absolute; inset-inline-start: 0; display: inline-flex; border-radius: 50%; box-shadow: 0 0 0 2px var(--rail-well); background: var(--rail-well); }
+.dev-rail-pile-more { font-size: 14px; font-weight: 600; color: var(--accent); }
+
+/* NARROW: one column. The rail sits between the root post and the replies,
+   its earlier steps folded into the pile until the reader opens them, and
+   the open steps tighter than a wide page's. */
+@media (max-width: 1179.98px) {
+  .dev-rail[data-rail-fold="shut"] .dev-rail-pile { display: flex; }
+  .dev-rail[data-rail-fold="shut"] .dev-rail-step:not([data-rail-now]) { display: none; }
+  .dev-rail[data-rail-fold="open"] .dev-rail-less { display: inline-flex; }
+  .dev-rail-step { padding: 4px 6px 6px; }
+  .dev-rail-step::before { top: 32px; bottom: -2px; }
+  .dev-rail-step[data-rail-now] { padding-top: 8px; }
+  .dev-rail-step[data-rail-now]::before { top: 36px; }
+  .dev-rail-line { line-height: 20px; }
+  .dev-rail-desc { line-height: 18px; }
+  .dev-rail-note { margin-top: 6px; padding: 8px 12px; }
+}
+
+/* WIDE: two columns. The page's header row runs across both; under it the
+   root post and the replies are cards in the first column, and the rail is
+   a card that stays put beside them. Not in a side panel (the Workshop's,
+   or the embedded one), which is a narrow page however wide the window is,
+   and not while the reader beside the thread is open, which takes the
+   second column's room. */
+@media (min-width: 1180px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
+    --thread-rail-w: 332px;
+    --thread-rail-gap: 20px;
+    --thread-card: var(--dc-sheet-fill);
+    --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05);
+    max-width: 1132px;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet {
+    background: none;
+    border-top-color: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--thread-rail-w);
+    column-gap: var(--thread-rail-gap);
+    align-content: start;
+    padding-bottom: 12px;
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages) {
+    grid-column: 1;
+    min-width: 0;
+    border-radius: 20px;
+    background: var(--thread-card);
+    box-shadow: var(--thread-card-edge);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { grid-row: 1; padding: 8px 4px 4px; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { grid-row: 2; margin-top: 14px; padding: 6px 4px 8px; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: start;
+    position: sticky;
+    top: 0;
+    max-height: 100%;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    border-radius: 20px;
+    background: var(--thread-card);
+    box-shadow: var(--thread-card-edge);
+    backdrop-filter: var(--dc-frost);
+    -webkit-backdrop-filter: var(--dc-frost);
+  }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
+    --rail-well: transparent;
+    margin: 0;
+    padding: 16px 10px 8px;
+    border-radius: 0;
+  }
+  /* The card says the title; the header row keeps the number, the pill and ⋯. */
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar .dev-request-bar-title { display: none; }
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) {
+    margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
+  }
+}
 
 /* THE BELL'S SHEET (features/notifications/notifications-sheet.tsx, the
    bar's bell). The sheet stays the product's: its search, its Unread and
@@ -28465,3 +28596,34 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   margin: 2px 0 10px;
   background: url('/illustrations/people/log.png') center / contain no-repeat;
 }
+
+/* A THREAD'S PAGE. Its cards on a wide page (the root post, the replies and
+   "How it got here": the block "THE THREAD'S RAIL" lays them out) are this
+   look's cards: opaque on the page, with the lift every card here has. The
+   step the thread stands on is the ink marker in a sun ring, and its second
+   line is on the sun wash, as a thing to do is. The rail's heading is a
+   sentence, as every label over a group is. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request {
+  --thread-card: var(--bl-card);
+  --thread-card-edge: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail {
+  --rail-now-ring: var(--bl-sun);
+  --rail-note: var(--bl-wash);
+  --rail-well: var(--bl-page);
+  --rail-done-tint: var(--bl-tint-leaf);
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-rail { --rail-now: var(--bl-solid); --rail-now-ink: var(--bl-on-solid); }
+html[data-skin="brand"].dark:not([data-app-tone="light"]) .dev-rail { --rail-now: var(--bl-sun); --rail-now-ink: var(--bl-on-sun); --rail-now-ring: rgba(255, 238, 111, 0.3); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail-title {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bl-label);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.dev-rail-link, .dev-rail-less, .dev-rail-pile-more) { color: var(--bl-sky); }
