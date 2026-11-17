@@ -1919,12 +1919,12 @@ async function seedStagingBotWaitingRows(pool) {
       if (d.held || d.verdict) {
         await pool.query(
           `INSERT INTO homeroom_bot_runs
-             (app_id, issue_number, mode, verdict, reason, cap_suppressed, go_ahead_decides, first_step, created_at)
-           SELECT $1, $2, 'live', $3, $4, $5, $6, $7, NOW() - INTERVAL '1 day'
+             (app_id, issue_number, mode, verdict, reason, cap_suppressed, go_ahead_decides, first_step, go_ahead_blocker, created_at)
+           SELECT $1, $2, 'live', $3, $4, $5, $6, $7, $8, NOW() - INTERVAL '1 day'
             WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
                                WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
           [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null,
-            d.cannot ? false : null, d.firstStep || null],
+            d.cannot ? false : null, d.firstStep || null, d.cannot ? 'operator_work' : null],
         );
       }
       if (d.buildQueued) {
@@ -1972,7 +1972,7 @@ async function seedStagingBotWaitingRows(pool) {
                                AND metadata->>'stagingDemo' = 'person-note')`,
         [
           appId, botRow.rows[0].id,
-          'I don\'t build changes like this myself, even with a go-ahead: Staging demo: moving App secrets in the infra '
+          'This needs something set up outside this app, which I can\'t do from here: Staging demo: moving App secrets in the infra '
             + 'repo and deleting a GitHub Actions secret are operator work outside this app. A person has to build it, '
             + 'for example with a coding agent, and the group votes on it as usual. I can build this part now: Remove '
             + 'the dead bot token line from the deploy workflow.',
@@ -2014,7 +2014,7 @@ async function seedStagingBotWaitingRows(pool) {
                                AND metadata->>'stagingDemo' = 'go-ahead-reply')`,
         [
           appId, botRow.rows[0].id,
-          'I don\'t build changes like this myself, even with a go-ahead: moving App secrets and deleting a GitHub '
+          'A go-ahead can\'t settle this one. This needs something set up outside this app, which I can\'t do from here: moving App secrets and deleting a GitHub '
             + 'Actions secret are operator work outside this app. A person has to build it, for example you with a '
             + 'coding agent, and the group votes on it as usual. I can build this part now: Remove the dead bot token '
             + 'line from the deploy workflow.',
