@@ -34,7 +34,7 @@ import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from
 import { botRequestNames, botThreadTitle, dotText, threadsAllowed } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
-  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords, serverThreadName,
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
 import { requestPageOf } from './request-page';
@@ -2391,6 +2391,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
           <PrivateThreadDoors
             rootId={privateRoot}
             text={privateThreadWords(root, replies, meId)}
+            name={privateThreadName(root, replies)}
             where={privateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
             invited={newProjectInvited(root, replies)}
