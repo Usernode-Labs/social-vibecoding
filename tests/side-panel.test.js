@@ -1811,7 +1811,22 @@ test('the column\'s ⋯ menu is a solid sheet above the page, in both looks (#64
   const base = rule('.messages-thread-menu');
   assert.match(base, /position: absolute;/);
   assert.match(base, /z-index: 30;/);
-  assert.match(base, /background: var\(--messages-surface\);/);
+  // #6765: the menu is also drawn on the bot page's thread rows, under none
+  // of those token hosts, so its fill and hover carry their own fallbacks
+  // (white and --bg-secondary in light, --dc-raised and #3a3a3c in dark) and
+  // never resolve to nothing there. A host that declares the tokens wins,
+  // because a fallback is used only when the variable is unset.
+  assert.match(base, /background: var\(--messages-surface, #ffffff\);/,
+    'the menu\'s fill has a light fallback');
+  assert.match(rule('.messages-thread-menu button:hover'),
+    /background: var\(--messages-surface-2, var\(--bg-secondary\)\);/,
+    'and its hover step a light fallback');
+  assert.match(rule('.dark .messages-thread-menu'),
+    /background: var\(--messages-surface, var\(--dc-raised\)\);/,
+    'the menu\'s fill has a dark fallback');
+  assert.match(rule('.dark .messages-thread-menu button:hover'),
+    /background: var\(--messages-surface-2, #3a3a3c\);/,
+    'and its hover step a dark fallback');
 });
 
 test('a new page, a new frame and leaving drop the head with the title (#6431)', () => {
