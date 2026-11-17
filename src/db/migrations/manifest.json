@@ -407,9 +407,14 @@
       "schemaSha256": "abb00afd2ad35eb1f854174240050bd46c011101d2de248d57d5130721853179"
     },
     {
+      "id": "private-thread-titles",
+      "sha256": "93ec3bcb9839de4fdc2a0ce7cea2eb3973224e22b51882fbb59fe1913675637e",
+      "schemaSha256": "7b054a8ea97e1cf59dd97945b0bbc7bfc701cdebeaad5046a0914d6c8cc56afb"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "b78d422dfab580192ffbe3cdc25c018bcff0b7a1273a9bffaa674267d1cf6a7a",
-      "schemaSha256": "822d1fb3c0fabcdbf0602773722d7fbbb84be055c072f3fea7dc1adc3cddeff3"
+      "schemaSha256": "0a6df4a751c5a855c051368e9803744ecaefacdd6ec2499b12b425c968861af8"
     }
   ]
 }
