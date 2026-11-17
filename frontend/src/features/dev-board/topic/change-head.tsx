@@ -350,7 +350,7 @@ export function GateCard({ which, g, action, rerun = null, id, closes = [], line
             {g.done ? <CheckIcon className="dev-change-gate-check" aria-hidden="true" /> : null}
             {g.name}
           </span>
-          <span className="dev-change-gate-figure">{g.figure}</span>
+          <span className="dev-change-gate-figure" title={g.figure}>{g.figure}</span>
         </div>
         <div className="dev-change-bar" role="img" aria-label={g.label}>
           {g.segments.map((seg, i) => (

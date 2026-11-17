@@ -666,7 +666,7 @@ test('#6234: the card of a change the bot is fixing says so, and its re-run is d
   const page = unescape(render(admin, botChange({ state: 'fixing', since, reason: null })).page);
   const testing = page.slice(page.indexOf('data-change-gate="testing"'));
   assert.match(testing, /^data-change-gate="testing" data-done="false" data-tone="muted" data-change-bot-fix="fixing"/);
-  assert.match(testing, /<span class="dev-change-gate-figure">Fixing<\/span>/);
+  assert.match(testing, /<span class="dev-change-gate-figure" title="Fixing">Fixing<\/span>/);
   assert.match(testing, /<button class="gc-vote-btn gc-vote-btn-accent" disabled="" title="Homeroom bot is fixing this\. Re-running now would restart its fix\.">Re-run checks<\/button>/);
   assert.match(testing, /<p class="dev-change-gate-note">Homeroom bot is fixing this, started 10 min ago\. Re-running the checks now would restart its fix\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
   assert.doesNotMatch(testing, /Its author needs to fix this/);
