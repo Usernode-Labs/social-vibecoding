@@ -195,7 +195,7 @@ test('the head and the hook list the same looks, the frame\'s five after brand',
   const head = skinModuleSrc().match(/const SKINS = \[([^\]]*)\]/);
   assert.ok(head, 'the head module lists its looks');
   const listed = head[1].split(',').map((s) => s.trim().replace(/'/g, '')).filter(Boolean);
-  assert.deepEqual(listed, ['brand', ...FRAME_LOOKS]);
+  assert.deepEqual(listed, ['wip', 'brand', ...FRAME_LOOKS]);
   const mod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
   assert.deepEqual([...mod.FRAME_SKINS], FRAME_LOOKS);
   assert.deepEqual([...mod.MENU_SKINS], listed, 'the menu offers exactly the looks the head stores');
@@ -214,8 +214,8 @@ test('the head and the hook list the same looks, the frame\'s five after brand',
 // non-admin"). New look's own switch stood above it until 13 Nov 2026;
 // its look, redrawn, is the menu's first option now.
 
-const LOOK_NAMES = { brand: 'Paper, simplified, with brand styling', glass: 'Glass', paper: 'Paper', pastel: 'Pastel', mosaic: 'Mosaic', sunrise: 'Sunrise' };
-const MENU_LOOKS = ['brand', ...FRAME_LOOKS];
+const LOOK_NAMES = { wip: 'Standard (WIP)', brand: 'Paper, simplified, with brand styling', glass: 'Glass', paper: 'Paper', pastel: 'Pastel', mosaic: 'Mosaic', sunrise: 'Sunrise' };
+const MENU_LOOKS = ['wip', 'brand', ...FRAME_LOOKS];
 
 test('Settings › Experimental offers every look in one menu, shipped hidden, and no New look switch', () => {
   const { renderComponent } = require('./lib/render-tsx');

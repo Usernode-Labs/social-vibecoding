@@ -161,6 +161,14 @@ export function cardTint(key: string, tint?: unknown): string {
 }
 
 /**
+ * The card Home's two pinned lists sit in: the plane colour, 20px corners and
+ * the one inset hairline, as GroupedList draws its cards. No overflow clip: a
+ * dragged tile and a tile's corner discs reach past its edge.
+ */
+export const PINS_CARD = 'home-pins-card rounded-[20px] bg-[color:var(--dc-sheet-solid)] '
+  + '[box-shadow:0_0_0_1px_var(--app-sheet-line)_inset]';
+
+/**
  * A home-screen area's LABEL, and the controls that act on the block below it.
  *
  * ── Why the title moved back out of the card ──────────────────────────

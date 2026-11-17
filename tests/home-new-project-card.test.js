@@ -27,9 +27,9 @@ const { message } = require('./lib/platform-i18n');
 const CARD = 'frontend/src/features/home/new-project-card.tsx';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-test('the island mounts the card in a side column, on the standard pages only', () => {
+test('the island mounts the card in a side column, under Standard (WIP) only', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  assert.match(island, /const aside = !frame && grid\.ready && !!grid\.create && !cardHidden;/);
+  assert.match(island, /const aside = wip && grid\.ready && !!grid\.create && !cardHidden;/);
   assert.match(island, /setCardHidden\(newProjectCardHidden\(\)\)/);
   assert.match(island, /window\.addEventListener\(NEW_PROJECT_HIDDEN_EVENT, onHidden\)/);
   assert.match(island, /data-home-aside=\{aside \? '' : undefined\}/);

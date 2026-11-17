@@ -31,6 +31,7 @@ import { MENU_SKINS, useLiveSkin, type Skin } from '../../lib/skin';
 // Whole literals, so the catalog inventory can see each id asked for.
 const NAME: Record<'standard' | (typeof MENU_SKINS)[number], string> = {
   standard: 'settings:experimental.look.standard',
+  wip: 'settings:experimental.look.wip',
   brand: 'settings:experimental.look.brand',
   glass: 'settings:experimental.look.glass',
   paper: 'settings:experimental.look.paper',
