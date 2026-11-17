@@ -9429,6 +9429,7 @@ const AppView = {
     'visuals',    // before/after captures
     'github',     // leaves the platform, for GitHub
     'code',       // the code, on Homeroom's own git host
+    'link',       // copies the page's own address
     'priority',   // the same flag the priority chip uses
     'category',
     'assignee',
@@ -18843,6 +18844,24 @@ const AppView = {
     // Just-you change's Approve opens the vote picker, whose other side is
     // Don't approve with its line in the box; this was a second way to the
     // same No, asking for the line by prompt instead.
+    // #6727: the page's own address, so a change pasted elsewhere carries its
+    // link and not just its title. Same row, words and notice as a governance
+    // vote's page (_govDecisionMenu); the router sends a change built for a
+    // request to the request's page. unshift, not push up top: the admin
+    // merge block above has to stay in the first 1600 characters
+    // tests/vote-row-card.test.js slices on.
+    items.unshift({
+      label: PlatformI18n.t('changes:proposal.menu.copyLink'),
+      icon: 'link',
+      title: PlatformI18n.t('changes:proposal.menu.copyLink'),
+      act: () => {
+        const slug = (AppView.appData && AppView.appData.slug) || App.currentApp;
+        const url = `${window.location.origin}/#app/${slug}/dev/proposals/${pr.id}`;
+        Promise.resolve(PlatformUI.copyText(url)).then((ok) => {
+          if (ok && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:proposal.menu.copyLinkDone'));
+        });
+      },
+    });
     return items;
   },
 
