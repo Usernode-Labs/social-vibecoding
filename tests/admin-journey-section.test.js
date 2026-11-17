@@ -30,6 +30,12 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const src = read('frontend/src/features/admin/admin-journey.tsx');
 const growth = read('frontend/src/features/admin/admin-growth.tsx');
+
+function binLabelOf(lo, next) {
+  const src = growth.match(/function binLabel\(lo: number, next: number \| undefined\): string \{([\s\S]{0,400}?)\n\}/)[1]
+    .replace(/: number/g, '').replace(/: string/g, '');
+  return new Function('lo', 'next', src)(lo, next);
+}
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const sections = read('frontend/src/features/admin/sections.ts');
 const audit = read('scripts/audit-react-ownership.mjs');
@@ -91,6 +97,19 @@ test('the filters: view, when, who, and who is left out', () => {
   assert.match(growth, /function BroughtToo\(/);
   assert.match(growth, /<BroughtToo r=\{r\} list=\{data\.people\.filter/);
   assert.doesNotMatch(growth, /Excluding Season 1|Including Season 1/, 'early members, not Season 1, name the filter');
+});
+
+test('activity: time in an app, either side of the 30-second line', () => {
+  assert.ok(growth.includes('id="admin-growth-time"'), 'the card');
+  assert.match(growth, /<TimeInApp data=\{data\} r=\{r\} \/>/, 'drawn on the Activity view');
+  assert.ok(growth.includes('data-growth-hist={id}'), 'two histograms share one drawing');
+  assert.match(growth, /label: 'No app time'/, 'opened but never in an app has its own column');
+  assert.match(growth, /const under = \(i: number\) => bins\[i\] < data\.staySeconds;/, 'the line is the Stayed bar, read from the payload');
+  assert.ok(growth.includes('data-growth-time-gap'), 'the gap either side of the line, in words');
+  assert.equal(binLabelOf(1, 5), '1–4 s');
+  assert.equal(binLabelOf(30, 60), '30–59 s');
+  assert.equal(binLabelOf(120, 300), '2–5 min');
+  assert.equal(binLabelOf(900, undefined), '15 min+');
   assert.match(growth, /useState<When>\(\{ kind: 'all', week: lastWeek \}\)/, 'since the era by default');
   assert.match(growth, />Last 4 weeks</);
   assert.match(growth, /aria-label="Week before"/);

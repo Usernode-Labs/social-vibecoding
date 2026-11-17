@@ -28,6 +28,8 @@ export type GrowthPerson = {
   opened: boolean;
   stayed: boolean;
   lastSeen: string | null;
+  bestSeconds: number | null;
+  visitBins: number[];
   activeWeeks: string[];
   last7: { opened: boolean; used: boolean; contributed: boolean; analyticsWau: boolean };
 };
@@ -50,6 +52,7 @@ export type GrowthData = {
   eraStart: string;
   groupMin: number;
   staySeconds: number;
+  timeBins: number[];
   weeks: string[];
   thisWeek: string;
   people: GrowthPerson[];
@@ -142,6 +145,8 @@ const HELP: Record<string, string> = {
   wGroups: 'Projects where 3 or more people in scope acted that week.',
   retention: 'People grouped by the first week they were active since 14 Sep. Each cell shows how many of them were active again N weeks later.',
   wau: 'Admin › Analytics counts anyone with any app heartbeat (even a second), a message, vote, kudos or request in the last 7 days. It leaves out admins and tests but keeps early members.',
+  timeBest: 'People in scope who opened Homeroom, by their longest visit (one person in one app on one day) since 14 Sep. No app time: they opened Homeroom but never spent a second in an app. The line is the 30-second bar for Stayed.',
+  timeVisits: 'Every visit of the people in scope, by its length. Short visits are normal even for regulars, which is why Stayed asks for one day of 30 seconds or more, not every visit. A bar lists the people with such a visit.',
   wauDid: 'What the people in that WAU did in the same 7 days, each counted once at their deepest. Acted: wrote a message, voted, filed a request or started a change. Stayed: 30 seconds or more in an app, no act. Glanced: under 30 seconds in an app, or only gave kudos.',
   lifeNew: 'Active this week for the first time.',
   lifeReturning: 'Active this week and the week before.',
@@ -834,6 +839,7 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
           ))}
         </div>
       </div>
+      <TimeInApp data={data} r={r} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
         <div className={`${G.card} flex flex-col gap-3`}>
           <h3 className={G.title}>{term('depth', 'Last 7 days, by depth')}</h3>
@@ -874,6 +880,84 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
         </div>
       </div>
     </>
+  );
+}
+
+// ── Time in an app ─────────────────────────────────────────────────────
+
+// A bin's words from its lower edge and the next one: 1–4 s … 1–2 min … 15 min+.
+function binLabel(lo: number, next: number | undefined): string {
+  const t = (s: number) => (s < 60 ? `${s} s` : `${s / 60} min`);
+  if (next == null) return `${t(lo)}+`;
+  if (next <= 60) return `${lo}–${next - 1} s`;
+  return `${lo / 60}–${next / 60} min`;
+}
+
+type HistCol = { label: string; value: number; list: GrowthPerson[]; under: boolean; none?: boolean };
+
+// Columns either side of the 30-second line; a column lists its people.
+function Hist({ cols, kicker, id }: { cols: HistCol[]; kicker: string; id: string }) {
+  const max = Math.max(1, ...cols.map((c) => c.value));
+  const col = (c: HistCol) => (
+    <div key={c.label} className="flex min-w-0 flex-1 flex-col items-stretch gap-1">
+      <Count row kicker={kicker} title={c.label} list={c.list} className="flex h-24 flex-col items-center justify-end gap-0.5 rounded-b-none border-b border-zinc-200 dark:border-zinc-800">
+        <span className="text-[11px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{c.value}</span>
+        <span className={`block w-full max-w-[34px] rounded-t ${c.none ? 'bg-zinc-300 dark:bg-zinc-600' : c.under ? 'bg-violet-300' : 'bg-violet-600'}`} style={{ height: `${c.value ? Math.max(3, (c.value / max) * 72) : 0}px` }} />
+      </Count>
+      <span className="text-center text-[10px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{c.label}</span>
+    </div>
+  );
+  return (
+    <div className="flex items-start gap-1.5" data-growth-hist={id}>
+      <div className="flex flex-[5] gap-1.5">{cols.filter((c) => c.under).map(col)}</div>
+      <div className="flex flex-col items-center self-stretch pb-4" aria-hidden="true">
+        <span className="h-24 w-0.5 bg-amber-600" />
+        <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-500">30 s</span>
+      </div>
+      <div className="flex flex-[5] gap-1.5">{cols.filter((c) => !c.under).map(col)}</div>
+    </div>
+  );
+}
+
+function TimeInApp({ data, r }: { data: GrowthData; r: Reading }) {
+  const { term, help } = useHelp();
+  const bins = data.timeBins || [];
+  const labels = bins.map((lo, i) => binLabel(lo, bins[i + 1]));
+  const binOf = (sec: number) => bins.filter((edge) => sec >= edge).length - 1;
+  const under = (i: number) => bins[i] < data.staySeconds;
+  const opened = r.scoped.filter((p) => p.opened);
+  const none = opened.filter((p) => !p.bestSeconds);
+  const best: HistCol[] = [{ label: 'No app time', value: none.length, list: none, under: true, none: true }].concat(labels.map((label, i) => {
+    const list = opened.filter((p) => p.bestSeconds && binOf(p.bestSeconds) === i);
+    return { label, value: list.length, list, under: under(i), none: false };
+  }));
+  const visits: HistCol[] = labels.map((label, i) => {
+    const list = r.scoped.filter((p) => (p.visitBins?.[i] || 0) > 0);
+    return { label, value: list.reduce((n, p) => n + (p.visitBins[i] || 0), 0), list, under: under(i) };
+  });
+  const secs = opened.map((p) => p.bestSeconds || 0).filter((x) => x > 0);
+  const below = secs.filter((x) => x < data.staySeconds);
+  const above = secs.filter((x) => x >= data.staySeconds);
+  const totalVisits = visits.reduce((n, c) => n + c.value, 0);
+  const shortVisits = visits.filter((c) => c.under).reduce((n, c) => n + c.value, 0);
+  return (
+    <div className={`${G.card} flex flex-col gap-4`} id="admin-growth-time">
+      <div className="flex flex-col gap-2">
+        <h3 className={G.title}>{term('timeBest', `Longest visit · ${people(opened.length)} who opened Homeroom`)}</h3>
+        {help('timeBest')}
+        <Hist id="best" kicker="Longest visit" cols={best} />
+        <p className={G.fine} data-growth-time-gap="">
+          {below.length && above.length
+            ? `Under the line the longest is ${Math.max(...below)} s; over it the shortest is ${Math.min(...above)} s.`
+            : 'Nobody on one side of the line yet.'}
+        </p>
+      </div>
+      <div className="flex flex-col gap-2">
+        <h3 className={G.title}>{term('timeVisits', `Every visit · ${totalVisits}, ${shortVisits} under 30 s`)}</h3>
+        {help('timeVisits')}
+        <Hist id="visits" kicker="Visits" cols={visits} />
+      </div>
+    </div>
   );
 }
 
