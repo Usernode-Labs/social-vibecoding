@@ -280,6 +280,7 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 // The look's own colours, one set per mode. A rule for either mode names no
 // colour of the page, the cards, the bars or the sky: it reads these.
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
+  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-lift-home',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
   '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down'];
@@ -363,9 +364,13 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
   assert.ok(media, 'the sidebar\'s rules apply from 768px, where the bar is a sidebar');
   const bar = ruleAt(`${EITHER} #platform-tabs`);
   assert.ok(bar, 'the bar itself, for either mode');
-  assert.match(bar.body, /background:\s*var\(--bl-side\);/);
-  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#1a63c4', 'the deep sky');
+  // A fade from its top to its foot (Drea's review of #6699): a step lighter
+  // and softer than the deep sky it was, so it sits back from the content.
+  assert.match(bar.body, /background:\s*linear-gradient\(180deg, var\(--bl-side\), var\(--bl-side-end\)\);/);
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#3c7bd8', 'a softened sky at the top');
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side-end'), '#3370d0', 'a little deeper at the foot');
   assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#122a52', 'a dark blue in dark, so it does not glare beside a dark page');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side-end'), '#122a52', 'and flat there');
   // Its rows draw from the tokens, so hover and focus follow without a rule each.
   assert.match(bar.body, /--text-primary:\s*rgba\(255, 255, 255, 0\.94\);/);
   assert.match(bar.body, /--lit-tint:\s*rgba\(255, 255, 255, 0\.24\);/, 'what is hovered is a wash of white');
@@ -507,7 +512,7 @@ test('Home\'s pinned apps and pinned communities each sit on a card, and the lau
     'both grids, in both modes, and nothing else');
   assert.match(card.body, /background-color:\s*var\(--bl-card\);/, 'the mode\'s card: white in light, one step off the page in dark');
   assert.match(card.body, /border-radius:\s*20px;/, 'a card\'s radius');
-  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/, 'and its hairline and lift');
+  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift-home\);/, 'and its hairline and Home\'s lift');
   // The launcher's drag overlay mirrors #app-list's padding, and a dropped
   // tile is measured against it (app.css .home-grid-overlay, Home._rectForCell):
   // the look paints the grid and moves nothing.
@@ -610,4 +615,67 @@ test('the empty-state figures are committed beside their provenance, and drawn o
   const css = read('public', 'css', 'app.css');
   const before = css.slice(0, css.indexOf(HEADING));
   assert.ok(!before.includes('/illustrations/people/'), 'nothing outside this look loads them');
+});
+
+// DREA'S REVIEW OF #6699. The page wears the standard wallpaper's washes
+// again, in the look's own tints; from 1280px Home has the side column
+// beside Pinned apps, with Pinned communities running the full width under
+// it as cards that say what is going on in each community.
+test('the page is the standard wallpaper\'s washes in the look\'s own tints, and the fixed layer follows', () => {
+  const light = ruleAt(LIGHT).body;
+  const dark = ruleAt(DARK).body;
+  assert.equal(valueOf(light, '--bl-wash-a'), '255, 253, 240', 'a lighter cream where the standard wash is lilac');
+  assert.equal(valueOf(light, '--bl-wash-b'), '247, 220, 200', 'a blush where it is pink');
+  assert.equal(valueOf(light, '--bl-wash-c'), '251, 230, 175', 'a sun where it is peach');
+  for (const name of ['--bl-wash-a', '--bl-wash-b', '--bl-wash-c']) {
+    const [r, g, b] = valueOf(dark, name).split(',').map(Number);
+    assert.ok(b > g && g > r, `${name} stays a blue round the dark page`);
+  }
+  const ground = ruleFor('body:has(#platform-tabs)').filter((rule) => /--look-washes:/.test(rule.body));
+  assert.equal(ground.length, 2, 'the phone\'s three washes, and from 640px the seven');
+  const wide = ground[1].body;
+  // The same places, sizes and strengths as the standard wallpaper.
+  for (const at of ['circle at calc(100% - 92px) 115px', 'ellipse 38vw 36vh at 24% 20%', 'ellipse 34vw 28vh at 90% 32%']) {
+    assert.ok(wide.includes(at), `a wash ${at}`);
+  }
+  assert.match(wide, /rgba\(var\(--bl-wash-c\), 0\.75\) 90px/);
+  assert.match(ground[0].body, /background:\s*var\(--look-wallpaper\);/);
+  assert.match(ground[0].body, /var\(--home-star, none\)/, 'the star falls back to nothing where the route rule does not define it');
+  assert.match(ruleFor('body::before')[0].body, /background:\s*var\(--look-wallpaper, var\(--bl-page\)\);/);
+});
+
+test('from 1280px Home has the side column beside Pinned apps, and Pinned communities runs the full width under it', () => {
+  const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
+  assert.match(island, /const aside = \(wip \|\| brand\) && grid\.ready && !!grid\.create && !cardHidden;/);
+  const block = lookBlock();
+  const media = block.slice(block.indexOf('/* HOME FROM 1280px, WITH ITS SIDE COLUMN'));
+  assert.match(media, /@media \(min-width: 1280px\)/);
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  assert.match(at('#home-screen[data-home-aside] .home-body-fill').body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 304px;/);
+  assert.match(at('#home-screen[data-home-aside] .home-main').body, /display:\s*contents;/);
+  // Rows by order, never by number, so a section that is not drawn holds no place.
+  assert.match(at('#home-screen[data-home-aside] .home-main > *').body, /grid-column:\s*1 \/ -1;\s*order:\s*4;/);
+  assert.match(at('#home-screen[data-home-aside] .home-main > #home-apps-section').body, /grid-column:\s*1;\s*order:\s*2;/);
+  assert.match(at('#home-screen[data-home-aside] #home-aside').body, /grid-column:\s*2;\s*order:\s*3;/);
+  assert.doesNotMatch(media, /grid-row:/, 'no section is pinned to a row');
+  // The card is the grid's wrapper; the grid itself only loses its paint.
+  assert.match(at('#home-screen[data-home-aside] #home-apps-section > div:last-child').body, /background-color:\s*var\(--bl-card\);/);
+  assert.match(at('#home-screen[data-home-aside] #home-apps-section #app-list').body, /background-color:\s*transparent;\s*box-shadow:\s*none;/);
+  assert.match(at('#home-screen[data-home-aside] #home-needs-tile').body, /display:\s*none;/, 'its card says the same thing');
+});
+
+test('a pinned community\'s card says its members, what went live and who was there, read only where it is drawn', () => {
+  const src = read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx');
+  assert.match(src, /const cards = skin === 'brand' && wide;/);
+  assert.match(src, /if \(cards && state\.ready && pinKey\) void loadHomePinsActivity\(\);/);
+  assert.match(src, /detail=\{cards \? activity\.bySlug\[pin\.slug\] : undefined\}/, 'pinned ones only, not the faded rest');
+  assert.match(src, /<span className="hidden" data-home-community-detail="">/, 'hidden everywhere the look does not draw cards');
+  assert.match(src, /if \(!members && !live && !active\) return null;/, 'a zero says nothing');
+  const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
+  assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
+  assert.match(ruleAt(`${EITHER} #home-communities-section [data-home-community-detail]`).body, /display:\s*flex;/);
+  const home = JSON.parse(read('frontend', 'locales', 'en', 'home.json'));
+  assert.equal(home['communities.liveWeek_other'].text, '{{count}} changes went live');
+  assert.equal(home['communities.activeWeek_other'].text, '{{formatted}} active this week');
+  assert.equal(home['communities.members_other'].text, '{{formatted}} members');
 });

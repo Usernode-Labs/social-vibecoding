@@ -27,9 +27,10 @@ const { message } = require('./lib/platform-i18n');
 const CARD = 'frontend/src/features/home/new-project-card.tsx';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-test('the island mounts the card in a side column, under Standard (WIP) only', () => {
+test('the island mounts the card in a side column, under Standard (WIP) and the default look', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  assert.match(island, /const aside = wip && grid\.ready && !!grid\.create && !cardHidden;/);
+  assert.match(island, /const brand = skin === 'brand';/);
+  assert.match(island, /const aside = \(wip \|\| brand\) && grid\.ready && !!grid\.create && !cardHidden;/);
   assert.match(island, /setCardHidden\(newProjectCardHidden\(\)\)/);
   assert.match(island, /window\.addEventListener\(NEW_PROJECT_HIDDEN_EVENT, onHidden\)/);
   assert.match(island, /data-home-aside=\{aside \? '' : undefined\}/);
@@ -51,6 +52,8 @@ test('the side column exists from 1280px and holds no place under it', () => {
   assert.match(js, /window\.matchMedia\('\(min-width: 1280px\)'\)\.matches/);
   const side = js.slice(js.indexOf('hasSideCard() {'), js.indexOf('_wireRowBudget() {'));
   assert.match(side, /if \(newProjectCardHidden\(\)\) return false;/, 'a closed card has no column');
+  assert.match(side, /if \(skin !== 'wip' && skin !== 'brand'\) return false;/,
+    'Standard (WIP) and the default look have the column; every other look ends Pinned apps with the tile');
   assert.ok(
     side.indexOf('newProjectCardHidden') < side.indexOf("window.matchMedia('(min-width: 1280px)')"),
     'the dismissal is answered before the width is',

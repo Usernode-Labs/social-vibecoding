@@ -27978,7 +27978,18 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-label: #41483c;
   --bl-tile-ink: #595f52;
   --bl-bar: #37477b;
-  --bl-side: #1a63c4;
+  /* The sidebar fades from --bl-side at its top to --bl-side-end at its
+     foot: a step lighter and softer than the deep sky (#1a63c4) it was, so
+     it sits back from the content (Drea's review of #6699). */
+  --bl-side: #3c7bd8;
+  --bl-side-end: #3370d0;
+  /* The page's washes, as r, g, b: the standard wallpaper's lilac, pink and
+     peach moved round the cream, to a lighter cream, a blush and a sun. */
+  --bl-wash-a: 255, 253, 240;
+  --bl-wash-b: 247, 220, 200;
+  --bl-wash-c: 251, 230, 175;
+  /* Home's cards lift a little further off the washes. */
+  --bl-lift-home: 0 1px 2px rgba(18, 26, 14, 0.05), 0 18px 40px -22px rgba(70, 50, 20, 0.38);
   --bl-sun: #ffee6f;
   --bl-sun-lit: #fff6ac;
   --bl-on-sun: #121a0e;
@@ -28061,6 +28072,13 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-tile-ink: #c3cad8;
   --bl-bar: #232b43;
   --bl-side: #122a52;
+  --bl-side-end: #122a52;
+  /* The washes round the navy, all blues as the dark look is: a lighter
+     navy, a deeper blue and a deep sky. */
+  --bl-wash-a: 30, 42, 68;
+  --bl-wash-b: 24, 38, 84;
+  --bl-wash-c: 22, 50, 82;
+  --bl-lift-home: var(--bl-lift);
   --bl-sun: #ffee6f;
   --bl-sun-lit: #fff6ac;
   --bl-on-sun: #121a0e;
@@ -28136,14 +28154,46 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]):not([data-contrast="mo
    the moving view from --un-zoom-bg, so it follows. --home-ground moves with
    it: the browser scroller paints the body from it (!important), and the
    launch cover and the washes end on it. The scroller's fixed layer repaints
-   the wallpaper; it is flat here too. */
+   the wallpaper.
+
+   THE WASHES (Drea's review of #6699). The page is the standard wallpaper
+   again, its washes at exactly the places, sizes and strengths the standard
+   look draws them, but in the look's own tints round the cream (--bl-wash-*
+   above; round the navy in dark), so the page stays the brand's cream with
+   soft light moving across it. Its grain and halftone star come with it, the
+   star below the navy bar rather than under it; from 640px two more copies
+   of the star, larger and quieter, sit lower on the page. The star and the
+   grain are the route rule's variables, so each falls back to nothing on a
+   screen that rule does not name rather than voiding the whole background. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) {
   --home-ground: var(--bl-page);
   --un-zoom-bg: var(--bl-page);
-  background: var(--bl-page);
+  --look-washes:
+    radial-gradient(circle at calc(100% - 92px) 115px, rgba(var(--bl-wash-a), 0.55) 138px, rgba(var(--bl-wash-a), 0.275) 198px, rgba(var(--bl-wash-a), 0) 258px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at calc(100% - 62px) 59%, rgba(var(--bl-wash-b), 0.65) 50px, rgba(var(--bl-wash-b), 0.325) 120px, rgba(var(--bl-wash-b), 0) 190px) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 70px calc(100% - 69px), rgba(var(--bl-wash-c), 0.75) 90px, rgba(var(--bl-wash-c), 0.375) 170px, rgba(var(--bl-wash-c), 0) 250px) 0 0 / 100% 100% no-repeat var(--bl-page);
+  --look-stars: var(--home-star, none) right 40px top calc(var(--home-star-y, 0px) + 64px) / 120px 97px no-repeat;
+  --look-wallpaper: var(--look-stars), var(--home-grain, none) 0 0 / 240px 240px repeat, var(--look-washes);
+  background: var(--look-wallpaper);
+}
+@media (min-width: 640px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) {
+    --look-washes:
+      radial-gradient(circle at calc(100% - 92px) 115px, rgba(var(--bl-wash-a), 0.55) 138px, rgba(var(--bl-wash-a), 0.275) 198px, rgba(var(--bl-wash-a), 0) 258px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at calc(100% - 62px) 59%, rgba(var(--bl-wash-b), 0.65) 50px, rgba(var(--bl-wash-b), 0.325) 120px, rgba(var(--bl-wash-b), 0) 190px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(circle at 70px calc(100% - 69px), rgba(var(--bl-wash-c), 0.75) 90px, rgba(var(--bl-wash-c), 0.375) 170px, rgba(var(--bl-wash-c), 0) 250px) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 38vw 36vh at 24% 20%, rgba(var(--bl-wash-a), 0.65), rgba(var(--bl-wash-a), 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 36vw 32vh at 66% 76%, rgba(var(--bl-wash-b), 0.65), rgba(var(--bl-wash-b), 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 32vw 32vh at 4% 64%, rgba(var(--bl-wash-c), 0.7), rgba(var(--bl-wash-c), 0) 70%) 0 0 / 100% 100% no-repeat,
+      radial-gradient(ellipse 34vw 28vh at 90% 32%, rgba(var(--bl-wash-a), 0.55), rgba(var(--bl-wash-a), 0) 70%) 0 0 / 100% 100% no-repeat var(--bl-page);
+    --look-stars:
+      var(--home-star, none) right 40px top calc(var(--home-star-y, 0px) + 64px) / 120px 97px no-repeat,
+      var(--home-star, none) left 20% bottom 120px / 240px 193px no-repeat,
+      var(--home-star, none) right 300px top 56% / 170px 137px no-repeat;
+  }
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body::before {
-  background: var(--bl-page);
+  background: var(--look-wallpaper, var(--bl-page));
 }
 /* A screen that paints itself with the wallpaper (Make it, the made
    screen, sign-in) does so in its own style attribute, which only
@@ -28238,7 +28288,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     --lit-tint: rgba(255, 255, 255, 0.24);
     --lit-line: transparent;
     --accent: #ffffff;
-    background: var(--bl-side);
+    background: linear-gradient(180deg, var(--bl-side), var(--bl-side-end));
     box-shadow: none;
   }
   /* A row being dragged keeps the bar's own fill behind it. */
@@ -28463,10 +28513,237 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
   background-color: var(--bl-card);
   border-radius: 20px;
-  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
   padding: 16px 8px 14px;
+}
+/* HOME'S TWO ACTIONS wear the look's one button (Drea's review of #6699):
+   New project's tile, where Pinned apps ends with it, is the sun pill's
+   square, and Needs you's tile takes the same outline and foot on its pale
+   sun. Nothing else on Home does, so the two stay the loud ones. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-create-tile .home-create-glyph {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-create-tile .home-create-label {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-tile > span:first-child > span:first-child {
+  box-shadow: var(--bl-pill-edge);
+}
+
+/* HOME FROM 1280px, WITH ITS SIDE COLUMN (Drea's review of #6699). The
+   look draws the side column Standard (WIP) had ("Have an idea?" and Needs
+   you, features/home/index.tsx), beside Pinned apps alone: Pinned
+   communities and everything under it run the full width again, so five
+   communities fit on a row. #home-body is a grid whose first row is Pinned
+   apps and the column; .home-main's sections are its rows, in their own
+   order, by `order` rather than by row numbers, so a section that is not
+   drawn holds no place and none can land above Pinned apps.
+   Pinned apps' card is the grid's wrapper here, not #app-list: the grid's
+   own box and padding are what its drag overlay mirrors (the rule above),
+   so it keeps them and sits in the middle of a card that runs down to the
+   foot of the column, a little below centre: a tile has less air above its
+   icon than under its name, so that is where the gaps above and below its
+   rows look equal. The column's cards are a step more compact
+   than WIP's, so that card stretches only a little. Needs you's tile goes
+   while its card is there: they say the same thing. */
+@media (min-width: 1280px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] {
+    --home-head-h: 40px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] .home-body-fill {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 304px;
+    column-gap: 20px;
+    align-items: stretch;
+    align-content: start;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] .home-main {
+    display: contents;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] .home-main > * {
+    grid-column: 1 / -1;
+    order: 4;
+    min-width: 0;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] .home-main > #home-widget-strip-section {
+    order: 1;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] .home-main > #home-apps-section {
+    grid-column: 1;
+    order: 2;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] .home-main > #home-apps-section:not([hidden]) {
+    display: flex;
+    flex-direction: column;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-apps-section > .home-area-label {
+    box-sizing: border-box;
+    height: var(--home-head-h);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-apps-section > div:last-child {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding-top: 29px;
+    background-color: var(--bl-card);
+    border-radius: 20px;
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-apps-section #app-list {
+    background-color: transparent;
+    box-shadow: none;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-aside {
+    grid-column: 2;
+    order: 3;
+    max-width: none;
+    gap: 10px;
+    padding: var(--home-head-h) 12px 0;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] :is(#home-new-project, #home-needs-card-btn) {
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-new-project {
+    gap: 8px;
+    padding: 12px 16px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-new-project > div[aria-hidden="true"] {
+    zoom: 0.75;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-new-project-title {
+    font-size: 17px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-new-project-btn {
+    height: 40px;
+    border: 0;
+    border-radius: 9999px;
+    background: var(--bl-sun);
+    color: var(--bl-on-sun);
+    font-weight: 700;
+    box-shadow: var(--bl-pill-edge);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-new-project-btn:active {
+    box-shadow: var(--bl-pill-edge-down);
+    transform: translateY(2px);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-needs-card-btn {
+    gap: 8px;
+    padding: 12px 16px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen[data-home-aside] #home-needs-tile {
+    display: none;
+  }
+
+  /* PINNED COMMUNITIES AS PEOPLE PLACES. From 1280px each community you
+     pinned is a small card on the section's card, with what
+     pinned-communities.tsx gives it under its name (data-home-community-detail,
+     hidden everywhere else): how many members, what went live this week,
+     and the faces of the people who were there this week. All communities
+     and New community become two small buttons after them. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+    grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+    gap: 12px;
+    padding: 12px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section [data-home-community] {
+    align-items: flex-start;
+    gap: 6px;
+    padding: 14px 12px;
+    border-radius: 16px;
+    text-align: start;
+    box-shadow: inset 0 0 0 1px var(--bl-edge);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section [data-home-community] > .line-clamp-2 {
+    margin-top: 2px;
+    font-size: 15px;
+    font-weight: 650;
+    line-height: 19px;
+    color: var(--text-primary);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section [data-home-community-detail] {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    align-self: stretch;
+    gap: 8px;
+    min-width: 0;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) {
+    flex-direction: row;
+    align-self: start;
+    gap: 10px;
+    padding: 8px 12px;
+    border-radius: 14px;
+    box-shadow: inset 0 0 0 1.5px var(--bl-edge);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) > span:first-child {
+    width: 36px;
+    height: 36px;
+    border-radius: 12px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) svg {
+    width: 18px;
+    height: 18px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) > span:last-child {
+    font-size: 14px;
+  }
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-news {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 9999px;
+  background: var(--bl-tint-sky);
+  color: var(--bl-sky);
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The words drop under the faces when a narrow card has no room beside them. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  align-self: stretch;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face {
+  margin-inline-end: -8px;
+  overflow: hidden;
+  box-shadow: 0 0 0 2px var(--bl-card);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face:last-child {
+  margin-inline-end: 0;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 /* A REPLY BOX on its sheet. The standard interface draws it white on a
    half-clear sheet, so the tinted page shows round it; here the sheet is

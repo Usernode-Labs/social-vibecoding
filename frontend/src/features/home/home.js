@@ -728,9 +728,10 @@ const Home = {
     } catch { /* no address to read */ }
     let skin = 'standard';
     try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
-    // Standard (WIP) alone has the column (lib/skin.ts 'wip'): every other
+    // Standard (WIP) and the default look, "Paper, simplified, with brand
+    // styling" (lib/skin.ts 'wip' and 'brand'), have the column: every other
     // look, Standard among them, ends Pinned apps with the tile.
-    if (skin !== 'wip') return false;
+    if (skin !== 'wip' && skin !== 'brand') return false;
     try { return !!window.matchMedia('(min-width: 1280px)').matches; } catch { return false; }
   },
 
