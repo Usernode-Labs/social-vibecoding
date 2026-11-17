@@ -352,6 +352,10 @@ async function migrate(config) {
   await seedStagingSpecUserShareFixtures(pool, config);
   await seedStagingChatEditFixtures(pool, config);
   await seedStagingBotChatRequest(pool, config);
+  // #6763's shots: a private thread where someone asks to make a new app and
+  // the bot's reply offers New project under it. Staging runs no model, so
+  // the exchange is seeded.
+  await seedStagingNewProjectOfferThread(pool);
   await seedStagingLlmUsage(pool);
   await seedStagingWeeklyCaps(pool);
   await seedStagingSpendDistribution(pool);
@@ -6400,6 +6404,119 @@ async function seedStagingBotChatRequest(pool, config) {
     log.info('db', 'Staging bot chat request seeded');
   } catch (err) {
     log.warn('db', 'Staging bot chat request seeding failed', { message: err.message });
+  }
+}
+
+// 17 Nov 2026 (#6763): New project under the bot's reply. Someone who says
+// they want to make a new app is told to tap New project, and the button is
+// offered with that reply (metadata.homeroomBot.newProject, which the
+// thread's foot reads). A staging copy runs no model, so the exchange is
+// stored for the shots' member fixture (usernode-capture): their private
+// thread, the bot's reply, and the thread's row. The thread is a "+" one
+// (kind 'ask') whose chip was preset to Homeroom, so app_id is set: the
+// project is where they happened to be, not what the idea is about, and the
+// foot still shows New project. Nothing here is a signal the bot reads to
+// decide anything. Idempotent through the root message's key and the private
+// thread's unique root; strictly a no-op outside staging.
+async function seedStagingNewProjectOfferThread(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    await pool.query(
+      `INSERT INTO users (username, password, is_synthetic, display_name)
+       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
+       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
+    );
+    const people = await pool.query(
+      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
+    );
+    const member = people.rows.find((row) => row.username === 'usernode-capture');
+    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
+    if (!member || !bot || member.id === bot.id) return;
+    const low = Math.min(member.id, bot.id);
+    const high = Math.max(member.id, bot.id);
+    const found = await pool.query(
+      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
+      [low, high],
+    );
+    let conversationId = found.rows[0]?.conversation_id;
+    if (!conversationId) {
+      const created = await pool.query(
+        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
+        [member.id],
+      );
+      conversationId = created.rows[0].id;
+      await pool.query(
+        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
+        [conversationId, low, high],
+      );
+    }
+    await pool.query(
+      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
+       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
+       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
+      [conversationId, member.id, bot.id],
+    );
+    const key = 'staging-demo-new-project-offer-thread';
+    const had = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
+      [conversationId, member.id, key],
+    );
+    if (had.rows[0]) return;
+    const root = await pool.query(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+       VALUES ($1, $2, 'Staging demo: I want to work on a new app, can you help me do that?', $3,
+               NOW() - INTERVAL '10 minutes')
+       RETURNING id`,
+      [conversationId, member.id, key],
+    );
+    const rootId = root.rows[0].id;
+    // The plan comes first, as the prompt now says: the bot asks what the app
+    // should do, the person answers, and its plan carries the offer.
+    await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, thread_root_id, created_at)
+       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '9 minutes')`,
+      [
+        conversationId, bot.id,
+        'I can help. What should the app do, and who is it for? I will put a plan here for you before anything gets '
+          + 'built.',
+        rootId,
+      ],
+    );
+    await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, thread_root_id, created_at)
+       VALUES ($1, $2, 'Staging demo: a garden planner for my street: which plants need water this week, and who is '
+                        || 'watering them.', $3, NOW() - INTERVAL '5 minutes')`,
+      [conversationId, member.id, rootId],
+    );
+    await pool.query(
+      `INSERT INTO conversation_messages
+         (conversation_id, sender_id, content, thread_root_id, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - INTERVAL '2 minutes')`,
+      [
+        conversationId, bot.id,
+        'Staging demo: here is the plan from your answers. It shows this week\'s plants and who waters them, and each '
+          + 'person can tick theirs off. New project is under this reply, carrying your answers, when you want to '
+          + 'start it.',
+        rootId,
+        JSON.stringify({ homeroomBot: {
+          kind: 'chat', newProject: true,
+          looked: { items: [{ what: 'how a new project starts' }], ms: 7000 },
+        } }),
+      ],
+    );
+    const platform = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    await pool.query(
+      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+       VALUES ($1, $2, $3, $4, 'ask', 'open')
+       ON CONFLICT (root_message_id) DO NOTHING`,
+      [member.id, conversationId, rootId, platform.rows[0]?.id || null],
+    );
+    log.info('db', 'Staging new project offer thread seeded');
+  } catch (err) {
+    log.warn('db', 'Staging new project offer thread seeding failed', { message: err.message });
   }
 }
 

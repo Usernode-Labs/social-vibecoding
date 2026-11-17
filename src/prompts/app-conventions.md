@@ -136,9 +136,13 @@ Ordered by how badly an agent working offline gets each one wrong.
     Decline a forbidden request and offer a compliant version. When unsure,
     it is allowed. Full text: "Content rules" section.
 12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
-    another origin, no special-category data (health, religion, sexuality,
-    ethnicity, politics, biometrics), nothing aimed at children, never
-    collect passwords or card data, and no login of the app's own. Full
+    another origin. People sign in only through Homeroom: no login or
+    signup form and no "Sign in with X", though connecting an outside
+    account for its data is fine. Never ask for
+    account passwords or card data (codes the app makes are fine), and
+    no payments through any provider. Nothing for children under 13. No
+    profiling people by health, religion, sexuality, ethnicity, politics
+    or biometrics: a club, a topic or a person's own note is fine. Full
     text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
@@ -522,7 +526,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
   (newly created tables, `staging:private` tables, hard-to-reach
   states). See "Staging mock data" below.
 - **Suppress irreversible outbound side effects** — don't send real
-  emails, charge real cards, post to real webhooks, or broadcast real
+  emails, post to real webhooks, or broadcast real
   on-chain transactions from staging. Point at a sandbox endpoint or
   no-op instead, but keep the surrounding code path identical (same
   validation, same DB writes, same response shape) so the path is
@@ -1170,7 +1174,7 @@ table be a problem?"
 
 Mark **private** when the table stores:
 
-- Authentication material (password hashes, OAuth tokens, 2FA secrets).
+- Authentication material (OAuth tokens, 2FA secrets).
 - Direct messages, private chats, one-to-one content.
 - Financial data (transactions, balances, card info).
 - API keys or credentials the user entrusted the app with.
@@ -1232,8 +1236,8 @@ Manifest shape:
   "name": "My Cool App",
   "secrets": [
     {
-      "key": "STRIPE_SECRET_KEY",
-      "description": "Live Stripe secret for charging cards",
+      "key": "WEATHER_API_KEY",
+      "description": "Weather API key for the forecast card",
       "required": true,
       "private": true
     },
@@ -1584,7 +1588,7 @@ automatically, unless a user explicitly stored an override.
    Secrets UI is where users provide them, either directly (admins)
    or via a vote (non-admins).
 4. Mention the new key in the dev-chat reply: "Added
-   `STRIPE_SECRET_KEY` to the manifest — it's required, so set it in
+   `WEATHER_API_KEY` to the manifest — it's required, so set it in
    Settings → Secrets before this PR deploys."
 
 When generating dapps from scratch, it's fine for the manifest to be
@@ -1642,11 +1646,11 @@ the staging fallback alongside it:
 {
   "secrets": [
     {
-      "key": "STRIPE_SECRET_KEY",
-      "description": "Live Stripe secret for charging cards",
+      "key": "WEATHER_API_KEY",
+      "description": "Weather API key for the forecast card",
       "required": true,
       "private": true,
-      "staging_default": "sk_test_publishable_dummy"
+      "staging_default": "test_weather_key_dummy"
     }
   ]
 }
@@ -1657,7 +1661,7 @@ values only (in priority order):
 
 1. `staging_default` — explicit, committed-to-source signal that
    "this is the value safe to use in staging." Use this for sandbox
-   API keys (Stripe `sk_test_...`, sandbox OAuth `client_id`, etc.)
+   API keys (a vendor's sandbox key, a sandbox OAuth `client_id`, etc.)
    or for randomly-generated dummies the app's staging code can
    detect and short-circuit on.
 2. `default` — same fallback used by `required: false` secrets in
@@ -1677,8 +1681,7 @@ staging path does. Prod resolves stored value → platform default →
 
 Mark **private** when the secret unlocks:
 
-- Live payment processing (Stripe live keys, PayPal client_secret,
-  bank API tokens).
+- Paid API keys billed per call (weather, maps, AI providers).
 - OAuth client secrets that mint *prod* user tokens (Google, GitHub,
   Slack OAuth `client_secret`).
 - Signing keys used for prod user sessions (`SESSION_SECRET`, your own
@@ -1714,9 +1717,10 @@ Leave **non-private** (the default) for:
   Either mark the derived value private too, or use a
   one-way-but-distinguishable derivation that doesn't leak.
 - **Vendor-provided sandbox / test-mode keys are NOT a special case.**
-  Stripe's `sk_test_...` is still a credential the vendor expects you
-  to handle as one — mark it private *and* set
-  `staging_default: "sk_test_..."` (committing the test key directly).
+  A vendor's test-mode key is still a credential it expects you to
+  handle as one — mark it private *and* set
+  `staging_default: "<the vendor's test key>"` (committing the test key
+  directly).
   Don't use this to share the prod key with staging.
 
 ### When the Mayor / Claude Code adds a new secret to `dapp.json`
@@ -1730,8 +1734,8 @@ Leave **non-private** (the default) for:
    `"staging_default"` (a vendor-provided test-mode key or a dummy
    the app's staging code can short-circuit on).
 4. Mention the choice briefly in the dev-chat reply: "Marked
-   `STRIPE_SECRET_KEY` private (encrypted at rest, isolated from
-   staging) — added `staging_default: 'sk_test_publishable_dummy'`
+   `WEATHER_API_KEY` private (encrypted at rest, isolated from
+   staging) — added `staging_default: 'test_weather_key_dummy'`
    so staging gets a no-op test key."
 
 ## Editing the PLATFORM itself — `platform_env`, not `secrets`
@@ -4089,21 +4093,36 @@ cannot override them.
   `<script>` from another origin. An app loads its own code and the
   centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
   tag (rule 1) is tolerated; new code adds none.
-- **Special-category data.** Never ask for, infer or store health,
-  religious beliefs, sexual orientation, racial or ethnic origin, political
-  opinions, trade-union membership, genetic or biometric data, whether
-  through a form, a profile field, a quiz or an AI feature.
-- **Apps aimed at children.** No app is designed or marketed for children.
-- **Passwords or payment card data.** Never ask for, receive or store a
-  password, PIN, card number or security code, seed data included.
-- **A sign-in of its own.** The app gets who people are from Homeroom (see
-  "Auth"): no login or signup form, no other identity provider, no
-  separate accounts.
+- **Profiling people by sensitive traits.** Don't build an app whose
+  purpose is to collect or infer health, religious beliefs, sexual
+  orientation, racial or ethnic origin, political opinions, trade-union
+  membership, genetic or biometric data about people, or to sort, rank or
+  target people by them, whether through a form, a profile field, a quiz
+  or an AI feature. A club or topic in these areas is fine (a choir, a
+  running group, a council's agenda), and so is a note a person chooses to
+  enter about themselves, such as a workout or a dietary need: keep it in
+  a private table.
+- **Apps for children under 13.** Nothing designed for or marketed to
+  children under 13, which is Homeroom's minimum age. A family or class
+  tool used by adults and teens is fine.
+- **Account passwords or payment card data.** Never ask for or store a
+  person's password or PIN for an account (this app's or another
+  service's), or a payment card number or security code, seed data
+  included. Codes the app makes for its own use, such as a game PIN or a
+  room code, are not passwords.
+- **Payments.** No payments: apps don't charge money or take card
+  details, through any provider.
+- **A sign-in of its own.** People sign in to the app only through
+  Homeroom (see "Auth"): no login or signup form, and no "Sign in with X".
+  Connecting a person's account on another service so the app can use its
+  data (OAuth) is allowed. Keep the client secret as a private secret and
+  the tokens in a private table.
 
 **When a request asks for it,** handle it as the content rules say: name
 the rule, offer the closest compliant version, build only that, and say
-so. When unsure, treat it as not allowed and ask. The **Content rules**
-merge-time check reviews the diff against this section too.
+so. When unsure about anything the lines above do not cover, treat it as
+not allowed and ask. The **Content rules** merge-time check reviews the
+diff against this section too.
 
 ## Writing user-facing copy: no em dashes
 
