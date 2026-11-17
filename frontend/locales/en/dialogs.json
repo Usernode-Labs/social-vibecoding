@@ -1559,6 +1559,18 @@
     "text": "Couldn't add the bounty: the bounty could not be placed.",
     "description": "Sentence added to the confirmation after a request was posted but its kudos reward was refused without an explanation."
   },
+  "feedback.weeklyGoal.left_one": {
+    "text": "{{count}} of {{target}} left this week",
+    "description": "Small grey line just above Cancel and Post in the \"Suggest an improvement\" dialog: how many more reports still count toward this week's \"Send useful feedback\" challenge. {{count}} is how many are left and {{target}} the week's goal."
+  },
+  "feedback.weeklyGoal.left_other": {
+    "text": "{{count}} of {{target}} left this week",
+    "description": "Small grey line just above Cancel and Post in the \"Suggest an improvement\" dialog: how many more reports still count toward this week's \"Send useful feedback\" challenge. {{count}} is how many are left and {{target}} the week's goal."
+  },
+  "feedback.weeklyGoal.met": {
+    "text": "This week's feedback goal is met",
+    "description": "Small grey line just above Cancel and Post in the \"Suggest an improvement\" dialog, once the person has reached this week's \"Send useful feedback\" challenge goal."
+  },
   "feedback.queue.retry": {
     "text": "Try again",
     "description": "Button under the status line of the \"Suggest an improvement\" dialog while a message saved on this device has not been sent: tries to send it now."

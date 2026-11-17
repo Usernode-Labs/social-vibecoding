@@ -57,6 +57,45 @@ const SESSIONS = {
   'expired-session': { user_id: WEB_USER.id, expires_at: new Date(Date.now() - DAY) },
 };
 
+// #6758: the challenge rows a scoped /challenges read resolves. Fields the v4
+// builder reads directly, plus the `t_*` template columns it merges over. The
+// first carries the useful-feedback artwork the feedback dialog's weekly line
+// picks its row by; the second has none, so the key's null case is pinned too.
+const CHALLENGE_ROWS = [
+  {
+    id: 900731,
+    season_event_id: 900501,
+    event_name: 'Staging Demo Event — Season Standings',
+    event_type: 'season',
+    goal: null, task: null, reward: null, description: null, requirements: null, reward_logic: null,
+    schedule_start: null, schedule_end: null,
+    cta_type: null, cta_label: null, cta_link: null,
+    mobile_cta_type: null, mobile_cta_label: null, mobile_cta_link: null,
+    kind: null,
+    metric_type: null, metric_target: null, metric_label: null,
+    enabled: true, completed: false, display_order: 1, featured: false, featured_order: null,
+    t_id: 900517, t_category: 'WEEKLY',
+    t_metric_type: 'count', t_metric_target: 4, t_metric_label: 'Reports sent',
+    t_illustration: 'useful-feedback',
+  },
+  {
+    id: 900732,
+    season_event_id: 900501,
+    event_name: 'Staging Demo Event — Season Standings',
+    event_type: 'season',
+    goal: null, task: null, reward: null, description: null, requirements: null, reward_logic: null,
+    schedule_start: null, schedule_end: null,
+    cta_type: null, cta_label: null, cta_link: null,
+    mobile_cta_type: null, mobile_cta_label: null, mobile_cta_link: null,
+    kind: null,
+    metric_type: null, metric_target: null, metric_label: null,
+    enabled: true, completed: false, display_order: 2, featured: false, featured_order: null,
+    t_id: 900518, t_category: 'WEEKLY',
+    t_metric_type: null, t_metric_target: null, t_metric_label: null,
+    t_illustration: null,
+  },
+];
+
 function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
@@ -85,6 +124,23 @@ function makeMockPool() {
     // /challenges: current-active-season resolution (no scope params).
     if (sql.includes('WHERE internal = FALSE AND is_active = TRUE AND starts_at <= NOW()')) {
       return { rows: [] }; // no current season -> handler returns data: []
+    }
+
+    // /challenges: an explicitly scoped season (#6758's illustration read).
+    if (sql.startsWith('SELECT id, internal FROM seasons WHERE id = $1')) {
+      return { rows: Number(params[0]) === 900500 ? [{ id: 900500, internal: false }] : [] };
+    }
+
+    // /challenges: the season's challenge rows. One weekly challenge whose
+    // template carries the useful-feedback artwork, which the feedback
+    // dialog's line reads by.
+    if (sql.startsWith('SELECT c.id, c.season_event_id')) {
+      return { rows: CHALLENGE_ROWS };
+    }
+
+    // /challenges: the viewer's own credits on those challenges.
+    if (sql.startsWith('SELECT challenge_id, points, description, activity_at, metadata FROM user_activities')) {
+      return { rows: [] };
     }
 
     // /seasons: the top-level season list (public filter, newest first).
@@ -206,8 +262,28 @@ test('valid session reads succeed with the v4 envelope', async () => {
   });
 });
 
-// ─── 2. /me/* identity comes from the session, not the client ─────────
+// #6758: a challenges row carries the template's artwork slug (`illustration`)
+// — the feedback dialog's weekly-goal line picks the "Send useful feedback"
+// row by it, and the always-open bug-report challenge shares that artwork, so
+// the WEEKLY category beside it is what tells the two apart. Null where the
+// template has none, which is most rows.
+test('a challenges row carries the template\'s illustration slug', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/challenges-api/challenges?season_id=900500`, {
+      headers: sessionCookie('good-session'),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.length, 2);
+    assert.equal(body.data[0].illustration, 'useful-feedback');
+    assert.equal(body.data[0].category, 'WEEKLY');
+    assert.deepEqual(body.data[0].progress, { done: false, current: 0, target: 4 });
+    assert.equal(body.data[1].illustration, null, 'a template with no artwork sends null');
+  });
+});
 
+// ─── 2. /me/* identity comes from the session, not the client ─────────
 test('/me/breakdown scopes to the session user', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/challenges-api/me/breakdown`, {

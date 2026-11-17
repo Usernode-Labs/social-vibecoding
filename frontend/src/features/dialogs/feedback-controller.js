@@ -640,6 +640,50 @@ export function init() {
       privateCheckbox.checked = false;
       privateRow.classList.toggle('hidden', !App.user?.canAdminWrite);
     };
+    // #6758: how many of this week's feedback reports still count toward the
+    // weekly "Send useful feedback" challenge, read from the same session-
+    // authed list the Leaderboard shows (no season param, so the server
+    // resolves the active one). The target is the challenge's own, never a
+    // fixed 4, and a changed target changes the line. A note and nothing
+    // more: Post is never disabled by it, and it hides itself when there is
+    // no such challenge to count or the read fails.
+    const weeklyGoalLine = document.getElementById('feedback-weekly-goal');
+    const hideWeeklyGoal = () => {
+      if (!weeklyGoalLine) return;
+      weeklyGoalLine.textContent = '';
+      weeklyGoalLine.classList.add('hidden');
+    };
+    const refreshWeeklyGoal = () => {
+      hideWeeklyGoal();
+      if (!weeklyGoalLine || !App.user) return;
+      // Read once per open: an answer that lands after the dialog closed and
+      // reopened, or after the account changed, belongs to nothing on screen.
+      const opened = presentation;
+      const userId = App.user.id;
+      fetch('/challenges-api/challenges', { credentials: 'same-origin' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((data) => {
+          if (opened !== presentation || userId !== App.user?.id) return;
+          const rows = data && Array.isArray(data.data) ? data.data : [];
+          // The always-open bug-report challenge carries the same artwork, so
+          // the WEEKLY category is what tells the two apart. A target of 0 or
+          // none has no figure to show, so the line stays hidden.
+          const row = rows.find((r) => r && r.illustration === 'useful-feedback'
+            && String(r.category).toUpperCase() === 'WEEKLY'
+            && r.enabled !== false && r.completed !== true
+            && r.progress && Number.isInteger(r.progress.target) && r.progress.target > 0);
+          if (!row) return;
+          const { done, current, target } = row.progress;
+          if (done === true || (Number(current) || 0) >= target) {
+            weeklyGoalLine.textContent = t('dialogs:feedback.weeklyGoal.met');
+          } else {
+            const left = target - Math.max(0, Number(current) || 0);
+            weeklyGoalLine.textContent = t('dialogs:feedback.weeklyGoal.left', { count: left, target });
+          }
+          weeklyGoalLine.classList.remove('hidden');
+        })
+        .catch(() => { /* the line stays hidden */ });
+    };
     privateCheckbox.addEventListener('change', () => {
       if (privateCheckbox.checked) {
         bountyCheckbox.checked = false;
@@ -2699,6 +2743,9 @@ export function init() {
       resetScreenshotState();
       // #3940: and clip-less, with the row repainted to "Video".
       resetVideoState();
+      // #6758: the weekly goal line, read once for this open (never while
+      // editing an already-sent report, and never behind a confirmation).
+      refreshWeeklyGoal();
       // #4127: every open starts with the paperclip's popover shut.
       setAttachMenuOpen(false);
       void probeNativeCaptureSupport(screenshotSession, true);
@@ -2908,6 +2955,8 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      // #6758: the count belonged to the open that is ending.
+      hideWeeklyGoal();
       const wasEditing = !!editing;
       resetEdit();
       setAttachMenuOpen(false);

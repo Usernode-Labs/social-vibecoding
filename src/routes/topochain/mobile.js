@@ -605,6 +605,10 @@ function buildMobileChallengeItem(r, { activities, activitiesTotal }) {
     schedule_end: iso(eff.schedule_end),
     enabled: r.enabled,
     completed: r.completed,
+    // #6758: the template's artwork slug, passed through as stored (never
+    // overridden — the same rule challenge-view.js and home-panels.js follow).
+    // The feedback dialog picks the weekly "Send useful feedback" row by it.
+    illustration: r.t_illustration || null,
     display_order: Number(r.display_order),
     featured: r.featured,
     featured_order: r.featured_order == null ? null : Number(r.featured_order),
@@ -657,7 +661,8 @@ const MOBILE_CHALLENGE_COLUMNS = `
   ct.mobile_cta_type AS t_mobile_cta_type, ct.mobile_cta_label AS t_mobile_cta_label,
   ct.mobile_cta_link AS t_mobile_cta_link,
   ct.kind AS t_kind, ct.metric_type AS t_metric_type, ct.metric_target AS t_metric_target,
-  ct.metric_label AS t_metric_label
+  ct.metric_label AS t_metric_label,
+  ct.illustration AS t_illustration
 `;
 
 // GET /challenges's event scope (SPEC: "event_id ... takes precedence") —

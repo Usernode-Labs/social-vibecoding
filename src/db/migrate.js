@@ -387,6 +387,9 @@ async function migrate(config) {
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
   await seedStagingCountedCredit(pool, config);
+  // #6758: the weekly feedback challenge the Suggest an improvement dialog's
+  // line counts against; after the season event the First challenges hang off.
+  await seedStagingFeedbackGoal(pool);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
@@ -15312,6 +15315,44 @@ async function seedStagingCountedCredit(pool, config) {
   }
 }
 
+// #6758: the weekly "Send useful feedback" challenge the Suggest an
+// improvement dialog's line counts against. A fresh staging copy has no
+// weekly challenge carrying the useful-feedback artwork, so the line would
+// never show and the before/after shots would have nothing to photograph.
+// One template and one enabled challenge on the fixture season's own event,
+// with NO credits for anybody: the line then reads "4 of 4 left this week"
+// (a count is the viewer's own, so seeding a credit would fabricate progress
+// this code reads). Ids clear of every fixture above (templates 900508-900516,
+// challenges 900720-900730), ON CONFLICT (id) DO NOTHING, so a reboot changes
+// nothing.
+async function seedStagingFeedbackGoal(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const EVENT_SEASON_ID = 900501;
+  try {
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, metric_type, metric_target,
+          metric_label, illustration, created_at, updated_at)
+       VALUES (900517, 'WEEKLY', 'Send useful feedback (staging demo)',
+               'Tell a project what would make it better.', '250 pts',
+               'Weekly feedback fixture for the line above Cancel and Post.', 'count', 4,
+               'Reports sent', 'useful-feedback', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, enabled, display_order, completed,
+          created_at, updated_at)
+       VALUES (900731, $1, 900517, TRUE, 6, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_SEASON_ID]
+    );
+    log.info('db', 'Staging weekly feedback goal seeded', { event: EVENT_SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Staging weekly feedback goal seed skipped', { message: err.message });
+  }
+}
+
 // Profile customization fixtures (issue #982).
 //
 // TWO of the three "missing in staging" categories apply here:
@@ -16000,6 +16041,7 @@ module.exports = {
   markChangesWithoutWorkState,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
+  seedStagingFeedbackGoal,
   seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,
