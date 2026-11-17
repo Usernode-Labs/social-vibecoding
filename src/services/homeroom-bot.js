@@ -6452,7 +6452,7 @@ async function oweChecksFix(pool, look, { sessionId }) {
  * left to it). Throws what it could not read or write, so the work runs
  * again.
  */
-async function queueChecksFix(pool, { sessionId, head = null } = {}) {
+async function queueChecksFix(pool, { sessionId, head = null, again = null } = {}) {
   const out = await checksFixDue(pool, { sessionId, head });
   if (!out.due) return { queued: false, why: out.why };
   const { due, row, issueNumber } = out;
@@ -6473,9 +6473,12 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
     [Number(row.id)],
   ).catch(() => ({ rows: [] }));
   const grantKey = grantRows[0]?.id ? `:grant:${grantRows[0].id}` : '';
+  // #6776: a re-asked round (a grant whose round never started) is a fresh
+  // ask, so the receipt of the earlier one does not swallow it.
+  const againKey = again ? `:again:${String(again).slice(0, 64)}` : '';
   await appendEvent(pool, loopRules.BOT_REQUEST, loopRules.requestKey(row.app_id, issueNumber), {
     type: 'FixAsked', payload: { appId: Number(row.app_id), issueNumber, sessionId: Number(row.id), head: due.head },
-  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
+  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}${againKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
   log.info('homeroom-bot', due.failing.length
     ? 'Its proposal\'s checks failed; asked its request to fix them'
     : due.broken?.length
@@ -11685,6 +11688,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   // #6420: a change that names requests it closes tells them once, including
   // the links set when the change was made or that became visible later.
   await each('claimsAnnounced', () => require('./change-claims').announce(pool, { appId: null }));
+  // #6776: a try somebody granted that never started is queued again, or
+  // closed with the reason it could not be.
+  await each('grantsRequeued', () => require('./homeroom-bot-retry-grants').sweepStrandedGrants(pool, settings, deps));
   return out;
 }
 
