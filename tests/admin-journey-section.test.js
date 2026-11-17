@@ -83,8 +83,14 @@ test('the filters: view, when, who, and who is left out', () => {
   for (const f of ['view', 'when', 'who', 'left-out']) assert.ok(growth.includes(`data-growth-filter="${f}"`), `the ${f} row`);
   for (const v of ['Overview', 'Activity', 'Groups', 'Sources', 'Scope']) assert.ok(growth.includes(`'${v}']`), `the ${v} view`);
   assert.match(growth, /useState<Who>\('newcomers'\)/, 'newcomers by default');
-  assert.match(growth, /Excluding Season 1 · \{counts\.newcomers\}/);
-  assert.match(growth, /Including Season 1 · \{counts\.all\}/);
+  assert.match(growth, /Without early members · \{counts\.newcomers\}/);
+  assert.match(growth, /Including early members · \{counts\.all\}/);
+  // Newcomers brought in by early members are newcomers, left out by default:
+  // an admit day says how many came in all ("30 of 36").
+  assert.match(growth, /Newcomer, brought in by an early member/);
+  assert.match(growth, /function BroughtToo\(/);
+  assert.match(growth, /<BroughtToo r=\{r\} list=\{data\.people\.filter/);
+  assert.doesNotMatch(growth, /Excluding Season 1|Including Season 1/, 'early members, not Season 1, name the filter');
   assert.match(growth, /useState<When>\(\{ kind: 'all', week: lastWeek \}\)/, 'since the era by default');
   assert.match(growth, />Last 4 weeks</);
   assert.match(growth, /aria-label="Week before"/);

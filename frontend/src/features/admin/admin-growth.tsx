@@ -122,7 +122,7 @@ const STEP_SHORT = ['Let in', 'Opened', 'Stayed 30 s+', 'With a group', 'Came ba
 const HELP: Record<string, string> = {
   view: 'Which part of the reading to show. The filters above apply to every view.',
   when: 'Newcomers are picked by the week they came in (let in, or joined), then followed through every later step. Weekly charts count activity in a week instead and fade the weeks outside the choice.',
-  who: 'Excluding Season 1: only people who came since 14 Sep and were not brought in by the early community. Including Season 1: everyone real.',
+  who: 'Early members are Season 1 and every account from before 14 Sep. Without early members: newcomers since 14 Sep, leaving out early members and the newcomers they brought in with a link of theirs. Including early members: everyone real.',
   leftOut: 'Who the current choice removes. Team, admins, test accounts and the Left out list are never counted.',
   back: 'Groups that acted together in a week and again in a later week. The north star: a group using Homeroom as a habit.',
   together: 'Projects where 3 or more people in scope started a change, voted or wrote in the same week.',
@@ -141,7 +141,7 @@ const HELP: Record<string, string> = {
   wActive: 'People with 30 seconds or more in an app, or an act, that week.',
   wGroups: 'Projects where 3 or more people in scope acted that week.',
   retention: 'People grouped by the first week they were active since 14 Sep. Each cell shows how many of them were active again N weeks later.',
-  wau: 'Admin › Analytics counts anyone with any app heartbeat (even a second), a message, vote, kudos or request in the last 7 days. It leaves out admins and tests but keeps Season 1.',
+  wau: 'Admin › Analytics counts anyone with any app heartbeat (even a second), a message, vote, kudos or request in the last 7 days. It leaves out admins and tests but keeps early members.',
   wauDid: 'What the people in that WAU did in the same 7 days, each counted once at their deepest. Acted: wrote a message, voted, filed a request or started a change. Stayed: 30 seconds or more in an app, no act. Glanced: under 30 seconds in an app, or only gave kudos.',
   lifeNew: 'Active this week for the first time.',
   lifeReturning: 'Active this week and the week before.',
@@ -156,7 +156,7 @@ const HELP: Record<string, string> = {
   ways: 'How people came in. Only a friend’s invite link says why: somebody brought them.',
   heard: 'The optional answer on the waitlist form: self-reported, often blank.',
   scopeWays: 'Which ways in to count.',
-  scopeDays: 'Which admit days to count. Never admitted means they signed up but are still waiting.',
+  scopeDays: 'Which admit days to count. Never admitted means they signed up but are still waiting. “30 of 36” means 6 more newcomers came in that day who were brought in by early members: Including early members counts them.',
   saved: 'A saved scope becomes a cohort under Compare on the Overview. It is kept in this browser.',
 };
 
@@ -406,17 +406,17 @@ export function Growth({ data, onOpenPerson, onLeftOut, onRefresh, fetchJson, re
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5" data-growth-filter="who">
           <span className={`${G.label} w-16`}>{term('who', 'Who')}</span>
-          <Pill id="admin-growth-newcomers" on={who === 'newcomers'} onClick={() => setWho('newcomers')}>Excluding Season 1 · {counts.newcomers}</Pill>
-          <Pill on={who === 'everyone'} onClick={() => setWho('everyone')}>Including Season 1 · {counts.all}</Pill>
+          <Pill id="admin-growth-newcomers" on={who === 'newcomers'} onClick={() => setWho('newcomers')}>Without early members · {counts.newcomers}</Pill>
+          <Pill on={who === 'everyone'} onClick={() => setWho('everyone')}>Including early members · {counts.all}</Pill>
         </div>
         <div className="mt-2 flex flex-wrap items-baseline gap-1.5" data-growth-filter="left-out">
           <span className={`${G.label} w-16`}>{term('leftOut', 'Left out')}</span>
           <span className="text-xs text-zinc-600 dark:text-zinc-300">
             {who === 'newcomers' ? (
               <>
-                Season 1 accounts · <Count {...leftOutOf('Season 1 accounts', data.people.filter((p) => p.seasonEarly))}>{counts.season}</Count>
-                {` · Accounts from before ${dayLabel(data.eraStart)} · `}<Count {...leftOutOf(`Accounts from before ${dayLabel(data.eraStart)}`, data.people.filter((p) => p.early && !p.seasonEarly))}>{counts.older}</Count>
-                {' · People they brought in · '}<Count {...leftOutOf('People they brought in', data.people.filter((p) => p.connected))}>{counts.connected}</Count>
+                Early members: Season 1 · <Count {...leftOutOf('Early members: Season 1', data.people.filter((p) => p.seasonEarly))}>{counts.season}</Count>
+                {` · Accounts from before ${dayLabel(data.eraStart)} · `}<Count {...leftOutOf(`Early members: accounts from before ${dayLabel(data.eraStart)}`, data.people.filter((p) => p.early && !p.seasonEarly))}>{counts.older}</Count>
+                {' · Newcomers they brought in · '}<Count {...leftOutOf('Newcomers brought in by early members', data.people.filter((p) => p.connected))}>{counts.connected}</Count>
                 {' · Team, admins and tests'}
               </>
             ) : 'Team, admins and tests'}
@@ -667,7 +667,7 @@ function PersonFacts({ p, step, data, groups }: { p: GrowthPerson; step: number;
     <div className="flex flex-col" data-growth-person-facts="">
       {fact('Got to', <StepPill step={step} />)}
       {fact('Came by', `${WAY_NAME[p.way]}${p.admittedDay ? `, let in ${dayLabel(p.admittedDay)}` : ''}${p.cameAt ? ` · arrived ${dayLabel(p.cameAt)}` : ''}`)}
-      {p.early || p.connected ? fact('Group', p.seasonEarly ? 'Season 1' : p.early ? `Account from before ${dayLabel(data.eraStart)}` : 'Brought in by the early community') : null}
+      {p.early || p.connected ? fact('Group', p.seasonEarly ? 'Early member: Season 1' : p.early ? `Early member: account from before ${dayLabel(data.eraStart)}` : 'Newcomer, brought in by an early member') : null}
       {p.heard ? fact('Heard about it', <span className="capitalize">{p.heard}</span>) : null}
       {p.way === 'waitlist' && p.admittedDay ? fact('Admit mail', p.mail ? MAIL_WORDS[p.mail] : '–') : null}
       {fact('Last seen', p.lastSeen ? dayLabel(p.lastSeen) : 'Never')}
@@ -760,9 +760,9 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
   const dmax = Math.max(1, ...depth.map((d) => d[1]));
   const wau = data.people.filter((p) => p.last7.analyticsWau);
   const parts: Array<[string, GrowthPerson[], string]> = [
-    ['Season 1', wau.filter((p) => p.seasonEarly), 'bg-zinc-300 dark:bg-zinc-600'],
-    ['Other early', wau.filter((p) => p.early && !p.seasonEarly), 'bg-zinc-500'],
-    ['Brought in by them', wau.filter((p) => p.connected), 'bg-zinc-700 dark:bg-zinc-400'],
+    ['Early: Season 1', wau.filter((p) => p.seasonEarly), 'bg-zinc-300 dark:bg-zinc-600'],
+    ['Early: older account', wau.filter((p) => p.early && !p.seasonEarly), 'bg-zinc-500'],
+    ['Brought in by early members', wau.filter((p) => p.connected), 'bg-zinc-700 dark:bg-zinc-400'],
     ['Newcomers', wau.filter((p) => !p.early && !p.connected), 'bg-violet-600'],
   ];
   // Each person once, at the deepest thing they did.
@@ -1096,6 +1096,19 @@ function ScopeCount(props: PeopleList) {
   );
 }
 
+// Without early members, a count leaves out the newcomers they brought in.
+// When a row has some, it says how many newcomers came in all: "30 of 36".
+function BroughtToo({ r, list }: { r: Reading; list: GrowthPerson[] }) {
+  const all = list.filter((p) => !p.early && r.inWhen(p));
+  const shown = all.filter((p) => r.inWho(p)).length;
+  if (all.length === shown) return null;
+  return (
+    <span className="text-zinc-500" data-growth-brought-too="" onClick={(e) => e.preventDefault()}>
+      of <Count kicker="Admit day" title="All newcomers, with those early members brought in" list={all} className="text-zinc-500">{all.length}</Count>
+    </span>
+  );
+}
+
 function Scope({ data, r, saved, onSave }: { data: GrowthData; r: Reading; saved: Saved[]; onSave: (list: Saved[]) => void }) {
   const { term, help } = useHelp();
   const days = [...new Set(r.whoPeople.map((p) => p.admittedDay).filter((d): d is string => !!d))].sort().reverse().concat(['never']);
@@ -1128,6 +1141,7 @@ function Scope({ data, r, saved, onSave }: { data: GrowthData; r: Reading; saved
             <input type="checkbox" className={G.check} checked={picked.includes(d)} onChange={() => setPicked(toggle(picked, d))} />
             <span className="flex-1">{d === 'never' ? 'Never admitted' : `Let in ${dayLabel(d)}`}</span>
             <ScopeCount kicker="Admit day" title={d === 'never' ? 'Never admitted' : `Let in ${dayLabel(d)}`} list={r.scoped.filter((p) => (p.admittedDay || 'never') === d && ways.includes(p.way))} />
+            <BroughtToo r={r} list={data.people.filter((p) => (p.admittedDay || 'never') === d && ways.includes(p.way))} />
           </label>
         ))}
       </div>
