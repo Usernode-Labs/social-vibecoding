@@ -1,6 +1,7 @@
 /**
- * Needs you: the second card of Home's side column (`#home-aside`,
- * ./index.tsx), under the New project card, from 1280px.
+ * Needs you: Home's card under Standard (WIP) (`#home-aside`, ./index.tsx),
+ * in the row it shares with Challenges: beside it from 1280px, a row of its
+ * own above it on anything narrower.
  *
  * It is drawn only while a vote waits on the viewer: the same count Home's
  * Needs you tile and the tab badge read (`badgeNeeds`,
@@ -62,14 +63,6 @@ function demoQuery(): string {
   }
 }
 
-function columnShown(): boolean {
-  try {
-    return typeof window !== 'undefined' && !!window.matchMedia?.('(min-width: 1280px)').matches;
-  } catch {
-    return false;
-  }
-}
-
 // One quiet row that is a link, not a list. The number sits in
 // a soft accent square, the words beside it, and under them the icons of
 // the communities that wait, with the split in words. Complete class
@@ -107,28 +100,15 @@ export function NeedsYouCard(): ReactNode {
   const { badgeNeeds } = useStoreState(communityScopeStore) as { badgeNeeds?: number | null };
   const waiting = Math.max(0, Number(badgeNeeds) || 0);
   const [feed, setFeed] = useState<NeedsCardItem[] | null>(null);
-  // Whether the column is displayed, followed as the window is resized: a
-  // window widened past 1280px reads the feed it had no use for before.
-  const [shown, setShown] = useState(false);
-  useEffect(() => {
-    setShown(columnShown());
-    let query: MediaQueryList | null = null;
-    try { query = window.matchMedia('(min-width: 1280px)'); } catch { return undefined; }
-    const onChange = () => setShown(columnShown());
-    query.addEventListener?.('change', onChange);
-    return () => query?.removeEventListener?.('change', onChange);
-  }, []);
-
   // Read again whenever the count moves: a vote cast, or a new one opened.
   useEffect(() => {
     if (!waiting) { setFeed(null); return undefined; }
-    if (!shown) return undefined;
     let live = true;
     sharedJson<{ items?: NeedsCardItem[] }>(`/api/workshop/needs-feed${demoQuery()}`, { fresh: true })
       .then((body) => { if (live && body && Array.isArray(body.items)) setFeed(body.items); })
       .catch(() => { /* the card keeps its count; the page says what failed */ });
     return () => { live = false; };
-  }, [waiting, shown]);
+  }, [waiting]);
 
   const summary = needsSummary(waiting, feed);
   if (!summary) return null;
