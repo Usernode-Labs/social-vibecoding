@@ -95,7 +95,7 @@ const CONTENT_RULES = [
   '- No sexual or suggestive content, and no nudity.',
   '- No violence, blood, weapons or anything made to frighten.',
   '- No gambling.',
-  '- Nothing aimed at children.',
+  '- Nothing aimed at children under 13.',
   '- No real person\'s likeness: any person in the picture is made up.',
   '- No brand names, logos or trademarks unless they are given to you here.',
   'If what is asked would break a rule, draw a harmless picture that keeps the rest of it.',
@@ -122,7 +122,7 @@ const GUARDS = Object.freeze([
   {
     rule: 'children',
     re: /\b(?:for (?:kids|children|toddlers|babies|little ones)|aimed at (?:kids|children)|kids'? (?:app|game|show|book)|children'?s (?:app|game|show|book|cartoon))\b/i,
-    why: 'nothing aimed at children',
+    why: 'nothing aimed at children under 13',
   },
   {
     rule: 'real_people',

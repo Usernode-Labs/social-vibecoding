@@ -303,6 +303,58 @@ test('shell upload accepts a 6 MB MP3 through the raw parser as audio/mpeg', asy
   }
 });
 
+test('serves a PDF row and a text row as attachments with nosniff', async () => {
+  const server = await startServeServer(fakeStore());
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`;
+    poolQueryHandler = async () => ({
+      rows: [{ app_id: 7, filename: 'menu.pdf', content_type: 'application/pdf', visibility: 'public' }],
+    });
+    const pdf = await fetch(base);
+    assert.equal(pdf.status, 200);
+    assert.equal(pdf.headers.get('content-type'), 'application/pdf');
+    assert.equal(pdf.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(pdf.headers.get('content-disposition'), /^attachment; filename="menu.pdf"/);
+
+    poolQueryHandler = async () => ({
+      rows: [{ app_id: 7, filename: 'rows.csv', content_type: 'text/csv; charset=utf-8', visibility: 'public' }],
+    });
+    const csv = await fetch(base);
+    assert.equal(csv.status, 200);
+    assert.equal(csv.headers.get('x-content-type-options'), 'nosniff');
+    assert.match(csv.headers.get('content-disposition'), /^attachment; filename="rows.csv"/);
+  } finally {
+    server.close();
+  }
+});
+
+test('serves video and audio rows inline, and an unknown type as an attachment', async () => {
+  const server = await startServeServer(fakeStore());
+  try {
+    const base = `http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`;
+    for (const [filename, contentType] of [
+      ['clip.mp4', 'video/mp4'],
+      ['clip.webm', 'video/webm'],
+      ['narration.ogg', 'audio/ogg'],
+    ]) {
+      poolQueryHandler = async () => ({
+        rows: [{ app_id: 7, filename, content_type: contentType, visibility: 'public' }],
+      });
+      const res = await fetch(base);
+      assert.equal(res.status, 200, contentType);
+      assert.match(res.headers.get('content-disposition'), /^inline; /, contentType);
+    }
+    poolQueryHandler = async () => ({
+      rows: [{ app_id: 7, filename: 'blob.bin', content_type: null, visibility: 'public' }],
+    });
+    const res = await fetch(base);
+    assert.equal(res.headers.get('content-type'), 'application/octet-stream');
+    assert.match(res.headers.get('content-disposition'), /^attachment; /);
+  } finally {
+    server.close();
+  }
+});
+
 test('serves an audio/ogg row with that Content-Type and nosniff', async () => {
   poolQueryHandler = async () => ({
     rows: [{ app_id: 7, filename: 'narration.ogg', content_type: 'audio/ogg', visibility: 'public' }],
@@ -313,6 +365,30 @@ test('serves an audio/ogg row with that Content-Type and nosniff', async () => {
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'audio/ogg');
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+  } finally {
+    server.close();
+  }
+});
+
+test('shell upload stores a PDF through the raw parser as application/pdf', async () => {
+  const handler = shellPoolHandler();
+  poolQueryHandler = handler;
+  accessGrants = { view: { id: 7 } };
+  const pdf = Buffer.concat([
+    Buffer.from('%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n'),
+    Buffer.alloc(6 * 1024 * 1024, 0),
+  ]);
+  const server = await startShellServer(fakeStore());
+  try {
+    const res = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/apps/demo/files?filename=menu.pdf`,
+      { method: 'POST', headers: { 'content-type': 'application/octet-stream', 'X-Usernode-App-Bridge': 'isolated-v2' }, body: pdf }
+    );
+    assert.equal(res.status, 200);
+    const j = await res.json();
+    assert.equal(j.contentType, 'application/pdf');
+    assert.equal(handler.inserts.length, 1);
+    assert.equal(handler.inserts[0][4], 'application/pdf');
   } finally {
     server.close();
   }

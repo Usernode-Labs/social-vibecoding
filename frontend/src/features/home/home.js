@@ -34,7 +34,6 @@ import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
 import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
 import { installHomeSearchShortcut } from './search-shortcut';
-import { NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden } from './new-project-dismiss';
 
 
 const Home = {
@@ -711,13 +710,10 @@ const Home = {
   _rowBudgetWired: false,
   _rowBudgetPending: 0,
 
-  // Whether Home has its side column, where the New project card is: from
-  // 1280px (app.css, HOME'S SIDE COLUMN), under Standard (WIP) only, the look
-  // it is being tried in, for a viewer who gets a tile.
+  // Whether New project is drawn outside the grid, so the grid ends with no
+  // tile: under Standard (WIP) only, whose search row carries the button
+  // (features/home/index.tsx), for a viewer who gets a tile.
   hasSideCard() {
-    // Closed in this browser (./new-project-dismiss.ts): there is no column
-    // to hold, so Pinned apps ends with its own New project tile.
-    if (newProjectCardHidden()) return false;
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     if (window.App?.user?.privateMember) return false;
     // The two shot links that exist to show the tile's treatments keep it in
@@ -728,10 +724,10 @@ const Home = {
     } catch { /* no address to read */ }
     let skin = 'standard';
     try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
-    // Standard (WIP) alone has the column (lib/skin.ts 'wip'): every other
+    // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
+    // search row at every width, so its grid draws no tile. Every other
     // look, Standard among them, ends Pinned apps with the tile.
-    if (skin !== 'wip') return false;
-    try { return !!window.matchMedia('(min-width: 1280px)').matches; } catch { return false; }
+    return skin === 'wip';
   },
 
   _wireRowBudget() {
@@ -759,10 +755,6 @@ const Home = {
         ? requestAnimationFrame(run)
         : setTimeout(run, 16);
     }, { passive: true });
-    // Closing the New project card changes the same answer: `run` compares
-    // `hasSideCard()` with the budget the last render used and re-renders, so
-    // the trailing New project tile comes back without a reload.
-    window.addEventListener(NEW_PROJECT_HIDDEN_EVENT, run);
   },
 
   // `_renderedCols`, `_wireViewport()` and `_applyColumnCount()` lived here:
@@ -1067,9 +1059,9 @@ const Home = {
       // three apps and New project. Nothing is re-placed: the app keeps its
       // cell and is there again once the grid is expanded or edited.
       //
-      // Only where Home is one column. From 1280px the New project card
-      // stands beside the lists (./new-project-card.tsx) and the grid draws
-      // no tile at all (`inCard`): four apps to the last row.
+      // Not under Standard (WIP) (`inCard`, Home.hasSideCard): New project is
+      // a button on its search row, and the grid draws no tile at all: four
+      // apps to the last row.
       const inCard = Home.hasSideCard();
       Home._sideCard = inCard;
       const createTakesLast = !inCard && !editing && !Home._appsExpanded
@@ -1229,6 +1221,10 @@ const Home = {
       // derives it per row, and anything it does not say reads as a
       // public community, which draws no mark.
       audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
+      // Standard (WIP)'s tile says what the app is and how many people made
+      // it: dapp.json's own sentence, and the list's contributor count.
+      description: String(app.manifest_snapshot?.description || '').trim(),
+      contributors: Math.max(0, Number(app.contributor_count) || 0),
     };
   },
 

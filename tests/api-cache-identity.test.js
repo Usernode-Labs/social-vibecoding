@@ -377,6 +377,37 @@ test('HTTPS cache identity ignores legacy hints and refuses ambiguous protected 
 });
 
 
+// A Homeroom preview's hint is a partitioned cookie (browser-session-cookies.js).
+// A document.cookie write of the same name is a second, unpartitioned cookie,
+// kept beside it rather than replacing it, so the jar below keeps both. The
+// failing check this pins: the staking sheet's epoch read, in flight while
+// /me answered, was fenced and the sheet never drew epoch 128.
+test("a /me naming the hint already in the jar writes no second copy beside a preview's partitioned one", async () => {
+  const partitioned = `__Host-usernode_api_scope=${A}`;
+  const written = [];
+  const held = deferred();
+  const win = {
+    document: {
+      get cookie() { return [partitioned, ...written.map(value => value.split(';')[0])].join('; '); },
+      set cookie(value) { written.push(value); },
+    },
+    location: { href: ORIGIN + '/', origin: ORIGIN, reload() {} },
+    addEventListener() {},
+    localStorage: { setItem() {} },
+    fetch: async req => new URL(req.url).pathname === '/api/auth/me'
+      ? json({ user: { id: 101 } }, A,
+        { headers: { 'X-Usernode-Cache-Expires': new Date(Date.now() + 86400_000).toISOString() } })
+      : held.promise,
+  };
+  installApiCacheIdentity(win);
+  const read = win.fetch('/api/private');
+  assert.deepEqual(await (await win.fetch('/api/auth/me')).json(), { user: { id: 101 } });
+  assert.deepEqual(written, [], 'the server already set this label: nothing to bootstrap');
+  assert.equal(readApiCacheScope(win.document), A);
+  held.resolve(json({ fake: 'epoch 128' }, A));
+  assert.deepEqual(await (await read).json(), { fake: 'epoch 128' }, 'the read in flight is not fenced');
+});
+
 test('plain HTTP development keeps its unprefixed cache partition', async () => {
   const h = page({ href: 'http://127.0.0.1:3000/' });
   assert.deepEqual(await (await h.win.fetch('/api/private')).json(), { fake: 'A' });

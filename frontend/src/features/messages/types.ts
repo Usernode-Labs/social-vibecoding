@@ -74,6 +74,8 @@ export interface HomeroomBotMeta {
   designTitle?: string;
   /** #6071 follow-up: what a thread from the bot's "+" is for (kind 'opened_thread'); none is any kind of change. 1 Nov 2026: 'project', a new project's thread. */
   changeKind?: 'fix' | 'add' | 'design' | 'project';
+  /** #6523: Homeroom bot offered to make this idea a project in this reply, so the thread's foot shows New project (./private-thread-bar newProjectInvited). */
+  newProject?: boolean;
   /** 1 Nov 2026: what a thread opened from a request's or change's page is about (kind 'opened_about'): never `issueNumber`, which would make it the request's story. */
   aboutKind?: 'request' | 'change';
   aboutNumber?: number;

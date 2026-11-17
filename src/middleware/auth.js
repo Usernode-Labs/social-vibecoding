@@ -289,7 +289,10 @@ function enforcePlatformAccessGate(req, res, user) {
 // parent mints a 1h RS256 app-identity JWT via /api/iframe-token →
 // app-view.js sets `iframe.src = stagingUrl + '?token=' + jwt` → this
 // middleware verifies + mints a local session cookie. Subsequent fetches
-// inside the iframe use the cookie like any prod request.
+// inside the iframe use the cookie like any prod request. That cookie is
+// partitioned (SameSite=None; Secure; Partitioned) so the cross-site frame a
+// preview is shown in keeps it (browser-session-cookies.js, "A preview of
+// Homeroom, in a frame on another site").
 //
 // Gated entirely on USERNODE_ENV === 'staging'. Production never reads the
 // query token, so a stolen iframe-token can't be replayed against prod (it's

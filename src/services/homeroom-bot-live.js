@@ -251,7 +251,7 @@ function personText({ reason, platform = false, project = null, done = false, wi
       + 'Anyone in the project can propose to close it, or reply here to keep it going.';
   }
   // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (operator work
-  // outside the app, or a database change that is not append-only), so the copy
+  // outside the app, or a database change that could lose data already stored), so the copy
   // names no Go ahead and ends with the part it can build. 17 Nov 2026: it
   // says which of the two it is (cannotLead), not one sentence for both.
   if (goAheadDecides === false) {
@@ -770,9 +770,10 @@ function stageGuidanceLines(stage, { firstVersion = false, guidance = null, revi
  * the same section).
  *
  * THE DATA RULES (#5117). Their section rides in the same block, read the
- * same way: no trackers or outside scripts, no special-category data,
- * nothing aimed at children, no passwords or card data, no login of the
- * app's own. The merge-time review holds a proposal to it as well.
+ * same way: no trackers or outside scripts, no profiling people by
+ * sensitive traits, nothing for under-13s, no account passwords or card
+ * data, no payments, no login of the app's own. The merge-time review
+ * holds a proposal to it as well.
  */
 const CONTENT_RULES_SLUG = 'content-rules-what-no-app-may-show';
 const DATA_RULES_SLUG = 'data-rules-what-no-app-may-collect-or-load';

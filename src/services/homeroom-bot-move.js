@@ -2,12 +2,14 @@
 
 // #4239: moving a request about Homeroom itself to Homeroom's own board.
 //
-// People file problems with the platform (its header, its suggestion form, a
-// project's description or invite message) on a project's board, where no
-// change to the project can fix them. The triage says so (its `platform`
-// flag on a person verdict, stored on the run as about_platform) and the
-// DM's chat model can say so too (offer_move_request). Either way the
-// requester is offered a move, decided by a tap like any offer:
+// People file problems with the platform (its header, its suggestion form, the
+// invite email it sends) on a project's board, where no change to the project
+// can fix them. A project's name, description and icon are lines in its own
+// dapp.json, so a change to them stays on its board and never moves here.
+// The triage says so (its `platform` flag on a person verdict, stored on the
+// run as about_platform) and the DM's chat model can say so too
+// (offer_move_request). Either way the requester is offered a move, decided
+// by a tap like any offer:
 //
 //   Move it to Homeroom  files the request on Homeroom's board with its
 //                        original title and words and a footer naming where
