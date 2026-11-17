@@ -98,6 +98,7 @@ import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
 import { NewProjectCard } from './new-project-card';
+import { NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden } from './new-project-dismiss';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
@@ -152,10 +153,20 @@ export function HomeScreen() {
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
   // THE SIDE COLUMN (./new-project-card.tsx): drawn for the viewer who may
-  // make projects, never under a look of the frame, and never before the
-  // grid's first paint, so the prerender agrees. The flag on the root is what
-  // app.css widens the column and sets the two side by side on.
-  const aside = !frame && grid.ready && !!grid.create;
+  // make projects, never under a look of the frame, never before the grid's
+  // first paint, so the prerender agrees, and not once the viewer has closed
+  // the card in this browser (./new-project-dismiss.ts): Home is then the one
+  // wide column it draws below 1280px, and Pinned apps ends with its New
+  // project tile. The flag on the root is what app.css widens the column and
+  // sets the two side by side on.
+  const [cardHidden, setCardHidden] = useState(false);
+  useEffect(() => {
+    setCardHidden(newProjectCardHidden());
+    const onHidden = () => setCardHidden(true);
+    window.addEventListener(NEW_PROJECT_HIDDEN_EVENT, onHidden);
+    return () => window.removeEventListener(NEW_PROJECT_HIDDEN_EVENT, onHidden);
+  }, []);
+  const aside = !frame && grid.ready && !!grid.create && !cardHidden;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined} data-home-aside={aside ? '' : undefined}>

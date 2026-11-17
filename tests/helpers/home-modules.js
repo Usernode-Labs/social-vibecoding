@@ -89,9 +89,15 @@ const MODE_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATU
 // an <html data-motion="reduce">) answers through the shipped reader rather
 // than an unbound name the glide's try swallows.
 const REDUCED_MOTION_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATURE_DIR, '..', '..', 'lib', 'reduced-motion.ts'), 'utf8'), { target: 99, module: 99 }).replace(/^export\s+/gm, '');
+// And whether Home's New project card is closed in this browser
+// (frontend/src/features/home/new-project-dismiss.ts, #6757): Home.hasSideCard
+// asks it before the media query, and _wireRowBudget listens for its event.
+// Transpiled the same way, so the sandbox resolves the shipped key and helper.
+const NEW_PROJECT_DISMISS_SRC = require('typescript').transpile(fs.readFileSync(path.join(FEATURE_DIR, 'new-project-dismiss.ts'), 'utf8'), { target: 99, module: 99 }).replace(/^export\s+/gm, '');
 const HOME_SRC = HOME_RAW
   .replace(/^import \{ readInterfaceMode \}.*$/m, MODE_SRC)
   .replace(/^import \{ reducedMotion \} from '\.\.\/\.\.\/lib\/reduced-motion';$/m, () => REDUCED_MOTION_SRC)
+  .replace(/^import \{ NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden \} from '\.\/new-project-dismiss';$/m, () => NEW_PROJECT_DISMISS_SRC)
   .replace(I18N_IMPORT, () => I18N_BINDINGS)
   .replace(/^import .* from '\.\.\/first-session\/build-line-words\.js';$/m, () => BUILD_LINE_WORDS_SRC)
   .replace(/^import .* from '\.\.\/\.\.\/lib\/repo-link\.js';$/m, () => REPO_LINK_SRC)

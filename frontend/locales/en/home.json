@@ -119,6 +119,10 @@
     "text": "Describe it, build it with Homeroom bot, and share it with your communities.",
     "description": "Sentence under \"Have an idea?\" on Home's New project card: what making a project involves. Homeroom bot is the product's assistant and is not translated."
   },
+  "newProject.close": {
+    "text": "Close",
+    "description": "Accessible name and tooltip of the ✕ button on Home's New project card (\"Have an idea?\"): hides the card in this browser. Pinned apps' New project tile then takes its place."
+  },
   "newProject.slotsFree_one": {
     "text": "<0>{{count}}</0> project slot available",
     "description": "Line under the New project button on Home's New project card, beside a green dot. {{count}} is how many more projects the viewer may make; a slot is room for one project. The number is drawn bold."
