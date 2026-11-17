@@ -450,8 +450,12 @@
   // idempotency key (client_op_id), so a retried add is the same item.
 
   var memoryQueue = [];
+  // Bumped by every change to the queue, so a read that left before one is
+  // not accepted when it comes back (refresh below).
+  var queueEpoch = 0;
   function queue() { return DURABLE ? (storedJSON(KEY_QUEUE) || []) : memoryQueue; }
   function saveQueue(q) {
+    queueEpoch++;
     var ok = DURABLE ? store(KEY_QUEUE, JSON.stringify(q)) : ((memoryQueue = q), true);
     syncHint(q.length > 0);
     renderStrip();
@@ -1774,14 +1778,24 @@
 
   var loading = null;
   // force: also when something is being edited or sent (after an import, a
-  // refused change, or the queue draining).
+  // refused change, or the queue draining). An answer sent while the queue
+  // was still changing is dropped and the list read again, so a reload's
+  // queued ticks are never cleared by an answer from before they landed
+  // (queueEpoch above).
   function refresh(force) {
     // A read already on its way may have left before the latest change:
     // read again once things are quiet (public/live-updates.js).
     if (loading) { if (live) live.changed(); return loading; }
     var asked = generation;
+    var askedQueue = queueEpoch;
+    var again = false;
     loading = api('GET', '/api/list', null, LOAD_TIMEOUT_MS)
       .then(function (d) {
+        // A reload sends its queued ticks while this read is on its way. An
+        // answer from before those ticks landed would clear them on screen,
+        // so drop it and read again; until then the copy kept on this
+        // device, which already has the ticks, stays up.
+        if (askedQueue !== queueEpoch) { again = true; return; }
         // A change made while this was on its way would be undone by it:
         // read again once it has gone out.
         if (loaded && !force && asked !== generation) { if (live) live.changed(); return; }
@@ -1804,7 +1818,10 @@
             : 'Nothing on it is lost. Check your connection and try again.';
         });
       })
-      .then(function () { loading = null; });
+      .then(function () {
+        loading = null;
+        if (again) return refresh(force);
+      });
     return loading;
   }
 
