@@ -523,7 +523,7 @@ test('a skipped rule reports the reason instead of failing silently', async () =
 // The standings: a new snapshot (a chart point) every six hours, and the
 // latest one rewritten in place whenever the ledger is newer (#3650: a member
 // saw the challenge's points long before the leaderboard's).
-function standingsPool({ at, fresh, newer }) {
+function standingsPool({ at, fresh, newer, ahead = false }) {
   const seen = [];
   return {
     seen,
@@ -531,6 +531,7 @@ function standingsPool({ at, fresh, newer }) {
       seen.push({ sql, params });
       if (sql === scorer.LAST_AGGREGATE_SQL) return { rows: at ? [{ at: new Date(at), fresh: fresh ? new Date(fresh) : null }] : [] };
       if (sql === scorer.LEDGER_NEWER_SQL) return { rows: [{ newer: newer(params[0]) }] };
+      if (sql === scorer.LEDGER_AHEAD_SQL) return { rows: [{ ahead }] };
       throw new Error(`unexpected query: ${sql.slice(0, 60)}`);
     },
   };
@@ -571,6 +572,27 @@ test('a newer credit refreshes the latest snapshot in place, not a new chart poi
   assert.deepEqual(result, { events: 1, refreshed: true });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].now.getTime(), NOW, 'rebuilt AT the latest snapshot_at: the builder upserts, so the history keeps its points');
+}));
+
+test('a credit OLDER than the last snapshot write still refreshes the standings (#6735)', () => withBuilder(async (calls) => {
+  // The admin rebuild or refresh-totals moves the generation's `fresh`
+  // without counting every event's credits, so a real credit is older than
+  // it and LEDGER_NEWER_SQL answers false. The ledger is still ahead of the
+  // snapshot, which is the question that matters: rebuild in place, and say
+  // why.
+  const pool = standingsPool({ at: NOW, fresh: NOW + 10 * MIN, newer: () => false, ahead: true });
+  assert.deepEqual(await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR }),
+    { events: 1, refreshed: true, reason: 'ledger_ahead' });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].now.getTime(), NOW, 'the same rewrite in place, no new chart point');
+  assert.ok(pool.seen.some((q) => q.sql === scorer.LEDGER_AHEAD_SQL),
+    'the snapshot was asked whether the ledger is ahead of it');
+}));
+
+test('the standings stay idle when the ledger and the snapshot agree', () => withBuilder(async (calls) => {
+  const pool = standingsPool({ at: NOW, fresh: NOW, newer: () => false, ahead: false });
+  assert.equal(await scorer.maybeAggregate(pool, { hours: 6, now: NOW + HOUR }), null);
+  assert.equal(calls.length, 0);
 }));
 
 test('a snapshot older than the cadence gets a new one, as before', () => withBuilder(async (calls) => {

@@ -98,8 +98,12 @@ test('challenge points the standings have not caught up with keep the card (#318
   assert.ok(view, 'someone with 1,500 challenge points still sees the card');
   assert.equal(view.rank, null);
   assert.equal(view.pending, '1,500 pts earned, not in the standings yet');
-  assert.equal(standingView({ status: 'ready', ranking: RANKING, pending: 1500 }).pending, null,
-    'a ranked viewer is not told about a pending figure the ranking already carries');
+  // #6735: the same line shows for a RANKED viewer whose new points the
+  // standings have not counted yet — not only when the standing is empty.
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, pending: 1500 }).pending,
+    '1,500 pts earned, not in the standings yet');
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, pending: 0 }).pending, null,
+    'up to date: no line');
 
   const html = renderCard({ status: 'ready', ranking: empty, pending: 1500, revealed: false });
   assert.match(html, />Your standing<\/span>/, 'no rank yet: the card names itself');
@@ -111,7 +115,7 @@ test('challenge points the standings have not caught up with keep the card (#318
   assert.doesNotMatch(html, /Standings update/, 'the old "every few hours" wording stays gone');
 });
 
-test('the ledger is read only when the standings have nothing for the viewer', async () => {
+test('the ledger is read for every viewer with a season, and the gap to the ranking is what is pending', async () => {
   const { MyStanding, myStandingStore, ledgerPoints } = loadTsx(STANDING);
   assert.equal(ledgerPoints([{ activities_total: 500 }, { activities_total: 1000 }, { activities_total: 0 }, {}]), 1500);
   assert.equal(ledgerPoints(null), 0);
@@ -133,10 +137,16 @@ test('the ledger is read only when the standings have nothing for the viewer', a
     const seen = await run({ ...RANKING, season_id: 4, rank: null, total_points: 0 });
     assert.ok(seen.includes('/challenges-api/challenges?season_id=4'), 'the season the ranking resolved');
     assert.equal(myStandingStore.get().pending, 1500);
-    const ranked = await run({ ...RANKING, season_id: 4 });
-    assert.ok(!ranked.some((u) => u.startsWith('/challenges-api/challenges?')), 'no extra read for a ranked viewer');
-    assert.deepEqual(ranked, ['/challenges-api/me/ranking?season_id=active'], 'one read in all');
-    assert.equal(myStandingStore.get().pending, 0);
+    // #6735: a RANKED viewer asks the ledger too — their points may be ahead
+    // of the ranking even with a rank already stored.
+    const ranked = await run({ ...RANKING, season_id: 4, total_points: 500 });
+    assert.ok(ranked.includes('/challenges-api/challenges?season_id=4'), 'the ledger is always read');
+    assert.equal(myStandingStore.get().pending, 1000, 'ledger 1,500 against a ranking of 500');
+    await run({ ...RANKING, season_id: 4, total_points: 2000 });
+    assert.equal(myStandingStore.get().pending, 0, 'the standings ahead of the ledger: nothing pending');
+    const noSeason = await run({ ...RANKING, season_id: null });
+    assert.deepEqual(noSeason, ['/challenges-api/me/ranking?season_id=active'],
+      'no season to scope a ledger read to');
   } finally {
     globalThis.fetch = realFetch;
   }
