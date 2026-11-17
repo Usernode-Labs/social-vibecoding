@@ -66,6 +66,8 @@ const onboarding = require('../services/onboarding');
 const journeyLeftOut = require('../services/journey-left-out');
 const journey = require('../services/journey');
 const journeyDemoData = require('../services/journey-demo');
+const growth = require('../services/growth');
+const growthDemoData = require('../services/growth-demo');
 const onboardingFlows = require('../services/onboarding-flows');
 const onboardingFlowsDemo = require('../services/onboarding-flows-demo');
 const usernames = require('../services/usernames');
@@ -1083,6 +1085,20 @@ function adminRoutes(config) {
     async (req, ctx) => {
       const found = await journey.person(pool, { userId: req.params.id, now: ctx.now });
       return found || { status: 404, error: 'There is no such person.' };
+    }));
+
+  // Growth (services/growth.js): the Journey page's one reading since it
+  // became the Growth dashboard. A row per person, their active weeks and the
+  // groups; the page filters it in the browser.
+  router.get('/api/admin/journey/growth', journeyRead('growth', () => growthDemoData.reading(),
+    (req, ctx) => growth.reading(pool, ctx)));
+
+  // One group's session, for the Groups view's side panel.
+  router.get('/api/admin/journey/growth/groups/:appId', journeyRead('growth group', (req) => growthDemoData.timeline(req.params.appId),
+    async (req) => {
+      const appId = Number(req.params.appId);
+      if (!Number.isSafeInteger(appId) || appId <= 0) return { status: 400, error: 'appId must be a positive integer.' };
+      return growth.groupTimeline(pool, appId);
     }));
 
   router.get('/api/admin/journey/left-out', async (req, res) => {
