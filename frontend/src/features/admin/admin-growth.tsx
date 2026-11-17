@@ -269,7 +269,7 @@ function Bars({ values, labels, fade, tone }: { values: number[]; labels: string
   return (
     <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${values.length}, minmax(0, 1fr))` }}>
       {values.map((v, i) => (
-        <div key={`b${i}`} className={`flex h-28 flex-col items-center justify-end gap-0.5 border-b border-zinc-200 dark:border-zinc-700 ${fade(i) ? 'opacity-30' : ''}`}>
+        <div key={`b${i}`} className={`flex h-28 flex-col items-center justify-end gap-0.5 border-b border-zinc-200 dark:border-zinc-800 ${fade(i) ? 'opacity-30' : ''}`}>
           <span className="text-[11px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{v || ''}</span>
           <span className={`block w-full max-w-[26px] rounded-t ${tone}`} style={{ height: `${v ? Math.max(3, (v / max) * 90) : 0}px` }} />
         </div>
@@ -456,14 +456,14 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
                 <div key={label}>
                   {i ? (
                     <div className="grid grid-cols-[9rem_minmax(0,1fr)_8rem] gap-3 items-center">
-                      <span className="text-right text-[11px] text-amber-700 dark:text-amber-400">{base[i - 1] ? `${pct(base[i], base[i - 1])} kept` : ''}</span>
+                      <span className="text-end text-[11px] text-amber-700 dark:text-amber-400">{base[i - 1] ? `${pct(base[i], base[i - 1])} kept` : ''}</span>
                       <span className="block h-4 bg-violet-100 dark:bg-violet-900/40"
                         style={{ clipPath: `polygon(${50 - prevW / 2}% 0, ${50 + prevW / 2}% 0, ${50 + Math.max(w, 0.8) / 2}% 100%, ${50 - Math.max(w, 0.8) / 2}% 100%)` }} />
                       <span />
                     </div>
                   ) : null}
                   <div className="grid grid-cols-[9rem_minmax(0,1fr)_8rem] gap-3 items-center" data-growth-step={i}>
-                    <span className="text-right text-sm font-semibold text-zinc-900 dark:text-zinc-100">{term(`s${i}`, label)}</span>
+                    <span className="text-end text-sm font-semibold text-zinc-900 dark:text-zinc-100">{term(`s${i}`, label)}</span>
                     <button type="button" className="relative block h-11 w-full" aria-label={`List the people at ${label}`}
                       onClick={() => setList({ step: i, cohort: null })}>
                       {base[i] ? <span className="absolute top-0 h-11 rounded-md bg-violet-600" style={{ left: `${50 - w / 2}%`, width: `${w}%` }} />
@@ -490,7 +490,7 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
             <div key={label} className="grid grid-cols-[5rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
               <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
               <span className={G.track}><span className={`block h-3 rounded ${tone}`} style={{ width: `${mail[0][1] ? (n / mail[0][1]) * 100 : 0}%` }} /></span>
-              <span className="text-right font-semibold tabular-nums">{n}</span>
+              <span className="text-end font-semibold tabular-nums">{n}</span>
             </div>
           ))}
           <div className="mt-2 border-t border-zinc-100 dark:border-zinc-800 pt-3 flex flex-col gap-1">
@@ -517,14 +517,14 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
           <table className="mt-2 border-separate border-spacing-1 text-xs tabular-nums">
             <thead>
               <tr>
-                <th className="pr-3 text-left font-medium text-zinc-500 dark:text-zinc-400">First week · people</th>
+                <th className="pe-3 text-start font-medium text-zinc-500 dark:text-zinc-400">First week · people</th>
                 {data.weeks.map((_, i) => <th key={`h${i}`} className="w-11 font-medium text-zinc-500 dark:text-zinc-400">W{i}</th>)}
               </tr>
             </thead>
             <tbody>
               {retention.map((row) => (
                 <tr key={row.week}>
-                  <th className="pr-3 text-left font-medium whitespace-nowrap">{dayLabel(row.week)} · {row.size}</th>
+                  <th className="pe-3 text-start font-medium whitespace-nowrap">{dayLabel(row.week)} · {row.size}</th>
                   {data.weeks.map((_, i) => {
                     const v = row.cells[i];
                     if (v == null) return <td key={`c${i}`} />;
@@ -559,23 +559,23 @@ function PeopleTable({ list, reached, onOpenPerson }: { list: GrowthPerson[]; re
   return (
     <table className={AdminUI.table} data-growth-people="">
       <thead className={AdminUI.thead}>
-        <tr><th className="py-2 pr-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Person</th>
-          <th className="py-2 px-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Came by</th>
-          <th className="py-2 px-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Got to</th>
-          <th className="py-2 pl-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">Last seen</th></tr>
+        <tr><th className="py-2 pe-2 text-start text-xs font-medium uppercase tracking-wider text-zinc-500">Person</th>
+          <th className="py-2 px-2 text-start text-xs font-medium uppercase tracking-wider text-zinc-500">Came by</th>
+          <th className="py-2 px-2 text-start text-xs font-medium uppercase tracking-wider text-zinc-500">Got to</th>
+          <th className="py-2 ps-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">Last seen</th></tr>
       </thead>
       <tbody>
         {list.map((p) => {
           const step = reached(p);
           return (
             <tr key={p.key} className="border-b border-zinc-100 dark:border-zinc-800/60">
-              <td className="py-2 pr-2">
+              <td className="py-2 pe-2">
                 {p.userId ? <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => onOpenPerson(p.userId!)}>{p.name || `#${p.userId}`}</button>
                   : <span className="text-zinc-500 dark:text-zinc-400">No account yet</span>}
               </td>
               <td className="py-2 px-2 text-zinc-600 dark:text-zinc-300">{WAY_NAME[p.way]}{p.admittedDay ? ` · ${dayLabel(p.admittedDay)}` : ''}</td>
               <td className="py-2 px-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${tone[step]}`}>{STEP_SHORT[step]}</span></td>
-              <td className="py-2 pl-2 text-right text-zinc-600 dark:text-zinc-300 whitespace-nowrap">{p.lastSeen ? dayLabel(p.lastSeen) : '–'}</td>
+              <td className="py-2 ps-2 text-end text-zinc-600 dark:text-zinc-300 whitespace-nowrap">{p.lastSeen ? dayLabel(p.lastSeen) : '–'}</td>
             </tr>
           );
         })}
@@ -665,7 +665,7 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
             <div key={`l${i}`} className="grid grid-cols-[4rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
               <span className="text-zinc-600 dark:text-zinc-300">{i + 1} {i ? 'weeks' : 'week'}</span>
               <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${(n / l4max) * 100}%`, opacity: 0.4 + i * 0.2 }} /></span>
-              <span className="text-right font-semibold tabular-nums">{n}</span>
+              <span className="text-end font-semibold tabular-nums">{n}</span>
             </div>
           ))}
         </div>
@@ -678,7 +678,7 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
             <div key={label} className="grid grid-cols-[9rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
               <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
               <span className={G.track}><span className={`block h-3 rounded ${['bg-violet-200', 'bg-violet-400', 'bg-violet-600', 'bg-zinc-900 dark:bg-zinc-100'][i]}`} style={{ width: `${(n / dmax) * 100}%` }} /></span>
-              <span className="text-right font-semibold tabular-nums">{n}</span>
+              <span className="text-end font-semibold tabular-nums">{n}</span>
             </div>
           ))}
         </div>
@@ -717,33 +717,33 @@ function Groups({ data, r, fetchJson, onOpenPerson }: {
         <table className={AdminUI.table}>
           <thead className={AdminUI.thead}>
             <tr>
-              <th className="py-2 pr-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Group</th>
-              <th className="py-2 px-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">People</th>
-              <th className="py-2 px-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">Builds</th>
-              <th className="py-2 px-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">{term('firstBuild', 'First build')}</th>
-              <th className="py-2 px-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">{term('weeksCol', 'Weeks active')}</th>
-              <th className="py-2 pl-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">Came back</th>
+              <th className="py-2 pe-2 text-start text-xs font-medium uppercase tracking-wider text-zinc-500">Group</th>
+              <th className="py-2 px-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">People</th>
+              <th className="py-2 px-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">Builds</th>
+              <th className="py-2 px-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">{term('firstBuild', 'First build')}</th>
+              <th className="py-2 px-2 text-start text-xs font-medium uppercase tracking-wider text-zinc-500">{term('weeksCol', 'Weeks active')}</th>
+              <th className="py-2 ps-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">Came back</th>
             </tr>
           </thead>
           <tbody>
             {list.map((g) => (
               <tr key={g.appId} className={AdminUI.trHover}>
-                <td className="py-3 pr-2">
-                  <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline text-left" onClick={() => setOpen(g)}>
+                <td className="py-3 pe-2">
+                  <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline text-start" onClick={() => setOpen(g)}>
                     {g.name || `Project ${g.appId}`}{g.private ? ' (private)' : ''} ›
                   </button>
                   <div className={G.fine}>made {dayLabel(g.madeAt)}</div>
                 </td>
-                <td className="py-3 px-2 text-right tabular-nums">{g.people.length}</td>
-                <td className="py-3 px-2 text-right tabular-nums">{g.builds}</td>
-                <td className="py-3 px-2 text-right tabular-nums">{g.firstBuildMinutes == null ? '–' : g.firstBuildMinutes < 120 ? `${g.firstBuildMinutes} min` : `${Math.round(g.firstBuildMinutes / 60)} h`}</td>
+                <td className="py-3 px-2 text-end tabular-nums">{g.people.length}</td>
+                <td className="py-3 px-2 text-end tabular-nums">{g.builds}</td>
+                <td className="py-3 px-2 text-end tabular-nums">{g.firstBuildMinutes == null ? '–' : g.firstBuildMinutes < 120 ? `${g.firstBuildMinutes} min` : `${Math.round(g.firstBuildMinutes / 60)} h`}</td>
                 <td className="py-3 px-2">
                   <span className="inline-flex items-center gap-0.5" role="img" aria-label={`Active ${g.weeks.length} of ${data.weeks.length} weeks`}>
                     {data.weeks.map((w) => <span key={w} className={`h-3.5 w-2 rounded-sm ${g.weeks.includes(w) ? 'bg-violet-600' : 'bg-zinc-100 dark:bg-zinc-800'}`} />)}
-                    <span className="ml-1.5 tabular-nums">{g.weeks.length}</span>
+                    <span className="ms-1.5 tabular-nums">{g.weeks.length}</span>
                   </span>
                 </td>
-                <td className="py-3 pl-2 text-right">{g.cameBack ? <span className={AdminUI.badge.success}>Yes</span> : <span className={AdminUI.badge.warn}>No</span>}</td>
+                <td className="py-3 ps-2 text-end">{g.cameBack ? <span className={AdminUI.badge.success}>Yes</span> : <span className={AdminUI.badge.warn}>No</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -799,11 +799,11 @@ function GroupTimeline({ group, names, fetchJson, onOpenPerson, onClose }: {
             const from = joined.get(id) || day.find((e) => e.userId === id)!.at;
             return (
               <div key={id} className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 items-center">
-                <button type="button" className="truncate text-left text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => onOpenPerson(id)}>{names.get(id) || `#${id}`}</button>
+                <button type="button" className="truncate text-start text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => onOpenPerson(id)}>{names.get(id) || `#${id}`}</button>
                 <div className="relative h-6 rounded bg-zinc-50 dark:bg-zinc-800">
                   <span className="absolute top-0 h-6 rounded bg-violet-600" style={{ left: pos(from), width: `calc(100% - ${pos(from)})` }} />
                   {day.filter((e) => e.kind === 'message' && e.userId === id).map((e, i) => (
-                    <span key={`m${i}`} className="absolute top-2 h-2 w-2 -ml-1 rounded-full bg-amber-500 ring-1 ring-white" style={{ left: pos(e.at) }} />
+                    <span key={`m${i}`} className="absolute top-2 h-2 w-2 -ms-1 rounded-full bg-amber-500 ring-1 ring-white" style={{ left: pos(e.at) }} />
                   ))}
                 </div>
               </div>
@@ -854,22 +854,22 @@ function Sources({ r }: { r: Reading }) {
         <table className={AdminUI.table}>
           <thead className={AdminUI.thead}>
             <tr>
-              <th className="py-2 pr-2 text-left text-xs font-medium uppercase tracking-wider text-zinc-500">Way in</th>
-              <th className="py-2 px-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">Let in</th>
-              <th className="py-2 px-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">Stayed 30 s+</th>
-              <th className="py-2 pl-2 text-right text-xs font-medium uppercase tracking-wider text-zinc-500">With a group</th>
+              <th className="py-2 pe-2 text-start text-xs font-medium uppercase tracking-wider text-zinc-500">Way in</th>
+              <th className="py-2 px-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">Let in</th>
+              <th className="py-2 px-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">Stayed 30 s+</th>
+              <th className="py-2 ps-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">With a group</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr key={row.w} className="border-b border-zinc-100 dark:border-zinc-800/60">
-                <td className="py-3 pr-2">
+                <td className="py-3 pe-2">
                   <span className="inline-flex items-center gap-2">{row.label}
                     {row.w === 'link' ? <span className={AdminUI.badge.success}>intent</span> : <span className={AdminUI.badge.outline}>no intent</span>}</span>
                 </td>
-                <td className="py-3 px-2 text-right tabular-nums">{row.came}</td>
-                <td className="py-3 px-2 text-right tabular-nums">{row.stayed}</td>
-                <td className="py-3 pl-2 text-right tabular-nums">{row.group}</td>
+                <td className="py-3 px-2 text-end tabular-nums">{row.came}</td>
+                <td className="py-3 px-2 text-end tabular-nums">{row.stayed}</td>
+                <td className="py-3 ps-2 text-end tabular-nums">{row.group}</td>
               </tr>
             ))}
           </tbody>
@@ -886,7 +886,7 @@ function Sources({ r }: { r: Reading }) {
                 <span className="block h-3 rounded bg-violet-600" style={{ width: `${h.came ? (h.stayed / h.came) * 100 : 0}%` }} />
               </span>
             </span>
-            <span className="text-right tabular-nums"><b>{h.stayed}</b><span className={G.fine}> / {h.came}</span></span>
+            <span className="text-end tabular-nums"><b>{h.stayed}</b><span className={G.fine}> / {h.came}</span></span>
           </div>
         ))}
         <p className={G.fine}>Dark: stayed 30 s+. Light: let in.</p>
@@ -937,7 +937,7 @@ function Scope({ data, r, saved, onSave }: { data: GrowthData; r: Reading; saved
           <div key={label} className="grid grid-cols-[8.5rem_minmax(0,1fr)_2.5rem] gap-2 items-center text-sm">
             <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
             <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${f[0] ? (f[i] / f[0]) * 100 : 0}%` }} /></span>
-            <span className="text-right font-semibold tabular-nums">{f[i]}</span>
+            <span className="text-end font-semibold tabular-nums">{f[i]}</span>
           </div>
         ))}
         <div className="border-t border-zinc-100 dark:border-zinc-800 pt-3 flex flex-col gap-2">
