@@ -191,7 +191,9 @@ test('a change\'s page: Status is a pill under its label, with no five-stop line
   const hand = css.slice(css.indexOf('THE FRAME IN THE SHELL'), css.indexOf('/* looks:begin'));
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-act \{ order: 1; flex-wrap: wrap; margin-top: 10px; \}/);
-  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // #6726: the figure keeps one line and ends in "…" rather than wrapping
+  // when a two-digit count would no longer fit beside the name.
+  assert.match(hand, /html\[data-skin\]:where\(:not\(\[data-skin="brand"\]\)\) \.dev-change-pair \.dev-change-gate-figure \{ min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; \}/);
 });
 
 test('Votes and Tested are small groups: each card\'s name is the label over it, its figure the card\'s first line', () => {

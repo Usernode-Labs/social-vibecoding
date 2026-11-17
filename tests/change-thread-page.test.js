@@ -335,9 +335,11 @@ test('on a phone the gate card stacks its buttons under its line', () => {
   assert.ok(phone, 'the change page has a phone block');
   assert.match(phone, /\.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(phone, /\.dev-change-gate-act \{[^}]*order: 1;[^}]*flex-wrap: wrap;[^}]*\}/);
-  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
-  assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
-  assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // #6726: the head keeps its name and figure on one line, so a two-digit
+  // count cannot take a second row and push the Vote button down.
+  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: nowrap; row-gap: 2px; \}/);
+  assert.match(phone, /\.dev-change-gate-name \{ flex: none; min-width: 0; \}/);
+  assert.match(phone, /\.dev-change-gate-figure \{ min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; \}/);
   // #6419: while stuck the pair keeps one line on a phone too, the Vote
   // button back on the card's own line rather than under it.
   assert.match(phone, /\.dev-change-pair\[data-stuck\] \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\) auto; padding: 8px 12px; \}/);

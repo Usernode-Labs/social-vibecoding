@@ -11731,10 +11731,15 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   font-size: 13px;
   font-weight: 600;
   line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 .dev-vote-switch-opt svg { width: 14px; height: 14px; }
 .dev-vote-switch-opt .dev-vote-n {
+  display: inline-block;
+  flex: none;
+  min-width: 5ch;
+  text-align: start;
   font-size: 11px;
   font-weight: 500;
   color: var(--text-muted);
@@ -14167,9 +14172,9 @@ p.dev-change-issue-pointer {
      name, figure and bar keep the card's width. */
   .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
   .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
-  .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
-  .dev-change-gate-name { min-width: 0; }
-  .dev-change-gate-figure { white-space: nowrap; }
+  .dev-change-gate-head { flex-wrap: nowrap; row-gap: 2px; }
+  .dev-change-gate-name { flex: none; min-width: 0; }
+  .dev-change-gate-figure { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   /* #6419: the stuck pair keeps only the heading, the figure and the vote,
      a little tighter; its note stays on the full card in the thread. The
      Vote button goes back on the card's own line, so the card stays one
@@ -25815,8 +25820,9 @@ html[data-skin]:where(:not([data-skin="brand"])) .dev-request-status:empty { dis
    beside Open app broke onto two lines. */
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate { grid-template-columns: minmax(0, 1fr); }
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act { order: 1; flex-wrap: wrap; margin-top: 10px; }
-html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: wrap; row-gap: 2px; }
-html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { white-space: nowrap; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-head { flex-wrap: nowrap; row-gap: 2px; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-name { flex: none; min-width: 0; }
+html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-figure { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 /* The card's buttons (Open app; an act in the accent's tint) are the kit's
    small ones, as "Ask Homeroom bot privately" beside the words is. */
 html[data-skin]:where(:not([data-skin="brand"])) .dev-change-pair .dev-change-gate-act .gc-vote-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--fr-sunk); color: var(--fr-ink); font: 650 13px/1 var(--fr-f); }
