@@ -69,6 +69,7 @@ const path = require('node:path');
 const log = require('./logger');
 const lineage = require('./upstream-lineage');
 const durableSteps = require('./durable-steps');
+const schemaSafety = require('./schema-safety');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
 const OPEN_STATUSES = Object.freeze(['active', 'promoted', 'merging']);
@@ -305,10 +306,12 @@ const DESTRUCTIVE = Object.freeze([
   /\balter\s+(?:table|index|sequence|view)\b.*\brename\b/i,
   /^\s*rename\s+(?:column\s+|constraint\s+)?(?:"[^"]+"|[A-Za-z_][\w$]*)\s+to\b/i,
   /^\s*rename\s+to\b/i,
-  /\balter\s+(?:column\s+)?(?:"[^"]+"|[A-Za-z_][\w$]*)\s+(?:set\s+data\s+)?type\b/i,
+  /\bset\s+not\s+null\b/i,
   /\bTRUNCATE\b/,
   /\btruncate\s+table\b/i,
 ]);
+// A type change: destructive unless it only loosens the column (isLosslessType).
+const TYPE_CHANGE = /\balter\s+(?:column\s+)?(?:"[^"]+"|[A-Za-z_][\w$]*)\s+(?:set\s+data\s+)?type\b/i;
 const URL_HOST = /\bhttps?:\/\/([A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*)/g;
 const AI_ENV = 'USERNODE_LLM_PROXY_URL';
 const STORAGE_ENV = 'USERNODE_STORAGE_URL';
@@ -398,7 +401,10 @@ function diffLines(diffText) {
  *
  *   tablesAdded   CREATE TABLE names it adds (not ones it only moves)
  *   destructive   the lines it adds that change data already stored:
- *                 DROP TABLE or COLUMN, RENAME, ALTER ... TYPE, TRUNCATE
+ *                 DROP TABLE or COLUMN, RENAME, ALTER ... TYPE, SET NOT NULL,
+ *                 TRUNCATE. A type change that only loosens the column
+ *                 (schemaSafety.isLosslessType) is left out when
+ *                 `opts.columnTypes` says what the column was.
  *   hostsAdded    outside hosts its code starts to name (not ones it
  *                 already named, nor this machine, Homeroom's own or a
  *                 documentation name)
@@ -409,7 +415,9 @@ function diffLines(diffText) {
  *
  * Comment-only lines, prose files and lockfiles say nothing here.
  */
-function factsOf(diffText, baseManifest, headManifest, { alreadyAi = false, alreadyStorage = false } = {}) {
+function factsOf(diffText, baseManifest, headManifest, {
+  alreadyAi = false, alreadyStorage = false, columnTypes,
+} = {}) {
   const { added, removed } = diffLines(diffText);
   const code = (l) => !(l.file && NOT_CODE.test(l.file)) && !COMMENT_LINE.test(l.text);
   const addedCode = added.filter(code);
@@ -432,10 +440,12 @@ function factsOf(diffText, baseManifest, headManifest, { alreadyAi = false, alre
   for (const l of addedCode) {
     const text = l.text.trim();
     if (!text || removedText.has(text)) continue;
-    if (DESTRUCTIVE.some((re) => re.test(text))) {
-      const line = clip(text, MAX_FACT_TEXT);
-      if (!destructive.includes(line)) destructive.push(line);
-    }
+    const other = DESTRUCTIVE.some((re) => re.test(text));
+    const retype = !other && TYPE_CHANGE.test(text);
+    if (!other && !retype) continue;
+    if (retype && schemaSafety.losslessTypeChange(text, columnTypes)) continue;
+    const line = clip(text, MAX_FACT_TEXT);
+    if (!destructive.includes(line)) destructive.push(line);
   }
 
   const hosts = (lines) => {
@@ -641,6 +651,34 @@ async function showFile(run, rev, file) {
   return r.code === 0 ? r.stdout : null;
 }
 
+// How many of the version's own files the type facts read.
+const MAX_COLUMN_FILES = 40;
+
+/**
+ * The columns the version's main already has (`schemaSafety.columnTypes`),
+ * from the files there that define or alter a table, read in path order.
+ * Undefined when any of them cannot be read: factsOf then treats every type
+ * change as destructive, as before.
+ */
+async function baseColumnTypes(run, rev) {
+  const grepped = await run.status(['grep', '-l', '-i', '-E', 'create table|alter table', rev, '--',
+    '*.sql', '*.js', '*.cjs', '*.mjs', '*.ts']);
+  if (grepped.code === 1) return new Map();
+  if (grepped.code !== 0) return undefined;
+  const paths = String(grepped.stdout || '')
+    .split('\n').map((line) => line.trim()).filter(Boolean)
+    .map((line) => line.slice(line.indexOf(':') + 1))
+    .filter((p) => p && !NOT_CODE.test(p))
+    .sort();
+  const texts = [];
+  for (const p of paths.slice(0, MAX_COLUMN_FILES)) {
+    const text = await showFile(run, rev, p);
+    if (typeof text !== 'string') return undefined;
+    texts.push(text);
+  }
+  return schemaSafety.columnTypes(texts);
+}
+
 function commitEnv(deps, epoch) {
   const author = deps.gitHost.defaultAuthor();
   const date = `@${Number(epoch) || 0} +0000`;
@@ -745,6 +783,7 @@ async function planIn(dir, {
   const uses = async (word) => (await run.status(['grep', '-q', '-F', '-e', word, syncedSha, '--'])).code === 0;
   const facts = factsOf(patch, syncedManifest, fromManifest, {
     alreadyAi: await uses(AI_ENV), alreadyStorage: await uses(STORAGE_ENV),
+    columnTypes: await baseColumnTypes(run, mainSha),
   });
 
   const words = describe({ originalName, versionName, brings, facts, keeps });

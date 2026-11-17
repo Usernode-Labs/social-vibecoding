@@ -6241,10 +6241,11 @@
   /* __USERNODE_STORAGE_BEGIN__ */
   (function () {
     var _ST_ACK_TIMEOUT_MS = 15000;
-    // Uploads relay a few MB across postMessage + a platform POST;
-    // generous, but bounded so a dropped relay can't hang the app.
-    var _ST_RESULT_TIMEOUT_MS = 120000;
-    var _ST_MAX_FILE_BYTES = 5 * 1024 * 1024; // mirror of the server cap
+    // The largest per-kind cap (a video clip); the server enforces each
+    // kind's own limit. Generous, but bounded so a dropped relay can't
+    // hang the app.
+    var _ST_RESULT_TIMEOUT_MS = 600000;
+    var _ST_MAX_FILE_BYTES = 100 * 1024 * 1024; // mirror of the largest server cap
     var _stPending = {};
 
     window.addEventListener("message", function (e) {
@@ -6326,9 +6327,11 @@
           ));
         }
         if (file.size > _ST_MAX_FILE_BYTES) {
-          return Promise.reject(new Error(
-            "Image too large (max " + Math.round(_ST_MAX_FILE_BYTES / 1024 / 1024) + " MB)."
-          ));
+          var tooLarge = new Error(
+            "File too large (max " + Math.round(_ST_MAX_FILE_BYTES / 1024 / 1024) + " MB)."
+          );
+          tooLarge.code = "file_too_large";
+          return Promise.reject(tooLarge);
         }
         var filename = String(opts.filename || file.name || "upload").slice(0, 256);
         var visibility = opts.visibility === "private" ? "private" : "public";

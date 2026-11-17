@@ -5875,7 +5875,8 @@ async function startRequest(pool, ctx, args) {
   );
   // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
   // a go-ahead cannot settle it (operator work outside the app, or a
-  // non-append-only database change). Queueing would only read it to the same answer.
+  // database change that could lose data already stored). Queueing would only
+  // read it to the same answer.
   // 17 Nov 2026: only a read that named which of the two it is
   // (go_ahead_blocker) is said again. One stored before the read had to name
   // it was often neither (a sign-in fix, a large request), so its go-ahead
