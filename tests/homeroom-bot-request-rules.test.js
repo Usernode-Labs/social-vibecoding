@@ -85,6 +85,25 @@ test('#6766: a service that needs a key is ready, not a person', () => {
   assert.match(read('src/services/homeroom-bot.js'), /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
 });
 
+test('#6766: a secret is never named as operator work, and never a go-ahead blocker', () => {
+  const md = read('src/prompts/homeroom-bot-triage.md');
+  const service = read('src/services/homeroom-bot.js');
+  // The operator-work example is work outside the app, such as a DNS or
+  // infrastructure change; setting a key is not that work.
+  assert.match(md, /`operator_work` \(work outside this app, such as a DNS or infrastructure change\)/);
+  for (const line of md.match(/`operator_work`[^\n]*/g) || []) {
+    assert.doesNotMatch(line, /\bsecret\b/i, line);
+  }
+  assert.doesNotMatch(md, /such as setting a secret/);
+  // The go-ahead decline list is these two blockers and nothing else.
+  assert.deepEqual(live.GO_AHEAD_BLOCKERS, ['operator_work', 'destructive_db']);
+  assert.match(md, /False only with `cannot_because` \(`operator_work` or `destructive_db`\)/);
+  assert.match(md, /"cannot_because": "operator_work" \| "destructive_db"/);
+  // The decider notes the read is handed say the same thing.
+  assert.doesNotMatch(service, /such as setting a secret/);
+  assert.match(service, /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
+});
+
 test('the words people gave the bot stay out of staging and prod-debug', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_requesters\.asked_text IS 'staging:private';/);
