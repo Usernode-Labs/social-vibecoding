@@ -160,7 +160,13 @@ test('the data rules are a section of their own, naming every rule (#5117)', () 
   // The list wraps across lines, so match on the section's flat text.
   const flat = section.content.replace(/\s+/g, ' ');
   for (const term of [
-    /Third-party trackers or external scripts/, /analytics/, /centrally hosted Homeroom assets/,
+    // 17 Nov 2026 (#6766): "the app loads its own code and the centrally
+    // hosted Homeroom assets only" read as a ban on map tiles, place search
+    // and every other outside service, so the bullet now names what is
+    // allowed and keeps the ban to script tags from another origin.
+    /Third-party trackers or external scripts/, /analytics/,
+    /Install libraries from npm and serve them from the app's own origin/,
+    /map tiles and map styles/,
     // 17 Nov 2026 (#6769): each bullet names what is meant, not a topic.
     /Profiling people by sensitive traits/, /health/, /religious/, /sexual orientation/,
     /ethnic origin/, /political/, /biometric/, /Apps for children under 13/,

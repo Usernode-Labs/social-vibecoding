@@ -68,6 +68,71 @@ test('triage sends a request whose point breaks the rules to a person, and swaps
   assert.match(md, /- Nothing it builds breaks the platform's content rules or data rules \(below\)\./);
 });
 
+test('#6766: a service that needs a key is ready, not a person', () => {
+  const md = read('src/prompts/homeroom-bot-triage.md');
+  // "another app or service" was narrowed: a new integration is ready or
+  // complicated (below), not impossible.
+  assert.match(md, /\(a service that does not exist, data the app does not have\)/);
+  assert.doesNotMatch(md, /\(another app or service, data the app does not have\)/);
+  // A service whose key the app declares is buildable, and only setting a
+  // value is a person, pointed at Secrets.
+  assert.match(md, /a service needing one is `ready` \(or `complicated` with `choices` if the provider is a choice\)/);
+  assert.match(md, /declares it in `dapp\.json` `secrets` \(not `required`, or with a `staging_default`\)/);
+  assert.match(md, /keeps the feature off and says so on screen until a member sets it/);
+  assert.match(md, /Only setting that value is `person`; `reason` points there\./);
+  // Setting a key is not operator work, including in the decider notes the
+  // read is given on a project with a creator or admins.
+  assert.doesNotMatch(md, /such as setting a secret/);
+  assert.match(read('src/services/homeroom-bot.js'), /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
+});
+
+test('#6766: a secret is never named as operator work, and never a go-ahead blocker', () => {
+  const md = read('src/prompts/homeroom-bot-triage.md');
+  const service = read('src/services/homeroom-bot.js');
+  // The operator-work example is work outside the app, such as a DNS or
+  // infrastructure change; setting a key is not that work. The parenthetical
+  // goes on to say so, so only its opening is pinned here.
+  assert.match(md, /`operator_work` \(work outside this app, such as a DNS or infrastructure change/);
+  for (const line of md.match(/`operator_work`[^\n]*/g) || []) {
+    assert.doesNotMatch(line, /\bsecret\b/i, line);
+  }
+  assert.doesNotMatch(md, /such as setting a secret/);
+  // The go-ahead decline list is these blockers and nothing else: operator
+  // work, a destructive database change, and (#6755) a request whose answer
+  // is a reply rather than a commit. A secret is never among them.
+  assert.deepEqual(live.GO_AHEAD_BLOCKERS, ['operator_work', 'destructive_db', 'explanation']);
+  assert.match(md, /False only with `cannot_because` \(`operator_work`, `destructive_db` or `explanation`\)/);
+  assert.match(md, /"cannot_because": "operator_work" \| "destructive_db" \| "explanation"/);
+  // The decider notes the read is handed say the same thing.
+  assert.doesNotMatch(service, /such as setting a secret/);
+  assert.match(service, /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
+});
+
+test('#6766: the triage carries the data rules in short form, and the builders carry them whole', () => {
+  const triage = bot.triagePromptFor({ seed: 'SEED', issueNumber: 7 });
+  // What changes a read's verdict: the two bans, and that a service needing
+  // a key is ready with its value in Secrets.
+  assert.match(triage, /Never add a `<script>` tag from another origin/);
+  assert.match(triage, /Never add trackers, analytics, ad SDKs, pixels\s+or beacons, in any form, including image pixels\./);
+  assert.match(triage, /A service that needs a key is `ready`: the build declares it in `dapp\.json` `secrets`/);
+  assert.match(triage, /member sets its value under Secrets/);
+  // The exceptions #6769 pinned stay too, so a gym log, a game PIN, a choir
+  // rota or a Spotify playlist sync is not refused again.
+  assert.match(triage, /a club or topic in\s+those areas/);
+  assert.match(triage, /a code\s+the app makes such as a game PIN/);
+  // The allowed-content list, the reasons behind the bans and the "prefer"
+  // guidance stay with the builders, which act on them. A read never does,
+  // and the triage prompt is the one held to a size guard.
+  assert.doesNotMatch(triage, /Everything else from other sites is fine: images, video and audio hosted/);
+  assert.doesNotMatch(triage, /Prefer fonts from npm\s+\(`@fontsource\/\*`\)/);
+  assert.doesNotMatch(triage, /A server-side call still sends what people type to the provider/);
+  // The spec and build prompts still carry the section whole.
+  for (const prompt of [live.specPrompt({ seed: 'SEED', buildNote: 'plan' }), live.buildPrompt({ seed: 'SEED', buildNote: 'plan' })]) {
+    assert.match(prompt, /Everything else from other sites is fine: images, video and audio hosted/);
+    assert.match(prompt, /Prefer fonts from npm\s+\(`@fontsource\/\*`\)/);
+  }
+});
+
 test('the words people gave the bot stay out of staging and prod-debug', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_requesters\.asked_text IS 'staging:private';/);
