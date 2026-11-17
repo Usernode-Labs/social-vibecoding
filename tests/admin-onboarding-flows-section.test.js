@@ -160,6 +160,12 @@ test('its styles are scoped to the section and use no untuned palette', () => {
   assert.match(engine, /listen\(document,'scroll',function\(e\)\{[^}]*hold\(b\);\},true\);/, 'where each box belongs, from its own scroll events');
   assert.match(engine, /sc\.addEventListener\('focusin',function\(e\)\{\s*around\(\)\.forEach\(function\(b\)\{var at=held\.get\(b\);[^\n]*b\.scrollTop=at\[1\];\}\}\);\s*reveal\(e\.target\);/,
     'and the chart moves to the card instead');
+  // The fade that sends what a selection does not touch to the background is scoped to the chart's own class, so
+  // the chart must carry it: without it the engine's dim and hl classes changed nothing on screen.
+  assert.match(read(SECTION), /<svg className="of-flow" data-of="flow"/);
+  assert.match(block, /#admin-onboarding-flows \.of-flow\.dim \.thread\{opacity:\.1\}/);
+  assert.match(block, /#admin-onboarding-flows \.of-flow\.dim \.nodeg:not\(\.hl\) \.nbox,[^{]*\.nlabel,[^{]*\.nsub,[^{]*\.caption\{opacity:\.3\}/);
+  assert.match(read(ENGINE), /svg\.classList\.add\('dim'\);/);
   // A pressed card stays where it is: the native kit's [role="button"]:active is a CSS transform, which would
   // replace an SVG shape's transform attribute and throw it to the drawing's corner. Cards and marks are placed
   // by an inline style instead, and the press does nothing inside the drawing.

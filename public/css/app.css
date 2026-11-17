@@ -10788,7 +10788,8 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .thread.both{stroke:url(#of-bothStripe)}
 #admin-onboarding-flows .of-flow.dim .thread{opacity:.1}
 #admin-onboarding-flows .of-flow.dim .thread.hl{opacity:1}
-#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub{opacity:.45}
+/* A selection, or a box or thread pointed at, keeps its own threads and cards and sends the rest to the background. */
+#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nbox,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nlabel,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .nsub,#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .caption{opacity:.3}
 #admin-onboarding-flows .nodeg{cursor:pointer;outline:none}
 /* The native kit presses every [role="button"]: a CSS transform (scale), a dimming and a spring back. Inside the
    drawing a CSS transform replaces an SVG shape's own position, so a pressed card flew to the corner. Cards and
@@ -10845,7 +10846,7 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .leak.strong text{fill:var(--surface)}
 #admin-onboarding-flows .leak.on rect{stroke:var(--fg);stroke-width:2}
 #admin-onboarding-flows .leak:focus-visible rect{stroke:var(--fg);stroke-width:2}
-#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.5}
+#admin-onboarding-flows .of-flow.dim .leak:not(.on){opacity:.35}
 #admin-onboarding-flows .legend .stop{width:4px;height:14px;border-radius:2px;background:var(--drop)}
 #admin-onboarding-flows .loop path{fill:none;stroke:var(--share);stroke-width:1.6;stroke-dasharray:5 4}
 #admin-onboarding-flows .loop text{font-family:var(--font-body);font-size:12.5px;font-weight:500;fill:var(--fg);paint-order:stroke;stroke:var(--surface);stroke-width:5px}
