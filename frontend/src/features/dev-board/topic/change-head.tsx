@@ -851,7 +851,9 @@ export function ChangeFoot({ id, card, v, page, ballot = false }: {
       busy={foot.key === 'testing'}
       extra={also ? (
         <p className="dev-thread-foot-also" data-thread-foot-also={also.bad ? 'bad' : 'running'}>
-          <span>{t('project:topic.card.foot.alsoTests', { what: line([also.figure], alsoLines || []) })}</span>{' '}
+          {/* The space before the link is in the sentence's own run: a bare
+              whitespace expression between text runs cannot survive hydration. */}
+          <span>{`${t('project:topic.card.foot.alsoTests', { what: line([also.figure], alsoLines || []) })} `}</span>
           <button type="button" className="dev-change-gate-link" data-thread-foot-see="checks" onClick={() => see('checks')}>
             {also.bad ? t('project:topic.rail.seeFailed') : t('project:topic.card.foot.seeProgress')}
           </button>
