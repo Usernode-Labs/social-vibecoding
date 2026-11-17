@@ -165,8 +165,9 @@ test('a new project\'s thread: its turns know what it is for, and a new one is t
 test('POST /api/apps takes a design: checked, its brief and plan from it, the card settled', () => {
   const route = read('src/routes/apps.js');
   assert.match(route, /fromDesign = await homeroomBotDm\.designForProject\(pool, \{ user: req\.user, design: req\.body\.design, brief: req\.body\.brief \}\);/);
-  assert.match(route, /app: appRow, user: req\.user, brief: req\.body\.brief, design: fromDesign,/);
-  assert.match(route, /earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign,/);
+  assert.match(route, /app: appRow, user: req\.user, brief: req\.body\.brief, design: fromDesign, thread: fromThread,/);
+  // #6784 adds a thread's own early plan beside the design's.
+  assert.match(route, /earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign \|\| !!fromThread,/);
   const dm = require('../src/services/homeroom-bot-dm');
   const brief = dm.designBrief({ title: 'Watering', versions: [{ version: 1, author: 'bot', note: 'A list' }, { version: 2, author: 'bot', note: 'Bigger' }] }, 1, '');
   assert.equal(brief, 'Watering\n\nIts first screen is "Watering", designed with Homeroom bot in a private thread (version 1). The first request\'s plan draws it.\n\nHow the design came to be, version by version:\n- A list');

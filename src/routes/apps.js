@@ -1337,12 +1337,35 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // request's plan is the design (homeroom-bot-dm.js fileFirstRequest),
       // and its early plan is written from it, asking nothing.
       const homeroomBotDm = require('../services/homeroom-bot-dm');
+      // #6784: a project is made from a design or from an idea thread, never
+      // both. Said before either is read, so the answer names the mistake.
+      if (req.body.design != null && req.body.thread != null) {
+        return res.status(400).json({ error: 'A project is made from a design or a thread, not both.' });
+      }
       let fromDesign = null;
       if (req.body.design != null) {
         fromDesign = await homeroomBotDm.designForProject(pool, { user: req.user, design: req.body.design, brief: req.body.brief });
         if (!fromDesign.ok) return res.status(fromDesign.status).json({ error: fromDesign.error });
         if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
         req.body = { ...req.body, brief: fromDesign.brief };
+      }
+
+      // #6784 (17 Nov 2026): a project made from an idea thread in one of the
+      // person's private threads with Homeroom bot (New project in the
+      // thread): their own thread, with no project yet and none made before.
+      // Its brief is the plan agreed there, so a one-line pitch from the
+      // model can no longer decide what gets built, and the first request's
+      // plan is that plan.
+      let fromThread = null;
+      if (req.body.thread != null) {
+        if (!homeroomBotDm.normalizeBrief(req.body.brief)) {
+          return res.status(400).json({ error: 'A project made from a thread starts from its plan.' });
+        }
+        fromThread = await homeroomBotDm.threadForProject(pool, {
+          user: req.user, thread: req.body.thread, brief: req.body.brief,
+        });
+        if (!fromThread.ok) return res.status(fromThread.status).json({ error: fromThread.error });
+        req.body = { ...req.body, brief: fromThread.brief };
       }
 
       // Everything the project is made from is written in ONE transaction:
@@ -1518,7 +1541,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (owesFirstVersion) {
           await optional('first_version', 'Homeroom bot first version not owed',
             () => homeroomBotDm.recordFirstVersion(db, pool, config, {
-              app: appRow, user: req.user, brief: req.body.brief, design: fromDesign,
+              app: appRow, user: req.user, brief: req.body.brief, design: fromDesign, thread: fromThread,
             }));
         }
         await db.query('COMMIT');
@@ -1598,7 +1621,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             // Its plan is written now, for the made screen to ask its
             // questions while the project is set up (first-version-plan.js).
             // A design's was written with the project, from the design.
-            earlyPlan: MAKE_ORIGINS.has(req.body.from) || !!fromDesign,
+            earlyPlan: MAKE_ORIGINS.has(req.body.from) || !!fromDesign || !!fromThread,
             fromDesign: !!fromDesign,
           });
         } catch (err) {
@@ -1608,6 +1631,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (fromDesign) {
           await require('../services/homeroom-bot-mayor').noteProjectMade(pool, {
             userId: req.user.id, rootId: fromDesign.design.rootId, app: appRow,
+          });
+        }
+        // #6784: the project's first-version thread quotes the plan agreed in
+        // the thread it came from, and links it. Never a reason the create
+        // fails (it is said after the project exists).
+        if (fromThread) {
+          await homeroomBotDm.noteThreadSource(pool, config, {
+            app: appRow, user: req.user, thread: fromThread,
           });
         }
       } else {

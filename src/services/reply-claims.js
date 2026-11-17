@@ -160,6 +160,22 @@ const NEW_PROJECT_CLAIM = new RegExp(
 const NEW_PROJECT_WORDS_RE = /\bNew project\b/;
 
 /**
+ * Pure (#6784, 17 Nov 2026): a New project offered with a one-line pitch
+ * while the reply beside it sets out a plan. The reply's plan points are its
+ * bullet lines ("- ", "* ", "• ", "1."); true when there are at least three,
+ * the idea has fewer than half as many lines, and the idea is under 40% of
+ * their length. A short idea with a short reply is no problem.
+ */
+function briefShortOfPlan(idea, text) {
+  const said = typeof idea === 'string' ? idea.trim() : '';
+  if (!said) return false;
+  const points = String(text || '').split(/\r?\n/).filter((line) => /^\s*(?:[-*•]|\d+[.)])\s+/.test(line));
+  if (points.length < 3) return false;
+  const lines = said.split(/\r?\n/).filter((line) => line.trim());
+  return lines.length < points.length / 2 && said.length < points.join('\n').length * 0.4;
+}
+
+/**
  * Pure (#6763): does this turn's thread already show New project at its foot,
  * or does the turn itself offer one? True when it called offer_new_project
  * (newProjectOffer); in the thread the bot opened for a new project
@@ -1311,6 +1327,11 @@ async function checkReply(pool, ctx, text) {
   } catch (err) {
     log.warn('reply-claims', 'Could not check the projects a reply names', { err: err.message });
   }
+  // #6784: an offer with a one-line idea while this same reply sets out a
+  // longer plan: the plan, not the line, is what the project is made from.
+  if (briefShortOfPlan(turn.newProjectBrief?.idea, text)) {
+    out.push({ kind: 'short_brief', said: 'offers New project with a one-line idea while its reply sets out a longer plan' });
+  }
   return out;
 }
 
@@ -1368,6 +1389,11 @@ function repairNote(problems, { tools = null } = {}) {
   const drafted = kinds.has('drafted')
     ? ` Your reply says a draft with File it and Not now is under it, but no draft is open in this conversation, so nothing is under it.${offered('offer_request') ? ' Call offer_request now with the project, title and details; if it is refused, say why plainly and do not mention File it.' : ' Do not mention File it.'} Then reply with one short line about the draft at most: the card under it shows its title and words, so never write them in your reply.`
     : '';
+  // #6784: the plan in the reply, not a line of it, is what the project is
+  // made from, so the offer is asked for again with all of it.
+  const shortBrief = kinds.has('short_brief')
+    ? ' Your offer_new_project idea is shorter than the plan in your reply. Call offer_new_project again with idea holding every point of the plan and every answer they gave, as bullets, then reply.'
+    : '';
   // 17 Nov 2026 (#6763): a New project pointed at with none under the reply.
   const newProject = kinds.has('new_project')
     ? ` Your reply points at a New project button under it, but none is there.${offered('offer_new_project') ? ' If they want to make a new app of its own, call offer_new_project now, then reply; otherwise ask what the app is for and do not mention New project.' : ' Do not mention New project.'}`
@@ -1399,7 +1425,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${drawing}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 
@@ -1492,6 +1518,7 @@ module.exports = {
   DRAWING_CLAIM,
   NEW_PROJECT_CLAIM,
   newProjectDoorShown,
+  briefShortOfPlan,
   NO_CONTROL_CLAIM,
   DESIGN_DONE,
   NOT_BUILT,

@@ -999,7 +999,7 @@ export type Mode =
   // `app`: handed to the app an invite opened (welcome), and down once it is drawn.
   | { kind: 'held'; app?: string }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
-  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
 
@@ -1215,7 +1215,7 @@ function viewerName(): string {
 export function openCreate(
   setMode: Dispatch<SetStateAction<Mode>>,
   startImport = false,
-  start: { idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience } = {},
+  start: { idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null } = {},
 ): boolean {
   // #6781: a name handed in is a new start, as a brief is: the form left
   // from Create does not come back under it (make.tsx forgetKeptDraft).
@@ -1229,8 +1229,8 @@ export function openCreate(
     // #6019 follow-up: a private thread's New project starts from its words,
     // for the audience the person chose. #6781: with the name the bot
     // suggested, when it named one.
-    return start.idea || start.name || start.audience
-      ? { kind: 'make', entry: 'create', idea: start.idea || null, name: start.name || null, ideaSource: start.ideaSource, audience: start.audience }
+    return start.idea || start.name || start.audience || start.threadRootId
+      ? { kind: 'make', entry: 'create', idea: start.idea || null, name: start.name || null, ideaSource: start.ideaSource, audience: start.audience, threadRootId: start.threadRootId ?? null }
       : { kind: 'make', entry: 'create' };
   }));
   if (opened) void invalidateAppAllowance();
@@ -1470,17 +1470,22 @@ export function FirstSession() {
       // The Create button (App.showCreateModal): the one front door for a
       // new project, for every signed-in viewer; `import` opens it on
       // importing a GitHub repo.
-      create(opts?: { import?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
+      create(opts?: { import?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null }): boolean {
         const audience = opts?.audience === 'solo' || opts?.audience === 'invited' || opts?.audience === 'open'
           ? opts.audience : undefined;
         const idea = typeof opts?.idea === 'string' ? opts.idea.slice(0, 4000) : null;
+        // #6784: the private thread the idea came from, so the project is
+        // made from the plan agreed there, not from a line of it. Only with
+        // an idea, and only a real message id.
+        const asked = Number(opts?.threadRootId);
+        const threadRootId = idea && Number.isSafeInteger(asked) && asked > 0 ? asked : null;
         // #6781: the name Homeroom bot suggested with its offer, editable.
         const name = typeof opts?.name === 'string' ? opts.name.trim().slice(0, 60) || null : null;
         // Create's door hands in a Discover search (#5928) or a private
         // thread's words (#6019), never a waitlist answer: only the first
         // session's own make screen says "from your waitlist answer".
         const ideaSource: IdeaSource = opts?.ideaSource === 'search' ? 'search' : 'thread';
-        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience });
+        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience, threadRootId });
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -1660,6 +1665,7 @@ export function FirstSession() {
         name={mode.name ?? null}
         ideaSource={mode.ideaSource ?? 'thread'}
         audience={mode.audience}
+        threadRootId={mode.threadRootId ?? null}
         underHeader={underHeader}
         // Nothing is answered: the tile behind is refreshed, so the new
         // project is in the grid when the made screen goes, and the

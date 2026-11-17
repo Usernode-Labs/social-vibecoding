@@ -1161,9 +1161,10 @@ const TOOLS = [
         properties: {
           idea: {
             type: 'string',
-            description: 'The project as you and they agreed it in this thread, in plain words, with their answers '
-              + 'folded in: what it does, who it is for and how it works. At most 4000 characters. Say what they '
-              + 'want, and leave out any limit you said was not possible.',
+            description: 'The project as you and they agreed it in this thread: every point of the plan as its own '
+              + 'bullet line, each feature you decided together and each answer they gave, in plain words. A one-line '
+              + 'pitch is not enough. At most 4000 characters. Say what they want, and leave out any limit you said '
+              + 'was not possible.',
           },
           name: { type: 'string', description: 'A short name for the project, at most 60 characters.' },
         },
