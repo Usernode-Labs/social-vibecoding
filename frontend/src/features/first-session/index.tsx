@@ -1230,7 +1230,7 @@ export function openCreate(
     // for the audience the person chose. #6781: with the name the bot
     // suggested, when it named one.
     return start.idea || start.name || start.audience || start.threadRootId
-      ? { kind: 'make', entry: 'create', idea: start.idea || null, name: start.name || null, ideaSource: start.ideaSource, audience: start.audience, threadRootId: start.threadRootId ?? null }
+      ? { kind: 'make', entry: 'create', idea: start.idea || null, name: start.name || null, ideaSource: start.ideaSource, audience: start.audience, ...(start.threadRootId ? { threadRootId: start.threadRootId } : {}) }
       : { kind: 'make', entry: 'create' };
   }));
   if (opened) void invalidateAppAllowance();
@@ -1470,14 +1470,15 @@ export function FirstSession() {
       // The Create button (App.showCreateModal): the one front door for a
       // new project, for every signed-in viewer; `import` opens it on
       // importing a GitHub repo.
-      create(opts?: { import?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience; threadRootId?: number | null }): boolean {
+      create(opts?: { import?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
         const audience = opts?.audience === 'solo' || opts?.audience === 'invited' || opts?.audience === 'open'
           ? opts.audience : undefined;
         const idea = typeof opts?.idea === 'string' ? opts.idea.slice(0, 4000) : null;
         // #6784: the private thread the idea came from, so the project is
         // made from the plan agreed there, not from a line of it. Only with
-        // an idea, and only a real message id.
-        const asked = Number(opts?.threadRootId);
+        // an idea, and only a real message id. It rides beside the door's
+        // own answers (the caller passes it on the same object).
+        const asked = Number((opts as { threadRootId?: unknown } | undefined)?.threadRootId);
         const threadRootId = idea && Number.isSafeInteger(asked) && asked > 0 ? asked : null;
         // #6781: the name Homeroom bot suggested with its offer, editable.
         const name = typeof opts?.name === 'string' ? opts.name.trim().slice(0, 60) || null : null;
@@ -1485,7 +1486,8 @@ export function FirstSession() {
         // thread's words (#6019), never a waitlist answer: only the first
         // session's own make screen says "from your waitlist answer".
         const ideaSource: IdeaSource = opts?.ideaSource === 'search' ? 'search' : 'thread';
-        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience, threadRootId });
+        if (threadRootId) return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience, threadRootId });
+        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience });
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -1665,8 +1667,8 @@ export function FirstSession() {
         name={mode.name ?? null}
         ideaSource={mode.ideaSource ?? 'thread'}
         audience={mode.audience}
-        threadRootId={mode.threadRootId ?? null}
         underHeader={underHeader}
+        threadRootId={mode.threadRootId ?? null}
         // Nothing is answered: the tile behind is refreshed, so the new
         // project is in the grid when the made screen goes, and the
         // allowance is read again.

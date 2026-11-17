@@ -725,7 +725,10 @@ export function MakeScreen({
       const reply = await postCreateApp({
         name: name.trim(),
         audience,
-        ...(ready ? { template: ready.template } : { brief: text.trim(), ...(threadRootId ? { thread: { rootId: threadRootId } } : {}), ...(starter ? { template: starter.template } : {}) }),
+        ...(ready ? { template: ready.template } : { brief: text.trim(), ...(starter ? { template: starter.template } : {}) }),
+        // #6784: the thread the plan was agreed in, never with a ready-made
+        // app (which has no brief to build from, and no thread to make).
+        ...(threadRootId && !ready ? { thread: { rootId: threadRootId } } : {}),
         // A ready-made app's description is the choice's own line. A game or
         // Your own words is built from what they typed, so the line is only
         // the card's fallback: the model writes its tagline from their words

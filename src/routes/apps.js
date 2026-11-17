@@ -1539,10 +1539,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // files it once its repository holds the starter. Never a reason the
         // create fails.
         if (owesFirstVersion) {
-          await optional('first_version', 'Homeroom bot first version not owed',
-            () => homeroomBotDm.recordFirstVersion(db, pool, config, {
-              app: appRow, user: req.user, brief: req.body.brief, design: fromDesign, thread: fromThread,
-            }));
+          await optional('first_version', 'Homeroom bot first version not owed', async () => {
+            const recorded = await homeroomBotDm.recordFirstVersion(db, pool, config, {
+              app: appRow, user: req.user, brief: req.body.brief, design: fromDesign,
+            });
+            // #6784: an idea thread's link, both ways, in the same savepoint
+            // and only once the first-version row is written.
+            if (recorded && fromThread) await homeroomBotDm.recordIdeaThread(db, { app: appRow, user: req.user, thread: fromThread });
+          });
         }
         await db.query('COMMIT');
       } catch (err) {

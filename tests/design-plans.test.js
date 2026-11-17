@@ -165,7 +165,10 @@ test('a new project\'s thread: its turns know what it is for, and a new one is t
 test('POST /api/apps takes a design: checked, its brief and plan from it, the card settled', () => {
   const route = read('src/routes/apps.js');
   assert.match(route, /fromDesign = await homeroomBotDm\.designForProject\(pool, \{ user: req\.user, design: req\.body\.design, brief: req\.body\.brief \}\);/);
-  assert.match(route, /app: appRow, user: req\.user, brief: req\.body\.brief, design: fromDesign, thread: fromThread,/);
+  assert.match(route, /app: appRow, user: req\.user, brief: req\.body\.brief, design: fromDesign,/);
+  // #6784 records the idea thread in the same transaction, once the first
+  // version is written, so the link is kept both ways.
+  assert.match(route, /if \(recorded && fromThread\) await homeroomBotDm\.recordIdeaThread\(db, \{ app: appRow, user: req\.user, thread: fromThread \}\);/);
   // #6784 adds a thread's own early plan beside the design's.
   assert.match(route, /earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign \|\| !!fromThread,/);
   const dm = require('../src/services/homeroom-bot-dm');

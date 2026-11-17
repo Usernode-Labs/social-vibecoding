@@ -282,8 +282,10 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   // #6019 follow-up: a private thread's New project says who it is for;
   // Create and the first session make a private project otherwise.
   assert.match(make, /audience = 'invited', threadRootId = null,\n\}: \{/);
-  assert.match(make, /audience,\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(threadRootId \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
-    'a ready-made app has nothing to build; a game preset sends its starter beside the brief, and a thread sends its root');
+  assert.match(make, /audience,\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
+    'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
+  assert.match(make, /\.\.\.\(threadRootId && !ready \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\),/,
+    'a thread sends its root with the brief, never with a ready-made app');
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
@@ -1235,7 +1237,7 @@ test('#6784: a thread\'s plan comes along, and the thread is sent with the brief
   // The body sends `thread` with the brief, and never with a ready-made app
   // (which sends no brief at all).
   assert.match(read(`${DIR}/make.tsx`),
-    /brief: text\.trim\(\), \.\.\.\(threadRootId \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\)/);
+    /\.\.\.\(threadRootId && !ready \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\),/);
   // Create's door takes a real message id, and only with an idea to make.
   const index = read(`${DIR}/index.tsx`);
   assert.match(index, /const threadRootId = idea && Number\.isSafeInteger\(asked\) && asked > 0 \? asked : null;/);

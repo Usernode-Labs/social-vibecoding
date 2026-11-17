@@ -6089,7 +6089,7 @@ function firstVersionStartedText({ name, hello = false, earlyPlan = false, fromD
 // The first request owed, written in the route's transaction (`db`) with
 // the project, so its making (src/workflow/app-creation/) finds it once its
 // setup ends. startFirstVersion, after the commit, says so.
-async function recordFirstVersion(db, pool, config, { app, user, brief, design = null, thread = null }) {
+async function recordFirstVersion(db, pool, config, { app, user, brief, design = null }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return false;
   // Read on the caller's transaction connection, never another from the pool
@@ -6104,8 +6104,6 @@ async function recordFirstVersion(db, pool, config, { app, user, brief, design =
     [app.id, user.id, text, botBuilds],
   );
   if (rows.length && design?.design) await recordDesignFirstVersion(db, { app, design, botBuilds });
-  // #6784: a project made from an idea thread keeps the link, both ways.
-  if (rows.length && thread?.thread) await recordIdeaThread(db, { app, user, thread });
   return rows.length > 0;
 }
 
@@ -7160,6 +7158,7 @@ module.exports = {
   postFirstDesignPlan,
   threadBrief,
   threadForProject,
+  recordIdeaThread,
   noteThreadSource,
   MIN_BRIEF_CHARS,
   HELP_TEXT,
