@@ -285,10 +285,16 @@ function Strip({ item, plates, shot, folded, ready, onAll, onTile }: {
 type View = { shot: number | null; phase: 'sheet' | 'opening' | 'live' | 'closing' };
 const SHEET_VIEW: View = { shot: null, phase: 'sheet' };
 
-function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }: {
+function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, appName = '' }: {
   item: ReviewItem;
   width: number;
   pageH: number;
+  /**
+   * The project's name, in bold before the line and above the full
+   * description. Drawn only in the all-projects Needs you, where nothing
+   * else names the project; a project's own Needs you already has it.
+   */
+  appName?: string;
   /**
    * How it came: 'enter' (the run opened on it: its plates are dealt),
    * 'push' (Next brought it), or 'still', the copy Next leaves behind,
@@ -447,11 +453,19 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore }
           full, as the bar's ⌄ does. The copy Next leaves behind is still. */}
       {onMore ? (
         <button type="button" className="rf-claim-row" onClick={onMore} aria-controls="rf-desc" data-rf-more="">
-          <span className="rf-claim" key={line || 'none'}>{line}</span>
+          <span className="rf-claim" key={line || 'none'}>
+            {appName ? <><strong className="rf-claim-app">{appName}</strong>{' '}</> : null}
+            {line}
+          </span>
           <span className="sr-only">{t('communities:review.desc.show')}</span>
         </button>
       ) : (
-        <div className="rf-claim-row"><p className="rf-claim" key={line || 'none'}>{line}</p></div>
+        <div className="rf-claim-row">
+          <p className="rf-claim" key={line || 'none'}>
+            {appName ? <><strong className="rf-claim-app">{appName}</strong>{' '}</> : null}
+            {line}
+          </p>
+        </div>
       )}
       <div ref={pictureRef} className="rf-picture" style={{ height, background: item.ground }} data-rf-picture="">
         {item.screens.length ? (
@@ -861,6 +875,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   // opened from. The shell's header steps aside for it on a phone, as it did
   // for the run's old head.
   const toProject = header === 'project' && item && item.app ? item.app.name : '';
+  // Across all projects, the line and the card start with the project's name:
+  // nothing else on this page says which one a change is for. Inside a
+  // project's own Needs you it is already on screen, so it stays as it was.
+  const appName = header === 'communities' && item && item.app ? item.app.name : '';
+  const leavingAppName = header === 'communities' && leaving && leaving.app ? leaving.app.name : '';
   const backName = t('communities:review.back.label', { place: toProject || t('core:tabs.home') });
 
   /* ── Drawing ── */
@@ -973,6 +992,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
         <div className="rf-desc-wrap" data-open={desc ? '' : undefined} style={{ top: barTop }} aria-hidden={!desc} inert={!desc || undefined}>
           <div className="rf-desc-dim" onClick={() => setDesc(false)} />
           <div className="rf-desc" id="rf-desc" data-rf-desc="">
+            {appName ? <p className="rf-desc-app">{appName}</p> : null}
             <p className="rf-desc-text">{item.summary || item.line}</p>
             {item.author ? <p className="rf-desc-by">{t('communities:review.desc.by', { name: item.author })}</p> : null}
             <div className="rf-desc-foot">
@@ -990,7 +1010,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
         <div ref={stageRef} className="rf-stage">
           {leaving && from ? (
             <div className="rf-stage-layer rf-stage-leaving" data-rf-leaving="" aria-hidden="true" inert>
-              <ChangeBody item={leaving} width={pw} pageH={ph} arrive="still" still={from.view} />
+              <ChangeBody item={leaving} width={pw} pageH={ph} arrive="still" still={from.view} appName={leavingAppName} />
             </div>
           ) : null}
           <div className={leaving ? 'rf-stage-layer rf-stage-arriving' : 'rf-stage-layer'} data-rf-arriving="">
@@ -1000,6 +1020,7 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
               width={pw}
               pageH={ph}
               arrive={from ? 'push' : 'enter'}
+              appName={appName}
               onView={(v) => { views.current[item.key] = v; }}
               onMore={() => setDesc(true)}
             />

@@ -23807,6 +23807,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-desc { position: absolute; inset-inline-start: 0; inset-inline-end: 0; top: 0; max-height: calc(100% - 48px); overflow-y: auto; padding-block: 6px 16px; padding-inline: 46px 16px; background: var(--rf-page); border-start-start-radius: 0; border-start-end-radius: 0; border-end-end-radius: 24px; border-end-start-radius: 24px; transform: translateY(-104%); transition: transform .32s cubic-bezier(0.22,1,0.36,1), box-shadow .32s; }
 .rf-desc-wrap[data-open] .rf-desc { transform: none; box-shadow: 0 16px 40px rgba(0,0,0,.18); }
 .rf-desc-text { margin: 0; font-size: 15px; line-height: 21px; color: var(--rf-muted); white-space: pre-line; overflow-wrap: anywhere; }
+/* Across all projects the card opens on the project's name: the same type as
+   the title, before the description's lighter grey. */
+.rf-desc-app { margin: 0 0 4px; font-size: 15px; line-height: 21px; font-weight: 650; color: var(--rf-ink); overflow-wrap: anywhere; }
 .rf-desc-foot { display: flex; margin-top: 16px; margin-inline-start: -30px; }
 .rf-desc-go { flex: 1; display: flex; align-items: center; justify-content: center; height: 44px; border-radius: 999px; background: var(--rf-fill); color: var(--rf-ink); font-size: 15px; font-weight: 600; text-decoration: none; }
 .rf-desc-by { margin: 8px 0 0; font-size: 13px; line-height: 18px; color: var(--rf-muted); }
@@ -23818,6 +23821,9 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 .rf-help-row + .rf-help-row::before { content: ''; position: absolute; inset-inline-start: 46px; inset-inline-end: 0; top: 0; height: 1px; background: var(--rf-line); }
 .rf-help-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .rf-claim { flex: none; margin: 0 0 14px; padding: 6px 16px 0; min-height: 42px; font-size: 15px; font-weight: 400; line-height: 21px; color: var(--rf-muted); text-wrap: pretty; animation: rf-claim-in .36s cubic-bezier(0.22,1,0.36,1); }
+/* The project's name leads the line across all projects, in the same bold ink
+   as the title; inline, so the line keeps its two-line height. */
+.rf-claim-app { font-weight: 650; color: var(--rf-ink); }
 @keyframes rf-claim-in { from { opacity: 0; transform: translateY(4px); } }
 .rf-hero-quiet { width: 100%; }
 .rf-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.62); opacity: 0; pointer-events: none; transition: opacity .22s cubic-bezier(0.22,1,0.36,1); }
