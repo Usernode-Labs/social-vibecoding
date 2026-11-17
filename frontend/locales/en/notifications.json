@@ -1748,8 +1748,8 @@
     "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says only when the phone reported that notifications were refused."
   },
   "ask.unsure": {
-    "text": "We couldn’t check notifications on this phone. Tap Notify me to try again.",
-    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says under its title when the phone's answer could not be read after Notify me; the button stays to try again."
+    "text": "We couldn’t check notifications on this phone.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says, in place of the question, when the phone's answer could not be read after Notify me. No retry button is shown."
   },
   "ask.turnOn": {
     "text": "Turn on notifications",
