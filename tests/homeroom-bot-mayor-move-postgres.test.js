@@ -158,6 +158,8 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
   const sam = await user('sam');
   const homeroom = await project('usernode-2d5619', sam, { members: [ada], title: 'Homeroom' });
   const ears = await project('ear-trainer', ada, { members: [sam] });
+  // #6771: a public project the requester can see but has not joined.
+  const bread = await project('bread-bot', sam, { title: 'Bread Bot' });
   await setting('homeroom_bot_mode', 'shadow');
   const settings = await homeroomBot.readSettings(pool);
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
@@ -452,6 +454,61 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     // The chat model sees why it was left.
     const detail = await mayor.requestDetail(pool, { user: ada, project: 'ear-trainer', number: 13, settings });
     assert.equal(detail.recentLooks[0].aboutHomeroom, true);
+  });
+
+  await t.test('#6771: a request about Bread Bot moves there, with its discussion, joining first and closing the original', async () => {
+    await request(15, { title: 'Bread timer skips the second rise', body: 'In Bread Bot the timer jumps straight to baking.' });
+    // Sam wrote in its discussion; the bot's own line went there too.
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+       VALUES ($1, $2, 'Same here, it skips the rise', 'message', 'issue', 15)`,
+      [ears.id, sam.id],
+    );
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref)
+       VALUES ($1, $2, 'I think this is about Bread Bot.', 'message', 'issue', 15)`,
+      [ears.id, bot.id],
+    );
+    // Offered to the same project it is on: refused.
+    const same = await turn('move #15 to ear trainer', [
+      [['offer_move_request', { project: 'ear-trainer', number: 15, reason: 'x', to: 'ear-trainer' }]],
+      [['reply', { text: 'It is already there.' }]],
+    ]);
+    assert.equal((await read(same)).metadata.homeroomBot.kind, 'chat', 'no offer to the same board');
+
+    const offered = await turn('this is about bread bot, move it there', [
+      [['offer_move_request', { project: 'ear-trainer', number: 15, reason: 'The timer is Bread Bot\'s', to: 'Bread Bot' }]],
+      [['reply', { text: 'Tap below to move it.' }]],
+    ]);
+    const meta = (await read(offered)).metadata.homeroomBot;
+    assert.deepEqual(meta.actions.map((a) => a.label), ['Join Bread Bot and move it', 'Keep it here']);
+    assert.equal(meta.question, 'Move this request from Ear trainer to Bread Bot?');
+    const action = await actionOf(offered.messageId);
+    assert.equal(Number(action.target_app_id), Number(bread.id));
+
+    const before = gh.created.length;
+    assert.equal((await tap(action, 'yes')).ok, true);
+    assert.equal(gh.created.length, before + 1);
+    const filed = gh.created.at(-1);
+    assert.equal(filed.repo, 'bread-bot', 'on the project it is really about');
+    assert.equal(filed.title, 'Bread timer skips the second rise');
+    assert.match(filed.body, /In Bread Bot the timer jumps straight to baking\./);
+    assert.match(filed.body, /Discussion on the original:\n\n@sam_\d+: Same here, it skips the rise/);
+    assert.doesNotMatch(filed.body, /I think this is about Bread Bot\./, 'the bot\'s own lines are left out');
+    // The requester joined the target before filing there.
+    const { rows: [joined] } = await pool.query(
+      'SELECT 1 FROM community_members WHERE community_id = $1 AND user_id = $2', [bread.community_id, ada.id],
+    );
+    assert.ok(joined, 'joined Bread Bot first');
+    // The original links to it and goes to a vote, naming the target.
+    assert.match(gh.comments.at(-1).body, /^Moved to Bread Bot's board as request #\d+:/);
+    const { rows: [vote] } = await pool.query(
+      `SELECT payload FROM issues WHERE app_id = $1 AND kind = 'close_issue' AND (payload->>'issueNumber')::int = 15`, [ears.id],
+    );
+    assert.match(vote.payload.reason, /^Moved to Bread Bot's board as request #\d+ \(.+\): it is about Bread Bot, not Ear trainer\.$/);
+    const { rows: [decided] } = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [action.id]);
+    assert.equal(decided.status, 'done');
+    assert.ok(Number(decided.issue_number) > 0);
   });
 
   await t.test('#4501: a project named inexactly is asked about on the card; its exact name files as before', async () => {
