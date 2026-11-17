@@ -775,10 +775,17 @@
     }
   }
 
+  // `imageOrientation: 'from-image'` because the re-encode below draws this
+  // bitmap onto a canvas, which carries no EXIF, so a phone photo's camera
+  // rotation has to be applied at decode. A bitmap decoded without it (the
+  // old default) is the raw sensor frame — a portrait photo with its width
+  // and height swapped — so the uploaded picture arrived on its side. An
+  // engine that does not know the option throws, and the <img> fallback
+  // below honours the rotation anyway.
   async function loadPickedImage(file) {
     if (typeof createImageBitmap === 'function') {
       try {
-        const bitmap = await createImageBitmap(file);
+        const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
         return {
           image: bitmap,
           width: bitmap.width,
