@@ -733,8 +733,14 @@ test('the retired pill, capsule and category well leave nothing behind', () => {
   // Stripped of comments: the note that replaced these rules names them.
   const css = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
   for (const rule of ['.home-challenge-pill', '.home-challenge-meter', '--home-meter-floor',
-    '.home-challenge-art', '.home-challenge-card {']) {
+    '.home-challenge-art']) {
     assert.ok(!css.includes(rule), `app.css still declares ${rule}`);
+  }
+  // No rule of the card's own. Standard (WIP) sizes and rounds the card where
+  // it sits in that look's Challenges row (tests/standard-wip-look.test.js),
+  // always from under html[data-skin-wip].
+  for (const m of css.matchAll(/([^{}]*)\.home-challenge-card \{/g)) {
+    assert.match(m[1], /html\[data-skin-wip\][^,]*$/, 'app.css still declares .home-challenge-card { (only Standard (WIP) may, in its own row)');
   }
   const src = challengesSrc();
   for (const gone of ['home-challenge-pill', 'home-panel-glyph', 'home-challenge-art',

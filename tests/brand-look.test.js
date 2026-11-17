@@ -536,8 +536,12 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   const block = lookBlock();
   assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
     'the face points at the self-hosted file by an absolute, same-origin path');
-  // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026).
-  assert.ok(!/Geist/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Geist');
+  // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026),
+  // but Standard (WIP)'s brand token config, which names it as that config's typeface and so
+  // loads the file only while that config is on.
+  const outside = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
+  assert.ok(!/Geist/.test(outside), 'nothing outside this look, Standard (WIP)\'s brand config and the signed-out pages\' names Geist');
+  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {

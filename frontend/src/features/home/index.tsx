@@ -121,6 +121,14 @@ import './home-layout.js';
 import './home-panels.js';
 import './home.js';
 
+/** Fold or unfold Pinned projects' grid: the flag "Show all N apps" has always set. */
+function foldApps(fold: boolean) {
+  const home = (window as any).Home;
+  if (!home) return;
+  home._appsExpanded = !fold;
+  home.render();
+}
+
 export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -130,7 +138,7 @@ export function HomeScreen() {
   // with no items and editing off, so the prerender and the first client
   // render draw no action at all.
   const grid = useStoreState(gridStore);
-  const { moreCount } = useStoreState(chromeStore);
+  const { moreCount, canFold } = useStoreState(chromeStore);
   // A look of the one frame draws this page in it (./frame/home-frame.tsx).
   // Read after mount only: the first render must match the prerendered
   // document, which knows no look (lib/skin.ts says why).
@@ -377,7 +385,7 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
-            ) : (canEdit || grid.create?.heldBack || (wip && moreCount > 0)) ? (
+            ) : (canEdit || grid.create?.heldBack || (wip && (moreCount > 0 || canFold))) ? (
               /* #5871: "Edit" is edit mode's own door. A hold on a tile used
                  to start it beside the tile's menu, so one press showed both;
                  a hold is the menu alone now, and arranging is asked for
@@ -394,15 +402,31 @@ export function HomeScreen() {
                     <span className="whitespace-nowrap">{t('home:edit.start')}</span>
                   </button>
                 ) : null}
+                {/* Standard (WIP): one link unfolds the grid and folds it
+                    again. See all while rows are held back; Show less once
+                    they are out and folding would hide some. */}
                 {wip && moreCount > 0 ? (
                   <button
                     type="button"
                     id="home-apps-see-all"
                     className={WIP_HEAD_LINK}
+                    aria-expanded={false}
+                    aria-controls="app-list"
                     aria-label={t('home:grid.showAll', { count: moreCount })}
-                    onClick={() => { const home = (window as any).Home; if (!home) return; home._appsExpanded = true; home.render(); }}
+                    onClick={() => { foldApps(false); }}
                   >
                     <span className="whitespace-nowrap">{t('home:grid.seeAll')}</span>
+                  </button>
+                ) : wip && canFold ? (
+                  <button
+                    type="button"
+                    id="home-apps-see-less"
+                    className={WIP_HEAD_LINK}
+                    aria-expanded
+                    aria-controls="app-list"
+                    onClick={() => { foldApps(true); }}
+                  >
+                    <span className="whitespace-nowrap">{t('home:grid.seeLess')}</span>
                   </button>
                 ) : null}
                 {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
@@ -432,10 +456,9 @@ export function HomeScreen() {
             want to make?" with the words typed in. Null in the prerender.
         */}
         {frame ? null : <HomeSearchMake />}
-        {/* Standard (WIP): Home is one column, and under Pinned projects one
-            row holds the Needs you card and Challenges
-            (app.css, "STANDARD (WIP)"). The card is drawn from 1280px;
-            narrower, the row is Challenges alone. */}
+        {/* Standard (WIP): Home is one column, and under Pinned projects the
+            Needs you card is a row of its own, then Challenges
+            (app.css, "STANDARD (WIP)"), at every width. */}
         {wip ? (
           <div id="home-row" className="home-row">
             {aside ? (
