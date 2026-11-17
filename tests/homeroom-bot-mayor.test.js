@@ -1166,9 +1166,13 @@ test('#6523: offer_new_project is the bot\'s to offer, in a private thread, and 
   assert.equal(inMain.sent[0].metadata.newProject, undefined, 'never with no thread to put it under');
   // The private prompt tells it when to offer one, and never for a question or a report.
   const plus = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'fix', appSlug: 'notes', appName: 'Notes' } } });
-  assert.match(plus, /When, and only when, this thread is an idea for a project of its own with no project yet, call\n  offer_new_project so New project shows under your reply\. Never for a question, a report, or a request about a\n  project that exists\./);
+  assert.match(plus, /shape it here\n  first: ask what it should do and put the plan here for them\. Once the plan is here, call\n  offer_new_project so New project shows under your reply, carrying their answers\./);
+  assert.match(plus, /Never offer it before the\n  plan, never for a question, a report, or a request about a project that exists, and never tell them to tap New\n  project unless you called it this turn\./);
   const idea = mayor.systemPrompt({ username: 'ada', thread: { draft: null } });
-  assert.match(idea, /only when, this thread is an idea for a project of its own with no project yet/);
+  assert.match(idea, /or they plainly ask to make or work\n  on a new app even before they say what it is/, 'a plain ask is enough, before the idea is named');
+  const earlier = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'earlier' } } });
+  assert.match(earlier, /or they plainly ask to make or work on a new app even before they say what it is\n  \(New project's screen asks what it should do\), call\n  offer_new_project so New project shows under your reply\./);
+  assert.match(tool.description, /or a plain ask to make or work on a new app before they have said what it is \(New project asks for the idea\)/);
   const project = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project' } } });
   assert.match(project, /New project is already at the foot of this thread, so do not call offer_new_project here\./);
 });

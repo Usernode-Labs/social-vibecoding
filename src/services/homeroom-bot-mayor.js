@@ -550,8 +550,11 @@ function otherThreadLines(thread) {
     lines.push(
       '- It is their Earlier chat thread: what you and they said before every conversation here became a thread of',
       '  its own. They can still write here. Nothing in it is filed until you offer it: once what they want is clear',
-      '  enough to build, offer it as a request with offer_request. When, and only when, they bring an idea for a',
-      '  project of its own with no project yet, call offer_new_project so New project shows under your reply.',
+      '  enough to build, offer it as a request with offer_request. When this thread is an idea for a project of its',
+      '  own with no project yet, or they plainly ask to make or work on a new app even before they say what it is',
+      '  (New project\'s screen asks what it should do), call',
+      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
+      '  project that exists. Never tell them to tap New project unless you called it this turn.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -564,19 +567,25 @@ function otherThreadLines(thread) {
       '  Help them say what they want. Once it is clear enough to build, offer it as a request with offer_request:',
       '  File it shows only under that offer, so make it then, without waiting to be asked. When they want to see how a',
       '  screen could look, call draw_screen: it is drawn here, in this thread, and changed at their word.',
-      // #6523: New project is offered, never guessed from the kind of thread.
-      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
-      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
-      '  project that exists.',
+      // #6523, #6763: New project is offered, never guessed from the kind of
+      // thread. 17 Nov 2026 (Evan): in this "+" thread the plan comes first,
+      // and New project follows it carrying their answers.
+      '  When this thread is an idea for a project of its own with no project yet, or they plainly ask to make or work',
+      '  on a new app even before they say what it is (New project\'s screen asks what it should do), shape it here',
+      '  first: ask what it should do and put the plan here for them. Once the plan is here, call',
+      '  offer_new_project so New project shows under your reply, carrying their answers. Never offer it before the',
+      '  plan, never for a question, a report, or a request about a project that exists, and never tell them to tap New',
+      '  project unless you called it this turn.',
     );
   } else if (!d) {
     lines.push(
       '- Nothing in this thread is filed until you offer it. Once what they want is clear enough to build, offer it as',
       '  a request with offer_request: File it shows only under that offer.',
-      // #6523: New project is offered, never guessed from the kind of thread.
-      '  When, and only when, this thread is an idea for a project of its own with no project yet, call',
+      // #6523, #6763: New project is offered, never guessed from the kind of thread.
+      '  When this thread is an idea for a project of its own with no project yet, or they plainly ask to make or work',
+      '  on a new app even before they say what it is (New project\'s screen asks what it should do), call',
       '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
-      '  project that exists.',
+      '  project that exists. Never tell them to tap New project unless you called it this turn.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
@@ -1116,9 +1125,10 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_new_project',
-      description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet) '
-        + 'and not a question, a report, or a change to a project that exists: put the New project button under your '
-        + 'reply. One per turn.',
+      description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet), '
+        + 'or a plain ask to make or work on a new app before they have said what it is (New project asks for the '
+        + 'idea), and not a question, a report, or a change to a project that exists: put the New project button under '
+        + 'your reply. One per turn.',
       parameters: { type: 'object', properties: {}, additionalProperties: false },
     },
   },

@@ -40,6 +40,10 @@
  * request or a change to a project that exists has no door, even when the
  * thread is not tied to a project.
  *
+ * 17 Nov 2026 (#6763): a "+" thread's project is the chip's preset (New chat
+ * starts on the project you were on), not what the idea is about, so the
+ * bot's offer opens New project there too, project set or not.
+ *
  * The first render is nothing: where the thread stands is read in an effect
  * (`usePrivateThread`, held by the thread's pane for its head and its foot).
  *
@@ -113,6 +117,9 @@ export function doorsFor(where: PrivateThreadState | null, botReplied: boolean, 
   if (!where || where.state !== 'open' || !botReplied || where.mine === false) return [];
   // B04: a screen drawn for no project yet is made into one, with its drawing.
   if (where.design && !where.app && where.kind !== 'draft_request' && where.kind !== 'draft_reply') return ['new'];
+  // #6763: a "+" thread's project is the chip's preset, not what the idea is
+  // about, so the bot's offer opens New project there even with one set.
+  if (where.kind === 'ask' && invited) return ['new'];
   // A design thread's bot offers the project itself (design-bot.js offer_project).
   if (where.kind === 'draft_request' || where.kind === 'draft_reply' || where.kind === 'design' || where.app) return [];
   return invited ? ['new'] : [];
