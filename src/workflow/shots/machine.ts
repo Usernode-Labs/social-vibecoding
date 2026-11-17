@@ -691,6 +691,32 @@ function traceOf(out: any): Json {
     tool: t.tool ?? null, toolCode: t.toolCode ?? t.code ?? null, toolMessage: t.toolMessage ?? t.message ?? null } } : {}) } as Json;
 }
 
+// The persona the sign-in was for, as the reason sentence names it.
+const SIGN_IN_PERSONAS: Readonly<Record<string, string>> = {
+  member: 'the member', admin: 'the admin', full_admin: 'the full admin', guest: 'the guest',
+  invited_member: 'the invited member', invited_member_listed: 'the invited member',
+};
+
+// A dispatch that failed while signing in to the preview, before the agent's
+// first tool ever started: the run did not get under way, so the slot should
+// say that rather than blame the agent. From the trace's kept auth_bootstrap
+// events, as src/services/shots-orchestrator.js records them. The cookie or
+// token is never part of the sentence: only fixed words and a code.
+function signInFailure(trace: any): string | null {
+  const activity = trace?.agentActivity;
+  if (!activity || typeof activity !== 'object') return null;
+  if (activity.firstAtMs && activity.firstAtMs.tool_start != null) return null;
+  const events = Array.isArray(activity.events) ? activity.events : [];
+  const failures = events.filter((event: any) => event && event.kind === 'auth_bootstrap' && event.outcome === 'error');
+  if (!failures.length) return null;
+  const event = failures[failures.length - 1];
+  const side = event.side === 'base' ? 'the before copy' : event.side === 'head' ? 'the after copy' : 'a copy';
+  const persona = SIGN_IN_PERSONAS[event.persona] || null;
+  const code = event.failureCode || event.errorClass || null;
+  return `Couldn’t sign in to ${side} of the preview`
+    + `${persona ? ` as ${persona}` : ''}${code ? ` (${code})` : ''}.`;
+}
+
 function agentDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: TransitionContext, deps: Deps): Outcome<SState> {
   const r = s.data.run!;
   const out = result(e);
@@ -720,10 +746,18 @@ function agentDone(s: Live, e: Event<WorkResultPayload>, f: Facts, ctx: Transiti
     });
   }
   if (agent.outcome !== 'completed' && !out.skippedAny) {
+    const trace = traceOf(out);
+    // The agent never got to start: it stopped signing in to a preview.
+    if (agent.outcome === 'failed' && agent.code === 'shots_agent_failed') {
+      const reason = signInFailure(trace);
+      if (reason) {
+        return fail(s, f, ctx, { code: 'shots_sign_in_failed', reason, fault: 'agent_exit', trace });
+      }
+    }
     const fault = agent.platformFault?.kind || agent.fault
       || (agent.outcome === 'died' || agent.code === 'shots_agent_failed' ? 'agent_exit' : null);
     return fail(s, f, ctx, { code: agent.code || 'shots_agent_failed', reason: agent.message || 'The shots agent stopped with an error before it finished.',
-      fault, retryAt: agent.retryAt, trace: traceOf(out) });
+      fault, retryAt: agent.retryAt, trace });
   }
   if (out.failedCount) return fail(s, f, ctx, { code: 'shots_change_failed', reason: out.failedReason, verdict: out.verdict, trace: traceOf(out) });
   return fail(s, f, ctx, { code: 'shots_capture_incomplete', reason: out.incompleteReason, verdict: out.verdict, trace: traceOf(out) });
