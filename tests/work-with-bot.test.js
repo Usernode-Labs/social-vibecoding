@@ -310,14 +310,22 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   // summary, before and after, Votes and Testing cards); not inside a
   // ballot's fold, where the ballot is what asks something. #6392: its vote
   // lines pick the words, and the bot building or fixing it leaves it out.
-  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} \/>\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{item\.number\}\s+voting=\{!!view\?\.v\.votes\.facts\?\.length\}\s+botAtWork=\{changeBotAtWork\(item, view\)\}\s*\/>/);
+  assert.match(changes, /const workWithBot = \(\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{item\.number\}\s+voting=\{!!view\?\.v\.votes\.facts\?\.length\}\s+botAtWork=\{changeBotAtWork\(item, view\)\}\s*\/>\s*\);/);
+  // Under the card look a change with a foot carries it at the foot's end,
+  // inside the band; otherwise it is the last thing in the change's section.
+  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} tail=\{footed \? workWithBot : null\} \/>\s*\{footed \? null : workWithBot\}/);
   // `botAtWork` is the bot still building it, or fixing or about to fix its
   // failing checks; a fix it handed back, stopped or found to be the
   // platform's is not the bot at work.
   assert.match(changes, /function changeBotAtWork\(item: ThreadItem, view: ChangeView \| null\): boolean \{\s*if \(item\.byBot && item\.state === 'underway' && !item\.ready\) return true;\s*const fix = view\?\.v\.testing\.botFix;\s*return fix === 'fixing' \|\| fix === 'queued';\s*\}/);
   const page = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(page, /\{v\.shots \? <ShotsCard s=\{v\.shots\} \/> : null\}\s*\{\/\*[^*]*\*\/\}\s*<WorkWithBotButton\s+slug=\{slug\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>/,
-    'the last of the change page\'s root post, under its cards, with the same two signals');
+  // Under the card look the root post ends in its foot (thread-card.tsx), so
+  // the button is the last thing in the post whichever look draws it.
+  assert.match(page, /const workWithBot = \(\s*<WorkWithBotButton\s+slug=\{slug\}\s+number=\{v\.number\}\s+voting=\{!!v\.votes\.facts\?\.length\}\s+botAtWork=\{v\.testing\.botFix === 'fixing' \|\| v\.testing\.botFix === 'queued'\}\s*\/>\s*\);/,
+    'the change page\'s own, with the same two signals');
+  // In the foot under the card look (thread-card.test.js); else the last of
+  // the root post, under its cards.
+  assert.match(page, /\{cardLook \? null : workWithBot\}\s*<\/div>\s*<\/article>/);
 });
 
 test('the bot tab says Waiting for you to OK the plan', () => {

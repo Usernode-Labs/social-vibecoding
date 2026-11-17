@@ -58,7 +58,7 @@ const Frame = memo(function Frame({ demo, cut }: { demo: boolean; cut: boolean }
     <div className="app">
       <div className="scroller" data-of="scroller">
         <div className="stage" data-of="stage">
-          <svg data-of="flow" role="img" aria-labelledby="admin-of-flow-title admin-of-flow-desc">
+          <svg className="of-flow" data-of="flow" role="img" aria-labelledby="admin-of-flow-title admin-of-flow-desc">
             <title id="admin-of-flow-title">Onboarding flows</title>
             <desc id="admin-of-flow-desc" data-of="flowDesc" />
             <defs data-of="defs" />

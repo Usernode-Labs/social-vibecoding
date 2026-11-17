@@ -92,6 +92,25 @@ test('a private thread is done, comes back, and finishes with its request', { ti
     assert.ok(changed.includes(evan.id), 'the bot page reads its lists again');
   });
 
+  // #6764 (17 Nov 2026): the person names their own thread; a name set by
+  // hand is theirs, and nobody else can rename it.
+  await t.test('#6764: Rename names their own thread, with their own source, and nobody else\'s', async () => {
+    const root = await say(evan, 'Map of place lists');
+    await say(bot, 'Sure, what places?', root);
+    const named = await privateThreads.rename(pool, { user: evan, rootId: root, title: '  Shared   map\nplace lists  ', deps });
+    assert.equal(named.ok, true, named.error);
+    assert.deepEqual({ title: named.title, titled: named.titled }, { title: 'Shared map place lists', titled: 'person' });
+    const { rows: [row] } = await pool.query('SELECT title, title_source FROM private_threads WHERE root_message_id = $1', [root]);
+    assert.deepEqual(row, { title: 'Shared map place lists', title_source: 'person' });
+    // The row and the open thread's head say the same name.
+    const { rows } = await pool.query(aiWork.PRIVATE_SQL, [evan.id, bot.id, aiWork.PRIVATE_MAX, aiWork.LIVE_DAYS]);
+    assert.equal(aiWork.shapePrivate(rows.find((r) => Number(r.root_id) === root)).title, 'Shared map place lists');
+    assert.equal((await privateThreads.stateOf(pool, { user: evan, rootId: root, deps })).title, 'Shared map place lists');
+    assert.equal((await privateThreads.rename(pool, { user: ada, rootId: root, title: 'Mine now', deps })).status, 404, 'somebody else\'s');
+    assert.equal((await privateThreads.rename(pool, { user: evan, rootId: root, title: '   ', deps })).status, 400);
+    assert.equal((await privateThreads.rename(pool, { user: evan, rootId: root, title: 'x'.repeat(81), deps })).status, 400);
+  });
+
   await t.test('a done thread stays findable for a week (#6271), and writing in it brings it back', async () => {
     const listed = async () => (await pool.query(aiWork.PRIVATE_SQL || '', [evan.id, bot.id, 50, aiWork.LIVE_DAYS]).catch(() => ({ rows: null }))).rows;
     const rows = await listed();

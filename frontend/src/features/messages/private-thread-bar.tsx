@@ -85,6 +85,12 @@ export interface PrivateThreadState {
    */
   title?: string | null;
   /**
+   * #6764 (17 Nov 2026): the thread's name is a stored one, an automatic
+   * summary ('auto') or the person's own ('person'), so the row and this
+   * head both take it ahead of the first words.
+   */
+  titled?: 'auto' | 'person';
+  /**
    * 1 Nov 2026: whether it is the viewer's private thread at all: a row of
    * theirs, or a root that is their own message (services/private-threads.js
    * stateOf). Absent from an older server (isOwnPrivateThread).
@@ -250,10 +256,10 @@ export function noteThreadName(rootId: number | null | undefined, name: string |
   if (rootId && said) serverNames.set(rootId, said);
 }
 
-/** Keep the names of the rows the server names by kind (the Homeroom bot page's read of its lists). */
-export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null }> | null | undefined): void {
+/** Keep the names of the rows the server names itself: by kind, or by a stored title (#6764). */
+export function noteThreadNames(rows: ReadonlyArray<{ rootId?: number | null; kind?: string | null; title?: string | null; titled?: string | null }> | null | undefined): void {
   for (const row of rows || []) {
-    if (row && KINDS_NAMED.has(String(row.kind))) noteThreadName(row.rootId, row.title);
+    if (row && (KINDS_NAMED.has(String(row.kind)) || row.titled)) noteThreadName(row.rootId, row.title);
   }
 }
 
@@ -270,15 +276,24 @@ export function usePrivateThread(rootId: number | null): [PrivateThreadState | n
     setWhere(null);
     if (!rootId) return undefined;
     let live = true;
-    fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!data || typeof data.state !== 'string') return;
-        noteThreadName(rootId, data.title);
-        if (live) setWhere(data);
-      })
-      .catch(() => {});
-    return () => { live = false; };
+    const read = () => {
+      fetch(`/api/conversations/homeroom-bot/threads/${rootId}`, { credentials: 'same-origin' })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (!data || typeof data.state !== 'string') return;
+          noteThreadName(rootId, data.title);
+          if (live) setWhere(data);
+        })
+        .catch(() => {});
+    };
+    read();
+    // #6764: an automatic title written after the bot's answer reaches an
+    // open head without a reload, as the lists re-read on the same push.
+    window.addEventListener('homeroom-bot-work-changed', read);
+    return () => {
+      live = false;
+      window.removeEventListener('homeroom-bot-work-changed', read);
+    };
   }, [rootId]);
   return [where, setWhere];
 }

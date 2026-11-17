@@ -5861,18 +5861,24 @@ async function startRequest(pool, ctx, args) {
   // named who. A go-ahead from that person is the decision the note asked
   // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
-    `SELECT verdict, reason, go_ahead_decides, first_step FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, go_ahead_blocker, first_step FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
   // 6 Nov 2026 (#6395): the last look left it for a person, and its read says
   // a go-ahead cannot settle it (operator work outside the app, or a
   // non-append-only database change). Queueing would only read it to the same answer.
-  if (lastLook[0]?.verdict === 'person' && lastLook[0].go_ahead_decides === false) {
+  // 17 Nov 2026: only a read that named which of the two it is
+  // (go_ahead_blocker) is said again. One stored before the read had to name
+  // it was often neither (a sign-in fix, a large request), so its go-ahead
+  // queues a fresh read below instead of the old refusal.
+  if (liveModule(deps).cannotStands(lastLook[0])) {
     return {
       ok: false,
       code: 'go_ahead_cannot',
-      said: liveModule(deps).goAheadCannotText({ reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username }),
+      said: liveModule(deps).goAheadCannotText({
+        reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username, blocker: lastLook[0].go_ahead_blocker,
+      }),
       next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
     };
   }

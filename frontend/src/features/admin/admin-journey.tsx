@@ -625,7 +625,9 @@ function momentLabel(m: { kind: string; how?: string; step?: number; steps?: num
   }
 }
 
-function PersonView({ userId, onBack, onName }: { userId: number; onBack: () => void; onName: (name: string) => void }) {
+const NOOP = () => {};
+
+function PersonView({ userId, onBack, onName, embedded = false }: { userId: number; onBack: () => void; onName: (name: string) => void; embedded?: boolean }) {
   const { data: p, failed } = useJourney<PersonData>(`/api/admin/journey/people/${userId}`);
   useEffect(() => { if (p) onName(p.name); }, [p, onName]);
   const section = (label: string, body: ReactNode) => (
@@ -636,11 +638,13 @@ function PersonView({ userId, onBack, onName }: { userId: number; onBack: () => 
   );
   let prevAt: string | null = null;
   return (
-    <section id="admin-journey-person" className={JUI.card}>
-      <div className="flex flex-wrap items-center gap-2 mb-1">
-        <button type="button" className={`${JUI.cohort} ${JUI.chipOff}`} onClick={onBack}>← Everyone</button>
-        <h3 className={AdminUI.sectionTitle}>{p ? p.name : 'Person'}</h3>
-      </div>
+    <section id={embedded ? undefined : 'admin-journey-person'} className={embedded ? '' : JUI.card} data-journey-person-embedded={embedded ? '' : undefined}>
+      {embedded ? null : (
+        <div className="flex flex-wrap items-center gap-2 mb-1">
+          <button type="button" className={`${JUI.cohort} ${JUI.chipOff}`} onClick={onBack}>← Everyone</button>
+          <h3 className={AdminUI.sectionTitle}>{p ? p.name : 'Person'}</h3>
+        </div>
+      )}
       {p ? (
         <>
           <p className={AdminUI.muted}>
@@ -823,7 +827,8 @@ function JourneySection() {
           <PersonView userId={person} onBack={() => setPerson(null)} onName={setPersonName} />
         </>
       ) : data ? (
-        <Growth data={data} onOpenPerson={openPerson} onLeftOut={() => setLeftOut(true)} onRefresh={reload} fetchJson={fetchJson} />
+        <Growth data={data} onOpenPerson={openPerson} onLeftOut={() => setLeftOut(true)} onRefresh={reload} fetchJson={fetchJson}
+          renderPerson={(id) => <PersonView userId={id} onBack={NOOP} onName={NOOP} embedded />} />
       ) : <div className={JUI.card}><Loading failed={failed} what="the growth reading" /></div>}
       {leftOut ? <LeftOutDialog onOpen={openPerson} onClose={closeLeftOut} /> : null}
     </div>

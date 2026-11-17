@@ -30,6 +30,12 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 
 const src = read('frontend/src/features/admin/admin-journey.tsx');
 const growth = read('frontend/src/features/admin/admin-growth.tsx');
+
+function binLabelOf(lo, next) {
+  const src = growth.match(/function binLabel\(lo: number, next: number \| undefined\): string \{([\s\S]{0,400}?)\n\}/)[1]
+    .replace(/: number/g, '').replace(/: string/g, '');
+  return new Function('lo', 'next', src)(lo, next);
+}
 const consoleJs = read('frontend/src/features/admin/admin-console.js');
 const sections = read('frontend/src/features/admin/sections.ts');
 const audit = read('scripts/audit-react-ownership.mjs');
@@ -83,8 +89,27 @@ test('the filters: view, when, who, and who is left out', () => {
   for (const f of ['view', 'when', 'who', 'left-out']) assert.ok(growth.includes(`data-growth-filter="${f}"`), `the ${f} row`);
   for (const v of ['Overview', 'Activity', 'Groups', 'Sources', 'Scope']) assert.ok(growth.includes(`'${v}']`), `the ${v} view`);
   assert.match(growth, /useState<Who>\('newcomers'\)/, 'newcomers by default');
-  assert.match(growth, /Excluding Season 1 · \{counts\.newcomers\}/);
-  assert.match(growth, /Including Season 1 · \{counts\.all\}/);
+  assert.match(growth, /Without early members · \{counts\.newcomers\}/);
+  assert.match(growth, /Including early members · \{counts\.all\}/);
+  // Newcomers brought in by early members are newcomers, left out by default:
+  // an admit day says how many came in all ("30 of 36").
+  assert.match(growth, /Newcomer, brought in by an early member/);
+  assert.match(growth, /function BroughtToo\(/);
+  assert.match(growth, /<BroughtToo r=\{r\} list=\{data\.people\.filter/);
+  assert.doesNotMatch(growth, /Excluding Season 1|Including Season 1/, 'early members, not Season 1, name the filter');
+});
+
+test('activity: time in an app, either side of the 30-second line', () => {
+  assert.ok(growth.includes('id="admin-growth-time"'), 'the card');
+  assert.match(growth, /<TimeInApp data=\{data\} r=\{r\} \/>/, 'drawn on the Activity view');
+  assert.ok(growth.includes('data-growth-hist={id}'), 'two histograms share one drawing');
+  assert.match(growth, /label: 'No app time'/, 'opened but never in an app has its own column');
+  assert.match(growth, /const under = \(i: number\) => bins\[i\] < data\.staySeconds;/, 'the line is the Stayed bar, read from the payload');
+  assert.ok(growth.includes('data-growth-time-gap'), 'the gap either side of the line, in words');
+  assert.equal(binLabelOf(1, 5), '1–4 s');
+  assert.equal(binLabelOf(30, 60), '30–59 s');
+  assert.equal(binLabelOf(120, 300), '2–5 min');
+  assert.equal(binLabelOf(900, undefined), '15 min+');
   assert.match(growth, /useState<When>\(\{ kind: 'all', week: lastWeek \}\)/, 'since the era by default');
   assert.match(growth, />Last 4 weeks</);
   assert.match(growth, /aria-label="Week before"/);
@@ -95,10 +120,31 @@ test('the overview: a north star, a funnel with a cohort on top, and the people 
   assert.ok(growth.includes('id="admin-journey-north-star"'), 'the tiles keep the declared check\'s anchor');
   assert.match(growth, /term\('together', 'Active groups'\)/, 'and its words');
   assert.match(growth, /const STEPS = \['Let in', 'Opened Homeroom', 'Stayed 30 s\+', 'Used it with a group', 'Came back together'\];/);
-  assert.match(growth, /aria-label=\{`List the people at \$\{label\}`\}/, 'a step opens its people');
-  assert.match(growth, /<Drawer kicker="Reached this step"/);
-  assert.match(growth, /onClick=\{\(\) => onOpenPerson\(p\.userId!\)\}/, 'a person opens in Journey');
+  assert.match(growth, /<Count row \{\.\.\.stepOf\(i\)\} className="relative block h-11">/, 'a step opens its people');
+  assert.match(growth, /kicker: 'Reached this step', title: STEPS\[i\], list: atStep\(i\)/);
+  assert.match(growth, /onClick=\{\(\) => onOpenPerson\(p\.userId!\)\}/, 'a person still opens on its own page');
   assert.match(growth, /const SAVED_KEY = 'homeroom\.admin\.growth\.cohorts';/, 'saved cohorts stay in this browser');
+});
+
+test('every number or bar that counts people opens them in one sidebar', () => {
+  assert.match(growth, /const PeopleCtx = createContext</, 'one sidebar for the page');
+  assert.match(growth, /<PeopleDrawer key=\{shown\.seq\}/);
+  assert.match(growth, /disabled=\{!list\.length\}/, 'an empty count opens nothing');
+  // Each place a count is drawn: its Count, so a tap lists exactly those people.
+  for (const kicker of ['Admit mail', 'Stopped here', 'First active', 'Weeks active, last 4', 'Last 7 days',
+    "In Analytics' WAU", 'Group', 'Heard about it', 'Way in', 'Admit day', 'This scope']) {
+    assert.ok(growth.includes(`kicker="${kicker}"`) || growth.includes(`kicker: '${kicker}'`), `${kicker} opens its people`);
+  }
+  assert.match(growth, /<Bars values=\{vals\} labels=\{labels\} fade=\{fade\} tone=\{tone\} lists=\{lists\} \/>/, 'every weekly bar');
+  assert.match(growth, /aria-label="Previous person"/);
+  assert.match(growth, /aria-label="Next person"/);
+  assert.match(src, /renderPerson=\{\(id\) => <PersonView userId=\{id\} onBack=\{NOOP\} onName=\{NOOP\} embedded \/>\}/,
+    'a person opens in Journey\'s own view, inside the sidebar');
+});
+
+test('Analytics\' WAU is broken down by what its people did', () => {
+  assert.match(growth, /term\('wauDid', 'What they did in those 7 days'\)/);
+  for (const row of ['Acted: wrote, voted or built', 'Stayed 30 s+, no act', 'Glanced: under 30 s, or kudos']) assert.ok(growth.includes(`'${row}'`), row);
 });
 
 test('nothing from the API is a link, and no chart library is loaded', () => {

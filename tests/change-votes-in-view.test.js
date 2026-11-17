@@ -127,7 +127,10 @@ test('the card is brought into view and held there while the page settles, until
 test('the change page takes its ask when it draws the Votes card, or hears one while it is up', () => {
   const head = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.match(head, /import \{ holdVotesInView, onVotesAsked, takeVotesInView \} from '\.\/votes-in-view';/);
-  assert.match(head, /const card = pair\.current\?\.querySelector<HTMLElement>\('\[data-change-gate="votes"\]'\);\n\s+if \(!card \|\| !takeVotesInView\(id\)\) return;/);
+  // Under the card look the vote is the card's foot (the Votes card is in
+  // the layer its step opens), so the foot is what is brought into view;
+  // under the frame's looks it is the Votes card as before.
+  assert.match(head, /const card = pair\.current\?\.closest\('\[data-thread-card\]'\)\?\.querySelector<HTMLElement>\('\.dev-thread-foot'\)\n\s+\|\| pair\.current\?\.querySelector<HTMLElement>\('\[data-change-gate="votes"\]'\);\n\s+if \(!card \|\| !takeVotesInView\(id\)\) return;/);
   assert.match(head, /const off = onVotesAsked\(show\);\n\s+return \(\) => \{ off\(\); release\?\.\(\); \};\n\s+\}, \[id\]\);/);
   assert.match(head, /<ChangeGates ref=\{pair\} id=\{id\} card=\{card\} v=\{v\} \/>/);
   assert.match(head, /<div\s+ref=\{setPair\}\s+className="dev-change-pair"/, 'the pair the ref is on leads with Votes');

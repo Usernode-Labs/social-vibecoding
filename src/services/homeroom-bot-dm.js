@@ -2019,7 +2019,7 @@ function requestNews(kind, dm, context) {
       // approved that somebody needs to approve.
       if (dm.goAheadDecides === false) {
         return `${line}\n\nThis needs a person to build, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
-          + 'I don\'t build changes like this myself, even with a go-ahead. A person has to build it, '
+          + `${require('./homeroom-bot-live').cannotLead(dm.blocker)}. A person has to build it, `
           + 'for example you with a coding agent, and the group votes on it as usual. '
           + require('./homeroom-bot-live').canBuildPart(dm.firstStep);
       }
@@ -5106,6 +5106,17 @@ async function answerOwed(pool, config, {
   const sent = attempt > 0
     ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
     : await noteUserMessage(pool, config, { user, conversationId: Number(conversationId), message, deps: turnDeps });
+  // #6764 (17 Nov 2026): once the bot has answered in a new thread, name it
+  // with a short summary of the exchange, in the background, so the answer
+  // is never slower. It stores nothing when the thread has a name already,
+  // or when the exchange was only a greeting; a failure keeps the first words.
+  if (sent) {
+    const name = deps.autoTitle
+      || ((args) => require('./private-threads').autoTitle(pool, args));
+    Promise.resolve()
+      .then(() => name({ userId: Number(userId), conversationId: Number(conversationId), messageId: Number(messageId), deps }))
+      .catch(() => {});
+  }
   return { sent: !!sent, later };
 }
 

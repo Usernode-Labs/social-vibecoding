@@ -56,6 +56,8 @@ const COMPONENTS = new Set([
   // Helpers that moved to GLM 5.3 Flash with a Haiku fallback (llm.js
   // helperMessage), each named so its speed and fallback rate read on their own.
   'short_description',
+  // The summary at the top of a request's page (services/request-summary.js).
+  'request_summary',
   'app_sketch',
   // The kind the public directory sorts a project under when its group chose
   // none (services/app-category.js).
@@ -1225,7 +1227,7 @@ const HELPER_CALL_COMPONENTS = Object.freeze([
   'issue_title', 'quick_replies', 'short_description', 'chat_ask', 'workshop_ask',
   'app_sketch', 'app_category', 'first_version_plan', 'first_version_look', 'session_title',
   'progress_estimate', 'challenge_grade', 'challenge_grade_feedback', 'challenge_grade_proposal',
-  'report_summary', 'content_review', 'small_change', 'checks_explanation',
+  'report_summary', 'content_review', 'small_change', 'checks_explanation', 'request_summary',
 ]);
 
 const HELPER_CALLS_SQL = `
