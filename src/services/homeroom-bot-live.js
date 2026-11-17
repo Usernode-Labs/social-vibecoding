@@ -238,7 +238,7 @@ function personText({ reason, platform = false, project = null, done = false, wi
       + 'Anyone in the project can propose to close it, or reply here to keep it going.';
   }
   // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (operator work
-  // outside the app, or a database change that is not append-only), so the copy
+  // outside the app, or a database change that could lose data already stored), so the copy
   // names no Go ahead and ends with the part it can build. 17 Nov 2026: it
   // says which of the two it is (cannotLead), not one sentence for both.
   if (goAheadDecides === false) {
