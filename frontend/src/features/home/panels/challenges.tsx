@@ -62,11 +62,70 @@
  * silent on failure); there is no error state to draw.
  */
 
+import { resolveIllustration } from '../../../lib/challenge-illustrations';
+import { useLiveSkin } from '../../../lib/skin';
 import { ChallengeCard } from '../../leaderboard/challenge-card';
-import type { ChallengesView } from '../panels-store';
+import type { ChallengeRowView, ChallengesView } from '../panels-store';
+import { WipCard } from '../wip-kit';
 import { PanelShell, panels } from './ui';
 
+/** A challenge's picture as a column's banner: its illustration on its tone, else its kind's icon. */
+function WipChallengeArt({ row }: { row: ChallengeRowView }) {
+  const art = resolveIllustration(row.illustration, row.illustrationTone);
+  if (art) {
+    return (
+      <span className={`wip-poster-art ${art.toneClass}`} aria-hidden="true">
+        <img src={art.src} alt="" width={64} height={64} draggable={false} />
+      </span>
+    );
+  }
+  return <span className="wip-poster-art" aria-hidden="true">{row.icon || ''}</span>;
+}
+
+/**
+ * Standard (WIP) (lib/skin.ts): the challenges as posters in the look's own
+ * kit (../wip-kit.tsx, app.css "STANDARD (WIP)"), inside the section's one
+ * card and with no card of their own. Each is as wide as one of the look's
+ * columns, and the row scrolls sideways for the rest. A poster is the
+ * challenge's picture across its top on the picture's own tone, then its
+ * goal, where the viewer stands and what it is worth on one line, and a
+ * meter: empty before it is started, the accent as far as it has come, green
+ * when it is done.
+ */
+function WipChallengePosters({ view }: { view: ChallengesView }) {
+  return (
+    <WipCard className="wip-posters" data-wip-challenges="">
+      {view.rows.map((row) => {
+        const pct = row.state === 'done' ? 100
+          : row.fill != null ? Math.round(Math.max(0, Math.min(row.fill, 1)) * 100)
+          : row.state === 'progress' ? 8 : 0;
+        return (
+          <button
+            key={row.id}
+            type="button"
+            className="wip-poster"
+            data-challenge-id={row.id}
+            data-state={row.state}
+            onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+          >
+            <WipChallengeArt row={row} />
+            <b className="wip-item-title">{row.goal}</b>
+            <span className="wip-poster-facts">
+              <span className="wip-item-meta">{row.stateLabel}</span>
+              {row.earned || row.reward ? (
+                <span className={row.earned ? 'wip-poster-worth wip-poster-worth-ok' : 'wip-poster-worth'}>{row.earned || row.reward}</span>
+              ) : null}
+            </span>
+            <span className="wip-meter" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
+          </button>
+        );
+      })}
+    </WipCard>
+  );
+}
+
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
+  const wip = useLiveSkin() === 'wip';
   if (view.note) {
     return (
       <PanelShell panelKey={view.key} plate="none" stamps={{ rows: 0 }}>
@@ -86,6 +145,14 @@ export function ChallengesPanel({ view }: { view: ChallengesView }) {
             </p>
           </div>
         </div>
+      </PanelShell>
+    );
+  }
+
+  if (wip) {
+    return (
+      <PanelShell panelKey={view.key} plate="none" stamps={{ rows: view.rows.length }}>
+        <WipChallengePosters view={view} />
       </PanelShell>
     );
   }

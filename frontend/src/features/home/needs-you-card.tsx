@@ -25,7 +25,8 @@ import { sharedJson } from '../../lib/shared-read';
 import { useStoreState } from '../../lib/use-store-state';
 import { placeHref } from '../dev-board/workshop/places';
 import { communityScopeStore } from '../workshop/community-scope';
-import { WIP_CARD, WIP_HEAD_LINK } from './wip-kit';
+import { SectionHeading } from './panels/ui';
+import { WipCard, WipHeadMore } from './wip-kit';
 
 /** What the card reads of a feed item (../workshop/needs-reel.tsx NeedsFeedItem). */
 export interface NeedsCardItem {
@@ -119,17 +120,25 @@ export function NeedsYouCard(): ReactNode {
   const more = (feed || []).length - rows.length;
 
   return (
-    <section id="home-needs-card" className={`${WIP_CARD} wip-panel`} aria-labelledby="home-needs-card-title" data-needs={String(summary.total)}>
-      <div className="wip-panel-head">
-        <h2 id="home-needs-card-title" className="wip-panel-label">{t('home:needsCard.eyebrow')}</h2>
-        <span className="wip-count" aria-hidden="true">{summary.total}</span>
+    <section id="home-needs-card" aria-label={t('home:needsCard.eyebrow')} data-needs={String(summary.total)}>
+      {/* The section's label line, on the page as every section's is: the
+          label, the count beside it and a chevron, all one link that opens
+          all of Needs you. */}
+      <SectionHeading>
+        <WipHeadMore
+          id="home-needs-card-btn"
+          direction="right"
+          href="#needs"
+          label={more > 0 ? t('home:needsCard.seeAllCount', { count: summary.total }) : t('home:needsCard.seeAll')}
+        >
+          <span id="home-needs-card-title">{t('home:needsCard.eyebrow')}</span>
+          <span className="wip-count" aria-hidden="true">{summary.total}</span>
+        </WipHeadMore>
         <span className="sr-only">{t('home:needsCard.waiting', { count: summary.total })}</span>
-        <a id="home-needs-card-btn" href="#needs" className={`${WIP_HEAD_LINK} wip-panel-link`}>
-          {more > 0 ? t('home:needsCard.seeAllCount', { count: summary.total }) : t('home:needsCard.seeAll')}
-        </a>
-      </div>
+      </SectionHeading>
       {/* What waits, in one to four columns by the room there is, each a row that opens its project's Needs you. */}
       {rows.length ? (
+        <WipCard className="wip-panel">
         <ul className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">
           {rows.map((item) => {
             const slug = item.app?.slug || '';
@@ -154,6 +163,7 @@ export function NeedsYouCard(): ReactNode {
             );
           })}
         </ul>
+        </WipCard>
       ) : null}
     </section>
   );
