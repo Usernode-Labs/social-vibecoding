@@ -120,6 +120,21 @@ test('the prompt names each failing check and what it said, as data, and offers 
   assert.match(long, /- and 8 more, not listed here/);
 });
 
+test('#6777: a triage prompt size failure sends the fix turn to trim that part first', () => {
+  const failing = [{
+    name: 'runTriage: the request comes first',
+    reason: 'triage prompt part "ready" (src/prompts/homeroom-bot-triage.md) is 4,120 chars, 170 over its budget of 3,950',
+  }];
+  const prompt = followup.checksFixPrompt({ seed: 'S', failing, total: 1 });
+  assert.match(prompt, /it names the part that went over its budget/);
+  assert.match(prompt, /Trim the text in that part that this change grew/);
+  assert.match(prompt, /Raise only that part's own budget on its marker/);
+  const unrelated = followup.checksFixPrompt({
+    seed: 'S', failing: [{ name: 'loads', reason: 'TypeError: x is undefined' }], total: 1,
+  });
+  assert.doesNotMatch(unrelated, /it names the part that went over its budget/);
+});
+
 test('what it says has no em dashes, and the hand-off says a person takes it', () => {
   const texts = [
     followup.checksRevisedText({ failing: [{ name: 'The settings button reads "Text size"', path: 'tests/settings.test.js' }] }),
