@@ -371,3 +371,64 @@ test('conventions doc says a game draws its play area on a canvas, with what tha
   const lines = require('../src/services/homeroom-bot-live.js').FIRST_VERSION_DESIGN_LINES.join(' ').replace(/\s+/g, ' ');
   assert.ok(lines.includes(cite), 'the build cites the section by its heading');
 });
+
+// 17 Nov 2026 (#6769): the data rules were written as whole-topic bans, so
+// the bot refused a gym log, a game PIN, a choir rota or a Spotify playlist
+// sync. Each line now bans what was actually meant, and the document no
+// longer contradicts itself with Stripe and "charge real cards" examples.
+test('the data rules ban what is meant, not whole topics (#6769)', () => {
+  const prompts = require('../src/services/prompts.js');
+  const { content } = prompts.getConventionSection('data-rules-what-no-app-may-collect-or-load');
+  const flat = content.replace(/\s+/g, ' ');
+
+  // 1. Sign-in stays Homeroom-only; connecting an outside account is allowed.
+  assert.match(flat, /People sign in to the app only through Homeroom/);
+  assert.match(flat, /no "Sign in with X"/);
+  assert.match(flat, /Connecting a person's account on another service so the app can use its data \(OAuth\) is allowed\./);
+  assert.match(flat, /client secret as a private secret and the tokens in a private table/);
+
+  // 2. Passwords and PINs mean account credentials; app-made codes are fine.
+  assert.match(flat, /Never ask for or store a person's password or PIN for an account/);
+  assert.match(flat, /payment card number or security code/);
+  assert.match(flat, /Codes the app makes for its own use, such as a game PIN or a room code, are not passwords\./);
+
+  // 3. Children means under 13, Homeroom's minimum age.
+  assert.match(flat, /Nothing designed for or marketed to children under 13/);
+  assert.match(flat, /Homeroom's minimum age/);
+  assert.match(flat, /family or class tool used by adults and teens is fine/);
+
+  // 4. Sensitive data is about profiling people, not the topic.
+  assert.match(flat, /Profiling people by sensitive traits/);
+  assert.match(flat, /sort, rank or target people by them/);
+  assert.match(flat, /A club or topic in these areas is fine \(a choir/);
+  assert.match(flat, /a note a person chooses to enter about themselves/);
+  assert.match(flat, /keep it in a private table/);
+
+  // 5. Payments are banned plainly, through any provider.
+  assert.match(flat, /No payments: apps don't charge money or take card details, through any provider\./);
+
+  // The old whole-topic lines are gone.
+  assert.doesNotMatch(flat, /No app is designed or marketed for children\./);
+  assert.doesNotMatch(flat, /Never ask for, infer or store health/);
+  assert.doesNotMatch(flat, /no other identity provider/);
+  assert.doesNotMatch(flat, /Never ask for, receive or store a password, PIN, card number or security code, seed data included\./);
+
+  // "When unsure" now covers only what the lines do not.
+  assert.match(flat, /When unsure about anything the lines above do not cover, treat it as not allowed and ask\./);
+
+  // The document no longer contradicts itself about payments or passwords.
+  const doc = getAppConventions();
+  assert.doesNotMatch(doc, /STRIPE_SECRET_KEY/);
+  assert.doesNotMatch(doc, /charging cards/);
+  assert.doesNotMatch(doc, /charge real cards/);
+  assert.doesNotMatch(doc, /password hashes/);
+  assert.match(doc, /WEATHER_API_KEY/);
+
+  // Essentials rule 12 carries the same five changes in one paragraph.
+  const essentials = prompts.getWorkOrderEssentials().replace(/\s+/g, ' ');
+  assert.match(essentials, /only through Homeroom/);
+  assert.match(essentials, /under 13|under-13s/);
+  assert.match(essentials, /payments/);
+  assert.match(essentials, /account passwords or card data/);
+  assert.match(essentials, /connecting an outside account for its data is fine/);
+});

@@ -31,6 +31,15 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /Nothing is filed until they tap File it/);
   assert.match(prompt, /Finish every turn by calling reply exactly once/);
   assert.match(prompt, /Decline, in one friendly sentence, what the platform's content rules forbid \(sexual content or nudity,/);
+  // 17 Nov 2026 (#6769): the data-rules decline names what is actually
+  // banned, and says what is allowed, instead of refusing whole topics.
+  assert.match(prompt, /anything the platform's data rules forbid: trackers, ads or outside scripts, a login/);
+  assert.match(prompt, /children under 13, or an app that profiles or targets people by health, religion, sexuality, ethnicity,/);
+  assert.match(prompt, /Connecting an outside account for its data, codes the app makes such as a game/);
+  assert.match(prompt, /family and class tools, and clubs or topics in those areas are allowed: never decline those\./);
+  assert.doesNotMatch(prompt, /an app for children, collecting passwords or card data/,
+    'the old topic-ban line is gone');
+  assert.doesNotMatch(prompt, /data rules forbid: trackers, ads or outside scripts, health,/);
   // Reads go one per project; builds up to the builds-per-project setting.
   assert.match(prompt, /on up to 2 of their requests at once: you read one request per\nproject at a time, and build up to 5 per project at once\./);
   // The atOnce line a status answer carries names the same setting.

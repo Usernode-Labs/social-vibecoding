@@ -74,9 +74,14 @@ test('the review holds a change to the data rules too, read from their section (
   await run({ deps });
   assert.ok(calls.system.includes(data.content), 'the data rules are read from the conventions, never copied');
   assert.match(calls.system, /content rules and data rules/);
-  for (const term of [/trackers/, /special-category data/, /children/, /passwords or payment card data/, /login, signup or outside sign-in/]) {
+  for (const term of [/trackers/, /special-category/, /under 13/, /passwords or PINs/, /payment/, /Sign in with/]) {
     assert.match(calls.system, term);
   }
+  // 17 Nov 2026 (#6769): the reviewer is told what is never a flag, so it
+  // stops reading "outside account" and "a health club" as breaks.
+  assert.match(calls.system, /An OAuth connection that uses a person's outside account for its data/);
+  assert.match(calls.system, /a club or topic in those areas, and a note a person enters about themselves are never a flag/);
+  assert.doesNotMatch(calls.system, /special-category data, passwords or payment card data/);
   // Without the section the review still runs on the content rules alone.
   const plain = contentReview.buildSystemPrompt('RULES');
   assert.match(plain, /against the platform's content rules below/);

@@ -57,7 +57,7 @@ function promptLines(ctx) {
     '  as a gallery under your reply, which they tap to propose one as the card picture (only where they may), to use one in',
     '  the app, or to get more like one. Each picture counts toward their own week of building time and a weekly number of',
     '  pictures; say so when they ask what it costs. You cannot see the pictures, so never say what one shows. Content',
-    '  rules: nothing sexual or suggestive, no violence or weapons, no gambling, nothing aimed at children, no real',
+    '  rules: nothing sexual or suggestive, no violence or weapons, no gambling, nothing aimed at children under 13, no real',
     '  person\'s likeness and no brands or logos they did not give you. Decline those plainly instead of calling it.',
     '  When they ask to use a picture in the app, offer a request (offer_request) whose details carry the picture\'s link',
     '  exactly as they gave it, on a line of its own, so the build can download it. When they ask for more like one, call',
