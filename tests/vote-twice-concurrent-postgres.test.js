@@ -7,14 +7,15 @@
 // announced: two "voted yes" lines in the change's discussion, two author
 // notifications, two tally pushes.
 //
-// The write now decides. recordVote's ON CONFLICT DO UPDATE carries a WHERE
-// that skips the update when the stored row already holds this same side at
-// the same epoch with no new words; the FOR UPDATE on chat_sessions orders
-// the two statements, so the second sees the first's row and answers
-// `changed = false`. The route uses that for its unchanged early return.
+// recordVote now decides it inside one transaction. It takes the FOR UPDATE
+// lock on chat_sessions first and reads the person's vote in its OWN
+// statement after it, so the second request waits for the first to commit
+// and then sees the row it wrote. That request answers `unchanged: true`,
+// and the route skips the vote line, the author's notification and the
+// tally push for it.
 //
-// Against the REAL schema in a throwaway PostgreSQL database, so the ON
-// CONFLICT's concurrency behaviour is the one that ships (a stub could only
+// Against the REAL schema in a throwaway PostgreSQL database, so the row
+// lock's concurrency behaviour is the one that ships (a stub could only
 // pretend).
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/vote-twice-concurrent-postgres.test.js
@@ -197,8 +198,10 @@ test('two identical Yes presses at once record one vote and announce it once', {
     subject.recordVote({ pool, session: first, userId: kampred.id, vote: 'yes', headSha: HEAD, revisionEnforced: false }),
     subject.recordVote({ pool, session: first, userId: kampred.id, vote: 'yes', headSha: HEAD, revisionEnforced: false }),
   ]);
-  const verdicts = [a, b].map((r) => r.rows[0]?.changed).sort();
+  const verdicts = [a, b].map((r) => r.unchanged).sort();
   assert.deepEqual(verdicts, [false, true], 'exactly one of the two writes changed the vote');
+  assert.deepEqual([a.previousVote, b.previousVote].sort(), [null, 'yes'],
+    'the second request, waiting on the row lock, saw the vote the first wrote');
   assert.equal(a.rowCount, 1, 'the statement always answers one row when the vote was eligible');
   assert.equal(b.rowCount, 1);
   const { rows: stored } = await pool.query(
@@ -206,11 +209,11 @@ test('two identical Yes presses at once record one vote and announce it once', {
   );
   assert.deepEqual(stored.map((r) => r.vote), ['yes'], 'one stored vote for one person');
 
-  // A flip is still a real change, even under the same statement.
+  // A flip is still a real change, through the same locked write.
   const flip = await subject.recordVote({
     pool, session: first, userId: kampred.id, vote: 'no', headSha: HEAD, revisionEnforced: false,
   });
-  assert.equal(flip.rows[0]?.changed, true, 'switching side is a change');
+  assert.equal(flip.unchanged, false, 'switching side is a change');
   const { rows: flipped } = await pool.query(
     'SELECT vote FROM pr_votes WHERE session_id = $1 AND user_id = $2', [first.id, kampred.id]
   );
