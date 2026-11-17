@@ -34,6 +34,7 @@ import { chromeStore } from './chrome-store';
 import { detectInstallHost } from '../mobile-install/environment';
 import { buildLineTileClass, buildLineTileOf, buildLineTileWordsOf, tileStageOf } from '../first-session/build-line-words.js';
 import { installHomeSearchShortcut } from './search-shortcut';
+import { NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden } from './new-project-dismiss';
 
 
 const Home = {
@@ -714,6 +715,9 @@ const Home = {
   // 1280px (app.css, HOME'S SIDE COLUMN), on the standard look only (a frame
   // look draws its own Home, with the tile), for a viewer who gets a tile.
   hasSideCard() {
+    // Closed in this browser (./new-project-dismiss.ts): there is no column
+    // to hold, so Pinned apps ends with its own New project tile.
+    if (newProjectCardHidden()) return false;
     if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return false;
     if (window.App?.user?.privateMember) return false;
     // The two shot links that exist to show the tile's treatments keep it in
@@ -754,6 +758,10 @@ const Home = {
         ? requestAnimationFrame(run)
         : setTimeout(run, 16);
     }, { passive: true });
+    // Closing the New project card changes the same answer: `run` compares
+    // `hasSideCard()` with the budget the last render used and re-renders, so
+    // the trailing New project tile comes back without a reload.
+    window.addEventListener(NEW_PROJECT_HIDDEN_EVENT, run);
   },
 
   // `_renderedCols`, `_wireViewport()` and `_applyColumnCount()` lived here:
