@@ -63,7 +63,7 @@ import {
 import { requestShots, togglePinShot } from './request-shots';
 import { newestPlan, requestRail, type RailOpen } from './rail-model';
 import { requestFoot } from './card-model';
-import { closeStep, openStep, useOpenStep } from './step-store';
+import { closeStep, openStep, useLead, useOpenStep } from './step-store';
 import { PlanWords, StepLayer, ThreadCardContext, ThreadFoot, ThreadKicker, WordsBy } from './thread-card';
 import { ThreadItems, pageSlug, useThreadPayload } from './thread-items';
 import { ThreadChanges, ChangeSectionSkeleton, letterOf } from './thread-changes';
@@ -578,9 +578,11 @@ function RequestAt({ s, specs, label }: { s: RequestStatusView; specs: RequestSp
  * sentence box under the words (RequestStatus) and Homeroom bot's progress
  * card, which the timeline's last step now opens over the card.
  */
-function RequestFoot({ s, specs, standing, yours, track, page }: {
+function RequestFoot({ s, specs, standing, yours, track, page, echo = '' }: {
   /** The page whose layer Read plan opens (./step-store.ts). */
   page: string;
+  /** The note under the timeline's current step: a sentence it carries is not repeated here. */
+  echo?: string;
   s: RequestStatusView;
   specs: RequestSpecCard[];
   standing: WorkState | null;
@@ -608,9 +610,17 @@ function RequestFoot({ s, specs, standing, yours, track, page }: {
   const picked = track && !s.closed ? (said || own) : (own || said);
   // A sentence that only repeats the headline ("Voted in" over "Voted in.") is left out.
   const plain = (text: string) => text.replace(/[.\s]+$/, '').toLowerCase();
-  const sub = plain(picked) === plain(headline) ? '' : picked;
+  // 17 Nov 2026: nor one the timeline's current step says under its title,
+  // which is where the explanation lives; the foot keeps the headline, the
+  // clock and what there is to press.
+  const said2 = plain(picked);
+  const noted = plain(echo);
+  const repeats = !!said2 && !!noted && (noted.includes(said2) || said2.includes(noted));
+  const sub = said2 === plain(headline) || repeats ? '' : picked;
   const clock = track ? trackClock(track, new Date()) : null;
-  const a = s.action;
+  // A button that only says Homeroom bot is busy is not something to press:
+  // the headline and the timeline already say it.
+  const a = s.action && !(s.action.disabled && foot?.busy) ? s.action : null;
   // The newest plan still standing, read over the card. The plan card that
   // hung under the words is the timeline's Planned step and this button.
   const plan = s.closed ? null : newestPlan(specs);
@@ -770,6 +780,20 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     const ballot = threadRead.data ? ballotOf(threadRead.data, [r.number]) : null;
     return ballot && ballot.options.length ? new Map(ballot.options.map((o, i) => [o.id, letterOf(i)] as const)) : null;
   }, [threadRead.data, r.number]);
+  // The request's one change, as its section published it (./step-store.ts):
+  // the timeline then ends on the phase that change's foot shows.
+  const lead = useLead(`request:${r.number}`);
+  // An open ballot names itself in the timeline as it does in the foot, and
+  // its rule is the last step's note.
+  const ballotNow = useMemo(() => {
+    const ballot = threadRead.data ? ballotOf(threadRead.data, [r.number]) : null;
+    if (!ballot || !ballot.options.length) return null;
+    const project = (typeof window !== 'undefined' && (window as any).AppView?.appData?.name) || '';
+    return {
+      count: ballot.options.length,
+      about: ballot.close ? t('project:topic.thread.ballot.aboutClose', { project }) : t('project:topic.thread.ballot.about', { project }),
+    };
+  }, [threadRead.data, r.number, t]);
   const railSteps = useMemo(() => requestRail({
     asker: r.asker || null,
     askedAt: r.askedAt || null,
@@ -780,14 +804,23 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
     words: !!r.bodyMarkdown?.trim(),
     track: !!track,
     letters,
-  }), [r.asker, r.askedAt, r.bodyMarkdown, r.standing, specs, layout.changes, standing, track, letters]);
+    ballot: ballotNow,
+    lead: r.status.closed ? null : lead,
+  }), [r.asker, r.askedAt, r.bodyMarkdown, r.standing, r.status.closed, specs, layout.changes, standing, track, letters, ballotNow, lead]);
+  // What the timeline's current step already says under its title: the foot
+  // does not say it again.
+  const nowNote = railSteps.find((step) => step.now)?.note || null;
+  const echo = nowNote ? (typeof nowNote === 'string' ? nowNote : t(nowNote.id, nowNote.values)) : '';
   // The standard look and the brand look draw the card the thread design
   // agreed (./thread-card.tsx), and a step of the timeline opens over it.
   const cardLook = !frame;
   const page = `request:${r.number}`;
   const openNow = useOpenStep(page);
   useEffect(() => closeStep, [page]);
-  const cardContext = useMemo(() => ({ card: cardLook, page }), [cardLook, page]);
+  // One summary for the request and its one change, as the card credits it:
+  // the change's own words are not said again under it.
+  const covers = cardLook && !editing && summary?.basis === 'change';
+  const cardContext = useMemo(() => ({ card: cardLook, page, covers }), [cardLook, page, covers]);
   const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
   const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
   /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
@@ -840,7 +873,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           {(r.asker || '?').charAt(0).toUpperCase()}
         </Avatar>
         <div className="min-w-0 flex-1" {...images.scope}>
-          {cardLook ? <ThreadKicker kind="request" number={r.number} /> : null}
+          {cardLook ? <ThreadKicker kind="request" number={r.number} category={r.category} /> : null}
           <div className="messages-message-head">
             <span className="messages-message-author">{r.asker}</span>
             {r.askedTime ? <time dateTime={r.askedAt || undefined} title={r.askedTitle}>{r.askedTime}</time> : null}
@@ -969,7 +1002,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
           </ThreadCardContext.Provider>
           {/* The foot: where a request with no change yet stands, and its action. */}
           {cardLook && (!working || r.status.closed) ? (
-            <RequestFoot s={r.status} specs={specs} standing={r.status.closed ? null : standing} yours={yours} track={working ? null : track} page={page} />
+            <RequestFoot s={r.status} specs={specs} standing={r.status.closed ? null : standing} yours={yours} track={working ? null : track} page={page} echo={echo} />
           ) : null}
           {cardLook && openNow?.kind === 'request' ? (
             <StepLayer open name="request" title={t('project:topic.rail.asked')} sub={r.asker ? t('project:topic.card.layer.requestSub', { name: r.asker }) : null} when={r.askedTime || null} onClose={closeStep}>

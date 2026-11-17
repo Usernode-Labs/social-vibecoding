@@ -796,6 +796,10 @@ export interface ChangeThreadView {
    * (AppView._shotsNotNeeded): the card says so where the picture would be.
    */
   shotsNone?: boolean;
+  /** The last finished run of its tests: the counts and each failure by name (AppView._checksSummary). */
+  checks?: { passed: number; failed: number; fails: { key: string; name: string; reason: string | null; advisory: boolean }[] } | null;
+  /** When it went live (its merge, else its release), for "Since …" in the card's foot and the timeline's Live step. */
+  liveAt?: string | null;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
   /**

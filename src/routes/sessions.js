@@ -1889,13 +1889,15 @@ function sessionRoutes(config) {
         [id, req.params.slug],
       );
       if (!rows.length) return res.status(404).json({ error: 'Change not found' });
-      const out = await require('../services/homeroom-bot-retry-grants')
-        .grant(pool, { sessionId: id, user: req.user });
+      const grants = require('../services/homeroom-bot-retry-grants');
+      const out = await grants.grant(pool, { sessionId: id, user: req.user });
       if (!out.ok) {
         if (out.why === 'not_allowed') return res.status(403).json({ error: 'not_allowed' });
-        return res.status(409).json({ error: out.why });
+        // #6776: the sentence says what is true: already queued and where,
+        // queued again, or why it cannot be.
+        return res.status(409).json({ error: grants.grantRefusalText(out.why, out), why: out.why });
       }
-      return res.json({ granted: true });
+      return res.json({ granted: true, requeued: !!out.requeued, said: grants.grantDoneText(out) });
     } catch (err) {
       log.error('sessions', 'Could not let the bot try again', { message: err.message });
       return res.status(500).json({ error: 'Could not let it try again' });

@@ -56,6 +56,7 @@ const log = require('./logger');
 const githubBudget = require('./github-budget');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
+const { parseParts, stripPartMarkers, checkParts } = require('./homeroom-bot-prompt-parts');
 const durableSteps = require('./durable-steps');
 const durableTurn = require('./durable-turn');
 const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
@@ -2599,8 +2600,39 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
 
 function triagePrompt() {
   if (triagePromptCache) return triagePromptCache;
-  triagePromptCache = fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8');
+  triagePromptCache = stripPartMarkers(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'));
   return triagePromptCache;
+}
+
+// #6777: the whole assembled prompt's ceiling, separate from each part's own
+// budget. About 8% above the 30,550 the one shared cap held, so ordinary
+// growth in one part does not move it. A change raises a part's budget, never
+// this.
+const TRIAGE_PROMPT_CEILING = 33000;
+
+// Every part of the triage prompt, with its size, its budget and how far it
+// is over. The parts are the triage file's own sections and the design
+// guidance it includes (measured with the longer self-check, since that is
+// what a turn can carry), plus the conventions' content and data rules, whose
+// text is a section of a document other apps read, so their budget lives in
+// homeroom-bot-live.js beside where they are added.
+function triagePromptBudgets() {
+  const prompts = require('./prompts');
+  const withImages = prompts.designGuidanceSource({ readsImages: true });
+  const textOnly = prompts.designGuidanceSource({ readsImages: false });
+  const design = withImages.length >= textOnly.length ? withImages : textOnly;
+  const rules = live.requestRulesLines().join('\n').trim();
+  return checkParts([
+    ...parseParts(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'), 'src/prompts/homeroom-bot-triage.md'),
+    ...parseParts(design, 'src/prompts/design-guidance.md'),
+    {
+      name: 'request-rules',
+      budget: live.REQUEST_RULES_BUDGET,
+      note: live.REQUEST_RULES_NOTE,
+      chars: rules.length,
+      source: 'src/services/homeroom-bot-live.js',
+    },
+  ]);
 }
 
 // What the triage knows of the platform. A request often turns on it (its
@@ -4327,6 +4359,9 @@ async function runTriage(pool, config, {
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             // P6 (homeroom-bot-flaky-checks.js), stubbed in tests.
             ...(deps.flakyChecks ? { flakyChecks: deps.flakyChecks } : {}),
+            // #6778: the repository mirror a fix turn reads main's log from,
+            // stubbed in tests.
+            ...(deps.repoMirror ? { repoMirror: deps.repoMirror } : {}),
             // #6347: the description step's writing helper, stubbed in tests.
             ...(deps.llm ? { llm: deps.llm } : {}),
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
@@ -6452,7 +6487,7 @@ async function oweChecksFix(pool, look, { sessionId }) {
  * left to it). Throws what it could not read or write, so the work runs
  * again.
  */
-async function queueChecksFix(pool, { sessionId, head = null } = {}) {
+async function queueChecksFix(pool, { sessionId, head = null, again = null } = {}) {
   const out = await checksFixDue(pool, { sessionId, head });
   if (!out.due) return { queued: false, why: out.why };
   const { due, row, issueNumber } = out;
@@ -6473,9 +6508,12 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
     [Number(row.id)],
   ).catch(() => ({ rows: [] }));
   const grantKey = grantRows[0]?.id ? `:grant:${grantRows[0].id}` : '';
+  // #6776: a re-asked round (a grant whose round never started) is a fresh
+  // ask, so the receipt of the earlier one does not swallow it.
+  const againKey = again ? `:again:${String(again).slice(0, 64)}` : '';
   await appendEvent(pool, loopRules.BOT_REQUEST, loopRules.requestKey(row.app_id, issueNumber), {
     type: 'FixAsked', payload: { appId: Number(row.app_id), issueNumber, sessionId: Number(row.id), head: due.head },
-  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
+  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}${againKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
   log.info('homeroom-bot', due.failing.length
     ? 'Its proposal\'s checks failed; asked its request to fix them'
     : due.broken?.length
@@ -6836,8 +6874,15 @@ async function runChecksFix(pool, config, {
   // rule (localeRule); unset, the note to the group stays English.
   const requester = await (deps.dm || require('./homeroom-bot-dm'))
     .requesterOf(pool, app.id, issueNumber).catch(() => null);
+  // #6778: what main and the project's other open changes did to the same
+  // files since the previous try, so a fix is not spent on a line that just
+  // moved under it. A read that fails costs the turn its two blocks, not the
+  // turn.
+  const overlap = await fixOverlapContext(pool, { app, session, head, failing, deps })
+    .catch(() => ({ mainChanges: [], openOverlaps: [], firstTry: false }));
   const prompt = followup.checksFixPrompt({
     seed, proposalBlock, prNumber, failing, total, broken, skipped, locale: requester?.locale || null,
+    mainChanges: overlap.mainChanges, openOverlaps: overlap.openOverlaps, firstTry: overlap.firstTry,
   });
   snapshot = {
     stage: 'checks_fix', appId: app.id, issueNumber,
@@ -6847,6 +6892,8 @@ async function runChecksFix(pool, config, {
       failing: JSON.stringify(failing),
       ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
       ...(skipped.length ? { skipped: JSON.stringify(skipped) } : {}),
+      ...(overlap.mainChanges.length ? { main_changes: JSON.stringify(overlap.mainChanges) } : {}),
+      ...(overlap.openOverlaps.length ? { open_overlaps: JSON.stringify(overlap.openOverlaps) } : {}),
       thread: snapshots.frozenThread({
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
       }),
@@ -11494,6 +11541,121 @@ async function overlapOthers(pool, { app, issueNumber, github }) {
 const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}`
   : w?.issueNumber ? `the change for request #${Number(w.issueNumber)}` : 'another open change');
 
+// #6778: a repository path named in a failing check's own words (a test file
+// in its reason, a path in its name). A token that names no real file simply
+// matches nothing.
+const REPO_PATH_TOKEN = /[\w.@-]+(?:\/[\w.@-]+)+\.[a-z]{1,5}\b/g;
+
+function repoPathsIn(value) {
+  return String(value || '').match(REPO_PATH_TOKEN) || [];
+}
+
+/**
+ * #6778: what moved under a fix try. Two lists, as data for the fix turn's
+ * prompt (followup.checksFixPrompt):
+ *
+ *   - mainChanges: the changes merged to the default branch since the bot's
+ *     previous try on this change (or since it started, on a first try) whose
+ *     files touch the files this change edits or the failing test's file.
+ *     Time-based on purpose: a sync with main that already brought a merged
+ *     change into the branch happened BEFORE the last try, and a merge-base
+ *     window would not see it. That was try 1 on PR 6748.
+ *   - openOverlaps: the project's other open changes (#6421, #6423, #6428's
+ *     query) whose diff shares a file with this one.
+ *
+ * A merge commit is named by its pull request when its subject ends
+ * "Title (#1234)", else by its short commit id. Both lists are left
+ * uncapped: the prompt caps them, so its count of the rest is exact. A read
+ * that fails is an empty list, never a stopped turn.
+ */
+async function fixOverlapContext(pool, { app, session, head, failing = [], deps = {} }) {
+  const empty = { mainChanges: [], openOverlaps: [], firstTry: false };
+  const repo = parseRepo(app.repo_url);
+  if (!repo) return empty;
+  const mirror = deps.repoMirror || require('./repo-mirror');
+  const github = deps.github || require('./github');
+  // The previous fix try on this change recorded the head it looked at; a
+  // first try has none, so the window starts when the change did.
+  const { rows: [previous] = [] } = await pool.query(
+    `SELECT created_at FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND checks_head_sha IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [Number(session.id)],
+  ).catch(() => ({ rows: [] }));
+  const firstTry = !previous?.created_at;
+  let since = previous?.created_at || session.created_at || null;
+  if (!since) {
+    const { rows: [made] = [] } = await pool.query(
+      'SELECT created_at FROM chat_sessions WHERE id = $1', [Number(session.id)],
+    ).catch(() => ({ rows: [] }));
+    since = made?.created_at || null;
+  }
+  // The failing test's file, and the files this change edits: what an
+  // overlap has to share to matter.
+  const failingFiles = [...new Set(failing.flatMap((f) => [
+    ...repoPathsIn(f?.name), ...repoPathsIn(f?.path), ...repoPathsIn(f?.reason),
+  ]))];
+  let dir = null;
+  let tip = null;
+  let changeFiles = [];
+  try {
+    dir = await mirror.ensureMirror(repo.owner, repo.repo);
+    tip = await mirror.defaultBranchSha(dir);
+    const base = await mirror.mergeBase(dir, tip, head);
+    if (base) changeFiles = await mirror.changedPaths(dir, base, head);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the files a fix touches from the mirror', {
+      app: app.slug, sessionId: session.id, err: err.message,
+    });
+  }
+  if (!changeFiles.length && github?.isEnabled?.() && typeof github.listChangedFiles === 'function' && session.branch_name) {
+    changeFiles = await github.listChangedFiles(repo.owner, repo.repo, `main...${session.branch_name}`)
+      .catch(() => []);
+  }
+  const wanted = new Set([...changeFiles, ...failingFiles]);
+  const mainChanges = [];
+  if (dir && tip && since && wanted.size) {
+    const log_ = await mirror.mainLogSince(dir, tip, since).catch(() => null);
+    for (const commit of log_ || []) {
+      const common = (Array.isArray(commit.files) ? commit.files : []).filter((f) => wanted.has(f));
+      if (!common.length) continue;
+      const named = /^(.*)\s\(#(\d+)\)$/.exec(commit.subject || '');
+      const prNumber = named ? Number(named[2]) : null;
+      // Its own change is not "changed on main".
+      if (prNumber && session.pr_number != null && Number(session.pr_number) === prNumber) continue;
+      mainChanges.push({
+        prNumber,
+        title: named ? named[1] : (commit.subject || String(commit.sha || '').slice(0, 7)),
+        mergedAt: commit.mergedAt,
+        sha: commit.sha,
+        files: common,
+      });
+    }
+  }
+  const ownRequest = Number(session.linked_issues?.[0]);
+  const others = await overlapOthers(pool, {
+    app, issueNumber: Number.isInteger(ownRequest) && ownRequest > 0 ? ownRequest : 0, github,
+  }).catch(() => []);
+  const shared = others
+    .filter((o) => Number(o.sessionId) !== Number(session.id))
+    .map((o) => ({ ...o, shared: (Array.isArray(o.files) ? o.files : []).filter((f) => wanted.has(f)) }))
+    .filter((o) => o.shared.length);
+  const titles = new Map();
+  if (shared.length) {
+    const { rows } = await pool.query(
+      `SELECT id, COALESCE(NULLIF(pr_title, ''), NULLIF(proposed_pr_title, ''), NULLIF(session_title, '')) AS title
+         FROM chat_sessions WHERE id = ANY($1::int[])`,
+      [shared.map((o) => o.sessionId)],
+    ).catch(() => ({ rows: [] }));
+    for (const row of rows) titles.set(Number(row.id), row.title || null);
+  }
+  const openOverlaps = shared.map((o) => ({
+    prNumber: o.prNumber, title: titles.get(o.sessionId) || null, status: o.status,
+    issueNumber: o.issueNumber, files: o.shared,
+  }));
+  return { mainChanges, openOverlaps, firstTry };
+}
+
 // #6423, #6428: what this build shares with the project's other open
 // changes, and whether it goes on top of one. `dependsOn` names the requests
 // its own depends on (a "build first" link, #6211); nothing passes it yet,
@@ -11685,6 +11847,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   // #6420: a change that names requests it closes tells them once, including
   // the links set when the change was made or that became visible later.
   await each('claimsAnnounced', () => require('./change-claims').announce(pool, { appId: null }));
+  // #6776: a try somebody granted that never started is queued again, or
+  // closed with the reason it could not be.
+  await each('grantsRequeued', () => require('./homeroom-bot-retry-grants').sweepStrandedGrants(pool, settings, deps));
   return out;
 }
 
@@ -11801,6 +11966,8 @@ module.exports = {
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
+  triagePromptBudgets,
+  TRIAGE_PROMPT_CEILING,
   personPlanTriageNote,
   signalNote,
   firstVersionNote,
@@ -11940,6 +12107,9 @@ module.exports = {
   NOT_FOLLOW_UP,
   checksToFix,
   runChecksFix,
+  // #6778: what main and the project's other open changes did to a fix
+  // turn's files, exported for its tests.
+  fixOverlapContext,
   // #6234: whether a fix of a head ran out of time once, for the change
   // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
   checksRetried,
