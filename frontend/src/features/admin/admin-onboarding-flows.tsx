@@ -111,9 +111,9 @@ const Frame = memo(function Frame({ demo, cut }: { demo: boolean; cut: boolean }
           <section className="card" aria-label="This view">
             <p className="viewline" data-of="viewline" aria-live="polite" />
             <p className="hint">
-              Drag or two-finger scroll to move the chart, pinch or use a mouse wheel to zoom, double-click to
-              zoom in. Point at a thread to see one person. Select a box to follow everyone who passed through
-              it. Selections carry across views.
+              Drag or two-finger scroll to move the chart, pinch or use a mouse wheel to zoom, double-click an
+              empty spot to zoom in. Point at a thread to see one person. Select a box to follow everyone who
+              passed through it, and select it again to clear. Selections carry across views.
             </p>
           </section>
           <section className="card" aria-labelledby="admin-of-says-title">
