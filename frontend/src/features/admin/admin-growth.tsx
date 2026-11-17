@@ -77,7 +77,7 @@ const G = Object.freeze({
   link: 'text-xs font-medium text-violet-700 dark:text-violet-400 hover:underline',
   row: 'flex items-center justify-between gap-2 py-2 border-b border-zinc-100 dark:border-zinc-800/60 last:border-b-0',
   check: 'h-4 w-4 accent-violet-600',
-  count: 'rounded tabular-nums underline-offset-2 enabled:hover:underline enabled:hover:text-violet-700 dark:enabled:hover:text-violet-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-default',
+  count: 'rounded tabular-nums underline-offset-2 enabled:hover:underline enabled:hover:text-violet-700 enabled:dark:hover:text-violet-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-default',
   countRow: 'w-full rounded-md text-start enabled:hover:bg-zinc-50 dark:enabled:hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-default',
 });
 
@@ -169,7 +169,7 @@ function useHelp() {
   // The words float over what follows, so opening them never moves the page.
   const help = (...ids: string[]) => (open && ids.includes(open) ? (
     <div className="relative h-0">
-      <p className={`${G.help} absolute start-0 top-1 z-30 w-max max-w-[min(28rem,calc(100vw-2rem))] shadow-lg`} role="note">{HELP[open]}</p>
+      <p className={`${G.help} absolute start-0 top-1 z-30 w-max max-w-[min(28rem,calc(var(--platform-float-w)-24px))] shadow-lg`} role="note">{HELP[open]}</p>
     </div>
   ) : null);
   return { term, help };
