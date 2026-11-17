@@ -1925,6 +1925,17 @@ export function NotificationsSheetView() {
   const threadMatches = isThreads && needle
     ? (threads || []).filter((thread) => `${thread.title} ${thread.appName}`.toLowerCase().includes(needle))
     : (threads || []);
+  // #6785: the wait begins on the tab's FIRST paint, not on the fetch's first
+  // state update. Between choosing the tab and the effect that starts the
+  // fetch, nothing is loaded and nothing is marked loading yet, so a panel
+  // guarded only by `threadsLoading` draws an empty list under the pills —
+  // indistinguishable from "no threads". `threadsPending` is that gap, plus
+  // every later page-1 retry; the rows in hand stay drawn while a further
+  // page loads.
+  const threadsPending = !threadsLoaded || (threadsLoading && !(threads || []).length);
+  // The one line that stands in for the list: the error when the read
+  // failed, else the empty invitation. Never while a page is in flight.
+  const threadsSettled = isThreads && threadsLoaded && !threadsLoading && !threadsPending;
   // #5406: on Unread in its collapsed state — the one the sheet opens in, and
   // the list you are trying to empty — the rows group under one heading per
   // app, with that app's "Mark read" beside it, instead of under Today and
@@ -2309,8 +2320,7 @@ export function NotificationsSheetView() {
           taken part in a thread yet reads one line, the same shape as the
           feed's empty state; both live in the list's own host, so the tab
           never shows a blank panel under its pills. */}
-      {!searching && isThreads && !threadsLoading && threadsLoaded
-        && (threadsError || !(threads && threads.length)) ? (
+      {!searching && threadsSettled && !(threads && threads.length) ? (
         <div id="notifications-threads-list">
           {threadsError ? (
             <p id="notifications-threads-error" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400 text-center">
@@ -2325,7 +2335,7 @@ export function NotificationsSheetView() {
       ) : null}
       {/* #6785: the first page's wait is the list's own placeholders, the
           same row shape it fills with, so nothing jumps when it arrives. */}
-      {!searching && isThreads && threadsLoading && !(threads && threads.length) ? (
+      {!searching && isThreads && threadsPending && !threadsError ? (
         <div id="notifications-threads-list" aria-busy="true">
           {[0, 1, 2].map((i) => (
             <div key={i} className="notifications-row w-full ps-4 pe-4 py-3.5 flex items-center gap-4 animate-pulse">

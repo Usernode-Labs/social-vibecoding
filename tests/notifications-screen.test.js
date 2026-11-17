@@ -117,3 +117,30 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   assert.match(screen, /loadOlder\(\)/);
   assert.match(screen, /screenCanLoadMore/);
 });
+
+test('#6785: Recent threads never paints a blank list before its first fetch', () => {
+  // There is a paint between choosing the tab and the effect that starts the
+  // fetch: nothing is loaded and nothing is marked loading yet. A list that
+  // waits only on `threadsLoading` draws an empty panel there, which reads as
+  // "no threads" — so the placeholders are guarded by `threadsPending`, which
+  // includes that gap, and the error/empty line waits until a page answered.
+  assert.match(screen,
+    /const threadsPending = !threadsLoaded \|\| \(threadsLoading && !\(threads \|\| \[\]\)\.length\)/);
+  assert.match(screen,
+    /!searching && isThreads && threadsPending && !threadsError \? \(\s*<div id="notifications-threads-list" aria-busy="true">/);
+  assert.match(screen,
+    /const threadsSettled = isThreads && threadsLoaded && !threadsLoading && !threadsPending/);
+  assert.match(screen, /id="notifications-threads-empty"/);
+  assert.match(screen, /id="notifications-threads-error"/);
+});
+
+test('#6785: a ?shot= link still opens the panel when the feed cannot be read', () => {
+  // The opener used to run only after a populated refresh, so a feed failure
+  // left the sheet shut and the capture showed the page underneath — the
+  // shooting link has to present the panel, whose tabs draw their own empty
+  // and error lines.
+  assert.match(controllerSrc,
+    /if \(!res\.ok\) \{\s*\/\/ #6785:[\s\S]{0,400}?Notifications\._maybeShotOpen\(\);\s*return false;/);
+  // And the guard that keeps it harmless for an ordinary visit.
+  assert.match(controllerSrc, /if \(Notifications\._shotOpened \|\| Notifications\.open\) return;/);
+});
