@@ -1,7 +1,6 @@
 /**
  * Needs you: Home's card under Standard (WIP) (`#home-aside`, ./index.tsx),
- * in the row it shares with Challenges: beside it from 1280px, a row of its
- * own above it on anything narrower.
+ * a full-width row of its own, just above Challenges.
  *
  * It is drawn only while a vote waits on the viewer: the same count Home's
  * Needs you tile and the tab badge read (`badgeNeeds`,
@@ -21,12 +20,12 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { ChevronRightIcon } from '@/components/ui/icons';
-
-import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { useMessages } from '../../lib/i18n/react';
 import { sharedJson } from '../../lib/shared-read';
 import { useStoreState } from '../../lib/use-store-state';
+import { placeHref } from '../dev-board/workshop/places';
 import { communityScopeStore } from '../workshop/community-scope';
+import { WIP_CARD, WIP_HEAD_LINK } from './wip-kit';
 
 /** What the card reads of a feed item (../workshop/needs-reel.tsx NeedsFeedItem). */
 export interface NeedsCardItem {
@@ -63,17 +62,21 @@ function demoQuery(): string {
   }
 }
 
-// One quiet row that is a link, not a list. The number sits in
-// a soft accent square, the words beside it, and under them the icons of
-// the communities that wait, with the split in words. Complete class
-// literals (Tailwind reads source text).
-const CARD = 'home-needs-card group flex min-w-0 flex-col gap-3 rounded-[20px] bg-[color:var(--dc-sheet-solid)] p-4 '
-  + '[box-shadow:0_0_0_1px_var(--app-sheet-line)_inset] transition-shadow '
-  + 'hover:[box-shadow:0_0_0_1px_var(--accent)_inset]';
-const COUNT = 'flex h-11 min-w-[44px] shrink-0 items-center justify-center rounded-2xl bg-violet-50 px-2 '
-  + 'text-[20px] font-bold tracking-tight text-violet-700 dark:bg-violet-900/40 dark:text-violet-200';
-const ICON = 'flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-md bg-zinc-100 '
-  + 'text-[11px] font-bold text-zinc-600 ring-2 ring-[color:var(--dc-sheet-solid)] dark:bg-zinc-800 dark:text-zinc-300';
+// The card is the look's own (./wip-kit.tsx, app.css "STANDARD (WIP)"): its
+// label, the count and See all on one line, then what waits as rows in
+// one to four columns by the screen's width, each with its whole title, opening its project's Needs you.
+
+/** How many decisions the card lists (two lines of four on a wide screen); See all has the rest. */
+export const NEEDS_ROWS = 8;
+
+/** A plain tap opens the project on its Needs you; the browser keeps a new tab's click. */
+function openNeeds(event: React.MouseEvent<HTMLAnchorElement>, slug: string) {
+  const win = window as any;
+  if (win.NavLink?.isNativeClick?.(event)) return;
+  event.preventDefault();
+  try { win.AppView?._landOnTab?.(slug, 'needs'); } catch { /* the page opens on what it remembers */ }
+  win.App?.navigateToApp?.(slug, 'dev');
+}
 
 /** The communities that wait, once each, in the feed's order: four at most. */
 export function waitingApps(feed: NeedsCardItem[] | null): NonNullable<NeedsCardItem['app']>[] {
@@ -90,9 +93,9 @@ export function waitingApps(feed: NeedsCardItem[] | null): NonNullable<NeedsCard
 
 function AppIcon({ app }: { app: NeedsCardItem['app'] }) {
   if (app?.icon_url) {
-    return <img src={app.icon_url} alt="" draggable={false} className={`${ICON} object-cover`} />;
+    return <img src={app.icon_url} alt="" draggable={false} className="wip-item-icon" />;
   }
-  return <span className={ICON} aria-hidden="true">{app?.icon_emoji || (app?.name || '').slice(0, 1).toUpperCase()}</span>;
+  return <span className="wip-item-icon" aria-hidden="true">{app?.icon_emoji || (app?.name || '').slice(0, 1).toUpperCase()}</span>;
 }
 
 export function NeedsYouCard(): ReactNode {
@@ -112,49 +115,46 @@ export function NeedsYouCard(): ReactNode {
 
   const summary = needsSummary(waiting, feed);
   if (!summary) return null;
-  const apps = waitingApps(feed);
+  const rows = (feed || []).slice(0, NEEDS_ROWS);
+  const more = (feed || []).length - rows.length;
 
   return (
-    <section id="home-needs-card" aria-labelledby="home-needs-card-title" data-needs={String(summary.total)}>
-      <a id="home-needs-card-btn" href="#needs" className={CARD}>
-        <span className="flex items-center gap-3">
-          <span className={COUNT} aria-hidden="true">{summary.total}</span>
-          <span className="min-w-0 flex-1">
-            <b id="home-needs-card-title" className="block text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-50">
-              {t('home:needsCard.eyebrow')}
-            </b>
-            <span className="mt-0.5 block text-[13px] leading-snug text-zinc-600 dark:text-zinc-300">
-              {t('home:needsCard.waiting', { count: summary.total })}
-            </span>
-          </span>
-          <ChevronRightIcon className="h-4 w-4 shrink-0 text-zinc-500 transition-colors group-hover:text-[color:var(--accent)] dark:text-zinc-400" aria-hidden="true" />
-        </span>
-        {feed ? (
-          <span className="flex items-center gap-2 text-[12px] text-zinc-600 dark:text-zinc-300">
-            <span className="flex -space-x-1.5" aria-hidden="true">
-              {apps.map((app) => <AppIcon key={app.slug} app={app} />)}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-end">
-              <RichMessage
-                id="home:needsCard.decide"
-                values={{ count: summary.decide }}
-                components={[<b className="font-bold text-zinc-900 dark:text-zinc-50" />]}
-              />
-              {/* Zero says nothing. */}
-              {summary.advisory ? (
-                <>
-                  {' · '}
-                  <RichMessage
-                    id="home:needsCard.advisory"
-                    values={{ count: summary.advisory }}
-                    components={[<b className="font-bold text-zinc-900 dark:text-zinc-50" />]}
-                  />
-                </>
-              ) : null}
-            </span>
-          </span>
-        ) : null}
-      </a>
+    <section id="home-needs-card" className={`${WIP_CARD} wip-panel`} aria-labelledby="home-needs-card-title" data-needs={String(summary.total)}>
+      <div className="wip-panel-head">
+        <h2 id="home-needs-card-title" className="wip-panel-label">{t('home:needsCard.eyebrow')}</h2>
+        <span className="wip-count" aria-hidden="true">{summary.total}</span>
+        <span className="sr-only">{t('home:needsCard.waiting', { count: summary.total })}</span>
+        <a id="home-needs-card-btn" href="#needs" className={`${WIP_HEAD_LINK} wip-panel-link`}>
+          {more > 0 ? t('home:needsCard.seeAllCount', { count: summary.total }) : t('home:needsCard.seeAll')}
+        </a>
+      </div>
+      {/* What waits, in one to four columns by the room there is, each a row that opens its project's Needs you. */}
+      {rows.length ? (
+        <ul className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">
+          {rows.map((item) => {
+            const slug = item.app?.slug || '';
+            return (
+              <li key={`${item.kind}:${item.id}`}>
+                <a
+                  className="wip-row"
+                  href={slug ? placeHref(slug, 'needs') : '#needs'}
+                  data-needs-item={`${item.kind}:${item.id}`}
+                  onClick={slug ? (event) => openNeeds(event, slug) : undefined}
+                >
+                  <AppIcon app={item.app} />
+                  <span className="wip-item-text">
+                    <b className="wip-item-title">{item.title}</b>
+                    <span className="wip-item-meta">{item.app?.name || ''}</span>
+                  </span>
+                  <span className={decides(item) ? 'wip-pill wip-pill-action' : 'wip-pill'}>
+                    {decides(item) ? t('home:needsCard.vote') : t('home:needsCard.advisoryPill')}
+                  </span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </section>
   );
 }

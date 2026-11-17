@@ -22,11 +22,11 @@ export function WipCard({ on = true, className, children, ...rest }: HTMLAttribu
   return <div className={cls || undefined} {...rest}>{children}</div>;
 }
 
-/** The page's one filled action: the accent gradient pill, a plus and its words. */
-export function WipCta({ children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode }) {
+/** A filled action: the accent gradient pill and its words, after a plus unless `glyph` is false. */
+export function WipCta({ children, glyph = true, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode; glyph?: boolean }) {
   return (
     <button type="button" className="wip-cta" {...rest}>
-      <PlusWideIcon className="wip-cta-glyph" strokeWidth="2.6" aria-hidden="true" />
+      {glyph ? <PlusWideIcon className="wip-cta-glyph" strokeWidth="2.6" aria-hidden="true" /> : null}
       {children}
     </button>
   );

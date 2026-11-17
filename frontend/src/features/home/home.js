@@ -972,6 +972,8 @@ const Home = {
     // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
+    // An unfolded grid that would hide rows when folded: "Show less" has a job.
+    let canFold = false;
     // The trailing "Create an app" tile — null in the search view, which is a
     // transient list of matches rather than the launcher.
     let create = null;
@@ -1042,6 +1044,7 @@ const Home = {
       }
       const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
+      canFold = !editing && Home._appsExpanded && canvas.some((it) => it.row > rowBound);
       let shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
@@ -1155,7 +1158,7 @@ const Home = {
     // explicit cell placement #app-list uses. Its reorder recognizer is
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
-    Home._renderAppsMore(moreCount);
+    Home._renderAppsMore(moreCount, canFold);
     // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
@@ -1845,9 +1848,10 @@ const Home = {
   // Kept its name and its caller. It no longer touches the DOM, and the
   // listener it used to re-attach on every paint is now attached once by
   // ./apps-more.tsx to an element React keeps.
-  _renderAppsMore(count) {
+  _renderAppsMore(count, canFold) {
     chromeStore.set({
       moreCount: count || 0,
+      canFold: !!canFold,
       strip: Home.widgetSectionView(),
     });
   },
