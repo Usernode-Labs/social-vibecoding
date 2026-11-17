@@ -90,16 +90,19 @@ test('#6766: a secret is never named as operator work, and never a go-ahead bloc
   const md = read('src/prompts/homeroom-bot-triage.md');
   const service = read('src/services/homeroom-bot.js');
   // The operator-work example is work outside the app, such as a DNS or
-  // infrastructure change; setting a key is not that work.
-  assert.match(md, /`operator_work` \(work outside this app, such as a DNS or infrastructure change\)/);
+  // infrastructure change; setting a key is not that work. The parenthetical
+  // goes on to say so, so only its opening is pinned here.
+  assert.match(md, /`operator_work` \(work outside this app, such as a DNS or infrastructure change/);
   for (const line of md.match(/`operator_work`[^\n]*/g) || []) {
     assert.doesNotMatch(line, /\bsecret\b/i, line);
   }
   assert.doesNotMatch(md, /such as setting a secret/);
-  // The go-ahead decline list is these two blockers and nothing else.
-  assert.deepEqual(live.GO_AHEAD_BLOCKERS, ['operator_work', 'destructive_db']);
-  assert.match(md, /False only with `cannot_because` \(`operator_work` or `destructive_db`\)/);
-  assert.match(md, /"cannot_because": "operator_work" \| "destructive_db"/);
+  // The go-ahead decline list is these blockers and nothing else: operator
+  // work, a destructive database change, and (#6755) a request whose answer
+  // is a reply rather than a commit. A secret is never among them.
+  assert.deepEqual(live.GO_AHEAD_BLOCKERS, ['operator_work', 'destructive_db', 'explanation']);
+  assert.match(md, /False only with `cannot_because` \(`operator_work`, `destructive_db` or `explanation`\)/);
+  assert.match(md, /"cannot_because": "operator_work" \| "destructive_db" \| "explanation"/);
   // The decider notes the read is handed say the same thing.
   assert.doesNotMatch(service, /such as setting a secret/);
   assert.match(service, /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
