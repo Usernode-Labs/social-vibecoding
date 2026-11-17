@@ -487,7 +487,10 @@
       // of the one frame (the 2026-11-06 screen tour), in the tour's order.
       // The same list is MENU_SKINS in src/lib/skin.ts and, less 'brand',
       // its FRAME_SKINS.
-      const SKINS = ['brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
+      // 'wip' is "Standard (WIP)": the standard look itself, where a change
+      // to it is tried before it is the standard's. It sets no data-skin (no
+      // rule of a look applies), only data-skin-wip for a rule of its own.
+      const SKINS = ['wip', 'brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
       const _listeners = [];
 
       let pinned = null;
@@ -515,7 +518,9 @@
       function apply() {
         const root = document.documentElement;
         const skin = get();
-        if (skin !== 'standard') {
+        if (skin === 'wip') root.setAttribute('data-skin-wip', '');
+        else root.removeAttribute('data-skin-wip');
+        if (skin !== 'standard' && skin !== 'wip') {
           root.setAttribute('data-skin', skin);
         } else {
           root.removeAttribute('data-skin');

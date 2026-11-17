@@ -102,7 +102,7 @@ import { NewProjectCard } from './new-project-card';
 import { NEW_PROJECT_HIDDEN_EVENT, newProjectCardHidden } from './new-project-dismiss';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
-import { SectionHeading } from './panels/ui';
+import { PINS_CARD, SectionHeading } from './panels/ui';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -140,6 +140,8 @@ export function HomeScreen() {
   const [viewer, setViewer] = useState(false);
   useEffect(() => whenPlatformViewer(() => setViewer(true)), []);
   const frame = isFrameSkin(skin) && viewer;
+  // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
+  const wip = skin === 'wip';
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -409,6 +411,9 @@ export function HomeScreen() {
           >
             {t('home:grid.heading')}
           </SectionHeading>
+          {/* In Standard (WIP) the grid and its "Show all" line are one card
+              (PINS_CARD, ./panels/ui.tsx), as Pinned communities' tiles are. */}
+          <div className={wip ? PINS_CARD : undefined}>
           {frame && grid.editing ? null : <AppGrid />}
           {/*
               "Show all N apps" — revealed by Home.render() only when the
@@ -416,7 +421,8 @@ export function HomeScreen() {
               and empty; it is React's now (chromeStore), which is what lets
               its listener be attached once instead of on every paint.
           */}
-          <AppsMore />
+          <AppsMore card={wip} />
+          </div>
         </section>
         {/*
             A SEARCH NOTHING ANSWERS IS AN IDEA (./search-make.tsx, #5928):
