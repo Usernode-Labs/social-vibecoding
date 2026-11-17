@@ -454,16 +454,24 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, 
       {onMore ? (
         <button type="button" className="rf-claim-row" onClick={onMore} aria-controls="rf-desc" data-rf-more="">
           <span className="rf-claim" key={line || 'none'}>
-            {appName ? <><strong className="rf-claim-app">{appName}</strong>{' '}</> : null}
-            {line}
+            {appName ? (
+              // The space belongs to the line's own text run: a bare `{' '}`
+              // here would be a second text child beside it, which cannot
+              // survive hydration (React #418).
+              <><strong className="rf-claim-app">{appName}</strong>{` ${line}`}</>
+            ) : line}
           </span>
           <span className="sr-only">{t('communities:review.desc.show')}</span>
         </button>
       ) : (
         <div className="rf-claim-row">
           <p className="rf-claim" key={line || 'none'}>
-            {appName ? <><strong className="rf-claim-app">{appName}</strong>{' '}</> : null}
-            {line}
+            {appName ? (
+              // The space belongs to the line's own text run: a bare `{' '}`
+              // here would be a second text child beside it, which cannot
+              // survive hydration (React #418).
+              <><strong className="rf-claim-app">{appName}</strong>{` ${line}`}</>
+            ) : line}
           </p>
         </div>
       )}
