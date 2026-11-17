@@ -261,6 +261,50 @@ var VIEWS=[
 VIEWS=['whole','priv','pub','share','drop'].map(function(id){return VIEWS.filter(function(v){return v.id===id;})[0];});
 var VBY={};VIEWS.forEach(function(v){VBY[v.id]=v;});
 
+/* ---------- steps: the whole funnel folds into bars ---------- */
+/* Each step of the whole funnel is the columns that tell one part of the story (a breakdown column travels with
+   the step it breaks down). Folded, a step is one bar of a funnel, as long as the people who reached it, in three
+   parts: who carries on, who is too early to say, who stopped there. Open, it keeps its bar and divides it into its
+   cards, each coloured the same way for its own people. The threads run through folded and open steps alike. */
+VBY.whole.steps=[
+ {id:'came',t:'Came in',cols:[0,1,2],enter:function(){return true;},out:function(){return 'go';},word:'came in'},
+ {id:'getin',t:'Getting in',cols:[3,4],enter:function(){return true;},out:function(p){return isIn(p)?'go':(p.got==='new'?'early':'stop');},word:'made an account'},
+ {id:'first',t:'First session',cols:[5,6],enter:isIn,out:function(p){return acted(p)?'go':'stop';},word:'did something'},
+ {id:'made',t:'Made or joined',cols:[7],enter:acted,out:function(){return 'go';},word:'made or joined'},
+ {id:'now',t:'Where they are now',cols:[8],enter:acted,out:function(p){return p.lane!=='none'?'go':'stop';},word:'taking part'},
+ {id:'eng',t:'How engaged',cols:[9,10,11,12],enter:engaged,out:function(){return 'go';},word:'engaged'}
+];
+VBY.whole.steps.forEach(function(st){['go','early','stop'].forEach(function(o){
+  N['fold:'+st.id+':'+o]={l:'',fold:o,stepId:st.id,full:st.t+': '+({go:st.word,early:'too early to say',stop:'stopped here'}[o])};
+});});
+// the steps left open, kept for the next visit
+var OPEN={};
+try{(localStorage.getItem('admin.onboardingFlows.open')||'').split(',').forEach(function(id){if(id)OPEN[id]=1;});}catch(e){}
+// the view as drawn: an open step's own columns, or one column of three parts for a folded one
+function stepView(view){
+  if(!view.steps)return view;
+  var cols=[],map={};
+  view.steps.forEach(function(st){
+    if(OPEN[st.id]){
+      st.cols.forEach(function(ci){map[ci]=cols.length;cols.push(Object.assign({},view.cols[ci],{step:st,cpad:3,cardMin:24}));});
+    }else{
+      st.cols.forEach(function(ci){map[ci]=cols.length;});
+      cols.push({t:st.t,step:st,fold:true,cpad:0,cardMin:1,node:function(p){return st.enter(p)?'fold:'+st.id+':'+st.out(p):null;},order:['go','early','stop'].map(function(o){return 'fold:'+st.id+':'+o;})});
+    }
+  });
+  cols.forEach(function(c){if(c.bandCol!=null)c.bandCol=map[c.bandCol];});
+  var g=view.gridAt!=null?map[view.gridAt]:null;
+  return Object.assign({},view,{cols:cols,gridAt:(g!=null&&!cols[g].fold)?g:null,zones:[],leaks:false,stepsOn:true,base:view});
+}
+function toggleStep(id){
+  if(OPEN[id])delete OPEN[id]; else OPEN[id]=1;
+  try{localStorage.setItem('admin.onboardingFlows.open',Object.keys(OPEN).join(','));}catch(e){}
+  show(curId,true,true);
+}
+// what became of a card's people at its step: carries on, too early, stopped
+function partsOf(n,cd){ if(!cd.step||n.meta.pass||n.meta.phantom)return null; var o={go:0,early:0,stop:0}; n.th.forEach(function(pa){o[cd.step.out(pa.p)]++;}); return [o.go,o.early,o.stop]; }
+var FOLDW=44;
+
 /* ---------- layout ---------- */
 var NODEW=12, TOP=80, LEFT=12, RIGHT=236;
 var LEAK_MIN=10,LEAK_TAG=0.2,LEAK_STRONG=0.5,LEAK_OK=0.1,LEAK_ROOM=12;
@@ -304,10 +348,11 @@ function layout(view,W,mode){
         if(m.sharer)n.text={l:m.l,sub:String(sharerN(m.sharer)),single:true};
         else if(m.phantom)n.text={l:m.l,sub:m.phantom,single:false};
         else n.text={l:(cdef.short&&m[cdef.short])||m.w||m.l,sub:n.th.length+' · '+pct(n.th.length,col.slots),single:(cdef.cardMin||34)<30};
-        var w=n.text.single?textW(n.text.l,FT)+10+textW(n.th.length+'/'+n.th.length,FS):Math.max(textW(n.text.l,FT),textW(n.text.sub,FS),textW(n.th.length+' of '+n.th.length+' \u00b7 100%',FS)+4);
+        var w=n.text.single?textW(n.text.l,FT)+10+Math.max(textW(n.th.length+'/'+n.th.length,FS),textW(n.text.sub,FS)):Math.max(textW(n.text.l,FT),textW(n.text.sub,FS),textW(n.th.length+' of '+n.th.length+' \u00b7 100%',FS)+4);
         mw=Math.max(mw,w);
       });
       col.w=Math.round(Math.min(300,Math.max(56,mw+22)));
+      if(cdef.fold)col.w=FOLDW;
     }
   });
   function nodeH(col,n,u){ return n.meta.pass?n.th.length*u:Math.max(n.th.length*u,col.minH); }
@@ -335,10 +380,11 @@ function layout(view,W,mode){
     var avail=W-LEFT-(view.right||RIGHT)-NODEW;
     view.cols.forEach(function(cdef,i){xs.push(x);x+=avail*(cdef.gap||1)/gaps;});
   }
-  // y positions
-  var bottom=0;
+  // y positions; with steps, each column is centred on the tallest, so the bars narrow like a funnel
+  var bottom=0,top=view.stepsOn?100:TOP,maxH=0;
+  if(view.stepsOn)cols.forEach(function(col,ci){if(!view.cols[ci].band)maxH=Math.max(maxH,colH(col,ci,unit));});
   cols.forEach(function(col,ci){
-    var y=TOP,cdef=view.cols[ci];
+    var y=top+(view.stepsOn&&!view.cols[ci].band?(maxH-colH(col,ci,unit))/2:0),cdef=view.cols[ci];
     if(cdef.band&&cdef.bandCol!=null&&cdef.bandCol!==ci){
       var tops={},used={};
       cols[cdef.bandCol].list.forEach(function(m){var k=cdef.band(m.id);if(!(k in tops)||m.y<tops[k])tops[k]=m.y;});
@@ -381,6 +427,8 @@ function layout(view,W,mode){
         return a.slotL[ia]-b.slotL[ib];
       });
       R.forEach(function(pa,i){pa.slotR[ci-pa.start]=i;});
+      // a folded bar is too narrow to hide a thread changing places inside it: one order through it
+      if(view.cols[ci].fold)R.forEach(function(pa,i){pa.slotL[ci-pa.start]=i;});
     });
   });
   paths.forEach(function(pa){
@@ -391,7 +439,7 @@ function layout(view,W,mode){
     });
     t.x0=t.segs[0].xL; t.x1=t.segs[t.segs.length-1].xR;
   });
-  var nodes=[];cols.forEach(function(col,ci){col.list.forEach(function(n){nodes.push({id:n.id,col:n.col,short:view.cols[n.col].short||null,x:n.x,y:n.y,h:n.h,w:col.w,card:col.card&&!n.meta.pass,text:n.text||null,gkeys:n.meta.group?paths.filter(function(pa){return n.meta.group.test(pa.p);}).map(function(pa){return pa.p.k;}):null,n:n.th.length,keys:n.th.map(function(pa){return pa.p.k;}),meta:n.meta,colTotal:col.slots});});});
+  var nodes=[];cols.forEach(function(col,ci){col.list.forEach(function(n){nodes.push({id:n.id,col:n.col,short:view.cols[n.col].short||null,x:n.x,y:n.y,h:n.h,w:col.w,card:col.card&&!n.meta.pass,text:n.text||null,gkeys:n.meta.group?paths.filter(function(pa){return n.meta.group.test(pa.p);}).map(function(pa){return pa.p.k;}):null,n:n.th.length,keys:n.th.map(function(pa){return pa.p.k;}),meta:n.meta,colTotal:col.slots,parts:partsOf(n,view.cols[n.col]),fold:n.meta.fold||null,inbar:!!view.cols[n.col].step&&!view.cols[n.col].fold&&col.card&&!n.meta.pass&&!n.meta.phantom});});});
   var H=bottom+(view.loop?58:22);
   var all=nodes;nodes=nodes.filter(function(n){return !n.meta.pass;});
   return {view:view,mode:mode,W:W,H:H,unit:unit,xs:xs,cw:cols.map(function(c){return c.w;}),nodes:nodes,all:all,T:T,people:people,bottom:bottom,cols:cols};
@@ -490,8 +538,8 @@ function makeNode(n){
   }
   g.appendChild(s('text',{'class':'nlabel',x:NODEW+7}));
   g.appendChild(s('text',{'class':'nsub',x:NODEW+7}));
-  g.addEventListener('click',function(ev){ev.stopPropagation();select({type:'node',id:n.id});});
-  g.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();select({type:'node',id:n.id});}});
+  g.addEventListener('click',function(ev){ev.stopPropagation();if(n.meta.fold){toggleStep(n.meta.stepId);return;}select({type:'node',id:n.id});});
+  g.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();if(n.meta.fold){toggleStep(n.meta.stepId);return;}select({type:'node',id:n.id});}});
   g.addEventListener('pointerenter',function(){setHover({type:'node',id:n.id});});
   g.addEventListener('pointerleave',function(){setHover(null);});
   g.addEventListener('focus',function(){setHover({type:'node',id:n.id});});
@@ -507,6 +555,8 @@ function placeNode(g,n,x,y,hh,op,ww){
   at(g,x,y);
   g.style.opacity=op;
   g.classList.toggle('card',card);
+  g.classList.toggle('inbar',!!n.inbar); g.classList.toggle('fold',!!n.fold);
+  paintParts(g,n,w,hh,!!(n.fold||n.inbar));
   var box=g.querySelector('.nbox'),hit=g.querySelector('.hit'),cap=g.querySelector('.caption');
   box.setAttribute('height',Math.max(hh,2).toFixed(1)); box.setAttribute('width',w.toFixed(1)); box.setAttribute('rx',card?6:2);
   hit.setAttribute('height',(Math.max(hh,2)+6).toFixed(1)); hit.setAttribute('width',(w+8).toFixed(1));
@@ -536,7 +586,20 @@ function placeNode(g,n,x,y,hh,op,ww){
     tl.setAttribute('x',NODEW+7); tl.textContent=lab.l; tl.setAttribute('y',(hh/2-1).toFixed(1));
     ts.textContent=lab.sub; ts.setAttribute('y',(hh/2+14).toFixed(1)); ts.setAttribute('x',NODEW+7); ts.removeAttribute('data-inline');
   }
-  g.setAttribute('aria-label',(n.meta.full||lab.l)+': '+plural(n.n,'person','people'));
+  if(n.fold){ // a folded step's part: its count, centred, when there is room
+    tl.textContent=''; ts.textContent=hh>=16?(REL?String(relCount(n)):String(n.n)):'';
+    ts.setAttribute('x',(w/2).toFixed(1)); ts.setAttribute('text-anchor','middle'); ts.setAttribute('y',(hh/2+4).toFixed(1)); ts.removeAttribute('data-inline');
+  }
+  g.setAttribute('aria-label',(n.meta.full||lab.l)+': '+plural(n.n,'person','people')+(n.fold?'. Select to open this step.':''));
+}
+// a card's colours, top to bottom: who carries on, who is too early to say, who stopped
+function paintParts(g,n,w,hh,on){
+  var ps=g.querySelectorAll('.part');
+  if(!on||!n.parts){ps.forEach(function(e){e.remove();});g.classList.remove('earlyish');return;}
+  if(ps.length!==3){ps.forEach(function(e){e.remove();});var box=g.querySelector('.nbox');['go','early','stop'].forEach(function(k){box.before(s('rect',{'class':'part '+k}));});}
+  var t=n.parts[0]+n.parts[1]+n.parts[2]||1,y=0,H=Math.max(hh,2);
+  ['go','early','stop'].forEach(function(k,i){var r=g.querySelector('.part.'+k),hk=H*n.parts[i]/t;r.setAttribute('x',0);r.setAttribute('y',y.toFixed(2));r.setAttribute('width',w.toFixed(1));r.setAttribute('height',Math.max(0,hk).toFixed(2));y+=hk;});
+  g.classList.toggle('earlyish',n.parts[1]>t/2);
 }
 function fixInline(){ // put the count after the one-line label
   Object.keys(nodeEls).forEach(function(id){var g=nodeEls[id],ts=g.querySelector('.nsub');if(ts.getAttribute('data-inline')&&ts.textContent){var tl=g.querySelector('.nlabel');var w=0;try{w=tl.getComputedTextLength();}catch(e){w=tl.textContent.length*7;}
@@ -551,14 +614,38 @@ function drawZones(L,op){
     if(i)gZ.appendChild(s('line',{'class':'zline',x1:lx,x2:lx,y1:8,y2:L.H-8}));
     gZ.appendChild(s('text',{'class':'ztitle',x:i?lx+10:x,y:20,text:z.l}));
   });
-  if(v.decor)v.decor(L,gZ);
-  v.cols.forEach(function(c,i){gZ.appendChild(s('text',(c.right&&L.mode!=='cards')?{'class':'ctitle',x:L.xs[i]+NODEW,y:46,'text-anchor':'end',text:c.t}:{'class':'ctitle',x:L.xs[i],y:46,text:c.t}));});
+  if(v.stepsOn)drawSteps(L);   // first, so the step boxes sit under the grid's labels
+  if(v.decor&&(!v.stepsOn||v.gridAt!=null))v.decor(L,gZ);
+  v.cols.forEach(function(c,i){if(c.fold)return;gZ.appendChild(s('text',(c.right&&L.mode!=='cards')?{'class':'ctitle',x:L.xs[i]+NODEW,y:46,'text-anchor':'end',text:c.t}:{'class':'ctitle',x:L.xs[i],y:46,text:c.t}));});
   // under each title, how many people reach that step: of everyone in the view, or of the selection
   var all=Object.keys(L.T).length;
   v.cols.forEach(function(c,i){
-    if(c.band)return;
+    if(c.band||c.fold)return;
     var r=reach(L,i),txt=REL?(r.k+' of '+REL.n+' selected'):(r.n+' \u00b7 '+pct(r.n,all));
     gZ.appendChild(s('text',(c.right&&L.mode!=='cards')?{'class':'ctot',x:L.xs[i]+NODEW,y:62,'text-anchor':'end',text:txt}:{'class':'ctot',x:L.xs[i],y:62,text:txt}));
+  });
+}
+function drawSteps(L){
+  var v=L.view;
+  v.base.steps.forEach(function(st){
+    var idx=[];v.cols.forEach(function(c,i){if(c.step===st)idx.push(i);});
+    if(!idx.length)return;
+    var i0=idx[0],i1=idx[idx.length-1],fold=!!v.cols[i0].fold,x0=L.xs[i0],x1=L.xs[i1]+L.cw[i1];
+    if(!fold){ // an open step is still one bar: a box around its columns
+      var y0=1e9,y1=-1e9;L.all.forEach(function(nd){if(idx.indexOf(nd.col)<0||nd.meta.pass||!nd.n)return;y0=Math.min(y0,nd.y);y1=Math.max(y1,nd.y+nd.h);});
+      var pt=idx.some(function(i){return v.cols[i].band;})?26:10;   // the grid's row labels sit above its rows
+      if(y0<y1)gZ.appendChild(s('rect',{'class':'stepbox',x:(x0-10).toFixed(1),y:(y0-pt).toFixed(1),width:(x1-x0+20).toFixed(1),height:(y1-y0+pt+10).toFixed(1),rx:10}));
+    }
+    var head=s('text',{'class':'stephead',x:x0,y:20,tabindex:'0',role:'button','aria-expanded':fold?'false':'true',text:(fold?'\u25b8 ':'\u25be ')+st.t});
+    head.addEventListener('click',function(ev){ev.stopPropagation();toggleStep(st.id);});
+    head.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();toggleStep(st.id);}});
+    gZ.appendChild(head);
+    if(!fold)return;
+    var c={go:0,early:0,stop:0},k=0;L.nodes.forEach(function(nd){if(nd.col===i0&&nd.meta.fold){c[nd.meta.fold]=nd.n;if(REL)k+=relCount(nd);}});
+    var n=c.go+c.early+c.stop;
+    gZ.appendChild(s('text',{'class':'ctot',x:x0,y:46,text:REL?(k+' of '+REL.n+' selected'):(st.id==='came'?n+' people':c.go+' of '+n+' \u00b7 '+pct(c.go,n))}));
+    if(c.stop)gZ.appendChild(s('text',{'class':'stepsum lost',x:x0,y:62,text:c.stop+' stopped'}));
+    if(c.early)gZ.appendChild(s('text',{'class':'stepsum',x:x0,y:c.stop?78:62,text:c.early+' too early'}));
   });
 }
 function drawLoop(L,op){
@@ -707,9 +794,11 @@ function drawLeaks(L){
     g.addEventListener('keydown',function(ev){if(ev.key==='Enter'||ev.key===' '){ev.preventDefault();pick();}});
     gK.appendChild(g);
   });
+  // Notes reads the leaks of the fully open chart, whichever steps are folded
+  var nk=L.full?(L.full.leaks||(L.full.leaks=leaksFor(L.full))):lk;
   var card=byId('leakCard'),ul=byId('leaks');ul.textContent='';
-  card.hidden=!lk.steps.length;
-  lk.steps.slice(0,6).forEach(function(st){
+  card.hidden=!nk.steps.length;
+  nk.steps.slice(0,6).forEach(function(st){
     var b=h('button',{'class':'linkbtn',type:'button',text:'Show'});b.addEventListener('click',function(){pickLeak(st);NOTES.close();});
     ul.appendChild(h('li',null,h('span',{'class':'fig none',text:'\u2212'+st.k+' \u00b7 '+pct(st.k,st.n)+' lost'}),h('p',null,h('b',{text:st.from+' \u2192 '+st.to+'. '}),leakText(st)+' '+leakMore(st).join(' ')+' ',b)));
   });
@@ -803,6 +892,7 @@ svg.addEventListener('pointermove',function(ev){
   if(ev.target.closest&&ev.target.closest('.nodeg')){
     var g=ev.target.closest('.nodeg'),n=g.__n;if(!n)return;
     if(ev.target.classList&&(ev.target.classList.contains('gbtn')||ev.target.classList.contains('gpill'))){showTip(svgPoint(ev),[h('b',{text:n.meta.group.label}),h('span',{'class':'t2',text:plural((n.gkeys||[]).length,'person','people')+'. Select to follow the whole group.'})]);return;}
+    if(n.meta.fold){showTip(svgPoint(ev),[h('b',{text:n.meta.full}),h('span',{'class':'t2',text:plural(n.n,'person','people')+' \u00b7 '+pct(n.n,n.colTotal)+' of the '+n.colTotal+' who reached this step'}),REL?h('span',{'class':'t2',text:relCount(n)+' of the '+REL.n+' selected'}):null,h('span',{'class':'t2',text:'Select to open this step.'})].filter(Boolean));return;}
     if(n.meta.phantom){var W=WAIT;showTip(svgPoint(ev),[h('b',{text:n.meta.full}),h('span',{'class':'t2',text:W?(plural(W.n,'person','people')+' joined the waitlist and have not been let off. Half have waited '+W.median+' days or more. Not drawn to scale: no thread leaves this box. Select it for the breakdown.'):'These people are stored, but nothing the connector returns lists or counts them, so the box is empty here.'})]);return;}
     var lab=nodeLabel(n);
     var sh=n.meta.sharer;
@@ -896,7 +986,7 @@ function renderDetail(){
     detailBody.appendChild(h('div',{'class':'split'},wl('Said they heard about it from',W.said),wl('Joined through',W.form)));
     detailBody.appendChild(h('div',{'class':'split'},wl('Joined in',W.months)));
     return;}
-  if(!n&&sel.group&&sel.view===curId){
+  if(!n&&sel.group&&sel.view===curId&&!cur.view.stepsOn){
     var at=function(p,d){var t=cur.T[p.k];if(!t)return null;var i=sel.col-t.start+d;if(d<0){while(i>0&&(N[t.nodes[i]]||{}).pass)i--;} return (i>=0&&i<t.nodes.length)?dispName(t.nodes[i]):(d>0?'Stopped here':(d<0?'Started here':null));};
     var mk=function(title,d){var rows=tally(people,function(p){return at(p,d);});return h('div',null,h('p',{'class':'eyebrow2',text:title}),h('ul',{'class':'rows'},rows.map(function(r){return h('li',null,h('span',{text:r[0]}),h('span',{'class':'n',text:String(r[1])}));})));};
     detailBody.appendChild(h('div',{'class':'split'},mk('In this group',0),mk('Went to',1)));
@@ -1129,6 +1219,7 @@ function legend(L){
   LANEKEYS.forEach(function(l){var n=count(L.people,function(p){return p.lane===l;});if(!n)return;el.appendChild(h('li',{title:LANES[l].d},h('span',l==='both'?{'class':'sw both'}:{'class':'sw','style':'background:var(--'+(l==='none'?'drop':l)+')'}),LANES[l].l+' '+n));});
   el.appendChild(h('li',null,h('span',{'class':'box hatch'}),'Not recorded'));
   if(L.view&&L.view.leaks)el.appendChild(h('li',{title:'A thread ends at this card'},h('span',{'class':'stop'}),'Stops here'));
+  if(L.view&&L.view.stepsOn)[['go','Carries on'],['early','Too early to say'],['drop','Stopped here']].forEach(function(x){el.appendChild(h('li',null,h('span',{'class':'box','style':'background:var(--'+x[0]+')'}),x[1]));});
 }
 /* The chart is laid out once at a fixed design width and then moved and scaled like a map. */
 var DESIGN_W=1500;
@@ -1241,13 +1332,15 @@ var NOTES=(function(){
 })();
 byId('sheetClose').addEventListener('click',function(){select(null);});
 listen(document,'keydown',function(e){if(e.key!=='Escape')return;if(NOTES.isOpen())NOTES.close();else if(sel)select(null);});
+// the layout as drawn; with steps, also the fully open one, which Notes reads (leaks, how many reach each step)
+function build(id){var v=stepView(VBY[id]),L=layout(v,width(v));if(v.stepsOn)L.full=layout(VBY[id],width(VBY[id]));return L;}
 function show(id,animate,force){
-  var prev=curId,L=layout(VBY[id],width(VBY[id]));fitStage(L);
+  var prev=curId,L=build(id);fitStage(L);
   curId=id;
   VIEWS.forEach(function(v){tabsEl.querySelector('[data-tab="'+v.id+'"]').setAttribute('aria-selected',v.id===id?'true':'false');});
   viewLine(id,animate?prev:null); legend(L);
   var s=byId('says');s.textContent='';says(id).forEach(function(li){s.appendChild(li);});
-  tables(id); stepsTable(L); onboardingTables(id);
+  tables(id); stepsTable(L.full||L); onboardingTables(id);
   byId('flowDesc').textContent=VBY[id].tab+' view of '+L.people.length+' people as a flow diagram with '+VBY[id].cols.length+' columns: '+VBY[id].cols.map(function(c){return c.t;}).join(', ')+'. The notes carry the same numbers.';
   if(animate&&cur&&(prev!==id||force)){var A=cur;hover=null;tip.hidden=true;transition(A,L);cur=L;}
   else{cur=L;renderStatic(L);}
@@ -1325,7 +1418,7 @@ whoSel.addEventListener('change',function(){setWho(whoSel.value,true);});
 function setMode(m,animate){
   MODE='cards';
   if(!cur)return;
-  var A=cur,L=layout(VBY[curId],width(VBY[curId]));fitStage(L);
+  var A=cur,L=build(curId);fitStage(L);
   hover=null;tip.hidden=true;
   if(animate){transition(A,L);cur=L;}else{cur=L;renderStatic(L);}
 }
