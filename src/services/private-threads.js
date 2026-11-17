@@ -95,6 +95,8 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
             a.slug, a.name, t.number AS target_number,
             d.title AS design_title,
             (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version,
+            -- #6784: an idea thread a project was made from says so in its head.
+            EXISTS (SELECT 1 FROM homeroom_bot_first_versions f WHERE f.idea_thread_id = p.id) AS made,
             (SELECT m.metadata->'homeroomBot'->>'appName' FROM conversation_messages m
               WHERE m.id = p.root_message_id) AS root_app_name
        FROM private_threads p
@@ -129,6 +131,9 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
     target: row.target_number == null ? null : Number(row.target_number),
     href: app && row.result_ref != null ? hrefFor(app, row.result_ref, row.kind === 'draft_reply' ? 'thread' : 'request') : null,
     mine: true,
+    // #6784: the thread a project was made from. Its head says "Made into
+    // {project}." with a link, ahead of the filed line (which has no request).
+    ...(row.made && app ? { made: true } : {}),
     // B04 (audit 2 Nov 2026): a screen drawn for no project yet, which New
     // project makes the project from (its name, the drawing), never the
     // generic create screen with the thread's last words.

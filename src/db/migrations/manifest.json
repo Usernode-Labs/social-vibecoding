@@ -415,6 +415,11 @@
       "id": "bot-cards-target-app",
       "sha256": "4f24f85148bc4953343a0d2ed40002503eb33611adaf3c1a8c3a6db3225d0f13",
       "schemaSha256": "b83e961322ac8ab1972aa5195c9523264663fce1bb4c0efde48606ec32a20005"
+    },
+    {
+      "id": "first-version-idea-thread",
+      "sha256": "781df0836023d097dd21db7a65b704a1c86d74bfc37d853d60ab18f6b18571f8",
+      "schemaSha256": "30f329665f77e2b9b9bc349b4fce32615e1690cef4162164c899f1227411a034"
     }
   ]
 }

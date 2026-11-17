@@ -106,6 +106,11 @@ export interface PrivateThreadState {
    * newest version: New project makes the project from it (./bot-make.tsx).
    */
   design?: { title: string | null; version: number } | null;
+  /**
+   * #6784 (17 Nov 2026): a project was made from this idea thread. Its head
+   * says "Made into {project}." with a link, and New project is gone.
+   */
+  made?: boolean;
 }
 
 export type Door = 'new';
@@ -404,6 +409,17 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
     );
   }
   if (filed && track) return <RequestTrackStrip track={track} number={filed.number} href={filed.href} />;
+  // #6784: an idea thread made into a project says so, and links it, ahead
+  // of the filed line (which is for a request, and this thread has none).
+  if (where.made && where.app?.slug) {
+    return (
+      <div className="messages-bot-note px-4 py-2" data-private-thread="made">
+        {t('messages:privateThread.made', { project: where.app.name || where.app.slug })}
+        {' · '}
+        <a href={`#app/${encodeURIComponent(where.app.slug)}`}>{t('messages:privateThread.open')}</a>
+      </div>
+    );
+  }
   if (where.state === 'filed' || where.state === 'posted') {
     const id = where.state === 'filed' ? 'messages:privateThread.filed' : 'messages:privateThread.posted';
     return (
@@ -456,7 +472,7 @@ export function PrivateThreadDoors({ rootId, text, name = '', where, botReplied,
 
   const startProject = (audience: Audience) => {
     const app = typeof window !== 'undefined' ? (window as any).App : null;
-    app?.showCreateModal?.({ idea: text, name, audience });
+    app?.showCreateModal?.({ idea: text, name, audience, threadRootId: rootId });
   };
   return (
     <div className="px-4 py-2" data-private-doors={doors.join(' ')}>

@@ -281,9 +281,11 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   // A description for Homeroom bot to build from, or a ready-made app to make (below).
   // #6019 follow-up: a private thread's New project says who it is for;
   // Create and the first session make a private project otherwise.
-  assert.match(make, /audience = 'invited',\n\}: \{/);
+  assert.match(make, /audience = 'invited', threadRootId = null,\n\}: \{/);
   assert.match(make, /audience,\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
     'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
+  assert.match(make, /\.\.\.\(threadRootId && !ready \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\),/,
+    'a thread sends its root with the brief, never with a ready-made app');
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
@@ -1206,4 +1208,41 @@ test('the first session\'s answer owes Homeroom bot\'s hello, unless making the 
   assert.ok(maker > 0, 'a ready-made app\'s maker is greeted');
   assert.match(create, /if \(readyMade\) \{\n\s+await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(pool, \{ userId: req\.user\.id, kind: 'maker', appId: appRow\.id \}\)\n\s+\.catch\(/);
   assert.ok(maker < create.indexOf('answerJoinScreenByMaking('), 'owed first');
+});
+
+// #6784 (17 Nov 2026): New project in a private thread with Homeroom bot
+// makes the project from the plan agreed there. The screen says so under the
+// box, and sends the thread with the brief so the server can build it.
+test('#6784: a thread\'s plan comes along, and the thread is sent with the brief', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(message(make.THREAD_IDEA_LINE), 'Homeroom bot\'s plan from your thread comes along with it.');
+  const idea = 'An app for saving places on a real map, with public and private lists';
+  const base = { who: 'Jordan', entry: 'create', onMade() {}, onClose() {}, idea };
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, threadRootId: 41 });
+  const line = /<p data-make-thread-idea="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
+  assert.ok(line, 'the line is drawn');
+  // React escapes the apostrophe in the rendered line; the catalog's own words are pinned above.
+  assert.match(line[2], /^Homeroom bot.+s plan from your thread comes along with it\.$/);
+  assert.match(line[1], /\btext-xs\b/);
+  assert.match(line[1], /\btext-zinc-500\b/);
+  assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
+  // It is the line under the box, whatever the brief says: the plan comes
+  // along with an edited one too (the condition is the thread, not the text).
+  assert.ok(html.indexOf('data-make-thread-idea') > html.indexOf('</textarea>'));
+  assert.ok(html.indexOf('data-make-thread-idea') < html.indexOf('first-session-name'));
+  assert.match(read(`${DIR}/make.tsx`), /kept: threadRootId \? \{ attr: 'data-make-thread-idea'/);
+  // Without a thread there is no line, as before.
+  assert.doesNotMatch(renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base), /data-make-thread-idea/);
+
+  // The body sends `thread` with the brief, and never with a ready-made app
+  // (which sends no brief at all).
+  assert.match(read(`${DIR}/make.tsx`),
+    /\.\.\.\(threadRootId && !ready \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\),/);
+  // Create's door takes a real message id, and only with an idea to make.
+  const index = read(`${DIR}/index.tsx`);
+  assert.match(index, /const threadRootId = idea && Number\.isSafeInteger\(asked\) && asked > 0 \? asked : null;/);
+  assert.match(index, /threadRootId=\{mode\.threadRootId \?\? null\}/);
+  // The foot hands it in, from the thread the person is in.
+  assert.match(read('frontend/src/features/messages/private-thread-bar.tsx'),
+    /app\?\.showCreateModal\?\.\(\{ idea: text, name, audience, threadRootId: rootId \}\)/);
 });
