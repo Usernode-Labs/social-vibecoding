@@ -2019,7 +2019,7 @@ function requestNews(kind, dm, context) {
       // approved that somebody needs to approve.
       if (dm.goAheadDecides === false) {
         return `${line}\n\nThis needs a person to build, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
-          + 'I don\'t build changes like this myself, even with a go-ahead. A person has to build it, '
+          + `${require('./homeroom-bot-live').cannotLead(dm.blocker)}. A person has to build it, `
           + 'for example you with a coding agent, and the group votes on it as usual. '
           + require('./homeroom-bot-live').canBuildPart(dm.firstStep);
       }

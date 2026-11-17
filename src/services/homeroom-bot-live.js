@@ -216,7 +216,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -239,9 +239,10 @@ function personText({ reason, platform = false, project = null, done = false, wi
   }
   // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (operator work
   // outside the app, or a database change that is not append-only), so the copy
-  // names no Go ahead and leads with the part it can build.
+  // names no Go ahead and ends with the part it can build. 17 Nov 2026: it
+  // says which of the two it is (cannotLead), not one sentence for both.
   if (goAheadDecides === false) {
-    return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+    return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
       + canBuildPart(firstStep);
   }
@@ -249,6 +250,53 @@ function personText({ reason, platform = false, project = null, done = false, wi
   // Homeroom's names who can say Go ahead (personHomeroomText).
   return `Homeroom bot thinks a person needs to decide this one: ${reasonSentence(reason)} `
     + 'Whoever decides here can say Go ahead in a chat with Homeroom bot, or reply here.';
+}
+
+// 17 Nov 2026: the two things a go-ahead cannot settle, as the read names
+// them (`blocker`). Anything else a read calls "cannot" is not one: its
+// go_ahead false is read as a request a go-ahead can settle (homeroom-bot.js
+// parseVerdict), so a sign-in fix or a large request never gets this note.
+const GO_AHEAD_BLOCKERS = Object.freeze(['operator_work', 'destructive_db']);
+
+/** Pure: a read's `blocker` when it is one of the two, else null. */
+function blockerOf(value) {
+  const key = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return GO_AHEAD_BLOCKERS.includes(key) ? key : null;
+}
+
+/**
+ * 17 Nov 2026: whether a stored run's "no go-ahead can settle this" still
+ * stands, so it may be said again without a new read: a person verdict, its
+ * go_ahead_decides false, and the blocker its read named. Pure.
+ */
+function cannotStands(run) {
+  return run?.verdict === 'person' && run.go_ahead_decides === false && !!blockerOf(run.go_ahead_blocker);
+}
+
+/**
+ * 17 Nov 2026: a refusal no go-ahead could settle, stored before the read
+ * had to name its blocker. On the boards most of these were neither operator
+ * work nor a destructive database change, and nothing read them again when
+ * the rules were loosened (#6672). The refresh reads each once more
+ * (homeroom-bot.js refreshApp): the new run names a blocker or carries
+ * go_ahead_decides true, so it is never stale twice. Pure.
+ */
+function staleCannot(run) {
+  return run?.mode === 'live' && run.verdict === 'person' && run.go_ahead_decides === false
+    && !blockerOf(run.go_ahead_blocker);
+}
+
+/**
+ * 17 Nov 2026: how a note that no go-ahead can settle opens, by what stands
+ * in the way. It used to be one sentence for both ("I don't build changes
+ * like this myself, even with a go-ahead"), which said nothing about why.
+ * A run stored before the read named its blocker has none. Pure.
+ */
+function cannotLead(blocker) {
+  const key = blockerOf(blocker);
+  if (key === 'operator_work') return 'This needs something set up outside this app, which I can\'t do from here';
+  if (key === 'destructive_db') return 'This changes or removes data that is already saved, which I leave to a person';
+  return 'I can\'t build this one myself';
 }
 
 /**
@@ -266,7 +314,7 @@ function canBuildPart(firstStep) {
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
@@ -282,7 +330,7 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
   // as able to say it. It says what it can build here instead.
   if (goAheadDecides === false) {
-    return firstPerson(`I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason)} `
+    return firstPerson(`${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
       + canBuildPart(firstStep));
   }
@@ -341,8 +389,8 @@ function personSuggestions({ firstStep = null, platform = false, done = false, w
  * request, instead of the note again. It says what a go-ahead cannot change,
  * then the part the bot can still build. Server text, like the labels.
  */
-function goAheadCannotText({ reason, firstStep = null, reader = null } = {}) {
-  return `I don't build changes like this myself, even with a go-ahead: ${reasonSentence(reason, { reader })} `
+function goAheadCannotText({ reason, firstStep = null, reader = null, blocker = null } = {}) {
+  return `A go-ahead can't settle this one. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
     + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
     + canBuildPart(firstStep);
 }
@@ -5849,6 +5897,11 @@ module.exports = {
   personSuggestions,
   goAheadCannotText,
   canBuildPart,
+  cannotLead,
+  cannotStands,
+  staleCannot,
+  blockerOf,
+  GO_AHEAD_BLOCKERS,
   saysGoAhead,
   GO_AHEAD_REPLY_MAX_CHARS,
   GO_AHEAD_LABEL,

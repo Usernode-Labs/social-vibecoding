@@ -395,6 +395,11 @@
       "id": "chat-messages-client-key",
       "sha256": "4d6a76708d16d32917100be4cd74422011fa39c348d1d55312a6af83e38567f4",
       "schemaSha256": "bfefb0ba5730958609baaa51e29f0eeb2cc2bb1a13738152cbbb273cddf582f9"
+    },
+    {
+      "id": "homeroom-bot-run-go-ahead-blocker",
+      "sha256": "df1654bbf2ff6ddfd3fb37fbb15eee15c95c4d64bffcf14a57596f1c9606e4e1",
+      "schemaSha256": "efc0c91828257b3f8f5770bdbed02810d52e074e796a770b4cc7d36a576b9272"
     }
   ]
 }

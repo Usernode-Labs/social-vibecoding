@@ -1014,7 +1014,7 @@ test('#6430: a go-ahead that cannot settle it says a person has to build it', ()
     goAheadDecides: false, firstStep: 'Just the three missing read tools',
   }, ctx);
   assert.match(text, /This needs a person to build, so I haven't built it: It changes permissions and production database access\./);
-  assert.match(text, /I don't build changes like this myself, even with a go-ahead\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Just the three missing read tools\.$/);
+  assert.match(text, /I can't build this one myself\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Just the three missing read tools\.$/);
   assert.doesNotMatch(text, /If you decide to go ahead/);
   assert.doesNotMatch(text, /\bapprove/i);
   assert.doesNotMatch(text, /\u2014/);
