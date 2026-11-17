@@ -2616,12 +2616,17 @@ const TRIAGE_PROMPT_CEILING = 33000;
 // what a turn can carry), plus the conventions' content and data rules, whose
 // text is a section of a document other apps read, so their budget lives in
 // homeroom-bot-live.js beside where they are added.
+//
+// The rules are measured in the same short form the triage prompt carries
+// (`{ triage: true }`, #6766). Measuring the full section instead charges
+// this prompt for text it never reads, since only the spec, build and
+// follow-up prompts get the whole thing.
 function triagePromptBudgets() {
   const prompts = require('./prompts');
   const withImages = prompts.designGuidanceSource({ readsImages: true });
   const textOnly = prompts.designGuidanceSource({ readsImages: false });
   const design = withImages.length >= textOnly.length ? withImages : textOnly;
-  const rules = live.requestRulesLines().join('\n').trim();
+  const rules = live.requestRulesLines({ triage: true }).join('\n').trim();
   return checkParts([
     ...parseParts(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'), 'src/prompts/homeroom-bot-triage.md'),
     ...parseParts(design, 'src/prompts/design-guidance.md'),
