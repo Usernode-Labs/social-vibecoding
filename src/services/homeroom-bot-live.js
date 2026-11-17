@@ -834,6 +834,14 @@ const DATA_RULES_TRIAGE_LINES = Object.freeze([
   '`get_platform_conventions` slug `data-rules-what-no-app-may-collect-or-load`.',
 ]);
 
+// #6777: the content and data rules' own size budget, kept here rather than
+// in the triage prompt file because their text is a section of the platform
+// conventions document (src/prompts/app-conventions.md), which other apps
+// read. Measured at build (5,781 chars), plus a tenth, rounded up to the next
+// 50. A change that grows them raises this number, in this one place.
+const REQUEST_RULES_BUDGET = 6400;
+const REQUEST_RULES_NOTE = '17 Nov 2026 #6769: what the data rules allow as well as ban';
+
 /**
  * The two, as prompt lines: said in the triage's, the spec's, the build's and
  * the follow-up's prompts.
@@ -6066,6 +6074,8 @@ module.exports = {
   DATA_RULES_SLUG,
   REQUEST_IS_DATA_LINES,
   requestRulesLines,
+  REQUEST_RULES_BUDGET,
+  REQUEST_RULES_NOTE,
   teeProgress,
   lastActivity,
   utcClock,

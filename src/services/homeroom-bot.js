@@ -56,6 +56,7 @@ const log = require('./logger');
 const githubBudget = require('./github-budget');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
+const { parseParts, stripPartMarkers, checkParts } = require('./homeroom-bot-prompt-parts');
 const durableSteps = require('./durable-steps');
 const durableTurn = require('./durable-turn');
 const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
@@ -2599,8 +2600,39 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
 
 function triagePrompt() {
   if (triagePromptCache) return triagePromptCache;
-  triagePromptCache = fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8');
+  triagePromptCache = stripPartMarkers(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'));
   return triagePromptCache;
+}
+
+// #6777: the whole assembled prompt's ceiling, separate from each part's own
+// budget. About 8% above the 30,550 the one shared cap held, so ordinary
+// growth in one part does not move it. A change raises a part's budget, never
+// this.
+const TRIAGE_PROMPT_CEILING = 33000;
+
+// Every part of the triage prompt, with its size, its budget and how far it
+// is over. The parts are the triage file's own sections and the design
+// guidance it includes (measured with the longer self-check, since that is
+// what a turn can carry), plus the conventions' content and data rules, whose
+// text is a section of a document other apps read, so their budget lives in
+// homeroom-bot-live.js beside where they are added.
+function triagePromptBudgets() {
+  const prompts = require('./prompts');
+  const withImages = prompts.designGuidanceSource({ readsImages: true });
+  const textOnly = prompts.designGuidanceSource({ readsImages: false });
+  const design = withImages.length >= textOnly.length ? withImages : textOnly;
+  const rules = live.requestRulesLines().join('\n').trim();
+  return checkParts([
+    ...parseParts(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'), 'src/prompts/homeroom-bot-triage.md'),
+    ...parseParts(design, 'src/prompts/design-guidance.md'),
+    {
+      name: 'request-rules',
+      budget: live.REQUEST_RULES_BUDGET,
+      note: live.REQUEST_RULES_NOTE,
+      chars: rules.length,
+      source: 'src/services/homeroom-bot-live.js',
+    },
+  ]);
 }
 
 // What the triage knows of the platform. A request often turns on it (its
@@ -11801,6 +11833,8 @@ module.exports = {
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
+  triagePromptBudgets,
+  TRIAGE_PROMPT_CEILING,
   personPlanTriageNote,
   signalNote,
   firstVersionNote,
