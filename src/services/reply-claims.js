@@ -152,7 +152,11 @@ const DRAWING_CLAIM = new RegExp(
 const NEW_PROJECT_CLAIM = new RegExp(
   String.raw`\b(?:tap|press|click|hit|use)\s+(?:the\s+)?\**["“]?New project\b`
   + String.raw`|\bNew project\b[^.!?\n]{0,80}\b(?:appear|show(?:s|n)? up|below|under (?:this|my|the|that) (?:message|reply))\b`
-  + String.raw`|\bNew project button\b`,
+  + String.raw`|\bNew project button\b`
+  // #6783: the offer is a card under the reply now, so a reply points at it
+  // there ("the card below", "check ... below, then Make it").
+  + String.raw`|\b(?:card|offer)\b[^.!?\n]{0,60}\b(?:below|under (?:this|my|the|that) (?:message|reply))\b`
+  + String.raw`|\bbelow\b[^.!?\n]{0,40}\bthen\s+\**["“]?Make it\b`,
   'i',
 );
 
@@ -1370,7 +1374,7 @@ function repairNote(problems, { tools = null } = {}) {
     : '';
   // 17 Nov 2026 (#6763): a New project pointed at with none under the reply.
   const newProject = kinds.has('new_project')
-    ? ` Your reply points at a New project button under it, but none is there.${offered('offer_new_project') ? ' If they want to make a new app of its own, call offer_new_project now, then reply; otherwise ask what the app is for and do not mention New project.' : ' Do not mention New project.'}`
+    ? ` Your reply points at a New project card or button under it, but none is there.${offered('offer_new_project') ? ' If they want to make a new app of its own, call offer_new_project now, then reply; otherwise ask what the app is for and do not mention New project.' : ' Do not mention New project.'}`
     : '';
   // 1 Nov 2026: a screen said to be drawing with nothing drawn.
   const drawWith = offered('write_screen') ? 'write_screen (or edit_design)' : null;

@@ -40,11 +40,25 @@ export interface MakeProject {
   name: string;
   rootId: number;
   version: number | null;
+  /** #6783: what the project will do, for a card the bot wrote in a private thread (no design). */
+  brief?: string | null;
 }
 
 /** Pure: what Make it posts to /api/apps for `project`. */
 export function makeBody(project: MakeProject, name: string, audience: CreateAudience, timeZone: string | null = null): Record<string, unknown> {
   const named = name.trim();
+  // #6783: a New project card's brief is what the project starts from, and
+  // the thread its card is in settles once it is made. No design, no `from`.
+  const brief = (project.brief || '').trim();
+  if (brief) {
+    return {
+      name: named,
+      audience,
+      brief,
+      thread: { rootId: project.rootId },
+      ...(timeZone ? { timeZone } : {}),
+    };
+  }
   return {
     name: named,
     audience,
@@ -147,7 +161,7 @@ export function MakeSheet({ project, onClose, onMade }: {
               })}
             </div>
           </fieldset>
-          <p className="mt-3 text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:bot.make.note')}</p>
+          <p className="mt-3 text-[13px] text-zinc-500 dark:text-zinc-400">{t(project.brief ? 'messages:bot.make.noteBrief' : 'messages:bot.make.note')}</p>
           {error ? <p role="alert" className="mt-3 text-[14px] text-red-600 dark:text-red-400">{error}</p> : null}
           <Button
             type="submit"
@@ -166,4 +180,79 @@ export function MakeSheet({ project, onClose, onMade }: {
     </div>
   );
   return typeof document === 'undefined' ? sheet : createPortal(sheet, document.body);
+}
+
+/**
+ * Pure (#6783): whether a New project card's brief has more to show than its
+ * four lines: more than four lines, or long enough to run past them.
+ */
+export function briefNeedsMore(brief: string | null | undefined): boolean {
+  const words = String(brief || '').trim();
+  return words.split('\n').length > 4 || words.length > 280;
+}
+
+/**
+ * #6783: the New project card Homeroom bot offers in a private thread: what
+ * it will do, with Make it (the sheet above) and Edit first (the create
+ * screen, filled in with the name and the brief). Once made, it says what it
+ * made and opens it, on every device (routes/apps.js noteProjectMade).
+ * The name the bot suggested is the head line the message itself carries.
+ */
+export function ProjectOfferCard({ project, made = null, closedLine = null }: {
+  project: MakeProject;
+  made?: { slug: string; name: string } | null;
+  /** #6783: an offer a newer message or a week's wait closed says so in its buttons' place. */
+  closedLine?: string | null;
+}): ReactNode {
+  const t = useMessages('messages');
+  const brief = (project.brief || '').trim();
+  const [open, setOpen] = useState(false);
+  const [making, setMaking] = useState(false);
+  // What this device made, until the server's own state comes back.
+  const [madeHere, setMadeHere] = useState<{ slug: string; name: string } | null>(null);
+  const done = made || madeHere;
+
+  const edit = () => {
+    const app = typeof window !== 'undefined' ? (window as any).App : null;
+    app?.showCreateModal?.({ idea: brief, name: project.name });
+  };
+
+  return (
+    <div className="messages-bot-question" data-bot-question={done ? 'answered' : closedLine ? 'closed' : 'open'} data-bot-project-card="">
+      <div className="rounded-[20px] bg-white p-3.5 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-800">
+        <div className="text-[13px] text-zinc-500 dark:text-zinc-400">{t('messages:bot.make.briefLabel')}</div>
+        <p className={`mt-1 whitespace-pre-line text-[15px] leading-snug text-zinc-900 dark:text-zinc-100 ${open ? '' : 'line-clamp-4'}`} data-bot-project-brief="">{brief}</p>
+        {briefNeedsMore(brief) ? (
+          <button
+            type="button"
+            className="py-1 text-[14px] font-semibold text-violet-700 dark:text-violet-300"
+            data-bot-project-more=""
+            aria-expanded={open}
+            onClick={() => setOpen((value) => !value)}
+          >
+            {t(open ? 'messages:bot.make.showLess' : 'messages:bot.make.showAll')}
+          </button>
+        ) : null}
+        {done ? (
+          <p className="messages-bot-answered" data-bot-made="">
+            <a className="font-semibold text-violet-700 dark:text-violet-300" href={`#app/${encodeURIComponent(done.slug)}`}>{t('messages:bot.make.open', { project: done.name || done.slug })}</a>
+          </p>
+        ) : closedLine ? (
+          <p className="messages-bot-answered">{closedLine}</p>
+        ) : (
+          <div className="messages-bot-answers mt-2" role="group" aria-label={project.name || t('messages:bot.make.unnamed')}>
+            <button type="button" className="messages-bot-primary" data-bot-project-make="" onClick={() => setMaking(true)}><span>{t('messages:bot.make.cardSubmit')}</span></button>
+            <button type="button" className="messages-bot-secondary" data-bot-project-edit="" onClick={edit}><span>{t('messages:bot.make.editFirst')}</span></button>
+          </div>
+        )}
+      </div>
+      {making ? (
+        <MakeSheet
+          project={project}
+          onClose={() => setMaking(false)}
+          onMade={(app) => { setMaking(false); setMadeHere(app); }}
+        />
+      ) : null}
+    </div>
+  );
 }

@@ -5,7 +5,7 @@ import { InfoCircleIcon } from '@/components/ui/icons';
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { InviteSheet } from '../first-session/made';
-import { MakeSheet } from './bot-make';
+import { MakeSheet, ProjectOfferCard } from './bot-make';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
 import { useTrackOf } from './bot-track';
@@ -179,6 +179,19 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
+  // #6783: a private thread's New project card (the bot's offer with a brief)
+  // is its own card under the reply, not a row of buttons.
+  if (meta?.kind === 'make_offer' && meta.makeProject?.brief) {
+    return (
+      <ProjectOfferCard
+        project={meta.makeProject}
+        made={meta.madeSlug ? { slug: meta.madeSlug, name: meta.madeName || meta.madeSlug } : null}
+        closedLine={meta.status === 'closed'
+          ? (meta.retired ? t(retiredLine(meta.retired)) : meta.expired ? t('messages:bot.offer.expired') : t('messages:bot.actions.closed'))
+          : null}
+      />
+    );
+  }
   if (meta?.actions?.length) return <BotActions message={message} meta={meta} conversationId={conversationId} hidePrompts={hidePrompts} />;
   if (!meta || !meta.question) return null;
   const answers = (meta.answers || []).filter((a) => typeof a === 'string' && a.trim());
