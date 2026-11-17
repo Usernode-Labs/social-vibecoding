@@ -401,6 +401,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   //   POST /api/conversations/homeroom-bot/threads/:rootId/post  { project, number, text? }
   //   POST /api/conversations/homeroom-bot/threads/:rootId/done   (#6159: Mark done)
   //   POST /api/conversations/homeroom-bot/threads/:rootId/reopen (#6159: Reopen)
+  //   PATCH /api/conversations/homeroom-bot/threads/:rootId      (#6764: Rename) { title }
   const privateThreads = () => require('../services/private-threads');
   const threadRoot = (req) => {
     const id = Number(req.params.rootId);
@@ -454,6 +455,22 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       }
     });
   }
+  // #6764 (17 Nov 2026): a private thread's owner renames it. A name set
+  // here is theirs: the automatic summary never replaces it.
+  router.patch('/api/conversations/homeroom-bot/threads/:rootId', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const rootId = threadRoot(req);
+      if (!rootId) return res.status(404).json({ error: 'No such thread' });
+      if (!req.user?.id || req.user.isSynthetic) return res.status(403).json({ error: 'forbidden' });
+      const body = req.body || {};
+      return answerDoor(res, await privateThreads().rename(pool, {
+        user: req.user, rootId, title: typeof body.title === 'string' ? body.title : '',
+      }));
+    } catch (err) {
+      log.error('conversations', 'private thread rename failed', { err: err.message, userId: req.user?.id });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
   router.post('/api/conversations/homeroom-bot/threads/:rootId/post', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
     try {
       const rootId = threadRoot(req);

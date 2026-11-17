@@ -287,6 +287,10 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       projectIdea: optional('projectIdea'),
       draftTitle: optional('draftTitle'),
       ...(['fix', 'add', 'design', 'project'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
+      // #6523, #6763: the bot offered to make this idea a project, so the
+      // thread's foot shows New project under this reply (private-thread-bar
+      // newProjectInvited). Dropped here, the door never opened.
+      ...(pick(bot, 'newProject') === true ? { newProject: true } : {}),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),
       ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),

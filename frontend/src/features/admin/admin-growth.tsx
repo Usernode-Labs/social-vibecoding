@@ -155,6 +155,7 @@ const HELP: Record<string, string> = {
   lifecycle: 'Each week’s active people split four ways. New: active for the first time. Returning: active this week and last. Resurrecting: active this week, not last, but before. Dormant (below the line): active last week, not this one.',
   l4: 'Of people active at least once in the last 4 weeks, how many weeks each was active. Many at 3 or 4 means a habit.',
   depth: 'The last 7 days, from any trace to acting in a group.',
+  overlap: 'Of the people in the groups below, how many of those groups each one acts in. Many groups made of one crowd moving between projects read very differently from many separate circles of friends.',
   groupsTable: 'Every project where 3 or more people in scope acted in the same week. Click a group to see its sessions.',
   weeksCol: 'One square per week since 14 Sep, filled for the weeks the group was active together.',
   firstBuild: 'Time from the project being made to its first change going live.',
@@ -972,6 +973,8 @@ function Groups({ data, r, fetchJson }: {
   const list = r.groupsInScope;
   const names = new Map(data.people.filter((p) => p.userId).map((p) => [p.userId as number, p.name || `#${p.userId}`]));
   return (
+    <div className="flex flex-col gap-4">
+    <GroupOverlap data={data} list={list} />
     <div className={G.card} id="admin-growth-groups">
       <h3 className={`${G.title} mb-2`}>{term('groupsTable', `Groups · ${list.length}`)}</h3>
       {help('groupsTable', 'weeksCol', 'firstBuild')}
@@ -1021,6 +1024,42 @@ function Groups({ data, r, fetchJson }: {
             show({ kicker: 'Group', title: open.name || `Project ${open.appId}`, list, pick: list.findIndex((p) => p.userId === id) });
           }} />
       ) : null}
+    </div>
+    </div>
+  );
+}
+
+// How many of the groups in scope each of their people acts in: many groups
+// made of one crowd read very differently from many separate circles.
+const OVERLAP_BINS: Array<[number, number, string]> = [[1, 1, '1 group'], [2, 3, '2–3 groups'], [4, 9, '4–9 groups'], [10, 19, '10–19 groups'], [20, Infinity, '20 or more']];
+
+function GroupOverlap({ data, list }: { data: GrowthData; list: GrowthGroup[] }) {
+  const { term, help } = useHelp();
+  const per = new Map<number, number>();
+  for (const g of list) for (const id of g.people) per.set(id, (per.get(id) || 0) + 1);
+  const byId = new Map(data.people.filter((p) => p.userId != null).map((p) => [p.userId as number, p]));
+  const inGroups = [...per.keys()].map((id) => byId.get(id)).filter((p): p is GrowthPerson => !!p);
+  const rows = OVERLAP_BINS.map(([lo, hi, label]) => ({ label, list: inGroups.filter((p) => { const n = per.get(p.userId as number) || 0; return n >= lo && n <= hi; }) }));
+  const max = Math.max(1, ...rows.map((x) => x.list.length));
+  const memberships = [...per.values()].reduce((a, b) => a + b, 0);
+  const top = [...per.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id]) => id);
+  const withTop = list.filter((g) => g.people.some((id) => top.includes(id))).length;
+  return (
+    <div className={`${G.card} flex flex-col gap-3`} id="admin-growth-overlap">
+      <h3 className={G.title}>{term('overlap', `Groups per person · ${people(inGroups.length)} in ${list.length} ${list.length === 1 ? 'group' : 'groups'}`)}</h3>
+      {help('overlap')}
+      {rows.map(({ label, list: l }) => (
+        <Count key={label} row kicker="Groups per person" title={label} list={l} className="grid grid-cols-[7rem_minmax(0,1fr)_2.5rem] gap-2 items-center text-sm">
+          <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
+          <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${(l.length / max) * 100}%` }} /></span>
+          <span className="text-end font-semibold tabular-nums">{l.length}</span>
+        </Count>
+      ))}
+      <p className={G.fine} data-growth-overlap-summary="">
+        {inGroups.length
+          ? `About ${(memberships / inGroups.length).toFixed(1)} groups each. The ${Math.min(10, top.length)} busiest act in ${withTop} of the ${list.length}.`
+          : 'No group in scope yet.'}
+      </p>
     </div>
   );
 }

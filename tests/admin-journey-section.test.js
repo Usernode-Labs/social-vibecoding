@@ -99,6 +99,13 @@ test('the filters: view, when, who, and who is left out', () => {
   assert.doesNotMatch(growth, /Excluding Season 1|Including Season 1/, 'early members, not Season 1, name the filter');
 });
 
+test('groups: how many of the groups each person acts in', () => {
+  assert.ok(growth.includes('id="admin-growth-overlap"'), 'the card');
+  assert.match(growth, /<GroupOverlap data=\{data\} list=\{list\} \/>/, 'above the groups table, from the same groups in scope');
+  assert.match(growth, /\[20, Infinity, '20 or more'\]/, 'bins up to 20 or more');
+  assert.ok(growth.includes('data-growth-overlap-summary'), 'groups each, and the busiest ten, in words');
+});
+
 test('activity: time in an app, either side of the 30-second line', () => {
   assert.ok(growth.includes('id="admin-growth-time"'), 'the card');
   assert.match(growth, /<TimeInApp data=\{data\} r=\{r\} \/>/, 'drawn on the Activity view');
