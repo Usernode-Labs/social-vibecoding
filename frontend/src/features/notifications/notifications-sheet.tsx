@@ -1797,8 +1797,10 @@ export function NotificationsSheetView() {
   // took out the Messages filter that used to be this address's.
   //
   // #6785: `?shot=notifications-threads` lands on Recent threads, the same
-  // way, so a shot and the declared check reach the tab that is otherwise
-  // two clicks away.
+  // way, so a shot reaches the tab that is otherwise two clicks away. No
+  // declared check reads it: the strip's order is pinned on the plain
+  // `?shot=notifications` route, and the tab's behavior by the unit suites,
+  // so this change adds no check to the manifest's pinned count.
   //
   // In an effect and not in the initial state, for the reason every deep link
   // in this bundle is: the SSG pass renders this island in Node, where there

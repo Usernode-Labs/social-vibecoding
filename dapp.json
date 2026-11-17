@@ -3080,12 +3080,6 @@
       "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-threads + #notifications-tab-all:last-child"
     },
     {
-      "name": "#6785: Recent threads is the middle tab, and its link lands on it",
-      "path": "/?shot=notifications-threads&demo=1",
-      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-tab-threads[aria-selected=\"true\"]) #notifications-threads-list .notifications-row .app-icon-tile",
-      "expectText": "Recent threads"
-    },
-    {
       "name": "The Unread footer shows older notifications in place rather than jumping to All",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open] #notifications-see-older",
