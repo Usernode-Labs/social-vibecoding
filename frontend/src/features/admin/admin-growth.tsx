@@ -158,7 +158,12 @@ function useHelp() {
     <button type="button" className={G.term} aria-expanded={open === id} data-growth-term={id}
       onClick={() => setOpen(open === id ? null : id)}>{label}</button>
   );
-  const help = (...ids: string[]) => (open && ids.includes(open) ? <p className={G.help} role="note">{HELP[open]}</p> : null);
+  // The words float over what follows, so opening them never moves the page.
+  const help = (...ids: string[]) => (open && ids.includes(open) ? (
+    <div className="relative h-0">
+      <p className={`${G.help} absolute start-0 top-1 z-30 w-max max-w-[min(28rem,calc(100vw-2rem))] shadow-lg`} role="note">{HELP[open]}</p>
+    </div>
+  ) : null);
   return { term, help };
 }
 
