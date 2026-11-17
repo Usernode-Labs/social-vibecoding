@@ -64,6 +64,8 @@ test('the reading puts each person, their weeks and the groups in one payload', 
     { rows: [{ user_id: 1, week: '2026-11-09' }, { user_id: 3, week: '2026-11-02' }] },
     // PROJECT_ACTS_SQL
     { rows: [{ app_id: 9, user_id: 1, week: '2026-11-02' }, { app_id: 9, user_id: 3, week: '2026-11-02' }] },
+    // TIME_SQL: person 2 left within 9 s twice; person 3 stayed 4 minutes once
+    { rows: [{ user_id: 2, bin: 2, visits: 2, longest: 9 }, { user_id: 3, bin: 7, visits: 1, longest: 240 }] },
     // LAST_WEEK_SQL
     { rows: [{ user_id: 1, opened: true, used: true, contributed: true, analytics_wau: true }] },
   ];
@@ -80,6 +82,12 @@ test('the reading puts each person, their weeks and the groups in one payload', 
   assert.equal(by.w77.mail, 'sent');
   assert.deepEqual(by.u1.activeWeeks, ['2026-11-09']);
   assert.equal(by.u1.last7.analyticsWau, true);
+  assert.deepEqual(r.timeBins, [1, 5, 10, 20, 30, 60, 120, 300, 900]);
+  assert.equal(by.u2.bestSeconds, 9);
+  assert.deepEqual(by.u2.visitBins, [0, 2, 0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(by.u3.bestSeconds, 240);
+  assert.equal(by.u1.bestSeconds, null, 'no app time, no longest visit');
+  assert.deepEqual(by.w77.visitBins, [0, 0, 0, 0, 0, 0, 0, 0, 0]);
   assert.deepEqual(r.groups.newcomers, [], 'one newcomer is not a group');
   assert.deepEqual(r.groups.everyone, [], 'two people are not a group either');
 });
@@ -94,10 +102,11 @@ test('the demo is whole, labelled and invented', () => {
   assert.equal(d.groups.newcomers.length, 1, 'one group of newcomers');
   assert.equal(d.groups.newcomers[0].cameBack, false, 'that did not come back');
   for (const p of d.people) {
-    for (const key of ['key', 'userId', 'name', 'early', 'seasonEarly', 'connected', 'way', 'admittedDay', 'cameAt', 'heard', 'mail', 'opened', 'stayed', 'lastSeen', 'activeWeeks', 'last7']) {
+    for (const key of ['key', 'userId', 'name', 'early', 'seasonEarly', 'connected', 'way', 'admittedDay', 'cameAt', 'heard', 'mail', 'opened', 'stayed', 'lastSeen', 'bestSeconds', 'visitBins', 'activeWeeks', 'last7']) {
       assert.ok(key in p, `${p.key} has ${key}`);
     }
   }
+  assert.ok(d.people.some((p) => p.bestSeconds && p.bestSeconds < 30) && d.people.some((p) => p.bestSeconds >= 30), 'time on both sides of 30 s');
   const t = demo.timeline(910100);
   assert.equal(t.demo, true);
   assert.ok(t.events.some((e) => e.kind === 'build' && e.until));

@@ -37,10 +37,23 @@ function person(n, fields) {
     key: `d${n}`, userId: fields.account === false ? null : 900200 + n, name: fields.account === false ? null : `demo_${String(n).padStart(3, '0')}`,
     early: false, seasonEarly: false, connected: false,
     way: 'waitlist', admittedDay: null, cameAt: null, heard: null, mail: null,
-    opened: false, stayed: false, lastSeen: null, activeWeeks: [],
+    opened: false, stayed: false, lastSeen: null, bestSeconds: null, visitBins: growth.TIME_BINS.map(() => 0), activeWeeks: [],
     last7: { opened: false, used: false, contributed: false, analyticsWau: false },
     ...fields,
   };
+}
+
+// Invented time in an app, shaped like the real reading: who stayed spent
+// minutes, who only opened left within seconds or never reached an app.
+function withTime(p, n) {
+  if (!p.opened) return p;
+  const best = p.stayed ? 170 + ((n * 37) % 700) : (n % 3 === 0 ? 0 : 5 + (n % 11));
+  if (!best) return p;
+  const bin = (s) => growth.TIME_BINS.filter((edge) => s >= edge).length - 1;
+  const visitBins = growth.TIME_BINS.map(() => 0);
+  visitBins[bin(best)] += 1;
+  if (p.stayed) { visitBins[bin(4 + (n % 20))] += 1; visitBins[bin(40 + (n % 200))] += 1 + (n % 3); }
+  return { ...p, bestSeconds: best, visitBins };
 }
 
 function reading() {
@@ -122,9 +135,10 @@ function reading() {
     eraStart: growth.ERA_START,
     groupMin: growth.GROUP_MIN,
     staySeconds: growth.STAY_SECONDS,
+    timeBins: growth.TIME_BINS,
     weeks: WEEKS,
     thisWeek: WEEKS[WEEKS.length - 1],
-    people,
+    people: people.map(withTime),
     groups: { newcomers: [theGroup], everyone: [theGroup, ...groupsEveryone] },
   };
 }

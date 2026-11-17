@@ -77,6 +77,55 @@ test('the checked-in Core v1 definition is valid and shaped like the first versi
   assert.deepEqual(v.counts, { triage: 44, build: 20, followup: 3, checks_fix: 2, dm: 5, spec: 0 });
 });
 
+test('#6767: the content-rules item expects a ready plan, because points-only betting is allowed', () => {
+  const spec = def.tasks.find((t) => t.ref === 'triage:adversarial:content-rules');
+  assert.equal(spec.reference.verdict, 'ready');
+  assert.match(spec.reference.notes, /pretend-currency game/);
+  assert.match(spec.reference.notes, /points only, with no cash-out/);
+  assert.match(spec.synthetic.body, /It's just points, not real money\./);
+  assert.match(spec.notes, /looks like gambling but is allowed/);
+});
+
+test('#6767: a stored authored reference that differs is rewritten and its trials graded again', async () => {
+  const spec = def.tasks.find((t) => t.ref === 'triage:adversarial:content-rules');
+  const stored = { verdict: 'person', notes: 'Wagering points on an outcome is simulated gambling' };
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM bench_suites/.test(sql)) return { rows: [{ id: 5, frozen_at: null }] };
+      if (/FROM bench_tasks/.test(sql)) return { rows: params[1] === spec.ref ? [{ id: 7, reference: stored }] : [] };
+      return { rows: [] };
+    },
+  };
+  const graded = [];
+  const out = await core.repairAuthoredReferences(pool, 5, def, {
+    graders: { regradeTask: async (_p, id) => { graded.push(id); return 3; } },
+  });
+  assert.deepEqual(out, { tasks: 1, trials: 3 });
+  assert.deepEqual(graded, [7], 'the finished trials are re-graded through the existing path');
+  const update = calls.find((c) => /UPDATE bench_tasks/.test(c.sql));
+  assert.deepEqual(JSON.parse(update.params[1]), spec.reference);
+  assert.equal(JSON.parse(update.params[1]).verdict, 'ready');
+});
+
+test('#6767: an authored reference repair does nothing on a frozen suite or when it already matches', async () => {
+  const spec = def.tasks.find((t) => t.ref === 'triage:adversarial:content-rules');
+  const pool = (frozenAt, reference) => ({
+    query: async (sql, params) => {
+      if (/FROM bench_suites/.test(sql)) return { rows: [{ id: 5, frozen_at: frozenAt }] };
+      if (/FROM bench_tasks/.test(sql)) return { rows: params[1] === spec.ref ? [{ id: 7, reference }] : [] };
+      return { rows: [] };
+    },
+  });
+  let graded = 0;
+  const graders = { regradeTask: async () => { graded += 1; return 1; } };
+  assert.equal(await core.repairAuthoredReferences(pool('2026-10-02', { verdict: 'person' }), 5, def, { graders }), null,
+    'a frozen suite cannot be relabelled');
+  assert.equal(await core.repairAuthoredReferences(pool(null, spec.reference), 5, def, { graders }), null);
+  assert.equal(graded, 0);
+});
+
 test('the definition\'s schema refuses what would make a bad suite', () => {
   const errs = (mutate) => { const d = clone(); mutate(d); return core.validateDefinition(d).errors.join('\n'); };
   assert.match(errs((d) => { d.tasks[1].ref = d.tasks[0].ref; }), /duplicate ref/);

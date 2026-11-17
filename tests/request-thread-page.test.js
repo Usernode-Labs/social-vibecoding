@@ -164,26 +164,37 @@ const requestView = (status) => ({
   },
 });
 
-test('the root post: who asked and when, the title in bold, the words as a quote, then where it stands', () => {
+// The standard look and the brand look draw the root post as the thread's
+// card (thread-card.tsx): the kicker, the title, the words and whose they
+// are, then a foot that says where it stands once. The stepper and the
+// sentence box it replaced are still what the frame's looks draw
+// (tests/request-frame.test.js).
+test('the root post is the card: the kicker, the title, the words and whose they are, then a foot that says where it stands', () => {
   const html = renderComponent(HEAD, 'RequestHead', { r: requestView() });
-  assert.match(html, /<article class="messages-message dev-request-root" data-ref-issue="4417"/);
+  assert.match(html, /<article class="messages-message dev-request-root dev-thread-card" data-ref-issue="4417" data-request-root="4417" data-thread-card="request">/);
+  assert.match(html, /<p class="dev-thread-kicker" data-thread-kicker="request"><span class="min-w-0">Request #4417<\/span><\/p>/);
+  // Who asked and when stay in the markup; app.css puts the row away, and
+  // the timeline beside the card says them.
   assert.match(html, /messages-message-author">evan<\/span><time[^>]*>04:01 PM<\/time>/);
   assert.match(html, /<h1 class="dev-request-title" data-issue-title="4417">Add topics as discussion containers<\/h1>/);
   assert.match(html, /class="dev-request-ask"><div class="dev-request-ask-text line-clamp-4"/);
-  assert.match(html, /data-request-stage="asked"/);
-  // The stepper: Asked is where it is, the rest still to come.
-  assert.match(html, /data-state="now" aria-current="step"><span class="dev-request-step-mark"><\/span><span class="dev-request-step-label">Asked/);
-  assert.equal((html.match(/data-state="next"/g) || []).length, 3);
-  assert.match(html, /dev-request-say">You’re working on this\.<\/p><p class="dev-request-fine">If nothing moves by Oct 15/);
-  assert.match(html, /data-act="openChangeWorkspace"[^>]*>Continue your work</);
+  assert.match(html, /<\/div><p class="dev-thread-by" data-thread-by="asker"><span>evan’s own words\.<\/span><\/p>/);
+  assert.doesNotMatch(html, /dev-request-steps|data-request-stage=/, 'no stepper: the timeline has the steps');
+  // The foot: the stage, one sentence for who is on it, the action, and the
+  // date the claim lapses under them.
+  assert.match(html, /<div class="dev-thread-foot" data-thread-foot="asked" role="group"><div class="dev-thread-foot-st" role="status"><b class="dev-thread-foot-head">Asked<\/b><span class="dev-thread-foot-sub">You’re working on this\.<\/span><\/div>/);
+  assert.match(html, /<div class="dev-thread-foot-acts"><button type="button" class="dev-request-primary" data-act="openChangeWorkspace">Continue your work<\/button><\/div>/);
+  assert.match(html, /<p class="dev-thread-foot-also" data-thread-foot-fine="">If nothing moves by Oct 15/);
 });
 
-test('voted in: every step is done, with no fill; a closed request says so instead of the stepper', () => {
+test('voted in says so once; a closed request says closed, in grey, with why', () => {
   const voted = renderComponent(HEAD, 'RequestHead', { r: requestView({ stage: 'voted', lead: 'Voted in.', action: null }) });
-  assert.equal((voted.match(/data-state="done"/g) || []).length, 4);
+  assert.match(voted, /data-thread-foot="voted" role="group"><div class="dev-thread-foot-st" role="status"><b class="dev-thread-foot-head">Voted in<\/b><\/div>/,
+    'the page\'s own "Voted in." would only repeat the headline, so it is left out');
   const closed = renderComponent(HEAD, 'RequestHead', { r: requestView({ closed: 'This request was closed by vote.', action: null }) });
   assert.doesNotMatch(closed, /dev-request-steps/);
-  assert.match(closed, /This request was closed by vote\./);
+  assert.match(closed, /data-thread-foot="closed" data-thread-foot-tone="muted"/);
+  assert.match(closed, /dev-thread-foot-head">Closed<\/b><span class="dev-thread-foot-sub">This request was closed by vote\.<\/span>/);
 });
 
 // #6680: the person whose private Homeroom bot thread filed the request (or
@@ -195,7 +206,7 @@ test('#6680: a request filed from a private thread links its owner back to it', 
   assert.match(html, /href="#homeroom-bot\/thread\/17372"/);
   assert.match(html, />Open the thread it came from</);
   // Right after the request's words, before where it stands.
-  assert.match(html, /data-request-words="">[\s\S]*?data-request-from-thread="17372"[\s\S]*?data-request-stage=/);
+  assert.match(html, /data-request-words="">[\s\S]*?data-request-from-thread="17372"[\s\S]*?data-thread-foot=/);
   assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: requestView() }), /data-request-from-thread/);
   assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: null } }), /data-request-from-thread/);
 });

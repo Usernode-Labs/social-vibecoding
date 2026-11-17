@@ -5,9 +5,10 @@
 //
 // Every label is a term: tap it and it says what it counts (Journey's
 // mileLabel pattern; a phone has no hover). Nothing from the API is drawn as
-// a link. People are opened in Journey's own person view.
+// a link. Every number or bar that counts people opens them in one sidebar
+// (PeopleDrawer), where a person opens in Journey's own person view.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { AdminUI } from './admin-console.js';
 
 // ── Payload ────────────────────────────────────────────────────────────
@@ -27,6 +28,8 @@ export type GrowthPerson = {
   opened: boolean;
   stayed: boolean;
   lastSeen: string | null;
+  bestSeconds: number | null;
+  visitBins: number[];
   activeWeeks: string[];
   last7: { opened: boolean; used: boolean; contributed: boolean; analyticsWau: boolean };
 };
@@ -49,6 +52,7 @@ export type GrowthData = {
   eraStart: string;
   groupMin: number;
   staySeconds: number;
+  timeBins: number[];
   weeks: string[];
   thisWeek: string;
   people: GrowthPerson[];
@@ -76,6 +80,8 @@ const G = Object.freeze({
   link: 'text-xs font-medium text-violet-700 dark:text-violet-400 hover:underline',
   row: 'flex items-center justify-between gap-2 py-2 border-b border-zinc-100 dark:border-zinc-800/60 last:border-b-0',
   check: 'h-4 w-4 accent-violet-600',
+  count: 'rounded tabular-nums underline-offset-2 enabled:hover:underline enabled:hover:text-violet-700 enabled:dark:hover:text-violet-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-default',
+  countRow: 'w-full rounded-md text-start enabled:hover:bg-zinc-50 dark:enabled:hover:bg-zinc-800/60 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 disabled:cursor-default',
 });
 
 // ── Small helpers ──────────────────────────────────────────────────────
@@ -119,7 +125,7 @@ const STEP_SHORT = ['Let in', 'Opened', 'Stayed 30 s+', 'With a group', 'Came ba
 const HELP: Record<string, string> = {
   view: 'Which part of the reading to show. The filters above apply to every view.',
   when: 'Newcomers are picked by the week they came in (let in, or joined), then followed through every later step. Weekly charts count activity in a week instead and fade the weeks outside the choice.',
-  who: 'Excluding Season 1: only people who came since 14 Sep and were not brought in by the early community. Including Season 1: everyone real.',
+  who: 'Early members are Season 1 and every account from before 14 Sep. Without early members: newcomers since 14 Sep, leaving out early members and the newcomers they brought in with a link of theirs. Including early members: everyone real.',
   leftOut: 'Who the current choice removes. Team, admins, test accounts and the Left out list are never counted.',
   back: 'Groups that acted together in a week and again in a later week. The north star: a group using Homeroom as a habit.',
   together: 'Projects where 3 or more people in scope started a change, voted or wrote in the same week.',
@@ -138,17 +144,25 @@ const HELP: Record<string, string> = {
   wActive: 'People with 30 seconds or more in an app, or an act, that week.',
   wGroups: 'Projects where 3 or more people in scope acted that week.',
   retention: 'People grouped by the first week they were active since 14 Sep. Each cell shows how many of them were active again N weeks later.',
-  wau: 'Admin › Analytics counts anyone with any app heartbeat (even a second), a message, vote, kudos or request in the last 7 days. It leaves out admins and tests but keeps Season 1.',
+  wau: 'Admin › Analytics counts anyone with any app heartbeat (even a second), a message, vote, kudos or request in the last 7 days. It leaves out admins and tests but keeps early members.',
+  timeBest: 'People in scope who opened Homeroom, by their longest visit (one person in one app on one day) since 14 Sep. No app time: they opened Homeroom but never spent a second in an app. The line is the 30-second bar for Stayed.',
+  timeVisits: 'Every visit of the people in scope, by its length. Short visits are normal even for regulars, which is why Stayed asks for one day of 30 seconds or more, not every visit. A bar lists the people with such a visit.',
+  wauDid: 'What the people in that WAU did in the same 7 days, each counted once at their deepest. Acted: wrote a message, voted, filed a request or started a change. Stayed: 30 seconds or more in an app, no act. Glanced: under 30 seconds in an app, or only gave kudos.',
+  lifeNew: 'Active this week for the first time.',
+  lifeReturning: 'Active this week and the week before.',
+  lifeResurrecting: 'Active this week, not the week before, but some week earlier.',
+  lifeDormant: 'Active the week before, not this week. Drawn below the line.',
   lifecycle: 'Each week’s active people split four ways. New: active for the first time. Returning: active this week and last. Resurrecting: active this week, not last, but before. Dormant (below the line): active last week, not this one.',
   l4: 'Of people active at least once in the last 4 weeks, how many weeks each was active. Many at 3 or 4 means a habit.',
   depth: 'The last 7 days, from any trace to acting in a group.',
+  overlap: 'Of the people in the groups below, how many of those groups each one acts in. Many groups made of one crowd moving between projects read very differently from many separate circles of friends.',
   groupsTable: 'Every project where 3 or more people in scope acted in the same week. Click a group to see its sessions.',
   weeksCol: 'One square per week since 14 Sep, filled for the weeks the group was active together.',
   firstBuild: 'Time from the project being made to its first change going live.',
   ways: 'How people came in. Only a friend’s invite link says why: somebody brought them.',
   heard: 'The optional answer on the waitlist form: self-reported, often blank.',
   scopeWays: 'Which ways in to count.',
-  scopeDays: 'Which admit days to count. Never admitted means they signed up but are still waiting.',
+  scopeDays: 'Which admit days to count. Never admitted means they signed up but are still waiting. “30 of 36” means 6 more newcomers came in that day who were brought in by early members: Including early members counts them.',
   saved: 'A saved scope becomes a cohort under Compare on the Overview. It is kept in this browser.',
 };
 
@@ -158,7 +172,12 @@ function useHelp() {
     <button type="button" className={G.term} aria-expanded={open === id} data-growth-term={id}
       onClick={() => setOpen(open === id ? null : id)}>{label}</button>
   );
-  const help = (...ids: string[]) => (open && ids.includes(open) ? <p className={G.help} role="note">{HELP[open]}</p> : null);
+  // The words float over what follows, so opening them never moves the page.
+  const help = (...ids: string[]) => (open && ids.includes(open) ? (
+    <div className="relative h-0">
+      <p className={`${G.help} absolute start-0 top-1 z-30 w-max max-w-[min(28rem,calc(var(--platform-float-w)-24px))] shadow-lg`} role="note">{HELP[open]}</p>
+    </div>
+  ) : null);
   return { term, help };
 }
 
@@ -221,8 +240,13 @@ function useReading(data: GrowthData, who: Who, when: When) {
     const funnel = (list: GrowthPerson[]) => [0, 1, 2, 3, 4].map((s) => list.filter((p) => reached(p) >= s).length);
     const ids = new Set(scoped.map((p) => p.userId).filter((id): id is number => id != null));
     const groupsInScope = groups.filter((g) => g.people.some((id) => ids.has(id)));
-    const weekActive = (week: string, list: GrowthPerson[]) => list.filter((p) => p.activeWeeks.includes(week)).length;
-    return { inWho, inWhen, scoped, reached, funnel, groups, groupsInScope, weekActive, whoPeople: data.people.filter(inWho), last4From };
+    const whoPeople = data.people.filter(inWho);
+    // The people in scope who acted in any of these groups.
+    const peopleOfGroups = (gs: GrowthGroup[]) => {
+      const set = new Set(gs.flatMap((g) => g.people));
+      return whoPeople.filter((p) => p.userId != null && set.has(p.userId));
+    };
+    return { inWho, inWhen, scoped, reached, funnel, groups, groupsInScope, whoPeople, peopleOfGroups, last4From };
   }, [data, who, when]);
 }
 
@@ -237,6 +261,24 @@ function cohortsFor(data: GrowthData, saved: Saved[]): Cohort[] {
   return out;
 }
 
+// ── People behind a number ─────────────────────────────────────────────
+
+// Every number or bar that counts people opens them in the one sidebar the
+// page owns. A list is computed where the number is, from the same filter, so
+// the sidebar always shows exactly the people the number counted.
+type PeopleList = { kicker: string; title: string; list: GrowthPerson[]; pick?: number };
+const PeopleCtx = createContext<(l: PeopleList) => void>(() => {});
+
+function Count({ list, kicker, title, row = false, className = '', style, children }: {
+  list: GrowthPerson[]; kicker: string; title: string; row?: boolean; className?: string; style?: CSSProperties; children: ReactNode;
+}) {
+  const show = useContext(PeopleCtx);
+  return (
+    <button type="button" data-growth-count="" disabled={!list.length} aria-label={`${people(list.length)}: ${title}. List them`}
+      className={`${row ? G.countRow : G.count} ${className}`} style={style} onClick={() => show({ kicker, title, list })}>{children}</button>
+  );
+}
+
 // ── Shared pieces ──────────────────────────────────────────────────────
 
 function Pill({ on, onClick, children, cmp = false, id }: { on: boolean; onClick: () => void; children: ReactNode; cmp?: boolean; id?: string }) {
@@ -246,8 +288,8 @@ function Pill({ on, onClick, children, cmp = false, id }: { on: boolean; onClick
   );
 }
 
-function Tile({ id, term, value, unit, north = false, onPeople }: {
-  id?: string; term: ReactNode; value: number | string; unit: string; north?: boolean; onPeople?: () => void;
+function Tile({ id, term, value, unit, north = false, peopleOf }: {
+  id?: string; term: ReactNode; value: number | string; unit: string; north?: boolean; peopleOf: PeopleList;
 }) {
   return (
     <div className={`${G.card} flex flex-col gap-2 ${north ? 'ring-2 ring-zinc-900 dark:ring-zinc-100' : ''}`} id={id}>
@@ -255,24 +297,26 @@ function Tile({ id, term, value, unit, north = false, onPeople }: {
         <span className={G.title}>{term}</span>
         {north ? <span className={AdminUI.badge.outline}>North star</span> : null}
       </div>
-      <span className={G.big}>{value}</span>
+      <Count {...peopleOf} className={`${G.big} self-start`}>{value}</Count>
       <div className="flex items-center justify-between gap-2">
         <span className={G.fine}>{unit}</span>
-        {onPeople ? <button type="button" className={G.link} onClick={onPeople}>People ›</button> : null}
+        <Count {...peopleOf} className={G.link}>People ›</Count>
       </div>
     </div>
   );
 }
 
-function Bars({ values, labels, fade, tone }: { values: number[]; labels: string[]; fade: (i: number) => boolean; tone: string }) {
+function Bars({ values, labels, fade, tone, lists }: {
+  values: number[]; labels: string[]; fade: (i: number) => boolean; tone: string; lists: Array<PeopleList>;
+}) {
   const max = Math.max(1, ...values);
   return (
     <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${values.length}, minmax(0, 1fr))` }}>
       {values.map((v, i) => (
-        <div key={`b${i}`} className={`flex h-28 flex-col items-center justify-end gap-0.5 border-b border-zinc-200 dark:border-zinc-800 ${fade(i) ? 'opacity-30' : ''}`}>
+        <Count key={`b${i}`} row {...lists[i]} className={`flex h-28 flex-col items-center justify-end gap-0.5 rounded-b-none border-b border-zinc-200 dark:border-zinc-800 ${fade(i) ? 'opacity-30' : ''}`}>
           <span className="text-[11px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{v || ''}</span>
           <span className={`block w-full max-w-[26px] rounded-t ${tone}`} style={{ height: `${v ? Math.max(3, (v / max) * 90) : 0}px` }} />
-        </div>
+        </Count>
       ))}
       {labels.map((l, i) => <span key={`l${i}`} className="pt-1 text-center text-[10px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{l}</span>)}
     </div>
@@ -308,13 +352,17 @@ function Drawer({ title, kicker, onClose, children, wide = false }: { title: str
 
 const VIEWS: Array<[string, string]> = [['overview', 'Overview'], ['activity', 'Activity'], ['groups', 'Groups'], ['sources', 'Sources'], ['scope', 'Scope']];
 
-export function Growth({ data, onOpenPerson, onLeftOut, onRefresh, fetchJson }: {
+export function Growth({ data, onOpenPerson, onLeftOut, onRefresh, fetchJson, renderPerson }: {
   data: GrowthData;
   onOpenPerson: (userId: number) => void;
   onLeftOut: () => void;
   onRefresh: () => void;
   fetchJson: (path: string) => Promise<{ ok: boolean; data: unknown }>;
+  renderPerson?: (userId: number) => ReactNode;
 }) {
+  const [shown, setShown] = useState<(PeopleList & { seq: number }) | null>(null);
+  const show = useCallback((l: PeopleList) => setShown((cur) => ({ ...l, seq: (cur?.seq || 0) + 1 })), []);
+  const closeShown = useCallback(() => setShown(null), []);
   const [view, setView] = useState('overview');
   const [who, setWho] = useState<Who>('newcomers');
   const lastWeek = data.weeks[data.weeks.length - 1];
@@ -330,7 +378,9 @@ export function Growth({ data, onOpenPerson, onLeftOut, onRefresh, fetchJson }: 
     newcomers: data.people.filter((p) => !p.early && !p.connected).length,
     all: data.people.length,
   };
+  const leftOutOf = (title: string, list: GrowthPerson[]) => ({ kicker: 'Left out', title, list });
   return (
+    <PeopleCtx.Provider value={show}>
     <div className="space-y-4">
       <div className={G.card} id="admin-journey-filters">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -362,25 +412,34 @@ export function Growth({ data, onOpenPerson, onLeftOut, onRefresh, fetchJson }: 
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5" data-growth-filter="who">
           <span className={`${G.label} w-16`}>{term('who', 'Who')}</span>
-          <Pill id="admin-growth-newcomers" on={who === 'newcomers'} onClick={() => setWho('newcomers')}>Excluding Season 1 · {counts.newcomers}</Pill>
-          <Pill on={who === 'everyone'} onClick={() => setWho('everyone')}>Including Season 1 · {counts.all}</Pill>
+          <Pill id="admin-growth-newcomers" on={who === 'newcomers'} onClick={() => setWho('newcomers')}>Without early members · {counts.newcomers}</Pill>
+          <Pill on={who === 'everyone'} onClick={() => setWho('everyone')}>Including early members · {counts.all}</Pill>
         </div>
         <div className="mt-2 flex flex-wrap items-baseline gap-1.5" data-growth-filter="left-out">
           <span className={`${G.label} w-16`}>{term('leftOut', 'Left out')}</span>
           <span className="text-xs text-zinc-600 dark:text-zinc-300">
-            {who === 'newcomers'
-              ? `Season 1 accounts · ${counts.season} · Accounts from before ${dayLabel(data.eraStart)} · ${counts.older} · People they brought in · ${counts.connected} · Team, admins and tests`
-              : 'Team, admins and tests'}
+            {who === 'newcomers' ? (
+              <>
+                Early members: Season 1 · <Count {...leftOutOf('Early members: Season 1', data.people.filter((p) => p.seasonEarly))}>{counts.season}</Count>
+                {` · Accounts from before ${dayLabel(data.eraStart)} · `}<Count {...leftOutOf(`Early members: accounts from before ${dayLabel(data.eraStart)}`, data.people.filter((p) => p.early && !p.seasonEarly))}>{counts.older}</Count>
+                {' · Newcomers they brought in · '}<Count {...leftOutOf('Newcomers brought in by early members', data.people.filter((p) => p.connected))}>{counts.connected}</Count>
+                {' · Team, admins and tests'}
+              </>
+            ) : 'Team, admins and tests'}
           </span>
         </div>
         <div className="mt-2">{help('view', 'when', 'who', 'leftOut')}</div>
       </div>
-      {view === 'overview' ? <Overview data={data} r={r} when={when} saved={saved} onOpenPerson={onOpenPerson} /> : null}
+      {view === 'overview' ? <Overview data={data} r={r} when={when} saved={saved} /> : null}
       {view === 'activity' ? <Activity data={data} who={who} r={r} when={when} /> : null}
-      {view === 'groups' ? <Groups data={data} r={r} fetchJson={fetchJson} onOpenPerson={onOpenPerson} /> : null}
+      {view === 'groups' ? <Groups data={data} r={r} fetchJson={fetchJson} /> : null}
       {view === 'sources' ? <Sources r={r} /> : null}
       {view === 'scope' ? <Scope data={data} r={r} saved={saved} onSave={(list) => { writeSaved(list); setSaved(list); }} /> : null}
     </div>
+    {shown ? (
+      <PeopleDrawer key={shown.seq} spec={shown} data={data} r={r} renderPerson={renderPerson} onOpenPerson={onOpenPerson} onClose={closeShown} />
+    ) : null}
+    </PeopleCtx.Provider>
   );
 }
 
@@ -388,12 +447,11 @@ type Reading = ReturnType<typeof useReading>;
 
 // ── Overview ───────────────────────────────────────────────────────────
 
-function Overview({ data, r, when, saved, onOpenPerson }: {
-  data: GrowthData; r: Reading; when: When; saved: Saved[]; onOpenPerson: (id: number) => void;
+function Overview({ data, r, when, saved }: {
+  data: GrowthData; r: Reading; when: When; saved: Saved[];
 }) {
   const { term, help } = useHelp();
   const [cmpKey, setCmpKey] = useState<string | null>(null);
-  const [list, setList] = useState<{ step: number; cohort: string | null } | null>(null);
   const cohorts = cohortsFor(data, saved);
   const cmp = cohorts.find((c) => c.key === cmpKey) || null;
   const base = r.funnel(r.scoped);
@@ -401,18 +459,27 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
   const back = r.groupsInScope.filter((g) => g.cameBack).length;
   const drops = base.slice(1).map((v, i) => ({ i, lost: base[i] ? 1 - v / base[i] : 0 }));
   const worst = drops.reduce((a, d) => (d.lost > a.lost ? d : a), drops[0]);
+  const atStep = (i: number, list = r.scoped) => list.filter((p) => r.reached(p) >= i);
+  const stopped = (i: number) => r.scoped.filter((p) => r.reached(p) === i);
+  const stepOf = (i: number): PeopleList => ({ kicker: 'Reached this step', title: STEPS[i], list: atStep(i) });
   const waitlist = r.scoped.filter((p) => p.way === 'waitlist' && p.admittedDay);
-  const mail = [
-    ['Let in', waitlist.length, 'bg-violet-200 dark:bg-violet-800'],
-    ['On record', waitlist.filter((p) => p.mail && p.mail !== 'not_on_record').length, 'bg-violet-400'],
-    ['Opened', waitlist.filter((p) => p.mail === 'opened' || p.mail === 'clicked').length, 'bg-zinc-300 dark:bg-zinc-600'],
-    ['Clicked', waitlist.filter((p) => p.mail === 'clicked').length, 'bg-violet-600'],
-  ] as const;
+  const mailLists: Array<[string, GrowthPerson[], string]> = [
+    ['Let in', waitlist, 'bg-violet-200 dark:bg-violet-800'],
+    ['On record', waitlist.filter((p) => p.mail && p.mail !== 'not_on_record'), 'bg-violet-400'],
+    ['Opened', waitlist.filter((p) => p.mail === 'opened' || p.mail === 'clicked'), 'bg-zinc-300 dark:bg-zinc-600'],
+    ['Clicked', waitlist.filter((p) => p.mail === 'clicked'), 'bg-violet-600'],
+  ];
   const labels = data.weeks.map((w) => dayLabel(w));
   const fade = (i: number) => (when.kind === 'week' ? data.weeks[i] !== when.week : when.kind === 'last4' ? data.weeks[i] < r.last4From : false);
-  const letIn = data.weeks.map((w) => r.whoPeople.filter((p) => weekOf(p.cameAt) === w).length);
-  const active = data.weeks.map((w) => r.weekActive(w, r.whoPeople));
+  const letInL = data.weeks.map((w) => r.whoPeople.filter((p) => weekOf(p.cameAt) === w));
+  const activeL = data.weeks.map((w) => r.whoPeople.filter((p) => p.activeWeeks.includes(w)));
   const groupsWeek = data.weeks.map((w) => r.groups.filter((g) => g.weeks.includes(w)).length);
+  const groupPeopleL = data.weeks.map((w) => r.peopleOfGroups(r.groups.filter((g) => g.weeks.includes(w))));
+  const weekly: Array<[string, string, number[], string, PeopleList[]]> = [
+    ['wLet', 'Let in', letInL.map((l) => l.length), 'bg-violet-400', letInL.map((list, i) => ({ kicker: 'Let in', title: `Week of ${labels[i]}`, list }))],
+    ['wActive', 'Active', activeL.map((l) => l.length), 'bg-violet-600', activeL.map((list, i) => ({ kicker: 'Active', title: `Week of ${labels[i]}`, list }))],
+    ['wGroups', 'Groups active together', groupsWeek, 'bg-zinc-900 dark:bg-zinc-100', groupPeopleL.map((list, i) => ({ kicker: 'In a group active together', title: `Week of ${labels[i]}`, list }))],
+  ];
   // Retention by the first week a person was active.
   const firstWeek = new Map<string, GrowthPerson[]>();
   for (const p of r.scoped) {
@@ -423,16 +490,15 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
   }
   const retention = [...firstWeek.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([w, ps]) => {
     const start = data.weeks.indexOf(w);
-    return { week: w, size: ps.length, cells: data.weeks.slice(start).map((wk) => ps.filter((p) => p.activeWeeks.includes(wk)).length) };
+    return { week: w, ps, cells: data.weeks.slice(start).map((wk) => ps.filter((p) => p.activeWeeks.includes(wk))) };
   });
-  const listPeople = list ? r.scoped.filter((p) => r.reached(p) >= list.step && (!list.cohort || cohorts.find((c) => c.key === list.cohort)?.match(p))) : [];
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4" id="admin-journey-north-star">
-        <Tile north term={term('back', 'Groups came back together')} value={back} unit="groups of 3+, a second week" onPeople={() => setList({ step: 4, cohort: null })} />
-        <Tile term={term('together', 'Active groups')} value={r.groupsInScope.length} unit="groups of 3+ that acted together" onPeople={() => setList({ step: 3, cohort: null })} />
-        <Tile term={term('stayed', 'Stayed 30 s+')} value={base[2]} unit={`people · ${base[1] - base[2]} of ${base[1]} left within 30 s`} onPeople={() => setList({ step: 2, cohort: null })} />
-        <Tile term={term('opened', 'Opened Homeroom')} value={base[1]} unit={`people · of ${base[0]} let in`} onPeople={() => setList({ step: 1, cohort: null })} />
+        <Tile north term={term('back', 'Groups came back together')} value={back} unit="groups of 3+, a second week" peopleOf={stepOf(4)} />
+        <Tile term={term('together', 'Active groups')} value={r.groupsInScope.length} unit="groups of 3+ that acted together" peopleOf={stepOf(3)} />
+        <Tile term={term('stayed', 'Stayed 30 s+')} value={base[2]} unit={`people · ${base[1] - base[2]} of ${base[1]} left within 30 s`} peopleOf={stepOf(2)} />
+        <Tile term={term('opened', 'Opened Homeroom')} value={base[1]} unit={`people · of ${base[0]} let in`} peopleOf={stepOf(1)} />
       </div>
       {help('back', 'together', 'stayed', 'opened')}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 items-start">
@@ -456,7 +522,9 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
                 <div key={label}>
                   {i ? (
                     <div className="grid grid-cols-[9rem_minmax(0,1fr)_8rem] gap-3 items-center">
-                      <span className="text-end text-[11px] text-amber-700 dark:text-amber-400">{base[i - 1] ? `${pct(base[i], base[i - 1])} kept` : ''}</span>
+                      <span className="text-end text-[11px] text-amber-700 dark:text-amber-400">{base[i - 1] ? (
+                        <Count kicker="Stopped here" title={`${STEPS[i - 1]}, not ${STEPS[i]}`} list={stopped(i - 1)}>{pct(base[i], base[i - 1])} kept</Count>
+                      ) : ''}</span>
                       <span className="block h-4 bg-violet-100 dark:bg-violet-900/40"
                         style={{ clipPath: `polygon(${50 - prevW / 2}% 0, ${50 + prevW / 2}% 0, ${50 + Math.max(w, 0.8) / 2}% 100%, ${50 - Math.max(w, 0.8) / 2}% 100%)` }} />
                       <span />
@@ -464,17 +532,20 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
                   ) : null}
                   <div className="grid grid-cols-[9rem_minmax(0,1fr)_8rem] gap-3 items-center" data-growth-step={i}>
                     <span className="text-end text-sm font-semibold text-zinc-900 dark:text-zinc-100">{term(`s${i}`, label)}</span>
-                    <button type="button" className="relative block h-11 w-full" aria-label={`List the people at ${label}`}
-                      onClick={() => setList({ step: i, cohort: null })}>
+                    <Count row {...stepOf(i)} className="relative block h-11">
                       {base[i] ? <span className="absolute top-0 h-11 rounded-md bg-violet-600" style={{ left: `${50 - w / 2}%`, width: `${w}%` }} />
                         : <span className="absolute top-0 h-11 w-10 rounded-md border-2 border-dashed border-violet-600" style={{ left: 'calc(50% - 1.25rem)' }} />}
                       {cv ? (cv[i]
                         ? <span className="absolute top-4 h-3 rounded bg-amber-500 ring-2 ring-white dark:ring-zinc-900" style={{ left: `${50 - cw / 2}%`, width: `${cw}%` }} />
                         : <span className="absolute top-4 h-3 w-7 rounded border-2 border-dashed border-amber-500" style={{ left: 'calc(50% - 0.875rem)' }} />) : null}
-                    </button>
-                    <span className="flex flex-col leading-tight tabular-nums">
-                      <span><b>{pct(base[i], base[0])}</b><span className={G.fine}> · {people(base[i])}</span></span>
-                      {cv ? <span className="text-amber-700 dark:text-amber-400 text-xs"><b>{pct(cv[i], cv[0])}</b> · {people(cv[i])}</span> : null}
+                    </Count>
+                    <span className="flex flex-col items-start leading-tight tabular-nums">
+                      <Count {...stepOf(i)}><b>{pct(base[i], base[0])}</b><span className={G.fine}> · {people(base[i])}</span></Count>
+                      {cv && cmp ? (
+                        <Count kicker={cmp.label} title={STEPS[i]} list={atStep(i, r.scoped.filter(cmp.match))} className="text-amber-700 dark:text-amber-400 text-xs">
+                          <b>{pct(cv[i], cv[0])}</b> · {people(cv[i])}
+                        </Count>
+                      ) : null}
                     </span>
                   </div>
                   <div className="grid grid-cols-[9rem_minmax(0,1fr)_8rem] gap-3"><span /><div>{help(`s${i}`)}</div><span /></div>
@@ -486,27 +557,29 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
         <div className={`${G.card} flex flex-col gap-3`}>
           <h3 className={G.title}>{term('mail', 'Admit mail')}</h3>
           {help('mail')}
-          {mail.map(([label, n, tone]) => (
-            <div key={label} className="grid grid-cols-[5rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
+          {mailLists.map(([label, list, tone]) => (
+            <Count key={label} row kicker="Admit mail" title={label} list={list} className="grid grid-cols-[5rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
               <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
-              <span className={G.track}><span className={`block h-3 rounded ${tone}`} style={{ width: `${mail[0][1] ? (n / mail[0][1]) * 100 : 0}%` }} /></span>
-              <span className="text-end font-semibold tabular-nums">{n}</span>
-            </div>
+              <span className={G.track}><span className={`block h-3 rounded ${tone}`} style={{ width: `${waitlist.length ? (list.length / waitlist.length) * 100 : 0}%` }} /></span>
+              <span className="text-end font-semibold tabular-nums">{list.length}</span>
+            </Count>
           ))}
           <div className="mt-2 border-t border-zinc-100 dark:border-zinc-800 pt-3 flex flex-col gap-1">
             <span className={G.title}>{term('drop', 'Biggest drop')}</span>
             {help('drop')}
-            <span className={G.big}>{worst && base[worst.i] ? `−${Math.round(worst.lost * 100)}%` : '–'}</span>
+            {worst && base[worst.i] ? (
+              <Count kicker="Stopped here" title={`${STEPS[worst.i]}, not ${STEPS[worst.i + 1]}`} list={stopped(worst.i)} className={`${G.big} self-start`}>−{Math.round(worst.lost * 100)}%</Count>
+            ) : <span className={G.big}>–</span>}
             <span className={G.fine}>{worst ? `${STEPS[worst.i]} → ${STEPS[worst.i + 1]}` : ''}</span>
           </div>
         </div>
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-        {[['wLet', 'Let in', letIn, 'bg-violet-400'], ['wActive', 'Active', active, 'bg-violet-600'], ['wGroups', 'Groups active together', groupsWeek, 'bg-zinc-900 dark:bg-zinc-100']].map(([id, title, vals, tone]) => (
-          <div key={id as string} className={G.card}>
-            <h3 className={`${G.title} mb-2`}>{term(id as string, title as string)}</h3>
-            {help(id as string)}
-            <Bars values={vals as number[]} labels={labels} fade={fade} tone={tone as string} />
+        {weekly.map(([id, title, vals, tone, lists]) => (
+          <div key={id} className={G.card}>
+            <h3 className={`${G.title} mb-2`}>{term(id, title)}</h3>
+            {help(id)}
+            <Bars values={vals} labels={labels} fade={fade} tone={tone} lists={lists} />
           </div>
         ))}
       </div>
@@ -524,12 +597,19 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
             <tbody>
               {retention.map((row) => (
                 <tr key={row.week}>
-                  <th className="pe-3 text-start font-medium whitespace-nowrap">{dayLabel(row.week)} · {row.size}</th>
-                  {data.weeks.map((_, i) => {
-                    const v = row.cells[i];
-                    if (v == null) return <td key={`c${i}`} />;
-                    const share = row.size ? v / row.size : 0;
-                    return <td key={`c${i}`} className={`h-7 rounded text-center font-semibold ${v ? (share > 0.55 ? 'bg-violet-600 text-white' : 'bg-violet-200 dark:bg-violet-800 text-zinc-900 dark:text-zinc-100') : 'bg-zinc-100 dark:bg-zinc-800'}`}>{v}</td>;
+                  <th className="pe-3 text-start font-medium whitespace-nowrap">
+                    {dayLabel(row.week)} · <Count kicker="First active" title={`Week of ${dayLabel(row.week)}`} list={row.ps}>{row.ps.length}</Count>
+                  </th>
+                  {data.weeks.map((wk, i) => {
+                    const list = row.cells[i];
+                    if (list == null) return <td key={`c${i}`} />;
+                    const v = list.length;
+                    const share = row.ps.length ? v / row.ps.length : 0;
+                    return (
+                      <td key={`c${i}`} className={`h-7 rounded text-center font-semibold ${v ? (share > 0.55 ? 'bg-violet-600 text-white' : 'bg-violet-200 dark:bg-violet-800 text-zinc-900 dark:text-zinc-100') : 'bg-zinc-100 dark:bg-zinc-800'}`}>
+                        <Count kicker={`First active ${dayLabel(row.week)}`} title={`Active again W${i} (${dayLabel(data.weeks[data.weeks.indexOf(row.week) + i] || wk)})`} list={list} className="h-7 w-full">{v}</Count>
+                      </td>
+                    );
                   })}
                 </tr>
               ))}
@@ -537,25 +617,22 @@ function Overview({ data, r, when, saved, onOpenPerson }: {
           </table>
         ) : <p className={AdminUI.muted}>Nobody in scope has been active yet.</p>}
       </div>
-      {list ? (
-        <Drawer kicker="Reached this step" title={STEPS[list.step]} onClose={() => setList(null)}>
-          <span className="text-sm text-zinc-600 dark:text-zinc-300">{people(listPeople.length)}</span>
-          {cmp ? (
-            <div className="flex flex-wrap gap-1.5">
-              <Pill on={!list.cohort} onClick={() => setList({ ...list, cohort: null })}>Everyone in scope</Pill>
-              <Pill cmp on={list.cohort === cmp.key} onClick={() => setList({ ...list, cohort: cmp.key })}>{cmp.label}</Pill>
-            </div>
-          ) : null}
-          <PeopleTable list={listPeople} reached={r.reached} onOpenPerson={onOpenPerson} />
-        </Drawer>
-      ) : null}
     </>
   );
 }
 
-function PeopleTable({ list, reached, onOpenPerson }: { list: GrowthPerson[]; reached: (p: GrowthPerson) => number; onOpenPerson: (id: number) => void }) {
-  const tone = ['bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300', 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300',
-    'bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200', 'bg-violet-600 text-white', 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'];
+const STEP_TONE = ['bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300', 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-300',
+  'bg-violet-100 text-violet-800 dark:bg-violet-500/20 dark:text-violet-200', 'bg-violet-600 text-white', 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'];
+
+function StepPill({ step }: { step: number }) {
+  return <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${STEP_TONE[step]}`}>{STEP_SHORT[step]}</span>;
+}
+
+function personName(p: GrowthPerson): string {
+  return p.name || (p.userId ? `#${p.userId}` : 'No account yet');
+}
+
+function PeopleTable({ list, reached, onPick }: { list: GrowthPerson[]; reached: (p: GrowthPerson) => number; onPick: (i: number) => void }) {
   return (
     <table className={AdminUI.table} data-growth-people="">
       <thead className={AdminUI.thead}>
@@ -565,22 +642,88 @@ function PeopleTable({ list, reached, onOpenPerson }: { list: GrowthPerson[]; re
           <th className="py-2 ps-2 text-end text-xs font-medium uppercase tracking-wider text-zinc-500">Last seen</th></tr>
       </thead>
       <tbody>
-        {list.map((p) => {
-          const step = reached(p);
-          return (
-            <tr key={p.key} className="border-b border-zinc-100 dark:border-zinc-800/60">
-              <td className="py-2 pe-2">
-                {p.userId ? <button type="button" className="font-medium text-violet-700 dark:text-violet-400 hover:underline" onClick={() => onOpenPerson(p.userId!)}>{p.name || `#${p.userId}`}</button>
-                  : <span className="text-zinc-500 dark:text-zinc-400">No account yet</span>}
-              </td>
-              <td className="py-2 px-2 text-zinc-600 dark:text-zinc-300">{WAY_NAME[p.way]}{p.admittedDay ? ` · ${dayLabel(p.admittedDay)}` : ''}</td>
-              <td className="py-2 px-2"><span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap ${tone[step]}`}>{STEP_SHORT[step]}</span></td>
-              <td className="py-2 ps-2 text-end text-zinc-600 dark:text-zinc-300 whitespace-nowrap">{p.lastSeen ? dayLabel(p.lastSeen) : '–'}</td>
-            </tr>
-          );
-        })}
+        {list.map((p, i) => (
+          <tr key={p.key} className={`${AdminUI.trHover} cursor-pointer`} onClick={() => onPick(i)}>
+            <td className="py-2 pe-2">
+              <button type="button" className={`font-medium hover:underline text-start ${p.userId ? 'text-violet-700 dark:text-violet-400' : 'text-zinc-500 dark:text-zinc-400'}`}
+                onClick={(e) => { e.stopPropagation(); onPick(i); }}>{personName(p)}</button>
+            </td>
+            <td className="py-2 px-2 text-zinc-600 dark:text-zinc-300">{WAY_NAME[p.way]}{p.admittedDay ? ` · ${dayLabel(p.admittedDay)}` : ''}</td>
+            <td className="py-2 px-2"><StepPill step={reached(p)} /></td>
+            <td className="py-2 ps-2 text-end text-zinc-600 dark:text-zinc-300 whitespace-nowrap">{p.lastSeen ? dayLabel(p.lastSeen) : '–'}</td>
+          </tr>
+        ))}
       </tbody>
     </table>
+  );
+}
+
+const MAIL_WORDS: Record<string, string> = { clicked: 'Clicked', opened: 'Opened, not clicked', sent: 'Sent, not opened', not_on_record: 'Not in the mail log' };
+
+// What the reading knows about one person, drawn above Journey's own view.
+function PersonFacts({ p, step, data, groups }: { p: GrowthPerson; step: number; data: GrowthData; groups: GrowthGroup[] }) {
+  const mine = p.userId == null ? [] : groups.filter((g) => g.people.includes(p.userId!));
+  const fact = (label: string, value: ReactNode) => (
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] gap-2 py-1.5 text-sm border-b border-zinc-100 dark:border-zinc-800 last:border-b-0">
+      <span className="text-zinc-500 dark:text-zinc-400">{label}</span><span className="min-w-0">{value}</span>
+    </div>
+  );
+  const last7 = [p.last7.opened && 'opened Homeroom', p.last7.used && 'stayed 30 s+', p.last7.contributed && 'acted', p.last7.analyticsWau && 'in Analytics\' WAU'].filter(Boolean).join(' · ');
+  return (
+    <div className="flex flex-col" data-growth-person-facts="">
+      {fact('Got to', <StepPill step={step} />)}
+      {fact('Came by', `${WAY_NAME[p.way]}${p.admittedDay ? `, let in ${dayLabel(p.admittedDay)}` : ''}${p.cameAt ? ` · arrived ${dayLabel(p.cameAt)}` : ''}`)}
+      {p.early || p.connected ? fact('Group', p.seasonEarly ? 'Early member: Season 1' : p.early ? `Early member: account from before ${dayLabel(data.eraStart)}` : 'Newcomer, brought in by an early member') : null}
+      {p.heard ? fact('Heard about it', <span className="capitalize">{p.heard}</span>) : null}
+      {p.way === 'waitlist' && p.admittedDay ? fact('Admit mail', p.mail ? MAIL_WORDS[p.mail] : '–') : null}
+      {fact('Last seen', p.lastSeen ? dayLabel(p.lastSeen) : 'Never')}
+      {fact('Weeks active', (
+        <span className="inline-flex flex-wrap items-center gap-0.5" role="img" aria-label={`Active ${p.activeWeeks.filter((w) => data.weeks.includes(w)).length} of ${data.weeks.length} weeks`}>
+          {data.weeks.map((w) => <span key={w} className={`h-3.5 w-2 rounded-sm ${p.activeWeeks.includes(w) ? 'bg-violet-600' : 'bg-zinc-100 dark:bg-zinc-800'}`} />)}
+        </span>
+      ))}
+      {fact('Last 7 days', last7 || 'Nothing')}
+      {mine.length ? fact('Groups', mine.map((g) => `${g.name || `Project ${g.appId}`}${g.cameBack ? ' (came back)' : ''}`).join(', ')) : null}
+    </div>
+  );
+}
+
+// The one sidebar every count opens: its people, then one of them in place,
+// with the previous and next person a tap away.
+function PeopleDrawer({ spec, data, r, renderPerson, onOpenPerson, onClose }: {
+  spec: PeopleList; data: GrowthData; r: Reading; renderPerson?: (userId: number) => ReactNode;
+  onOpenPerson: (id: number) => void; onClose: () => void;
+}) {
+  const [sel, setSel] = useState<number | null>(spec.pick != null && spec.pick >= 0 ? spec.pick : null);
+  const n = spec.list.length;
+  const p = sel == null ? null : spec.list[sel];
+  return (
+    <Drawer wide={!!p} kicker={p ? `${spec.kicker} · ${spec.title}` : spec.kicker} title={p ? personName(p) : spec.title} onClose={onClose}>
+      {p && sel != null ? (
+        <>
+          <div className="flex items-center gap-2">
+            <button type="button" className={`${AdminUI.btn.ghost} text-sm`} data-growth-back="" onClick={() => setSel(null)}>‹ All {people(n)}</button>
+            <span className="ms-auto inline-flex items-center gap-1.5">
+              <button type="button" className={G.stepper} aria-label="Previous person" disabled={sel <= 0} onClick={() => setSel(sel - 1)}>‹</button>
+              <span className={`${G.fine} tabular-nums`}>{sel + 1} of {n}</span>
+              <button type="button" className={G.stepper} aria-label="Next person" disabled={sel >= n - 1} onClick={() => setSel(sel + 1)}>›</button>
+            </span>
+          </div>
+          <PersonFacts p={p} step={r.reached(p)} data={data} groups={r.groups} />
+          {p.userId != null ? (
+            <>
+              {renderPerson ? <div key={p.userId}>{renderPerson(p.userId)}</div> : null}
+              <button type="button" className={`${G.link} self-start`} onClick={() => onOpenPerson(p.userId!)}>Open on its own page ›</button>
+            </>
+          ) : <p className={AdminUI.muted}>Let in from the waitlist, but no account yet: nothing more is recorded.</p>}
+        </>
+      ) : (
+        <>
+          <span className="text-sm text-zinc-600 dark:text-zinc-300">{people(n)}</span>
+          {n ? <PeopleTable list={spec.list} reached={r.reached} onPick={setSel} /> : <p className={AdminUI.muted}>Nobody here.</p>}
+        </>
+      )}
+    </Drawer>
   );
 }
 
@@ -588,41 +731,51 @@ function PeopleTable({ list, reached, onOpenPerson }: { list: GrowthPerson[]; re
 
 function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Reading; when: When }) {
   const { term, help } = useHelp();
+  const [pick, setPick] = useState<string | null>(null);
   const pool = r.whoPeople;
   const weeks = data.weeks;
   const life = weeks.map((w, i) => {
     const prev = weeks[i - 1];
-    let nw = 0; let ret = 0; let res = 0; let dor = 0;
+    const L: Record<'nw' | 'ret' | 'res' | 'dor', GrowthPerson[]> = { nw: [], ret: [], res: [], dor: [] };
     for (const p of pool) {
       const now = p.activeWeeks.includes(w);
       const before = prev ? p.activeWeeks.includes(prev) : false;
       const earlier = p.activeWeeks.some((x) => x < w);
-      if (now && !earlier) nw += 1;
-      else if (now && before) ret += 1;
-      else if (now) res += 1;
-      else if (before) dor += 1;
+      if (now && !earlier) L.nw.push(p);
+      else if (now && before) L.ret.push(p);
+      else if (now) L.res.push(p);
+      else if (before) L.dor.push(p);
     }
-    return { w, nw, ret, res, dor };
+    return { w, L, nw: L.nw.length, ret: L.ret.length, res: L.res.length, dor: L.dor.length };
   });
   const up = Math.max(1, ...life.map((l) => l.nw + l.ret + l.res));
   const down = Math.max(1, ...life.map((l) => l.dor));
   const scale = 110 / Math.max(up, down);
   const last4 = weeks.slice(-4);
-  const l4 = [1, 2, 3, 4].map((k) => pool.filter((p) => last4.filter((w) => p.activeWeeks.includes(w)).length === k).length);
-  const l4max = Math.max(1, ...l4);
-  const depth: Array<[string, number]> = [
-    ['Opened Homeroom', pool.filter((p) => p.last7.opened).length],
-    ['Stayed 30 s+', pool.filter((p) => p.last7.used).length],
-    ['Contributed', pool.filter((p) => p.last7.contributed).length],
-    ['Active groups', r.groups.filter((g) => g.weeks.includes(data.thisWeek)).length],
+  const l4L = [1, 2, 3, 4].map((k) => pool.filter((p) => last4.filter((w) => p.activeWeeks.includes(w)).length === k));
+  const l4max = Math.max(1, ...l4L.map((l) => l.length));
+  const groupsNow = r.groups.filter((g) => g.weeks.includes(data.thisWeek));
+  // The group row counts groups; its people are the ones in those groups.
+  const depth: Array<[string, number, GrowthPerson[]]> = [
+    ['Opened Homeroom', 0, pool.filter((p) => p.last7.opened)],
+    ['Stayed 30 s+', 0, pool.filter((p) => p.last7.used)],
+    ['Contributed', 0, pool.filter((p) => p.last7.contributed)],
+    ['Active groups', groupsNow.length, r.peopleOfGroups(groupsNow)],
   ];
+  for (const d of depth) if (d[0] !== 'Active groups') d[1] = d[2].length;
   const dmax = Math.max(1, ...depth.map((d) => d[1]));
   const wau = data.people.filter((p) => p.last7.analyticsWau);
-  const parts: Array<[string, number, string]> = [
-    ['Season 1', wau.filter((p) => p.seasonEarly).length, 'bg-zinc-300 dark:bg-zinc-600'],
-    ['Other early', wau.filter((p) => p.early && !p.seasonEarly).length, 'bg-zinc-500'],
-    ['Brought in by them', wau.filter((p) => p.connected).length, 'bg-zinc-700 dark:bg-zinc-400'],
-    ['Newcomers', wau.filter((p) => !p.early && !p.connected).length, 'bg-violet-600'],
+  const parts: Array<[string, GrowthPerson[], string]> = [
+    ['Early: Season 1', wau.filter((p) => p.seasonEarly), 'bg-zinc-300 dark:bg-zinc-600'],
+    ['Early: older account', wau.filter((p) => p.early && !p.seasonEarly), 'bg-zinc-500'],
+    ['Brought in by early members', wau.filter((p) => p.connected), 'bg-zinc-700 dark:bg-zinc-400'],
+    ['Newcomers', wau.filter((p) => !p.early && !p.connected), 'bg-violet-600'],
+  ];
+  // Each person once, at the deepest thing they did.
+  const wauDid: Array<[string, GrowthPerson[], string]> = [
+    ['Acted: wrote, voted or built', wau.filter((p) => p.last7.contributed), 'bg-violet-600'],
+    ['Stayed 30 s+, no act', wau.filter((p) => !p.last7.contributed && p.last7.used), 'bg-violet-400'],
+    ['Glanced: under 30 s, or kudos', wau.filter((p) => !p.last7.contributed && !p.last7.used), 'bg-zinc-300 dark:bg-zinc-600'],
   ];
   const fade = (w: string) => (when.kind === 'week' ? w !== when.week : when.kind === 'last4' ? w < r.last4From : false);
   return (
@@ -632,16 +785,19 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className={G.title}>{term('lifecycle', 'Weekly lifecycle')}</h3>
             <span className="flex flex-wrap gap-3 text-xs text-zinc-600 dark:text-zinc-300">
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-300" />New</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-600" />Returning</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-600" />Resurrecting</span>
-              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />Dormant</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-300" />{term('lifeNew', 'New')}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-violet-600" />{term('lifeReturning', 'Returning')}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-emerald-600" />{term('lifeResurrecting', 'Resurrecting')}</span>
+              <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />{term('lifeDormant', 'Dormant')}</span>
             </span>
           </div>
-          {help('lifecycle')}
+          {help('lifecycle', 'lifeNew', 'lifeReturning', 'lifeResurrecting', 'lifeDormant')}
           <div className="mt-3 grid gap-2" style={{ gridTemplateColumns: `repeat(${life.length}, minmax(0, 1fr))` }}>
-            {life.map((l) => (
-              <div key={l.w} className={`flex flex-col items-center ${fade(l.w) ? 'opacity-30' : ''} ${l.w === data.thisWeek ? 'opacity-60' : ''}`}>
+            {life.map((l, i) => (
+              <div key={l.w} className="relative" onMouseEnter={() => setPick(l.w)} onMouseLeave={() => setPick(null)}>
+              <button type="button" aria-expanded={pick === l.w} aria-label={`Week of ${dayLabel(l.w)}: ${l.nw} new, ${l.ret} returning, ${l.res} resurrecting, ${l.dor} dormant`}
+                onClick={() => setPick(pick === l.w ? null : l.w)}
+                className={`flex w-full flex-col items-center rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800 ${pick === l.w ? 'bg-zinc-100 dark:bg-zinc-800' : ''} ${fade(l.w) ? 'opacity-30' : ''} ${l.w === data.thisWeek ? 'opacity-60' : ''}`}>
                 <div className="flex h-32 w-full flex-col items-center justify-end">
                   <span className="text-[11px] font-semibold tabular-nums">{l.nw + l.ret + l.res || ''}</span>
                   <span className="block w-3/4 bg-emerald-600" style={{ height: `${l.res * scale}px` }} />
@@ -654,6 +810,20 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
                   <span className="text-[11px] font-semibold tabular-nums text-amber-700 dark:text-amber-400">{l.dor ? `−${l.dor}` : ''}</span>
                 </div>
                 <span className="text-[10px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{dayLabel(l.w)}</span>
+              </button>
+              {pick === l.w ? (
+                <div role="note" className={`${G.help} absolute top-0 z-30 flex w-44 flex-col gap-0.5 shadow-lg ${i < life.length / 2 ? 'start-0' : 'end-0'}`}>
+                  <p className="font-semibold">Week of {dayLabel(l.w)}{l.w === data.thisWeek ? ' (so far)' : ''}</p>
+                  {([['New', l.L.nw, 'bg-violet-300'], ['Returning', l.L.ret, 'bg-violet-600'], ['Resurrecting', l.L.res, 'bg-emerald-600'], ['Dormant', l.L.dor, 'bg-amber-400']] as Array<[string, GrowthPerson[], string]>).map(([name, list, tone]) => (
+                    <Count key={name} row kicker={`Week of ${dayLabel(l.w)}`} title={name} list={list} className="flex items-center gap-2 px-1 enabled:hover:bg-white/10 dark:enabled:hover:bg-black/10">
+                      <span className={`h-2 w-2 rounded-sm ${tone}`} /><span className="flex-1">{name}</span><b className="tabular-nums">{list.length}</b>
+                    </Count>
+                  ))}
+                  <Count row kicker={`Week of ${dayLabel(l.w)}`} title="Active" list={[...l.L.nw, ...l.L.ret, ...l.L.res]} className="mt-1 px-1 enabled:hover:bg-white/10 dark:enabled:hover:bg-black/10">
+                    {people(l.nw + l.ret + l.res)} active ›
+                  </Count>
+                </div>
+              ) : null}
               </div>
             ))}
           </div>
@@ -661,38 +831,52 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
         <div className={`${G.card} flex flex-col gap-3`}>
           <h3 className={G.title}>{term('l4', 'Weeks active, last 4')}</h3>
           {help('l4')}
-          {l4.map((n, i) => (
-            <div key={`l${i}`} className="grid grid-cols-[4rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
+          {l4L.map((list, i) => (
+            <Count key={`l${i}`} row kicker="Weeks active, last 4" title={`${i + 1} ${i ? 'weeks' : 'week'}`} list={list} className="grid grid-cols-[4rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
               <span className="text-zinc-600 dark:text-zinc-300">{i + 1} {i ? 'weeks' : 'week'}</span>
-              <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${(n / l4max) * 100}%`, opacity: 0.4 + i * 0.2 }} /></span>
-              <span className="text-end font-semibold tabular-nums">{n}</span>
-            </div>
+              <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${(list.length / l4max) * 100}%`, opacity: 0.4 + i * 0.2 }} /></span>
+              <span className="text-end font-semibold tabular-nums">{list.length}</span>
+            </Count>
           ))}
         </div>
       </div>
+      <TimeInApp data={data} r={r} />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
         <div className={`${G.card} flex flex-col gap-3`}>
           <h3 className={G.title}>{term('depth', 'Last 7 days, by depth')}</h3>
           {help('depth')}
-          {depth.map(([label, n], i) => (
-            <div key={label} className="grid grid-cols-[9rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
+          {depth.map(([label, n, list], i) => (
+            <Count key={label} row kicker="Last 7 days" title={i === 3 ? 'In a group active this week' : label} list={list} className="grid grid-cols-[9rem_minmax(0,1fr)_2rem] gap-2 items-center text-sm">
               <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
               <span className={G.track}><span className={`block h-3 rounded ${['bg-violet-200', 'bg-violet-400', 'bg-violet-600', 'bg-zinc-900 dark:bg-zinc-100'][i]}`} style={{ width: `${(n / dmax) * 100}%` }} /></span>
               <span className="text-end font-semibold tabular-nums">{n}</span>
-            </div>
+            </Count>
           ))}
         </div>
         <div className={`${G.card} flex flex-col gap-3`} id="admin-growth-wau">
           <h3 className={G.title}>{term('wau', `Who is in Analytics' WAU of ${wau.length}`)}</h3>
           {help('wau')}
           <div className="flex h-7 overflow-hidden rounded-md gap-0.5">
-            {parts.map(([label, n, tone]) => (n ? <span key={label} className={tone} style={{ flex: n }} /> : null))}
+            {parts.map(([label, list, tone]) => (list.length
+              ? <Count key={label} row kicker="In Analytics' WAU" title={label} list={list} className={`${tone} rounded-none`} style={{ flex: list.length }}><span className="sr-only">{label}</span></Count>
+              : null))}
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-            {parts.map(([label, n, tone]) => (
-              <span key={label} className="inline-flex items-center gap-1.5"><span className={`h-2.5 w-2.5 rounded-sm ${tone}`} /><b className="tabular-nums">{n}</b> {label}</span>
+            {parts.map(([label, list, tone]) => (
+              <Count key={label} kicker="In Analytics' WAU" title={label} list={list} className="inline-flex items-center gap-1.5">
+                <span className={`h-2.5 w-2.5 rounded-sm ${tone}`} /><b className="tabular-nums">{list.length}</b> {label}
+              </Count>
             ))}
           </div>
+          <h4 className={`${G.title} mt-2`}>{term('wauDid', 'What they did in those 7 days')}</h4>
+          {help('wauDid')}
+          {wauDid.map(([label, list, tone]) => (
+            <Count key={label} row kicker="In Analytics' WAU" title={label} list={list} className="grid grid-cols-[minmax(0,12rem)_minmax(0,1fr)_2.5rem] gap-2 items-center text-sm">
+              <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
+              <span className={G.track}><span className={`block h-3 rounded ${tone}`} style={{ width: `${wau.length ? (list.length / wau.length) * 100 : 0}%` }} /></span>
+              <span className="text-end font-semibold tabular-nums">{list.length}</span>
+            </Count>
+          ))}
           <p className={G.fine}>{who === 'newcomers' ? 'Shown for everyone: this is what the old number counts.' : ''}</p>
         </div>
       </div>
@@ -700,16 +884,97 @@ function Activity({ data, who, r, when }: { data: GrowthData; who: Who; r: Readi
   );
 }
 
+// ── Time in an app ─────────────────────────────────────────────────────
+
+// A bin's words from its lower edge and the next one: 1–4 s … 1–2 min … 15 min+.
+function binLabel(lo: number, next: number | undefined): string {
+  const t = (s: number) => (s < 60 ? `${s} s` : `${s / 60} min`);
+  if (next == null) return `${t(lo)}+`;
+  if (next <= 60) return `${lo}–${next - 1} s`;
+  return `${lo / 60}–${next / 60} min`;
+}
+
+type HistCol = { label: string; value: number; list: GrowthPerson[]; under: boolean; none?: boolean };
+
+// Columns either side of the 30-second line; a column lists its people.
+function Hist({ cols, kicker, id }: { cols: HistCol[]; kicker: string; id: string }) {
+  const max = Math.max(1, ...cols.map((c) => c.value));
+  const col = (c: HistCol) => (
+    <div key={c.label} className="flex min-w-0 flex-1 flex-col items-stretch gap-1">
+      <Count row kicker={kicker} title={c.label} list={c.list} className="flex h-24 flex-col items-center justify-end gap-0.5 rounded-b-none border-b border-zinc-200 dark:border-zinc-800">
+        <span className="text-[11px] font-semibold tabular-nums text-zinc-900 dark:text-zinc-100">{c.value}</span>
+        <span className={`block w-full max-w-[34px] rounded-t ${c.none ? 'bg-zinc-300 dark:bg-zinc-600' : c.under ? 'bg-violet-300' : 'bg-violet-600'}`} style={{ height: `${c.value ? Math.max(3, (c.value / max) * 72) : 0}px` }} />
+      </Count>
+      <span className="text-center text-[10px] text-zinc-500 dark:text-zinc-400 whitespace-nowrap">{c.label}</span>
+    </div>
+  );
+  return (
+    <div className="flex items-start gap-1.5" data-growth-hist={id}>
+      <div className="flex flex-[5] gap-1.5">{cols.filter((c) => c.under).map(col)}</div>
+      <div className="flex flex-col items-center self-stretch pb-4" aria-hidden="true">
+        <span className="h-24 w-0.5 bg-amber-600" />
+        <span className="text-[10px] font-semibold text-amber-700 dark:text-amber-500">30 s</span>
+      </div>
+      <div className="flex flex-[5] gap-1.5">{cols.filter((c) => !c.under).map(col)}</div>
+    </div>
+  );
+}
+
+function TimeInApp({ data, r }: { data: GrowthData; r: Reading }) {
+  const { term, help } = useHelp();
+  const bins = data.timeBins || [];
+  const labels = bins.map((lo, i) => binLabel(lo, bins[i + 1]));
+  const binOf = (sec: number) => bins.filter((edge) => sec >= edge).length - 1;
+  const under = (i: number) => bins[i] < data.staySeconds;
+  const opened = r.scoped.filter((p) => p.opened);
+  const none = opened.filter((p) => !p.bestSeconds);
+  const best: HistCol[] = [{ label: 'No app time', value: none.length, list: none, under: true, none: true }].concat(labels.map((label, i) => {
+    const list = opened.filter((p) => p.bestSeconds && binOf(p.bestSeconds) === i);
+    return { label, value: list.length, list, under: under(i), none: false };
+  }));
+  const visits: HistCol[] = labels.map((label, i) => {
+    const list = r.scoped.filter((p) => (p.visitBins?.[i] || 0) > 0);
+    return { label, value: list.reduce((n, p) => n + (p.visitBins[i] || 0), 0), list, under: under(i) };
+  });
+  const secs = opened.map((p) => p.bestSeconds || 0).filter((x) => x > 0);
+  const below = secs.filter((x) => x < data.staySeconds);
+  const above = secs.filter((x) => x >= data.staySeconds);
+  const totalVisits = visits.reduce((n, c) => n + c.value, 0);
+  const shortVisits = visits.filter((c) => c.under).reduce((n, c) => n + c.value, 0);
+  return (
+    <div className={`${G.card} flex flex-col gap-4`} id="admin-growth-time">
+      <div className="flex flex-col gap-2">
+        <h3 className={G.title}>{term('timeBest', `Longest visit · ${people(opened.length)} who opened Homeroom`)}</h3>
+        {help('timeBest')}
+        <Hist id="best" kicker="Longest visit" cols={best} />
+        <p className={G.fine} data-growth-time-gap="">
+          {below.length && above.length
+            ? `Under the line the longest is ${Math.max(...below)} s; over it the shortest is ${Math.min(...above)} s.`
+            : 'Nobody on one side of the line yet.'}
+        </p>
+      </div>
+      <div className="flex flex-col gap-2">
+        <h3 className={G.title}>{term('timeVisits', `Every visit · ${totalVisits}, ${shortVisits} under 30 s`)}</h3>
+        {help('timeVisits')}
+        <Hist id="visits" kicker="Visits" cols={visits} />
+      </div>
+    </div>
+  );
+}
+
 // ── Groups ─────────────────────────────────────────────────────────────
 
-function Groups({ data, r, fetchJson, onOpenPerson }: {
-  data: GrowthData; r: Reading; fetchJson: (path: string) => Promise<{ ok: boolean; data: unknown }>; onOpenPerson: (id: number) => void;
+function Groups({ data, r, fetchJson }: {
+  data: GrowthData; r: Reading; fetchJson: (path: string) => Promise<{ ok: boolean; data: unknown }>;
 }) {
+  const show = useContext(PeopleCtx);
   const { term, help } = useHelp();
   const [open, setOpen] = useState<GrowthGroup | null>(null);
   const list = r.groupsInScope;
   const names = new Map(data.people.filter((p) => p.userId).map((p) => [p.userId as number, p.name || `#${p.userId}`]));
   return (
+    <div className="flex flex-col gap-4">
+    <GroupOverlap data={data} list={list} />
     <div className={G.card} id="admin-growth-groups">
       <h3 className={`${G.title} mb-2`}>{term('groupsTable', `Groups · ${list.length}`)}</h3>
       {help('groupsTable', 'weeksCol', 'firstBuild')}
@@ -734,7 +999,9 @@ function Groups({ data, r, fetchJson, onOpenPerson }: {
                   </button>
                   <div className={G.fine}>made {dayLabel(g.madeAt)}</div>
                 </td>
-                <td className="py-3 px-2 text-end tabular-nums">{g.people.length}</td>
+                <td className="py-3 px-2 text-end tabular-nums">
+                  <Count kicker="Group" title={g.name || `Project ${g.appId}`} list={data.people.filter((p) => p.userId != null && g.people.includes(p.userId))}>{g.people.length}</Count>
+                </td>
                 <td className="py-3 px-2 text-end tabular-nums">{g.builds}</td>
                 <td className="py-3 px-2 text-end tabular-nums">{g.firstBuildMinutes == null ? '–' : g.firstBuildMinutes < 120 ? `${g.firstBuildMinutes} min` : `${Math.round(g.firstBuildMinutes / 60)} h`}</td>
                 <td className="py-3 px-2">
@@ -749,7 +1016,50 @@ function Groups({ data, r, fetchJson, onOpenPerson }: {
           </tbody>
         </table>
       ) : <p className={AdminUI.muted}>No group in scope yet: no project where {data.groupMin} or more of these people acted in the same week.</p>}
-      {open ? <GroupTimeline group={open} names={names} fetchJson={fetchJson} onOpenPerson={onOpenPerson} onClose={() => setOpen(null)} /> : null}
+      {open ? (
+        <GroupTimeline group={open} names={names} fetchJson={fetchJson} onClose={() => setOpen(null)}
+          onOpenPerson={(id) => {
+            const list = data.people.filter((p) => p.userId != null && open.people.includes(p.userId));
+            setOpen(null);
+            show({ kicker: 'Group', title: open.name || `Project ${open.appId}`, list, pick: list.findIndex((p) => p.userId === id) });
+          }} />
+      ) : null}
+    </div>
+    </div>
+  );
+}
+
+// How many of the groups in scope each of their people acts in: many groups
+// made of one crowd read very differently from many separate circles.
+const OVERLAP_BINS: Array<[number, number, string]> = [[1, 1, '1 group'], [2, 3, '2–3 groups'], [4, 9, '4–9 groups'], [10, 19, '10–19 groups'], [20, Infinity, '20 or more']];
+
+function GroupOverlap({ data, list }: { data: GrowthData; list: GrowthGroup[] }) {
+  const { term, help } = useHelp();
+  const per = new Map<number, number>();
+  for (const g of list) for (const id of g.people) per.set(id, (per.get(id) || 0) + 1);
+  const byId = new Map(data.people.filter((p) => p.userId != null).map((p) => [p.userId as number, p]));
+  const inGroups = [...per.keys()].map((id) => byId.get(id)).filter((p): p is GrowthPerson => !!p);
+  const rows = OVERLAP_BINS.map(([lo, hi, label]) => ({ label, list: inGroups.filter((p) => { const n = per.get(p.userId as number) || 0; return n >= lo && n <= hi; }) }));
+  const max = Math.max(1, ...rows.map((x) => x.list.length));
+  const memberships = [...per.values()].reduce((a, b) => a + b, 0);
+  const top = [...per.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([id]) => id);
+  const withTop = list.filter((g) => g.people.some((id) => top.includes(id))).length;
+  return (
+    <div className={`${G.card} flex flex-col gap-3`} id="admin-growth-overlap">
+      <h3 className={G.title}>{term('overlap', `Groups per person · ${people(inGroups.length)} in ${list.length} ${list.length === 1 ? 'group' : 'groups'}`)}</h3>
+      {help('overlap')}
+      {rows.map(({ label, list: l }) => (
+        <Count key={label} row kicker="Groups per person" title={label} list={l} className="grid grid-cols-[7rem_minmax(0,1fr)_2.5rem] gap-2 items-center text-sm">
+          <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
+          <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${(l.length / max) * 100}%` }} /></span>
+          <span className="text-end font-semibold tabular-nums">{l.length}</span>
+        </Count>
+      ))}
+      <p className={G.fine} data-growth-overlap-summary="">
+        {inGroups.length
+          ? `About ${(memberships / inGroups.length).toFixed(1)} groups each. The ${Math.min(10, top.length)} busiest act in ${withTop} of the ${list.length}.`
+          : 'No group in scope yet.'}
+      </p>
     </div>
   );
 }
@@ -836,14 +1146,13 @@ function Sources({ r }: { r: Reading }) {
   const { term, help } = useHelp();
   const rows = WAYS.map(([w, label]) => {
     const ps = r.scoped.filter((p) => p.way === w);
-    const f = r.funnel(ps);
-    return { w, label, came: ps.length, stayed: f[2], group: f[3] };
+    return { w, label, ps, stayed: ps.filter((p) => r.reached(p) >= 2), group: ps.filter((p) => r.reached(p) >= 3) };
   });
   const waitlist = r.scoped.filter((p) => p.way === 'waitlist');
   const answers = [...new Set(waitlist.map((p) => p.heard || 'blank'))];
   const heard = answers.map((a) => {
     const ps = waitlist.filter((p) => (p.heard || 'blank') === a);
-    return { a, came: ps.length, stayed: ps.filter((p) => p.stayed).length };
+    return { a, ps, came: ps.length, stayedL: ps.filter((p) => p.stayed), stayed: ps.filter((p) => p.stayed).length };
   }).sort((x, y) => y.came - x.came);
   const hmax = Math.max(1, ...heard.map((h) => h.came));
   return (
@@ -867,9 +1176,9 @@ function Sources({ r }: { r: Reading }) {
                   <span className="inline-flex items-center gap-2">{row.label}
                     {row.w === 'link' ? <span className={AdminUI.badge.success}>intent</span> : <span className={AdminUI.badge.outline}>no intent</span>}</span>
                 </td>
-                <td className="py-3 px-2 text-end tabular-nums">{row.came}</td>
-                <td className="py-3 px-2 text-end tabular-nums">{row.stayed}</td>
-                <td className="py-3 ps-2 text-end tabular-nums">{row.group}</td>
+                <td className="py-3 px-2 text-end"><Count kicker={row.label} title="Let in" list={row.ps}>{row.ps.length}</Count></td>
+                <td className="py-3 px-2 text-end"><Count kicker={row.label} title="Stayed 30 s+" list={row.stayed}>{row.stayed.length}</Count></td>
+                <td className="py-3 ps-2 text-end"><Count kicker={row.label} title="Used it with a group" list={row.group}>{row.group.length}</Count></td>
               </tr>
             ))}
           </tbody>
@@ -880,13 +1189,16 @@ function Sources({ r }: { r: Reading }) {
         {help('heard')}
         {heard.map((h) => (
           <div key={h.a} className="grid grid-cols-[6rem_minmax(0,1fr)_4rem] gap-2 items-center text-sm">
-            <span className="text-zinc-600 dark:text-zinc-300 capitalize">{h.a}</span>
-            <span className={G.track}>
+            <Count row kicker="Heard about it" title={h.a} list={h.ps} className="text-zinc-600 dark:text-zinc-300 capitalize">{h.a}</Count>
+            <Count row kicker="Heard about it" title={h.a} list={h.ps} className={G.track}>
               <span className="flex h-3 rounded bg-violet-200 dark:bg-violet-800" style={{ width: `${(h.came / hmax) * 100}%` }}>
                 <span className="block h-3 rounded bg-violet-600" style={{ width: `${h.came ? (h.stayed / h.came) * 100 : 0}%` }} />
               </span>
+            </Count>
+            <span className="text-end tabular-nums">
+              <Count kicker={`Heard about it: ${h.a}`} title="Stayed 30 s+" list={h.stayedL}><b>{h.stayed}</b></Count>
+              <span className={G.fine}> / </span><Count kicker="Heard about it" title={h.a} list={h.ps} className={G.fine}>{h.came}</Count>
             </span>
-            <span className="text-end tabular-nums"><b>{h.stayed}</b><span className={G.fine}> / {h.came}</span></span>
           </div>
         ))}
         <p className={G.fine}>Dark: stayed 30 s+. Light: let in.</p>
@@ -897,13 +1209,37 @@ function Sources({ r }: { r: Reading }) {
 
 // ── Scope ──────────────────────────────────────────────────────────────
 
+// A count beside a checkbox: its own button, so a tap lists the people and
+// does not tick the box.
+function ScopeCount(props: PeopleList) {
+  return (
+    <span onClick={(e) => e.preventDefault()}>
+      <Count {...props} className="text-zinc-500">{props.list.length}</Count>
+    </span>
+  );
+}
+
+// Without early members, a count leaves out the newcomers they brought in.
+// When a row has some, it says how many newcomers came in all: "30 of 36".
+function BroughtToo({ r, list }: { r: Reading; list: GrowthPerson[] }) {
+  const all = list.filter((p) => !p.early && r.inWhen(p));
+  const shown = all.filter((p) => r.inWho(p)).length;
+  if (all.length === shown) return null;
+  return (
+    <span className="text-zinc-500" data-growth-brought-too="" onClick={(e) => e.preventDefault()}>
+      of <Count kicker="Admit day" title="All newcomers, with those early members brought in" list={all} className="text-zinc-500">{all.length}</Count>
+    </span>
+  );
+}
+
 function Scope({ data, r, saved, onSave }: { data: GrowthData; r: Reading; saved: Saved[]; onSave: (list: Saved[]) => void }) {
   const { term, help } = useHelp();
   const days = [...new Set(r.whoPeople.map((p) => p.admittedDay).filter((d): d is string => !!d))].sort().reverse().concat(['never']);
   const [ways, setWays] = useState<GrowthPerson['way'][]>(WAYS.map(([w]) => w));
   const [picked, setPicked] = useState<string[]>(days);
   const match = (p: GrowthPerson) => ways.includes(p.way) && picked.includes(p.admittedDay || 'never');
-  const f = r.funnel(r.scoped.filter(match));
+  const inScope = r.scoped.filter(match);
+  const f = r.funnel(inScope);
   const toggle = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const name = [ways.length === WAYS.length ? 'All ways in' : ways.map((w) => WAY_NAME[w]).join(', '),
     picked.length === days.length ? 'all admit days' : picked.map((d) => (d === 'never' ? 'never admitted' : dayLabel(d))).join(', ')].join(' · ');
@@ -916,7 +1252,7 @@ function Scope({ data, r, saved, onSave }: { data: GrowthData; r: Reading; saved
           <label key={w} className="flex items-center gap-2 text-sm">
             <input type="checkbox" className={G.check} checked={ways.includes(w)} onChange={() => setWays(toggle(ways, w))} />
             <span className="flex-1">{label}</span>
-            <span className="tabular-nums text-zinc-500">{r.scoped.filter((p) => p.way === w && picked.includes(p.admittedDay || 'never')).length}</span>
+            <ScopeCount kicker="Way in" title={label} list={r.scoped.filter((p) => p.way === w && picked.includes(p.admittedDay || 'never'))} />
           </label>
         ))}
       </div>
@@ -927,18 +1263,19 @@ function Scope({ data, r, saved, onSave }: { data: GrowthData; r: Reading; saved
           <label key={d} className="flex items-center gap-2 text-sm">
             <input type="checkbox" className={G.check} checked={picked.includes(d)} onChange={() => setPicked(toggle(picked, d))} />
             <span className="flex-1">{d === 'never' ? 'Never admitted' : `Let in ${dayLabel(d)}`}</span>
-            <span className="tabular-nums text-zinc-500">{r.scoped.filter((p) => (p.admittedDay || 'never') === d && ways.includes(p.way)).length}</span>
+            <ScopeCount kicker="Admit day" title={d === 'never' ? 'Never admitted' : `Let in ${dayLabel(d)}`} list={r.scoped.filter((p) => (p.admittedDay || 'never') === d && ways.includes(p.way))} />
+            <BroughtToo r={r} list={data.people.filter((p) => (p.admittedDay || 'never') === d && ways.includes(p.way))} />
           </label>
         ))}
       </div>
       <div className={`${G.card} flex flex-col gap-3`}>
         <h3 className={G.title}>This scope · {people(f[0])}</h3>
         {STEPS.map((label, i) => (
-          <div key={label} className="grid grid-cols-[8.5rem_minmax(0,1fr)_2.5rem] gap-2 items-center text-sm">
+          <Count key={label} row kicker="This scope" title={label} list={inScope.filter((p) => r.reached(p) >= i)} className="grid grid-cols-[8.5rem_minmax(0,1fr)_2.5rem] gap-2 items-center text-sm">
             <span className="text-zinc-600 dark:text-zinc-300">{label}</span>
             <span className={G.track}><span className="block h-3 rounded bg-violet-600" style={{ width: `${f[0] ? (f[i] / f[0]) * 100 : 0}%` }} /></span>
             <span className="text-end font-semibold tabular-nums">{f[i]}</span>
-          </div>
+          </Count>
         ))}
         <div className="border-t border-zinc-100 dark:border-zinc-800 pt-3 flex flex-col gap-2">
           <span className={G.title}>{term('saved', 'Saved cohorts')}</span>

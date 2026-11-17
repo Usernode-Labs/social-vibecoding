@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
+import { useLiveSkin } from '../../lib/skin';
 import { useMessages } from '../../lib/i18n/react';
 import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
 import { featuredApps, presentCategories, sortApps, type GuestApp, type GuestSort } from '../guest/guest-data';
@@ -69,6 +70,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
+  // Standard (WIP), lib/skin.ts: Featured is a row of Home's own there, so its label says of what.
+  const wip = useLiveSkin() === 'wip';
   const [kind, setKind] = useState<string | null>(null);
   const [sort, setSort] = useState<JoinSort>('trending');
   const [shown, setShown] = useState(JOIN_PAGE);
@@ -135,7 +138,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
           <h3 id={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
-            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) }) : t('home:join.featured')}
+            {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
+              : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
           </h3>
           <div
             role="list"

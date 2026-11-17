@@ -654,6 +654,17 @@ function stagingMockClosedIssues(repoUrl) {
   ];
 }
 
+// A staging mock request's summary, as services/request-summary.js would
+// return one: only #900003, the mock that has a plan up for the group. Every
+// word is made up and says so.
+function stagingMockSummary(number) {
+  if (!IS_STAGING || Number(number) !== 900003) return null;
+  return {
+    text: '[Mock] staging-tester asked for topic cards to stop overflowing on narrow phones. Homeroom bot has a plan: the Vote and Preview buttons move onto a second line on small screens, and nothing changes on wider ones. Nothing is built yet.',
+    basis: 'plan',
+  };
+}
+
 // Mock 900018's synthetic `bot` state: building for the last twenty minutes.
 // Shared by the list and the single-issue route, so its page reads the same
 // opened from the board or by its address.
@@ -3112,16 +3123,27 @@ function issueRoutes(config) {
           || null;
       }
 
+      // The summary at the top of the page, once the request has a plan the
+      // group can read or a change built for it (services/request-summary.js:
+      // written in the background when what it draws on has moved, so this
+      // read never waits on it). A staging mock has a made-up one, so the
+      // card's summary can be seen on a preview.
+      const askerName = (creatorRows[0] && creatorRows[0].username)
+        || creatorFromSourceLine(issue.body)
+        || ghLogin;
+      const summary = issue === mock
+        ? stagingMockSummary(number)
+        : await require('../services/request-summary').forRequest(pool, { appId: app.id, number, issue, asker: askerName });
+
       return res.json({
         issue: {
           state: 'open',
           closedAt: null,
           ...issueFields,
+          summary,
           bounty_count: b ? b.cnt : 0,
           my_bounty: b ? !!b.mine : false,
-          created_by_username: (creatorRows[0] && creatorRows[0].username)
-            || creatorFromSourceLine(issue.body)
-            || ghLogin,
+          created_by_username: askerName,
           in_progress: issueFields.in_progress ?? null,
           bot,
           botAwaits,

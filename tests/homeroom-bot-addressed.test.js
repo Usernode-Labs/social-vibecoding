@@ -506,7 +506,7 @@ test('#6430: a re-read after a thread go-ahead posts the one plain answer, not t
   assert.equal(acted, 'person');
   assert.equal(seen.posts.length, 1, 'one post, not a note and an answer');
   const said = seen.posts[0].homeroomText;
-  assert.match(said, /even with a go-ahead/);
+  assert.match(said, /^A go-ahead can't settle this one\. I can't build this one myself: /);
   assert.match(said, /your go-ahead/, 'the reader is spoken to, never named in the third person');
   assert.doesNotMatch(said, /evan/i);
   assert.doesNotMatch(said, /\bapprove/i, 'it never says somebody has to approve it');
