@@ -10928,6 +10928,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
 #admin-onboarding-flows {
   --bg:#f5f5f7; --surface:#ffffff; --fg:#1c1c1e; --muted:#68686c; --faint:#8e8e93; --rule:#e3e3e6; --node:#2c2c2e;
   --share:#12876B; --pub:#5B50C8; --drop:#C2410C; --ok:#2E7D32;
+  --go:#3b3f8f; --early:#c6c6cd; --on-fill:#ffffff;
   --share-fill:#E1F5EE; --pub-fill:#EEEDFE; --drop-fill:#FBEBE2;
   --sel:#1c1c1e; --thread-op:.8;
   --font-display:inherit; --font-body:inherit; --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
@@ -10937,6 +10938,7 @@ html:not(.dark) #admin-status-root .pill-creating { background: #eef2ff; color: 
 html.dark #admin-onboarding-flows {
   --bg:#0b0b0c; --surface:#1c1c1e; --fg:#f5f5f7; --muted:#a1a1a6; --faint:#68686c; --rule:#2c2c2e; --node:#e3e3e6;
   --share:#27A17E; --pub:#8A80E8; --drop:#DC6B30; --ok:#6CC070;
+  --go:#8f93e8; --early:#4a4a52; --on-fill:#0b0b0c;
   --share-fill:#0C3A2C; --pub-fill:#2A2562; --drop-fill:#43200F;
   --sel:#f5f5f7; --thread-op:.85;
 }
@@ -11041,6 +11043,23 @@ html.dark #admin-onboarding-flows {
 #admin-onboarding-flows .nodeg.card.inferred rect.nbox{fill:var(--surface);stroke-width:1.4;stroke-dasharray:5 4}
 #admin-onboarding-flows .nodeg.card.team rect.nbox{fill:var(--bg);stroke:var(--faint)}
 #admin-onboarding-flows .nodeg.card.sel rect.nbox{stroke-width:2.4;stroke-dasharray:none}
+/* Steps of the whole funnel. A folded step is one bar, a card in an open step is a slice of its bar: both are drawn
+   in the colours of what became of their people there (carries on, too early to say, stopped), with no card face. */
+#admin-onboarding-flows .nodeg .part{shape-rendering:crispEdges}
+#admin-onboarding-flows .nodeg .part.go{fill:var(--go)}
+#admin-onboarding-flows .nodeg .part.early{fill:var(--early)}
+#admin-onboarding-flows .nodeg .part.stop{fill:var(--drop)}
+#admin-onboarding-flows .nodeg.card.inbar rect.nbox,#admin-onboarding-flows .nodeg.card.fold rect.nbox{fill:none;stroke:none}
+#admin-onboarding-flows .nodeg.card.inbar.sel rect.nbox{stroke:var(--sel);stroke-width:2.4}
+#admin-onboarding-flows .nodeg.card.inbar.ghost .part{opacity:.6}
+#admin-onboarding-flows .nodeg.card.inbar .nlabel,#admin-onboarding-flows .nodeg.card.inbar .nsub,#admin-onboarding-flows .nodeg.card.fold .nsub{fill:var(--on-fill)}
+#admin-onboarding-flows .nodeg.card.inbar.earlyish .nlabel,#admin-onboarding-flows .nodeg.card.inbar.earlyish .nsub,#admin-onboarding-flows .nodeg.card.fold.earlyish .nsub{fill:var(--fg)}
+#admin-onboarding-flows .of-flow.dim .nodeg:not(.hl) .part{opacity:.3}
+#admin-onboarding-flows .stepbox{fill:color-mix(in srgb,var(--go) 7%,var(--surface));stroke:color-mix(in srgb,var(--go) 24%,var(--surface));stroke-width:1}
+#admin-onboarding-flows .stephead{font-size:13.5px;font-weight:650;fill:var(--fg);cursor:pointer;outline:none}
+#admin-onboarding-flows .stephead:hover,#admin-onboarding-flows .stephead:focus-visible{text-decoration:underline}
+#admin-onboarding-flows .stepsum{font-family:var(--font-mono);font-size:10.5px;fill:var(--muted)}
+#admin-onboarding-flows .stepsum.lost{fill:var(--drop)}
 #admin-onboarding-flows .nodeg.card .nlabel{font-size:12.5px;font-weight:600;stroke:none}
 #admin-onboarding-flows .nodeg.card.small .nlabel{font-size:12px;font-weight:500}
 #admin-onboarding-flows .nodeg.card .nsub{font-size:10.5px;stroke:none}
