@@ -397,9 +397,19 @@
       "schemaSha256": "bfefb0ba5730958609baaa51e29f0eeb2cc2bb1a13738152cbbb273cddf582f9"
     },
     {
+      "id": "request-summaries",
+      "sha256": "e5c30240f6771f3dbceae9da6540e2cefa4dab0fe961f8f84833958562759d93",
+      "schemaSha256": "6b2e5fe4998f0fdae27de7ec26bfb939a577280227a1c73197d6f2ff4f7755a3"
+    },
+    {
+      "id": "homeroom-bot-run-go-ahead-blocker",
+      "sha256": "df1654bbf2ff6ddfd3fb37fbb15eee15c95c4d64bffcf14a57596f1c9606e4e1",
+      "schemaSha256": "abb00afd2ad35eb1f854174240050bd46c011101d2de248d57d5130721853179"
+    },
+    {
       "id": "private-thread-titles",
       "sha256": "93ec3bcb9839de4fdc2a0ce7cea2eb3973224e22b51882fbb59fe1913675637e",
-      "schemaSha256": "282af9a1f4004c323065bc299bc037debabeb0f2bf084d06df9023bc04bd9ac9"
+      "schemaSha256": "7b054a8ea97e1cf59dd97945b0bbc7bfc701cdebeaad5046a0914d6c8cc56afb"
     }
   ]
 }

@@ -160,35 +160,40 @@ test('#6311: a note built from internal words comes out in plain words, first pe
 
 test('#6395, #6430: a go-ahead that cannot settle it says what can be built, and names no Go ahead', () => {
   const own = live.personHomeroomText({
-    reason: 'It moves credentials outside this app.', goAheadDecides: false,
+    reason: 'It moves credentials outside this app.', goAheadDecides: false, blocker: 'operator_work',
     firstStep: 'Remove the dead bot token line',
   });
-  assert.equal(own, 'I don\'t build changes like this myself, even with a go-ahead: '
+  assert.equal(own, 'This needs something set up outside this app, which I can\'t do from here: '
     + 'It moves credentials outside this app. A person has to build it, for example with a coding agent, '
     + 'and the group votes on it as usual. I can build this part now: Remove the dead bot token line.');
   assert.doesNotMatch(own, /Go ahead/i);
   assert.doesNotMatch(own, /@/, 'it names nobody who can say Go ahead');
   assert.doesNotMatch(own, /\bapprove/i, 'it never tells the reader that somebody has to approve');
   assert.doesNotMatch(own, /\byou(r)?\b/i, 'the note everyone reads does not address only the reader');
-  assert.match(own, /even with a go-ahead/);
+  // 17 Nov 2026: it says what stands in the way, not one sentence for all.
+  assert.doesNotMatch(own, /even with a go-ahead/);
+  assert.equal(live.personHomeroomText({ reason: 'It drops a column.', goAheadDecides: false, blocker: 'destructive_db' }),
+    'This changes or removes data that is already saved, which I leave to a person: It drops a column. '
+    + 'A person has to build it, for example with a coding agent, and the group votes on it as usual. '
+    + 'Reply here if a smaller part would help.');
+  assert.equal(live.cannotLead('something else'), 'I can\'t build this one myself', 'a run stored before the blocker was named');
   assert.match(own, /A person has to build it, for example with a coding agent/);
 
-  const cannot = live.goAheadCannotText({ reason: 'It moves credentials outside this app.', firstStep: 'Remove the dead line' });
-  assert.equal(cannot, 'I don\'t build changes like this myself, even with a go-ahead: '
+  const cannot = live.goAheadCannotText({ reason: 'It moves credentials outside this app.', firstStep: 'Remove the dead line', blocker: 'operator_work' });
+  assert.equal(cannot, 'A go-ahead can\'t settle this one. This needs something set up outside this app, which I can\'t do from here: '
     + 'It moves credentials outside this app. A person has to build it, for example you with a coding agent, '
     + 'and the group votes on it as usual. I can build this part now: Remove the dead line.');
-  assert.match(cannot, /even with a go-ahead/);
   assert.match(cannot, /A person has to build it, for example you with a coding agent/);
   assert.doesNotMatch(cannot, /\bapprove/i);
   assert.equal(live.goAheadCannotText({ reason: 'The whole thing is too big for one build.' }),
-    'I don\'t build changes like this myself, even with a go-ahead: The whole thing is too big for one build. '
+    'A go-ahead can\'t settle this one. I can\'t build this one myself: The whole thing is too big for one build. '
     + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
     + 'Reply here if a smaller part would help.');
   assert.doesNotMatch(live.goAheadCannotText({ reason: 'x', firstStep: 'Do the small part' }), /—/);
   // #6430: the reply to the person who said go ahead talks to them, never
   // about them in the third person.
   assert.equal(live.goAheadCannotText({ reason: 'It was evan\'s go-ahead, and Evan said so.', reader: 'evan' }),
-    'I don\'t build changes like this myself, even with a go-ahead: '
+    'A go-ahead can\'t settle this one. I can\'t build this one myself: '
     + 'It was your go-ahead, and you said so. A person has to build it, for example you with a coding agent, '
     + 'and the group votes on it as usual. Reply here if a smaller part would help.');
   assert.equal(live.canBuildPart('Remove the dead line'), 'I can build this part now: Remove the dead line.');
