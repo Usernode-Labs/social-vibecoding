@@ -6531,9 +6531,9 @@ async function seedStagingNewProjectOfferThread(pool) {
     await pool.query(
       `INSERT INTO conversation_messages
          (conversation_id, sender_id, content, thread_root_id, metadata, idempotency_key, created_at)
-       SELECT $1, $2, '**Street Garden** · a new project', $3, $4::jsonb, $5, NOW() - INTERVAL '1 minute'
+       SELECT $1, $2, '**Street Garden** · a new project', $3, $4::jsonb, $5::text, NOW() - INTERVAL '1 minute'
         WHERE NOT EXISTS (
-          SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND idempotency_key = $5
+          SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND idempotency_key = $5::text
         )`,
       [
         conversationId, bot.id, rootId,
