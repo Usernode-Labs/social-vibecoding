@@ -1117,9 +1117,60 @@ function refuseChat(client, msg, code, message = null) {
   if (!msg || msg.type !== 'chat') return;
   try {
     if (client.ws && client.ws.readyState === 1) {
-      client.ws.send(JSON.stringify({ type: 'error', code, ...(message ? { message } : {}) }));
+      // #6730: name the comment's client key when it had one, so the
+      // composer can stop expecting an echo for it.
+      const key = typeof msg.clientKey === 'string' && msg.clientKey ? { clientKey: msg.clientKey } : {};
+      client.ws.send(JSON.stringify({ type: 'error', code, ...(message ? { message } : {}), ...key }));
     }
   } catch { /* a closed socket has nobody to tell */ }
+}
+
+// #6730: the comment a client key already stored, if the sender's first
+// press reached us after all. Scoped to the app and the user, exactly as
+// the partial unique index is, so a key replayed elsewhere never matches.
+async function findClientKeyMessage(pool, client, clientKey) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, content, msg_type, metadata, thread_type, thread_ref,
+            posted_via, created_at
+       FROM chat_messages
+      WHERE app_id = $1 AND user_id = $2 AND client_key = $3
+      LIMIT 1`,
+    [client.appId, client.user.id, clientKey]
+  );
+  return rows[0] || null;
+}
+
+// The same frame shape the first press's insert broadcasts, rebuilt from the
+// stored row, so the send that was retried looks delivered to its sender.
+function duplicateChatOutMsg(row, client, clientKey) {
+  const thread = row.thread_type && row.thread_ref != null
+    ? { type: row.thread_type, ref: Number(row.thread_ref) }
+    : null;
+  const metadata = row.metadata && typeof row.metadata === 'object'
+    && Object.keys(row.metadata).length ? row.metadata : null;
+  return {
+    type: 'chat',
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    username: client.user.username,
+    content: row.content,
+    msgType: row.msg_type || 'message',
+    ...(metadata ? { metadata } : {}),
+    ...(thread ? { thread } : {}),
+    createdAt: row.created_at,
+    postedVia: row.posted_via || null,
+    ...(clientKey ? { clientKey } : {}),
+  };
+}
+
+function answerDuplicateChat(client, row, clientKey) {
+  const message = duplicateChatOutMsg(row, client, clientKey);
+  try {
+    if (client.ws && client.ws.readyState === 1) {
+      client.ws.send(JSON.stringify({ type: 'chat_ack', clientKey, id: message.id }));
+    }
+  } catch { /* a closed socket has nobody to tell */ }
+  return { ok: true, duplicate: true, message };
 }
 
 async function canWriteChat(pool, client) {
@@ -1254,6 +1305,19 @@ async function handleMessage(pool, client, msg) {
             }
           } catch { /* a closed socket has nobody to tell */ }
           return { ok: false, code: 'topic_closed' };
+        }
+      }
+
+      // #6730: a key made when Send was first pressed. A malformed one is
+      // treated as absent: the comment is still stored, never refused. A
+      // match means the first press DID reach us (its answer was lost), so
+      // this one answers with the row already stored and writes nothing.
+      const clientKey = require('./conversations').normalizeIdempotencyKey(msg.clientKey);
+      if (clientKey) {
+        const existing = await findClientKeyMessage(pool, client, clientKey);
+        if (existing) {
+          storedChats.add(msg);
+          return answerDuplicateChat(client, existing, clientKey);
         }
       }
 
@@ -1421,12 +1485,12 @@ async function handleMessage(pool, client, msg) {
         }
       }
 
-      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via)
-         VALUES ($1, $2, $3, 'message', $4, $5, $6, $7)
+      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via, client_key)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6, $7, $8)
          RETURNING id, created_at`;
       // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
-        thread ? thread.type : null, thread ? thread.ref : null, postedVia];
+        thread ? thread.type : null, thread ? thread.ref : null, postedVia, clientKey];
       // 17 Oct 2026: a person's message in any place but a governance vote's
       // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
       // in the statement that inserts it: an answer it owes is never only in
@@ -1440,26 +1504,41 @@ async function handleMessage(pool, client, msg) {
         ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
         : db.query(insertSql, insertParams).then((r) => r.rows));
       let rows;
-      if (attRows.length) {
-        // Insert + link atomically — a half-linked send would render
-        // chips that 404 while the orphan sweeper still owns the rows.
-        const cx = await pool.connect();
-        try {
-          await cx.query('BEGIN');
-          rows = await insert(cx);
-          await cx.query(
-            `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
-            [rows[0].id, attIds]
-          );
-          await cx.query('COMMIT');
-        } catch (err) {
-          try { await cx.query('ROLLBACK'); } catch { /* connection gone */ }
-          throw err;
-        } finally {
-          cx.release();
+      try {
+        if (attRows.length) {
+          // Insert + link atomically — a half-linked send would render
+          // chips that 404 while the orphan sweeper still owns the rows.
+          const cx = await pool.connect();
+          try {
+            await cx.query('BEGIN');
+            rows = await insert(cx);
+            await cx.query(
+              `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
+              [rows[0].id, attIds]
+            );
+            await cx.query('COMMIT');
+          } catch (err) {
+            try { await cx.query('ROLLBACK'); } catch { /* connection gone */ }
+            throw err;
+          } finally {
+            cx.release();
+          }
+        } else {
+          rows = await insert(pool);
         }
-      } else {
-        rows = await insert(pool);
+      } catch (err) {
+        // #6730: two frames carrying one key raced past the lookup above.
+        // The index refused the second; the first is the comment, so answer
+        // with it rather than failing a send that was actually stored.
+        if (clientKey && err && err.code === '23505'
+            && String(err.constraint || '').includes('idx_chat_messages_client_key')) {
+          const existing = await findClientKeyMessage(pool, client, clientKey);
+          if (existing) {
+            storedChats.add(msg);
+            return answerDuplicateChat(client, existing, clientKey);
+          }
+        }
+        throw err;
       }
       storedChats.add(msg);
 
@@ -1494,6 +1573,10 @@ async function handleMessage(pool, client, msg) {
         // Always present on a human row, so a live row and a loaded one
         // carry the same fact (`posted_via` on the REST payload).
         postedVia,
+        // #6730: the sender's own per-press key, so its composer knows this
+        // echo is the comment it was waiting for. Meaningless to everyone
+        // else (a random value).
+        ...(clientKey ? { clientKey } : {}),
       };
 
       await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
