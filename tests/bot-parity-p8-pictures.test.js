@@ -53,32 +53,44 @@ const ID = (n) => String(n).repeat(32).slice(0, 32);
 test('the content rules refuse the obvious before anything is called, and let ordinary pictures through', () => {
   for (const [prompt, rule] of [
     ['a naked woman on a beach', 'sexual'], ['something sexy for the banner', 'sexual'],
-    ['a knight holding a sword', 'violence'], ['a gun on a table', 'violence'], ['a bloody battle', 'violence'],
-    ['a casino night poster', 'gambling'], ['poker chips', 'gambling'],
-    ['a cartoon for kids', 'children'], ['a children\'s game mascot', 'children'],
+    ['a gory battle', 'gore'], ['a corpse on a throne', 'gore'], ['a torture scene', 'gore'],
+    ['bet real money on roulette', 'gambling'], ['a sportsbook ad', 'gambling'], ['a lottery ticket design', 'gambling'],
     ['a photo of my wife', 'real_people'], ['a celebrity smiling', 'real_people'],
     ['the Nike logo on a shoe', 'brands'], ['Mickey Mouse waving', 'brands'], ['in the Pixar style', 'brands'],
   ]) {
     assert.equal(pictures.guard(prompt)?.rule, rule, prompt);
   }
+  // #6675 / #6767: what the content rules allow is never refused on a word.
+  for (const prompt of [
+    'A knife and fork icon for a recipe app', 'A knight with a sword for an RPG', 'Poker chips for a poker night',
+    'A kids\' party with balloons', 'Party games for kids', 'A casino night for points', 'A gun on a table in a game',
+    'A detective at a murder mystery dinner', 'A killer feature banner with a rocket',
+  ]) {
+    assert.equal(pictures.guard(prompt), null, prompt);
+  }
   for (const prompt of [
     'A watercolour pear on a wooden table', 'A hero image of mountains at dawn, soft blues',
-    'An empty state: a sleepy cat on a laptop', 'A killer feature banner with a rocket', 'A blood orange, cut in half',
+    'An empty state: a sleepy cat on a laptop', 'A blood orange, cut in half',
     'Seed packets on a garden bench', 'A friendly robot waving',
   ]) {
     assert.equal(pictures.guard(prompt), null, prompt);
   }
-  const words = pictures.refusalText(pictures.guard('a casino'));
-  assert.match(words, /^I can't make that picture: the platform's content rules say no gambling\. Nothing was made and nothing was charged\.$/);
+  assert.equal(pictures.refusalText(pictures.guard('a gory battle')),
+    "I can't make that picture: the platform's content rules say no gore or graphic violence. Nothing was made and nothing was charged.");
+  assert.equal(pictures.refusalText(pictures.guard('bet real money on poker')),
+    "I can't make that picture: the platform's content rules say no real-money gambling. Nothing was made and nothing was charged.");
 });
 
 test('every prompt the model gets starts with the content rules, then their words, marked as theirs', () => {
   const said = pictures.promptFor({ prompt: 'A pear', aspect: 'wide', variant: 'light', letter: 'B', count: 3, purpose: 'featured' });
   assert.ok(said.startsWith(pictures.CONTENT_RULES), 'the rules come first');
-  for (const rule of [/No sexual or suggestive content, and no nudity\./, /No violence, blood, weapons/, /No gambling\./,
-    /Nothing aimed at children under 13\./, /No real person's likeness/, /No brand names, logos or trademarks unless they are given to you here\./]) {
-    assert.match(pictures.CONTENT_RULES, rule);
-  }
+  // #6767: the conventions' own lists, not a copy that can drift from them.
+  const contentRules = require('../src/services/content-rules-prompt');
+  for (const rule of contentRules.forbidden()) assert.ok(pictures.CONTENT_RULES.includes(rule), rule);
+  for (const rule of contentRules.allowed()) assert.ok(pictures.CONTENT_RULES.includes(rule), rule);
+  assert.match(pictures.CONTENT_RULES, /No real person's likeness/);
+  assert.match(pictures.CONTENT_RULES, /No brand names, logos or trademarks unless they are given to you here\./);
+  assert.doesNotMatch(pictures.CONTENT_RULES, /Nothing aimed at children|No gambling\.|No violence, blood, weapons/);
   assert.match(said, /card picture in Discover/);
   assert.match(said, /Shape: wide \(16:9\)\./);
   assert.match(said, /Give it a light background/);
@@ -227,7 +239,10 @@ test('make_pictures: offered to a person while the bot is on, its words in the p
   assert.deepEqual(params.properties.for.enum, ['featured', 'app', 'design', 'other']);
   const lines = tool.promptLines(on).join('\n');
   assert.match(lines, /make_pictures/);
-  assert.match(lines, /nothing sexual or suggestive, no violence or weapons, no gambling, nothing aimed at children under 13/);
+  // #6767: the content rules' own lists, and the allowed list is never declined.
+  assert.match(lines, /Content rules: never Sexual content or nudity, Realistic or graphic violence/);
+  assert.match(lines, /Allowed, never a reason to refuse: Cartoon and fantasy violence in games, Pretend-currency games/);
+  assert.doesNotMatch(lines, /no violence or weapons|nothing aimed at children/);
   assert.match(lines, /their own week of building time/);
   for (const text of [lines, tool.TOOL.function.description, ...Object.values(params.properties).map((p) => p.description || '')]) {
     assert.doesNotMatch(text, /—/);
@@ -237,8 +252,8 @@ test('make_pictures: offered to a person while the bot is on, its words in the p
   // A refusal on the rules is said before anything is asked.
   let asked = 0;
   const botPictures = { ...pictures, generate: async () => { asked += 1; return { ok: false, error: 'x' }; } };
-  const refused = await tool.run(null, { ...on, deps: { pictures: { botPictures } } }, 'make_pictures', { prompt: 'a gun' });
-  assert.match(refused.error, /content rules say no violence or weapons/);
+  const refused = await tool.run(null, { ...on, deps: { pictures: { botPictures } } }, 'make_pictures', { prompt: 'a gory battle' });
+  assert.match(refused.error, /content rules say no gore or graphic violence/);
   assert.equal(asked, 0);
   // A card picture needs its project.
   const noProject = await tool.run(null, { ...on, deps: { pictures: { botPictures } } }, 'make_pictures', { prompt: 'A pear', for: 'featured' });

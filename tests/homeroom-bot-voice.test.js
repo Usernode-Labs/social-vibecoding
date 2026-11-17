@@ -562,6 +562,10 @@ test('the prompt says where it is, lists only what it can do, and holds it to wh
   assert.match(prompt, /the limit is\s+yours/);
   assert.match(prompt, /Read one message of this thread in full \(read_message\)\./);
   assert.match(prompt, /Today is 2026-10-10/);
+  // #6767: the content rules' own lists, and the allowed list is never declined.
+  assert.match(prompt, /Decline, in one friendly sentence, what Homeroom's content rules forbid \(Sexual content or nudity, Realistic or graphic violence, Real tragedy, self-harm or drug use as entertainment, Real-money gambling\)/);
+  assert.match(prompt, /These are allowed, never a reason to decline: Cartoon and fantasy violence in games, Pretend-currency games, Mysteries and crime stories, Meeting and matching people\./);
+  assert.doesNotMatch(prompt, /anything sexual, violent, about gambling/);
   // #6670: a reworked draft is the whole request, never a note against an earlier one.
   assert.match(prompt, /Write it as a request in its own right/);
   const offer = tools.find((t) => t.function.name === 'offer_request').function;
