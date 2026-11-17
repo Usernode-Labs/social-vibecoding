@@ -129,6 +129,28 @@ test('the triage keeps a person verdict\'s first step, and only that verdict\'s'
   assert.equal(blank.firstStep, null);
 });
 
+// 17 Nov 2026 (#6770): a request that only asks why something happens is
+// answered from the code in its note, with no Go ahead and the close vote.
+test('#6770: an explanation the code answers is a person verdict with no go-ahead', () => {
+  const parsed = bot.parseVerdict('{"verdict":"person","reason":"The board loads its list again each time its tab is shown, so it flashes and starts at the top.","go_ahead":false,"cannot_because":"explanation"}');
+  assert.equal(parsed.verdict, 'person');
+  assert.equal(parsed.goAheadDecides, false);
+  assert.equal(parsed.blocker, 'explanation');
+  assert.equal(parsed.reason, 'The board loads its list again each time its tab is shown, so it flashes and starts at the top.');
+  assert.deepEqual(live.personSuggestions({ goAheadDecides: false, blocker: 'explanation' }), []);
+  assert.equal(live.cannotStands({ mode: 'live', verdict: 'person', go_ahead_decides: false, go_ahead_blocker: 'explanation' }), true);
+  assert.match(live.goAheadCannotText({ reason: parsed.reason, blocker: 'explanation' }),
+    /^A go-ahead can't change anything here\. This asks for an explanation, not a change, so here is what the code says: .* Turn this into a fix/);
+});
+
+test('#6770: an investigation the code cannot answer says what a person must look at', () => {
+  const parsed = bot.parseVerdict('{"verdict":"person","reason":"This needs the production error rate and logs, which the code cannot show: a person would need to look at last week\'s errors.","go_ahead":false,"cannot_because":"explanation"}');
+  assert.equal(parsed.verdict, 'person');
+  assert.equal(parsed.goAheadDecides, false);
+  assert.equal(parsed.blocker, 'explanation');
+  assert.match(parsed.reason, /production error rate and logs.*a person would need to look at/);
+});
+
 // ── The note's branch stores them for the people it names ────────────────
 
 test('the person branch stores the note\'s suggestions for the deciders it names', async () => {
@@ -329,4 +351,48 @@ test('a go-ahead that meets a read saying it cannot settle it posts one plain re
   assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
   assert.deepEqual(says[0].metadata.homeroomBot.actions.map((a) => a.label),
     ['Remove the dead bot token line', 'Not now']);
+});
+
+// #6770: the note is the answer, with a close card under it and no buttons
+// of its own, because there is nothing to build and no go-ahead to give.
+test('#6770: the person branch posts an answered explanation with the close card', async () => {
+  const says = [];
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realTargets = live.mentionTargets;
+  live.post = async (args) => { says.push(args); return {}; };
+  live.advanceSeen = async () => ({});
+  live.mentionTargets = async () => [];
+  try {
+    await bot.actOnVerdict({
+      pool: {
+        async query(sql) {
+          if (/FROM homeroom_bot_requesters/.test(sql)) {
+            return { rows: [{ user_id: 9, username: 'maya', first_version: false, has_platform_access: true }] };
+          }
+          return { rows: [] };
+        },
+      },
+      config: {}, bot: { id: 2 }, app: { id: 1, slug: 'x', name: 'X' },
+      repo: { owner: 'o', repo: 'r' }, issueNumber: 88, issue: {},
+      parsed: {
+        verdict: 'person', reason: 'The board loads its list again each time its tab is shown, and draws it from the top while it loads.',
+        platform: false, done: false, goAheadDecides: false, blocker: 'explanation', firstStep: null,
+      },
+      decider: { requesterDecides: true },
+      capSuppressed: null, runId: 3, seed: '', seedReadAt: 'now', postedAt: [], turnBudgetMs: 1000, model: 'm',
+      deps: { github: {}, ws: {} },
+    });
+  } finally {
+    live.post = realPost;
+    live.advanceSeen = realSeen;
+    live.mentionTargets = realTargets;
+  }
+  assert.equal(says.length, 1);
+  assert.match(says[0].homeroomText,
+    /^This asks for an explanation, not a change, so here is what the code says: The board loads its list again each time its tab is shown, and draws it from the top while it loads\. Anyone in the project can tap Propose to close below once this answers it\. If it shows something broken, reply Turn this into a fix and I'll plan the fix\.$/);
+  assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
+  assert.equal(says[0].card.kind, 'close_request');
+  assert.equal(says[0].metadata, undefined, 'no Go ahead or smaller-step buttons');
+  assert.equal(says[0].dm.explanation, true);
 });

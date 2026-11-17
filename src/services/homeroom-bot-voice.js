@@ -966,7 +966,9 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
     text: live.goAheadCannotText({
       reason: lastLook.reason, firstStep: lastLook.first_step, reader: speaker.username, blocker: lastLook.go_ahead_blocker,
     }),
-    labels: live.personSuggestions({ firstStep: lastLook.first_step, goAheadDecides: false }),
+    labels: live.personSuggestions({
+      firstStep: lastLook.first_step, goAheadDecides: false, blocker: lastLook.go_ahead_blocker,
+    }),
   };
 }
 
@@ -1402,7 +1404,7 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     has('start_request') ? '- Start this request now, or read it again, when somebody asks you to build it (start_request). The result says what happens; say exactly that. When it gives a link or changeLink, include them as written. When its result has `said`, reply with that and nothing else.' : null,
     has('change_plan') ? '- Your plan for this request waits for its requester to say Build it. Them saying to build it or go ahead is start_request, which builds the plan as they saw it. Somebody asking for something in the plan to change is change_plan, which plans it again with their words. A question about the plan or where it stands is answered from the facts, and changes nothing.' : null,
     // Step 5 (11 Nov 2026): only what changes the ask reads it again.
-    has('ask_changed') ? '- When somebody changes what this request asks for (something added, dropped or done differently), call ask_changed with what changed in one line: you read the request again soon, with their words. Say so, and never what that read will decide. A question, a status check or thanks gets a reply only: never ask_changed for those. Asking you to build it or start now is start_request.' : null,
+    has('ask_changed') ? '- When somebody changes what this request asks for (something added, dropped or done differently), call ask_changed with what changed in one line: you read the request again soon, with their words. Say so, and never what that read will decide. A question, a status check or thanks gets a reply only: never ask_changed for those. Asking you to build it or start now is start_request. When somebody says Turn this into a fix about an explanation you answered, that changes what the request asks for: ask_changed.' : null,
     // #6684: the person who asked for this request (or its project's owner)
     // comments while you build it: their words reach the build.
     has('add_to_build') ? '- This request is being built right now, and the person writing asked for it or owns the project. A correction or a small addition to what it asks for goes to add_to_build with their words: a card under your reply says when the build has it, and never say it has until the card says so. A comment that says the build is going the wrong way goes to stop_and_redo: it puts Stop and redo and Keep going under your reply, and nothing stops until they tap. Never say it was stopped. A separate piece of work goes to offer_follow_up_request with a title and details: File it and Not now are under your reply, and nothing is filed until they tap. Use one of these three in a turn. A question, a status check or thanks gets a reply only.' : null,
