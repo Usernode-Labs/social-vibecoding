@@ -402,8 +402,12 @@ test('Vote is the Votes card’s button and Preview the Testing card’s; everyt
   const { v, page } = render(av, PR);
   const votes = page.slice(page.indexOf('data-change-gate="votes"'), page.indexOf('data-change-gate="testing"'));
   const testing = page.slice(page.indexOf('data-change-gate="testing"'));
-  assert.match(votes, /<div class="dev-change-gate-act"><button type="button" class="dev-vote-btn"/);
-  assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview" aria-label="Open preview"/);
+  // Under the card look (thread-card.tsx) the two cards are put away in the
+  // layer their steps open, and the card's foot holds their buttons, once
+  // each: Preview, then Vote.
+  assert.doesNotMatch(votes, /dev-vote-btn|dev-change-gate-act/, 'put away, the Votes card carries no button');
+  assert.match(testing, /<div class="dev-thread-foot-acts">(?:(?!<\/div>)[\s\S])*<button type="button" class="gc-vote-btn gc-vote-btn-preview" aria-label="Open preview"(?:(?!<\/div>)[\s\S])*<button type="button" class="dev-vote-btn"/);
+  assert.equal((page.match(/class="dev-vote-btn"/g) || []).length, 1, 'one Vote on the page');
   assert.doesNotMatch(page, /gc-explore-chat-btn|>Share<|gc-card-actions/, 'no action band');
   const menu = av._cardMenuItems(v.card.rail.menuKey).map((a) => a.label);
   for (const row of ['Details', 'Explore in a coding agent', 'Share to…', 'View PR on GitHub']) {
@@ -561,10 +565,13 @@ test('a failed run says what went wrong in plain words, and offers its author Fi
   const { page, details } = render(own, FAILED);
   const testing = unescape(page.slice(page.indexOf('data-change-gate="testing"')));
   // Preview stays in the corner; the re-run moves beside Fix it, under the sentence.
-  assert.match(testing, /<div class="dev-change-gate-act"><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
+  // Under the card look the Testing card is put away in the layer its step
+  // opens; the card's foot offers Fix it, the quieter re-run beside it, then
+  // Preview.
+  assert.match(testing, /<div class="dev-thread-foot-acts">(?:<button[^>]*data-thread-foot-see="checks"[^>]*>See what failed<\/button>)?<button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><button type="button" class="gc-vote-btn gc-vote-btn-preview"/);
   assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-change-gate-why')), /castRecheck/);
   assert.match(testing, /<p class="dev-change-gate-why" data-change-gate-why="own-words">One of this change’s tests failed\. The test “every message the server can send has a Spanish wording” failed with: Spanish for: Pick a date, or choose I don't remember\.<\/p>/);
-  assert.match(testing, /<div class="dev-change-gate-fix"><button type="button" class="gc-vote-btn gc-vote-btn-accent" data-change-fix-checks="4090">Fix it<\/button><button class="gc-vote-btn" title="[^"]*" data-act="castRecheck">Re-run checks<\/button><\/div>/);
+  assert.doesNotMatch(testing.slice(0, testing.indexOf('dev-thread-foot')), /dev-change-gate-fix/, 'the card offers them itself only once its layer is open');
   assert.match(testing, /<p class="dev-change-gate-note">Fix it opens your chat with Homeroom bot about this change, where you can ask it to fix what failed\. <button type="button" class="dev-change-gate-link">See what failed<\/button><\/p>/);
 
   // Details › Checks: the app's own tests by what they are, the test that

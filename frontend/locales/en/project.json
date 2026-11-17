@@ -6666,5 +6666,121 @@
   "topic.rail.showLess": {
     "text": "Show less",
     "description": "Link beside the heading in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen, once the earlier steps are open: folds them back into the pile."
+  },
+  "topic.rail.seeChecks": {
+    "text": "See checks",
+    "description": "Link on the Tested step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the change's votes and tests over the card."
+  },
+  "topic.rail.note.reading": {
+    "text": "Homeroom bot is reading the request and the project. It comes back with a plan or a question.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while Homeroom bot is reading a request that was just filed."
+  },
+  "topic.rail.note.planning": {
+    "text": "Homeroom bot is writing a plan for it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while Homeroom bot writes its plan for the request."
+  },
+  "topic.rail.note.question": {
+    "text": "Homeroom bot asked a question in the replies. Anyone can answer it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when Homeroom bot is waiting for an answer to a question it asked before planning."
+  },
+  "topic.rail.note.plan": {
+    "text": "The plan is ready. It is built once a member presses Build it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when a plan is posted and nobody has started the build. \"Build it\" is the button's label."
+  },
+  "topic.rail.note.waiting": {
+    "text": "It is waiting for an answer in the replies.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when the request is waiting for a person and no more specific reason is known."
+  },
+  "topic.rail.note.building": {
+    "text": "It is being built. Then it is tested and goes up for a vote.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while a change is being built for the request."
+  },
+  "topic.rail.note.checking": {
+    "text": "Its tests are running. Then the before and after screenshots are taken, and it goes up for a vote.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while the change's automated tests run."
+  },
+  "topic.rail.note.shots": {
+    "text": "Its tests passed. Only the before and after screenshots are left, then it goes up for a vote.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while the before and after screenshots are being taken, after the tests passed."
+  },
+  "topic.rail.note.vote": {
+    "text": "Members are voting on it.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, while the change is up for the group's vote and no tally line is known."
+  },
+  "topic.rail.note.goingLive": {
+    "text": "It has the yes it needs and is on its way to everyone.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, after the vote passed, while the change is being merged and released."
+  },
+  "topic.rail.note.live": {
+    "text": "Everyone has it now.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, once the change is live."
+  },
+  "topic.rail.note.stopped": {
+    "text": "It stopped before it was finished.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, when the work stopped (a build that did not finish, or tests that still fail) and no more specific reason is known."
+  },
+  "topic.rail.note.closed": {
+    "text": "Nothing more happens here unless it is reopened.",
+    "description": "Sentence under the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), and under the status at the foot of the card, once the request or the change is closed."
+  },
+  "topic.card.ownWords": {
+    "text": "{{name}}’s own words.",
+    "description": "Small line under the request's text on a request's page: the text above is exactly what the person who asked wrote, not a summary. {{name}} is their username."
+  },
+  "topic.card.summaryBy": {
+    "text": "Summary by {{name}}.",
+    "description": "Small line under the summary on a change's page: who wrote the summary above. {{name}} is a username or Homeroom bot."
+  },
+  "topic.card.summaryByBot": {
+    "text": "Summary by Homeroom bot.",
+    "description": "Small line under the summary on a change's page when Homeroom bot wrote the summary above from the change itself."
+  },
+  "topic.card.foot.alsoTests": {
+    "text": "Its tests: {{what}}",
+    "description": "Second row at the foot of a change's card, under the vote's status, when the change is up for a vote while its tests have failed or are still running. {{what}} is the tests' own status sentence, for example \"The preview didn’t start. Could not parse repo URL.\""
+  },
+  "topic.card.layer.close": {
+    "text": "Close",
+    "description": "Accessible name of the × button, and of the dimmed area behind, on the panel that opens over a thread's card when a step of the \"How it got here\" timeline is pressed: closes the panel."
+  },
+  "topic.card.layer.gatesSub": {
+    "text": "Its votes and its tests",
+    "description": "Second line in the header of the panel that opens over a change's card when its Tested, tests-failed or up-for-a-vote step is pressed in the \"How it got here\" timeline: the panel holds the change's Votes and Testing cards."
+  },
+  "topic.card.layer.planBy": {
+    "text": "The plan, by {{name}}",
+    "description": "Second line in the header of the panel that opens over a thread's card when the Planned step is pressed in the \"How it got here\" timeline. {{name}} is who posted the plan: a username or Homeroom bot."
+  },
+  "topic.card.layer.planLoading": {
+    "text": "Loading the plan…",
+    "description": "Shown in the panel that opens over a thread's card while the plan's text is being fetched."
+  },
+  "topic.card.layer.planFailed": {
+    "text": "The plan could not be loaded. Close this and try again.",
+    "description": "Shown in the panel that opens over a thread's card when the plan's text could not be fetched."
+  },
+  "topic.card.layer.requestSub": {
+    "text": "The request, as {{name}} wrote it",
+    "description": "Second line in the header of the panel that opens over a request's card when the Asked step is pressed in the \"How it got here\" timeline: the panel shows the request's own text. {{name}} is the username of who asked."
+  },
+  "topic.card.layer.trackSub": {
+    "text": "Homeroom bot’s progress on it",
+    "description": "Second line in the header of the panel that opens over a request's card when its current step is pressed in the \"How it got here\" timeline while Homeroom bot is working on it: the panel shows the bot's progress card."
+  },
+  "topic.card.foot.seeProgress": {
+    "text": "See progress",
+    "description": "Button at the foot of a change's card while its tests are running: opens the change's Testing card over the card."
+  },
+  "topic.card.foot.readPlan": {
+    "text": "Read plan",
+    "description": "Button at the foot of a request's card when it has a plan: opens the plan over the card."
+  },
+  "topic.card.shots.noneTitle": {
+    "text": "Nothing you can see changes",
+    "description": "Heading in the box where a change's before and after screenshots would be, on a change that alters nothing visible."
+  },
+  "topic.card.shots.noneText": {
+    "text": "This change is to how it works underneath, so there are no before and after screenshots. The summary above says what it does.",
+    "description": "Sentence under \"Nothing you can see changes\" in the box where a change's before and after screenshots would be."
   }
 }

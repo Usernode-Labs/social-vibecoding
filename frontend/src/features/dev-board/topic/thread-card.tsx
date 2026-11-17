@@ -1,0 +1,278 @@
+/**
+ * The pieces a thread's card is drawn from on a request's and a change's
+ * page, under the standard look and the brand look (the frame's looks keep
+ * their own page, ./frame/topic-frame.tsx):
+ *
+ *   - `ThreadKicker`: the project's icon and name, then "Request #N" or
+ *     "Change #N", over the title. It replaces the author row and the number
+ *     in the sheet's header, which app.css puts away on these pages.
+ *   - `WordsBy`: the line under the card's words that says whose they are.
+ *   - `ThreadFoot`: where the thread stands, in one headline and one line
+ *     under it, with the action beside them (./card-model.ts).
+ *   - `StepLayer`: a step of "How it got here" (./thread-rail.tsx), opened
+ *     over the card. It lies over the card's content and never changes the
+ *     card's height; × on its right, Escape, or a press on the dimmed card
+ *     closes it (./step-store.ts).
+ *   - `PlanWords` and `ShotsWait`: a plan's text for the layer, and the well
+ *     that holds the picture's place before there is one.
+ */
+
+import { createContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+
+import { XIcon } from '@/components/ui/icons';
+
+import { useInnerHtml } from '../../../lib/html';
+import { useMessages } from '../../../lib/i18n/react';
+import { AppIconContent, appIconKind } from '../../apps/app-card-view';
+import type { FootTone } from './card-model';
+import { dotLine } from './frame/topic-page';
+import type { RequestSpecCard } from './request-model';
+
+/**
+ * Whether the page draws the card (the standard look and the brand look), and
+ * which page's layer a step opens (./step-store.ts). A request's page gives
+ * it to the change sections under it (./thread-changes.tsx).
+ */
+export const ThreadCardContext = createContext<{ card: boolean; page: string }>({ card: false, page: '' });
+
+function appData(): { slug: string; name: string; icon_emoji: string | null; icon_url: string | null } | null {
+  const data = typeof window === 'undefined' ? null : (window as any).AppView?.appData;
+  if (!data || typeof data.slug !== 'string') return null;
+  return {
+    slug: data.slug,
+    name: (typeof data.name === 'string' && data.name) || data.slug,
+    icon_emoji: data.icon_emoji || null,
+    icon_url: data.icon_url || null,
+  };
+}
+
+export function ThreadKicker({ kind, number }: { kind: 'request' | 'change'; number: number | null }): ReactNode {
+  const t = useMessages('project');
+  const app = appData();
+  const what = kind === 'request'
+    ? t('project:topic.request.bar.title', { number: number ?? '' })
+    : number ? t('project:topic.change.bar.titleNumbered', { number }) : t('project:topic.change.bar.title');
+  return (
+    <p className="dev-thread-kicker" data-thread-kicker={kind}>
+      {app ? (
+        <span className="app-icon-tile dev-thread-kicker-tile" data-icon={appIconKind(app as any)} aria-hidden="true">
+          <AppIconContent app={app as any} />
+        </span>
+      ) : null}
+      <span className="min-w-0">
+        {app ? dotLine([app.name, what]) : what}
+      </span>
+    </p>
+  );
+}
+
+/** Whose words the card's summary is: the asker's own, its author's, or Homeroom bot's. */
+export function WordsBy({ who, name = null }: { who: 'asker' | 'author' | 'bot'; name?: string | null }): ReactNode {
+  const t = useMessages('project');
+  if (who !== 'bot' && !name) return null;
+  return (
+    <p className="dev-thread-by" data-thread-by={who}>
+      {who === 'bot' ? t('project:topic.card.summaryByBot')
+        : who === 'asker' ? t('project:topic.card.ownWords', { name }) : t('project:topic.card.summaryBy', { name })}
+    </p>
+  );
+}
+
+export function ThreadFoot({ what, headline, sub, tone = null, progress = null, busy = false, children = null, extra = null }: {
+  /** For `data-thread-foot`: what the foot is saying. */
+  what: string;
+  headline: string;
+  sub?: string | null;
+  tone?: FootTone;
+  /** 0 to 1 while something is running. */
+  progress?: number | null;
+  busy?: boolean;
+  /** The actions, at the foot's end. */
+  children?: ReactNode;
+  /** A full-width row under the status and its actions. */
+  extra?: ReactNode;
+}): ReactNode {
+  const pct = progress == null ? null : Math.round(Math.max(0, Math.min(1, progress)) * 100);
+  return (
+    <div className="dev-thread-foot" data-thread-foot={what} data-thread-foot-tone={tone || undefined} role="group">
+      <div className="dev-thread-foot-st" role="status">
+        <b className="dev-thread-foot-head">{headline}</b>
+        {sub ? <span className="dev-thread-foot-sub">{sub}</span> : null}
+        {pct != null ? (
+          <span className="dev-thread-foot-bar" data-busy={busy ? '' : undefined} aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
+        ) : null}
+      </div>
+      {children ? <div className="dev-thread-foot-acts">{children}</div> : null}
+      {extra ? <div className="dev-thread-foot-extra">{extra}</div> : null}
+    </div>
+  );
+}
+
+/**
+ * A step's content over the card. `keep` leaves the content in the page while
+ * the layer is shut (put away with `hidden`): a change's Votes and Testing
+ * cards live here, and the page's declared checks and the doors that bring
+ * the vote into view still find them.
+ *
+ * The card it lies over is its nearest `[data-thread-card]`, which app.css
+ * makes its containing block. It is placed in the part of the card that is
+ * on screen, centred there when it fits; over a short card it may hang past
+ * the card's end.
+ */
+export function StepLayer({ open, keep = false, name, title, sub = null, when = null, mark = null, onClose, children }: {
+  open: boolean;
+  keep?: boolean;
+  /** For `data-step-layer`: which step's content this is. */
+  name: string;
+  title: string;
+  sub?: string | null;
+  when?: string | null;
+  /** The step's marker, as the timeline draws it. */
+  mark?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+}): ReactNode {
+  const t = useMessages('project');
+  const box = useRef<HTMLDivElement>(null);
+  const close = useRef<HTMLButtonElement>(null);
+  const [place, setPlace] = useState<{ top: number; max: number } | null>(null);
+  useLayoutEffect(() => {
+    if (!open) { setPlace(null); return undefined; }
+    const el = box.current;
+    const card = el?.closest<HTMLElement>('[data-thread-card]');
+    if (!el || !card) return undefined;
+    const fit = () => {
+      const room = card.clientHeight;
+      // The part of the card on screen: a tall card on a phone is mostly
+      // out of view, and the layer belongs where the reader is looking.
+      const rect = card.getBoundingClientRect();
+      const scroller = card.closest<HTMLElement>('#gc-thread-scroll');
+      const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: typeof window === 'undefined' ? 800 : window.innerHeight };
+      const from = Math.min(Math.max(view.top - rect.top, 0), room);
+      const to = Math.min(Math.max(view.bottom - rect.top, 0), room);
+      const seen = to - from;
+      const max = Math.round(Math.max(200, Math.min(room >= 320 ? room - 16 : 600, view.bottom - view.top - 24)));
+      el.style.maxHeight = `${max}px`;
+      const height = el.offsetHeight;
+      // Centred in what is seen when it fits there; else at its near edge.
+      const wanted = seen >= height ? from + (seen - height) / 2 : from > 0 ? from + 8 : to - height - 8;
+      const top = Math.round(Math.max(8, Math.min(wanted, Math.max(8, room - height - 8))));
+      setPlace((was) => (was && was.top === top && was.max === max ? was : { top, max }));
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [open, children]);
+  useEffect(() => {
+    if (!open) return undefined;
+    const before = document.activeElement as HTMLElement | null;
+    close.current?.focus({ preventScroll: true });
+    // Pressed from a timeline that sits under the card (a narrow page), the
+    // layer may be out of view: bring it in once it has its place.
+    const frame = typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame(() => box.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' }))
+      : 0;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.stopPropagation(); onClose(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      if (frame && typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame);
+      document.removeEventListener('keydown', onKey);
+      if (before && typeof before.focus === 'function' && document.contains(before)) before.focus({ preventScroll: true });
+    };
+    // `onClose` is the store's, the same function every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+  if (!open && !keep) return null;
+  return (
+    <div className="dev-step-layer" data-step-layer={name} data-open={open ? 'true' : 'false'} hidden={!open}>
+      <button type="button" className="dev-step-scrim" tabIndex={-1} aria-label={t('project:topic.card.layer.close')} onClick={onClose} />
+      <div
+        ref={box}
+        className="dev-step-sheet"
+        role="dialog"
+        aria-label={title}
+        style={place ? { top: `${place.top}px`, maxHeight: `${place.max}px` } : undefined}
+      >
+        <div className="dev-step-head">
+          {mark}
+          <div className="min-w-0 flex-1">
+            <b className="dev-step-title">{title}</b>
+            {sub ? <span className="dev-step-sub">{sub}</span> : null}
+          </div>
+          {when ? <span className="dev-step-when">{when}</span> : null}
+          <button ref={close} type="button" className="dev-step-close" data-step-close="" aria-label={t('project:topic.card.layer.close')} onClick={onClose}>
+            <XIcon className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="dev-step-body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function demoQuery(): string {
+  try {
+    return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Markdown as the request's own words are drawn (the platform's renderer, which sanitises). */
+export function markdownHtml(markdown: string): string {
+  const renderer = typeof window !== 'undefined' ? (window as any).PlatformMarkdown : null;
+  if (!renderer?.render) {
+    const escaped = markdown.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    return `<div class="dev-issue-body">${escaped}</div>`;
+  }
+  return `<div class="dev-issue-body">${renderer.render(markdown, { images: true })}</div>`;
+}
+
+/**
+ * A plan's text, for the layer. A plan posted on Homeroom is read from its
+ * session (the same read the reader beside the thread makes); the bot's
+ * GitHub copy carries its own text.
+ */
+export function PlanWords({ plan }: { plan: RequestSpecCard }): ReactNode {
+  const t = useMessages('project');
+  const read = plan.read;
+  const own = read.kind === 'text' ? markdownHtml(read.markdown || '') : null;
+  const [state, setState] = useState<{ key: string; html: string | null; failed: boolean }>({ key: '', html: null, failed: false });
+  const key = read.kind === 'shared' ? `${read.sessionId}:${read.version}` : '';
+  useEffect(() => {
+    if (read.kind !== 'shared') return undefined;
+    let live = true;
+    setState({ key, html: null, failed: false });
+    fetch(`/api/sessions/${read.sessionId}/specs/${read.version}${demoQuery()}`, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(String(res.status)))))
+      .then((data) => {
+        if (!live) return;
+        const spec = data?.spec || data || {};
+        setState({ key, html: markdownHtml(String(spec.content || '')), failed: false });
+      })
+      .catch(() => { if (live) setState({ key, html: null, failed: true }); });
+    return () => { live = false; };
+    // `key` names the plan and its version.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  const html = own ?? (state.key === key ? state.html : null);
+  const inner = useInnerHtml(html || '');
+  if (html) return <div className="dev-step-doc" data-step-plan="" dangerouslySetInnerHTML={inner} />;
+  return (
+    <p className="dev-step-plain" role="status">
+      {state.failed ? t('project:topic.card.layer.planFailed') : t('project:topic.card.layer.planLoading')}
+    </p>
+  );
+}
+
+/** Where the picture will be, before there is one: a well with one line saying why. */
+export function ShotsWait({ title, text, busy = false, state }: { title: string; text?: string | null; busy?: boolean; state: string }): ReactNode {
+  return (
+    <div className="dev-thread-wait" data-thread-wait={state} data-busy={busy ? '' : undefined}>
+      <b>{title}</b>
+      {text ? <span>{text}</span> : null}
+    </div>
+  );
+}

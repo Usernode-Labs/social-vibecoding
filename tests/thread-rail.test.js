@@ -207,7 +207,8 @@ test('both heads portal the rail into its host, and never under one of the frame
   for (const file of ['frontend/src/features/dev-board/topic/request-head.tsx', 'frontend/src/features/dev-board/topic/change-head.tsx']) {
     const src = read(file);
     assert.match(src, /const rail = frame \? null : host\('gc-thread-rail'\);/, file);
-    assert.match(src, /\{rail \? createPortal\(<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} \/>, rail\) : null\}/, file);
+    // `current`: the step open over the card, which the rail marks (thread-card.tsx).
+    assert.match(src, /\{rail \? createPortal\(<ThreadRail steps=\{railSteps\} onOpen=\{openRail\} current=\{cardLook \? openNow : null\} \/>, rail\) : null\}/, file);
   }
   const request = read('frontend/src/features/dev-board/topic/request-head.tsx');
   assert.match(request, /open\.kind === 'plan'[\s\S]{0,160}openRequestSpec\(card\)/, 'a plan opens in the reader it always did');

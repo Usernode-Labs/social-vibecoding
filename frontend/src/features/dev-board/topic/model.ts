@@ -784,6 +784,11 @@ export interface ChangeThreadView {
      */
     thumbs?: { before: string | null; after: string | null; viewer: string } | null;
   } | null;
+  /**
+   * The change shows nothing a person can see, so no shots were asked for
+   * (AppView._shotsNotNeeded): the card says so where the picture would be.
+   */
+  shotsNone?: boolean;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
   /**
@@ -937,6 +942,8 @@ export interface TopicBody {
   plan?: RequestSpecCard | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
+  /** Who wrote the summary: Homeroom bot or the change's author (AppView._summaryBy). Null when there is none, or the row does not say. */
+  summaryBy?: 'bot' | 'author' | null;
   /**
    * The rest of the summary, folded under `summaryHtml` as "How it’s built":
    * on a change Homeroom bot built, everything from its spec's Design

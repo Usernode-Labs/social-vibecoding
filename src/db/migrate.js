@@ -316,6 +316,7 @@ async function migrate(config) {
   await seedStagingShotsNoticed(pool);
   // After seedStagingDemoAppCard, whose demo app it belongs to.
   await seedStagingShotsScreens(pool);
+  await seedStagingCompetingChanges(pool);
   await seedStagingShotsFailed(pool);
   await seedStagingLeaderboardProfile(pool);
   await seedStagingGeneralChannel(pool);
@@ -10265,6 +10266,47 @@ async function seedStagingShotsScreens(pool) {
   }
 }
 
+// Two changes built for one request, both up for a vote: the case a thread's
+// page draws as a ballot between them (thread-changes.tsx Competing), which a
+// fresh staging copy otherwise never has. Both are for the demo project's
+// request #900001 and are obviously fake "Staging demo" rows by fake people.
+// Their tests are marked passed so the ballot opens; no code stands behind
+// them. Idempotent, and a no-op outside staging.
+const STAGING_COMPETING_SESSION_IDS = [900170, 900171];
+
+async function seedStagingCompetingChanges(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const rows = [
+    { id: STAGING_COMPETING_SESSION_IDS[0], by: 'staging-demo-user', branch: 'staging-demo/competing-a', sha: 'a'.repeat(40), age: '2 hours',
+      title: '[Mock] Staging demo: the switch beside the bell',
+      summary: 'Staging demo summary. Adds the switch to the header, beside the bell.', source: 'generated' },
+    { id: STAGING_COMPETING_SESSION_IDS[1], by: 'staging-demo-collab', branch: 'staging-demo/competing-b', sha: 'b'.repeat(40), age: '1 hour',
+      title: '[Mock] Staging demo: the switch in the account menu',
+      summary: 'Staging demo summary. Puts the switch in the account menu instead.', source: 'author' },
+  ];
+  try {
+    for (const row of rows) {
+      await pool.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+            promoted_at, reviewed_head_sha, check_state, linked_issues,
+            pr_summary_md, pr_summary_source)
+         SELECT $1::int, 900001, u.id, $2::varchar, $1::int, $3::varchar, 'promoted',
+                NOW() - $4::interval, $5::varchar, 'passing', ARRAY[900001],
+                $6::text, $7::varchar
+           FROM users u
+          WHERE u.username = $8
+            AND EXISTS (SELECT 1 FROM apps WHERE id = 900001)
+         ON CONFLICT (id) DO NOTHING`,
+        [row.id, row.branch, row.title, row.age, row.sha, row.summary, row.source, row.by]
+      );
+    }
+    log.info('db', 'Staging competing changes seeded', { sessionIds: STAGING_COMPETING_SESSION_IDS });
+  } catch (err) {
+    log.warn('db', 'Staging competing changes seeding failed', { message: err.message });
+  }
+}
+
 // The failed sibling of the two shots fixtures above (#6551): a change
 // waiting for a vote whose before & after screenshots could not be taken.
 // Authored by the shots' own member fixture (usernode-capture), who is a
@@ -16038,7 +16080,7 @@ module.exports = {
   markBareDateActivities,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
-  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens, seedStagingShotsFailed,
+  seedStagingGeneralChannel, seedStagingShotsNoticed, seedStagingShotsScreens, seedStagingCompetingChanges, seedStagingShotsFailed,
   seedStagingVisuals, seedStagingGalleryProposals,
   // A test seam: preview-projects-source-repo.test.js counts what a preview's
   // sample apps leave room for under the limit it runs with.

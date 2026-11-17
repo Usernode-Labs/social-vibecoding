@@ -68,7 +68,8 @@ import { Avatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
-import { ChangeGates } from './change-head';
+import { ChangeFoot, ChangeGates } from './change-head';
+import { ThreadCardContext } from './thread-card';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
 import { ChangeSheets, readChangeDetail } from './topic-head';
@@ -506,7 +507,9 @@ function useInView(id: number, ready: boolean, box: RefObject<HTMLElement | null
     let release: (() => void) | null = null;
     const show = () => {
       const el = box.current;
-      const card = el ? (el.querySelector<HTMLElement>(target) || el) : null;
+      // A lone change under the card look votes from its foot; its Votes
+      // card is in the layer (./thread-card.tsx), put away until opened.
+      const card = el ? (el.querySelector<HTMLElement>('.dev-thread-foot') || el.querySelector<HTMLElement>(target) || el) : null;
       if (!card || !takeVotesInView(id)) return;
       release?.();
       release = holdVotesInView(card);
@@ -724,6 +727,8 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
   const propose = useProposeChange(item);
   const summary = view?.body.summaryHtml || '';
   const threadRequests = useContext(ThreadRequests);
+  const thread = useContext(ThreadCardContext);
+  const lone = thread.card && !ballot;
   return (
     <>
       <AlreadyClosed item={item} />
@@ -735,6 +740,11 @@ function ChangeBody({ item, view, plan = null, ballot = false, request }: {
         : null}
       {plan ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
       {view?.v.shots ? <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} /> : null}
+      {/* On its own under the request's card, its foot says where it stands;
+          the pair below is then the content of the layer the timeline's
+          steps open (change-head.tsx ChangeGates). */}
+      {lone && view && item.state !== 'underway' && hasCards(item)
+        ? <ChangeFoot id={item.id} card={view.card} v={view.v} page={thread.page} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
         propose.can ? (
           // #6599: its one action, where the Votes card will appear, with the

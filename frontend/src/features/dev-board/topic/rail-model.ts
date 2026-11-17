@@ -13,6 +13,7 @@
 
 import { lineWords, stageWords, type Phrase, type Stage, type WorkState } from '../../../lib/work-state';
 import type { RequestSpecCard } from './request-model';
+import { stageNote } from './card-model';
 import type { ThreadItem } from './thread-model';
 
 /** Which glyph a step's marker wears. */
@@ -28,6 +29,8 @@ export type RailOpen =
   | { kind: 'request' }
   | { kind: 'plan'; key: string }
   | { kind: 'checks'; changeId: number }
+  | { kind: 'votes'; changeId: number }
+  | { kind: 'track' }
   | { kind: 'change'; changeId: number };
 
 export interface RailStep {
@@ -41,6 +44,11 @@ export interface RailStep {
   since: boolean;
   desc: Phrase | null;
   link: { label: Phrase; open: RailOpen } | null;
+  /**
+   * What a press on the step opens over the card, when it has no link of its
+   * own to say so: the last step's votes, its tests, the bot's progress.
+   */
+  open: RailOpen | null;
   /** The last step: where the thread stands. */
   now: boolean;
   tone: RailTone | null;
@@ -51,7 +59,7 @@ export interface RailStep {
 }
 
 const step = (s: Partial<RailStep> & Pick<RailStep, 'key' | 'icon' | 'title'>): RailStep => ({
-  at: null, since: false, desc: null, link: null, now: false, tone: null, busy: false, note: null, ...s,
+  at: null, since: false, desc: null, link: null, open: null, now: false, tone: null, busy: false, note: null, ...s,
 });
 
 /** The newest plan still standing: the highest version, else the last posted. */
@@ -94,8 +102,9 @@ function planStep(plan: RequestSpecCard): RailStep {
 }
 
 /** Where the thread stands, as its last step. */
-function nowStep(standing: WorkState, yours: boolean): RailStep {
+function nowStep(standing: WorkState, yours: boolean, track = false): RailStep {
   const stage = standing.stage;
+  const lead = standing.change || null;
   const shots = stage === 'checking' && standing.line?.code === 'shots';
   return step({
     key: `now:${stage}`,
@@ -106,7 +115,13 @@ function nowStep(standing: WorkState, yours: boolean): RailStep {
     now: true,
     tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
     busy: BUSY.has(stage),
-    note: lineWords(standing),
+    // The server's own second line, else the plain sentence for the stage.
+    note: lineWords(standing) || stageNote(standing),
+    open: lead && (stage === 'up_for_vote' || stage === 'going_live' || stage === 'live')
+      ? { kind: 'votes', changeId: lead.id }
+      : lead && stage === 'checking'
+        ? { kind: 'checks', changeId: lead.id }
+        : track && !lead ? { kind: 'track' } : null,
   });
 }
 
@@ -122,6 +137,8 @@ export interface RequestRailInput {
   yours?: boolean;
   /** The request has words of its own to read (a title alone has none). */
   words?: boolean;
+  /** Homeroom bot's progress on it is known, so the last step can open it. */
+  track?: boolean;
 }
 
 /** A request's page: asked, planned, each change built, its tests, then where it stands. */
@@ -164,7 +181,13 @@ export function requestRail(input: RequestRailInput): RailStep[] {
         link: { label: { id: 'project:topic.rail.seeFailed' }, open: { kind: 'checks', changeId: item.id } },
       }));
     } else if (lead.checks.state === 'passing' && stage && (PAST_TESTS.has(stage) || (stage === 'checking' && standing?.line?.code === 'shots'))) {
-      steps.push(step({ key: `tested:${item.id}`, icon: 'tested', title: { id: 'project:topic.rail.tested' }, desc: { id: 'project:topic.rail.testedAll' } }));
+      steps.push(step({
+        key: `tested:${item.id}`,
+        icon: 'tested',
+        title: { id: 'project:topic.rail.tested' },
+        desc: { id: 'project:topic.rail.testedAll' },
+        link: { label: { id: 'project:topic.rail.seeChecks' }, open: { kind: 'checks', changeId: item.id } },
+      }));
     }
     if (stage === 'going_live' || stage === 'live') {
       const yes = Number(lead.votes?.yes) || 0;
@@ -173,10 +196,11 @@ export function requestRail(input: RequestRailInput): RailStep[] {
         icon: 'vote',
         title: { id: 'project:topic.rail.voted' },
         desc: yes > 0 ? { id: 'project:topic.rail.yesVotes', values: { count: yes } } : null,
+        open: { kind: 'votes', changeId: item.id },
       }));
     }
   }
-  if (standing) steps.push(nowStep(standing, input.yours !== false));
+  if (standing) steps.push(nowStep(standing, input.yours !== false, !!input.track));
   return steps;
 }
 
@@ -216,7 +240,13 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       link: { label: { id: 'project:topic.rail.seeFailed' }, open: { kind: 'checks', changeId: input.id } },
     }));
   } else if (testing && testing.done) {
-    steps.push(step({ key: 'tested', icon: 'tested', title: { id: 'project:topic.rail.tested' }, desc: { id: 'project:topic.rail.testedAll' } }));
+    steps.push(step({
+      key: 'tested',
+      icon: 'tested',
+      title: { id: 'project:topic.rail.tested' },
+      desc: { id: 'project:topic.rail.testedAll' },
+      link: input.id != null ? { label: { id: 'project:topic.rail.seeChecks' }, open: { kind: 'checks', changeId: input.id } } : null,
+    }));
   }
   if (input.status && input.status.label) {
     const tone = PILL_TONE[input.status.key] || null;
@@ -232,7 +262,13 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       now: true,
       tone,
       busy: testingNow,
-      note: voting ? input.votes!.figure : null,
+      note: voting
+        ? input.votes!.figure
+        : tone === 'ok' ? { id: 'project:topic.rail.note.live' }
+          : tone === 'muted' ? { id: 'project:topic.rail.note.closed' }
+            : testingNow ? { id: 'project:topic.rail.note.checking' } : null,
+      open: input.id == null ? null
+        : testingNow ? { kind: 'checks', changeId: input.id } : { kind: 'votes', changeId: input.id },
     }));
   }
   return steps;
@@ -246,4 +282,9 @@ export function earlierSteps(steps: RailStep[]): RailStep[] {
 /** A narrow page folds the earlier steps once there are two or more of them. */
 export function railFolds(steps: RailStep[]): boolean {
   return earlierSteps(steps).length > 1;
+}
+
+/** What a press on a step opens: its link's, else its own. */
+export function stepOpens(s: RailStep): RailOpen | null {
+  return s.link ? s.link.open : s.open;
 }

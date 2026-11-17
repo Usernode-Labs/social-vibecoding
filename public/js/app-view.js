@@ -6366,6 +6366,8 @@ const AppView = {
         // #4490: the author's diagram leads the page, above its description.
         diagram: item && item.diagram && typeof item.diagram === 'object' ? item.diagram : null,
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        // Whose words the summary is, for the line under it (thread-card.tsx WordsBy).
+        summaryBy: AppView._summaryBy(item),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
@@ -6388,6 +6390,8 @@ const AppView = {
         actions: AppView._detailActionsView('session', item),
         ...AppView._changeSummaryView(item),
         summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
+        // Whose words the summary is, for the line under it (thread-card.tsx WordsBy).
+        summaryBy: AppView._summaryBy(item),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
       };
@@ -8041,6 +8045,7 @@ const AppView = {
       // unless GitHub is holding the merge or it is under way.
       merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
+      shotsNone: AppView._shotsNotNeeded(item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
@@ -8970,6 +8975,22 @@ const AppView = {
       state: view.state, html: '', line: view.sentence, waiting: false,
       retake: AppView._canRetakeShots(item) ? Number(item.id) : null,
     };
+  },
+
+  // Who wrote a change's summary: Homeroom bot ('generated', pr-metadata.js)
+  // or its author. Null with no summary, or when the row does not say.
+  _summaryBy(item) {
+    if (!item || typeof item.pr_summary_md !== 'string' || !item.pr_summary_md.trim()) return null;
+    return item.pr_summary_source === 'generated' ? 'bot' : item.pr_summary_source === 'author' ? 'author' : null;
+  },
+
+  // The change shows nothing a person can see: its shots were not required.
+  // The card says so where the picture would be (thread-card.tsx ShotsWait).
+  _shotsNotNeeded(item) {
+    const shots = item && item.shots && typeof item.shots === 'object' ? item.shots : null;
+    if (!shots) return false;
+    const view = AppView._shotsView(shots);
+    return !!view && view.state === 'not_required';
   },
 
   // "The preview is ready · Try it", in a change's stream.
