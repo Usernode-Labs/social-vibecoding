@@ -2691,7 +2691,7 @@ function triagePromptFor({
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     personPlanTriageNote(personPlan),
     locale ? `The requester's locale is \`${locale}\`.` : null,
-    live.requestRulesLines().join('\n').trim(),
+    live.requestRulesLines({ triage: true }).join('\n').trim(),
     signal ? signalNote(signal) : null,
     require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,

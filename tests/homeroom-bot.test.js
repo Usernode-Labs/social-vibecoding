@@ -1825,11 +1825,12 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // code waits only for a go-ahead.
   // 17 Nov 2026 (#6766): the key-service rule (about 330 more), so a service
   // that needs a key is ready, not a person, and only setting a value goes
-  // to a person. The request's follow-up added the allowed-content list and
-  // the two bans with their reasons to the data rules (about 700 more).
-  // #6769: the data rules also say what is allowed as well as banned (about
-  // 900 more). Those counts left no room: the reference sits at 30,604
-  // characters once both ride in it, so the cap moves to 31,000.
+  // to a person. The request's follow-up added the allowed-content list, the
+  // two bans with their reasons and the "prefer" guidance to the data rules,
+  // but a read applies none of that: the triage carries the short form (the
+  // two bans, the key rule and the other bans with their exceptions in
+  // brief), so the cap stays at main's 30,550. The full section stays in the
+  // spec, build and follow-up prompts and one tool call away.
   // 17 Nov 2026 (#6772): what a database change may do that loses no data, in
   // the `ready` criteria (about 400 more), so the bot builds a widening and
   // still leaves drops, narrowing, converting types and SET NOT NULL alone.
@@ -1843,7 +1844,7 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // with `go_ahead` false and `cannot_because` "explanation" (about 150 more),
   // so a request that only asks why cannot offer a Go ahead that changes
   // nothing, and its `reason` is the code's answer.
-  assert.ok(prompt.length < 31500, `a triage prompt stays small: ${prompt.length} chars`);
+  assert.ok(prompt.length < 30550, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation"\}$/);
 });
