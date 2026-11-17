@@ -259,6 +259,21 @@ test('the cards are one grid that reflows, two columns at least, and the cards l
   assert.match(card, /<span aria-hidden="true" class="absolute bottom-2 end-2 [^"]*opacity-0[^"]*group-hover:opacity-100[^"]*group-has-\[a:focus-visible\]:opacity-100/);
 });
 
+test('a project\'s picture that cannot load falls back to its icon on its colour, never a broken image', () => {
+  // #6784 review: the Home card showed a broken image when a project's
+  // picture file was missing. The cover hears the browser's error, stops
+  // drawing the picture, and takes the icon-on-its-colour branch a project
+  // with no picture uses.
+  const src = read(DISCOVER);
+  const at = src.indexOf('function CardCover(');
+  const body = src.slice(at, src.indexOf('\nfunction ', at + 10));
+  assert.ok(at > 0 && body, 'CardCover is found');
+  assert.equal(body.match(/onError=\{\(\) => setPictureFailed\(true\)\}/g)?.length, 2, 'both pictures say when they cannot load');
+  assert.match(body, /const picture = !!app\.illustration_url && !pictureFailed;/, 'a failed picture is not drawn');
+  assert.match(body, /style=\{picture \? undefined : \{ background: color \}\}/, 'the icon sits on the project\'s colour');
+  assert.match(body, /\{picture \? \(/, 'the cover picks the picture or the icon');
+});
+
 test('a visitor\'s card has no buttons at all: Try it, Join and Pin are the project page\'s (#6433), and a waitlisted account still sees every project', () => {
   const html = renderComponent(DISCOVER, 'GuestDiscover', discoverProps());
   assert.doesNotMatch(html, /data-guest-try=/);
