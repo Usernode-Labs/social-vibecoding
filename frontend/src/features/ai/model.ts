@@ -1037,5 +1037,5 @@ export function heroWords(needs: number, next: number, fresh = 0): Phrase | null
  * wait there for the next topic opened from anywhere.
  */
 export function isTopicHref(href: string | null | undefined): boolean {
-  return /^#?app\/[^/]+\/dev\/(issues|changes|proposals|governance|shared)\/\d+$/.test(String(href || ''));
+  return /^#?app\/[^/]+\/dev\/(issues|changes|proposals|governance|shared)\/\d+(?:\/\d+)?$/.test(String(href || ''));
 }

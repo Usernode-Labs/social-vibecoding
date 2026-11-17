@@ -6460,7 +6460,7 @@ const AppView = {
       sessionId: ref.sessionId,
       label: n ? `#${n}` : PlatformI18n.t('changes:request.ref.changeLabel'),
       title: ref.title || (n ? PlatformI18n.t('changes:request.ref.pullRequestTitle', { number: n }) : PlatformI18n.t('changes:request.ref.changeTitle', { id: ref.sessionId })),
-      href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${ref.sessionId}`,
+      href: n ? `#app/${slug}/dev/changes/${n}/${ref.sessionId}` : `#app/${slug}/dev/proposals/${ref.sessionId}`,
     };
   },
 
@@ -7306,7 +7306,7 @@ const AppView = {
       sessionId: id,
       label: n ? `#${n}` : PlatformI18n.t('changes:page.includedIn.changeLabel'),
       title: item.included_in_pr_title || (n ? PlatformI18n.t('changes:page.includedIn.pullRequestTitle', { number: n }) : PlatformI18n.t('changes:page.includedIn.changeTitle', { id })),
-      href: n ? `#app/${slug}/dev/changes/${n}` : `#app/${slug}/dev/proposals/${id}`,
+      href: n ? `#app/${slug}/dev/changes/${n}/${id}` : `#app/${slug}/dev/proposals/${id}`,
     };
   },
 
@@ -8141,7 +8141,7 @@ const AppView = {
         sessionId: w.id,
         number: w.number,
         title: w.title,
-        href: w.number ? `#app/${slug}/dev/changes/${w.number}` : `#app/${slug}/dev/proposals/${w.id}`,
+        href: w.number ? `#app/${slug}/dev/changes/${w.number}/${w.id}` : `#app/${slug}/dev/proposals/${w.id}`,
       },
     };
   },
@@ -13320,7 +13320,7 @@ const AppView = {
     // The panel is up for this very entry (a sheet pushed over it, closed
     // with Back): the address stays the item's.
     if (AppView._panelAddressIsUp(stamp.slug) && AppView._panelAddress.to === here) return false;
-    const item = /^\/app\/([^/?#]+)\/dev\/(issues|changes|proposals|shared|governance)\/\d+(?:[?#]|$)/.exec(here);
+    const item = /^\/app\/([^/?#]+)\/dev\/(issues|changes|proposals|shared|governance)\/\d+(?:\/\d+)?(?:[?#]|$)/.exec(here);
     const page = /^\/app\/([^/?#]+)\/(workshop|board|dev)(?:[?#]|$)/.exec(stamp.from);
     if (!item || !page || item[1] !== page[1] || page[1] !== encodeURIComponent(stamp.slug)) {
       AppView._dropPanelAddressStamp();

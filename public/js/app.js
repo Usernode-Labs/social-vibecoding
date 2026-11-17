@@ -4534,8 +4534,12 @@ const App = {
         suffix = '/dev/chat';
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.kind === 'proposal'
           && norm.ref.pr) {
-        // #4367: a change with a pull request is addressed by its number.
-        suffix = `/dev/changes/${norm.ref.pr}`;
+        // #4367/#6718: a change with a pull request is addressed by its
+        // number, and by its own session id after it when that is known.
+        const id = Number(norm.ref.id);
+        suffix = Number.isInteger(id) && id > 0
+          ? `/dev/changes/${norm.ref.pr}/${id}`
+          : `/dev/changes/${norm.ref.pr}`;
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.id) {
         const seg = norm.ref.kind === 'issue' ? 'issues'
           : norm.ref.kind === 'proposal' ? 'proposals'
@@ -5683,7 +5687,13 @@ const App = {
             ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
           } else if (sec === 'changes' && App._changeNumber(parts[4])) {
             subTab = 'topic'; // #4367: by PR number; the topic view finds the session
-            ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
+            // #6718: a 6th segment is the change's own session id, which wins
+            // over any lookup by the (possibly shared) number.
+            ref = {
+              kind: 'proposal',
+              id: App._changeNumber(parts[5]),
+              pr: App._changeNumber(parts[4]),
+            };
           } else if (sec === 'governance' && parts[4]) {
             // #6439: a vote to close a request forwards to the request's
             // page (`AppView._renderTopicSubView` and `openTopicInPanel`);

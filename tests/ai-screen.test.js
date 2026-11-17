@@ -1669,6 +1669,7 @@ test('a thread opens on this page: beside the list in its column, or on its page
   const { isTopicHref } = loadTsx(MODEL);
   assert.equal(isTopicHref('#app/garden/dev/issues/12'), true);
   assert.equal(isTopicHref('#app/garden/dev/changes/12'), true);
+  assert.equal(isTopicHref('#app/garden/dev/changes/12/987'), true, '#6718: a change link carries its own id');
   assert.equal(isTopicHref('#app/garden/dev/governance/3'), true);
   assert.equal(isTopicHref('#app/garden/workshop'), false, 'a Workshop is no topic: the origin would wait for the next one');
   // A private thread is the column's: the panel gives its place back first (showAt).
@@ -2254,6 +2255,12 @@ test('an item in the bot page\'s column has an address of its own, and its own p
   assert.equal(door.botItemAt('#homeroom-bot/thread/5'), null, 'a chat place is not an item');
   assert.equal(door.botItemRoute({ kind: 'decision', slug: 'garden', number: 7 }), 'app/garden/dev/governance/7');
   assert.equal(door.pageLinkFor('app/usernode-2d5619/dev/issues/6214'), '/app/usernode-2d5619/dev/issues/6214');
+  // #6718: a change's address carries its own id after the number, and the
+  // page link keeps it so Expand opens that change.
+  assert.equal(door.pageLinkFor('app/usernode-2d5619/dev/changes/2151/4223'), '/app/usernode-2d5619/dev/changes/2151/4223');
+  assert.deepEqual(plain(door.botItemFromRoute('app/usernode-2d5619/dev/changes/2151/4223')),
+    { kind: 'change', slug: 'usernode-2d5619', number: 2151 },
+    'the number the column names is the one people see');
   assert.equal(door.botTabAt('#homeroom-bot/request/usernode-2d5619/6214'), null);
   const src = read('frontend/src/features/ai/index.tsx');
   assert.match(src, /if \(sidePanel\(\)\?\.take\?\.\(route, \{ place: appFromLists\(item\.slug\), label: null \}\)\) \{ underPanel\(\); return; \}/);
