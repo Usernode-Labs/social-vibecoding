@@ -565,7 +565,9 @@ const Notifications = {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all') return;
+    // #6785: and `?shot=notifications-threads` opens it on Recent threads.
+    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all'
+      && shot !== 'notifications-threads') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather

@@ -1886,6 +1886,13 @@
       "preview": "overrides.map(r => r.statement).join(';\\n')"
     },
     {
+      "source": "src/services/recent-threads.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "ca972ffbf58dbc20fb58",
+      "count": 1,
+      "preview": "LIST_SQL"
+    },
+    {
       "source": "src/services/release-holds.js",
       "kind": "structural-template",
       "fingerprint": "32b772d3655bf79a7000",
