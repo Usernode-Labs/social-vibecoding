@@ -10,6 +10,9 @@
 //   2. Its button opens the same make screen as the tile.
 //   3. The line under the button counts project slots only when there is a
 //      limit, and at none it links to the allowance card.
+//   4. It can be closed for this browser (#6757): the ✕ keeps the choice in
+//      localStorage, the card and Home's side column both follow it, and
+//      once closed Home is one column again with the grid's New project tile.
 //
 // Run with: node --test tests/home-new-project-card.test.js
 
@@ -26,7 +29,9 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 test('the island mounts the card in a side column, on the standard pages only', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  assert.match(island, /const aside = !frame && grid\.ready && !!grid\.create;/);
+  assert.match(island, /const aside = !frame && grid\.ready && !!grid\.create && !cardHidden;/);
+  assert.match(island, /setCardHidden\(newProjectCardHidden\(\)\)/);
+  assert.match(island, /window\.addEventListener\(NEW_PROJECT_HIDDEN_EVENT, onHidden\)/);
   assert.match(island, /data-home-aside=\{aside \? '' : undefined\}/);
   assert.match(island, /\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NewProjectCard \/>[\s\S]*?<\/aside>\s*\) : null\}/);
   assert.match(island, /<div className="home-main">/);
@@ -42,7 +47,16 @@ test('the side column exists from 1280px and holds no place under it', () => {
   assert.match(media, /#home-screen\[data-home-aside\] \.home-aside \{\s*display: flex;\s*flex-direction: column;\s*gap: 12px;[^}]*flex: 0 0 304px;/);
   assert.match(media, /#home-screen\[data-home-aside\] \.home-body-fill \{\s*flex-direction: row-reverse;/);
   // home.js draws no grid tile at the same width (Home.hasSideCard).
-  assert.match(read('frontend/src/features/home/home.js'), /window\.matchMedia\('\(min-width: 1280px\)'\)\.matches/);
+  const js = read('frontend/src/features/home/home.js');
+  assert.match(js, /window\.matchMedia\('\(min-width: 1280px\)'\)\.matches/);
+  const side = js.slice(js.indexOf('hasSideCard() {'), js.indexOf('_wireRowBudget() {'));
+  assert.match(side, /if \(newProjectCardHidden\(\)\) return false;/, 'a closed card has no column');
+  assert.ok(
+    side.indexOf('newProjectCardHidden') < side.indexOf("window.matchMedia('(min-width: 1280px)')"),
+    'the dismissal is answered before the width is',
+  );
+  assert.match(js, /window\.addEventListener\(NEW_PROJECT_HIDDEN_EVENT, run\)/,
+    'closing the card re-renders the grid, so its tile comes back');
 });
 
 test('the card draws only for a viewer who may make projects, and opens the make screen', () => {
@@ -55,6 +69,55 @@ test('the card draws only for a viewer who may make projects, and opens the make
   assert.equal(message('home:newProject.title'), 'Have an idea?');
   assert.equal(message('home:create.label'), 'New project');
   assert.match(message('home:newProject.slotsNone'), /<0>Request project slots<\/0>/);
+  // The close button is the same dismissal the page reads (#6757).
+  assert.match(src, /id="home-new-project-close"[\s\S]*?onClick=\{hideNewProjectCard\}/);
+  assert.match(src, /aria-label=\{t\('home:newProject\.close'\)\}/);
+  assert.equal(message('home:newProject.close'), 'Close');
+  assert.match(src, /if \(hidden\) return null;/, 'a closed card draws nothing');
+  assert.match(src, /window\.addEventListener\(NEW_PROJECT_HIDDEN_EVENT, onHidden\)/);
+});
+
+test('the card is drawn in Home\'s plain card, with no glow and no accent pill', () => {
+  const src = read(CARD);
+  assert.doesNotMatch(src, /bg-gradient/, 'no gradient button');
+  assert.doesNotMatch(src, /blur-3xl/, 'no soft light in the corner');
+  assert.doesNotMatch(src, /shadow-violet/, 'no accent shadow');
+  assert.match(src, /text-\[15px\] font-\[650\] leading-tight/, 'a list-title heading, not a hero');
+  assert.match(src, /pe-8/, 'the fan clears the close button');
+});
+
+test('the dismissal is kept per browser: the key, the event, and a storage that throws', () => {
+  const store = new Map();
+  const events = [];
+  global.localStorage = {
+    getItem: (key) => (store.has(key) ? store.get(key) : null),
+    setItem: (key, value) => { store.set(key, String(value)); },
+  };
+  global.window = { dispatchEvent: (event) => { events.push(event); } };
+  try {
+    const dismiss = loadTsx('frontend/src/features/home/new-project-dismiss.ts');
+    assert.equal(dismiss.NEW_PROJECT_HIDDEN_KEY, 'usernode:new-project-card-hidden');
+    assert.equal(dismiss.NEW_PROJECT_HIDDEN_EVENT, 'usernode:new-project-card-hidden');
+    assert.equal(dismiss.newProjectCardHidden(), false, 'not closed at first');
+    dismiss.hideNewProjectCard();
+    assert.equal(store.get('usernode:new-project-card-hidden'), '1');
+    assert.equal(events.length, 1, 'the page is told once');
+    assert.equal(events[0].type, 'usernode:new-project-card-hidden');
+    assert.equal(dismiss.newProjectCardHidden(), true);
+
+    // Private mode: reading throws, so the card shows; writing throws, so the
+    // close is for this visit only.
+    global.localStorage = {
+      getItem() { throw new Error('denied'); },
+      setItem() { throw new Error('denied'); },
+    };
+    assert.equal(dismiss.newProjectCardHidden(), false);
+    assert.doesNotThrow(() => dismiss.hideNewProjectCard());
+    assert.equal(events.length, 2, 'the card still closes for this visit');
+  } finally {
+    delete global.localStorage;
+    delete global.window;
+  }
 });
 
 test('the fan is the pinned apps\' pictures: five at most, no demo tile, no letter', () => {
