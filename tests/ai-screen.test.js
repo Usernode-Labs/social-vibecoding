@@ -737,6 +737,32 @@ test('each In progress and Waiting row says its stage and its second line, in th
   assert.equal(heroWords(0, 0), null);
 });
 
+test('the hero counts what the project filter shows (request 6744)', () => {
+  const { showsPicked } = loadTsx('frontend/src/features/ai/lines.ts');
+  const garden = { slug: 'garden' };
+  // All picked nothing: every project shows, and a private row in no project too.
+  assert.equal(showsPicked([])(garden), true);
+  assert.equal(showsPicked([])(null), true);
+  // One project picked: it shows; another project, and a private row in no
+  // project, do not, as the lists leave them out.
+  assert.equal(showsPicked(['garden'])(garden), true);
+  assert.equal(showsPicked(['garden'])({ slug: 'bread' }), false);
+  assert.equal(showsPicked(['garden'])(null), false);
+  // The lists and the line under the bot's name ask the same rule, so a
+  // saved filter's counts cannot disagree with the list below them.
+  const lines = read('frontend/src/features/ai/lines.ts');
+  assert.match(lines, /const shows = showsPicked\(picked\);/, 'the lists narrow by the shared rule');
+  assert.match(lines, /progressShown: progressShown\.length,/, 'the hook reports the in-progress count it shows');
+  const page = read('frontend/src/features/ai/index.tsx');
+  assert.match(page, /const heroShows = showsPicked\(picked\);/, 'the hero narrows by the same rule');
+  assert.match(
+    page,
+    /heroWords\(owedCount\(heroRows\), progress\.filter\(\(th\) => heroShows\(th\.app\)\)\.length, freshCount\(heroRows\)\)/,
+    'the hero counts the picked projects\' needs, in progress and new',
+  );
+  assert.doesNotMatch(page, /heroWords\(owed, progress\.length, fresh\)/, 'not every project, as it did before');
+});
+
 test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
   const { shortWords, whyOf, threadWhy, needsYou, upNext } = loadTsx(MODEL);
   const row = (what, extra = {}) => thread(1, 7, what, extra);
