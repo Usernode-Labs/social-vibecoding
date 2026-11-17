@@ -191,13 +191,13 @@ test('the build runs the queries it writes, does not stub what it changed, and c
   }
 });
 
-test('triage sends a request for an explanation to a person, and still builds a bug report', () => {
+test('triage sends a request for an explanation to a person with the answer, and still builds a bug report', () => {
   const prompt = read('src/prompts/homeroom-bot-triage.md');
   const ready = prompt.slice(prompt.indexOf('3. `ready`'), prompt.indexOf('4. `person`'));
-  assert.match(ready, /- It asks for a change to the app\. A request that only asks for an explanation or a write-up \("why does X happen\?", "look into Y and report back"\) names nothing to build: the answer is a reply for a person, not a commit, so it is `person`\./);
+  assert.match(ready, /- It asks for a change to the app\. A request that only asks for an explanation or a write-up \("why does X happen\?", "look into Y and report back"\) names nothing to build: it is `person` \(see 4\)\. A later "Turn this into a fix" makes it a change\./);
   assert.match(ready, /A bug report \("X is broken", "X shows the wrong thing"\) is not this: it asks for X to be fixed\./);
   const person = prompt.slice(prompt.indexOf('4. `person`'), prompt.indexOf('Also state, whatever the verdict:'));
-  assert.match(person, /A request that asks only for an explanation or an investigation is `person`\./);
+  assert.match(person, /An explanation or investigation request is `person` with `go_ahead` false and `cannot_because` "explanation"/);
 });
 
 test('a BLOCKED spec builds nothing and says why; a spec that merely mentions it builds', async () => {

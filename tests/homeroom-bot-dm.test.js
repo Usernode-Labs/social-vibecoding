@@ -1020,6 +1020,20 @@ test('#6430: a go-ahead that cannot settle it says a person has to build it', ()
   assert.doesNotMatch(text, /\u2014/);
 });
 
+// 17 Nov 2026 (#6770): a request that only asks why something happens carries
+// the answer, and the close vote, instead of "a person has to build it".
+test('#6770: an explanation DM carries the answer and offers the close vote', () => {
+  const ctx = { appName: 'Note board', issueNumber: 8, issueTitle: 'Why does the board reload?' };
+  const text = dm.dmText('person', {
+    reason: 'The board loads its list again each time its tab is shown, and draws it from the top while it loads.',
+    explanation: true, goAheadDecides: false, blocker: 'explanation',
+  }, ctx);
+  assert.match(text, /This asks for an explanation, not a change, so here is what the code says: The board loads its list again each time its tab is shown, and draws it from the top while it loads\./);
+  assert.match(text, /Anyone in the project can propose to close it once this answers the question\. If it shows something broken, reply Turn this into a fix and I'll plan the fix\.$/);
+  assert.doesNotMatch(text, /Go ahead|A person has to build it/);
+  assert.doesNotMatch(text, /—/);
+});
+
 test('a request found already done says so, where it is, and that a vote on closing it follows', () => {
   const ctx = { appName: 'Ear Trainer', issueNumber: 14, issueTitle: 'Show my votes' };
   // One story: one message, the verdict and its offer (Propose to close,
@@ -1031,7 +1045,7 @@ test('a request found already done says so, where it is, and that a vote on clos
   }
   assert.match(dm.dmText('person', { reason: 'x', done: true, deciders: ['ann'] }, ctx), /looks done already/, 'done comes before who decides');
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /: \(kind === 'person' \|\| kind === 'empty'\) && dm\.done \? 'close_request' : null;/);
+  assert.match(src, /: \(kind === 'person' \|\| kind === 'empty'\) && \(dm\.done \|\| dm\.explanation\) \? 'close_request' : null;/);
   assert.match(src, /const offer = offerKind \? await move\.foldOffer\(pool, \{/);
   assert.deepEqual(require('../src/services/homeroom-bot-move').DONE_ACTIONS.map((a) => a.label), ['Propose to close', 'Tell me what\'s missing']);
 });
