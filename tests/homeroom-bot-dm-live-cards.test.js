@@ -326,7 +326,8 @@ test('a vote on one of the bot\'s changes reads its requester\'s DM again', () =
   // nothing. A yes is no line in the request's thread (5 Nov 2026).
   const votes = read('src/routes/votes.js');
   const record = votes.slice(votes.indexOf('async function recordVote('), votes.indexOf('async function retractVote('));
-  assert.match(record, /told AS \(\$\{botChangeVotedSql\(\{ from: 'v', sessionId: 'v\.session_id', voterId: '\$2::int', voter: '\$7::text', vote: '\$3::text', epoch: 'v\.approval_epoch' \}\)\}\)/);
+  assert.match(record, /told AS \(\$\{botChangeVotedSql\(\{ from: 'v', sessionId: 'v\.session_id', voterId: '\$2::int', voter: '\$7::text', vote: '\$3::text', epoch: 'v\.approval_epoch', announce: '\$8::boolean' \}\)\}\)/);
+  assert.match(record, /!unchanged && !reasonOnly/, 'a repeat tells the bot nothing');
   assert.doesNotMatch(votes, /noteVoted/);
   const machine = read('src/workflow/bot-change/machine.ts');
   assert.match(machine, /return step\(live\.name as Name, live\.data, \{ work: \[\], push: tray\(f\) \}\);/);

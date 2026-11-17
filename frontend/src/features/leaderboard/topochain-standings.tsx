@@ -56,7 +56,7 @@ type RowView = {
 };
 
 /** #5275: the viewer's own place, pinned above the table. */
-type YouView = { rank: string; points: string; count: number };
+type YouView = { rank: string; points: string; count: number; pending: string | null };
 
 type NonPodiumToggle = { count: number | null; on: boolean };
 
@@ -268,6 +268,13 @@ function YouLine({ you }: { you: YouView | null | undefined }): ReactNode {
       onClick={() => controller()?._openViewerRow()}
     >
       {t('leaderboard:standings.you', { rank: you.rank, points: you.points, count: you.count })}
+      {/* #6735: the row shows the ledger's figure; this says how much of it
+          the standings have yet to count. */}
+      {you.pending ? (
+        <span className="mt-1 block text-sm font-medium text-zinc-500 dark:text-zinc-400">
+          {you.pending}
+        </span>
+      ) : null}
     </button>
   );
 }

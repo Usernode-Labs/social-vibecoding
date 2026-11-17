@@ -23,6 +23,7 @@
 
 const { num } = require('../../routes/topochain/helpers');
 const { computeStandings } = require('./standings');
+const { computeOffchainColumns, resolveOffchainWeight } = require('./scoring');
 
 // ─── Identifier masking + display-name fallback (SPEC 958, 1246) ────────
 
@@ -176,6 +177,84 @@ async function fetchEventLeaderboardRows(pool, event) {
   }));
 }
 
+// ─── The viewer's own points, read from the ledger ──────────────────────
+//
+// #6735: the standings are a SNAPSHOT, rebuilt every few hours (or on a
+// credit); the profile and the challenge cards read the points LEDGER
+// directly, so they show a credit at once. A board whose own row answers
+// with the snapshot alone therefore sat at an old figure — often 0 — until
+// the next rebuild, and people read it as lost points.
+//
+// These two reads let the viewer's row catch up without touching anyone
+// else's: which events the board covers, and how many points the ledger
+// holds for each of them.
+//
+// The board's scope is the SAME one computeStandings (STANDINGS_SQL) uses:
+// one regular event's own snapshots, or — for a season board — every
+// non-internal event of that season (all public events when the season-type
+// event names no season). A regular event is the event itself.
+const SEASON_BOARD_SCOPE_SQL = `
+  SELECT id FROM season_events
+   WHERE internal = FALSE
+     AND ($1::bigint IS NULL OR season_id = $1)
+   ORDER BY id ASC
+`;
+
+async function boardScopeEventIds(pool, event) {
+  if (!event) return [];
+  if (event.type === 'regular') return [Number(event.id)];
+  const seasonId = event.type === 'season' && event.season_id != null
+    ? Number(event.season_id) : null;
+  const { rows } = await pool.query(SEASON_BOARD_SCOPE_SQL, [seasonId]);
+  return rows.map((r) => Number(r.id));
+}
+
+// One indexed read: the viewer's ledger points per event in scope, beside
+// the event's own offchain weight. `idx_user_activities_user_season_event`
+// serves the viewer filter.
+const VIEWER_LEDGER_TOTALS_SQL = `
+  SELECT se.id AS season_event_id, se.start_epoch, se.end_epoch, se.scoring_formula,
+         COALESCE(SUM(ua.points), 0) AS ledger_points
+    FROM season_events se
+    LEFT JOIN user_activities ua
+      ON ua.season_event_id = se.id AND ua.user_id = $1
+   WHERE se.id = ANY($2::bigint[])
+   GROUP BY se.id, se.start_epoch, se.end_epoch, se.scoring_formula
+`;
+
+// The weight the snapshot builder applies to an event's ledger points —
+// its own arithmetic, not a second rule:
+//
+//   - an event with NO epoch range takes the builder's points-only path,
+//     which enters ledger points at FACE VALUE (weight 1), ignoring
+//     `offchain_weight`. That matters here: production's season-type events
+//     carry `offchain_weight: 0`, so a weighted read would report 0 pending
+//     points on exactly the board this fix is for;
+//   - any other event weights them by `scoring_formula.offchain_weight`,
+//     as `resolveOffchainWeight` does (missing is 0).
+function ledgerWeight(event) {
+  const pointsOnly = event.start_epoch == null || event.end_epoch == null;
+  return pointsOnly ? 1 : resolveOffchainWeight(event.scoring_formula);
+}
+
+// Map of season_event_id -> the points the ledger holds for the viewer
+// there, already in the snapshot's own `extra_points` units (the same
+// computeOffchainColumns arithmetic the builder uses: every type's sum,
+// weighed once and rounded to 2 decimals).
+async function viewerLedgerTotals(pool, { userId, eventIds }) {
+  const out = new Map();
+  if (userId == null || !Array.isArray(eventIds) || !eventIds.length) return out;
+  const { rows } = await pool.query(VIEWER_LEDGER_TOTALS_SQL, [
+    Number(userId), eventIds.map((id) => Number(id)),
+  ]);
+  for (const r of rows) {
+    const points = num(r.ledger_points) ?? 0;
+    out.set(Number(r.season_event_id),
+      computeOffchainColumns({ ledger: points }, ledgerWeight(r)).extra_points);
+  }
+  return out;
+}
+
 // ─── "Which event should a standings surface open on?" ──────────────────
 //
 // The server-side twin of `TopochainEvents.pickDefault(events, {
@@ -285,6 +364,10 @@ module.exports = {
   publicUsername,
   EVENT_LEADERBOARD_SQL,
   fetchEventLeaderboardRows,
+  SEASON_BOARD_SCOPE_SQL,
+  boardScopeEventIds,
+  VIEWER_LEDGER_TOTALS_SQL,
+  viewerLedgerTotals,
   DEFAULT_PUBLIC_EVENT_SQL,
   resolveDefaultPublicEvent,
   eventStandingsBoard,

@@ -24,7 +24,7 @@ function stub(id, exports) {
 }
 
 function makePool({ session = null, now = null, recordRows = null } = {}) {
-  return {
+  const pool = {
     async query(sql, params) {
       const text = String(sql);
       if (/FROM chat_sessions cs JOIN apps a ON cs\.app_id = a\.id[\s\S]*status IN \('promoted', 'merging'\)/.test(text)) {
@@ -39,6 +39,10 @@ function makePool({ session = null, now = null, recordRows = null } = {}) {
       return { rows: [], rowCount: 0 };
     },
   };
+  // recordVote is one transaction now (#6736): this client delegates to the
+  // same recorder, so the route still reaches the statement it pins.
+  pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
+  return pool;
 }
 
 function loadVotes(pool) {

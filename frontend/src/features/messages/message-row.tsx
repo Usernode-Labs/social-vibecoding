@@ -5,6 +5,7 @@ import {
   PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
+import { useSearchMark } from '../ai/search-mark';
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { openReport } from '../dialogs/report';
@@ -163,6 +164,10 @@ export const MessageRow = memo(function MessageRow({
   botChat?: boolean;
 }) {
   const t = useMessages('messages');
+  // #6738: the words a search result was opened by stay marked in this
+  // message while it is read (../ai/search-mark.ts marks only the id it
+  // was opened for, so the thread's other rows are untouched).
+  const marks = useSearchMark(message.id);
   const mine = Number(typeof window !== 'undefined' ? window.App?.user?.id : 0) === message.sender.id;
   // #6081: someone else's words can be read in the reader's language. A
   // request's words are asked for only on a tap; a chat's ask for themselves
@@ -376,9 +381,9 @@ export const MessageRow = memo(function MessageRow({
   // Task 2020: a bot answer laid out is drawn in place of its words, which
   // stay its fallback (./bot-html.tsx).
   const richHtml = head ? null : botReplyHtml(message);
-  const markdown = <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} />;
+  const markdown = <MessageMarkdown content={message.content} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} marks={marks} />;
   const words = !message.content ? null : head
-    ? <BotHeadWords head={head} objects={message.objects} channels={channels} draft={draft} />
+    ? <BotHeadWords head={head} objects={message.objects} channels={channels} draft={draft} marks={marks} />
     : richHtml ? <BotHtmlReply html={richHtml} fallback={markdown} /> : markdown;
 
   // #5680: which rows have a side. A DM and a group do; a channel does not
@@ -451,7 +456,7 @@ export const MessageRow = memo(function MessageRow({
   // reply stays above them, and the same markdown renderer draws the
   // translation, so the row reads as it did.
   const translatedBody = translation.state === 'shown' && !editing
-    ? <>{quote}<MessageMarkdown content={translation.texts[0]} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} /></>
+    ? <>{quote}<MessageMarkdown content={translation.texts[0]} channels={channels} appSlug={botMeta(message)?.appSlug} requestColors={!!botMeta(message)} marks={marks} /></>
     : null;
 
   // Everything a message carries besides its text: files, shared items,

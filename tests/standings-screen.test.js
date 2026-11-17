@@ -1150,8 +1150,28 @@ test('#5275: the viewer\'s own place is pinned above the table', () => {
     leaderboard: [SEASON_ROW],
     viewer_row: { ...SEASON_ROW, rank: 22, total_points: 10823, is_viewer: true },
   });
-  assert.deepEqual(view.you, { rank: '22', points: '10,823', count: 10823 });
+  assert.deepEqual(view.you, { rank: '22', points: '10,823', count: 10823, pending: null });
   assert.equal(message('leaderboard:standings.you_other'), 'You · #{{rank}} · {{points}} points');
+
+  // #6735: points the standings have not counted yet ride under the line, in
+  // the same words the "Your standing" card uses.
+  const caughtUp = renderStandings({
+    event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },
+    leaderboard: [SEASON_ROW],
+    viewer_row: { ...SEASON_ROW, rank: 22, total_points: 750, pending_points: 750, is_viewer: true },
+  });
+  assert.equal(caughtUp.you.points, '750');
+  assert.equal(caughtUp.you.pending, '750 pts earned, not in the standings yet');
+  const pane = loadTsx('frontend/src/features/leaderboard/topochain-standings.tsx', {
+    stubs: {
+      './topochain-standings-store.js': {
+        topochainStandingsStore: { get: () => ({ mounted: true, body: caughtUp, drill: null }), subscribe: () => () => {} },
+      },
+    },
+  });
+  assert.match(renderToHtml(createElement(pane.TopochainStandingsPane, {})),
+    /<button[^>]*id="tc-lb-you"[\s\S]*?<span class="mt-1 block text-sm font-medium[^"]*">750 pts earned, not in the standings yet<\/span><\/button>/,
+    'inside the pinned line, as a second line');
 
   const guest = renderStandings({
     event: { id: 8, name: 'Season 1 Beta', display_leaderboard: true, type: 'regular' },

@@ -392,9 +392,14 @@
       "schemaSha256": "61b3ca527e4f285f860e86637b0ae0b4b6da4c6f6d1740a034010389ec81e64b"
     },
     {
+      "id": "chat-messages-client-key",
+      "sha256": "4d6a76708d16d32917100be4cd74422011fa39c348d1d55312a6af83e38567f4",
+      "schemaSha256": "bfefb0ba5730958609baaa51e29f0eeb2cc2bb1a13738152cbbb273cddf582f9"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "b78d422dfab580192ffbe3cdc25c018bcff0b7a1273a9bffaa674267d1cf6a7a",
-      "schemaSha256": "3c0d7bdef1c0b49a25aa5c03f384915f08168e5fb5983684dcbfaf7a254a2b9f"
+      "schemaSha256": "af4c4a16520183d8313df27faa16639e9a7059b5a026a7fe549ac5bf59091f5a"
     }
   ]
 }

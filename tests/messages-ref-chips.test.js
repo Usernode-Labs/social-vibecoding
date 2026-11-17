@@ -148,15 +148,15 @@ test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s 
 
 test('the row hands a bot message\'s project to its markdown, and a chip press records where it was opened from', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>/,
+  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} marks=\{marks\} \/>/,
     'only the bot\'s own message (botMeta reads it off a bot sender only), whose request numbers wear their tag colour');
   assert.match(read('frontend/src/features/messages/bot-question.tsx'),
     /export function botMeta\(message: ConversationMessage\): HomeroomBotMeta \| null \{\s*if \(!message\.sender\.bot\) return null;/);
 
   const format = read('frontend/src/features/messages/format.tsx');
   const fn = format.slice(format.indexOf('export function MessageMarkdown('), format.indexOf('\n}\n', format.indexOf('export function MessageMarkdown(')));
-  assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);[\s\S]*?return root\.innerHTML;\s*\}, \[content, channels, appSlug, requestColors\]\);/,
-    'the chips are rebuilt when the project changes, or whether they wear their request colours');
+  assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);[\s\S]*?return root\.innerHTML;\s*\}, \[content, channels, appSlug, requestColors, marks\]\);/,
+    'the chips are rebuilt when the project changes, whether they wear their request colours, or the words a search marked change');
   assert.match(fn, /const chip = \(event\.target as Element \| null\)\?\.closest\?\.\('a\.gc-ref\[href\]'\);/);
   assert.match(fn, /\n    recordObjectOrigin\(event, href\);\n  \};/, 'any chip it does not handle in place (#4241) records its origin');
   assert.match(fn, /onClick=\{appSlug \? openRef : undefined\} dangerouslySetInnerHTML=\{inner\}/,

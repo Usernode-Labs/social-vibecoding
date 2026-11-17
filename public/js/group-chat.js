@@ -75,6 +75,11 @@ const GroupChat = {
   _reconnectAttempts: 0,
   _reconnectTimer: null,
   _pendingOutgoing: [],
+  // #6730: comments sent on an open socket whose echo has not come back,
+  // keyed by the per-press clientKey. If the socket drops underneath one,
+  // it goes back to the front of _pendingOutgoing (so the reconnect flush
+  // retries it with the same key) and the server's key match stores it once.
+  _inFlight: new Map(),
 
   // #15: Signal-style reply. `replyDraft` is the quote to attach to the
   // NEXT outgoing message (or null). `_tap` records the last pointerdown
@@ -526,6 +531,9 @@ const GroupChat = {
       // Bail if disconnect() ran (we changed apps / left the
       // surface entirely); the existing socket reference is stale.
       if (GroupChat.ws !== ws) return;
+      // #6730: comments sent but not echoed were never confirmed; retry them
+      // after the reconnect with the keys they were first sent under.
+      GroupChat._requeueInFlight();
       GroupChat._renderStatusLine();
       GroupChat._scheduleReconnect(ev.code);
     };
@@ -570,6 +578,9 @@ const GroupChat = {
     for (const payload of queue) {
       try {
         GroupChat.ws.send(JSON.stringify(payload));
+        // #6730: now waiting on its echo, like anything sent on an open
+        // socket; a drop before the echo requeues it.
+        if (payload.clientKey) GroupChat._inFlight.set(payload.clientKey, payload);
       } catch {
         // Socket closed mid-flush — re-queue whatever didn't go
         // and let the next reconnect try again.
@@ -577,6 +588,28 @@ const GroupChat = {
         break;
       }
     }
+  },
+
+  // #6730: stop waiting for this comment's echo — it arrived (a `chat`
+  // frame), the server already had it (`chat_ack`), or it was refused.
+  _settleInFlight(key) {
+    if (typeof key !== 'string' || !key) return;
+    GroupChat._inFlight.delete(key);
+  },
+
+  // #6730: a socket that closed with comments un-echoed. They were on the
+  // wire but may never have arrived, so put them back at the front of the
+  // offline queue — each keeps its key, so the flush after the reconnect
+  // stores each one once, whether or not the first attempt got there.
+  _requeueInFlight() {
+    if (!GroupChat._inFlight.size) return;
+    const queued = new Set(GroupChat._pendingOutgoing.map((p) => p && p.clientKey));
+    const kept = [];
+    for (const [key, payload] of GroupChat._inFlight) {
+      if (!queued.has(key)) kept.push(payload);
+    }
+    GroupChat._inFlight.clear();
+    if (kept.length) GroupChat._pendingOutgoing.unshift(...kept);
   },
 
   disconnect() {
@@ -610,6 +643,7 @@ const GroupChat = {
     // we switch apps, drop them rather than silently sending them
     // to whatever room reconnects next.
     GroupChat._pendingOutgoing.length = 0;
+    GroupChat._inFlight.clear();
   },
 
   // A block changes which persisted posts this viewer may see. Drop every
@@ -727,13 +761,23 @@ const GroupChat = {
         // Posting here is for the app's members (services/communities.js).
         // The server answered THIS socket's own message with the question
         // rather than dropping it; see _answerJoinRequired.
+        // #6730: that comment is no longer waiting on an echo.
+        GroupChat._settleInFlight(msg.clientKey || (msg.retry && msg.retry.clientKey));
         void GroupChat._answerJoinRequired(msg);
+        break;
+      }
+      case 'chat_ack': {
+        // #6730: the server already had this comment (a retry after a lost
+        // answer); it says so on the sender's socket alone.
+        GroupChat._settleInFlight(msg.clientKey);
         break;
       }
       case 'rate_limited': {
         // The server refused THIS socket's own message, edit or reaction for
         // coming too fast (admitSocketFrame in services/ws.js). The composer
         // already cleared itself, so say it was not sent and when to retry.
+        // #6730: the refused comment is not waiting on an echo either.
+        GroupChat._settleInFlight(msg.clientKey || (msg.retry && msg.retry.clientKey));
         window.PlatformUI?.toast?.(GroupChat._rateLimitedText(msg));
         break;
       }
@@ -741,10 +785,13 @@ const GroupChat = {
         // A refusal the server explains in words, such as Homeroom's old
         // channel being read-only (`channel_moved`). It answers a message
         // this socket sent, so it used to vanish along with that message.
+        GroupChat._settleInFlight(msg.clientKey);
         GroupChat._showSocketError(msg);
         break;
       }
       case 'chat': {
+        // #6730: an echo is the comment arriving; stop waiting on it.
+        GroupChat._settleInFlight(msg.clientKey);
         // #194: thread messages never land in the general stream — they
         // route to the mounted thread (if it matches) or bump the
         // chat-count badge on their issue/proposal row. #2387 follow-up:
@@ -1055,6 +1102,16 @@ const GroupChat = {
   // preserve the user's most recent intent.
   PENDING_LIMIT: 50,
 
+  // #6730: a random mark for one press of Send. Same shape as the Messages
+  // composer's key (the server validates it as [A-Za-z0-9._:-]{8,64}); it
+  // never leaves this device except on the comment it belongs to.
+  _newClientKey() {
+    try {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch { /* older browser: fall through */ }
+    return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  },
+
   // Submit a chat message. Either ships it now (socket OPEN) or
   // queues it for the next reconnect. Never silently drops — that
   // was the visible half of #7 ("messages fail to send without
@@ -1072,6 +1129,10 @@ const GroupChat = {
     if (GroupChat._readOnly()) return;
     // #194: thread sends carry their scope.
     const payload = { type: 'chat', content };
+    // #6730: one press, one comment. The key is made here, at the press,
+    // and rides with the payload through every retry (a queued flush, a
+    // reconnect, a Join and resend) so the server can match it.
+    payload.clientKey = GroupChat._newClientKey();
     if (thread && thread.type && thread.ref) {
       payload.thread = { type: thread.type, ref: Number(thread.ref) };
     }
@@ -1106,6 +1167,7 @@ const GroupChat = {
     GroupChat._setAttachError(null, thread);
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      GroupChat._inFlight.set(payload.clientKey, payload);
       GroupChat.ws.send(JSON.stringify(payload));
       return;
     }
@@ -1142,6 +1204,9 @@ const GroupChat = {
     } catch { joined = false; }
     if (joined && msg.retry && msg.retry.type === 'chat') {
       if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+        // #6730: the retry is the same comment, so it keeps its key and is
+        // waited on under it again.
+        if (msg.retry.clientKey) GroupChat._inFlight.set(msg.retry.clientKey, msg.retry);
         GroupChat.ws.send(JSON.stringify(msg.retry));
       } else {
         GroupChat._pendingOutgoing.push(msg.retry);
