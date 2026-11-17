@@ -2463,6 +2463,18 @@ async function recordVote({
   // epoch read under that lock. An epoch the voter's screen was drawn at
   // (#2782) is held to when the revision is enforced. The bot's change
   // machine hears it in the same statement (botChangeVotedSql).
+  //
+  // #6728: the write itself decides whether the vote changed. Two tabs (or
+  // devices) pressing the same Yes arrive together, both read "no prior
+  // vote" before either commits, and the DO UPDATE's WHERE then skips the
+  // second: ON CONFLICT sees the row the first committed, finds the same
+  // side at the same epoch with no new words, and returns no row. The
+  // statement therefore answers with one row either way: `changed` is true
+  // for a real write and false for an identical repeat, which is what the
+  // route uses to skip the vote line, the author's notification and the
+  // tally push. Zero rows still means the vote was refused (the epoch moved
+  // or the change left review), the meaning rowCount has always had here and
+  // in demo-mode's castPartnerVote.
   return pool.query(
     `WITH current_session AS (
        SELECT id, approval_epoch
@@ -2471,19 +2483,27 @@ async function recordVote({
           AND status IN ('promoted', 'merging')
         FOR UPDATE
      ),
+     eligible AS (
+       SELECT id, approval_epoch FROM current_session
+        WHERE $6::integer IS NULL OR approval_epoch = $6::integer
+     ),
      v AS (
      INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
-     SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
-      WHERE $6::integer IS NULL OR approval_epoch = $6::integer
+     SELECT id, $2, $3, $4, approval_epoch, $5 FROM eligible
      ON CONFLICT (session_id, user_id) DO UPDATE
        SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
            approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
            ${VOTE_REASON_UPSERT_SQL}
+      WHERE NOT (pr_votes.vote = EXCLUDED.vote
+                 AND pr_votes.approval_epoch IS NOT DISTINCT FROM EXCLUDED.approval_epoch
+                 AND (EXCLUDED.reason IS NULL OR EXCLUDED.reason IS NOT DISTINCT FROM pr_votes.reason))
      RETURNING id, reason, session_id, approval_epoch
      ),
      told AS (${botChangeVotedSql({ from: 'v', sessionId: 'v.session_id', voterId: '$2::int', voter: '$7::text', vote: '$3::text', epoch: 'v.approval_epoch' })})
-     SELECT v.id, v.reason, (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1) IS NOT NULL AS told
-       FROM v`,
+     SELECT v.id, v.reason, (v.id IS NOT NULL) AS changed,
+            (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1) IS NOT NULL AS told
+       FROM eligible
+       LEFT JOIN v ON TRUE`,
     [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null, voter]
   );
 }
@@ -3519,20 +3539,14 @@ function voteRoutes(config) {
         [session.id, req.user.id]
       );
       const previousVote = prevRows[0]?.vote || null;
-      const previousReason = prevRows[0]?.reason || null;
       const voteHeadSha = reviewedHeadForSession(session);
-      // #2038: "unchanged" means the same person voting the same way on the
-      // same PROPOSAL. Keying it on the commit made a re-vote after a
-      // mechanical sync look like a change, re-posting to group chat and
-      // re-entering the merge gate for a click that moved nothing.
+      // #2038: the pre-read still classifies a real write as the same side
+      // on the same PROPOSAL. It no longer decides `unchanged`: two tabs
+      // voting at once both read "no prior vote" here, so only the write
+      // under the row lock can tell which of them changed anything (#6728).
       const sameSide = previousVote === vote
         && prevRows[0]?.approval_epoch != null
         && prevRows[0].approval_epoch === prevRows[0].current_epoch;
-      const unchanged = sameSide && (reason === null || reason === previousReason);
-      // Same side, new words (#1688): the row is updated and the roster
-      // re-reads it, but nothing is announced or re-counted — the vote did
-      // not move.
-      const reasonOnly = sameSide && !unchanged;
 
       // Stamp every GitHub proposal vote with its reviewed PR head. Imported
       // proposals retain imported_pr_head_sha; native proposals use the new
@@ -3549,6 +3563,14 @@ function voteRoutes(config) {
         expectedEpoch: req.body?.expectedEpoch,
         voter: req.user.username || null,
       });
+      // #6728: the write says whether the vote changed. An identical repeat
+      // (same side, same epoch, no new words) updated nothing, so nothing
+      // is announced, notified or re-counted for it.
+      const unchanged = recorded?.rows?.[0]?.changed === false;
+      // Same side, new words (#1688): the row is updated and the roster
+      // re-reads it, but nothing is announced or re-counted — the vote did
+      // not move.
+      const reasonOnly = sameSide && !unchanged;
       // The line the row now carries: the one sent, or the earlier one the
       // upsert kept for a same-side re-cast (a Yes carried onto a new
       // version brings its sentence along).
@@ -3636,6 +3658,21 @@ function voteRoutes(config) {
       const readyCard = { ...(goesLive ? { goesLive } : {}), ...codeMissingNote };
 
       if (unchanged) {
+        // #6728: the row was not rewritten, but the person did just look at
+        // the change and press Yes, and that is activity: the proposal
+        // machine's review check reads MAX(created_at) to decide whether a
+        // proposal is going stale. Best-effort, and nothing else follows it.
+        try {
+          await pool.query(
+            `UPDATE pr_votes SET created_at = NOW()
+              WHERE session_id = $1 AND user_id = $2`,
+            [session.id, req.user.id]
+          );
+        } catch (err) {
+          log.warn('votes', 'Touching the repeated vote\'s activity time failed', {
+            sessionId: session.id, userId: req.user.id, err: err.message,
+          });
+        }
         log.debug('votes', 'Vote unchanged, skipping broadcast+merge', {
           sessionId: session.id, userId: req.user.id, vote,
         });

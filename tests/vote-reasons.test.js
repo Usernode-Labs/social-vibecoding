@@ -69,11 +69,17 @@ function votePool({ prev = [], roster = [] } = {}) {
     [/cs\.approval_epoch AS current_epoch/, prev],
     // The upsert's CASE, in miniature: a line that arrives wins; none
     // arriving keeps the old one on the same side and drops it on a flip.
+    // #6728: `changed` is the statement's own verdict — false only when the
+    // stored row already holds this same side at the same epoch with no new
+    // words, which is when the DO UPDATE's WHERE skips it.
     [/INSERT INTO pr_votes/, (params) => {
       const p = prev[0] || null;
       const reason = params[4] != null ? params[4] : (p && p.vote === params[2] ? p.reason : null);
-      inserted.push({ params, reason });
-      return [{ id: 1, reason }];
+      const changed = !(p && p.vote === params[2]
+        && p.approval_epoch === p.current_epoch
+        && (params[4] == null || params[4] === p.reason));
+      inserted.push({ params, reason, changed });
+      return [{ id: changed ? 1 : null, reason: changed ? reason : null, changed }];
     }],
     [/AS current\s+FROM pr_votes pv/, roster],
     [/SELECT app_id FROM chat_sessions WHERE id = \$1/, [{ app_id: 5 }]],
@@ -251,6 +257,15 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
     assert.match(plain.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/, 'none arriving keeps it on the same side');
     assert.match(plain.sql, /ELSE NULL END/, 'and drops it on a flip');
     assert.match(plain.sql, /RETURNING id, reason/);
+    // #6728: the write decides whether the vote changed. A second identical
+    // press finds the row the first committed and the DO UPDATE's WHERE skips
+    // it, so the statement answers `changed = false` instead of rewriting it.
+    assert.match(plain.sql, /eligible AS \(/, 'the epoch predicate is its own CTE');
+    assert.match(plain.sql, /WHERE NOT \(pr_votes\.vote = EXCLUDED\.vote/,
+      'an identical repeat updates nothing');
+    assert.match(plain.sql, /\(v\.id IS NOT NULL\) AS changed/);
+    assert.match(plain.sql, /FROM eligible\s+LEFT JOIN v ON TRUE/,
+      'one row either way, so the route can tell a repeat from a refusal');
     assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.', null, null]);
 
     await subject.recordVote({

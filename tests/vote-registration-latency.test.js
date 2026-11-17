@@ -72,7 +72,7 @@ function makePool({ epoch = 2 } = {}) {
         const expected = params[5];
         if (expected != null && expected !== state.epoch) return { rows: [], rowCount: 0 };
         inserted.push(params);
-        return { rows: [{ id: 1, reason: params[4] }], rowCount: 1 };
+        return { rows: [{ id: 1, reason: params[4], changed: true }], rowCount: 1 };
       }
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: HEAD, approval_epoch: state.epoch }], rowCount: 1 };
