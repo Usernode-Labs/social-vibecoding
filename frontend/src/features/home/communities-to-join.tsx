@@ -93,6 +93,13 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   }, [pool, kind, query, sort, featured]);
   useEffect(() => { setShown(JOIN_PAGE); }, [kind, query, sort]);
   const more = list.length > shown;
+  // "More communities" names the rest under Featured. Standard (WIP) draws
+  // Featured as a row of Home's own, away from this list, so the list is
+  // simply Communities to join and takes no second label.
+  const restLabel = featured.length > 0 && !wip;
+  // Standard (WIP): the filters are one line, the kinds at its start and the
+  // sort at its end, right over the list (app.css `.wip-filterbar`).
+  const oneLine = wip && !query && kinds.length > 0;
 
   useEffect(() => {
     const el = sentinel.current;
@@ -114,6 +121,22 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   }, [more, shown]);
 
   if (query && !list.length) return null;
+  const sortMenu = (
+    <Select
+      variant="plain"
+      className="w-auto min-h-11"
+      aria-label={t('home:join.sort.label')}
+      data-home-join-sort=""
+      value={sort}
+      onChange={(e) => setSort(e.target.value as JoinSort)}
+    >
+      {JOIN_SORTS.map((s) => (
+        <option key={s} value={s}>
+          {s === 'trending' ? t('home:join.sort.active') : t(`home:join.sort.${s}`)}
+        </option>
+      ))}
+    </Select>
+  );
   // Nothing drawn on a card depends on being signed in (#6609): a member and
   // a visitor get the same card, and Join is the project page's.
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
@@ -124,7 +147,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     <section id={signedIn ? 'home-join-section' : undefined} data-home-join-section="" className="px-3 pb-6" aria-busy={apps ? undefined : true}>
       <SectionHeading>{heading}</SectionHeading>
       {!query && kinds.length ? (
-        <FadeRail role="group" aria-label={ta('auth:guest.categories.label')} className="-mx-3 gap-2 px-3 pt-1 pb-3">
+        <div className={oneLine ? 'wip-filterbar' : undefined}>
+        <FadeRail role="group" aria-label={ta('auth:guest.categories.label')} className={oneLine ? 'min-w-0 flex-1 gap-2 px-0 py-0' : '-mx-3 gap-2 px-3 pt-1 pb-3'}>
           <Chip size="bar" className="min-h-11" selected={!kind} data-home-join-kind="all" onClick={() => setKind(null)}>
             {ta('auth:guest.category.all')}
           </Chip>
@@ -134,6 +158,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             </Chip>
           ))}
         </FadeRail>
+        {oneLine && list.length > 1 ? sortMenu : null}
+        </div>
       ) : null}
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
@@ -178,25 +204,12 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             A search leaves Featured out, and then there is one grid with no
             heading, and the sort sits on its own line above it. The sort is
             drawn only when there are two cards it could order. */}
-        {list.length > 1 ? (
-          <div className={`flex items-center gap-2 px-1 pb-2${featured.length ? '' : ' justify-end'}`}>
-            {featured.length ? <h3 className={`${SMALL_CAPS_LABEL} flex-1`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
-            <Select
-              variant="plain"
-              className="w-auto min-h-11"
-              aria-label={t('home:join.sort.label')}
-              data-home-join-sort=""
-              value={sort}
-              onChange={(e) => setSort(e.target.value as JoinSort)}
-            >
-              {JOIN_SORTS.map((s) => (
-                <option key={s} value={s}>
-                  {s === 'trending' ? t('home:join.sort.active') : t(`home:join.sort.${s}`)}
-                </option>
-              ))}
-            </Select>
+        {oneLine ? null : list.length > 1 ? (
+          <div className={`flex items-center gap-2 px-1 pb-2${restLabel ? '' : ' justify-end'}`}>
+            {restLabel ? <h3 className={`${SMALL_CAPS_LABEL} flex-1`} data-home-join-rest="">{t('home:join.more')}</h3> : null}
+            {sortMenu}
           </div>
-        ) : featured.length ? (
+        ) : restLabel ? (
           <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`} data-home-join-rest="">{t('home:join.more')}</h3>
         ) : null}
         <div className={`${CARD_GRID} px-1`}>

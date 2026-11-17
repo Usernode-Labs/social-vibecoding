@@ -23,10 +23,6 @@
     "text": "Pinned projects",
     "description": "Heading over the grid of project tiles on the Home screen under the Standard (WIP) look: the projects this person keeps a tile for. It replaces \"Pinned apps\" there."
   },
-  "grid.seeAll": {
-    "text": "See all",
-    "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown when the folded grid hides some: it unfolds the grid to show every pinned one."
-  },
   "grid.seeLess": {
     "text": "Show less",
     "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown once See all has unfolded the grid: it folds the grid back to its first rows."

@@ -102,7 +102,7 @@ import { NeedsYouCard } from './needs-you-card';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
-import { WIP_HEAD_LINK, WipCard, WipCta } from './wip-kit';
+import { WipCard, WipCta, WipHeadMore } from './wip-kit';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -385,7 +385,7 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
-            ) : (canEdit || grid.create?.heldBack || (wip && (moreCount > 0 || canFold))) ? (
+            ) : (canEdit || grid.create?.heldBack) ? (
               /* #5871: "Edit" is edit mode's own door. A hold on a tile used
                  to start it beside the tile's menu, so one press showed both;
                  a hold is the menu alone now, and arranging is asked for
@@ -402,38 +402,23 @@ export function HomeScreen() {
                     <span className="whitespace-nowrap">{t('home:edit.start')}</span>
                   </button>
                 ) : null}
-                {/* Standard (WIP): one link unfolds the grid and folds it
-                    again. See all while rows are held back; Show less once
-                    they are out and folding would hide some. */}
-                {wip && moreCount > 0 ? (
-                  <button
-                    type="button"
-                    id="home-apps-see-all"
-                    className={WIP_HEAD_LINK}
-                    aria-expanded={false}
-                    aria-controls="app-list"
-                    aria-label={t('home:grid.showAll', { count: moreCount })}
-                    onClick={() => { foldApps(false); }}
-                  >
-                    <span className="whitespace-nowrap">{t('home:grid.seeAll')}</span>
-                  </button>
-                ) : wip && canFold ? (
-                  <button
-                    type="button"
-                    id="home-apps-see-less"
-                    className={WIP_HEAD_LINK}
-                    aria-expanded
-                    aria-controls="app-list"
-                    onClick={() => { foldApps(true); }}
-                  >
-                    <span className="whitespace-nowrap">{t('home:grid.seeLess')}</span>
-                  </button>
-                ) : null}
                 {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
               </span>
             ) : null}
           >
-            {wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
+            {/* Standard (WIP): the label and the chevron after it are one
+                thing to press, which unfolds the grid and folds it again.
+                Down while rows are held back; up once they are out and
+                folding would hide some; plain words when neither. */}
+            {wip && moreCount > 0 ? (
+              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
+                {t('home:grid.headingProjects')}
+              </WipHeadMore>
+            ) : wip && canFold ? (
+              <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
+                {t('home:grid.headingProjects')}
+              </WipHeadMore>
+            ) : wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
           </SectionHeading>
           {/* In Standard (WIP) the grid and its "Show all" line are one card
               (WipCard, ./wip-kit.tsx), as Pinned communities' tiles are. */}

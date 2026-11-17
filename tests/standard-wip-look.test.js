@@ -113,7 +113,7 @@ test('Home places what it does not name last, so a new standard section is drawn
 
 test('its pieces come from the kit, not from classes spelled in place', () => {
   const kit = read('frontend', 'src', 'features', 'home', 'wip-kit.tsx');
-  for (const name of ['WipCard', 'WipCta', 'WIP_HEAD_LINK']) assert.match(kit, new RegExp(`export (function|const) ${name}\\b`));
+  for (const name of ['WipCard', 'WipCta', 'WipHeadMore']) assert.match(kit, new RegExp(`export (function|const) ${name}\\b`));
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
   assert.match(island, /<WipCard on=\{wip\}>/);
   assert.match(island, /<WipCta id="home-new-project-top"/);
