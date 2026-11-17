@@ -26160,7 +26160,8 @@ const AppView = {
   //                screen's size, otherwise on After. It is a fourth radio
   //                with no label, checked to start; any choice replaces it.
   //   zoom       — a Close-up / Whole screen switch on screens that have a
-  //                close-up. The radios hold it; the caller lays the sides out.
+  //                close-up. The radios hold it, checked on Whole screen so a
+  //                viewer opens fitted; the caller lays the sides out.
   // `key` makes the ids unique on the page, so a spec and a card can share one.
   SHOTS_SIZE_NAME_IDS: {
     desktop: 'changes:shots.size.desktop',
@@ -26354,7 +26355,7 @@ const AppView = {
     });
     const sidePicks = `<span class="shots-picks"><input type="radio" class="shots-side-pick shots-side-before" name="shots-${key}-side" id="${sideId('before')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBefore')}"><input type="radio" class="shots-side-pick shots-side-after" name="shots-${key}-side" id="${sideId('after')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAfter')}"${autoSide ? '' : ' checked'}>${sideBySide ? `<input type="radio" class="shots-side-pick shots-side-both" name="shots-${key}-side" id="${sideId('both')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showBoth')}">` : ''}${autoSide ? `<input type="radio" class="shots-side-pick shots-side-auto" name="shots-${key}-side" id="${sideId('auto')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showAuto')}" checked>` : ''}</span>`;
     const zoomPicks = zooming
-      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}" checked><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}"></span>`
+      ? `<span class="shots-picks"><input type="radio" class="shots-zoom-pick shots-zoom-close" name="shots-${key}-zoom" id="${zoomId('close')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showCloseUp')}"><input type="radio" class="shots-zoom-pick shots-zoom-whole" name="shots-${key}-zoom" id="${zoomId('whole')}" aria-label="${PlatformI18n.htmlText('changes:shots.viewer.showWhole')}" checked></span>`
       : '';
     const screenPicks = list.length > 1
       ? `<span class="shots-picks">${list.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="shots-${key}-screen-pick" id="${pickId(index)}" aria-label="${attr(Object.prototype.hasOwnProperty.call(AppView.SHOTS_SCREEN_PICK_IDS, String(screen.viewport))
