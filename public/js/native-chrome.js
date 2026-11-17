@@ -692,23 +692,36 @@
         Date.now() - at < NativeChrome._REASK_AFTER_MS;
     },
 
+    // A bridge read that times out or fails resolves null rather than
+    // rejecting. Read once more after this pause before calling the answer
+    // unknown: a slow answer must never be read as "never asked".
+    _READ_RETRY_MS: 400,
+
     // iOS: whether the app has ever presented the OS notification prompt.
     // The settings snapshot only carries the exactAlarmGranted boolean,
     // which cannot distinguish "denied" from "never asked" — the social
     // push state can. Resolves 'undetermined' | 'granted' | 'denied', or
-    // null when the build doesn't expose it (callers fall back to the
-    // boolean). Tolerates both notDetermined / not_determined spellings.
+    // null when the build doesn't expose it or the answer could not be
+    // read twice. Tolerates both notDetermined / not_determined spellings.
     async _iosPushPermissionStatus() {
       if (!(await NativeChrome.has('getSocialPushState'))) return null;
       const bridge = window.usernode;
       if (!bridge || typeof bridge.getSocialPushState !== 'function') {
         return null;
       }
-      let state = null;
-      try { state = await bridge.getSocialPushState(); } catch (_) {
-        return null;
+      const read = async () => {
+        try { return await bridge.getSocialPushState(); } catch (_) {
+          return null;
+        }
+      };
+      let state = await read();
+      if (!state) {
+        await new Promise((resolve) => setTimeout(
+          resolve, NativeChrome._READ_RETRY_MS));
+        state = await read();
       }
-      return NativeChrome._permissionStatusOf(state && state.permissionStatus);
+      if (!state) return null;
+      return NativeChrome._permissionStatusOf(state.permissionStatus);
     },
 
     // One spelling for a native permission status, wherever it was read
@@ -1709,6 +1722,25 @@
       return { verdict: 'ask' };
     },
 
+    // The settings snapshot's `permissions`, or null when the read timed
+    // out or failed. A missing answer is read once more before anything is
+    // decided from it; a second miss stays unknown, never "never asked".
+    async _settingsPermissions(bridge) {
+      const read = async () => {
+        try {
+          const snapshot = await bridge.getSettingsState();
+          return (snapshot && snapshot.permissions) || null;
+        } catch (_) {
+          return null;
+        }
+      };
+      const first = await read();
+      if (first) return first;
+      await new Promise((resolve) => setTimeout(
+        resolve, NativeChrome._READ_RETRY_MS));
+      return read();
+    },
+
     // Everything decideReadyPing needs, read without asking anything.
     async _readyPingState() {
       const bridge = window.usernode;
@@ -1725,10 +1757,7 @@
       let perms = null;
       if (typeof bridge.getSettingsState === 'function' &&
           (await NativeChrome.supports('getSettingsState')) !== false) {
-        try {
-          const snapshot = await bridge.getSettingsState();
-          perms = snapshot && snapshot.permissions;
-        } catch (_) { /* unreadable: decided from what else is known */ }
+        perms = await NativeChrome._settingsPermissions(bridge);
       }
       if (perms && typeof perms.platform === 'string') state.platform = perms.platform;
       const can = async (method) => typeof bridge[method] === 'function' &&

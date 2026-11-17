@@ -5,7 +5,8 @@
  *   - the account's answers: GET /api/me/notification-asks, once per page
  *     and again after each answer;
  *   - the phone's permission, in the Homeroom app:
- *     NativeChrome.notifyAskPermission (public/js/native-chrome.js);
+ *     NativeChrome.notifyAskPermission (public/js/native-chrome.js). A
+ *     rejected read is explicitly unknown, so it draws no ask;
  *   - where the app can be got: GET /api/public/mobile-app;
  *   - this device: a phone (a store link) or a computer (a code to scan).
  * One write: POST /api/me/notification-asks, with the answer.
@@ -149,7 +150,7 @@ export async function planAsk(moment: NotifyMoment): Promise<AskContext> {
   const [state, native, urls] = await Promise.all([
     readAskState(),
     isNative && h.NativeChrome && typeof h.NativeChrome.notifyAskPermission === 'function'
-      ? h.NativeChrome.notifyAskPermission().catch((): NativePermission => ({ isNative: true, canRequest: false }))
+      ? h.NativeChrome.notifyAskPermission().catch((): NativePermission => ({ isNative: true, permission: null, canRequest: false }))
       : Promise.resolve({ isNative } as NativePermission),
     isNative ? Promise.resolve(null) : readStoreUrls(),
   ]);
