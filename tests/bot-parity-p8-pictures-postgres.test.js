@@ -218,7 +218,7 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     assert.match(tooMany.error, /^You have 2 pictures left this week: ask for that many or fewer\./);
     const spent = await tool.run(pool, { ...ctx, settings: { ...settings, userWeeklyCents: 10 } }, 'make_pictures', { prompt: 'A pear' });
     assert.match(spent.error, /Your building time for this week is used up/);
-    const rules = await tool.run(pool, ctx, 'make_pictures', { prompt: 'A pear holding a gun' });
+    const rules = await tool.run(pool, ctx, 'make_pictures', { prompt: 'A pear in a gory scene' });
     assert.match(rules.error, /content rules/);
     assert.equal(asked.length, before, 'nothing was asked of the model');
     assert.equal(await pictures.picturesThisWeek(pool, ada.id), 4, 'nothing was counted');
