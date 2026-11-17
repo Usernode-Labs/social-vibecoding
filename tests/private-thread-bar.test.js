@@ -151,16 +151,18 @@ test('it is drawn on every private thread in the bot\'s chat, by the server\'s w
   assert.ok(note > 0 && doors > note, 'the note heads the thread, the doors close it');
   assert.match(screen.slice(doors - 80, doors), /\{privateRoot && privateMine && root \? \(\s*$/);
   assert.match(screen.slice(doors, doors + 400), /text=\{privateThreadWords\(root, replies, meId\)\}/);
+  // #6781: the name the bot suggested, from its newest reply that carries one.
+  assert.match(screen.slice(doors, doors + 400), /name=\{privateThreadName\(root, replies\)\}/);
   assert.match(screen.slice(doors, doors + 400), /botReplied=\{replies\.some\(\(message\) => message\.sender\.bot\)\}/);
   // #6523: the foot follows what Homeroom bot last said, not the thread's kind.
   assert.match(screen.slice(doors, doors + 400), /invited=\{newProjectInvited\(root, replies\)\}/);
-  assert.match(screen, /PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited,/);
+  assert.match(screen, /PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName,/);
   assert.match(screen.slice(doors, doors + 400), /working=\{!!threadWorking\}/, 'the thread\'s working state holds the foot back');
   assert.doesNotMatch(screen, /<PrivateThreadBar\b/, 'no bar of doors over the thread any more');
 });
 
 test('whose thread it is, its name and the words to take public, for a root of theirs or the bot\'s line', () => {
-  const { isOwnPrivateThread, privateThreadTitle, privateThreadWords } = loadTsx(BAR);
+  const { isOwnPrivateThread, privateThreadName, privateThreadTitle, privateThreadWords } = loadTsx(BAR);
   const ME = 7;
   const mine = { content: 'An idea: swap seeds\nby post', sender: { id: ME } };
   const plus = { content: 'New thread, to add something new on Seed swap.', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread' } } };
@@ -183,15 +185,45 @@ test('whose thread it is, its name and the words to take public, for a root of t
   assert.equal(privateThreadTitle(plus, [], ME), null, 'nothing yet: the caller names it by its kind');
   assert.equal(privateThreadTitle(design, [], ME), 'Home screen', 'a design thread by its screen');
   assert.equal(privateThreadTitle(draft, [], ME), 'I drafted it as a request on Seed swap, in a thread only you can see.');
-  // The words: their root's, else their first message in the thread.
-  assert.equal(privateThreadWords(mine, replies, ME), 'An idea: swap seeds\nby post');
-  assert.equal(privateThreadWords(plus, replies, ME), 'A seed calendar\nmonth by month');
+  // The words: the newest offer's brief, else their idea the bot opened for,
+  // else everything they wrote in the thread, in order (#6781).
+  assert.equal(privateThreadWords(mine, replies, ME), 'An idea: swap seeds\nby post\n\nA seed calendar\nmonth by month\n\nand reminders');
+  assert.equal(privateThreadWords(plus, replies, ME), 'A seed calendar\nmonth by month\n\nand reminders', 'all of theirs, not only the first');
   assert.equal(privateThreadWords(draft, [], ME), '', 'nothing of theirs yet');
   // B08, B04 (audit 2 Nov 2026): a new project's thread is named by its idea and starts from it.
   const project = { content: 'New thread, for a new project: a chore chart. Only you can see it.', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread', projectIdea: 'a chore chart for our flat' } } };
   const answered = [{ content: 'Yes please. Just the three of us', sender: { id: ME } }];
   assert.equal(privateThreadTitle(project, answered, ME), 'a chore chart for our flat', 'never their newest words');
   assert.equal(privateThreadWords(project, answered, ME), 'a chore chart for our flat');
+  // #6781: the brief Homeroom bot wrote with its New project offer is what
+  // Create starts from, over the root's words and everything they answered.
+  const offered = {
+    content: 'Here is the plan from your answers.',
+    sender: { id: 2, bot: true },
+    metadata: { homeroomBot: { kind: 'chat', newProject: true, projectIdea: 'A seed calendar with swaps and reminders', projectName: 'Seed Swap' } },
+  };
+  const withOffer = [...replies, offered];
+  assert.equal(privateThreadWords(plus, withOffer, ME), 'A seed calendar with swaps and reminders');
+  assert.equal(privateThreadWords(mine, withOffer, ME), 'A seed calendar with swaps and reminders', 'over their own root too');
+  assert.equal(privateThreadName(plus, withOffer), 'Seed Swap');
+  assert.equal(privateThreadName(plus, replies), '', 'no name offered');
+  // The newest offer's brief wins; the button follows the newest reply.
+  const older = {
+    content: 'An earlier plan.', sender: { id: 2, bot: true },
+    metadata: { homeroomBot: { newProject: true, projectIdea: 'The first brief', projectName: 'First Name' } },
+  };
+  assert.equal(privateThreadWords(plus, [older, ...replies, offered], ME), 'A seed calendar with swaps and reminders');
+  assert.equal(privateThreadName(plus, [older, ...replies, offered]), 'Seed Swap');
+  // No brief: everything they wrote, cut at 4000 characters, keeping the start.
+  const long = { content: `start ${'x'.repeat(5000)}`, sender: { id: ME } };
+  assert.equal(privateThreadWords(plus, [long], ME).length, 4000);
+  assert.equal(privateThreadWords(plus, [long], ME).slice(0, 6), 'start ');
+  // The key must survive the client's metadata shaper, or the name field
+  // stays empty however right the thread's foot is (api.ts normalizeBotMeta).
+  const { normalizeBotMeta } = loadTsx('frontend/src/features/messages/api.ts');
+  const shaped = normalizeBotMeta({ homeroomBot: { kind: 'chat', newProject: true, projectIdea: 'A brief', projectName: 'Seed Swap' } });
+  assert.equal(shaped.homeroomBot.projectName, 'Seed Swap');
+  assert.equal(privateThreadName(plus, [{ content: '', sender: { id: 2, bot: true }, metadata: shaped }]), 'Seed Swap');
   // B19: a draft's thread by what it drafts.
   const named = { ...draft, metadata: { homeroomBot: { kind: 'opened_draft', draftTitle: 'Also show who has each thing' } } };
   assert.equal(privateThreadTitle(named, [], ME), 'Also show who has each thing');
@@ -219,6 +251,8 @@ test('the foot has New project alone: no File it or Post it form, and nothing it
   assert.match(source, /data-private-door=\{d\}/);
   assert.doesNotMatch(source, /privateThread\.(fileIt|postIt|sendFile|sendPost)/, 'no File it or Post it at the foot');
   assert.doesNotMatch(source, /method: 'POST'/, 'the foot writes nothing: the bot\'s offer does');
+  // #6781: the foot hands the make screen the brief and the suggested name.
+  assert.match(source, /app\?\.showCreateModal\?\.\(\{ idea: text, name, audience \}\)/);
   // #6763: a "+" thread's project is the chip's preset, not what the idea is
   // about, so the bot's offer opens New project there too.
   assert.match(renderComponent(BAR, 'PrivateThreadDoors', {

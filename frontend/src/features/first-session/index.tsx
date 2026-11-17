@@ -999,7 +999,7 @@ export type Mode =
   // `app`: handed to the app an invite opened (welcome), and down once it is drawn.
   | { kind: 'held'; app?: string }
   // `entry` 'create' is the Create button's (see the header); none is the first session's.
-  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }
+  | { kind: 'make'; shot?: MakeShot; entry?: MakeEntry; startImport?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }
   | { kind: 'made'; made: Made; entry?: MakeEntry }
   | { kind: 'tour'; info: FirstSessionInfo; path: TourPath; start?: number; moments?: boolean };
 
@@ -1215,7 +1215,7 @@ function viewerName(): string {
 export function openCreate(
   setMode: Dispatch<SetStateAction<Mode>>,
   startImport = false,
-  start: { idea?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience } = {},
+  start: { idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience } = {},
 ): boolean {
   let opened = false;
   flushSync(() => setMode((prev) => {
@@ -1224,9 +1224,10 @@ export function openCreate(
     opened = true;
     if (startImport) return { kind: 'make', entry: 'create', startImport: true };
     // #6019 follow-up: a private thread's New project starts from its words,
-    // for the audience the person chose.
-    return start.idea || start.audience
-      ? { kind: 'make', entry: 'create', idea: start.idea || null, ideaSource: start.ideaSource, audience: start.audience }
+    // for the audience the person chose. #6781: with the name the bot
+    // suggested, when it named one.
+    return start.idea || start.name || start.audience
+      ? { kind: 'make', entry: 'create', idea: start.idea || null, name: start.name || null, ideaSource: start.ideaSource, audience: start.audience }
       : { kind: 'make', entry: 'create' };
   }));
   if (opened) void invalidateAppAllowance();
@@ -1466,15 +1467,17 @@ export function FirstSession() {
       // The Create button (App.showCreateModal): the one front door for a
       // new project, for every signed-in viewer; `import` opens it on
       // importing a GitHub repo.
-      create(opts?: { import?: boolean; idea?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
+      create(opts?: { import?: boolean; idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience }): boolean {
         const audience = opts?.audience === 'solo' || opts?.audience === 'invited' || opts?.audience === 'open'
           ? opts.audience : undefined;
         const idea = typeof opts?.idea === 'string' ? opts.idea.slice(0, 4000) : null;
+        // #6781: the name Homeroom bot suggested with its offer, editable.
+        const name = typeof opts?.name === 'string' ? opts.name.trim().slice(0, 60) || null : null;
         // Create's door hands in a Discover search (#5928) or a private
         // thread's words (#6019), never a waitlist answer: only the first
         // session's own make screen says "from your waitlist answer".
         const ideaSource: IdeaSource = opts?.ideaSource === 'search' ? 'search' : 'thread';
-        return openCreate(setMode, !!opts?.import, { idea, ideaSource, audience });
+        return openCreate(setMode, !!opts?.import, { idea, name, ideaSource, audience });
       },
     };
     w.UsernodeReact.firstSession = api;
@@ -1651,6 +1654,7 @@ export function FirstSession() {
         entry="create"
         startImport={!!mode.startImport}
         idea={mode.idea ?? null}
+        name={mode.name ?? null}
         ideaSource={mode.ideaSource ?? 'thread'}
         audience={mode.audience}
         underHeader={underHeader}

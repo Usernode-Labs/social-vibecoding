@@ -387,7 +387,7 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, ideaSource = 'waitlist',
+  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, name: startName = null, ideaSource = 'waitlist',
   audience = 'invited',
 }: {
   who: string;
@@ -407,6 +407,12 @@ export function MakeScreen({
    * one, the screen opens on Your own idea with it in the box.
    */
   idea?: string | null;
+  /**
+   * #6781: the name Homeroom bot suggested with its offer (Create, from a
+   * private thread's New project). The screen opens with it in the name
+   * field, editable, and it counts as typed: a tile picked later keeps it.
+   */
+  name?: string | null;
   /** Where `idea` came from (IdeaSource): the line under the box says so. */
   ideaSource?: IdeaSource;
   /**
@@ -422,6 +428,8 @@ export function MakeScreen({
   // standard render, at the foot of this function).
   const look = useLiveSkin();
   const waitlistIdea = typeof idea === 'string' && idea.trim() ? idea : null;
+  // #6781: a name handed in counts as theirs: it survives a tile picked later.
+  const handedName = typeof startName === 'string' && startName.trim() ? startName.trim().slice(0, 60) : null;
   const fromCreate = entry === 'create';
   // At the allowance's limit (or a full server), Make it and Import it are
   // pale and the row above says why (the retired dialog's rule: never offer
@@ -430,10 +438,10 @@ export function MakeScreen({
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
   // N9: Create's form as it was last left (keptDraft), read once at mount.
-  // An idea handed in (a private thread's) wins over a kept draft.
-  const [draft] = useState(() => (fromCreate && !startImport && !waitlistIdea && keptDraft?.who === who ? keptDraft : null));
+  // An idea or name handed in (a private thread's) wins over a kept draft.
+  const [draft] = useState(() => (fromCreate && !startImport && !waitlistIdea && !handedName && keptDraft?.who === who ? keptDraft : null));
   const [brief, setBrief] = useState(draft ? draft.brief : waitlistIdea ?? '');
-  const [name, setName] = useState(draft ? draft.name : '');
+  const [name, setName] = useState(draft ? draft.name : handedName ?? '');
   // The tile picked: a template, Your own idea, or nothing yet.
   const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(draft ? draft.picked : waitlistIdea ? OWN_IDEA : null);
   // The template's choice, and their own words: in its blank, or the rest
@@ -443,8 +451,9 @@ export function MakeScreen({
   // "Write it yourself": the sentence it put in the plain box. The template
   // stays picked until they change those words.
   const [written, setWritten] = useState<string | null>(draft ? draft.written : null);
-  // A name they typed: from then on a choice no longer suggests one.
-  const [nameTyped, setNameTyped] = useState(draft ? draft.nameTyped : false);
+  // A name they typed: from then on a choice no longer suggests one. A name
+  // handed in (#6781) counts as typed from the start.
+  const [nameTyped, setNameTyped] = useState(draft ? draft.nameTyped : !!handedName);
   // Who can change it (#4666): You or the group, unless Change picked another.
   // Sent only when it is another, as the project's own governance block.
   const [rule, setRule] = useState<PresetKey>(draft ? draft.rule : DEFAULT_PRESET);

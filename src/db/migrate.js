@@ -6462,7 +6462,27 @@ async function seedStagingNewProjectOfferThread(pool) {
       'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
       [conversationId, member.id, key],
     );
-    if (had.rows[0]) return;
+    // 17 Nov 2026 (#6781): the offer now carries the brief and the name the
+    // make screen opens with. A copy seeded before them gets both here.
+    const brief = {
+      homeroomBot: {
+        kind: 'chat', newProject: true,
+        projectIdea: 'A garden planner for my street: it shows which plants need water this week and who is watering '
+          + 'them. Neighbours join with an invite link and see the shared list, while each household keeps its own '
+          + 'notes private, and everyone can tick off a watering and see who is next.',
+        projectName: 'Street Garden',
+        looked: { items: [{ what: 'how a new project starts' }], ms: 7000 },
+      },
+    };
+    if (had.rows[0]) {
+      await pool.query(
+        `UPDATE conversation_messages
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+          WHERE conversation_id = $2 AND sender_id = $3 AND metadata->'homeroomBot'->>'newProject' = 'true'`,
+        [JSON.stringify(brief), conversationId, bot.id],
+      );
+      return;
+    }
     const root = await pool.query(
       `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
        VALUES ($1, $2, 'Staging demo: I want to work on a new app, can you help me do that?', $3,
@@ -6501,10 +6521,7 @@ async function seedStagingNewProjectOfferThread(pool) {
           + 'person can tick theirs off. New project is under this reply, carrying your answers, when you want to '
           + 'start it.',
         rootId,
-        JSON.stringify({ homeroomBot: {
-          kind: 'chat', newProject: true,
-          looked: { items: [{ what: 'how a new project starts' }], ms: 7000 },
-        } }),
+        JSON.stringify(brief),
       ],
     );
     const platform = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');

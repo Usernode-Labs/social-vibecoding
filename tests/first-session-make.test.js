@@ -837,6 +837,24 @@ test('a waitlist answer opens the make screen on Your own idea, filled in, with 
   assert.match(read(`${DIR}/make.tsx`), /const text = templated && said \? said\.text : brief;/);
 });
 
+test('#6781: Create opened from a thread\'s New project shows the bot\'s brief and suggested name, both editable', () => {
+  const base = { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} };
+  const idea = 'An app for saving places on a real map, with public and private lists';
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea, name: 'Saved Places' });
+  // The brief in the description box, the name in the name field.
+  assert.match(html, /<textarea[^>]*id="first-session-brief"[^>]*>An app for saving places on a real map, with public and private lists<\/textarea>/);
+  assert.match(html, /<input[^>]*id="first-session-name"[^>]*value="Saved Places"/);
+  // Editable as always: a controlled field with no readonly.
+  assert.doesNotMatch(html, /<input[^>]*id="first-session-name"[^>]*readonly/);
+  // Nothing handed in leaves the field empty, as before.
+  const bare = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea });
+  assert.match(bare, /<input[^>]*id="first-session-name"[^>]*value=""/);
+  // A name alone seeds the field without picking a tile.
+  const named = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, name: 'Saved Places' });
+  assert.match(named, /<input[^>]*id="first-session-name"[^>]*value="Saved Places"/);
+  assert.doesNotMatch(named, /aria-pressed="true"/);
+});
+
 test('#5928: an idea from a Discover search says so, not that it came from the waitlist', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(message(make.SEARCH_IDEA_LINE), 'Filled in from your search.');

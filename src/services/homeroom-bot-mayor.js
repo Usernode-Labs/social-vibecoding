@@ -555,6 +555,11 @@ function otherThreadLines(thread) {
       '  (New project\'s screen asks what it should do), call',
       '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
       '  project that exists. Never tell them to tap New project unless you called it this turn.',
+      // #6781: the make screen opens from what it passes here, so the brief
+      // says what they want, not only the first thing they typed.
+      '  Pass its idea (the project as you agreed it, with their answers folded in, at most 4000 characters) and a',
+      '  short name: the make screen opens with both. Write the idea from their own words and answers, and leave out',
+      '  any limit you said was not possible.',
     );
   } else if (d?.kind === 'ask') {
     // #6071 follow-up: started from your "+", with what its welcome block picked.
@@ -576,6 +581,11 @@ function otherThreadLines(thread) {
       '  offer_new_project so New project shows under your reply, carrying their answers. Never offer it before the',
       '  plan, never for a question, a report, or a request about a project that exists, and never tell them to tap New',
       '  project unless you called it this turn.',
+      // #6781: the make screen opens from what it passes here, so the brief
+      // carries their answers and the plan, not only their first line.
+      '  Pass its idea (the project as you agreed it here, with their answers folded in, at most 4000 characters) and a',
+      '  short name: the make screen opens with both. Write the idea from their own words and answers, and leave out',
+      '  any limit you said was not possible.',
     );
   } else if (!d) {
     lines.push(
@@ -586,6 +596,11 @@ function otherThreadLines(thread) {
       '  on a new app even before they say what it is (New project\'s screen asks what it should do), call',
       '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
       '  project that exists. Never tell them to tap New project unless you called it this turn.',
+      // #6781: the make screen opens from what it passes here, so the brief
+      // says what they want, not only the first thing they typed.
+      '  Pass its idea (the project as you agreed it, with their answers folded in, at most 4000 characters) and a',
+      '  short name: the make screen opens with both. Write the idea from their own words and answers, and leave out',
+      '  any limit you said was not possible.',
     );
   } else if (d?.appSlug) {
     const name = d.appName || d.appSlug;
@@ -1140,7 +1155,20 @@ const TOOLS = [
         + 'or a plain ask to make or work on a new app before they have said what it is (New project asks for the '
         + 'idea), and not a question, a report, or a change to a project that exists: put the New project button under '
         + 'your reply. One per turn.',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      // #6781: the brief and the name the make screen opens with.
+      parameters: {
+        type: 'object',
+        properties: {
+          idea: {
+            type: 'string',
+            description: 'The project as you and they agreed it in this thread, in plain words, with their answers '
+              + 'folded in: what it does, who it is for and how it works. At most 4000 characters. Say what they '
+              + 'want, and leave out any limit you said was not possible.',
+          },
+          name: { type: 'string', description: 'A short name for the project, at most 60 characters.' },
+        },
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -3226,6 +3254,11 @@ async function runTool(pool, ctx, name, args) {
         // thread that is an idea for a project of its own.
         if (!ctx.deps.threadRootId) return { ok: false, error: 'Only in a private thread with no project.' };
         ctx.newProjectOffer = true;
+        // #6781: the make screen opens from the brief and name the bot agreed
+        // here, never from the person's first line alone.
+        const idea = typeof args.idea === 'string' ? args.idea.trim().slice(0, 4000) : '';
+        const name = typeof args.name === 'string' ? args.name.trim().slice(0, 60) : '';
+        ctx.newProjectBrief = { ...(idea ? { idea } : {}), ...(name ? { name } : {}) };
         return { ok: true, note: 'New project shows under your reply.' };
       }
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
@@ -3755,6 +3788,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // 9 Nov 2026 (#6523): the bot offered to make this idea a project, so the
     // reply carries `newProject` and the thread's foot shows New project.
     newProjectOffer: false,
+    // #6781: the brief and suggested name offered with it, if it gave any.
+    newProjectBrief: null,
     // Their Stop (homeroom-bot-stop.js), for a tool that waits (look_into).
     stopSignal: deps.stop?.signal || null,
   };
@@ -4163,8 +4198,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const toolCard = ctx.card && typeof ctx.card === 'object' && typeof ctx.card.type === 'string' ? ctx.card : null;
   const extra = {
     ...(looked ? { looked } : {}), ...(toolCard ? { card: toolCard } : {}),
-    // #6523: the thread's foot reads this to show New project.
+    // #6523: the thread's foot reads this to show New project. #6781: the
+    // brief and name travel with it, too.
     ...(ctx.newProjectOffer ? { newProject: true } : {}),
+    ...(ctx.newProjectBrief?.idea ? { projectIdea: ctx.newProjectBrief.idea } : {}),
+    ...(ctx.newProjectBrief?.name ? { projectName: ctx.newProjectBrief.name } : {}),
   };
   // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
   // offers follow it as cards of their own (MAX_OFFERS), each said once.

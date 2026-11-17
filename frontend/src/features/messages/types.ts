@@ -82,6 +82,8 @@ export interface HomeroomBotMeta {
   aboutTitle?: string;
   /** B08 (audit 2 Nov 2026): what a new project's thread is for (kind 'opened_thread', changeKind 'project'): its name. */
   projectIdea?: string;
+  /** #6781: the name Homeroom bot suggested when it offered New project (./private-thread-bar privateThreadName). */
+  projectName?: string;
   /** B19: what a draft's thread drafts (kind 'opened_draft'): the request's title or the words to post. */
   draftTitle?: string;
   appSlug?: string;
