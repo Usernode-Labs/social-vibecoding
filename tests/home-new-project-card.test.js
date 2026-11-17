@@ -28,7 +28,7 @@ test('the island mounts the card in a side column, on the standard pages only', 
   const island = read('frontend/src/features/home/index.tsx');
   assert.match(island, /const aside = !frame && grid\.ready && !!grid\.create;/);
   assert.match(island, /data-home-aside=\{aside \? '' : undefined\}/);
-  assert.match(island, /\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NewProjectCard \/>\s*<\/aside>\s*\) : null\}/);
+  assert.match(island, /\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NewProjectCard \/>[\s\S]*?<\/aside>\s*\) : null\}/);
   assert.match(island, /<div className="home-main">/);
 });
 
@@ -39,7 +39,7 @@ test('the side column exists from 1280px and holds no place under it', () => {
   assert.match(base[1], /display: none;/, 'one column draws no card');
   const wide = css.slice(css.indexOf("HOME'S SIDE COLUMN"));
   const media = wide.slice(wide.indexOf('@media (min-width: 1280px)'));
-  assert.match(media, /#home-screen\[data-home-aside\] \.home-aside \{\s*display: block;\s*flex: 0 0 304px;/);
+  assert.match(media, /#home-screen\[data-home-aside\] \.home-aside \{\s*display: flex;\s*flex-direction: column;\s*gap: 12px;[^}]*flex: 0 0 304px;/);
   assert.match(media, /#home-screen\[data-home-aside\] \.home-body-fill \{\s*flex-direction: row-reverse;/);
   // home.js draws no grid tile at the same width (Home.hasSideCard).
   assert.match(read('frontend/src/features/home/home.js'), /window\.matchMedia\('\(min-width: 1280px\)'\)\.matches/);

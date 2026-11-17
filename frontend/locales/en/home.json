@@ -131,6 +131,34 @@
     "text": "No project slots left. <0>Request project slots</0> to build your own ideas.",
     "description": "Line under the New project button on Home's New project card when the viewer may make no more projects. The link opens the card where more slots can be requested; a slot is room for one project."
   },
+  "needsCard.eyebrow": {
+    "text": "Needs you",
+    "description": "Title of Home's Needs you card, in the side column: the votes and decisions waiting on the viewer across their projects. The card opens the Needs you page."
+  },
+  "needsCard.waiting_one": {
+    "text": "{{count}} decision waiting for your vote",
+    "description": "Line under \"Needs you\" on Home's Needs you card: how many decisions wait on the viewer. Singular."
+  },
+  "needsCard.waiting_other": {
+    "text": "{{count}} decisions waiting for your vote",
+    "description": "Line under \"Needs you\" on Home's Needs you card: how many decisions wait on the viewer. Plural."
+  },
+  "needsCard.decide_one": {
+    "text": "<0>{{count}}</0> decides",
+    "description": "Under the bar on Home's Needs you card: how many waiting decisions the viewer's vote can settle. Singular; the number is bold."
+  },
+  "needsCard.decide_other": {
+    "text": "<0>{{count}}</0> decide",
+    "description": "Under the bar on Home's Needs you card: how many waiting decisions the viewer's vote can settle. Plural; the number is bold."
+  },
+  "needsCard.advisory_one": {
+    "text": "<0>{{count}}</0> advisory",
+    "description": "Under the bar on Home's Needs you card: how many waiting decisions take the viewer's vote as advice only. Singular; the number is bold."
+  },
+  "needsCard.advisory_other": {
+    "text": "<0>{{count}}</0> advisory",
+    "description": "Under the bar on Home's Needs you card: how many waiting decisions take the viewer's vote as advice only. Plural; the number is bold."
+  },
   "create.lockedTip": {
     "text": "New project. View app quota. {{hint}}",
     "description": "Tooltip and accessible name of the + tile at the end of Home's grid when the viewer cannot create another app right now — and of the small New project button beside \"Show all N apps\" that stands in for it there, in the same state. {{hint}} is one whole sentence saying what pressing it does (\"View your app allowance or request more slots.\")."
