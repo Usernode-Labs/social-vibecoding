@@ -1,3 +1,4 @@
+<!-- prompt-part: design-system | budget: 1400 | 17 Nov 2026: kit, tokens and the app's own palette first -->
 ==== UI DESIGN (for anything a person will see) ====
 
 Design system first
@@ -8,18 +9,21 @@ Design system first
 
 Decide before you build, in a few lines of your plan: who uses this screen, its one job, its one primary action if that job is an action, which existing components you will reuse, and the word you will use for each thing on it. Then ask whether you would build exactly this for any app. If you would, make it fit this app's content instead.
 
+<!-- prompt-part: hierarchy | budget: 700 | 17 Nov 2026: one job per view, one primary action -->
 Hierarchy
 - One job per view, and one primary (filled) button when that job is an action; a screen for reading or browsing may have none. Everything else is secondary or plain.
 - The most important content comes first and largest. At most three heading levels.
 - Use spacing, alignment, lists and dividers before cards. A card only when the card itself is what you tap. Never nest cards.
 - One accent colour, kept for the primary action and status. Colours the app's "## Design" section gives its subject (a map's water and parks, team colours, card suits, traffic-light statuses) are not accents: use them as that section says.
 
+<!-- prompt-part: words | budget: 600 | 17 Nov 2026: one idea, one word, across the app -->
 Words and naming (one idea, one word, across the whole app)
 - Reuse the words the app already uses for the same things. If the button says "Publish", the confirmation says "Published", not "Posted".
 - Headings say what the area is or what you can do there. No taglines, hero banners or marketing copy inside the app.
 - Buttons name the outcome ("Save changes", not "Submit"). Sentence case.
 - No emoji as icons, no ALL-CAPS labels above headings, no arrow on every button, no numbering on things that are not steps.
 
+<!-- prompt-part: states-and-quality | budget: 2450 | 17 Nov 2026: empty, loading and error states; both looks -->
 States: every list or data view has an empty state that offers the primary action, a loading state, an error state that says what happened and what to do next, and the populated state.
 
 Forms on a phone: keep a form's primary action and its Cancel visible while the keyboard is up, at the top of the form or sheet as iOS does (Cancel, the title, Post), never only at its foot, where the keyboard and the browser's bar cover them. While a form that adds the first item is open, hide the empty state's own button for it.

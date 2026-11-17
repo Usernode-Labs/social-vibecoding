@@ -2030,6 +2030,9 @@ function shapeChange(session, live, origin, kind = 'agent_mayor') {
     link: session.app_slug ? changeLink(origin, session.app_slug, session.id, session.pr_number) : null,
     stagingUrl: session.staging_url || null,
     checks,
+    // The public shots view the change page reads. Null means this change
+    // predates shots, or shots are not configured.
+    shots: (session.shots && typeof session.shots === 'object') ? session.shots : null,
     yesVotes: typeof session.yes_count === 'number' ? session.yes_count : null,
     noVotes: typeof session.no_count === 'number' ? session.no_count : null,
     votesRequired: typeof session.votes_required === 'number' ? session.votes_required : null,
@@ -2518,6 +2521,38 @@ function registerTools(server, ctx) {
     overriddenBy: z.number().nullable(),
     overriddenAt: z.string().nullable(),
     overrideReason: z.string().nullable(),
+    // #6779: why the latest run stopped, for the caller the diagnostics route
+    // already allows (the change's owner or a manager): fixed codes, the step
+    // it stopped at, counts, timings and the shots agent's already-redacted
+    // last words. Present only on a failed run, and absent for everybody else.
+    diagnosis: z.object({
+      runId: z.string(),
+      state: z.string(),
+      failureCode: z.string().nullable(),
+      terminalClass: z.string().nullable(),
+      stoppedAt: z.object({
+        kind: z.string(),
+        side: z.string().nullable().optional(),
+        persona: z.string().nullable().optional(),
+        outcome: z.string().nullable().optional(),
+        failureCode: z.string().nullable().optional(),
+        failureStage: z.string().nullable().optional(),
+        responseStatus: z.number().nullable().optional(),
+        tool: z.string().nullable().optional(),
+        phase: z.string().nullable().optional(),
+        errorClass: z.string().nullable().optional(),
+        atMs: z.number().nullable().optional(),
+      }).nullable(),
+      agentStarted: z.boolean(),
+      toolsUsed: z.number(),
+      lastWords: z.string().nullable().optional(),
+      timingsMs: z.record(z.number()),
+      workerOutOfMemory: z.boolean().nullable(),
+    }).nullable().optional()
+      .describe('Why the latest shots run failed: its failure code and terminal class, the step it stopped at '
+        + '(for example auth_bootstrap with its side, persona, failure code, stage and response status), whether '
+        + 'the agent started and how many tools it used, its last words, timings, and whether the worker ran out '
+        + 'of memory. Only for the change\'s owner or a manager, on a failed run.'),
     // A close-up (services/shots-view.js cleanCloseup) is an after still of
     // one region, in its own shape: `rect` and `part` instead of `focusRect`,
     // and no `stageLabels`. A viewer in the New Needs you experiment gets them
@@ -2581,6 +2616,25 @@ function registerTools(server, ctx) {
   const readResult = async (toolName, structured, extra = []) => {
     if (!isHintEligibleTool(toolName)) return toolResult(structured, null, extra);
     return toolResult(structured, await claimSetupHint(), extra);
+  };
+
+  // #6779: the step a failed shots run stopped at, read through the
+  // diagnostics route so its owner-or-manager rule stays the only one that
+  // decides. The read never fails because of it: a 404 (somebody else's
+  // change, or shots not configured) and an unreachable route both mean no
+  // diagnosis, and the change itself still reads normally.
+  const shotsDiagnosisFor = async (session) => {
+    if (!session || typeof session !== 'object' || !session.app_slug) return null;
+    if (!session.shots || session.shots.state !== 'failed') return null;
+    const id = Number(session.id);
+    if (!Number.isSafeInteger(id) || id <= 0) return null;
+    try {
+      const result = await callPlatform(baseUrl, accessToken, 'GET',
+        `/api/apps/${encodeURIComponent(session.app_slug)}/proposals/${id}/shots/diagnostics`);
+      if (!result.ok) return null;
+      const diagnosis = result.body && result.body.diagnostics && result.body.diagnostics.diagnosis;
+      return diagnosis && typeof diagnosis === 'object' ? diagnosis : null;
+    } catch { return null; }
   };
 
   const readAnnotations = {
@@ -5079,7 +5133,10 @@ function registerTools(server, ctx) {
         + 'other — list_my_proposals reports both for each of the user\'s open proposals.'
       );
     }
-    return readResult('get_proposal', shapeProposal(session, origin, user && user.id));
+    const shaped = shapeProposal(session, origin, user && user.id);
+    const diagnosis = await shotsDiagnosisFor(session);
+    if (diagnosis && shaped.shots) shaped.shots = { ...shaped.shots, diagnosis };
+    return readResult('get_proposal', shaped);
   });
 
   // ── get_check_output ─────────────────────────────────────────────────
@@ -5440,7 +5497,7 @@ function registerTools(server, ctx) {
   // ── get_change ───────────────────────────────────────────────────────
   server.registerTool('get_change', {
     title: 'Get a change',
-    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES, why, and their error excerpts — get_check_output reads one in full), votes, and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
+    description: 'Where one of Homeroom\'s own changes stands: a change built inside Homeroom by its coding agent, as opposed to work pushed from a fork. Returns its status, whether a turn or a sync is running right now, its branch, pull request, staging preview, checks (failing test NAMES, why, and their error excerpts — get_check_output reads one in full), votes, its before/after shots (with `shots.diagnosis`, the step a failed run stopped at, for its owner or a manager), and a nextStep in plain words: follow it. Takes the change id, which get_proposal and list_my_proposals call proposalId. Name the change by its pull request number first when it has one: "PR #2151 (change 4223)". Read-only.',
     inputSchema: { changeId: changeIdSchema() },
     outputSchema: {
       changeId: z.number(),
@@ -5465,6 +5522,10 @@ function registerTools(server, ctx) {
       stagingUrl: z.string().nullable(),
       checks: z.unknown()
         .describe('The checks snapshot, in the same shape get_proposal reports: state, phase, failing names, failures with reasons and their excerpt details, detailsTruncated, stale, error.'),
+      shots: shotsOutputSchema.nullable()
+        .describe('Before/after shots of the declared changes on the current revision, in the same shape '
+          + 'get_proposal reports, including `diagnosis` when a failed run\'s step is readable to this caller '
+          + '(the change\'s owner or a manager). Null when the change predates shots or shots are not configured.'),
       yesVotes: z.number().nullable(),
       noVotes: z.number().nullable(),
       votesRequired: z.number().nullable(),
@@ -5481,7 +5542,10 @@ function registerTools(server, ctx) {
     // The live half is advisory: an unreadable status leaves `busy` unknown
     // rather than failing a read the row already answers.
     const live = await callPlatform(baseUrl, accessToken, 'GET', `/api/sessions/${changeId}/status`);
-    return readResult('get_change', shapeChange(session, live.ok ? live.body : null, origin, kind));
+    const shaped = shapeChange(session, live.ok ? live.body : null, origin, kind);
+    const diagnosis = await shotsDiagnosisFor(session);
+    if (diagnosis && shaped.shots) shaped.shots = { ...shaped.shots, diagnosis };
+    return readResult('get_change', shaped);
   });
 
   // ── recheck_change ───────────────────────────────────────────────────

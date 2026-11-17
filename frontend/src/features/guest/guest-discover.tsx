@@ -169,19 +169,25 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
   const t = useMessages('auth');
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   const people = app.active_users || 0;
+  // A picture whose file is gone falls back to the icon on its colour, as a
+  // project with no picture shows, rather than leaving a broken image.
+  const [pictureFailed, setPictureFailed] = useState(false);
+  useEffect(() => { setPictureFailed(false); }, [app.illustration_url, app.illustration_dark_url]);
+  const picture = !!app.illustration_url && !pictureFailed;
   return (
     <span
       data-guest-card-cover=""
       className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-zinc-200 shadow-[inset_0_-1px_0_var(--app-sheet-line)] dark:bg-zinc-800"
-      style={app.illustration_url ? undefined : { background: color }}
+      style={picture ? undefined : { background: color }}
     >
-      {app.illustration_url ? (
+      {picture ? (
         <>
           <img
             src={app.illustration_url}
             alt=""
             loading={eager ? 'eager' : 'lazy'}
             draggable={false}
+            onError={() => setPictureFailed(true)}
             className={cn('absolute inset-0 h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100', app.illustration_dark_url ? 'dark:hidden' : '')}
           />
           {app.illustration_dark_url ? (
@@ -190,6 +196,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
               alt=""
               loading={eager ? 'eager' : 'lazy'}
               draggable={false}
+              onError={() => setPictureFailed(true)}
               className="absolute inset-0 hidden h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100 dark:block"
             />
           ) : null}

@@ -293,3 +293,33 @@ test('#6763: the repair note asks for the offer, or says not to mention it', () 
     assert.doesNotMatch(note, /retract/i);
   }
 });
+
+// ── #6784: the plan in the reply, not a line of it, is what is offered ─────
+
+const PLAN_REPLY = [
+  'Here is the plan as it now stands, with your answers kept.',
+  '- Home page: popular public lists, ranked by how many people saved them',
+  '- Lists: public or private, who can see each',
+  '- Adding places: search, results on a real map, tap one to add it',
+  '- Sharing: invite link with a role, or by username; viewer and editor',
+].join('\n');
+
+test('#6784: a one-line idea beside a longer plan is asked for again with the whole plan', async () => {
+  const turn = threadTurn({ newProjectOffer: true, newProjectBrief: { idea: 'An app for collecting saved places into lists on a real map.' } });
+  const found = await claims.checkReply(pool(), turn, PLAN_REPLY);
+  assert.deepEqual(found.map((p) => p.kind), ['short_brief']);
+  const note = claims.repairNote(found, { tools: new Set(['reply', 'offer_new_project']) });
+  assert.match(note, /Your offer_new_project idea is shorter than the plan in your reply\. Call offer_new_project again with idea holding every point of the plan and every answer they gave, as bullets, then reply\./);
+  assert.doesNotMatch(note, /—/);
+  // The bullets are harmless in the reply: nothing is cut for this.
+  assert.equal(claims.cut(PLAN_REPLY, found, turn), PLAN_REPLY);
+});
+
+test('#6784: a bullet idea, or a short idea with a short reply, is no problem', async () => {
+  const full = ['- Home page: popular lists', '- Lists: public or private', '- Sharing: by invite link', '- First version: the whole loop'].join('\n');
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectBrief: { idea: full } }), PLAN_REPLY), []);
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectBrief: { idea: 'A small app for lists.' } }), 'Here is the plan:\n- Lists'), []);
+  assert.deepEqual(await kinds(pool(), threadTurn({}), PLAN_REPLY), [], 'no idea, nothing to compare');
+  assert.equal(claims.briefShortOfPlan('', PLAN_REPLY), false);
+  assert.equal(claims.briefShortOfPlan('A line', PLAN_REPLY), true);
+});

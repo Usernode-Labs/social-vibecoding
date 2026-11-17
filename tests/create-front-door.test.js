@@ -104,6 +104,14 @@ test('the island opens the Create door over nothing else, on importing when aske
     state = { kind: 'none' };
     assert.equal(island.openCreate(setMode, true), true);
     assert.deepEqual(state, { kind: 'make', entry: 'create', startImport: true });
+    // #6781: a thread's New project hands in the brief, the name and the
+    // audience; both travel into the make screen's start state.
+    state = { kind: 'none' };
+    assert.equal(island.openCreate(setMode, false, { idea: 'An app for saving places', name: 'Saved Places', audience: 'solo' }), true);
+    assert.deepEqual(state, { kind: 'make', entry: 'create', idea: 'An app for saving places', name: 'Saved Places', ideaSource: undefined, audience: 'solo' });
+    state = { kind: 'none' };
+    assert.equal(island.openCreate(setMode, false, { name: 'Saved Places' }), true);
+    assert.deepEqual(state, { kind: 'make', entry: 'create', idea: null, name: 'Saved Places', ideaSource: undefined, audience: undefined });
     // Something already up stays.
     state = { kind: 'tour', info: { slug: 'x', name: 'X' }, path: 'walk' };
     assert.equal(island.openCreate(setMode), false);
@@ -111,8 +119,9 @@ test('the island opens the Create door over nothing else, on importing when aske
   });
   const src = read(ISLAND);
   // #6019 follow-up: a private thread's New project hands it an idea and who
-  // it is for; the door still opens over nothing else.
-  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, ideaSource, audience \}\);\s+\},/);
+  // it is for; #6781 adds the name the bot suggested. The door still opens
+  // over nothing else.
+  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; name\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, name, ideaSource, audience \}\);\s+\},/);
   assert.doesNotMatch(src, /made\(made: Made\): boolean|onMoreOptions|dialogs\?\.create/, 'no hand-off from a dialog, and no way to one');
 });
 

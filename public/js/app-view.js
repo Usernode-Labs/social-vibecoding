@@ -8051,6 +8051,12 @@ const AppView = {
       merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
       shotsNone: AppView._shotsNotNeeded(item),
+      // When it went live, for "Since …" in the card's foot and the
+      // timeline's Live step (frontend topic/card-model.ts, rail-model.ts).
+      liveAt: item.status === 'merged' ? (item.live_at || item.merged_at || null) : null,
+      // The last run's counts and its failures by name, for the layer See
+      // what failed opens over the card (change-head.tsx ChecksSummary).
+      checks: AppView._checksSummary(item),
       thanks: !AppView.readOnly && AppView._kudosOffered(item) && !['active', 'paused'].includes(item.status),
       // Its code did not come across from GitHub (_codeMissing): the page
       // says so in a notice above Votes and Testing (change-head.tsx).
@@ -8063,6 +8069,27 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // What a finished run of a change's tests came to: how many passed, how
+  // many failed, and each failure by its name and its own reason. Null while
+  // nothing has finished. The card look's layer draws it as chips and rows
+  // in place of the Testing card's bar and paragraph.
+  _checksSummary(item) {
+    if (!item || (item.check_state !== 'failing' && item.check_state !== 'passing')) return null;
+    const v = AppView._checksVerdictView(item);
+    if (!v) return null;
+    const failures = Array.isArray(v.failures) ? v.failures.filter(Boolean) : [];
+    // The count is of the failures that block: an advisory one is listed,
+    // quieter, and never counted as a failed test.
+    const blocking = failures.filter((row) => !row.advisory);
+    return {
+      passed: Number(v.passCount) || 0,
+      failed: blocking.length || (item.check_state === 'failing' ? failures.length : 0),
+      fails: failures.slice(0, 12).map((row) => ({
+        key: String(row.key || row.name || ''), name: String(row.name || ''), reason: row.reason ? String(row.reason) : null, advisory: !!row.advisory,
+      })),
     };
   },
 
@@ -9005,7 +9032,11 @@ const AppView = {
       const pic = html ? AppView._workshopVisuals(null, shots) : null;
       const thumbs = pic && (pic.before || pic.after)
         ? { before: pic.before || null, after: pic.after || null, viewer: `shots-${Number(item.id)}-viewer` } : null;
-      return html ? { state: 'verified', html, line: null, thumbs } : null;
+      // The run's own screens and what changed on each, for the card's
+      // picture: the Needs you page's slider (topic/thread-picture.tsx).
+      const screens = pic && Array.isArray(pic.screens) ? pic.screens : [];
+      const changes = pic && Array.isArray(pic.changes) ? pic.changes : [];
+      return html ? { state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number(item.id) || null } : null;
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
@@ -21231,7 +21262,9 @@ const AppView = {
         if (btn) { btn.disabled = false; btn.textContent = PlatformI18n.t('changes:tryAgain.label'); }
         return;
       }
-      PlatformUI.toast(PlatformI18n.t('changes:tryAgain.done'));
+      // #6776: the bot's own sentence, so "queued it again" is heard too.
+      const data = await resp.json().catch(() => ({}));
+      PlatformUI.toast(data.said || PlatformI18n.t('changes:tryAgain.done'));
       AppView.refreshDevData('tryAgain');
       if (typeof window.dispatchEvent === 'function') window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: Number(sessionId) }));
       return true;

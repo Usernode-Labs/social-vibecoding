@@ -102,7 +102,7 @@ import { NeedsYouCard } from './needs-you-card';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
 import { SectionHeading } from './panels/ui';
-import { WIP_HEAD_LINK, WipCard, WipCta } from './wip-kit';
+import { WipCard, WipCta, WipHeadMore } from './wip-kit';
 import { VerifyCard } from './verify-card';
 import { WaitlistCard } from './waitlist-card';
 import { WidgetStrip } from './widget-strip';
@@ -121,6 +121,14 @@ import './home-layout.js';
 import './home-panels.js';
 import './home.js';
 
+/** Fold or unfold Pinned projects' grid: the flag "Show all N apps" has always set. */
+function foldApps(fold: boolean) {
+  const home = (window as any).Home;
+  if (!home) return;
+  home._appsExpanded = !fold;
+  home.render();
+}
+
 export function HomeScreen() {
   const t = useMessages('home');
   const screenRef = useRef<HTMLElement | null>(null);
@@ -130,7 +138,7 @@ export function HomeScreen() {
   // with no items and editing off, so the prerender and the first client
   // render draw no action at all.
   const grid = useStoreState(gridStore);
-  const { moreCount } = useStoreState(chromeStore);
+  const { moreCount, canFold } = useStoreState(chromeStore);
   // A look of the one frame draws this page in it (./frame/home-frame.tsx).
   // Read after mount only: the first render must match the prerendered
   // document, which knows no look (lib/skin.ts says why).
@@ -377,7 +385,7 @@ export function HomeScreen() {
                   <span className="whitespace-nowrap">{t('home:edit.done')}</span>
                 </button>
               </span>
-            ) : (canEdit || grid.create?.heldBack || (wip && moreCount > 0)) ? (
+            ) : (canEdit || grid.create?.heldBack) ? (
               /* #5871: "Edit" is edit mode's own door. A hold on a tile used
                  to start it beside the tile's menu, so one press showed both;
                  a hold is the menu alone now, and arranging is asked for
@@ -394,22 +402,23 @@ export function HomeScreen() {
                     <span className="whitespace-nowrap">{t('home:edit.start')}</span>
                   </button>
                 ) : null}
-                {wip && moreCount > 0 ? (
-                  <button
-                    type="button"
-                    id="home-apps-see-all"
-                    className={WIP_HEAD_LINK}
-                    aria-label={t('home:grid.showAll', { count: moreCount })}
-                    onClick={() => { const home = (window as any).Home; if (!home) return; home._appsExpanded = true; home.render(); }}
-                  >
-                    <span className="whitespace-nowrap">{t('home:grid.seeAll')}</span>
-                  </button>
-                ) : null}
                 {grid.create?.heldBack ? <CreateCompact view={grid.create} /> : null}
               </span>
             ) : null}
           >
-            {wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
+            {/* Standard (WIP): the label and the chevron after it are one
+                thing to press, which unfolds the grid and folds it again.
+                Down while rows are held back; up once they are out and
+                folding would hide some; plain words when neither. */}
+            {wip && moreCount > 0 ? (
+              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
+                {t('home:grid.headingProjects')}
+              </WipHeadMore>
+            ) : wip && canFold ? (
+              <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
+                {t('home:grid.headingProjects')}
+              </WipHeadMore>
+            ) : wip ? t('home:grid.headingProjects') : t('home:grid.heading')}
           </SectionHeading>
           {/* In Standard (WIP) the grid and its "Show all" line are one card
               (WipCard, ./wip-kit.tsx), as Pinned communities' tiles are. */}
@@ -432,10 +441,9 @@ export function HomeScreen() {
             want to make?" with the words typed in. Null in the prerender.
         */}
         {frame ? null : <HomeSearchMake />}
-        {/* Standard (WIP): Home is one column, and under Pinned projects one
-            row holds the Needs you card and Challenges
-            (app.css, "STANDARD (WIP)"). The card is drawn from 1280px;
-            narrower, the row is Challenges alone. */}
+        {/* Standard (WIP): Home is one column, and under Pinned projects the
+            Needs you card is a row of its own, then Challenges
+            (app.css, "STANDARD (WIP)"), at every width. */}
         {wip ? (
           <div id="home-row" className="home-row">
             {aside ? (

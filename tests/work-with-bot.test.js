@@ -313,7 +313,7 @@ test('a change gets the quiet version: under its cards, on its request\'s page a
   assert.match(changes, /const workWithBot = \(\s*<WorkWithBotButton\s+slug=\{pageSlug\(\)\}\s+number=\{item\.number\}\s+voting=\{!!view\?\.v\.votes\.facts\?\.length\}\s+botAtWork=\{changeBotAtWork\(item, view\)\}\s*\/>\s*\);/);
   // Under the card look a change with a foot carries it at the foot's end,
   // inside the band; otherwise it is the last thing in the change's section.
-  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} tail=\{footed \? workWithBot : null\} \/>\s*\{footed \? null : workWithBot\}/);
+  assert.match(changes, /<ChangeBody item=\{item\} view=\{view\} plan=\{plan\} request=\{request\} tail=\{footed \? workWithBot : null\} covered=\{thread\.card && sole && !!thread\.covers\} \/>\s*\{footed \? null : workWithBot\}/);
   // `botAtWork` is the bot still building it, or fixing or about to fix its
   // failing checks; a fix it handed back, stopped or found to be the
   // platform's is not the bot at work.

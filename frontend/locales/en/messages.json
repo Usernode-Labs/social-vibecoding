@@ -4663,6 +4663,10 @@
     "text": "Filed as request #{{number}} on {{project}}.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was filed. {{number}} is the new request's number, {{project}} the project's name."
   },
+  "privateThread.made": {
+    "text": "Made into {{project}}.",
+    "description": "Line at the top of a private thread with Homeroom bot once a project was made from its plan. {{project}} is the new project's name; an Open link follows it."
+  },
   "privateThread.posted": {
     "text": "Posted on #{{number}} on {{project}}.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was posted in an existing thread. {{number}} is the request's or change's number, {{project}} the project's name."

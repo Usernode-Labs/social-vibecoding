@@ -457,6 +457,87 @@ test('get_change gives back the description people vote on, as data, with its ve
   assert.equal(shaped.title, 'A dark mode toggle', 'the platform read still comes through');
 });
 
+// #6779: on its own change the bot reads the step its shots stopped at, as
+// fixed values without the shots agent's last words, because everyone in the
+// thread reads its reply.
+test('#6779: the bot reads its own change\'s failed shots step, and not the agent\'s last words', async () => {
+  const BOT_ID = 77;
+  const runId = 'e'.repeat(32);
+  const run = {
+    id: runId,
+    state: 'failed',
+    failure_code: 'shots_agent_failed',
+    trace_summary: {
+      agentActivity: {
+        firstAtMs: {},
+        toolCounts: {},
+        events: [{
+          atMs: 1300, kind: 'auth_bootstrap', side: 'base', persona: 'member',
+          outcome: 'error', failureCode: 'invalid_session_cookie', failureStage: 'exchange',
+          responseStatus: 200,
+        }],
+      },
+      agentFinalResponse: { excerpt: 'Only the owner should see this.' },
+    },
+  };
+  const poolFor = (userId) => ({
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions cs WHERE cs\.id/.test(s)) {
+        return { rows: [{
+          id: 7, app_id: 3, user_id: userId, status: 'promoted', is_headless: false,
+          pr_summary_md: null, pr_body: null, pr_summary_stale: false, pr_summary_input_version: 0,
+        }] };
+      }
+      if (/SELECT shots_run_id FROM chat_sessions/.test(s)) return { rows: [{ shots_run_id: runId }] };
+      if (/FROM shot_runs/.test(s)) return { rows: [run] };
+      if (/MAX\(version\)/.test(s)) return { rows: [] };
+      return { rows: [] };
+    },
+  });
+  const platform = {
+    async call() {
+      return {
+        isError: false,
+        text: JSON.stringify({
+          changeId: 7, title: 'A toggle', status: 'promoted',
+          shots: { state: 'failed', failureCode: 'shots_agent_failed' },
+        }),
+      };
+    },
+  };
+  const ask = async (userId) => {
+    const ctx = {
+      app: { id: 3, slug: 'todo' }, place: { type: 'session', ref: 7 },
+      user: { id: 9, username: 'ada' }, settings: {}, bot: { id: BOT_ID },
+      deps: {}, config: {}, change: null, reads: 0, readChanges: new Set(),
+    };
+    const out = await voice.runTool(poolFor(userId), ctx, 'get_change', { changeId: 7 }, { platform });
+    return JSON.parse(out.result);
+  };
+
+  const own = await ask(BOT_ID);
+  assert.equal(own.shots.diagnosis.stoppedAt.kind, 'auth_bootstrap');
+  assert.equal(own.shots.diagnosis.stoppedAt.failureCode, 'invalid_session_cookie');
+  assert.equal(own.shots.diagnosis.agentStarted, false);
+  assert.equal('lastWords' in own.shots.diagnosis, false, 'the thread reads the bot\'s reply');
+
+  // Somebody else's change gets nothing merged: its own owner or a manager
+  // reads the diagnosis through the route, and this speaker is neither.
+  const theirs = await ask(9);
+  assert.equal('diagnosis' in theirs.shots, false);
+});
+
+test('#6779: the prompt tells the bot to name the shots step and never quote the agent', () => {
+  const tools = voice.toolsFor({ type: 'session', ref: 7 }, { ownChange: true, platform: true });
+  const prompt = voice.systemPrompt({ app: { slug: 'todo', name: 'Todo' }, place: { type: 'session', ref: 7 }, tools });
+  assert.match(prompt, /why a change's before and after shots failed/);
+  assert.match(prompt, /name shots\.diagnosis\.stoppedAt in plain words/);
+  assert.match(prompt, /could not sign in to the before copy, invalid_session_cookie/);
+  assert.match(prompt, /say when it is the platform rather than the change/);
+  assert.match(prompt, /Never quote the shots agent's last words/);
+});
+
 test('#6384: a request\'s thread reads a posted plan by the version it is asked about, about its own project only', async () => {
   const calls = [];
   const plan = {
@@ -800,6 +881,15 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
   assert.match(post, /messageId: Number\(posted\.message\?\.id\) \|\| null/);
   const merged = dm.slice(dm.indexOf('async function noteProposalMerged'));
   assert.match(merged.slice(0, 500), /\.dropAsks\(pool, session\.id, \{ strict: !!deps\.strict \}\)/, 'strict in the bot-change machine\'s durable work');
+});
+
+// #6766: the old rule 8 headline read as a ban on every outside API, so the
+// bot told someone a real map with place search could not be built. Its
+// prompt now keeps it from stating a limit the platform rules do not.
+test('#6766: it never states a platform limit the rules do not plainly forbid', () => {
+  const prompt = voice.systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue', ref: 1 }, tools: [] });
+  assert.match(prompt, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
+  assert.match(prompt, /When\n  unsure, say you will check rather than state a limit; a live app already doing it \(Homeroom Maps has a real\n  map and place search\) shows it can be built\./);
 });
 
 // ── Step 5 (11 Nov 2026): a comment that does not change the ask ─────────

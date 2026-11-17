@@ -417,9 +417,14 @@
       "schemaSha256": "b83e961322ac8ab1972aa5195c9523264663fce1bb4c0efde48606ec32a20005"
     },
     {
+      "id": "first-version-idea-thread",
+      "sha256": "781df0836023d097dd21db7a65b704a1c86d74bfc37d853d60ab18f6b18571f8",
+      "schemaSha256": "30f329665f77e2b9b9bc349b4fce32615e1690cef4162164c899f1227411a034"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "b78d422dfab580192ffbe3cdc25c018bcff0b7a1273a9bffaa674267d1cf6a7a",
-      "schemaSha256": "3cbf9f603b3bb0baad3ea54983a85600bb6436ac287cf0e5a56d6864acc66bcf"
+      "schemaSha256": "1405e2ec6dec216d3fbd4fff7bb88332378c966d873000ee321dd25bca66e09e"
     }
   ]
 }

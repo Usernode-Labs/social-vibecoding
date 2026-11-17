@@ -28,27 +28,36 @@ const item = (id, slug, extra = {}) => ({
   kind: 'proposal', id, title: `Change ${id}`, app: { slug, name: slug.toUpperCase() }, ...extra,
 });
 
-test('the island mounts it under Standard (WIP), in the row it shares with Challenges', () => {
+test('the island mounts it under Standard (WIP), in a row of its own before Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
   assert.match(island, /const aside = wip && grid\.ready && !!grid\.create;/);
   assert.match(island, /\{wip \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
   assert.match(island, /\{wip \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
-  // Beside Challenges from 1280px at the card's own width; narrower, a row
-  // of its own as wide as the column.
+  // A row of its own, as wide as the column, placed right under Pinned projects.
   const css = read('public/css/app.css');
-  assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 0 0 auto; width: var\(--wip-needs-w\); \}/);
   assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
+  assert.match(css, /html\[data-skin-wip\] #home-screen \.home-main > \.home-row \{ display: contents; \}/);
+  assert.match(css, /html\[data-skin-wip\] #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
 });
 
-test('the card is one link to Needs you, drawn from the waiting count', () => {
+test('it is a section as Pinned projects is: its label line on the page, then one card, drawn from the waiting count', () => {
   const src = read(CARD);
   assert.match(src, /const \{ badgeNeeds \} = useStoreState\(communityScopeStore\)/);
   assert.match(src, /if \(!summary\) return null;/);
-  assert.match(src, /<section id="home-needs-card" aria-labelledby="home-needs-card-title" data-needs=\{String\(summary\.total\)\}>/);
-  assert.match(src, /<a id="home-needs-card-btn" href="#needs" className=\{CARD\}>/);
+  assert.match(src, /<section id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-needs=\{String\(summary\.total\)\}>/);
+  // The label, the count and a chevron are one link to all of Needs you, right after one another.
+  assert.match(src, /<SectionHeading>\s*<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+href="#needs"/);
+  assert.match(src, /<span id="home-needs-card-title">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<span className="wip-count" aria-hidden="true">\{summary\.total\}<\/span>\s*<\/WipHeadMore>/);
+  assert.match(src, /label=\{more > 0 \? t\('home:needsCard\.seeAllCount', \{ count: summary\.total \}\) : t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
   assert.equal(message('home:needsCard.eyebrow'), 'Needs you');
+  assert.equal(message('home:needsCard.seeAll'), 'See all');
+  assert.equal(message('home:needsCard.seeAllCount_other'), 'See all {{count}}');
+  // The number is a glyph beside the label; a screen reader gets the sentence.
+  assert.match(src, /<span className="sr-only">\{t\('home:needsCard\.waiting', \{ count: summary\.total \}\)\}<\/span>/);
   assert.equal(message('home:needsCard.waiting_one'), '{{count}} decision waiting for your vote');
   assert.equal(message('home:needsCard.waiting_other'), '{{count}} decisions waiting for your vote');
+  // The card holds the list alone.
+  assert.match(src, /<WipCard className="wip-panel">\s*<ul className="wip-rows wip-rows-cols"/);
 });
 
 test('the feed is read at every width, and again when the count moves', () => {
@@ -79,9 +88,22 @@ test('the icons are the communities that wait: once each, in order, four at most
   assert.deepEqual(waitingApps(null), []);
 });
 
-test('zero says nothing: the advisory part is drawn only when there is one', () => {
+test('what waits is a list in the look\'s columns, each row opening its project\'s Needs you', () => {
   const src = read(CARD);
-  assert.match(src, /\{summary\.advisory \? \(\s*<>\s*\{' · '\}\s*<RichMessage\s+id="home:needsCard\.advisory"/);
-  assert.match(message('home:needsCard.decide_one'), /<0>\{\{count\}\}<\/0> decides/);
-  assert.match(message('home:needsCard.decide_other'), /<0>\{\{count\}\}<\/0> decide$/);
+  const { NEEDS_ROWS } = loadTsx(CARD);
+  assert.equal(NEEDS_ROWS, 8, 'two lines of four on a wide screen; See all has the rest');
+  assert.match(src, /<ul className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">/);
+  assert.match(src, /href=\{slug \? placeHref\(slug, 'needs'\) : '#needs'\}/, 'a row is a link a new tab can open');
+  assert.match(src, /win\.AppView\?\._landOnTab\?\.\(slug, 'needs'\);[\s\S]*?win\.App\?\.navigateToApp\?\.\(slug, 'dev'\);/, 'and a plain tap lands on that place');
+  // One pill a row: filled when the viewer's vote decides, plain when it is advisory.
+  assert.match(src, /className=\{decides\(item\) \? 'wip-pill wip-pill-action' : 'wip-pill'\}/);
+  assert.equal(message('home:needsCard.vote'), 'Vote');
+  assert.equal(message('home:needsCard.advisoryPill'), 'Advisory');
+  // As many columns as the look has room for, the number Challenges' cards read too.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.wip-rows-cols \{ grid-template-columns: repeat\(var\(--wip-cols, 1\), minmax\(0, 1fr\)\);/);
+  for (const [at, n] of [['640px', 2], ['1024px', 3], ['1440px', 4]]) {
+    assert.match(css, new RegExp(`@media \\(min-width: ${at}\\) \\{ html\\[data-skin-wip\\] \\{ --wip-cols: ${n}; \\} \\}`));
+  }
+  assert.match(css, /\.wip-poster \{\s*display: flex;\s*flex: 0 0 calc\(\(100% - \(var\(--wip-cols, 1\) - 1\) \* var\(--wip-col-gap\)\) \/ var\(--wip-cols, 1\)\);/, 'a challenge is one of the same columns');
 });

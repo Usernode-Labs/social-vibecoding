@@ -11,7 +11,7 @@
  */
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 
-import { PlusWideIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, PlusWideIcon } from '@/components/ui/icons';
 
 /** The look's card: the plane colour, the card radius, one inset hairline. */
 export const WIP_CARD = 'wip-card';
@@ -22,15 +22,50 @@ export function WipCard({ on = true, className, children, ...rest }: HTMLAttribu
   return <div className={cls || undefined} {...rest}>{children}</div>;
 }
 
-/** The page's one filled action: the accent gradient pill, a plus and its words. */
-export function WipCta({ children, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode }) {
+/** A filled action: the accent gradient pill and its words, after a plus unless `glyph` is false. */
+export function WipCta({ children, glyph = true, ...rest }: ButtonHTMLAttributes<HTMLButtonElement> & { children: ReactNode; glyph?: boolean }) {
   return (
     <button type="button" className="wip-cta" {...rest}>
-      <PlusWideIcon className="wip-cta-glyph" strokeWidth="2.6" aria-hidden="true" />
+      {glyph ? <PlusWideIcon className="wip-cta-glyph" strokeWidth="2.6" aria-hidden="true" /> : null}
       {children}
     </button>
   );
 }
 
-/** A link riding a section's heading (Edit, See all): 14px semibold in the accent. */
-export const WIP_HEAD_LINK = 'wip-head-link un-touch-target';
+/**
+ * A section's label as the way to all of what the section shows a part of:
+ * the label's own words (and a count beside them), then a chevron, all one
+ * thing to press. Right, it is a link to that page; down and up, a button
+ * that unfolds the section in place and folds it back. The words on screen
+ * are the section's name, so `label` says what pressing does ("See all
+ * challenges").
+ */
+export function WipHeadMore({ direction, label, href, onClick, id, expanded, children }: {
+  direction: 'right' | 'down' | 'up';
+  label: string;
+  /** With an address it is a link; without, a button. */
+  href?: string;
+  onClick?: () => void;
+  id?: string;
+  /** For a button that unfolds: whether the section is unfolded now. */
+  expanded?: boolean;
+  children: ReactNode;
+}) {
+  const Glyph = direction === 'down' ? ChevronDownIcon : direction === 'up' ? ChevronUpIcon : ChevronRightIcon;
+  const inner = (
+    <>
+      {children}
+      <span className="wip-head-chevron" aria-hidden="true">
+        <Glyph className="wip-head-chevron-glyph" strokeWidth="2.4" />
+      </span>
+    </>
+  );
+  if (href) {
+    return <a id={id} href={href} className="wip-head-more" aria-label={label} title={label}>{inner}</a>;
+  }
+  return (
+    <button type="button" id={id} className="wip-head-more" aria-label={label} title={label} aria-expanded={expanded} onClick={onClick}>
+      {inner}
+    </button>
+  );
+}

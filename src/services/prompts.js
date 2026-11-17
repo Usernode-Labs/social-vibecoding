@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const { platformOrigin } = require('./app-identity-env');
+const { stripPartMarkers } = require('./homeroom-bot-prompt-parts');
 
 const CONVENTIONS_PATH = path.join(__dirname, '..', 'prompts', 'app-conventions.md');
 
@@ -67,7 +68,10 @@ const DESIGN_SELF_CHECK = Object.freeze({
 
 let cachedDesignGuidance = null;
 
-function getDesignGuidance({ readsImages = true } = {}) {
+// #6777: the file's part markers are budgets, not text. Kept out of what a
+// build work order, a triage or an agent's guidance reads, so all of them
+// still get exactly the guidance they got before the budgets existed.
+function designGuidanceSource({ readsImages = true } = {}) {
   if (cachedDesignGuidance === null) {
     try {
       cachedDesignGuidance = fs.readFileSync(DESIGN_GUIDANCE_PATH, 'utf-8').trim();
@@ -80,6 +84,10 @@ function getDesignGuidance({ readsImages = true } = {}) {
   return cachedDesignGuidance
     .split(DESIGN_SELF_CHECK_TOKEN)
     .join(readsImages ? DESIGN_SELF_CHECK.images : DESIGN_SELF_CHECK.text);
+}
+
+function getDesignGuidance(opts) {
+  return stripPartMarkers(designGuidanceSource(opts));
 }
 
 // Whether the model an OpenRouter coding turn runs reads images, from the
@@ -354,6 +362,7 @@ function getConventionSlugs() {
 module.exports = {
   getAppConventions,
   getDesignGuidance,
+  designGuidanceSource,
   runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
   FIRST_VERSION_SPEC_DESIGN_BRIEF,

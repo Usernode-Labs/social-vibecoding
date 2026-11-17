@@ -23,9 +23,9 @@
     "text": "Pinned projects",
     "description": "Heading over the grid of project tiles on the Home screen under the Standard (WIP) look: the projects this person keeps a tile for. It replaces \"Pinned apps\" there."
   },
-  "grid.seeAll": {
-    "text": "See all",
-    "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown when the folded grid hides some: it unfolds the grid to show every pinned one."
+  "grid.seeLess": {
+    "text": "Show less",
+    "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown once See all has unfolded the grid: it folds the grid back to its first rows."
   },
   "grid.heading": {
     "text": "Pinned apps",
@@ -119,6 +119,26 @@
     "text": "View your app allowance or request more slots.",
     "description": "Last sentence of the + tile's tooltip when the viewer has used up the number of apps they may create: what pressing it does instead. A slot is room for one app."
   },
+  "needsCard.seeAllCount_one": {
+    "text": "See all {{count}}",
+    "description": "Link at the end of the heading line of Home's Needs you card, when the card could not list every waiting decision: opens Needs you. {{count}} is how many wait in all."
+  },
+  "needsCard.seeAllCount_other": {
+    "text": "See all {{count}}",
+    "description": "Link at the end of the heading line of Home's Needs you card, when the card could not list every waiting decision: opens Needs you. {{count}} is how many wait in all."
+  },
+  "needsCard.seeAll": {
+    "text": "See all",
+    "description": "Link at the end of the heading line of Home's Needs you card (the Standard (WIP) look): opens Needs you, every decision waiting for the viewer across their projects."
+  },
+  "needsCard.vote": {
+    "text": "Vote",
+    "description": "Small pill on one waiting decision in Home's Needs you card, when the viewer's vote can decide it. A verb: what pressing the row leads to."
+  },
+  "needsCard.advisoryPill": {
+    "text": "Advisory",
+    "description": "Small pill on one waiting decision in Home's Needs you card, when the viewer's vote is advisory: it is recorded and does not decide the outcome."
+  },
   "needsCard.eyebrow": {
     "text": "Needs you",
     "description": "Title of Home's Needs you card, in the side column: the votes and decisions waiting on the viewer across their projects. The card opens the Needs you page."
@@ -130,22 +150,6 @@
   "needsCard.waiting_other": {
     "text": "{{count}} decisions waiting for your vote",
     "description": "Line under \"Needs you\" on Home's Needs you card: how many decisions wait on the viewer. Plural."
-  },
-  "needsCard.decide_one": {
-    "text": "<0>{{count}}</0> decides",
-    "description": "Under the bar on Home's Needs you card: how many waiting decisions the viewer's vote can settle. Singular; the number is bold."
-  },
-  "needsCard.decide_other": {
-    "text": "<0>{{count}}</0> decide",
-    "description": "Under the bar on Home's Needs you card: how many waiting decisions the viewer's vote can settle. Plural; the number is bold."
-  },
-  "needsCard.advisory_one": {
-    "text": "<0>{{count}}</0> advisory",
-    "description": "Under the bar on Home's Needs you card: how many waiting decisions take the viewer's vote as advice only. Singular; the number is bold."
-  },
-  "needsCard.advisory_other": {
-    "text": "<0>{{count}}</0> advisory",
-    "description": "Under the bar on Home's Needs you card: how many waiting decisions take the viewer's vote as advice only. Plural; the number is bold."
   },
   "create.lockedTip": {
     "text": "New project. View app quota. {{hint}}",

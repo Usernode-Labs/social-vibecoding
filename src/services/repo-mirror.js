@@ -444,6 +444,52 @@ async function commitsBetween(dir, base, head, { limit = 50 } = {}) {
   return commits.length > limit ? null : commits;
 }
 
+/**
+ * #6778: the changes merged to the default branch since a moment, newest
+ * first, with the files each one touched. This is what a fix turn reads to
+ * see that main moved the same lines it is failing on. First parents only
+ * and no merges, so a squash merge is one entry and a merge of a branch
+ * brings none of the branch's own commits in as separate entries.
+ *
+ * `[{ sha, mergedAt, subject, files }]`, or null when git cannot say (an
+ * unknown tip, an unusable date, a git error). `limit` bounds how far back
+ * the read goes; the caller's own list is capped separately.
+ */
+async function mainLogSince(dir, tip, sinceIso, { limit = 60 } = {}) {
+  const since = String(sinceIso || '').trim();
+  if (!Number.isFinite(Date.parse(since))) return null;
+  const r = await git(dir, [
+    'log', '--first-parent', '--no-merges', '--name-only',
+    `--since=${since}`, `--max-count=${Math.max(1, Number(limit) || 60)}`,
+    '--format=%H%x1f%cI%x1f%s%x1e', safeSha(tip),
+  ], { allowFail: true });
+  if (r.code !== 0) return null;
+  // git writes a commit's header, then its record separator, then its file
+  // names: the separator marks where the files start, not where the header
+  // ends. A file name never holds the field separator, so the header is the
+  // line that does.
+  const commits = [];
+  let current = null;
+  for (const raw of text(r.stdout).split('\n')) {
+    const line = raw.replace(/\x1e/g, '').trim();
+    if (!line) continue;
+    if (line.includes('\x1f')) {
+      const [sha, mergedAt, subject] = line.split('\x1f');
+      current = {
+        sha: String(sha || '').trim().toLowerCase(),
+        mergedAt: String(mergedAt || '').trim(),
+        subject: String(subject || '').trim(),
+        files: [],
+      };
+      if (current.sha) commits.push(current);
+      else current = null;
+    } else if (current) {
+      current.files.push(line);
+    }
+  }
+  return commits;
+}
+
 module.exports = {
   ensureMirror,
   mirrorPath,
@@ -459,6 +505,7 @@ module.exports = {
   listBranches,
   hasCommit,
   commitsBetween,
+  mainLogSince,
   // Exported for the unit tests, which drive the plumbing against a real
   // temporary repository rather than a mock — the whole point of this module
   // is that the answers are git's, so stubbing git would test nothing.

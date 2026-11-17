@@ -8265,7 +8265,9 @@ const App = {
   // new project, "What do you want to make?"
   // (frontend/src/features/first-session/make.tsx), the screen the first
   // session asks with, so a second project starts the way the first did;
-  // `{ import: true }` opens it on importing a GitHub repo. The New project
+  // `{ import: true }` opens it on importing a GitHub repo; `{ idea, name,
+  // audience }` (a private thread's New project) opens it filled in with the
+  // bot's brief and suggested name, for who they chose. The New project
   // dialog it used to open is retired. Answers whether it opened: another
   // of the island's screens (the first session's) keeps the view.
   showCreateModal(opts) {

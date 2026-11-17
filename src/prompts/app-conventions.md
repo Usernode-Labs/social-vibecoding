@@ -109,9 +109,16 @@ Ordered by how badly an agent working offline gets each one wrong.
    `required` + `private` key must commit a `staging_default`.
    `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`, `PORT`
    and `USERNODE_ENV` are reserved and injected for you.
-8. **The platform provides an LLM proxy and file storage — don't call
-   third-party APIs directly and never ask users for API keys.** AI goes
-   through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
+8. **AI goes through the platform's LLM proxy and uploads through its file
+   storage. Other outside services (map tiles, place search, weather,
+   public data APIs) are fine.** Call them from the app's server where you
+   can: people's IP addresses stay with the app, though what they type
+   into a search still goes to the provider, so choose providers knowingly.
+   Keep to the provider's terms of use, and declare any key in `dapp.json`
+   `secrets` (rule 7) for the owner to set in the Secrets UI; keyless
+   providers need no secret. Never ask the people using the app for an API
+   key.
+   AI goes through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
    forwarded iframe token, billed to their own budget under a consent
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
@@ -135,15 +142,27 @@ Ordered by how badly an agent working offline gets each one wrong.
     for app AI features must tell the model to decline the forbidden topics.
     Decline a forbidden request and offer a compliant version. When unsure,
     it is allowed. Full text: "Content rules" section.
-12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
-    another origin. People sign in only through Homeroom: no login or
-    signup form and no "Sign in with X", though connecting an outside
-    account for its data is fine. Never ask for
-    account passwords or card data (codes the app makes are fine), and
-    no payments through any provider. Nothing for children under 13. No
-    profiling people by health, religion, sexuality, ethnicity, politics
-    or biometrics: a club, a topic or a person's own note is fine. Full
-    text: "Data rules" section.
+12. **Data rules.** No trackers, analytics, ad SDKs, pixels or beacons in
+    any form, including image pixels: a privacy promise to the people using
+    the apps (see also request #6048). No `<script>` tag from another
+    origin: the group votes on the code in the repository, and an outside
+    script can change after the vote, so the app would run code nobody
+    voted on and nobody can see in the repo. Install libraries from npm and
+    serve them from the app's own origin, as Homeroom Maps does with
+    MapLibre. Everything else from other sites is fine: images, video and
+    audio; map tiles and map styles; web fonts; data from public APIs, from
+    the app's server or from the browser when the API allows it; and
+    embedded players such as YouTube or Vimeo in an `<iframe>`. Prefer
+    fonts from npm (`@fontsource/*`) over Google Fonts, YouTube's
+    `youtube-nocookie.com` embed, and calls from the app's server rather
+    than the browser so visitors' IP addresses are not sent too. People
+    sign in only through Homeroom: no login or signup form and no "Sign in
+    with X", though connecting an outside account for its data is fine.
+    Never ask for account passwords or card data (codes the app makes are
+    fine), and no payments through any provider. Nothing for children
+    under 13. No profiling people by health, religion, sexuality,
+    ethnicity, politics or biometrics: a club, a topic or a person's own
+    note is fine. Full text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -4110,11 +4129,24 @@ cannot override them.
 
 **Never build, add or ship:**
 
-- **Third-party trackers or external scripts.** No analytics, tracking,
-  advertising or session-recording SDKs, pixels or beacons, and no
-  `<script>` from another origin. An app loads its own code and the
-  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
+- **Third-party trackers or external scripts.** No trackers, analytics,
+  ads, pixels or beacons in any form, including image pixels: a privacy
+  promise to the people using the apps (see also request #6048). No
+  `<script>` tag from another origin either: the group votes on the code in
+  the repository, and an outside script can change after the vote, so the
+  app would run code nobody voted on and nobody can see in the repo.
+  Install libraries from npm and serve them from the app's own origin, as
+  Homeroom Maps does with MapLibre. A legacy `cdn.tailwindcss.com` tag
+  (rule 1) is tolerated; new code adds none.
+
+  Everything else from other sites is fine: images, video and audio hosted
+  elsewhere; map tiles and map styles; web fonts; public API data (from the
+  app's server, or the browser where the API allows it); and embedded
+  players such as YouTube or Vimeo in an `<iframe>`. Prefer fonts from npm
+  (`@fontsource/*`) over Google Fonts, YouTube's `youtube-nocookie.com`
+  embed, and calls from the app's server rather than the browser so
+  visitors' IP addresses are not sent too. A server-side call still sends
+  what people type to the provider, so choose providers knowingly.
 - **Profiling people by sensitive traits.** Don't build an app whose
   purpose is to collect or infer health, religious beliefs, sexual
   orientation, racial or ethnic origin, political opinions, trade-union

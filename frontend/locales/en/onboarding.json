@@ -1019,6 +1019,10 @@
     "text": "Filled in from your search.",
     "description": "Hint under the \"What should it do?\" box when it was filled in with what the member searched for in Discover and no app matched."
   },
+  "firstSession.make.threadIdea": {
+    "text": "Homeroom bot's plan from your thread comes along with it.",
+    "description": "Hint under the \"What should it do?\" box when the member opened New project from a private thread with Homeroom bot: the plan agreed in that thread is used with what they send here."
+  },
   "firstSession.make.nameLabel": {
     "text": "What should we call it?",
     "description": "Label of the name field on the \"What do you want to make?\" screen, where a member describes a new project: the name of the new project. \"it\" is the project."
