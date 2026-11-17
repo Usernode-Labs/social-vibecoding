@@ -1944,14 +1944,16 @@ platform's Settings → "App AI permissions"; revocation is immediate,
 so treat `grant_required` as a state that can appear at any time, not
 just on first use.
 
-## App file storage — user-uploaded images and audio
+## App file storage — user-uploaded images, audio, video, PDFs and text files
 
 Apps that let users upload photos (avatars, "here's how mine turned
-out" shots, attachment images) or that generate spoken narration store
-them **platform-side** and persist only the returned URL in their own
-database. **Never store file bytes in your Postgres DB** (base64/bytea
-columns bloat the DB and its staging clones) and never build your own
-disk storage — the app container has no persistent volume.
+out" shots, attachment images), that show a menu, sheet music or flyer
+as a PDF, that post a short video clip, that offer a calendar file, or
+that generate spoken narration store those files **platform-side** and
+persist only the returned URL in their own database. **Never store file
+bytes in your Postgres DB** (base64/bytea columns bloat the DB and its
+staging clones) and never build your own disk storage — the app
+container has no persistent volume. Every common kind has a home here.
 
 Two ways in; both return the same shape. Persist `url` (to render)
 and `id` (to delete later) in your own tables:
@@ -1972,10 +1974,28 @@ Limits and rules (both paths):
   from the bytes, and the file extension must match. An `.ogg` must
   carry Opus; other codecs inside it are refused. Max **25 MB** per
   file, roughly 30 minutes of speech.
-- **Quotas**: 10 GB per app, 1 GB per user per app, shared by images
-  and audio (staging-preview uploads: 100 MB per app, auto-deleted
-  after 7 days). Structured error codes on rejection:
-  `file_too_large`, `invalid_image`, `invalid_audio`,
+- **Documents**: PDF (`.pdf`) — sniffed from the bytes (a real
+  `%PDF-` header, never the name). Max **25 MB** per file. A PDF
+  downloads as a file; it never renders as a page.
+- **Video**: MP4 (H.264/AAC, `.mp4` or `.m4v`) and WebM (`.webm`) —
+  sniffed from the bytes; QuickTime and Matroska files are refused.
+  Max **100 MB** per file. Render it inline with
+  `<video src="${url}" controls>`. Files are served whole with no
+  range support, so it plays from the start in Chrome and Firefox;
+  Safari on iPhone usually wants pieces and may not play it.
+- **Text and data**: plain text (`.txt`), CSV (`.csv`), JSON
+  (`.json`) and calendar (`.ics`) — 5 MB each. They must be valid
+  UTF-8 with no NUL bytes, a `.json` must parse, and an `.ics` must
+  begin `BEGIN:VCALENDAR`. They download as files. Bytes that begin
+  like HTML, XML, SVG or JavaScript are refused whatever the name.
+- **Never accepted**: HTML, SVG, JavaScript and XML under any name.
+  An upload is checked by its bytes, so a web page renamed
+  `menu.pdf` is refused.
+- **Quotas**: 10 GB per app, 1 GB per user per app, shared by every
+  kind above (staging-preview uploads: 100 MB per app, auto-deleted
+  after 7 days — one large video can use most of a preview's space).
+  Structured error codes on rejection:
+  `file_too_large`, `invalid_image`, `invalid_audio`, `invalid_file`,
   `app_quota_exceeded`, `user_quota_exceeded`,
   `staging_quota_exceeded`, `storage_unavailable`.
 - **Visibility**: `public` (default) serves the file to anyone with
@@ -1983,7 +2003,8 @@ Limits and rules (both paths):
   content the app shows to all its users. `private` additionally
   requires a platform user token at view time: render those as
   `<img src="${url}?token=${theIframeToken}">` (or
-  `<audio src="${url}?token=${theIframeToken}">` for narration). Files
+  `<audio ...>`/`<video ...>` with the same `?token=` for narration
+  and clips). Files
   are served whole; there is no range/skip-ahead support.
 - **Files are immutable** — there is no overwrite; upload a new file
   and update your stored URL. Deleting makes the URL 404 for fresh
@@ -2003,9 +2024,10 @@ try {
 ```
 
 - `usernode.uploadFile(file, { visibility })` — uploads a `File`/`Blob`
-  as the signed-in user, resolves the stored-file shape above. It keeps
-  a 5 MB check before sending, so small images and short audio clips fit
-  but long narration does not: send those through the server path below.
+  as the signed-in user, resolves the stored-file shape above. It
+  refuses files over 100 MB (the largest kind's limit) before sending
+  and leaves each kind's own limit to the server; a large video on a
+  slow connection can take a while, so it waits up to 10 minutes.
 - `usernode.deleteFile(id)` — deletes one of the **current user's
   own** uploads (use it for "remove my photo" flows).
 - `usernode.getStorageUsage()` — resolves `{ appBytes, appCapBytes,
@@ -2036,8 +2058,8 @@ const STORAGE_ENABLED = !!process.env.USERNODE_STORAGE_TOKEN;
 ```
 
 Endpoints (auth headers exactly like the LLM proxy — the app token
-plus the user's forwarded iframe token). This is the path for long
-narration, which the browser helper's 5 MB check would refuse:
+plus the user's forwarded iframe token). Use this path for anything
+the browser helper's 100 MB ceiling would refuse, and for takedowns:
 
 ```js
 // Upload: raw bytes, filename/visibility as query params (NOT multipart)
