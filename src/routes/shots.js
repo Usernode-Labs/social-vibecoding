@@ -9,6 +9,7 @@ const shots = require('../services/shots-files');
 const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
 const view = require('../services/shots-view');
+const { fromRun: shotDiagnosisFromRun } = require('../services/shots-diagnosis');
 const mediaStore = require('../services/media-store');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -209,6 +210,9 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
         })),
         failureCode: run.failure_code,
         failureReason: run.failure_reason,
+        // #6779: the step the run stopped at, from its own trace, as fixed
+        // values only. Null unless the run failed.
+        diagnosis: shotDiagnosisFromRun(run),
         // What the agent is doing now, from its workspace (while it exists).
         agentProgress: run.id === ctx.session.shots_run_id ? await agentProgress(run.id) : null,
         trace: {

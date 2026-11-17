@@ -3,6 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const worker = require('../src/services/worker');
+const shotsDiagnosis = require('../src/services/shots-diagnosis');
 
 test('shots worker reports the last browser tool without retaining its inputs or results', () => {
   const events = [];
@@ -245,4 +246,112 @@ test('navigation diagnostics identify paired sides and repeated routes without s
   assert.equal(calls[0].routeHint, 'declared_check');
   assert.equal(calls[0].checkRank, 1);
   assert.doesNotMatch(JSON.stringify(events), /private|outside\.invalid|token|secret/i);
+});
+
+// ── The failed run's diagnosis (#6779) ─────────────────────────────────
+
+test('a failed run stopped signing in to the before copy says so, fixed fields only', () => {
+  const run = {
+    id: 'a'.repeat(32),
+    state: 'failed',
+    failure_code: 'shots_agent_failed',
+    trace_summary: {
+      terminalFailureClass: 'agent_never_started',
+      agentActivity: {
+        firstAtMs: {},
+        toolCounts: {},
+        events: [
+          { atMs: 10, kind: 'worker_prepare_end', outcome: 'ok' },
+          {
+            atMs: 1300, kind: 'auth_bootstrap', side: 'base', persona: 'member',
+            outcome: 'error', failureCode: 'invalid_session_cookie', failureStage: 'exchange',
+            responseStatus: 200,
+          },
+        ],
+      },
+      timingsMs: { provisioning: 900, total: 1400, bogus: 'not a number' },
+      workerMemory: { oomKillsDuringTurn: 0 },
+      agentFinalResponse: { excerpt: 'I could not sign in.' },
+    },
+  };
+  const diagnosis = shotsDiagnosis.fromRun(run);
+  assert.equal(diagnosis.runId, run.id);
+  assert.equal(diagnosis.state, 'failed');
+  assert.equal(diagnosis.failureCode, 'shots_agent_failed');
+  assert.equal(diagnosis.terminalClass, 'agent_never_started');
+  assert.deepEqual(diagnosis.stoppedAt, {
+    kind: 'auth_bootstrap', side: 'base', persona: 'member', outcome: 'error',
+    failureCode: 'invalid_session_cookie', failureStage: 'exchange', responseStatus: 200,
+    atMs: 1300,
+  });
+  assert.equal(diagnosis.agentStarted, false);
+  assert.equal(diagnosis.toolsUsed, 0);
+  assert.deepEqual(diagnosis.timingsMs, { provisioning: 900, total: 1400 });
+  assert.equal(diagnosis.workerOutOfMemory, false);
+  assert.equal(diagnosis.lastWords, 'I could not sign in.');
+
+  // Only a failed run has a diagnosis.
+  for (const state of ['planned', 'provisioning', 'exploring', 'reviewing', 'verified', 'stale', 'cancelled']) {
+    assert.equal(shotsDiagnosis.fromRun({ ...run, state }), null, state);
+  }
+  assert.equal(shotsDiagnosis.fromRun(null), null);
+});
+
+test('a diagnosis carries no secret: no cookie, token, JWT, URL query or header', () => {
+  const run = {
+    id: 'b'.repeat(32),
+    state: 'failed',
+    // Not an enum, so it is dropped rather than passed through.
+    failure_code: 'session=abc123secret',
+    trace_summary: {
+      terminalClass: 'Bearer abcdefghijklmnop',
+      agentActivity: {
+        firstAtMs: { first_output: 40 },
+        toolCounts: { browser_navigate: 2, other: 1 },
+        events: [{
+          atMs: 50, kind: 'auth_bootstrap',
+          side: 'base', persona: 'member', outcome: 'error',
+          failureCode: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlMTIz',
+          failureStage: 'https://example.invalid/callback?token=abc123secret',
+          responseStatus: 200,
+          cookie: 'session=abc123secret',
+          url: 'https://example.invalid/?token=abc123secret',
+          headers: { authorization: 'Bearer abc123secret' },
+        }],
+      },
+      timingsMs: { provisioning: 10 },
+      agentFinalResponse: {
+        excerpt: 'Sign-in failed: session=abc123secret from https://example.invalid/?token=abc123secret '
+          + 'with Bearer abc123secret and eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJlMTIz',
+      },
+    },
+  };
+  const serialized = JSON.stringify(shotsDiagnosis.fromRun(run));
+  for (const secret of [
+    'abc123secret', 'abcdefghijklmnop', 'eyJhbGciOiJIUzI1NiJ9',
+    'authorization', 'cookie',
+  ]) {
+    assert.equal(serialized.includes(secret), false, `${secret} must not survive`);
+  }
+  assert.equal(shotsDiagnosis.fromRun(run).failureCode, null, 'a non-enum code is dropped');
+  assert.equal(shotsDiagnosis.fromRun(run).terminalClass, null, 'a non-enum class is dropped');
+  assert.equal(shotsDiagnosis.fromRun(run).stoppedAt.failureCode, undefined);
+  assert.equal(shotsDiagnosis.fromRun(run).stoppedAt.failureStage, undefined);
+  assert.equal(shotsDiagnosis.fromRun(run).agentStarted, true);
+  assert.equal(shotsDiagnosis.fromRun(run).toolsUsed, 3);
+});
+
+test('the bot reads no last words, but keeps the step', () => {
+  const run = {
+    id: 'c'.repeat(32),
+    state: 'failed',
+    failure_code: 'shots_agent_failed',
+    trace_summary: {
+      agentActivity: { events: [{ atMs: 1, kind: 'auth_bootstrap', outcome: 'error', failureCode: 'invalid_session_cookie' }] },
+      agentFinalResponse: { excerpt: 'Only I should see this.' },
+    },
+  };
+  const diagnosis = shotsDiagnosis.fromRun(run, { lastWords: false });
+  assert.equal('lastWords' in diagnosis, false);
+  assert.equal(diagnosis.stoppedAt.failureCode, 'invalid_session_cookie');
 });

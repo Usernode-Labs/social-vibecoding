@@ -1566,6 +1566,7 @@ module.exports = {
   MIN_AGENT_RETRY_MS,
   platformFault,
   visibleError,
+  redactDiagnosticText,
   newRunMetrics,
   recordAgentDiagnostic,
   addTiming,
