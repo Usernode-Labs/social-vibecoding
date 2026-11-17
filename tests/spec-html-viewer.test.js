@@ -49,8 +49,10 @@ test('a spec\'s viewer adds side by side, starts on auto, and offers close-up on
   // Every screen's side switch has the third option.
   assert.equal((html.match(/class="shots-seg-btn shots-seg-both"/g) || []).length, 3);
   assert.match(html, /<label for="shots-spec-dc-9-2-0-side-both" class="shots-seg-btn shots-seg-both" title="Side by side">/);
-  // One pair of zoom radios, Close-up first, and a zoom switch only on screens with a close-up.
-  assert.match(html, /class="shots-zoom-pick shots-zoom-close" name="shots-spec-dc-9-2-0-zoom" id="shots-spec-dc-9-2-0-zoom-close" aria-label="Show a close-up of what changes" checked>/);
+  // One pair of zoom radios, Close-up then Whole screen, and a zoom switch only on screens with a close-up.
+  // Whole screen is the start, so the screens open fitted.
+  assert.match(html, /class="shots-zoom-pick shots-zoom-close" name="shots-spec-dc-9-2-0-zoom" id="shots-spec-dc-9-2-0-zoom-close" aria-label="Show a close-up of what changes">/);
+  assert.match(html, /class="shots-zoom-pick shots-zoom-whole" name="shots-spec-dc-9-2-0-zoom" id="shots-spec-dc-9-2-0-zoom-whole" aria-label="Show the whole screen" checked>/);;
   assert.equal((html.match(/class="shots-seg shots-seg-zoom"/g) || []).length, 2);
   // The spec's chips, escaped by the builder.
   assert.match(html, /shots-flip-chip-after">After · planned</);
