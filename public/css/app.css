@@ -26646,6 +26646,10 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
 .dev-rail-link { font-weight: 600; color: var(--accent); white-space: nowrap; }
 .dev-rail-link:hover { text-decoration: underline; }
 .dev-rail-note { margin: 8px 0 0; padding: 9px 12px; border-radius: 12px; background: var(--rail-note); font-size: 13px; line-height: 19px; color: var(--rail-ink); overflow-wrap: anywhere; }
+/* Three tones (17 Nov 2026): the wash only when somebody has to act; a wait
+   that needs nobody is plain, and a stop is tinted red. */
+.dev-rail-note[data-rail-note="plain"] { background: var(--rail-note-plain, color-mix(in srgb, var(--rail-line) 55%, transparent)); }
+.dev-rail-note[data-rail-note="bad"] { background: var(--rail-bad-tint); }
 
 /* The folded pile: the earlier steps' markers, one over the next down the
    line, the newest on top with its glyph, and the link that opens them. A
@@ -26674,10 +26678,11 @@ html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-
 
 /* THE CARDS, at every width: the root post, the timeline and the replies
    are three cards on the page's ground, as the thread design drew them, on
-   a phone as on a desktop. Not in a side panel (the Workshop's, or the
-   embedded one), which keeps the one sheet, and not while the reader beside
-   the thread is open. A look paints them through the `-look` variables
-   (the brand look's are white); without one they are the standard sheet. */
+   a phone as on a desktop. A side panel (the Workshop's, or the embedded
+   one) and the page while the reader beside it is open are drawn by the
+   next block, on their own ground. A look paints them through the `-look`
+   variables (the brand look's are white); without one they are the
+   standard sheet. */
 html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
   --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
   --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
@@ -26712,6 +26717,42 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
 /* The pile's markers lie over each other, so each needs an opaque ground. */
 html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail-pile-mark { background: var(--thread-card-solid); box-shadow: 0 0 0 2px var(--thread-card-solid); }
 
+/* IN A PANEL TOO (17 Nov 2026): the Workshop's side panel, the column
+   beside Homeroom bot's list and the page with the reader open beside it
+   drew the same page as one flat sheet, with the timeline a tinted block
+   inside it. They are the same three cards there, on the panel's own
+   ground (a look names it: `--thread-ground-look`). `#dev-topic-thread`
+   is in the scope so the replies' card outranks the thread's own rules. */
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { background: var(--thread-ground-look, transparent); }
+html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet { border-top-color: transparent; box-shadow: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) :is(#gc-thread-head, #gc-thread-messages, .dev-request-rail) {
+  min-width: 0;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-head { padding: 8px 0 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages { margin-top: 14px; padding: 6px 4px 8px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) #gc-thread-messages:empty { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-rail { margin-top: 14px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll { padding-top: 12px; padding-bottom: 12px; }
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail {
+  --rail-well: transparent;
+  margin: 0;
+  padding: 14px 10px 8px;
+  border-radius: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail-pile-mark { background: var(--thread-card-solid); box-shadow: 0 0 0 2px var(--thread-card-solid); }
+/* The panel's own head names the project and the number, so the card's
+   kicker would say it twice. */
+html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
+
 /* WIDE: two columns. The page's header row runs across both; under it the
    root post and the replies are cards in the first column, and the rail is
    a card that stays put beside them. */
@@ -26745,6 +26786,8 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-rail { padding: 16px 10px 8px; }
   /* The card says the title; the header row keeps the number, the pill and ⋯. */
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar .dev-request-bar-title { display: none; }
+  /* …and ends where the card does, so ⋯ is on the card and not over the timeline. */
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-bar { margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap)); }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet > :is(.messages-composer, .messages-jump, .messages-status-line) {
     margin-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
   }
@@ -26762,6 +26805,25 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
    (the frame's looks keep their own page), so nothing here needs a look in
    its selector: every rule hangs off a class those pages alone render.
    ═══════════════════════════════════════════════════════════════════════ */
+/* THE ⋯ ON THE CARD'S FIRST LINE (17 Nov 2026). The sheet's header row
+   held only the topic's name and ⋯ under the card look: a band about 70px
+   tall above every card, on a phone too. The header keeps its markup (the
+   ⋯ and what selects on it), takes no height, and its ⋯ sits over the end
+   of the card's kicker line; the topic is said in the kicker instead. */
+.dev-request:has(.dev-thread-card) .dev-request-bar { height: 0; position: relative; z-index: 5; box-shadow: none; }
+.dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header { padding: 6px 10px 0; pointer-events: none; }
+.dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action { pointer-events: auto; }
+.dev-request:has(.dev-thread-card) .dev-request-bar :is([data-request-category], [data-change-category]) {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+.dev-request:has(.dev-request-bar [data-card-menu]) .dev-thread-kicker { padding-inline-end: 44px; }
+/* THE REPLY BOX FOLLOWS THE REPLIES (17 Nov 2026). The scroller filled the
+   sheet, so the box was pinned to the bottom of the window however short
+   the thread: far under a card with two replies. The scroller is now only
+   as tall as what it holds, so the box sits right under the replies, and
+   it is pinned again (the scroller shrinks and scrolls) once the thread is
+   taller than the window. */
+.dev-request:has(.dev-thread-card) .dev-request-scroll { flex-grow: 0; }
 /* The author row gives way to the kicker; the timeline says who and when. */
 .dev-thread-card { position: relative; --foot-x: 16px; --foot-b: 16px; }
 /* The card's own gutters, so the foot's band can reach its edges exactly. */
@@ -26820,6 +26882,10 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
   /* On a phone the one to press takes the row it is on. */
   .dev-thread-foot-acts > :is(.dev-vote-btn, .dev-request-primary, :has(> .dev-vote-btn)):last-child { flex: 1 1 auto; }
   .dev-thread-foot-acts > :has(> .dev-vote-btn):last-child > .dev-vote-btn { width: 100%; }
+  /* …and the others share it, so none is a small pill beside empty space. */
+  .dev-thread-foot-acts > :is(button, a), .dev-thread-foot-acts > [data-thread-foot-next] > :is(button, a) { flex: 1 1 auto; justify-content: center; }
+  .dev-thread-foot-acts > :has(> .dev-vote-btn) { flex: 1 1 auto; }
+  .dev-thread-foot-acts > :has(> .dev-vote-btn) > .dev-vote-btn { width: 100%; }
 }
 
 /* Where the picture will be, before there is one. */
@@ -26851,6 +26917,15 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
 [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-seg-side { margin-inline: auto; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
 [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-expand { position: absolute; inset-inline-end: 10px; bottom: 0; margin: 0; }
 [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { inset-inline-start: auto; inset-inline-end: 10px; }
+/* One picture, one switch (17 Nov 2026): the screen-size switch and the
+   light and dark flip are the expanded viewer's, a press on Expand away. */
+[data-thread-picture] .dev-change-viewer:not(:popover-open) :is(.shots-seg-size, .shots-theme-flip) { display: none; }
+/* The caption under the tiles is one quiet line a screen, not a heading:
+   the viewer's own bold claim and its key to the outlines are for the
+   expanded view. */
+.dev-thread-tiles-legend .shots-change strong { font-size: 13.5px; line-height: 19px; font-weight: 400; color: var(--text-secondary); }
+.dev-thread-tiles-legend .shots-change-n { width: 18px; height: 18px; font-size: 11px; }
+.dev-thread-tiles-legend .shots-key { display: none; }
 /* The chip says what the side is for this change ("If it passes · After"):
    the page hands the words as CSS strings (change-head.tsx), drawn in place
    of the viewer's own one word. */
@@ -26871,7 +26946,7 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
 
 /* A step's content, over the card. */
 .dev-step-layer { position: absolute; inset: 0; z-index: 6; }
-.dev-step-scrim { position: absolute; inset: -6px; border-radius: 14px; background: var(--messages-surface); opacity: 0.78; cursor: default; }
+.dev-step-scrim { position: absolute; inset: -6px; top: var(--step-floor, -6px); border-radius: 14px; background: var(--messages-surface); opacity: 0.78; cursor: default; }
 .dev-step-sheet {
   position: absolute; inset-inline: 0; top: 8px;
   overflow: auto; overscroll-behavior: contain;
@@ -26909,6 +26984,30 @@ html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body
 
 /* One step, one thing: the Tested step's layer shows the tests, the vote's
    step its votes (change-head.tsx ChangeGates). */
+/* The tests as counts and rows (change-head.tsx ChecksSummary); the Testing
+   card under it is put away while they are drawn. */
+[data-gates-show="checks"]:has(> [data-checks-summary]) .dev-change-pair [data-change-gate="testing"] { display: none; }
+.dev-thread-facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.dev-thread-fact {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 3px 10px; border-radius: 999px;
+  background: var(--thread-fact, var(--messages-surface)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 13px; line-height: 18px; font-weight: 600; color: var(--text-secondary);
+}
+.dev-thread-fact[data-tone="bad"] { background: color-mix(in srgb, var(--state-blocked) 12%, transparent); box-shadow: none; color: var(--state-blocked); }
+.dev-thread-fact[data-tone="ok"] { background: color-mix(in srgb, var(--state-ok) 14%, transparent); box-shadow: none; color: var(--state-ok); }
+.dev-checks-sum > .dev-thread-facts { margin-top: 0; }
+.dev-checks-why { margin: 10px 0 0; font-size: 13.5px; line-height: 20px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.dev-checks-rows { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.dev-checks-row {
+  display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 12px;
+  background: var(--thread-fact, var(--messages-surface)); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  font-size: 13px; line-height: 19px; color: var(--text-secondary); overflow-wrap: anywhere;
+}
+.dev-checks-row > b { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
+.dev-checks-row > b > svg { margin-top: 3px; color: var(--state-blocked); }
+.dev-checks-row[data-checks-row="advisory"] > b > svg { color: var(--text-muted); }
+.dev-checks-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.dev-checks-acts:empty { display: none; }
 [data-gates-show="checks"] .dev-change-pair [data-change-gate="votes"],
 [data-gates-show="votes"] .dev-change-pair :is([data-change-gate="testing"], [data-change-gate="merge"]) { display: none; }
 
@@ -28837,7 +28936,9 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   --rail-well: var(--bl-page);
   --rail-done-tint: var(--bl-tint-leaf);
 }
-html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-rail { --rail-now: var(--bl-solid); --rail-now-ink: var(--bl-on-solid); }
+/* The note under the step it stands on is a pale wash on the white card,
+   not the header's yellow. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) .dev-rail { --rail-now: var(--bl-solid); --rail-now-ink: var(--bl-on-solid); --rail-note: color-mix(in srgb, var(--bl-wash) 50%, var(--bl-card)); }
 html[data-skin="brand"].dark:not([data-app-tone="light"]) .dev-rail { --rail-now: var(--bl-sun); --rail-now-ink: var(--bl-on-sun); --rail-now-ring: rgba(255, 238, 111, 0.3); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail-title {
   font-size: 13px;
@@ -28864,7 +28965,9 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   color: var(--text-primary);
   box-shadow: var(--bl-raise-edge);
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-rail { --rail-now-box: var(--bl-page); --rail-now-box-line: var(--app-sheet-line); --rail-note-plain: transparent; }
+/* A fact chip and a failed test's row are white on the layer's cream. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-card { --thread-fact: var(--bl-card); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-before:checked) .shots-seg-before,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open):has(.shots-side-after:checked) .shots-seg-after {
   background: var(--bl-solid);
@@ -28872,3 +28975,20 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { background: rgba(18, 26, 14, 0.82); color: #ffffff; }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-opt-look { color: var(--bl-sky); }
+/* A thread in a panel: the panel's ground is the page's cream, so its three
+   cards are white on it as a full page's are. The column beside Homeroom
+   bot's list paints its body (#6432), so the body is named too. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-request { --thread-ground-look: var(--bl-page); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])).in-side-panel.side-panel-beside-ai body:has(.dev-thread-card) { background: var(--bl-page) !important; }
+/* Failed tests: the foot's one sun pill is what moves it on (Fix it, or the
+   re-run), and Vote steps back to a white pill beside See what failed. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot[data-thread-foot="failed"] .dev-thread-foot-acts .dev-vote-btn {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts [data-thread-foot-next] :is(button, a) {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}

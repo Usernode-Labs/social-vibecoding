@@ -3668,10 +3668,10 @@
       "expectText": "Preview building"
     },
     {
-      "name": "Imported proposal whose preview failed: the Testing card says so, with its retry in place of the Preview button (#866, #4455)",
+      "name": "Imported proposal whose preview failed: the card's foot says Tests failed and why, with See what failed and the retry as its one action (#866, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
       "expectText": "The preview didn’t start",
-      "expectSelector": ".dev-change-root:has([data-change-gate=\"testing\"][data-tone=\"bad\"] .dev-change-gate-figure) .dev-thread-foot:has(.dev-thread-foot-acts [data-act=\"swapToStagingForSession\"]) [data-thread-foot-also=\"bad\"]"
+      "expectSelector": ".dev-change-root:has([data-change-gate=\"testing\"][data-tone=\"bad\"] .dev-change-gate-figure) .dev-thread-foot[data-thread-foot=\"failed\"] .dev-thread-foot-acts:has([data-thread-foot-see=\"checks\"]) [data-thread-foot-next] [data-act=\"swapToStagingForSession\"]"
     },
     {
       "name": "Freshness (#1442): a conflicted proposal says so in one short line on its merge step, in Details (B10b)",
@@ -3708,10 +3708,10 @@
       "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > [data-check-unit]:has(.dev-ledger-unit-said) > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
     },
     {
-      "name": "A change whose checks failed tells its author what went wrong in plain words, with Fix it beside a quieter Re-run checks",
+      "name": "A change whose checks failed says Tests failed in its foot, with See what failed and Fix it; the plain-words account is read for the layer",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000494",
-      "expectSelector": ".dev-change-root:has([data-change-gate=\"testing\"][data-tone=\"bad\"] > .dev-change-gate-why[data-change-gate-why=\"explained\"]) .dev-thread-foot:has(.dev-thread-foot-acts > .gc-vote-btn-accent[data-change-fix-checks] + .gc-vote-btn:not(.gc-vote-btn-accent)[data-act=\"castRecheck\"]) [data-thread-foot-also=\"bad\"]",
-      "expectText": "needs a Spanish version"
+      "expectSelector": ".dev-change-root:has(.dev-change-gate-why[data-change-gate-why=\"explained\"]) .dev-thread-foot[data-thread-foot=\"failed\"] .dev-thread-foot-acts:has(> [data-thread-foot-see=\"checks\"]) > [data-thread-foot-next] > .gc-vote-btn-accent[data-change-fix-checks]",
+      "expectText": "Tests failed"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
