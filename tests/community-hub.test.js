@@ -289,7 +289,7 @@ test('Recently live: the last three changes that went live, as pictures that ope
     'the label, and its door to the Workshop');
   const cards = [...html.matchAll(/<a class="dev-ws-recent-card" href="([^"]+)" data-ws-recent-item="([^"]+)"/g)].map((m) => [m[1], m[2]]);
   assert.deepEqual(cards, [
-    ['#app/garden/dev/changes/901', 'live:1'], ['#app/garden/dev/changes/902', 'live:2'], ['#app/garden/dev/changes/903', 'live:3'],
+    ['#app/garden/dev/changes/901/1', 'live:1'], ['#app/garden/dev/changes/902/2', 'live:2'], ['#app/garden/dev/changes/903/3', 'live:3'],
   ], 'the newest three, each its change\'s page');
   assert.match(html, /<span class="dev-ws-recent-pic" data-ws-recent-pic="shot" aria-hidden="true"><img src="\/api\/apps\/garden\/proposals\/1\/shots\/0123456789abcdef0123456789abcdef" alt="" loading="lazy" draggable="false"\/><\/span><span class="dev-ws-recent-title">Change 1<\/span><span class="dev-ws-recent-meta" title="[^"]+">Homeroom bot · 1h ago<\/span>/,
     'its after shot, its title, and who and when');

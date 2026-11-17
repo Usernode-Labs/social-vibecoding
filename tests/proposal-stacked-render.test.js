@@ -136,7 +136,7 @@ test('the change\'s page: the notice above Votes and Testing, with a door to the
   const card = AppView._proposalCardModel(PR());
   const view = AppView._changeThreadView('proposal', PR(), card, { hero: { author: 'bruno' } });
   assert.deepEqual(JSON.parse(JSON.stringify(view.waitsFor)), {
-    sessionId: 11568, number: 5956, title: 'SEC-09: conductor runtime writes', href: '#app/demo/dev/changes/5956',
+    sessionId: 11568, number: 5956, title: 'SEC-09: conductor runtime writes', href: '#app/demo/dev/changes/5956/11568',
   });
   assert.equal(view.baseNotMain, undefined);
   const lone = AppView._changeThreadView('proposal', PR({ imported_pr_base_ref: 'someone/else', waits_for_session_id: null, waits_for: null }), card, { hero: {} });
@@ -149,7 +149,7 @@ test('the change\'s page: the notice above Votes and Testing, with a door to the
   const head = 'frontend/src/features/dev-board/topic/change-head.tsx';
   const notice = renderComponent(head, 'StackNotice', { v: view });
   assert.match(notice, /^<div data-change-waits-for="11568" class="rounded-lg border border-amber-500\/40 bg-amber-500\/10 text-sm text-amber-800 dark:text-amber-300 px-3 py-2 mt-3">/);
-  assert.match(notice, /Waits for <a href="#app\/demo\/dev\/changes\/5956" class="font-semibold underline" data-change-waits-for-link="11568">#5956: SEC-09: conductor runtime writes<\/a>\. This change is built on that change’s branch, so it can go live only after #5956 does\./);
+  assert.match(notice, /Waits for <a href="#app\/demo\/dev\/changes\/5956\/11568" class="font-semibold underline" data-change-waits-for-link="11568">#5956: SEC-09: conductor runtime writes<\/a>\. This change is built on that change’s branch, so it can go live only after #5956 does\./);
   // The change it waits for has no number yet: the notice still says so.
   const unnumbered = renderComponent(head, 'StackNotice', { v: { ...view, waitsFor: { ...view.waitsFor, number: null, href: '#app/demo/dev/proposals/11568' } } });
   assert.match(unnumbered, /Waits for <a href="#app\/demo\/dev\/proposals\/11568" class="font-semibold underline" data-change-waits-for-link="11568">another change<\/a>\./);
