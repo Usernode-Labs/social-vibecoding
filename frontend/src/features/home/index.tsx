@@ -97,6 +97,7 @@ import { AppsMore } from './apps-more';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
+import { NeedsYouCard } from './needs-you-card';
 import { NewProjectCard } from './new-project-card';
 import { PinnedCommunities } from './pinned-communities';
 import { HomeSearchMake } from './search-make';
@@ -260,6 +261,7 @@ export function HomeScreen() {
         {aside ? (
           <aside id="home-aside" className="home-aside">
             <NewProjectCard />
+            <NeedsYouCard />
           </aside>
         ) : null}
         <div className="home-main">
