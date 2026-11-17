@@ -224,7 +224,7 @@ function FoundRow({ line }: { line: FoundLine }): ReactNode {
       className={LIVE_ROW}
       title={line.name}
       aria-label={line.name}
-      onClick={(e) => followFound(e, line.href)}
+      onClick={(e) => followFound(e, line.href, { messageId: line.messageId, q: line.q })}
       data-ai-found={line.thread ? 'thread' : 'chat'}
     >
       <span className={GLYPH} aria-hidden="true"><GlyphIcon name="chat" /></span>

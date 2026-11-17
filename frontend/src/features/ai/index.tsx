@@ -123,7 +123,8 @@ import { showsPicked } from './lines';
 import { isFrameSkin, useSkin } from '../../lib/skin';
 import { historyAsked, isBotTabHash, kindOf, projectsOf, withFilter, type HistoryKind } from './filter-address';
 import { useHistory, type HistoryRow } from './history';
-import { useBotSearch } from './search';
+import { cleanQuery, useBotSearch } from './search';
+import { clearSearchMark, currentSearchMark } from './search-mark';
 import { communityScopeStore } from '../workshop/community-scope';
 import { NewChatButton } from './new-chat-button';
 import { AiDrawer, ThreadPane, usePhone } from './phone-drawer';
@@ -897,6 +898,15 @@ export function AiScreen(): ReactNode {
     signedIn: mounted && typeof window !== 'undefined' && !!(window as any).App?.user,
     demo: !!demoQuery(),
   });
+  // 17 Nov 2026 (./search-mark.ts): the words a found result opened stay
+  // marked in its message while it is read. Clearing the box, closing the
+  // search or typing something else takes the marks with it; the box is not
+  // in the address, so nothing else is left for a reload to find.
+  const marked = cleanQuery(searchOpen ? query : '');
+  useEffect(() => {
+    const mark = currentSearchMark();
+    if (mark && mark.q !== marked) clearSearchMark();
+  }, [marked]);
 
   // #6744: the line under the bot's name summarises the lists below it, so it
   // counts only the projects the chips show, as the "Needs you" heading and

@@ -68,6 +68,10 @@ export interface FoundLine {
   key: string;
   /** The tab's address of the message: its thread, or the chat, at it (./door.ts). */
   href: string;
+  /** The message the row opens, so its words can be marked there (./search-mark.ts). */
+  messageId: number;
+  /** The query it was found by, as the search asked it (./search.ts cleanQuery). */
+  q: string;
   /** It is in a thread; otherwise in the chat itself. */
   thread: boolean;
   parts: MarkPart[];
@@ -370,6 +374,8 @@ export function useAiLines({
     return {
       key: `found:${row.messageId}`,
       href: botTabAddress({ threadRootId: row.rootId, focusMessageId: row.messageId }),
+      messageId: row.messageId,
+      q: found.q,
       thread: !!row.rootId,
       parts: markParts(row.snippet, row.ranges),
       place,
