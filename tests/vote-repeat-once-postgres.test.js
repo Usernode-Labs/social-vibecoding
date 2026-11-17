@@ -26,6 +26,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { Pool } = require('pg');
+const { waitFor } = require('./lib/wait-for');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -132,11 +133,24 @@ test('two overlapping requests for one vote record and announce it once', { time
     const holder = await pool.connect();
     try {
       await holder.query('BEGIN');
+      const { rows: [{ pid }] } = await holder.query('SELECT pg_backend_pid() AS pid');
       await holder.query('SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE', [s.session.id]);
       const first = s.cast('yes');
       const second = s.cast('yes');
-      // Let both requests reach their own row lock and wait there.
-      await new Promise((resolve) => setTimeout(resolve, 150));
+      // Wait until both requests are queued on the held row, rather than a
+      // fixed time that a busy machine could outrun. The second waiter can
+      // block on the first rather than on the holder, so one of them being
+      // blocked by the holder and two lock waits in total is the event.
+      await waitFor(async () => {
+        const { rows: [waiting] } = await pool.query(
+          `SELECT COUNT(*)::int AS n,
+                  BOOL_OR($1::int = ANY(pg_blocking_pids(pid))) AS held
+             FROM pg_stat_activity
+            WHERE datname = current_database() AND pid <> $1 AND wait_event_type = 'Lock'`,
+          [pid]
+        );
+        return waiting.n >= 2 && waiting.held;
+      }, { label: 'both vote requests wait on the held proposal row', timeoutMs: 30000 });
       await holder.query('COMMIT');
       const results = await Promise.all([first, second]);
       assert.equal(results.filter((r) => r.unchanged === false).length, 1,
