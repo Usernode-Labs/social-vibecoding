@@ -238,10 +238,18 @@ function personText({ reason, platform = false, project = null, done = false, wi
       + 'Anyone in the project can propose to close it, or reply here to keep it going.';
   }
   // 6 Nov 2026 (#6395): a go-ahead cannot settle this one (operator work
-  // outside the app, or a database change that is not append-only), so the copy
-  // names no Go ahead and ends with the part it can build. 17 Nov 2026: it
-  // says which of the two it is (cannotLead), not one sentence for both.
+  // outside the app, a database change that is not append-only, or a request
+  // that only asks for an explanation), so the copy names no Go ahead and ends
+  // with the part it can build. 17 Nov 2026: it says which of the three it is
+  // (cannotLead), not one sentence for all.
   if (goAheadDecides === false) {
+    // 17 Nov 2026 (#6770): an explanation's note is the answer itself, so it
+    // ends with the close vote and the way to turn it into a fix instead.
+    if (blockerOf(blocker) === 'explanation') {
+      return `${cannotLead(blocker)}: ${reasonSentence(reason)}\n\n`
+        + 'Anyone in the project can propose to close it once this answers the question. '
+        + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+    }
     return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
       + canBuildPart(firstStep);
@@ -252,13 +260,14 @@ function personText({ reason, platform = false, project = null, done = false, wi
     + 'Whoever decides here can say Go ahead in a chat with Homeroom bot, or reply here.';
 }
 
-// 17 Nov 2026: the two things a go-ahead cannot settle, as the read names
-// them (`blocker`). Anything else a read calls "cannot" is not one: its
-// go_ahead false is read as a request a go-ahead can settle (homeroom-bot.js
+// 17 Nov 2026: the things a go-ahead cannot settle, as the read names them
+// (`blocker`). Anything else a read calls "cannot" is not one: its go_ahead
+// false is read as a request a go-ahead can settle (homeroom-bot.js
 // parseVerdict), so a sign-in fix or a large request never gets this note.
-const GO_AHEAD_BLOCKERS = Object.freeze(['operator_work', 'destructive_db']);
+// #6770: `explanation` is a request whose answer the code already gives.
+const GO_AHEAD_BLOCKERS = Object.freeze(['operator_work', 'destructive_db', 'explanation']);
 
-/** Pure: a read's `blocker` when it is one of the two, else null. */
+/** Pure: a read's `blocker` when it is one of them, else null. */
 function blockerOf(value) {
   const key = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return GO_AHEAD_BLOCKERS.includes(key) ? key : null;
@@ -296,6 +305,7 @@ function cannotLead(blocker) {
   const key = blockerOf(blocker);
   if (key === 'operator_work') return 'This needs something set up outside this app, which I can\'t do from here';
   if (key === 'destructive_db') return 'This changes or removes data that is already saved, which I leave to a person';
+  if (key === 'explanation') return 'This asks for an explanation, not a change, so here is what the code says';
   return 'I can\'t build this one myself';
 }
 
@@ -329,7 +339,14 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
   }
   // 6 Nov 2026 (#6395): no Go ahead can settle this one, and nobody is named
   // as able to say it. It says what it can build here instead.
+  // 17 Nov 2026 (#6770): an explanation's note is the answer, with the close
+  // vote under it and the way to turn it into a fix.
   if (goAheadDecides === false) {
+    if (blockerOf(blocker) === 'explanation') {
+      return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
+        + 'Anyone in the project can tap Propose to close below once this answers it. '
+        + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+    }
     return firstPerson(`${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
       + canBuildPart(firstStep));
@@ -362,9 +379,11 @@ const NOT_NOW_LABEL = 'Not now';
  * in when it did not.
  * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
  * the request, so Go ahead is not offered and the smaller step is primary.
+ * 17 Nov 2026 (#6770): an explanation offers none at all: the close vote is
+ * under its note instead (homeroom-bot.js doneCloseOffer).
  */
-function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null } = {}) {
-  if (platform || done || withdrawn) return [];
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null, blocker = null } = {}) {
+  if (platform || done || withdrawn || blockerOf(blocker) === 'explanation') return [];
   const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
@@ -390,6 +409,14 @@ function personSuggestions({ firstStep = null, platform = false, done = false, w
  * then the part the bot can still build. Server text, like the labels.
  */
 function goAheadCannotText({ reason, firstStep = null, reader = null, blocker = null } = {}) {
+  // 17 Nov 2026 (#6770): a go-ahead changes nothing on a request that only
+  // asked for an explanation: the answer is already there, and the way on is
+  // to turn it into a fix or close it.
+  if (blockerOf(blocker) === 'explanation') {
+    return `A go-ahead can't change anything here. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
+      + 'Anyone in the project can propose to close it once this answers the question. '
+      + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+  }
   return `A go-ahead can't settle this one. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
     + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
     + canBuildPart(firstStep);

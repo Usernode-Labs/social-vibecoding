@@ -2629,7 +2629,7 @@ ${designGuidance}
 // it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
 // without it, a re-read answered in keys of its own (`next_step`,
 // `ask_reporter`) that nothing reads, and so did the ask to repair it.
-const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db"}';
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db" | "explanation"}';
 const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
 
 function triageClosing(issueNumber) {
@@ -2858,7 +2858,7 @@ function deciderNote(decider) {
       who,
       '- A request that fails a `ready` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is a `question` to them, not `person`. Ask it plainly, say what it would change, and give `answers` they can tap: "Go ahead" first, then "Leave it".',
       '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
-      '- Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where.',
+      '- Database changes that are not append-only and operator work outside this app are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
       rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
     ].join('\n');
   }
@@ -2872,7 +2872,7 @@ function deciderNote(decider) {
     `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
     `- A request that fails a \`ready\` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
     `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
-    '- Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where.',
+    '- Database changes that are not append-only and operator work outside this app are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
     rulesLine(`${either} can`),
   ].join('\n');
 }
@@ -2896,7 +2896,7 @@ function goAheadNote(goAhead) {
     '',
     `@${by}, who your last note on this request named, said to go ahead ${inThread
       ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
-      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that are not append-only are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work". Nothing else is \`go_ahead\` false.`,
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that are not append-only are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work". So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
   ].join('\n');
 }
 
@@ -7989,8 +7989,11 @@ async function actOnVerdict({
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
-      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides,
+      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
     });
+    // #6770: a request that only asks for an explanation has its answer in the
+    // note and nothing to build, so it takes the close vote instead.
+    const explanationNote = parsed.blocker === 'explanation';
     // #6413: done wins when the read says both, so a withdrawn note is only
     // the one without a "done".
     const withdrawnNote = parsed.withdrawn && !parsed.done;
@@ -8035,7 +8038,7 @@ async function actOnVerdict({
       // #6321: a note about Homeroom itself is never `done`, so never both.
       // #6413: a withdrawn request gets the same close offer. The card is
       // written with the note (live.post `card`), so its buttons always work.
-      const threadCard = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
+      const threadCard = copyOffer || (parsed.done || withdrawnNote || explanationNote ? await doneCloseOffer() : null);
       const noteMeta = threadCard
         ? null
         : (suggestActions.length && suggestFor.length
@@ -8051,6 +8054,7 @@ async function actOnVerdict({
         dm: {
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
+          ...(explanationNote ? { explanation: true } : {}),
           // 6 Nov 2026 (#6430): the DM says a person has to build it, not
           // that a go-ahead can settle it, and names the smaller part.
           ...(parsed.goAheadDecides === false ? { goAheadDecides: false, blocker: parsed.blocker } : {}),
