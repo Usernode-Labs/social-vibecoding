@@ -28204,6 +28204,10 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-on-solid: #ffffff;
   --bl-tint-sun: #fff6ac;
   --bl-tint-sky: #e3eefb;
+  /* The line round a message's bubble, and round your own on sky. */
+  --bl-bubble-line: rgba(18, 26, 14, 0.14);
+  --bl-bubble-line-own: rgba(26, 99, 196, 0.24);
+  --bl-card-line: rgba(18, 26, 14, 0.2);
   --bl-tint-leaf: #e2f2dc;
   --bl-on-tint: #121a0e;
   --bl-edge: rgba(18, 26, 14, 0.07);
@@ -28286,6 +28290,9 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-bubble-line: rgba(220, 230, 248, 0.2);
+  --bl-bubble-line-own: rgba(127, 188, 247, 0.42);
+  --bl-card-line: rgba(220, 230, 248, 0.26);
   --bl-tint-leaf: rgba(150, 184, 133, 0.22);
   --bl-on-tint: #eef2f8;
   --bl-edge: rgba(220, 230, 248, 0.08);
@@ -28872,3 +28879,20 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-thread-picture] .dev-change-viewer:not(:popover-open) .shots-flip-chip { background: rgba(18, 26, 14, 0.82); color: #ffffff; }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-opt-look { color: var(--bl-sky); }
+/* A CONVERSATION'S BUBBLES (17 Nov 2026). A thread is a white card in this
+   look, as a request's replies and Homeroom bot's thread list are, and a
+   bubble from the other side was white on it (--messages-surface), your own
+   a grey one shade off (--accent-tint), and a card of the bot's a third
+   white: nothing had an edge. Inside the card, then: the other side's words
+   sit on the page's cream and yours on the sky tint, each with a thin line
+   round it, and the bot's cards keep their white with a firmer line, so a
+   card is the one white thing among the bubbles. A saved message keeps its
+   accent outline. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.messages-bubble, .gc-bubble) { background: var(--bl-page); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-self .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { background: var(--bl-tint-sky); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-bubble:not(.messages-message-saved) .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble { box-shadow: inset 0 0 0 1px var(--bl-bubble-line); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-message-bubble.messages-message-self:not(.messages-message-saved) .messages-bubble,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .gc-bubble-self { box-shadow: inset 0 0 0 1px var(--bl-bubble-line-own); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [data-bot-card-state] { box-shadow: inset 0 0 0 1px var(--bl-card-line); }
