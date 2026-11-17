@@ -4255,7 +4255,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   const prompts = next.length ? require('./homeroom-bot-dm').promptActions(next) : [];
   const actions = prompts.slice(0, 3);
   const project = named.project ? { appSlug: named.project } : {};
-  const said = await say(text, {
+  return say(text, {
     objects: unique,
     metadata: {
       kind: 'chat', ...project,
@@ -4264,9 +4264,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // Task 2020: the answer laid out, drawn in place of the words.
       ...(html ? { html } : {}),
     },
+  }).then(async (said) => {
+    // #6783: the New project card goes under the reply, never before it.
+    await sendOfferCard();
+    return said;
   });
-  await sendOfferCard();
-  return said;
 }
 
 // ── An offer, and the tap that decides it ─────────────────────────────────
