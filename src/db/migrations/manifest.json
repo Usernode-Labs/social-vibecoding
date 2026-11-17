@@ -410,6 +410,11 @@
       "id": "private-thread-titles",
       "sha256": "93ec3bcb9839de4fdc2a0ce7cea2eb3973224e22b51882fbb59fe1913675637e",
       "schemaSha256": "7b054a8ea97e1cf59dd97945b0bbc7bfc701cdebeaad5046a0914d6c8cc56afb"
+    },
+    {
+      "id": "bot-cards-target-app",
+      "sha256": "4f24f85148bc4953343a0d2ed40002503eb33611adaf3c1a8c3a6db3225d0f13",
+      "schemaSha256": "b83e961322ac8ab1972aa5195c9523264663fce1bb4c0efde48606ec32a20005"
     }
   ]
 }

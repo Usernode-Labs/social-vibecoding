@@ -3048,12 +3048,12 @@ function quoteOf(message, username) {
 // words.
 const OFFERS_SQL = `(
   SELECT id, app_id, chat_message_id AS message_id, kind, args, user_id AS for_user_id, status, result,
-         created_at, decided_at, decided_key, expires_at, retired_reason, 'cards' AS store
+         created_at, decided_at, decided_key, expires_at, retired_reason, target_app_id, 'cards' AS store
     FROM bot_cards WHERE place = 'thread'
   UNION ALL
   SELECT id, app_id, message_id, kind, args, for_user_id, status, result,
          created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, NULL AS retired_reason,
-         'voice' AS store
+         NULL::int AS target_app_id, 'voice' AS store
     FROM homeroom_bot_voice_offers
 )`;
 const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_voice_offers' });
@@ -3557,12 +3557,17 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
   if (offer.kind === 'move_request') {
     const full = await mayor.findApp(pool, app.slug);
     const move = require('./homeroom-bot-move');
-    const moved = await move.moveToHomeroom(pool, config, {
-      user, app: full, issueNumber: args.issueNumber, fileKey: `voice-offer:${offer.id}`, settings, deps,
+    // #6771: a card may name the project it moves to (NULL: Homeroom).
+    const target = offer.target_app_id ? await move.appById(pool, offer.target_app_id) : null;
+    if (offer.target_app_id && !target) return settle('failed', { error: 'target_gone' }, 'I couldn\'t move it: the project it belongs on is no longer there.');
+    const moved = await move.moveRequest(pool, config, {
+      user, app: full, issueNumber: args.issueNumber, target, fileKey: `voice-offer:${offer.id}`, settings, deps,
     });
     if (!moved.ok) return settle('failed', { error: moved.code }, `I couldn't move it: ${moved.error}`);
+    const to = moved.target.slug === botModule(deps).PLATFORM_SELF_APP_SLUG
+      ? 'Homeroom\'s own board' : `${moved.target.name || moved.target.slug}'s board`;
     return settle('done', { issueNumber: moved.issueNumber, original: moved.how },
-      `Moved to Homeroom's own board as request ${requestMd(domainOf(deps), moved.target.slug, moved.issueNumber)}, with a link to it left here. `
+      `Moved to ${to} as request ${requestMd(domainOf(deps), moved.target.slug, moved.issueNumber)}, with a link to it left here. `
         + move.closedWords({ how: moved.how, appName: moved.appName, reasons: moved.reasons, author: moved.mine }));
   }
   if (offer.kind === 'copy_request') {

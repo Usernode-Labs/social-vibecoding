@@ -697,6 +697,8 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  moves until they tap Move it to Homeroom under your message, so never say it was moved. When they want it on',
     '  Homeroom\'s own board as well and the request kept here, offer to copy it there instead (offer_copy_request):',
     '  nothing is filed until they tap Put it on Homeroom\'s board, and this request stays open.',
+    '- A request that is really about another project, not the one it is filed on, belongs to that project:',
+    '  offer to move it there with offer_move_request and `to` set to the project\'s name, when they can see it.',
     '- When they ask you to close a request, or say one is done and can be closed, offer a vote on closing it',
     '  (offer_close_request). Nothing happens until they tap Propose to close under your message, and it closes only',
     '  if its group votes for it, so never say it was closed.',
@@ -1006,13 +1008,14 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'offer_move_request',
-      description: 'Offer to move one of their requests that is about Homeroom itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), not the project\'s code, to Homeroom\'s own board. Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to Homeroom and Keep it here; nothing moves unless they tap Move it to Homeroom. Then it is filed on Homeroom\'s board with a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. Up to three offers under one reply.',
+      description: 'Offer to move one of their requests to a project its request is really about: Homeroom\'s own board when it is about the Homeroom platform itself (its header, its request form, a project\'s description or invite message, how votes or notifications work), or any project they can see (pass `to`). Only a request they filed or asked for, or one on a project they made or are an admin of. They see it under your reply with Move it to <project> and Keep it here, or Join <project> and move it when they are not a member there yet; nothing moves unless they tap it. Then it is filed on that project\'s board with its discussion and a link back, and the original is closed, or put to its group\'s vote when anybody else took part in it. Up to three offers under one reply.',
       parameters: {
         type: 'object',
         properties: {
           project: { type: 'string', description: 'The project it is on: its name or short name.' },
           number: { type: 'integer', description: 'The request number.' },
-          reason: { type: 'string', description: 'Why it is about Homeroom rather than the project, in a few plain words. They see it with the offer.' },
+          reason: { type: 'string', description: 'Why it belongs on the other board rather than this project, in a few plain words. They see it with the offer.' },
+          to: { type: 'string', description: 'The project it belongs on, when it is not Homeroom itself: its name or short name. Leave it out for Homeroom\'s own board.' },
         },
         required: ['project', 'number', 'reason'],
         additionalProperties: false,
@@ -4536,12 +4539,16 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     sessionId: withdraw || (post && o.sessionId) ? o.sessionId : null,
     sourceIssueNumber: move || copy || close || post ? o.issueNumber : null,
     targetMessageId: post && o.targetMessageId ? Number(o.targetMessageId) : null,
+    // #6771: a move to another project names it (NULL means Homeroom), and
+    // its card carries the target so a redrawn button says the same.
+    ...(move && o.targetAppId ? { targetAppId: Number(o.targetAppId) } : {}),
+    ...(move && o.targetName ? { args: { issueNumber: o.issueNumber, targetName: o.targetName, join: !!o.join } } : {}),
   };
   const moveSvc = require('./homeroom-bot-move');
   const body = post
     ? postOfferText({ name, issueNumber: o.issueNumber, revise: !!o.sessionId, text, draft: o.details })
     : move
-    ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
+    ? moveSvc.moveOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details, targetName: o.targetName })
     : copy
     ? moveSvc.copyOfferText({ name, issueNumber: o.issueNumber, text, title: o.title, why: o.details })
     : close
@@ -4592,7 +4599,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
         app: o.app, name, actionId: null,
         question: o.sessionId ? `Post this on the change for request #${o.issueNumber} on ${name}?` : `Post this on request #${o.issueNumber} on ${name}?`,
       })
-        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null })
+        : move ? moveSvc.moveOfferMeta({ app: o.app, actionId: null, targetName: o.targetName, join: o.join })
         : copy ? moveSvc.copyOfferMeta({ app: o.app, actionId: null })
         : close ? closeOfferMeta({ app: o.app, name, actionId: null, issueNumber: o.issueNumber })
         : o.guess ? guessMeta({ app: o.app, name, actionId: null })
@@ -4959,6 +4966,8 @@ function typedDecision(content) {
     if (words.yes.has(text)) return { yes: true, plain: false, kind };
     if (words.no.has(text)) return { yes: false, plain: false, kind };
   }
+  // #6771: "move it to Bread Bot" answers a move offer to that project.
+  if (/^move it to .+$/.test(text)) return { yes: true, plain: false, kind: 'move_request' };
   if (PLAIN_YES.has(text)) return { yes: true, plain: true };
   if (PLAIN_NO.has(text)) return { yes: false, plain: true };
   return null;
@@ -6368,20 +6377,31 @@ async function offerMoveRequest(pool, ctx, args) {
   const moveSvc = require('./homeroom-bot-move');
   const gate = await moveSvc.moveGate(pool, { app, issueNumber: args.number, user, deps });
   if (!gate.ok) return { ok: false, error: `${gate.error} Nothing was moved.` };
-  const target = await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
-  if (!target) return { ok: false, error: 'Homeroom\'s own board is not available. Nothing was moved.' };
-  if (!(await canFile(pool, target, user))) {
-    return { ok: false, error: 'They are not a member of Homeroom\'s own community, so they cannot file there. They can join it from its page. Nothing was moved.' };
-  }
+  // #6771: `to` names the project it belongs on; Homeroom's own board when
+  // it is left out.
+  const to = typeof args.to === 'string' ? args.to.trim() : '';
+  const target = to ? await findApp(pool, to) : await findApp(pool, botModule(deps).PLATFORM_SELF_APP_SLUG);
+  if (!target) return { ok: false, error: `There is no project called ${to || 'Homeroom'}. Nothing was moved.` };
+  if (Number(target.id) === Number(app.id)) return { ok: false, error: 'That request is already on that project\'s board. Nothing was moved.' };
+  if (!(await canView(pool, target, user))) return { ok: false, error: 'No such project they can see. Check my_projects. Nothing was moved.' };
+  const targetName = target.name || target.slug;
+  const isPlatform = target.slug === botModule(deps).PLATFORM_SELF_APP_SLUG;
+  // A non-member may move it when the target can be joined: the card then
+  // says Join <project> and move it.
+  const join = !(await canFile(pool, target, user));
   if (!addOffer(ctx, {
     kind: 'move_request', app, issueNumber: gate.issueNumber,
     title: clip(withoutEmDashes(String(gate.issue.title || `Request ${gate.issueNumber}`).replace(/\s+/g, ' ')), MAX_TITLE_CHARS),
     details: clip(withoutEmDashes(String(args.reason || '').replace(/\s+/g, ' ')), 600) || null,
+    targetName: isPlatform ? null : targetName, join: isPlatform ? false : join,
+    targetAppId: isPlatform ? null : Number(target.id),
   })) return { ok: false, error: SAME_OFFER };
   return {
     ok: true,
     request: { project: app.slug, number: gate.issueNumber, title: gate.issue.title },
-    shown: 'They see it under your reply with Move it to Homeroom and Keep it here. Nothing moves until they tap Move it to Homeroom: ask them to, and never say it was moved.',
+    shown: isPlatform
+      ? 'They see it under your reply with Move it to Homeroom and Keep it here. Nothing moves until they tap Move it to Homeroom: ask them to, and never say it was moved.'
+      : `They see it under your reply with ${join ? `Join ${targetName} and move it` : `Move it to ${targetName}`} and Keep it here. Nothing moves until they tap it: ask them to, and never say it was moved.`,
   };
 }
 

@@ -216,7 +216,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -224,6 +224,19 @@ function personText({ reason, platform = false, project = null, done = false, wi
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
       + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have it filed on Homeroom's own board too, or moved there.`;
+  }
+  // #6771: about another project. Its board is named when it is public, and
+  // the person who asked is offered the move in the project's own thread.
+  if (elsewhere) {
+    return `Homeroom bot thinks this is about ${clipText(elsewhere, 80)}, not ${name}: ${reasonSentence(reason)}\n\n`
+      + `It can move it to ${clipText(elsewhere, 80)}'s board, with its discussion, and close it here.`
+      + (elsewhereJoin ? ` Whoever asked for it can join ${clipText(elsewhere, 80)} first.` : '');
+  }
+  if (Array.isArray(candidates) && candidates.length) {
+    const names = candidates.slice(0, 3).map((c) => clipText(c, 80));
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+    return `Homeroom bot thinks this is about another app, not ${name}: ${reasonSentence(reason)}\n\n`
+      + `Which one is it: ${list}? Reply here with its name and it offers to move it there.`;
   }
   // #6306: the ask is already there, so there is nothing to build and no
   // decision to make: it only waits to be closed.
@@ -314,13 +327,27 @@ function canBuildPart(firstStep) {
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
   if (platform) {
     return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
       + 'I can put it on Homeroom\'s own board too and keep this request open here.');
+  }
+  // #6771: about another project: its one job is to say where it belongs,
+  // and its one action (under the note, its card) moves it there.
+  if (elsewhere) {
+    const to = clipText(elsewhere, 80);
+    return firstPerson(`I think this is about ${to}, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
+      + `I can move it to ${to}'s board, with its discussion, and close it here.`
+      + (elsewhereJoin ? ` You are not a member of ${to} yet, so tapping below joins you first.` : ''));
+  }
+  if (Array.isArray(candidates) && candidates.length) {
+    const names = candidates.slice(0, 3).map((c) => clipText(c, 80));
+    const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`;
+    return firstPerson(`I think this is about another app, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
+      + `Which one is it: ${list}? Reply here with its name and I'll offer to move it there.`);
   }
   // #6306: already there: no Go ahead, only a close vote. #6321: its buttons
   // are under the note (homeroom-bot.js doneCloseOffer).
@@ -363,8 +390,8 @@ const NOT_NOW_LABEL = 'Not now';
  * 6 Nov 2026 (#6395): when `goAheadDecides` is false a go-ahead cannot settle
  * the request, so Go ahead is not offered and the smaller step is primary.
  */
-function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null } = {}) {
-  if (platform || done || withdrawn) return [];
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null, elsewhere = false, candidates: elsewhereCandidates = [] } = {}) {
+  if (platform || done || withdrawn || elsewhere || (Array.isArray(elsewhereCandidates) && elsewhereCandidates.length)) return [];
   const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';

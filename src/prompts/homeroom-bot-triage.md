@@ -55,6 +55,7 @@ Also state, whatever the verdict:
 - `determined`: true when a competent developer could build this now without asking anyone anything (this can be true even when you answer `person`).
 - `missing_fact`: the ONE fact that would most change your verdict, in one sentence. When nothing is missing, say "none".
 - `platform`: true ONLY with the verdict `person`, when the request is about the Homeroom platform itself rather than this app: something Homeroom draws or runs around every app (its header, its request form, a project's description or invite message, how votes work), so no change here can do it. Its requester is offered to move it to Homeroom's own board. Omit it otherwise, and when only part of the request is about the platform.
+- `elsewhere`: ONLY with `person`, when the request is about another app: its name as the request gives it. Its requester is offered a move. When the app is not named, give `elsewhere_candidates`: up to three, best first.
 - `done`: true only with `person` or `empty`, when all it asks for already exists or is done; `reason` says where on screen, and its members are offered a vote to close it. When the requester, or somebody who decides on the project, says in the discussion that it works and can be closed ("you can propose closing this"), and the code agrees, that is `done`.
 - `withdrawn`: true only with `person` or `empty`, when its requester, or a project decider, says in the discussion to close, drop or withdraw it ("you can just close this one", "propose to close the request"), whatever the code says. `reason` quotes and credits their words. It omits `go_ahead` and `first_step`, offering no Go ahead. A later message to keep or build it cancels it.
 - `builder`: only with `person`, when the request or its discussion says a named person will build it: that username, without the @. Its requester is then not notified. Omit it otherwise.
@@ -90,6 +91,7 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "plan": ["a first version or complicated change: 3 to 5 short lines, one point each, at most 60 characters, what people will see or do"] (verdict ready),
   "choices": [{"question": "a first version or complicated change only, at most 2", "answers": ["the suggested answer, first", "another"]}] (verdict ready),
   "platform": true (verdict person, only when the request is about the Homeroom platform itself, not this app),
+  "elsewhere": "the app's name", "elsewhere_candidates": ["up to 3"],
   "withdrawn": true (person or empty, when its requester or a decider said to close it),
   "builder": "who the request says will build it (verdict person, only then)",
   "first_step": "the smaller first step you would build, in their words, at most 60 characters (verdict person, when one would do)",

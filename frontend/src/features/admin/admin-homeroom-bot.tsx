@@ -477,6 +477,9 @@ export interface MoveOffers {
   kept: number;
   open: number;
   failed: number;
+  /** #6771: offers naming another project, and how many of them moved. */
+  toOtherProjects?: number;
+  movedToOther?: number;
   notOffered: number;
   notOfferedByWhy: Record<string, number>;
   notOfferedRecent?: { runId: number; app: string; issueNumber: number; why: string; at: string }[];
@@ -1049,7 +1052,10 @@ const NOT_OFFERED_WORDS: Record<string, string> = {
  */
 export function moveOffersLine(m: MoveOffers | null | undefined): string {
   if (!m || (!m.sent && !m.notOffered)) return '';
-  const decided = countsLine([[m.moved, 'moved'], [m.kept, 'kept'], [m.open, 'not answered yet'], [m.failed, 'failed']]);
+  const decided = countsLine([
+    [m.moved, 'moved'], [m.kept, 'kept'], [m.open, 'not answered yet'], [m.failed, 'failed'],
+    [Number(m.toOtherProjects) || 0, 'to other projects'],
+  ]);
   const sent = `${m.sent} offer${m.sent === 1 ? '' : 's'} to move a request to Homeroom in the last ${m.days || 7} days${decided ? ` (${decided})` : ''}`;
   if (!m.notOffered) return `${sent}.`;
   const why = Object.entries(m.notOfferedByWhy || {}).filter(([, n]) => n > 0)
