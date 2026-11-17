@@ -275,7 +275,9 @@ test('the foot has New project alone: no File it or Post it form, and nothing it
   assert.doesNotMatch(source, /privateThread\.(fileIt|postIt|sendFile|sendPost)/, 'no File it or Post it at the foot');
   assert.doesNotMatch(source, /method: 'POST'/, 'the foot writes nothing: the bot\'s offer does');
   // #6781: the foot hands the make screen the brief and the suggested name.
-  assert.match(source, /app\?\.showCreateModal\?\.\(\{ idea: text, name, audience \}\)/);
+  // #6784: and the thread it was tapped in, so the project is made from the
+  // plan agreed there.
+  assert.match(source, /app\?\.showCreateModal\?\.\(\{ idea: text, name, audience, threadRootId: rootId \}\)/);
   // #6763: a "+" thread's project is the chip's preset, not what the idea is
   // about, so the bot's offer opens New project there too.
   assert.match(renderComponent(BAR, 'PrivateThreadDoors', {
@@ -489,4 +491,22 @@ test('a thread the server names is headed by that name, from its row or from whe
   const server = read('src/services/private-threads.js');
   assert.match(server, /const title = ownTitle \|\| kindTitle\(\{ kind: row\.kind, appName: app\?\.name \|\| row\.root_app_name \|\| null \}\);/);
   assert.match(read('src/services/ai-history.js'), /m\.metadata->'homeroomBot'->>'appName' AS root_app_name,/);
+});
+
+// #6784 (17 Nov 2026): a project was made from the thread's plan, so its head
+// says what it made and links it, ahead of the filed line, and New project is
+// gone (its state is filed, which no door survives).
+test('#6784: a thread made into a project says so, with a link, and offers no New project', () => {
+  const where = {
+    state: 'filed', kind: 'idea', made: true, mine: true,
+    app: { slug: 'saved-places-lists', name: 'Saved Places Lists' },
+  };
+  const head = renderComponent(BAR, 'PrivateThreadNote', { where });
+  assert.match(head, /data-private-thread="made">Made into Saved Places Lists\./);
+  assert.match(head, /· <a href="#app\/saved-places-lists">Open<\/a>/);
+  assert.equal(message('messages:privateThread.made', { project: 'Saved Places Lists' }), 'Made into Saved Places Lists.');
+  // A thread that was filed as a request keeps its filed line, not this one.
+  assert.match(renderComponent(BAR, 'PrivateThreadNote', { where: { ...where, made: false, number: 4 } }), /data-private-thread="filed"/);
+  const { doorsFor } = loadTsx(BAR);
+  assert.deepEqual(doorsFor(where, true, true), [], 'New project is gone once it was made');
 });

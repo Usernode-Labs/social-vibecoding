@@ -320,6 +320,13 @@ export const WAITLIST_IDEA_LINE = 'onboarding:firstSession.make.waitlistIdea';
 export const SEARCH_IDEA_LINE = 'onboarding:firstSession.make.searchIdea';
 
 /**
+ * #6784: the same quiet line for an idea a private thread handed in: the
+ * plan agreed with Homeroom bot in it comes along with what they send. A
+ * message id.
+ */
+export const THREAD_IDEA_LINE = 'onboarding:firstSession.make.threadIdea';
+
+/**
  * Where an idea handed to the make screen came from, which decides the line
  * under the box: the waitlist answer (the first session's, and the default),
  * a Discover search (#5928), or a private thread's words (#6019), which says
@@ -398,7 +405,7 @@ export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header
 
 export function MakeScreen({
   who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, name: startName = null, ideaSource = 'waitlist',
-  audience = 'invited',
+  audience = 'invited', threadRootId = null,
 }: {
   who: string;
   onMade: (made: Made) => void;
@@ -431,6 +438,12 @@ export function MakeScreen({
    * and the first session make it a private project otherwise.
    */
   audience?: CreateAudience;
+  /**
+   * #6784: the private thread New project was tapped in (Create, from a
+   * thread with Homeroom bot). Sent with the brief, so the project is made
+   * from the plan agreed there, not from a line of it.
+   */
+  threadRootId?: number | null;
 }) {
   const t = useMessages('onboarding');
   // The look, read here with the other hooks: under one of the frame's
@@ -713,6 +726,9 @@ export function MakeScreen({
         name: name.trim(),
         audience,
         ...(ready ? { template: ready.template } : { brief: text.trim(), ...(starter ? { template: starter.template } : {}) }),
+        // #6784: the thread the plan was agreed in, never with a ready-made
+        // app (which has no brief to build from, and no thread to make).
+        ...(threadRootId && !ready ? { thread: { rootId: threadRootId } } : {}),
         // A ready-made app's description is the choice's own line. A game or
         // Your own words is built from what they typed, so the line is only
         // the card's fallback: the model writes its tagline from their words
@@ -880,7 +896,8 @@ export function MakeScreen({
               },
               onScroll: (e) => setBriefScrolled(briefFades(e.currentTarget)),
               fade: briefScrolled ? BRIEF_FADE : '',
-              kept: waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? { attr: 'data-make-waitlist-idea', text: t(WAITLIST_IDEA_LINE) }
+              kept: threadRootId ? { attr: 'data-make-thread-idea', text: t(THREAD_IDEA_LINE) }
+                : waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? { attr: 'data-make-waitlist-idea', text: t(WAITLIST_IDEA_LINE) }
                 : waitlistIdea && brief === waitlistIdea && ideaSource === 'search' ? { attr: 'data-make-search-idea', text: t(SEARCH_IDEA_LINE) }
                   : null,
             }}
@@ -1121,6 +1138,7 @@ export function MakeScreen({
                     placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
                     className={`${BRIEF_INPUT}${briefScrolled ? ` ${BRIEF_FADE}` : ''} resize-none leading-[22px]`}
                   />
+                  {threadRootId ? <p data-make-thread-idea="" className={HINT}>{t(THREAD_IDEA_LINE)}</p> : null}
                   {waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                   {waitlistIdea && brief === waitlistIdea && ideaSource === 'search' ? <p data-make-search-idea="" className={HINT}>{t(SEARCH_IDEA_LINE)}</p> : null}
                 </>

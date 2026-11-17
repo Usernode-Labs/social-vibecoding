@@ -154,7 +154,7 @@ function oneLine(value, max) {
  * game (services/app-templates.js `bot`), its creator, who is in it, the
  * language to answer in, and the description. Pure.
  */
-function planUserPrompt({ name, brief, starter = null, maker = null, members = null, locale = null }) {
+function planUserPrompt({ name, brief, starter = null, maker = null, members = null, locale = null, fromThread = false }) {
   const bot = require('./homeroom-bot');
   const s = starter ? require('./app-templates').botStarter(starter) : null;
   const creator = maker && maker.username ? `@${oneLine(maker.username, 40)}` : null;
@@ -169,6 +169,16 @@ function planUserPrompt({ name, brief, starter = null, maker = null, members = n
     creator ? `THE CREATOR:\n${creator}` : null,
     bot.membersNote(members),
     locale ? `LANGUAGE:\nWrite the plan lines and the choices in the language of the locale \`${oneLine(locale, 20)}\`.` : null,
+    // #6784: the description holds a plan agreed with Homeroom bot in the
+    // creator's own thread. Its points are the plan; what the thread left
+    // open is what the creator is asked, and nothing settled is asked again.
+    fromThread ? [
+      'THE THREAD IT CAME FROM:',
+      'This description holds a plan agreed with Homeroom bot in the creator\'s own thread, with their answers and the',
+      'questions it left open. Keep its points as the plan lines, in its terms. A question it says is still open',
+      'becomes one of the choices (at most two; anything else it left open is an assumption). Never ask a point the',
+      'plan or their answers already settled.',
+    ].join('\n') : null,
     `WHAT IT SHOULD DO (the creator's words):\n${String(brief || '').slice(0, BRIEF_MAX)}`,
   ].filter(Boolean).join('\n\n');
 }
@@ -314,7 +324,7 @@ async function makerOf(pool, user) {
  * within PLAN_WAIT_MS, else none. What it cost is recorded against `user`.
  * Saves nothing. Resolves { plan, model, error }, `plan` null on failure.
  */
-async function makePlan(pool, { app, user, brief, deps = {} }) {
+async function makePlan(pool, { app, user, brief, fromThread = false, deps = {} }) {
   const llm = deps.llm || require('./llm');
   const limits = deps.limits || require('./limits');
   const bot = deps.bot || require('./homeroom-bot');
@@ -336,7 +346,7 @@ async function makePlan(pool, { app, user, brief, deps = {} }) {
     ]);
     const call = llm.generateFirstVersionPlan({
       system: PLAN_SYSTEM,
-      user: planUserPrompt({ name: app.name || app.slug, brief, starter, maker, members, locale: maker.locale }),
+      user: planUserPrompt({ name: app.name || app.slug, brief, starter, maker, members, locale: maker.locale, fromThread }),
       model,
       schema: PLAN_SCHEMA,
       validate: usableAnswer,
@@ -431,7 +441,7 @@ async function startEarlyPlan(pool, { app, user, brief }, deps = {}) {
  */
 async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
   const { rows: [row] } = await pool.query(
-    `SELECT f.user_id, f.brief, f.early_plan_status, a.id, a.name, a.slug,
+    `SELECT f.user_id, f.brief, f.early_plan_status, f.idea_thread_id, a.id, a.name, a.slug,
             f.created_at > NOW() - make_interval(secs => $2::int) AS fresh
        FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
       WHERE f.app_id = $1`,
@@ -447,7 +457,9 @@ async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
   // asked: what read it went on without it (an ask re-sent after a rollout).
   if (!row.fresh && !(steps && steps.has('plan'))) return { planned: false, skipped: 'too_late' };
   const app = { id: row.id, name: row.name, slug: row.slug };
-  const ask = () => makePlan(pool, { app, user: { id: row.user_id }, brief: row.brief, deps });
+  const ask = () => makePlan(pool, {
+    app, user: { id: row.user_id }, brief: row.brief, fromThread: !!row.idea_thread_id, deps,
+  });
   const made = steps ? await steps.once('plan', ask) : await ask();
   if (!saved && !(await savePlan(pool, app.id, made))) return { planned: false, skipped: 'too_late' };
   if (made.plan) {
