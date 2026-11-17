@@ -712,8 +712,8 @@ const Home = {
   _rowBudgetPending: 0,
 
   // Whether Home has its side column, where the New project card is: from
-  // 1280px (app.css, HOME'S SIDE COLUMN), on the standard look only (a frame
-  // look draws its own Home, with the tile), for a viewer who gets a tile.
+  // 1280px (app.css, HOME'S SIDE COLUMN), under Standard (WIP) only, the look
+  // it is being tried in, for a viewer who gets a tile.
   hasSideCard() {
     // Closed in this browser (./new-project-dismiss.ts): there is no column
     // to hold, so Pinned apps ends with its own New project tile.
@@ -728,8 +728,9 @@ const Home = {
     } catch { /* no address to read */ }
     let skin = 'standard';
     try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
-    // lib/skin.ts FRAME_SKINS: 'brand' keeps the standard pages.
-    if (['glass', 'paper', 'pastel', 'mosaic', 'sunrise'].includes(skin)) return false;
+    // Standard (WIP) alone has the column (lib/skin.ts 'wip'): every other
+    // look, Standard among them, ends Pinned apps with the tile.
+    if (skin !== 'wip') return false;
     try { return !!window.matchMedia('(min-width: 1280px)').matches; } catch { return false; }
   },
 

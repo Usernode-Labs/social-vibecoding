@@ -378,6 +378,10 @@ test('beside the New project card the grid draws no tile and gives up no cell', 
   const { Home, model, moreCount, sandbox } = makeHome();
   sandbox.matchMedia = (q) => ({ matches: q === '(min-width: 1280px)' });
   Home._apps = mine(12);
+  // The column is Standard (WIP)'s: Standard keeps the tile at every width.
+  Home.render();
+  assert.equal(model().create.inCard, false, 'no card under Standard');
+  sandbox.Skin = { get: () => 'wip' };
   Home.render();
   const state = model();
   assert.equal(state.create.inCard, true);

@@ -142,6 +142,9 @@ export function HomeScreen() {
   const frame = isFrameSkin(skin) && viewer;
   // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
   const wip = skin === 'wip';
+  // The grid's trailing tile depends on the look (Home.hasSideCard): a look
+  // picked while Home is up repaints it.
+  useEffect(() => { (window as any).Home?.render?.(); }, [wip]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -169,7 +172,7 @@ export function HomeScreen() {
     window.addEventListener(NEW_PROJECT_HIDDEN_EVENT, onHidden);
     return () => window.removeEventListener(NEW_PROJECT_HIDDEN_EVENT, onHidden);
   }, []);
-  const aside = !frame && grid.ready && !!grid.create && !cardHidden;
+  const aside = wip && grid.ready && !!grid.create && !cardHidden;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined} data-home-aside={aside ? '' : undefined}>
