@@ -306,7 +306,9 @@ test('a picked mention notifies as mentions already do — no new kind, no new r
   // notifications after every chat insert, threaded or not, so `@evan` in a
   // feed reply reaches evan through the pipeline #87 built.
   const submit = FEED.slice(FEED.indexOf('const submit = useCallback'), FEED.indexOf('const hidden'));
-  assert.match(submit, /body: JSON\.stringify\(\{ content, thread_type: type, thread_ref: refId \}\)/);
+  // #6730 adds the per-press client key to this same POST; the route and
+  // its mention fanout are unchanged.
+  assert.match(submit, /body: JSON\.stringify\(\{ content, thread_type: type, thread_ref: refId, client_key: clientKey \}\)/);
   const insert = WS.indexOf('INSERT INTO chat_messages');
   const fanout = WS.indexOf('notifications.createMentionNotifications(pool, {', insert);
   assert.ok(insert > 0 && fanout > insert, 'mentions fan out after the insert, for thread posts too');
