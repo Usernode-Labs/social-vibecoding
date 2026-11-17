@@ -883,6 +883,15 @@ test('the DM, a chat\'s fix and a No vote\'s line become asks, and a merge drops
   assert.match(merged.slice(0, 500), /\.dropAsks\(pool, session\.id, \{ strict: !!deps\.strict \}\)/, 'strict in the bot-change machine\'s durable work');
 });
 
+// #6766: the old rule 8 headline read as a ban on every outside API, so the
+// bot told someone a real map with place search could not be built. Its
+// prompt now keeps it from stating a limit the platform rules do not.
+test('#6766: it never states a platform limit the rules do not plainly forbid', () => {
+  const prompt = voice.systemPrompt({ app: { name: 'Maps' }, place: { type: 'issue', ref: 1 }, tools: [] });
+  assert.match(prompt, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
+  assert.match(prompt, /When\n  unsure, say you will check rather than state a limit; a live app already doing it \(Homeroom Maps has a real\n  map and place search\) shows it can be built\./);
+});
+
 // ── Step 5 (11 Nov 2026): a comment that does not change the ask ─────────
 
 test('step 5: ask_changed owes the request a read as changed:voice, only where a read would come of it', async () => {

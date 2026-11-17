@@ -15,6 +15,21 @@ const mayor = require('../src/services/homeroom-bot-mayor');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
+// #6766: outside data services are allowed, and the Mayor never invents a
+// platform limit ("outside scripts" also read as a ban on map tiles and
+// place search).
+test('#6766: outside data services are allowed, and it never invents a limit', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  // The list wraps across lines, so match on the prompt's flat text.
+  const flat = prompt.replace(/\s+/g, ' ');
+  // The ban names script tags from another origin, not "outside scripts":
+  // map tiles and place search are fetched data, not scripts.
+  assert.match(flat, /trackers, ads, pixels or `<script>` tags from another origin/);
+  assert.match(flat, /Maps, place search and other outside data services are allowed: the app calls them from its server, with any key in its secrets\./);
+  assert.match(flat, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
+  assert.match(flat, /Homeroom Maps has a real map and place search\) shows it can be built\./);
+});
+
 test('the prompt keeps the model to the tools, plain words and Homeroom\'s content rules', () => {
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2, today: new Date('2026-10-02T00:00:00Z') });
   assert.match(prompt, /talking with @ada in a direct message on Homeroom/);
@@ -33,10 +48,12 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /Decline, in one friendly sentence, what the platform's content rules forbid \(sexual content or nudity,/);
   // 17 Nov 2026 (#6769): the data-rules decline names what is actually
   // banned, and says what is allowed, instead of refusing whole topics.
-  assert.match(prompt, /anything the platform's data rules forbid: trackers, ads or outside scripts, a login/);
-  assert.match(prompt, /children under 13, or an app that profiles or targets people by health, religion, sexuality, ethnicity,/);
-  assert.match(prompt, /Connecting an outside account for its data, codes the app makes such as a game/);
-  assert.match(prompt, /family and class tools, and clubs or topics in those areas are allowed: never decline those\./);
+  // That list wraps, so match it on the prompt's flat text.
+  const flat = prompt.replace(/\s+/g, ' ');
+  assert.match(flat, /anything the platform's data rules forbid: trackers, ads, pixels or `<script>` tags from another origin, a login/);
+  assert.match(flat, /children under 13, or an app that profiles or targets people by health, religion, sexuality, ethnicity, politics or biometrics\./);
+  assert.match(flat, /Connecting an outside account for its data, codes the app makes such as a game/);
+  assert.match(flat, /family and class tools, and clubs or topics in those areas are allowed: never decline those\./);
   assert.doesNotMatch(prompt, /an app for children, collecting passwords or card data/,
     'the old topic-ban line is gone');
   assert.doesNotMatch(prompt, /data rules forbid: trackers, ads or outside scripts, health,/);

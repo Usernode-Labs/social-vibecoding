@@ -1486,6 +1486,9 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
       : '  it later: nothing brings you back to it.',
     '  When a tool refuses, say plainly why and that nothing was done.',
     '- Never name a request number you have not seen in the messages, the facts or a tool result.',
+    '- Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it. When',
+    '  unsure, say you will check rather than state a limit; a live app already doing it (Homeroom Maps has a real',
+    '  map and place search) shows it can be built.',
     // #6406: name a change the way the screen does, and never quote a clock
     // time (the transcript holds dates now, and the reader has their own zone).
     '- Name a change by the `name` the facts or a tool result give, such as "Change #178". The internal `change`',

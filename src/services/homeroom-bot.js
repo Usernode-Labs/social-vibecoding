@@ -2616,12 +2616,17 @@ const TRIAGE_PROMPT_CEILING = 33000;
 // what a turn can carry), plus the conventions' content and data rules, whose
 // text is a section of a document other apps read, so their budget lives in
 // homeroom-bot-live.js beside where they are added.
+//
+// The rules are measured in the same short form the triage prompt carries
+// (`{ triage: true }`, #6766). Measuring the full section instead charges
+// this prompt for text it never reads, since only the spec, build and
+// follow-up prompts get the whole thing.
 function triagePromptBudgets() {
   const prompts = require('./prompts');
   const withImages = prompts.designGuidanceSource({ readsImages: true });
   const textOnly = prompts.designGuidanceSource({ readsImages: false });
   const design = withImages.length >= textOnly.length ? withImages : textOnly;
-  const rules = live.requestRulesLines().join('\n').trim();
+  const rules = live.requestRulesLines({ triage: true }).join('\n').trim();
   return checkParts([
     ...parseParts(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'), 'src/prompts/homeroom-bot-triage.md'),
     ...parseParts(design, 'src/prompts/design-guidance.md'),
@@ -2723,7 +2728,7 @@ function triagePromptFor({
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     personPlanTriageNote(personPlan),
     locale ? `The requester's locale is \`${locale}\`.` : null,
-    live.requestRulesLines().join('\n').trim(),
+    live.requestRulesLines({ triage: true }).join('\n').trim(),
     signal ? signalNote(signal) : null,
     require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
@@ -2907,7 +2912,7 @@ function deciderNote(decider) {
       who,
       '- A request that fails a `ready` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is a `question` to them, not `person`. Ask it plainly, say what it would change, and give `answers` they can tap: "Go ahead" first, then "Leave it".',
       '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
-      '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
+      '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. A key the app declares in `dapp.json` `secrets` is not operator work. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
       rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
     ].join('\n');
   }
@@ -2921,7 +2926,7 @@ function deciderNote(decider) {
     `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
     `- A request that fails a \`ready\` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
     `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
-    '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
+    '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. A key the app declares in `dapp.json` `secrets` is not operator work. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
     rulesLine(`${either} can`),
   ].join('\n');
 }
@@ -2945,7 +2950,7 @@ function goAheadNote(goAhead) {
     '',
     `@${by}, who your last note on this request named, said to go ahead ${inThread
       ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
-      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that could lose data already stored are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work". So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that could lose data already stored are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work"; a key the app declares in \`dapp.json\` \`secrets\` is not. So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
   ].join('\n');
 }
 
