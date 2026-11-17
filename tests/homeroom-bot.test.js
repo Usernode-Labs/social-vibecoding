@@ -1836,6 +1836,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // 17 Nov 2026 (#6769): the data rules now say what is allowed as well as
   // banned (about 900 more), so the bot stops refusing a gym log, a game
   // PIN, a choir rota or a Spotify playlist sync.
+  // 17 Nov 2026 (#6771): `elsewhere` and its candidates (about 290 more), so
+  // a request that is about another project names it, or the few it could be,
+  // and its requester is offered the move to that project's board.
   // 17 Nov 2026 (#6770): an explanation or investigation request is `person`
   // with `go_ahead` false and `cannot_because` "explanation" (about 150 more),
   // so a request that only asks why cannot offer a Go ahead that changes
