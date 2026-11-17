@@ -5641,7 +5641,8 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
   min-height: calc(100dvh - var(--browser-banner-h) - var(--platform-header-h) - var(--platform-safe-top) + .5rem);
 }
 
-/* HOME'S SIDE COLUMN (features/home/index.tsx, new-project-card.tsx). The
+/* HOME'S SIDE COLUMN (features/home/index.tsx, new-project-card.tsx,
+   needs-you-card.tsx). The
    New project card sits in `#home-aside`, the first child of #home-body, and
    the lists follow in `.home-main`. On a phone and a narrow window they are
    one column, the card on top inside the lists' own 12px gutter. From 1280px,
@@ -5669,7 +5670,11 @@ html[data-browser-scroller="home-screen"] .home-body-fill {
     flex: 1 1 0;
   }
   #home-screen[data-home-aside] .home-aside {
-    display: block;
+    display: flex;
+    flex-direction: column;
+    gap: 12px; /* between the column's cards */
+    min-width: 0; /* a long title is cut, never the column widened */
+    max-width: 304px;
     flex: 0 0 304px; /* a 280px card and the 12px gutter each side */
     padding-top: 16px;
   }
