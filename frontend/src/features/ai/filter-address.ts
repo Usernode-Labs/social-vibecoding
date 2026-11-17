@@ -86,6 +86,16 @@ export function projectTabAddress(slug: string): string {
   return withFilter('#homeroom-bot', { projects: [slug] });
 }
 
+/**
+ * The AI tab's address from a project's page: narrowed to that project, else
+ * the bare tab (#6714). A press on the AI tab from a project carries the
+ * project on screen, so its chip is offered and starts chosen. A missing or
+ * invalid slug is All.
+ */
+export function botTabAddress(slug: string | null | undefined): string {
+  return slug ? projectTabAddress(slug) : '#homeroom-bot';
+}
+
 /** Pure: the History card, narrowed to a kind (Me's old Your work rows). */
 export function historyAddress(kind: HistoryKind | null = null, projects: readonly string[] = []): string {
   return withFilter('#homeroom-bot/history', { projects, kind });

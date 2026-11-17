@@ -2570,3 +2570,16 @@ test('#6600: a takeover that failed says the bot could not fix it, with Ask agai
   const [pr] = needsYou(null, { ...work, needs: [{ ...work.needs[0], app: onGithub }] });
   assert.equal(words(pr.sub), "Garden club · PR 410 · Homeroom bot couldn't fix it");
 });
+
+// #6714: a press on the AI tab from a project's page carries that project
+// into the tab's address, so its filter offers it and starts on it
+// (../frontend/src/features/ai/filter-address.ts).
+test('#6714: the AI tab\'s address from a project\'s page is narrowed to that project', () => {
+  const a = loadTsx('frontend/src/features/ai/filter-address.ts');
+  assert.equal(a.botTabAddress('garden'), '#homeroom-bot?project=garden');
+  assert.deepEqual(a.projectsOf(a.botTabAddress('garden')), ['garden'], 'the filter reads it back');
+  assert.equal(a.botTabAddress(null), '#homeroom-bot', 'nowhere in particular is All');
+  assert.equal(a.botTabAddress(undefined), '#homeroom-bot');
+  assert.equal(a.botTabAddress(''), '#homeroom-bot');
+  assert.equal(a.botTabAddress('not a slug'), '#homeroom-bot', 'never anything but a slug');
+});

@@ -89,6 +89,7 @@ import {
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
+import { botTabAddress } from '../ai/filter-address';
 import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
@@ -836,6 +837,19 @@ function goToTab(key: string, href: string): void {
 }
 
 /**
+ * Where a tab press goes (#6714). The AI tab pressed from a project's page
+ * carries that project into its address (`botTabAddress`), so the project's
+ * filter offers it and starts on it; All stays one tap away. From anywhere
+ * else, and for every other tab, the rendered href is what it has always
+ * been.
+ */
+function tabHref(key: string, href: string): string {
+  if (key !== 'ai' || navStore.get().screen !== 'app-view') return href;
+  const slug = (window as unknown as { App?: { currentApp?: string | null } }).App?.currentApp;
+  return botTabAddress(slug || null);
+}
+
+/**
  * The Communities destination that always lands (#5730): the All communities
  * page, at `#communities`.
  *
@@ -1069,8 +1083,16 @@ export function PlatformTabs() {
     const fallback = key === 'workshop'
       ? () => { if (navStore.get().screen === left) openCommunitiesPage(); }
       : undefined;
-    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href), fallback)) {
+    const target = tabHref(key, href);
+    if (key !== lit && press(event.currentTarget, key, () => goToTab(key, target), fallback)) {
       event.preventDefault();
+      return;
+    }
+    // The pill cannot slide: the tab's destination is taken directly, and it
+    // is the addressed one (#6714).
+    if (target !== href) {
+      event.preventDefault();
+      window.location.assign(target);
       return;
     }
     const now = key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined;
