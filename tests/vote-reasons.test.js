@@ -37,7 +37,7 @@ function stub(id, exports) {
 
 function makeRecordingPool(handlers) {
   const queries = [];
-  return {
+  const pool = {
     queries,
     issued(re) { return queries.some((q) => re.test(q.sql)); },
     async query(sql, params) {
@@ -51,6 +51,11 @@ function makeRecordingPool(handlers) {
       return { rows: [], rowCount: 0 };
     },
   };
+  // recordVote is one transaction now (#6736): BEGIN, the row lock, the
+  // previous vote, the upsert. This client delegates to the same recorder,
+  // so every query the test pins is still the one that ran.
+  pool.connect = async () => ({ query: (...args) => pool.query(...args), release() {} });
+  return pool;
 }
 
 // An imported proposal up for a vote: the reviewed head is the import head,
@@ -66,12 +71,10 @@ function votePool({ prev = [], roster = [] } = {}) {
   const inserted = [];
   const pool = makeRecordingPool([
     [/cs\.status IN \('promoted', 'merging'\)/, [{ ...sessionRow }]],
-    [/cs\.approval_epoch AS current_epoch/, prev],
     // The upsert's CASE, in miniature: a line that arrives wins; none
     // arriving keeps the old one on the same side and drops it on a flip.
-    // #6728: `changed` is the statement's own verdict — false only when the
-    // stored row already holds this same side at the same epoch with no new
-    // words, which is when the DO UPDATE's WHERE skips it.
+    // Before the row-lock branch below: the upsert statement also carries a
+    // `SELECT id, approval_epoch … FROM chat_sessions` CTE.
     [/INSERT INTO pr_votes/, (params) => {
       const p = prev[0] || null;
       const reason = params[4] != null ? params[4] : (p && p.vote === params[2] ? p.reason : null);
@@ -81,6 +84,11 @@ function votePool({ prev = [], roster = [] } = {}) {
       inserted.push({ params, reason, changed });
       return [{ id: changed ? 1 : null, reason: changed ? reason : null, changed }];
     }],
+    // recordVote's own row lock, read under the transaction.
+    [/SELECT id, approval_epoch\s+FROM chat_sessions/, [{ id: sessionRow.id, approval_epoch: sessionRow.approval_epoch }]],
+    // The previous vote, read in its own statement once the row is held.
+    [/SELECT vote, reason, approval_epoch\s+FROM pr_votes/, prev],
+    [/cs\.approval_epoch AS current_epoch/, prev],
     [/AS current\s+FROM pr_votes pv/, roster],
     [/SELECT app_id FROM chat_sessions WHERE id = \$1/, [{ app_id: 5 }]],
   ]);
@@ -238,7 +246,10 @@ test('normalizeVoteReason: collapsed, capped, and "no line" when empty', () => {
 // ── 2. The row ────────────────────────────────────────────────────────
 
 test('recordVote writes the line, and the upsert carries or drops the old one by side', async () => {
-  const pool = makeRecordingPool([[/INSERT INTO pr_votes/, (params) => [{ id: 1, reason: params[4] }]]]);
+  const pool = makeRecordingPool([
+    [/INSERT INTO pr_votes/, (params) => [{ id: 1, reason: params[4] }]],
+    [/SELECT id, approval_epoch\s+FROM chat_sessions/, [{ id: 41, approval_epoch: 0 }]],
+  ]);
   const { subject, restore } = loadVotes({ pool });
   try {
     const r = await subject.recordVote({
@@ -249,7 +260,7 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
     // One statement for every proposal, an imported one's included (the
     // proposal machine's bug 5): the row is locked and must still be up for
     // a vote; an epoch is held to only when the revision is enforced.
-    const plain = pool.queries[0];
+    const plain = pool.queries.find((q) => /INSERT INTO pr_votes/.test(q.sql));
     assert.match(plain.sql, /FOR UPDATE/);
     assert.match(plain.sql, /status IN \('promoted', 'merging'\)/, 'only a proposal still up for a vote');
     assert.match(plain.sql, /INSERT INTO pr_votes \(session_id, user_id, vote, head_sha, approval_epoch, reason\)/);
@@ -257,24 +268,16 @@ test('recordVote writes the line, and the upsert carries or drops the old one by
     assert.match(plain.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/, 'none arriving keeps it on the same side');
     assert.match(plain.sql, /ELSE NULL END/, 'and drops it on a flip');
     assert.match(plain.sql, /RETURNING id, reason/);
-    // #6728: the write decides whether the vote changed. A second identical
-    // press finds the row the first committed and the DO UPDATE's WHERE skips
-    // it, so the statement answers `changed = false` instead of rewriting it.
-    assert.match(plain.sql, /eligible AS \(/, 'the epoch predicate is its own CTE');
-    assert.match(plain.sql, /WHERE NOT \(pr_votes\.vote = EXCLUDED\.vote/,
-      'an identical repeat updates nothing');
-    assert.match(plain.sql, /\(v\.id IS NOT NULL\) AS changed/);
-    assert.match(plain.sql, /FROM eligible\s+LEFT JOIN v ON TRUE/,
-      'one row either way, so the route can tell a repeat from a refusal');
-    assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.', null, null]);
+    assert.deepEqual(plain.params, [41, 8, 'no', HEAD, 'The new colors clash on mobile.', null, null, true],
+      'no previous vote: a real vote, so the bot is told');
 
     await subject.recordVote({
       pool, session: { id: 41 }, userId: 8, vote: 'yes', headSha: HEAD, revisionEnforced: true,
     });
-    const locked = pool.queries[1];
+    const locked = pool.queries.filter((q) => /INSERT INTO pr_votes/.test(q.sql))[1];
     assert.equal(locked.sql, plain.sql, 'the revision-enforced path is the same locked statement');
     assert.match(locked.sql, /WHEN pr_votes\.vote = EXCLUDED\.vote THEN pr_votes\.reason/);
-    assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null, null, null], 'no line: null, never the empty string; no epoch stamp: null');
+    assert.deepEqual(locked.params, [41, 8, 'yes', HEAD, null, null, null, true], 'no line: null, never the empty string; no epoch stamp: null');
   } finally {
     restore();
   }
@@ -288,7 +291,7 @@ test('a No without its line is recorded with reason null and announced', async (
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false });
     assert.equal(ctx.pool.inserted.length, 1);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, null, null, 'evan'],
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, null, null, 'evan', true],
       'no line: null, never the empty string');
     assert.equal(ctx.systemMessages[0].content, 'evan voted no on PR #26: Native iOS look',
       'the row reads without a quote, as a lineless Yes already does');
@@ -299,7 +302,7 @@ test('a No without its line is recorded with reason null and announced', async (
   await withServer({}, async (ctx) => {
     const blank = await ctx.post({ vote: 'no', reason: '   ' });
     assert.equal(blank.status, 200, 'whitespace is no line, not a refusal');
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, null, null, 'evan']);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, null, null, 'evan', true]);
   });
   await withServer({}, async (ctx) => {
     const long = await ctx.post({ vote: 'no', reason: 'x'.repeat(281) });
@@ -317,7 +320,7 @@ test('a No with its line is recorded, quoted in the thread, and checks whether t
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false });
     assert.equal(ctx.pool.inserted.length, 1);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'The new colors clash on mobile.', null, 'evan'],
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'The new colors clash on mobile.', null, 'evan', true],
       'the line goes in normalised, beside the vote');
 
     assert.equal(ctx.systemMessages.length, 1);
@@ -339,7 +342,7 @@ test('a Yes needs no line, and without one reads exactly as before', async () =>
   await withServer({}, async (ctx) => {
     const r = await ctx.post({ vote: 'yes' });
     assert.equal(r.status, 200);
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, null, null, 'evan']);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, null, null, 'evan', true]);
     assert.equal(ctx.systemMessages[0].content, 'evan voted yes on PR #26: Native iOS look');
     assert.deepEqual(ctx.systemMessages[0].metadata, { vote: { sessionId: 7, prNumber: 26, reason: null } });
     assert.deepEqual(ctx.prompts, [], 'a Yes never asks for a conversation');
@@ -355,7 +358,8 @@ test('the same side with new words updates the row and nothing else', async () =
     const r = await ctx.post({ vote: 'yes', reason: 'new words' });
     assert.equal(r.status, 200);
     assert.deepEqual(await r.json(), { ok: true, merged: false, unchanged: false, reasonUpdated: true });
-    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, 'new words', null, 'evan']);
+    assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'yes', HEAD, 'new words', null, 'evan', false],
+      'same side with new words: the bot hears nothing new');
     assert.equal(ctx.systemMessages.length, 0, 'the vote did not move: no second announcement');
     assert.equal(ctx.voteNotifications.length, 0, 'and no second ping to the proposer');
     assert.deepEqual(ctx.voteUpdates, [{ sessionId: 7, appSlug: 'widget', merged: false }],
@@ -414,7 +418,7 @@ test('#3977: a No\'s line on the bot\'s change goes to the bot first, and the vo
       bot.watch(ctx);
       const r = await ctx.post({ vote: 'no', reason: '  Sort the list   by date ' });
       assert.equal(r.status, 200);
-      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date', null, 'evan'], 'the vote keeps its line');
+      assert.deepEqual(ctx.pool.inserted[0].params, [7, 3, 'no', HEAD, 'Sort the list by date', null, 'evan', true], 'the vote keeps its line');
       assert.deepEqual(bot.asked, [7]);
       assert.deepEqual(bot.hands, [{ userId: 3, line: 'Sort the list by date', target: BOT_TARGET, rowsBefore: 0 }],
         'handed once, as the voter, before the vote row');
