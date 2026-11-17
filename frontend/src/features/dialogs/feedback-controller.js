@@ -974,6 +974,12 @@ export function init() {
       if (!attachMenu || !attachBtn) return;
       attachMenu.classList.toggle('hidden', !open);
       attachBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      // #6734: while this menu is open it owns Escape. The kit's modal
+      // listener in usernode-native/v1/native.js runs first (the head loads
+      // it before this bundle) and stands aside for `[data-owns-escape]`, the
+      // same opt-out the full-size picture preview above uses (#5687).
+      if (open) attachMenu.setAttribute('data-owns-escape', '');
+      else attachMenu.removeAttribute('data-owns-escape');
     };
     const paintAttachButton = () => {
       if (!attachBtn) return;
@@ -993,13 +999,24 @@ export function init() {
         }
       });
       // Any click outside the paperclip and its popover closes it. Capture
-      // phase, so a click something else stops still counts. (Escape is the
-      // kit modal's: it closes the dialog, and _reset closes this with it.)
+      // phase, so a click something else stops still counts.
       document.addEventListener('click', (e) => {
         if (!attachMenuOpen()) return;
         const t = e && e.target;
         if (t && (attachBtn.contains(t) || attachMenu.contains(t))) return;
         setAttachMenuOpen(false);
+      }, true);
+      // #6734: Escape closes the menu alone, and the sheet keeps its text.
+      // The marker setAttachMenuOpen leaves on the menu makes the kit's modal
+      // listener stand aside; this one then closes the menu and hands focus
+      // back to the paperclip. With the menu shut it does nothing, so Escape
+      // still closes the sheet as before.
+      window.addEventListener('keydown', (e) => {
+        if (!e || e.key !== 'Escape' || !attachMenuOpen()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        setAttachMenuOpen(false);
+        attachBtn.focus({ preventScroll: true });
       }, true);
     }
     const screenshotTools = window.ScreenshotSelect;
