@@ -134,7 +134,7 @@ test('every read tool returns through readResult and no others do', () => {
   const hinted = [...TOOLS_SRC.matchAll(/return readResult\('([a-z_]+)'/g)]
     .map((m) => m[1]);
   assert.deepEqual([...new Set(hinted)].sort(), [
-    'get_app', 'get_bench_context_pack', 'get_bench_gallery', 'get_bench_item', 'get_bench_reference_order', 'get_bench_run',
+    'get_app', 'get_attachment', 'get_bench_context_pack', 'get_bench_gallery', 'get_bench_item', 'get_bench_reference_order', 'get_bench_run',
     'get_bench_studio', 'get_bench_studio_run', 'get_bench_suite', 'get_bench_trial', 'get_bench_trial_transcript', 'get_bot_config_pair',
     'get_browser_languages',
     'get_challenge_event', 'get_challenge_scoring', 'get_challenge_template',
