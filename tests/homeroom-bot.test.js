@@ -1810,6 +1810,9 @@ test('runTriage: the request comes first; the platform reference follows, small,
   // request is planned as its first part, a design or product decision is
   // planned with choices, and sign-in, billing, permissions and credentials
   // code waits only for a go-ahead.
+  // 17 Nov 2026 (#6766): the key-service rule (about 330 more), so a service
+  // that needs a key is ready, not a person, and only setting a value goes
+  // to a person.
   assert.ok(prompt.length < 28800, `a triage prompt stays small: ${prompt.length} chars`);
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false\}$/);

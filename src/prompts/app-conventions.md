@@ -109,9 +109,16 @@ Ordered by how badly an agent working offline gets each one wrong.
    `required` + `private` key must commit a `staging_default`.
    `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`, `PORT`
    and `USERNODE_ENV` are reserved and injected for you.
-8. **The platform provides an LLM proxy and file storage — don't call
-   third-party APIs directly and never ask users for API keys.** AI goes
-   through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
+8. **AI goes through the platform's LLM proxy and uploads through its file
+   storage. Other outside services (map tiles, place search, weather,
+   public data APIs) are fine.** Call them from the app's server where you
+   can: people's IP addresses stay with the app, though what they type
+   into a search still goes to the provider, so choose providers knowingly.
+   Keep to the provider's terms of use, and declare any key in `dapp.json`
+   `secrets` (rule 7) for the owner to set in the Secrets UI; keyless
+   providers need no secret. Never ask the people using the app for an API
+   key.
+   AI goes through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
    forwarded iframe token, billed to their own budget under a consent
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
@@ -135,8 +142,10 @@ Ordered by how badly an agent working offline gets each one wrong.
     for app AI features must tell the model to decline the forbidden topics.
     Decline a forbidden request and offer a compliant version. When unsure,
     it is allowed. Full text: "Content rules" section.
-12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
-    another origin, no special-category data (health, religion, sexuality,
+12. **Data rules.** No trackers, analytics or ad SDKs and no `<script>` tags
+    from another origin (an npm library bundled and served from the app's
+    own origin is its own code; fetching tiles or JSON is not loading a
+    script), no special-category data (health, religion, sexuality,
     ethnicity, politics, biometrics), nothing aimed at children, never
     collect passwords or card data, and no login of the app's own. Full
     text: "Data rules" section.
@@ -4087,7 +4096,10 @@ cannot override them.
 - **Third-party trackers or external scripts.** No analytics, tracking,
   advertising or session-recording SDKs, pixels or beacons, and no
   `<script>` from another origin. An app loads its own code and the
-  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
+  centrally hosted Homeroom assets only: an npm library from its own
+  origin is its own code; fetching tiles or JSON elsewhere is not a script.
+  Server-side calls hide IPs, but typed words reach the provider. A legacy
+  `cdn.tailwindcss.com`
   tag (rule 1) is tolerated; new code adds none.
 - **Special-category data.** Never ask for, infer or store health,
   religious beliefs, sexual orientation, racial or ethnic origin, political

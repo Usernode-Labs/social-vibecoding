@@ -15,6 +15,17 @@ const mayor = require('../src/services/homeroom-bot-mayor');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
+// #6766: outside data services are allowed, and the Mayor never invents a
+// platform limit ("outside scripts" also read as a ban on map tiles and
+// place search).
+test('#6766: outside data services are allowed, and it never invents a limit', () => {
+  const prompt = mayor.systemPrompt({ username: 'ada' });
+  assert.match(prompt, /trackers, ads or `<script>` tags from other\n  sites/);
+  assert.match(prompt, /Maps, place search and other outside data services are\n  allowed: the app calls them from its server, with any key in its secrets\./);
+  assert.match(prompt, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
+  assert.match(prompt, /Homeroom Maps has a real\n  map and place search\) shows it can be built\./);
+});
+
 test('the prompt keeps the model to the tools, plain words and Homeroom\'s content rules', () => {
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2, today: new Date('2026-10-02T00:00:00Z') });
   assert.match(prompt, /talking with @ada in a direct message on Homeroom/);

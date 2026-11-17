@@ -67,6 +67,24 @@ test('triage sends a request whose point breaks the rules to a person, and swaps
   assert.match(md, /- Nothing it builds breaks the platform's content rules or data rules \(below\)\./);
 });
 
+test('#6766: a service that needs a key is ready, not a person', () => {
+  const md = read('src/prompts/homeroom-bot-triage.md');
+  // "another app or service" was narrowed: a new integration is ready or
+  // complicated (below), not impossible.
+  assert.match(md, /\(a service that does not exist, data the app does not have\)/);
+  assert.doesNotMatch(md, /\(another app or service, data the app does not have\)/);
+  // A service whose key the app declares is buildable, and only setting a
+  // value is a person, pointed at Secrets.
+  assert.match(md, /a service needing one is `ready` \(or `complicated` with `choices` if the provider is a choice\)/);
+  assert.match(md, /declares it in `dapp\.json` `secrets` \(not `required`, or with a `staging_default`\)/);
+  assert.match(md, /keeps the feature off and says so on screen until a member sets it/);
+  assert.match(md, /Only setting that value is `person`; `reason` points there\./);
+  // Setting a key is not operator work, including in the decider notes the
+  // read is given on a project with a creator or admins.
+  assert.doesNotMatch(md, /such as setting a secret/);
+  assert.match(read('src/services/homeroom-bot.js'), /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
+});
+
 test('the words people gave the bot stay out of staging and prod-debug', () => {
   const schema = read('src/db/schema.sql');
   assert.match(schema, /COMMENT ON COLUMN homeroom_bot_requesters\.asked_text IS 'staging:private';/);

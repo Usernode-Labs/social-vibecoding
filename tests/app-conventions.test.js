@@ -9,7 +9,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { getAppConventions } = require('../src/services/prompts.js');
+const { getAppConventions, getConventionSection } = require('../src/services/prompts.js');
 
 const ESCALATION_HEADING =
   'Platform-level problems & missing capabilities: escalate, don\'t file workarounds';
@@ -370,4 +370,31 @@ test('conventions doc says a game draws its play area on a canvas, with what tha
   assert.ok(require('../src/services/prompts.js').FIRST_VERSION_SPEC_DESIGN_BRIEF.includes(cite));
   const lines = require('../src/services/homeroom-bot-live.js').FIRST_VERSION_DESIGN_LINES.join(' ').replace(/\s+/g, ' ');
   assert.ok(lines.includes(cite), 'the build cites the section by its heading');
+});
+
+// #6766: rule 8's old headline ("don't call third-party APIs directly")
+// read as a ban on every outside API, so the bot told someone a real map
+// with place search could not be built, though Homeroom Maps does exactly
+// that. The rules now say what is allowed, and the data rule distinguishes a
+// library the app serves itself from a script on another origin.
+test('conventions allow outside data services, with keys in secrets (#6766)', () => {
+  const doc = getAppConventions();
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'));
+  // The phrase the bot and two projects read as a platform limit is gone.
+  assert.doesNotMatch(excerpt, /don't call\s+third-party APIs directly/);
+  assert.match(excerpt, /\*\*AI goes through the platform's LLM proxy and uploads through its file\s+storage\. Other outside services \(map tiles, place search, weather,\s+public data APIs\) are fine\.\*\*/);
+  assert.match(excerpt, /declare any key in `dapp\.json`\s+`secrets` \(rule 7\) for the owner to set in the Secrets UI/);
+  assert.match(excerpt, /Never ask the people using the app for an API\s+key\./);
+  assert.match(excerpt, /keyless\s+providers need no secret/);
+  // Rule 12 names the bundled library and the fetched tiles.
+  assert.match(excerpt, /an npm library bundled and served from the app's\s+own origin is its own code; fetching tiles or JSON is not loading a\s+script/);
+  assert.match(excerpt, /no `<script>` tags\s+from another origin/);
+
+  const data = getConventionSection('data-rules-what-no-app-may-collect-or-load');
+  assert.ok(data && data.content, 'the data rules section exists');
+  const section = data.content.replace(/\s+/g, ' ');
+  assert.match(section, /an npm library from its own origin is its own code/);
+  assert.match(section, /fetching tiles or JSON elsewhere is not a script/);
+  assert.match(section, /no `<script>` from another origin/);
+  assert.match(section, /Server-side calls hide IPs, but typed words reach the provider\./);
 });
