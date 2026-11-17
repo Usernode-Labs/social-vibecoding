@@ -66,9 +66,41 @@ test('true or a missing go_ahead keeps today\'s three buttons', () => {
   }
 });
 
+// 17 Nov 2026: a stored refusal is said again only when its read named the
+// blocker; one from before is read once more, on the refresh or at the next
+// go-ahead, instead of being repeated under rules that have changed since.
+test('a refusal stored before the read named its blocker is stale, and is not said again', () => {
+  const old = { mode: 'live', verdict: 'person', go_ahead_decides: false, go_ahead_blocker: null };
+  assert.equal(live.cannotStands(old), false);
+  assert.equal(live.staleCannot(old), true);
+  const named = { ...old, go_ahead_blocker: 'operator_work' };
+  assert.equal(live.cannotStands(named), true);
+  assert.equal(live.staleCannot(named), false, 'its new run is never stale: each request is read once');
+  for (const run of [null, { ...old, go_ahead_decides: true }, { ...old, go_ahead_decides: null },
+    { ...old, verdict: 'ready' }, { ...old, mode: 'trial' }]) {
+    assert.equal(live.staleCannot(run), false);
+    assert.equal(live.cannotStands(run), false);
+  }
+  assert.equal(live.cannotStands({ ...old, go_ahead_blocker: 'too_big' }), false);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/services/homeroom-bot.js'), 'utf8');
+  assert.match(src, /else if \(capRoom && bot && verdict\.reason === 'unchanged' && live\.staleCannot\(lastRun\)\) \{\n\s+eligible\.push\(\{ n, eligible: true, reason: RULES_CHANGED_REASON, priority: 3, threadSeenAt: verdict\.threadSeenAt \}\);/,
+    'the refresh reads it again, on a live app only');
+  assert.equal(bot.RULES_CHANGED_REASON, 'rules_changed');
+});
+
 test('the triage reads go_ahead as false, true, or absent; only a plain person verdict carries it', () => {
-  const no = bot.parseVerdict('{"verdict":"person","reason":"x","go_ahead":false,"first_step":"Remove the dead line"}');
+  const no = bot.parseVerdict('{"verdict":"person","reason":"x","go_ahead":false,"cannot_because":"operator_work","first_step":"Remove the dead line"}');
   assert.equal(no.goAheadDecides, false);
+  assert.equal(no.blocker, 'operator_work');
+  assert.equal(bot.parseVerdict('{"verdict":"person","reason":"x","go_ahead":false,"cannot_because":"destructive_db"}').blocker, 'destructive_db');
+  // 17 Nov 2026: a bare false, or one with a blocker that is neither of the
+  // two (a sign-in fix, a large request), is a request a go-ahead can settle.
+  for (const extra of ['', ',"cannot_because":"sign_in"', ',"cannot_because":"too_big"', ',"blocker":"operator_work"']) {
+    const bare = bot.parseVerdict(`{"verdict":"person","reason":"x","go_ahead":false${extra}}`);
+    assert.equal(bare.goAheadDecides, true, extra || 'bare false');
+    assert.equal(bare.blocker, null);
+  }
+  assert.equal(bot.parseVerdict('{"verdict":"person","reason":"x","go_ahead":true,"cannot_because":"operator_work"}').blocker, null);
   assert.equal(no.firstStep, 'Remove the dead line');
   assert.equal(bot.parseVerdict('{"verdict":"person","reason":"x","go_ahead":true}').goAheadDecides, true);
   assert.equal(bot.parseVerdict('{"verdict":"person","reason":"x"}').goAheadDecides, true,
@@ -279,6 +311,7 @@ test('a go-ahead that meets a read saying it cannot settle it posts one plain re
       parsed: {
         verdict: 'person', reason: 'moving App secrets is operator work outside this app.',
         firstStep: 'Remove the dead bot token line', platform: false, done: false, goAheadDecides: false,
+        blocker: 'operator_work',
       },
       goAhead: { by: 'evan' },
       decider: { requesterDecides: true },
@@ -292,7 +325,7 @@ test('a go-ahead that meets a read saying it cannot settle it posts one plain re
   }
   assert.equal(says.length, 1);
   assert.match(says[0].homeroomText,
-    /^I don't build changes like this myself, even with a go-ahead: moving App secrets is operator work outside this app\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Remove the dead bot token line\.$/);
+    /^A go-ahead can't settle this one\. This needs something set up outside this app, which I can't do from here: moving App secrets is operator work outside this app\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Remove the dead bot token line\.$/);
   assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
   assert.deepEqual(says[0].metadata.homeroomBot.actions.map((a) => a.label),
     ['Remove the dead bot token line', 'Not now']);

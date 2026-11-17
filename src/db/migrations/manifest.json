@@ -402,9 +402,14 @@
       "schemaSha256": "6b2e5fe4998f0fdae27de7ec26bfb939a577280227a1c73197d6f2ff4f7755a3"
     },
     {
+      "id": "homeroom-bot-run-go-ahead-blocker",
+      "sha256": "df1654bbf2ff6ddfd3fb37fbb15eee15c95c4d64bffcf14a57596f1c9606e4e1",
+      "schemaSha256": "abb00afd2ad35eb1f854174240050bd46c011101d2de248d57d5130721853179"
+    },
+    {
       "id": "change-close-reason",
       "sha256": "b78d422dfab580192ffbe3cdc25c018bcff0b7a1273a9bffaa674267d1cf6a7a",
-      "schemaSha256": "22b3700089f3c611496b4f0feeab906f767d1c4a2b229f3598ad7b8de4ad59a6"
+      "schemaSha256": "822d1fb3c0fabcdbf0602773722d7fbbb84be055c072f3fea7dc1adc3cddeff3"
     }
   ]
 }
