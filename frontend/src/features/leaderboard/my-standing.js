@@ -87,7 +87,10 @@ export function ledgerPoints(challenges) {
 export function standingView(state) {
   if (state.status !== 'ready' || !state.ranking) return null;
   const r = state.ranking;
-  const pending = standingIsEmpty(r) ? Number(state.pending || 0) : 0;
+  // #6735: the card says so whenever the ledger is ahead of the standings,
+  // not only when the standings have nothing at all — a ranked viewer whose
+  // new points the snapshot has not counted yet sees the same line.
+  const pending = Number(state.pending || 0) > 0 ? Number(state.pending) : 0;
   if (standingIsEmpty(r) && pending <= 0) return null;
   const rank = Number(r.rank);
   const people = Number(r.total_participants);
@@ -108,15 +111,16 @@ const MyStanding = {
     if (myStandingStore.get().status === 'idle') myStandingStore.set({ status: 'loading' });
     try {
       const ranking = await fetchData('/challenges-api/me/ranking?season_id=active');
-      // Only when the standings have nothing for the viewer: ask the ledger
-      // whether challenge points are waiting for the next snapshot. An
-      // existing read, scoped to the season the ranking resolved.
+      // #6735: always ask the ledger how far ahead of the standings the
+      // viewer's own points are — the profile and challenge cards read the
+      // same figure, so a ranked viewer's new points show as pending here
+      // too. An existing read, scoped to the season the ranking resolved.
       let pending = 0;
-      if (ranking && standingIsEmpty(ranking) && ranking.season_id) {
+      if (ranking && ranking.season_id) {
         const challenges = await fetchData(
           `/challenges-api/challenges?season_id=${encodeURIComponent(ranking.season_id)}`
         ).catch(() => null);
-        pending = ledgerPoints(challenges);
+        pending = Math.max(0, ledgerPoints(challenges) - Number(ranking.total_points || 0));
       }
       if (token !== MyStanding._token) return;
       myStandingStore.set({ status: 'ready', ranking, pending, revealed: readRevealed() });
