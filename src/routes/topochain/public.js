@@ -51,6 +51,7 @@ const adminTextTranslations = require('../../services/admin-text-translations');
 const log = require('../../services/logger');
 const { optionalSessionAuth } = require('../../middleware/topochain-auth');
 const { computeStandings } = require('../../services/topochain/standings');
+const { round2 } = require('../../services/topochain/scoring');
 // The per-event standings vocabulary — identifier masking, the display-name
 // fallback chain, EVENT_LEADERBOARD_SQL and the type-branch that resolves one
 // event's rows — moved into this service when the home screen's Challenges
@@ -58,7 +59,7 @@ const { computeStandings } = require('../../services/topochain/standings');
 // one of a display name, shared by the routes and the widget.
 const {
   resolveIdentifier, maskIdentifier, resolveDisplayName, publicUsername, fetchEventLeaderboardRows,
-  resolveDefaultPublicEvent,
+  resolveDefaultPublicEvent, boardScopeEventIds, viewerLedgerTotals,
 } = require('../../services/topochain/event-standings');
 // #5807: the opaque per-row code the season board issues, so a row with no
 // wallet and no Discord handle can still open its activities.
@@ -407,7 +408,32 @@ function topochainPublicRoutes(config) {
       // place rather than below the table.
       const viewerId = req.user && req.user.id != null ? Number(req.user.id) : null;
       const isViewer = (r) => viewerId != null && Number(r.user_id) === viewerId;
-      const own = viewerId != null ? visible.find(isViewer) : null;
+      let own = viewerId != null ? visible.find(isViewer) : null;
+      // #6735: the standings are a snapshot; the viewer's own points are in
+      // the ledger, which is what their profile and challenge cards read.
+      // So the viewer's row catches up here — and ONLY their row: the rank,
+      // the order, the paging and every other row stay the standings'.
+      //
+      // The caught-up figure replaces the snapshot's own ledger share with
+      // what the ledger holds now, per event in the board's scope, using the
+      // snapshot builder's arithmetic (see viewerLedgerTotals). When the
+      // ledger is at or behind the snapshot — block points, a weight below
+      // 1, a reversed credit — the snapshot's figure is kept, so the number
+      // only ever rises to meet the ledger.
+      let viewerPending = 0;
+      if (own) {
+        const eventIds = await boardScopeEventIds(pool, event);
+        const ledger = await viewerLedgerTotals(pool, { userId: viewerId, eventIds });
+        const ledgerExtra = [...ledger.values()].reduce((sum, n) => sum + (Number(n) || 0), 0);
+        const snapshotTotal = num(own.total_points) ?? 0;
+        const caughtUp = round2(snapshotTotal - (num(own.extra_points) ?? 0) + ledgerExtra);
+        if (caughtUp > snapshotTotal + 0.005) {
+          viewerPending = round2(caughtUp - snapshotTotal);
+          const index = visible.indexOf(own);
+          own = { ...own, total_points: caughtUp };
+          if (index !== -1) visible[index] = own;
+        }
+      }
       // #5807: `row_ref` is the opaque handle the drill-down asks
       // /leaderboard/user-activities with. It is added HERE rather than in
       // formatLeaderboardRow so that builder stays config-free; it is a
@@ -416,6 +442,9 @@ function topochainPublicRoutes(config) {
       const withRef = (r, extra) => ({
         ...formatLeaderboardRow(r),
         row_ref: rowRef(r.user_id, config && config.sessionSecret),
+        // #6735: additive, and only on the viewer's own row: the points the
+        // standings have not counted yet, which the pane marks as such.
+        ...(isViewer(r) ? { pending_points: viewerPending } : {}),
         ...extra,
       });
       const leaderboard = visible.slice(start, start + perPage).map((r) => withRef(r, { is_viewer: isViewer(r) }));

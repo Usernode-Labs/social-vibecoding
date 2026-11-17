@@ -68,6 +68,10 @@ export interface FoundLine {
   key: string;
   /** The tab's address of the message: its thread, or the chat, at it (./door.ts). */
   href: string;
+  /** The message the row opens, so its words can be marked there (./search-mark.ts). */
+  messageId: number;
+  /** The query it was found by, as the search asked it (./search.ts cleanQuery). */
+  q: string;
   /** It is in a thread; otherwise in the chat itself. */
   thread: boolean;
   parts: MarkPart[];
@@ -171,6 +175,15 @@ export interface AiLinesInput {
 }
 
 /**
+ * #6744: which projects the chips show: any when none is picked, else only
+ * a picked one. The lists and the hero under the bot's name both ask this,
+ * so a saved project's counts cannot disagree with the list below them.
+ */
+export function showsPicked(picked: readonly string[]): (app: AiApp | null) => boolean {
+  return (app) => !picked.length || (!!app && picked.includes(app.slug));
+}
+
+/**
  * The lists' rows and what is said around them, from what the page read. A
  * hook only because it reads the catalog and this tab's build (#6233).
  */
@@ -213,7 +226,7 @@ export function useAiLines({
   const setOnly = (slugs: string[]) => onPick?.(slugs);
   const rail = railProjects(ranked, picked);
   const past = ranked.length - rail.length;
-  const shows = (app: AiApp | null) => !picked.length || (!!app && picked.includes(app.slug));
+  const shows = showsPicked(picked);
   const toggle = (slug: string) => setOnly(picked.includes(slug) ? picked.filter((x) => x !== slug) : [...picked, slug]);
   // #6262: what is new. The heading and the hero follow the chips (as the
   // owed count does); each chip carries its project's own count, and All the
@@ -361,6 +374,8 @@ export function useAiLines({
     return {
       key: `found:${row.messageId}`,
       href: botTabAddress({ threadRootId: row.rootId, focusMessageId: row.messageId }),
+      messageId: row.messageId,
+      q: found.q,
       thread: !!row.rootId,
       parts: markParts(row.snippet, row.ranges),
       place,
@@ -388,6 +403,9 @@ export function useAiLines({
     say, searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
     owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+    // #6744: the counts the project filter shows, for anything that summarises
+    // the lists (the hero under the bot's name asks the same question).
+    progressShown: progressShown.length,
   };
 }
 

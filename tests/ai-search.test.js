@@ -32,6 +32,66 @@ const aiSearch = require('../src/services/ai-search');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const SEARCH = 'frontend/src/features/ai/search.ts';
 
+// ── A DOM just big enough for MessageMarkdown's marking pass ────────────
+// Text nodes, elements and fragments, and a serializer for the assertions.
+// No parsing: the test builds the tree the way marked emits it (the same
+// shim tests/messages-ref-chips.test.js uses for decorateRefs).
+function makeDocument() {
+  const doc = {};
+  class Node {
+    constructor() { this.parentNode = null; this.childNodes = []; this.ownerDocument = doc; }
+    appendChild(node) {
+      const nodes = node.isFragment ? node.childNodes.splice(0) : [node];
+      for (const n of nodes) { n.parentNode = this; this.childNodes.push(n); }
+      return node;
+    }
+    replaceChild(next, old) {
+      const nodes = next.isFragment ? next.childNodes.splice(0) : [next];
+      const at = this.childNodes.indexOf(old);
+      this.childNodes.splice(at, 1, ...nodes);
+      for (const n of nodes) n.parentNode = this;
+      old.parentNode = null;
+      return old;
+    }
+    get firstChild() { return this.childNodes[0] || null; }
+    get nextSibling() {
+      if (!this.parentNode) return null;
+      const at = this.parentNode.childNodes.indexOf(this);
+      return this.parentNode.childNodes[at + 1] || null;
+    }
+  }
+  class Text extends Node {
+    constructor(value) { super(); this.nodeType = 3; this.nodeValue = String(value); }
+    get data() { return this.nodeValue; }
+    get textContent() { return this.nodeValue; }
+  }
+  class Fragment extends Node {
+    constructor() { super(); this.nodeType = 11; this.isFragment = true; }
+  }
+  class Element extends Node {
+    constructor(tag) { super(); this.nodeType = 1; this.tagName = tag.toUpperCase(); this.attrs = []; }
+    set className(value) { this.setAttribute('class', value); }
+    get className() { const found = this.attrs.find((a) => a[0] === 'class'); return found ? found[1] : ''; }
+    setAttribute(name, value) { this.attrs.push([name, String(value)]); }
+    getAttribute(name) { const found = this.attrs.find((a) => a[0] === name); return found ? found[1] : null; }
+    set textContent(value) { this.childNodes = []; this.appendChild(new Text(value)); }
+    get textContent() { return this.childNodes.map((n) => n.textContent).join(''); }
+  }
+  doc.createElement = (tag) => new Element(tag);
+  doc.createTextNode = (value) => new Text(value);
+  doc.createDocumentFragment = () => new Fragment();
+  return doc;
+}
+
+function html(node) {
+  if (node.nodeType === 3) return node.nodeValue.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const inner = node.childNodes.map(html).join('');
+  if (node.isFragment || node.root) return inner;
+  const tag = node.tagName.toLowerCase();
+  const attrs = node.attrs.map(([k, v]) => ` ${k}="${v.replace(/"/g, '&quot;')}"`).join('');
+  return `<${tag}${attrs}>${inner}</${tag}>`;
+}
+
 test('the query is data: one line, a length, and its LIKE wildcards escaped', () => {
   assert.equal(aiSearch.cleanQuery('  improve \n  my   app '), 'improve my app');
   assert.equal(aiSearch.cleanQuery(undefined), '');
@@ -206,6 +266,86 @@ test('the client marks the found words by splitting the text, and checks an answ
   assert.equal(foundDay('2026-11-03T12:00:00Z', 'en-GB', now), '3 Nov');
   assert.equal(foundDay('2025-11-03T12:00:00Z', 'en-GB', now), '3 Nov 2025');
   assert.equal(foundDay(null, 'en-GB', now), '');
+});
+
+// #6738: a person searched, opened a message from the results, and the
+// message glowed for about two seconds and then showed nothing of where the
+// word was. The words stay marked in that message while it is read.
+test('every place the searched words appear in an opened message is marked, and the marks are part of what is drawn', () => {
+  const { matchRanges } = loadTsx(SEARCH);
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+
+  // Every match, in order: not only the first, in either case.
+  assert.deepEqual(plain(matchRanges('I want to improve my app.', 'improve')), [[10, 17]]);
+  assert.deepEqual(plain(matchRanges('Improve it, then IMPROVE it again', 'improve')), [[0, 7], [17, 24]]);
+  assert.deepEqual(plain(matchRanges('nothing here', 'improve')), []);
+  // A phrase matches across a line break, as it does on the server; a
+  // character a pattern would read is matched as written.
+  assert.deepEqual(plain(matchRanges('please improve\nmy app', 'improve my')), [[7, 17]]);
+  assert.deepEqual(plain(matchRanges('c++ and c# are not the same', 'c++')), [[0, 3]]);
+  assert.deepEqual(plain(matchRanges('a.b and axb', 'a.b')), [[0, 3]]);
+  assert.deepEqual(plain(matchRanges('Is it 100% (really) done?', '100% (really)')), [[6, 19]]);
+  // Nothing to mark: an empty query, or one too short to have been asked.
+  assert.deepEqual(plain(matchRanges('improve', '')), []);
+  assert.deepEqual(plain(matchRanges('improve', null)), []);
+  assert.deepEqual(plain(matchRanges('', 'improve')), []);
+  // The client's marks are exactly where the server put them.
+  for (const [text, q] of [
+    ['I want to improve my app.', 'improve'],
+    ['Improve it, then IMPROVE it again', 'improve'],
+    ['please improve\nmy app', 'improve my'],
+    ['Is it 100% (really) done? a.b', '100% (really)'],
+  ]) {
+    assert.deepEqual(plain(matchRanges(text, q)), plain(aiSearch.snippetOf(text, q).ranges), `${q} in ${text}`);
+  }
+
+  // The body marks them as it is drawn (format.tsx): a <mark> per match,
+  // built from text nodes, so the marks are part of the html its row keeps.
+  const doc = makeDocument();
+  const prev = global.document;
+  global.document = doc;
+  try {
+    const { markSearchHits } = loadTsx('frontend/src/features/messages/format.tsx');
+    const root = doc.createElement('div');
+    const p = doc.createElement('p');
+    p.appendChild(doc.createTextNode('I want to improve my app. Improve it.'));
+    root.appendChild(p);
+    const code = doc.createElement('code');
+    code.appendChild(doc.createTextNode('improve'));
+    p.appendChild(code);
+    const script = doc.createElement('script');
+    script.appendChild(doc.createTextNode('improve'));
+    root.appendChild(script);
+
+    markSearchHits(root, 'improve');
+    const out = html(root);
+    assert.match(out, /I want to <mark data-search-mark="" class="[^"]*">improve<\/mark> my app\. <mark data-search-mark="" class="[^"]*">Improve<\/mark> it\./,
+      'every match, in its own text');
+    assert.match(out, /<code><mark data-search-mark="" class="[^"]*">improve<\/mark><\/code>/, 'a word in a code span is marked too');
+    assert.match(out, /<script>improve<\/script>/, 'never inside a script');
+    const markClass = /<mark[^>]*class="([^"]*)"/.exec(out)[1];
+    assert.match(markClass, /bg-\[color:var\(--accent-tint\)\]/, 'the same accent tint the found rows use');
+    assert.doesNotMatch(markClass, /#[0-9a-f]{3,8}\b|yellow/i, 'no literal colour');
+    assert.equal((out.match(/data-search-mark/g) || []).length, 3, 'a marked word is not marked again');
+
+    // Drawn again with no marks, it is the text as it was.
+    const plainRoot = doc.createElement('div');
+    plainRoot.root = true;
+    const plainP = doc.createElement('p');
+    plainP.appendChild(doc.createTextNode('I want to improve my app.'));
+    plainRoot.appendChild(plainP);
+    markSearchHits(plainRoot, null);
+    assert.equal(html(plainRoot), '<p>I want to improve my app.</p>');
+  } finally {
+    global.document = prev;
+  }
+
+  // The body is told what was searched, and marking comes after the chips so
+  // a word inside one is marked too; the marks are part of its html, so a
+  // re-render, a scroll or a part drawn later keeps them.
+  const format = read('frontend/src/features/messages/format.tsx');
+  assert.match(format, /export function MessageMarkdown\(\{ content, channels, appSlug, requestColors = false, marks = null \}/);
+  assert.match(format, /markSearchHits\(root, marks\);\s*return root\.innerHTML;\s*\}, \[content, channels, appSlug, requestColors, marks\]\);/);
 });
 
 test('the read waits for the typing to stop, drops a stale answer, and asks nothing before anyone types', () => {

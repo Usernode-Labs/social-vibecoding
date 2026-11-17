@@ -25,6 +25,7 @@
 
 import type { ActionSpec, StatusPillState } from '../card/model';
 import type { RequestSpecCard } from './request-model';
+import type { ReviewScreen } from '../../review-flow/model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -543,6 +544,13 @@ export interface ClosesRequestView {
 }
 
 export interface RequestView {
+  /**
+   * Homeroom bot's summary of the thread, once the request has a plan or a
+   * change (src/services/request-summary.js): its words, and what it drew
+   * on, for the line under it. Null while the asker's own words are all
+   * there is.
+   */
+  summary?: { text: string; basis: 'plan' | 'change' | 'changes' } | null;
   similar?: { number: number; title: string } | null;
   /**
    * #6680: the viewer's own private Homeroom bot thread that filed this
@@ -783,7 +791,25 @@ export interface ChangeThreadView {
      * page, and the id of the viewer (`html`) its Expand opens.
      */
     thumbs?: { before: string | null; after: string | null; viewer: string } | null;
+    /**
+     * A verified run's screens, each a before and an after with the areas
+     * that differ (AppView._workshopVisuals), and what changed, numbered:
+     * the card's picture draws them with the Needs you page's slider.
+     */
+    screens?: ReviewScreen[];
+    changes?: { n: number; text: string }[];
+    /** The change the shots are of, for the detail column its Expand opens. */
+    changeId?: number | null;
   } | null;
+  /**
+   * The change shows nothing a person can see, so no shots were asked for
+   * (AppView._shotsNotNeeded): the card says so where the picture would be.
+   */
+  shotsNone?: boolean;
+  /** The last finished run of its tests: the counts and each failure by name (AppView._checksSummary). */
+  checks?: { passed: number; failed: number; fails: { key: string; name: string; reason: string | null; advisory: boolean }[] } | null;
+  /** When it went live (its merge, else its release), for "Since …" in the card's foot and the timeline's Live step. */
+  liveAt?: string | null;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
   /**
@@ -937,6 +963,8 @@ export interface TopicBody {
   plan?: RequestSpecCard | null;
   /** The previous summary was retained for provenance but no longer describes this revision. */
   summaryStale?: boolean;
+  /** Who wrote the summary: Homeroom bot or the change's author (AppView._summaryBy). Null when there is none, or the row does not say. */
+  summaryBy?: 'bot' | 'author' | null;
   /**
    * The rest of the summary, folded under `summaryHtml` as "How it’s built":
    * on a change Homeroom bot built, everything from its spec's Design

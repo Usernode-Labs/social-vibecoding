@@ -238,14 +238,16 @@ export function BotHeadCard({ head, objects, draft = null }: { head: BotHead; ob
 }
 
 /** The words before the line, the card it names, then the words after it. */
-export function BotHeadWords({ head, objects, channels, draft = null }: {
+export function BotHeadWords({ head, objects, channels, draft = null, marks = null }: {
   head: BotHead;
   objects: readonly SharedObjectCard[];
   channels?: ReadonlySet<string>;
   /** #6248: the preview an open draft's card opens, when this is one. */
   draft?: DraftPreview | null;
+  /** #6738: the words a search result opened, marked in this message (../ai/search-mark.ts). */
+  marks?: string | null;
 }) {
-  const words = (text: string) => (text ? <MessageMarkdown content={text} channels={channels} appSlug={head.appSlug} /> : null);
+  const words = (text: string) => (text ? <MessageMarkdown content={text} channels={channels} appSlug={head.appSlug} marks={marks} /> : null);
   if (head.hidden) return words([head.before, head.rest].filter(Boolean).join('\n\n'));
   return (
     <>

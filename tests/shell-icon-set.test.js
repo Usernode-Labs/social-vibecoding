@@ -306,8 +306,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // the top-level screen is a REPORT of what your apps want from you, not
     // a place to start something; the menu's went with the app strip above
     // it. Every plus left in the shell renders behind state.
-    // PlusThinIcon, UserCircleIcon and CheckLongIcon left this list and the
-    // module together: only the retired dev chat's banners drew them.
+    // PlusThinIcon and UserCircleIcon left this list and the module
+    // together: only the retired dev chat's banners drew them. CheckLongIcon
+    // left with them and is back: the thread rail's Approved step draws it,
+    // only once a thread has loaded.
+    'M4.5 12.75l6 6 9-13.5',
     'M12 4v16m8-8H4',
     'M12 5.5v13',
     'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',

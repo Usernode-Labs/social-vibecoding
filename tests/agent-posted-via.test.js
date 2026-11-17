@@ -245,7 +245,8 @@ test('the chat handler persists posted_via and echoes it on the broadcast', asyn
     assert.equal(result.ok, true);
     const ins = pool.insert();
     assert.ok(ins, 'INSERT ran');
-    assert.match(ins.sql, /thread_ref, posted_via\)\s*\n\s*VALUES \(\$1, \$2, \$3, 'message', \$4, \$5, \$6, \$7\)/);
+    // #6730 added the client_key column (and its $8) to this same insert.
+    assert.match(ins.sql, /thread_ref, posted_via, client_key\)\s*\n\s*VALUES \(\$1, \$2, \$3, 'message', \$4, \$5, \$6, \$7, \$8\)/);
     assert.equal(ins.params[6], expected, `posted_via param for ${String(postedVia)}`);
     assert.equal(result.message.postedVia, expected, 'the broadcast row carries the same value');
   }

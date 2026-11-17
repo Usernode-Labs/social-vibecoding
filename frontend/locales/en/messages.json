@@ -3119,45 +3119,21 @@
     "text": "Start a new conversation",
     "description": "Accessible name of the menu opened by the + button above the conversation list."
   },
-  "inbox.section.agents": {
-    "text": "Agents",
-    "description": "Small-caps heading over the Messages list section that holds the viewer's changes in flight, each being built by an AI agent. It is a button that folds the section away and opens it again."
-  },
   "inbox.section.people": {
     "text": "People",
-    "description": "Small-caps heading over the last section of the Messages list, under Agents, and over the same rows in the sidebar: the viewer's direct messages and group chats with people. It does not fold."
-  },
-  "inbox.section.working_one": {
-    "text": "{{count}} working",
-    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's changes an agent is working on right now. {{count}} is that number."
-  },
-  "inbox.section.working_other": {
-    "text": "{{count}} working",
-    "description": "Beside the Agents heading in the Messages list, also while the section is folded: how many of the viewer's changes an agent is working on right now. {{count}} is that number."
+    "description": "Small-caps heading over the Messages list: the viewer's direct messages and group chats with people. Under one of the frame's looks it is the list's one tab."
   },
   "inbox.section.unread_one": {
     "text": "{{count}} unread",
-    "description": "Beside the People heading in the Messages list, in the accent colour, also while the section is folded: how many messages from people the viewer has not read. {{count}} is that number."
+    "description": "Beside the People heading in the Messages list: how many messages from people the viewer has not read. {{count}} is that number."
   },
   "inbox.section.unread_other": {
     "text": "{{count}} unread",
-    "description": "Beside the People heading in the Messages list, in the accent colour, also while the section is folded: how many messages from people the viewer has not read. {{count}} is that number."
+    "description": "Beside the People heading in the Messages list: how many messages from people the viewer has not read. {{count}} is that number."
   },
   "inbox.loading": {
     "text": "Loading conversations",
     "description": "Accessible label of the placeholder rows shown while the conversation list loads."
-  },
-  "inbox.older.show_one": {
-    "text": "{{count}} older change",
-    "description": "Quiet link at the foot of the Agents section in Messages: shows the change in flight that nothing has happened to in the last seven days. \"Change\" is a noun. {{count}} is how many there are."
-  },
-  "inbox.older.show_other": {
-    "text": "{{count}} older changes",
-    "description": "Quiet link at the foot of the Agents section in Messages: shows the changes in flight that nothing has happened to in the last seven days. \"Changes\" is a noun. {{count}} is how many there are."
-  },
-  "inbox.older.hide": {
-    "text": "Hide older changes",
-    "description": "Quiet link at the foot of the Agents section in Messages, once the older changes are shown: folds them away again. \"Changes\" is a noun."
   },
   "inbox.listName": {
     "text": "Conversations",
@@ -4639,6 +4615,22 @@
     "text": "Mark done",
     "description": "A menu item in a private thread's ⋯ menu (in its head, and on its row on the Homeroom bot page): finishes the thread, which then leaves the page's lists. Nothing in it is deleted."
   },
+  "privateThread.rename": {
+    "text": "Rename",
+    "description": "A menu item in a private thread's ⋯ menu (in its head, and on its row on the Homeroom bot page), above Mark done: opens a small prompt to give the thread a name of the person's own, which the automatic title never replaces."
+  },
+  "privateThread.renameTitle": {
+    "text": "Rename thread",
+    "description": "The title of the small prompt a private thread's Rename opens, with one text field and Save."
+  },
+  "privateThread.renamePlaceholder": {
+    "text": "Thread name",
+    "description": "The placeholder in the text field of the prompt a private thread's Rename opens: what the thread should be called."
+  },
+  "privateThread.renameFailed": {
+    "text": "Couldn’t rename this thread.",
+    "description": "The message shown when renaming a private thread failed and the server gave no sentence of its own. The thread keeps its name."
+  },
   "privateThread.menu": {
     "text": "Thread actions",
     "description": "Accessible name and tooltip of the ⋯ button on a private thread with Homeroom bot, which opens a menu with Mark done (or Reopen)."
@@ -4670,6 +4662,10 @@
   "privateThread.filed": {
     "text": "Filed as request #{{number}} on {{project}}.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was filed. {{number}} is the new request's number, {{project}} the project's name."
+  },
+  "privateThread.made": {
+    "text": "Made into {{project}}.",
+    "description": "Line at the top of a private thread with Homeroom bot once a project was made from its plan. {{project}} is the new project's name; an Open link follows it."
   },
   "privateThread.posted": {
     "text": "Posted on #{{number}} on {{project}}.",
@@ -5837,11 +5833,7 @@
   },
   "frame.inbox.none": {
     "text": "Nothing here yet.",
-    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the list when the chosen tab holds no conversation."
-  },
-  "frame.inbox.agentsPurpose": {
-    "text": "Changes your agents are building.",
-    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title while the Agents tab is chosen: the tab lists the person's changes in flight."
+    "description": "Messages when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Said in place of the list when it holds no conversation and none has been read yet."
   },
   "bot.offer.expired": {
     "text": "This offer has expired.",

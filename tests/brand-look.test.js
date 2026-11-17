@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard: it is the one look that keeps the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard and its work-in-progress copy: it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -250,7 +250,8 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
-  '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down'];
+  '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down',
+  '--bl-bubble-line', '--bl-bubble-line-own', '--bl-card-line'];
 
 test('each mode sets every one of the look\'s colours, and the shared rules read them', () => {
   const light = ruleAt(LIGHT);
@@ -535,8 +536,12 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   const block = lookBlock();
   assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
     'the face points at the self-hosted file by an absolute, same-origin path');
-  // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026).
-  assert.ok(!/Geist/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Geist');
+  // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026),
+  // but Standard (WIP)'s brand token config, which names it as that config's typeface and so
+  // loads the file only while that config is on.
+  const outside = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
+  assert.ok(!/Geist/.test(outside), 'nothing outside this look, Standard (WIP)\'s brand config and the signed-out pages\' names Geist');
+  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {
@@ -578,4 +583,30 @@ test('the empty-state figures are committed beside their provenance, and drawn o
   const css = read('public', 'css', 'app.css');
   const before = css.slice(0, css.indexOf(HEADING));
   assert.ok(!before.includes('/illustrations/people/'), 'nothing outside this look loads them');
+});
+
+test('a conversation\'s bubbles have a ground and an edge of their own inside the white thread', () => {
+  // 17 Nov 2026: a thread is a white card in this look, and a bubble from the
+  // other side was white on it, your own a grey one shade off, and the bot's
+  // cards a third white. The other side's words sit on the page's cream and
+  // yours on the sky tint, each with a thin line; the bot's cards keep their
+  // white with a firmer line.
+  const block = lookBlock();
+  const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rule = (selector, body) => new RegExp(`${esc(EITHER)} ${esc(selector)}[^{]*\\{ ${esc(body)} \\}`);
+  assert.match(block, rule(':is(.messages-bubble, .gc-bubble)', 'background: var(--bl-page);'));
+  assert.match(block, new RegExp(`${esc(EITHER)} \\.messages-message-self \\.messages-bubble,\\s*${esc(EITHER)} \\.gc-bubble-self \\{ background: var\\(--bl-tint-sky\\); \\}`));
+  assert.match(block, new RegExp(`${esc(EITHER)} \\.messages-message-bubble:not\\(\\.messages-message-saved\\) \\.messages-bubble,\\s*${esc(EITHER)} \\.gc-bubble \\{ box-shadow: inset 0 0 0 1px var\\(--bl-bubble-line\\); \\}`),
+    'a saved message keeps its accent outline');
+  assert.match(block, new RegExp(`${esc(EITHER)} \\.messages-message-bubble\\.messages-message-self:not\\(\\.messages-message-saved\\) \\.messages-bubble,\\s*${esc(EITHER)} \\.gc-bubble-self \\{ box-shadow: inset 0 0 0 1px var\\(--bl-bubble-line-own\\); \\}`));
+  assert.match(block, rule('[data-bot-card-state]', 'box-shadow: inset 0 0 0 1px var(--bl-card-line);'));
+  // The bot's card is drawn with the attribute the rule reads.
+  assert.match(read('frontend', 'src', 'features', 'messages', 'bot-cards', 'card-ui.tsx'), /data-bot-card-state=\{state\}/);
+  // The lines are the look's own, set in both modes.
+  const light = ruleAt(LIGHT).body;
+  const dark = ruleAt(DARK).body;
+  assert.equal(valueOf(light, '--bl-bubble-line'), 'rgba(18, 26, 14, 0.14)');
+  assert.equal(valueOf(light, '--bl-bubble-line-own'), 'rgba(26, 99, 196, 0.24)');
+  assert.equal(valueOf(dark, '--bl-bubble-line'), 'rgba(220, 230, 248, 0.2)');
+  assert.equal(valueOf(dark, '--bl-bubble-line-own'), 'rgba(127, 188, 247, 0.42)');
 });

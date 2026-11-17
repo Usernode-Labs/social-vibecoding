@@ -56,6 +56,7 @@ const log = require('./logger');
 const githubBudget = require('./github-budget');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
+const { parseParts, stripPartMarkers, checkParts } = require('./homeroom-bot-prompt-parts');
 const durableSteps = require('./durable-steps');
 const durableTurn = require('./durable-turn');
 const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
@@ -484,6 +485,9 @@ const APP_AGAIN_REASON = 'app_again';
 // once that cap has room (refreshApp). A held ready verdict is reused then,
 // with no new read, when the request has not changed since (reuseHeldVerdict).
 const CAP_FREED_REASON = 'cap_freed';
+// 17 Nov 2026: a request read again because its last refusal was made under
+// rules that have changed since (refreshApp, live.staleCannot).
+const RULES_CHANGED_REASON = 'rules_changed';
 // The queue reason of an issue whose bot proposal's checks settled failing
 // on its current head (bot-change's queueChecksFix): a follow-up turn fixes them.
 const CHECKS_REASON = 'checks_failing';
@@ -1590,6 +1594,8 @@ function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
     reason: plain(v.reason),
     firstStep: plain(v.firstStep),
     planVariant: plain(v.planVariant),
+    elsewhere: plain(v.elsewhere),
+    elsewhereCandidates: Array.isArray(v.elsewhereCandidates) ? v.elsewhereCandidates.map(plain) : v.elsewhereCandidates,
   };
 }
 
@@ -1751,12 +1757,22 @@ function readVerdict(text) {
         plan = { bullets: [], questions: [first, second] };
       }
     }
+    // #6771: a request that is about another project: the app's name as the
+    // request names it, or up to three names when the read is unsure. Like
+    // `platform`, only a person verdict carries them, and the read never
+    // carries both. A resolved project is offered a move to its board.
+    const elsewhere = verdict === 'person' && obj.platform !== true
+      ? (clip(String(obj.elsewhere || '').replace(/\s+/g, ' ').trim(), 80) || null) : null;
+    const elsewhereCandidates = verdict === 'person' && obj.platform !== true
+      ? (Array.isArray(obj.elsewhere_candidates) ? obj.elsewhere_candidates : [])
+        .map((c) => clip(String(c || '').replace(/\s+/g, ' ').trim(), 80)).filter(Boolean).slice(0, 3)
+      : [];
     // #6413: its requester, or somebody who decides on the project, said in
     // the discussion to close, drop or withdraw it. It gets the same close
     // offer a done request does, and no Go ahead. A person or empty verdict
     // carries it; one about Homeroom itself does not.
     const withdrawn = (verdict === 'person' || verdict === 'empty')
-      && obj.withdrawn === true && obj.platform !== true;
+      && obj.withdrawn === true && obj.platform !== true && !elsewhere;
     return {
       verdict,
       determined: typeof obj.determined === 'boolean' ? obj.determined : null,
@@ -1789,11 +1805,16 @@ function readVerdict(text) {
       // #4239: a request the bot leaves because it is about Homeroom itself,
       // not the app it was filed on. Only a person verdict carries it.
       platform: verdict === 'person' && obj.platform === true,
+      // #6771: a request it leaves because it is about another project, whose
+      // name it names, and up to three likely projects when it is unsure
+      // which. Only a person verdict carries them, never with `platform`.
+      elsewhere,
+      elsewhereCandidates,
       // A request whose ask is already there (in the app, or done by a merged
       // change): its requester is offered a vote on closing it, not left at a
       // "person decides" with nothing to decide. A person or empty verdict
       // carries it; one about Homeroom itself is offered the move instead.
-      done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true,
+      done: (verdict === 'person' || verdict === 'empty') && obj.done === true && obj.platform !== true && !elsewhere,
       // #6413: asked to close or withdraw by its requester or a decider. Done
       // wins when both say so (actOnVerdict).
       withdrawn,
@@ -1808,12 +1829,19 @@ function readVerdict(text) {
       firstStep: verdict === 'person' && !withdrawn ? firstStepOf(obj.first_step) : null,
       // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
       // can settle this, or it still fails `ready` for somebody else to act
-      // on (operator work outside the app, or a non-append-only database
-      // change). Only a person verdict that is
+      // on (operator work outside the app, or a database change that could
+      // lose data already stored). Only a person verdict that is
       // neither about Homeroom itself nor already done nor withdrawn carries
       // it; a missing key is today's behaviour.
-      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && obj.done !== true
-        ? obj.go_ahead !== false : null,
+      // 17 Nov 2026: and only with the blocker it names in `cannot_because`,
+      // one of the two (live.blockerOf; `blocker` is a question's own key).
+      // The bare false was set far beyond them (sign-in fixes, large
+      // requests, product direction), and nothing checked it: without a
+      // blocker it is a request a go-ahead can settle.
+      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
+        ? !(obj.go_ahead === false && live.blockerOf(obj.cannot_because)) : null,
+      blocker: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
+        && obj.go_ahead === false ? live.blockerOf(obj.cannot_because) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
       // #6211: the read's overlap call, as it wrote it. plainVerdict keeps it
@@ -2163,6 +2191,7 @@ function latestOf(a, b) {
 async function lastRunsByIssue(pool, appId) {
   const { rows } = await pool.query(
     `SELECT DISTINCT ON (issue_number) id, issue_number, thread_seen_at, verdict, cap_suppressed, created_at, mode,
+            go_ahead_decides, go_ahead_blocker,
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
              AND created_at > NOW() - make_interval(days => $2)) AS live_building,
@@ -2392,6 +2421,14 @@ async function refreshApp(pool, app, {
       continue;
     }
     if (verdict.eligible) eligible.push({ n, ...verdict });
+    // 17 Nov 2026: a refusal no go-ahead could settle, from before the read
+    // had to name its blocker, is read once more on a live app: it kept the
+    // rules of the day it was read (live.staleCannot). Its new run is never
+    // stale, so this takes each request once.
+    else if (capRoom && bot && verdict.reason === 'unchanged' && live.staleCannot(lastRun)) {
+      eligible.push({ n, eligible: true, reason: RULES_CHANGED_REASON, priority: 3, threadSeenAt: verdict.threadSeenAt });
+      continue;
+    }
     else if (verdict.reason === 'held') held.push({ n, heldAt: toMs(lastRun.created_at), ...verdict });
     // A request the bot is building keeps a row it queued for itself, as an
     // unchanged one does: it is read once the build ends.
@@ -2563,8 +2600,44 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
 
 function triagePrompt() {
   if (triagePromptCache) return triagePromptCache;
-  triagePromptCache = fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8');
+  triagePromptCache = stripPartMarkers(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'));
   return triagePromptCache;
+}
+
+// #6777: the whole assembled prompt's ceiling, separate from each part's own
+// budget. About 8% above the 30,550 the one shared cap held, so ordinary
+// growth in one part does not move it. A change raises a part's budget, never
+// this.
+const TRIAGE_PROMPT_CEILING = 33000;
+
+// Every part of the triage prompt, with its size, its budget and how far it
+// is over. The parts are the triage file's own sections and the design
+// guidance it includes (measured with the longer self-check, since that is
+// what a turn can carry), plus the conventions' content and data rules, whose
+// text is a section of a document other apps read, so their budget lives in
+// homeroom-bot-live.js beside where they are added.
+//
+// The rules are measured in the same short form the triage prompt carries
+// (`{ triage: true }`, #6766). Measuring the full section instead charges
+// this prompt for text it never reads, since only the spec, build and
+// follow-up prompts get the whole thing.
+function triagePromptBudgets() {
+  const prompts = require('./prompts');
+  const withImages = prompts.designGuidanceSource({ readsImages: true });
+  const textOnly = prompts.designGuidanceSource({ readsImages: false });
+  const design = withImages.length >= textOnly.length ? withImages : textOnly;
+  const rules = live.requestRulesLines({ triage: true }).join('\n').trim();
+  return checkParts([
+    ...parseParts(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'), 'src/prompts/homeroom-bot-triage.md'),
+    ...parseParts(design, 'src/prompts/design-guidance.md'),
+    {
+      name: 'request-rules',
+      budget: live.REQUEST_RULES_BUDGET,
+      note: live.REQUEST_RULES_NOTE,
+      chars: rules.length,
+      source: 'src/services/homeroom-bot-live.js',
+    },
+  ]);
 }
 
 // What the triage knows of the platform. A request often turns on it (its
@@ -2610,7 +2683,7 @@ ${designGuidance}
 // it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
 // without it, a re-read answered in keys of its own (`next_step`,
 // `ask_reporter`) that nothing reads, and so did the ask to repair it.
-const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false}';
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db" | "explanation"}';
 const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
 
 function triageClosing(issueNumber) {
@@ -2655,7 +2728,7 @@ function triagePromptFor({
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     personPlanTriageNote(personPlan),
     locale ? `The requester's locale is \`${locale}\`.` : null,
-    live.requestRulesLines().join('\n').trim(),
+    live.requestRulesLines({ triage: true }).join('\n').trim(),
     signal ? signalNote(signal) : null,
     require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
@@ -2839,7 +2912,7 @@ function deciderNote(decider) {
       who,
       '- A request that fails a `ready` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is a `question` to them, not `person`. Ask it plainly, say what it would change, and give `answers` they can tap: "Go ahead" first, then "Leave it".',
       '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
-      '- Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false; `reason` says who acts and where.',
+      '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. A key the app declares in `dapp.json` `secrets` is not operator work. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
       rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
     ].join('\n');
   }
@@ -2853,7 +2926,7 @@ function deciderNote(decider) {
     `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
     `- A request that fails a \`ready\` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
     `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
-    '- Database changes that are not append-only, and operator work outside this app, are still `person`, with `go_ahead` false; `reason` says who acts and where.',
+    '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. A key the app declares in `dapp.json` `secrets` is not operator work. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
     rulesLine(`${either} can`),
   ].join('\n');
 }
@@ -2877,7 +2950,7 @@ function goAheadNote(goAhead) {
     '',
     `@${by}, who your last note on this request named, said to go ahead ${inThread
       ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
-      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that are not append-only are still \`person\`, with \`go_ahead\` false; \`reason\` says what kind of change this is in plain words, that you do not build it yourself even with a go-ahead, and that a person has to build it (for example with a coding agent). It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app.`,
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that could lose data already stored are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work"; a key the app declares in \`dapp.json\` \`secrets\` is not. So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
   ].join('\n');
 }
 
@@ -3274,8 +3347,9 @@ async function insertRunRow(pool, run) {
   // the smaller first step it named, the same way.
   if (id && (run.goAheadDecides === true || run.goAheadDecides === false || run.firstStep)) {
     await pool.query(
-      'UPDATE homeroom_bot_runs SET go_ahead_decides = $2, first_step = $3 WHERE id = $1',
-      [id, typeof run.goAheadDecides === 'boolean' ? run.goAheadDecides : null, run.firstStep || null],
+      'UPDATE homeroom_bot_runs SET go_ahead_decides = $2, first_step = $3, go_ahead_blocker = $4 WHERE id = $1',
+      [id, typeof run.goAheadDecides === 'boolean' ? run.goAheadDecides : null, run.firstStep || null,
+        run.goAheadDecides === false ? live.blockerOf(run.blocker) : null],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record whether a go-ahead settles it', { runId: id, err: err.message }));
   }
   // What the read saw of its request (readFingerprintOf), and the held run
@@ -4290,6 +4364,9 @@ async function runTriage(pool, config, {
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             // P6 (homeroom-bot-flaky-checks.js), stubbed in tests.
             ...(deps.flakyChecks ? { flakyChecks: deps.flakyChecks } : {}),
+            // #6778: the repository mirror a fix turn reads main's log from,
+            // stubbed in tests.
+            ...(deps.repoMirror ? { repoMirror: deps.repoMirror } : {}),
             // #6347: the description step's writing helper, stubbed in tests.
             ...(deps.llm ? { llm: deps.llm } : {}),
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
@@ -5006,7 +5083,7 @@ async function runTriage(pool, config, {
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
-    firstStep: parsed.firstStep, goAheadDecides: parsed.goAheadDecides,
+    firstStep: parsed.firstStep, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedMs, readFingerprint,
@@ -6415,7 +6492,7 @@ async function oweChecksFix(pool, look, { sessionId }) {
  * left to it). Throws what it could not read or write, so the work runs
  * again.
  */
-async function queueChecksFix(pool, { sessionId, head = null } = {}) {
+async function queueChecksFix(pool, { sessionId, head = null, again = null } = {}) {
   const out = await checksFixDue(pool, { sessionId, head });
   if (!out.due) return { queued: false, why: out.why };
   const { due, row, issueNumber } = out;
@@ -6436,9 +6513,12 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
     [Number(row.id)],
   ).catch(() => ({ rows: [] }));
   const grantKey = grantRows[0]?.id ? `:grant:${grantRows[0].id}` : '';
+  // #6776: a re-asked round (a grant whose round never started) is a fresh
+  // ask, so the receipt of the earlier one does not swallow it.
+  const againKey = again ? `:again:${String(again).slice(0, 64)}` : '';
   await appendEvent(pool, loopRules.BOT_REQUEST, loopRules.requestKey(row.app_id, issueNumber), {
     type: 'FixAsked', payload: { appId: Number(row.app_id), issueNumber, sessionId: Number(row.id), head: due.head },
-  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
+  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}${againKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
   log.info('homeroom-bot', due.failing.length
     ? 'Its proposal\'s checks failed; asked its request to fix them'
     : due.broken?.length
@@ -6799,8 +6879,15 @@ async function runChecksFix(pool, config, {
   // rule (localeRule); unset, the note to the group stays English.
   const requester = await (deps.dm || require('./homeroom-bot-dm'))
     .requesterOf(pool, app.id, issueNumber).catch(() => null);
+  // #6778: what main and the project's other open changes did to the same
+  // files since the previous try, so a fix is not spent on a line that just
+  // moved under it. A read that fails costs the turn its two blocks, not the
+  // turn.
+  const overlap = await fixOverlapContext(pool, { app, session, head, failing, deps })
+    .catch(() => ({ mainChanges: [], openOverlaps: [], firstTry: false }));
   const prompt = followup.checksFixPrompt({
     seed, proposalBlock, prNumber, failing, total, broken, skipped, locale: requester?.locale || null,
+    mainChanges: overlap.mainChanges, openOverlaps: overlap.openOverlaps, firstTry: overlap.firstTry,
   });
   snapshot = {
     stage: 'checks_fix', appId: app.id, issueNumber,
@@ -6810,6 +6897,8 @@ async function runChecksFix(pool, config, {
       failing: JSON.stringify(failing),
       ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
       ...(skipped.length ? { skipped: JSON.stringify(skipped) } : {}),
+      ...(overlap.mainChanges.length ? { main_changes: JSON.stringify(overlap.mainChanges) } : {}),
+      ...(overlap.openOverlaps.length ? { open_overlaps: JSON.stringify(overlap.openOverlaps) } : {}),
       thread: snapshots.frozenThread({
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
       }),
@@ -7967,10 +8056,26 @@ async function actOnVerdict({
     const suggestFor = deciders.length
       ? await idsOfUsernames(pool, deciders)
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
+    // #6771: a request about another project has that project resolved
+    // against what its requester can see (a private one they cannot see is
+    // never named), so its note can offer the move there.
+    const moveSvc = require('./homeroom-bot-move');
+    const elsewhere = (parsed.elsewhere || (parsed.elsewhereCandidates || []).length)
+      ? await moveSvc.resolveElsewhere(pool, {
+        app, name: parsed.elsewhere, candidates: parsed.elsewhereCandidates,
+        requester: Number(requester?.userId) > 0 ? { id: Number(requester.userId), username: requester.username } : null,
+      }).catch(() => null)
+      : null;
+    const moveTarget = elsewhere?.target || null;
+    const moveCandidates = elsewhere?.candidates || [];
     const suggestActions = live.personSuggestions({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
-      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides,
+      withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
+      elsewhere: !!(moveTarget || moveCandidates.length), candidates: moveCandidates,
     });
+    // #6770: a request that only asks for an explanation has its answer in the
+    // note and nothing to build, so it takes the close vote instead.
+    const explanationNote = parsed.blocker === 'explanation';
     // #6413: done wins when the read says both, so a withdrawn note is only
     // the one without a "done".
     const withdrawnNote = parsed.withdrawn && !parsed.done;
@@ -7979,10 +8084,14 @@ async function actOnVerdict({
     // Go ahead that was just refused.
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
-      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by })
+      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by, blocker: parsed.blocker })
       : withdrawnNote
         ? live.withdrawnHomeroomText(parsed)
-        : live.personHomeroomText({ ...parsed, project, requester: asker?.username || null, deciders });
+        : live.personHomeroomText({
+          ...parsed, project, requester: asker?.username || null, deciders,
+          elsewhere: moveTarget ? (moveTarget.name || moveTarget.slug) : null,
+          elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
+        });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -8005,17 +8114,27 @@ async function actOnVerdict({
       // A note about Homeroom itself held so offers no move: the run says why.
       if (parsed.platform) await require('./homeroom-bot-move').noteMoveOffer(pool, runId, 'repeat_held');
     } else {
-      // #6311: a platform note carries an offer in the thread, for the person
-      // who asked for the request. 5 Nov 2026: the move itself, which their
-      // chat with the bot offered when the request's news went there (a
-      // first version's still does: homeroom-bot-dm.js relayIssuePost).
-      const copyOffer = parsed.platform && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0
-        ? { kind: requester.firstVersion ? 'copy_request' : 'move_request', forUserId: Number(requester.userId), args: { issueNumber } }
+      // A note about Homeroom itself, or another project's, carries the
+      // offer in the thread for the person who asked. #6771: the target's
+      // name, whether they must join first, and the project's id are on it.
+      const moveWanted = (parsed.platform || moveTarget) && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0;
+      const copyOffer = moveWanted
+        ? {
+          kind: parsed.platform && requester.firstVersion ? 'copy_request' : 'move_request',
+          forUserId: Number(requester.userId),
+          args: {
+            issueNumber,
+            ...(moveTarget ? {
+              targetSlug: moveTarget.slug, targetName: moveTarget.name || moveTarget.slug, join: !!elsewhere.join,
+            } : {}),
+          },
+          ...(moveTarget ? { targetAppId: Number(moveTarget.id) } : {}),
+        }
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
       // #6413: a withdrawn request gets the same close offer. The card is
       // written with the note (live.post `card`), so its buttons always work.
-      const threadCard = copyOffer || (parsed.done || withdrawnNote ? await doneCloseOffer() : null);
+      const threadCard = copyOffer || (parsed.done || withdrawnNote || explanationNote ? await doneCloseOffer() : null);
       const noteMeta = threadCard
         ? null
         : (suggestActions.length && suggestFor.length
@@ -8024,16 +8143,22 @@ async function actOnVerdict({
             actions: suggestActions, othersActions: suggestOthers,
           }
           : null);
-      await say('person', live.personText({ ...parsed, project }), {
+      await say('person', live.personText({
+        ...parsed, project,
+        // #6771: GitHub's copy never names a private project.
+        elsewhere: moveTarget && moveTarget.view_visibility === 'public' ? (moveTarget.name || moveTarget.slug) : null,
+        elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
+      }), {
         homeroomText: noteText,
         ...(noteMeta ? { metadata: { homeroomBot: noteMeta } } : {}),
         ...(threadCard ? { card: threadCard } : {}),
         dm: {
           reason: parsed.reason, ...(parsed.platform ? { platform: true } : {}), ...(deciders.length ? { deciders } : {}),
           ...(parsed.done ? { done: true } : {}),
+          ...(explanationNote ? { explanation: true } : {}),
           // 6 Nov 2026 (#6430): the DM says a person has to build it, not
           // that a go-ahead can settle it, and names the smaller part.
-          ...(parsed.goAheadDecides === false ? { goAheadDecides: false } : {}),
+          ...(parsed.goAheadDecides === false ? { goAheadDecides: false, blocker: parsed.blocker } : {}),
           ...(parsed.firstStep ? { firstStep: parsed.firstStep } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
@@ -11421,6 +11546,121 @@ async function overlapOthers(pool, { app, issueNumber, github }) {
 const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}`
   : w?.issueNumber ? `the change for request #${Number(w.issueNumber)}` : 'another open change');
 
+// #6778: a repository path named in a failing check's own words (a test file
+// in its reason, a path in its name). A token that names no real file simply
+// matches nothing.
+const REPO_PATH_TOKEN = /[\w.@-]+(?:\/[\w.@-]+)+\.[a-z]{1,5}\b/g;
+
+function repoPathsIn(value) {
+  return String(value || '').match(REPO_PATH_TOKEN) || [];
+}
+
+/**
+ * #6778: what moved under a fix try. Two lists, as data for the fix turn's
+ * prompt (followup.checksFixPrompt):
+ *
+ *   - mainChanges: the changes merged to the default branch since the bot's
+ *     previous try on this change (or since it started, on a first try) whose
+ *     files touch the files this change edits or the failing test's file.
+ *     Time-based on purpose: a sync with main that already brought a merged
+ *     change into the branch happened BEFORE the last try, and a merge-base
+ *     window would not see it. That was try 1 on PR 6748.
+ *   - openOverlaps: the project's other open changes (#6421, #6423, #6428's
+ *     query) whose diff shares a file with this one.
+ *
+ * A merge commit is named by its pull request when its subject ends
+ * "Title (#1234)", else by its short commit id. Both lists are left
+ * uncapped: the prompt caps them, so its count of the rest is exact. A read
+ * that fails is an empty list, never a stopped turn.
+ */
+async function fixOverlapContext(pool, { app, session, head, failing = [], deps = {} }) {
+  const empty = { mainChanges: [], openOverlaps: [], firstTry: false };
+  const repo = parseRepo(app.repo_url);
+  if (!repo) return empty;
+  const mirror = deps.repoMirror || require('./repo-mirror');
+  const github = deps.github || require('./github');
+  // The previous fix try on this change recorded the head it looked at; a
+  // first try has none, so the window starts when the change did.
+  const { rows: [previous] = [] } = await pool.query(
+    `SELECT created_at FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND checks_head_sha IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [Number(session.id)],
+  ).catch(() => ({ rows: [] }));
+  const firstTry = !previous?.created_at;
+  let since = previous?.created_at || session.created_at || null;
+  if (!since) {
+    const { rows: [made] = [] } = await pool.query(
+      'SELECT created_at FROM chat_sessions WHERE id = $1', [Number(session.id)],
+    ).catch(() => ({ rows: [] }));
+    since = made?.created_at || null;
+  }
+  // The failing test's file, and the files this change edits: what an
+  // overlap has to share to matter.
+  const failingFiles = [...new Set(failing.flatMap((f) => [
+    ...repoPathsIn(f?.name), ...repoPathsIn(f?.path), ...repoPathsIn(f?.reason),
+  ]))];
+  let dir = null;
+  let tip = null;
+  let changeFiles = [];
+  try {
+    dir = await mirror.ensureMirror(repo.owner, repo.repo);
+    tip = await mirror.defaultBranchSha(dir);
+    const base = await mirror.mergeBase(dir, tip, head);
+    if (base) changeFiles = await mirror.changedPaths(dir, base, head);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the files a fix touches from the mirror', {
+      app: app.slug, sessionId: session.id, err: err.message,
+    });
+  }
+  if (!changeFiles.length && github?.isEnabled?.() && typeof github.listChangedFiles === 'function' && session.branch_name) {
+    changeFiles = await github.listChangedFiles(repo.owner, repo.repo, `main...${session.branch_name}`)
+      .catch(() => []);
+  }
+  const wanted = new Set([...changeFiles, ...failingFiles]);
+  const mainChanges = [];
+  if (dir && tip && since && wanted.size) {
+    const log_ = await mirror.mainLogSince(dir, tip, since).catch(() => null);
+    for (const commit of log_ || []) {
+      const common = (Array.isArray(commit.files) ? commit.files : []).filter((f) => wanted.has(f));
+      if (!common.length) continue;
+      const named = /^(.*)\s\(#(\d+)\)$/.exec(commit.subject || '');
+      const prNumber = named ? Number(named[2]) : null;
+      // Its own change is not "changed on main".
+      if (prNumber && session.pr_number != null && Number(session.pr_number) === prNumber) continue;
+      mainChanges.push({
+        prNumber,
+        title: named ? named[1] : (commit.subject || String(commit.sha || '').slice(0, 7)),
+        mergedAt: commit.mergedAt,
+        sha: commit.sha,
+        files: common,
+      });
+    }
+  }
+  const ownRequest = Number(session.linked_issues?.[0]);
+  const others = await overlapOthers(pool, {
+    app, issueNumber: Number.isInteger(ownRequest) && ownRequest > 0 ? ownRequest : 0, github,
+  }).catch(() => []);
+  const shared = others
+    .filter((o) => Number(o.sessionId) !== Number(session.id))
+    .map((o) => ({ ...o, shared: (Array.isArray(o.files) ? o.files : []).filter((f) => wanted.has(f)) }))
+    .filter((o) => o.shared.length);
+  const titles = new Map();
+  if (shared.length) {
+    const { rows } = await pool.query(
+      `SELECT id, COALESCE(NULLIF(pr_title, ''), NULLIF(proposed_pr_title, ''), NULLIF(session_title, '')) AS title
+         FROM chat_sessions WHERE id = ANY($1::int[])`,
+      [shared.map((o) => o.sessionId)],
+    ).catch(() => ({ rows: [] }));
+    for (const row of rows) titles.set(Number(row.id), row.title || null);
+  }
+  const openOverlaps = shared.map((o) => ({
+    prNumber: o.prNumber, title: titles.get(o.sessionId) || null, status: o.status,
+    issueNumber: o.issueNumber, files: o.shared,
+  }));
+  return { mainChanges, openOverlaps, firstTry };
+}
+
 // #6423, #6428: what this build shares with the project's other open
 // changes, and whether it goes on top of one. `dependsOn` names the requests
 // its own depends on (a "build first" link, #6211); nothing passes it yet,
@@ -11612,6 +11852,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   // #6420: a change that names requests it closes tells them once, including
   // the links set when the change was made or that became visible later.
   await each('claimsAnnounced', () => require('./change-claims').announce(pool, { appId: null }));
+  // #6776: a try somebody granted that never started is queued again, or
+  // closed with the reason it could not be.
+  await each('grantsRequeued', () => require('./homeroom-bot-retry-grants').sweepStrandedGrants(pool, settings, deps));
   return out;
 }
 
@@ -11728,6 +11971,8 @@ module.exports = {
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
+  triagePromptBudgets,
+  TRIAGE_PROMPT_CEILING,
   personPlanTriageNote,
   signalNote,
   firstVersionNote,
@@ -11867,6 +12112,9 @@ module.exports = {
   NOT_FOLLOW_UP,
   checksToFix,
   runChecksFix,
+  // #6778: what main and the project's other open changes did to a fix
+  // turn's files, exported for its tests.
+  fixOverlapContext,
   // #6234: whether a fix of a head ran out of time once, for the change
   // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
   checksRetried,
@@ -11937,6 +12185,7 @@ module.exports = {
   readFingerprintOf,
   reuseHeldVerdict,
   CAP_FREED_REASON,
+  RULES_CHANGED_REASON,
   buildsNow,
   // A project's first version goes first.
   FIRST_VERSION_PENDING_SQL,

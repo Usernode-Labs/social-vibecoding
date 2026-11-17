@@ -547,6 +547,25 @@ test('every ready-made app runs: seeds in staging only, serves its screen, refus
       const unticked = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { checked: false } })).data.item;
       assert.deepEqual([unticked.checked, unticked.completed_at, unticked.last_checked_by, unticked.sort_order], [false, null, 'ada', 0]);
 
+      // Ticking is decided by the request, not by an earlier look at the row,
+      // so two phones ticking at once cannot silently ignore the second: a
+      // repeat tick changes nothing (the first tick's time and person stand),
+      // and of two opposite ticks the one whose write commits last wins.
+      const tickAgain = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { checked: true } })).data.item;
+      const tickedTwice = (await app.call('PATCH', `/api/items/${lemons.id}`, { as: grace, body: { checked: true } })).data.item;
+      assert.deepEqual([tickAgain.checked, tickAgain.last_checked_by, typeof tickAgain.completed_at], [true, 'ada', 'string'],
+        'the answer carries the item as it is stored');
+      assert.deepEqual([tickedTwice.checked, tickedTwice.last_checked_by, tickedTwice.completed_at],
+        [true, 'ada', tickAgain.completed_at], 'already ticked: the first tick keeps its time and its person');
+      const both = await Promise.all([
+        app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { checked: false } }),
+        app.call('PATCH', `/api/items/${lemons.id}`, { as: grace, body: { checked: true } }),
+      ]);
+      assert.deepEqual(both.map((r) => r.status), [200, 200], 'both phones are answered');
+      const raced = item(await get(), lemons.id);
+      assert.equal(raced.completed_at === null, !raced.checked, 'ticked and its time agree, whichever landed last');
+      await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { checked: false } });
+
       // Edit, and move to another category: its end.
       assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { text: 'Limes' } })).data.item.text, 'Limes');
       assert.equal((await app.call('PATCH', `/api/items/${lemons.id}`, { as: ada, body: { text: ' ' } })).status, 400);

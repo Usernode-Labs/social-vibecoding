@@ -975,13 +975,16 @@ function chatRoutes(config) {
       }
 
       const { handleMessage } = require('../services/ws');
+      // #6730: a client key is the composer's own per-press mark, so a
+      // retry after a slow answer returns the row the first attempt stored.
+      const clientKey = typeof body.client_key === 'string' && body.client_key ? body.client_key : null;
       const result = await handleMessage(
         pool,
         // `postedVia` rides on the CLIENT, beside the identity it qualifies,
         // rather than in the message: it describes who is holding the pen,
         // and the body is the one thing a caller gets to write.
         { user: req.user, appId: app.id, appSlug: app.slug, postedVia: postedViaFor(req) },
-        { type: 'chat', content, ...(attIds.length ? { attachmentIds: attIds } : {}), ...(thread ? { thread } : {}) }
+        { type: 'chat', content, ...(clientKey ? { clientKey } : {}), ...(attIds.length ? { attachmentIds: attIds } : {}), ...(thread ? { thread } : {}) }
       );
       if (!result?.ok) {
         if (result?.code === 'not_collaborator') {
@@ -1015,7 +1018,9 @@ function chatRoutes(config) {
       }
 
       const message = result.message;
-      return res.status(201).json({
+      // #6730: the same client key sent again answers with the row the first
+      // send stored, and says so with 200 rather than a fresh 201.
+      return res.status(result.duplicate ? 200 : 201).json({
         message: {
           id: message.id,
           user_id: message.userId,

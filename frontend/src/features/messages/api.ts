@@ -285,8 +285,15 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       aboutTitle: optional('aboutTitle'),
       // B04, B08, B19 (audit 2 Nov 2026): what a new project's thread is for, and what a draft's thread drafts.
       projectIdea: optional('projectIdea'),
+      // #6781: the name the bot suggested with its New project offer; the
+      // make screen opens with it. Dropped here, the name field stays empty.
+      projectName: optional('projectName'),
       draftTitle: optional('draftTitle'),
       ...(['fix', 'add', 'design', 'project'].includes(String(pick(bot, 'changeKind'))) ? { changeKind: String(pick(bot, 'changeKind')) as HomeroomBotMeta['changeKind'] } : {}),
+      // #6523, #6763: the bot offered to make this idea a project, so the
+      // thread's foot shows New project under this reply (private-thread-bar
+      // newProjectInvited). Dropped here, the door never opened.
+      ...(pick(bot, 'newProject') === true ? { newProject: true } : {}),
       ...(issueNumber ? { issueNumber } : {}),
       issueTitle: optional('issueTitle'),
       ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),

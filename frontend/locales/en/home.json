@@ -19,6 +19,14 @@
     "text": "{{count}} results",
     "description": "Small heading over the app tiles on Home while a search is active. {{count}} is how many of the viewer's apps match."
   },
+  "grid.headingProjects": {
+    "text": "Pinned projects",
+    "description": "Heading over the grid of project tiles on the Home screen under the Standard (WIP) look: the projects this person keeps a tile for. It replaces \"Pinned apps\" there."
+  },
+  "grid.seeLess": {
+    "text": "Show less",
+    "description": "Link beside Edit in the heading over the grid of project tiles on the Home screen (the Standard (WIP) look), shown once See all has unfolded the grid: it folds the grid back to its first rows."
+  },
   "grid.heading": {
     "text": "Pinned apps",
     "description": "Heading over the grid of app tiles on the Home screen: the apps this person keeps a tile for. The same name is used in \"Pin to Home\"."
@@ -110,6 +118,38 @@
   "create.disabledHint": {
     "text": "View your app allowance or request more slots.",
     "description": "Last sentence of the + tile's tooltip when the viewer has used up the number of apps they may create: what pressing it does instead. A slot is room for one app."
+  },
+  "needsCard.seeAllCount_one": {
+    "text": "See all {{count}}",
+    "description": "Link at the end of the heading line of Home's Needs you card, when the card could not list every waiting decision: opens Needs you. {{count}} is how many wait in all."
+  },
+  "needsCard.seeAllCount_other": {
+    "text": "See all {{count}}",
+    "description": "Link at the end of the heading line of Home's Needs you card, when the card could not list every waiting decision: opens Needs you. {{count}} is how many wait in all."
+  },
+  "needsCard.seeAll": {
+    "text": "See all",
+    "description": "Link at the end of the heading line of Home's Needs you card (the Standard (WIP) look): opens Needs you, every decision waiting for the viewer across their projects."
+  },
+  "needsCard.vote": {
+    "text": "Vote",
+    "description": "Small pill on one waiting decision in Home's Needs you card, when the viewer's vote can decide it. A verb: what pressing the row leads to."
+  },
+  "needsCard.advisoryPill": {
+    "text": "Advisory",
+    "description": "Small pill on one waiting decision in Home's Needs you card, when the viewer's vote is advisory: it is recorded and does not decide the outcome."
+  },
+  "needsCard.eyebrow": {
+    "text": "Needs you",
+    "description": "Title of Home's Needs you card, in the side column: the votes and decisions waiting on the viewer across their projects. The card opens the Needs you page."
+  },
+  "needsCard.waiting_one": {
+    "text": "{{count}} decision waiting for your vote",
+    "description": "Line under \"Needs you\" on Home's Needs you card: how many decisions wait on the viewer. Singular."
+  },
+  "needsCard.waiting_other": {
+    "text": "{{count}} decisions waiting for your vote",
+    "description": "Line under \"Needs you\" on Home's Needs you card: how many decisions wait on the viewer. Plural."
   },
   "create.lockedTip": {
     "text": "New project. View app quota. {{hint}}",
@@ -906,6 +946,10 @@
   "join.headingSignedOut": {
     "text": "Communities",
     "description": "Heading over the cards of public communities at the bottom of Home for a visitor who is not signed in."
+  },
+  "join.featuredAppsCommunities": {
+    "text": "Featured apps / communities",
+    "description": "Small label over the row of featured cards on the Home screen under the Standard (WIP) look, where that row stands apart from Communities to join. Each card is an app and the community that builds it."
   },
   "join.featured": {
     "text": "Featured",

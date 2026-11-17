@@ -474,11 +474,21 @@ const TopochainLeaderboard = {
     // a viewer excluded from the ranking gets none, since there is no rank to
     // show.
     const own = payload.viewer_row;
+    // #6735: points the standings have not counted yet. The figure on the
+    // line itself is already the ledger's (the server caught the row up);
+    // this line says why it is ahead of the table's ranks.
+    const pendingPoints = own ? Number(own.pending_points) || 0 : 0;
     const you = own && !own.is_non_podium && own.rank != null
       ? {
         rank: String(own.rank),
         points: TopochainLeaderboard._points(own.total_points),
         count: Math.round(Number(own.total_points) || 0),
+        pending: pendingPoints > 0
+          ? PlatformI18n.t('leaderboard:standing.pending', {
+            count: pendingPoints,
+            points: Math.round(pendingPoints).toLocaleString('en-US'),
+          })
+          : null,
       }
       : null;
 

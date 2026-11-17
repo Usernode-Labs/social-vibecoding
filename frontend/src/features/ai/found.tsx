@@ -7,6 +7,7 @@ import type { MouseEvent, ReactNode } from 'react';
 
 import { goBotAddress } from './door';
 import type { MarkPart } from './search';
+import { setSearchMark } from './search-mark';
 
 /**
  * A snippet, its found words each a <mark>. The parts are text
@@ -27,11 +28,17 @@ export function Marked({ parts, className }: { parts: readonly MarkPart[]; class
 /**
  * A found message's link, pressed: through the tab's own door, so the same
  * message opens again when its address is already the one in the bar
- * (./door.ts goBotAddress). A press that asks for a new tab or window is
- * left to the browser.
+ * (./door.ts goBotAddress). The words it was found by are marked in that
+ * message (./search-mark.ts), so they stay there while it is read. A press
+ * that asks for a new tab or window is left to the browser, and sets no mark.
  */
-export function followFound(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+export function followFound(
+  event: MouseEvent<HTMLAnchorElement>,
+  href: string,
+  mark: { messageId: number; q: string } | null = null,
+): void {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
+  if (mark) setSearchMark(mark);
   goBotAddress(href);
 }

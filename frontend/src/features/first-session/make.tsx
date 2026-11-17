@@ -320,6 +320,13 @@ export const WAITLIST_IDEA_LINE = 'onboarding:firstSession.make.waitlistIdea';
 export const SEARCH_IDEA_LINE = 'onboarding:firstSession.make.searchIdea';
 
 /**
+ * #6784: the same quiet line for an idea a private thread handed in: the
+ * plan agreed with Homeroom bot in it comes along with what they send. A
+ * message id.
+ */
+export const THREAD_IDEA_LINE = 'onboarding:firstSession.make.threadIdea';
+
+/**
  * Where an idea handed to the make screen came from, which decides the line
  * under the box: the waitlist answer (the first session's, and the default),
  * a Discover search (#5928), or a private thread's words (#6019), which says
@@ -365,6 +372,16 @@ type MakeDraft = {
 };
 let keptDraft: (MakeDraft & { who: string }) | null = null;
 
+/**
+ * #6781: a name handed in (a private thread's New project, which offers it
+ * with the brief) is a new start, as a brief is: drop the draft left from
+ * Create before the screen mounts, so it does not open with that name over
+ * the bot's. Called by the door that hands one in (./index.tsx openCreate).
+ */
+export function forgetKeptDraft(): void {
+  keptDraft = null;
+}
+
 /** The draft to keep, or null when the form holds nothing worth keeping. Pure. */
 export function draftWorthKeeping(draft: MakeDraft | null): MakeDraft | null {
   if (!draft) return null;
@@ -387,8 +404,8 @@ export const MAKE_ROOT = 'platform-kb-surface fixed inset-0 z-[9000] flex flex-c
 export const MAKE_ROOT_UNDER_HEADER = 'platform-kb-surface platform-under-header fixed inset-x-0 bottom-0 z-[9000] flex flex-col text-zinc-900 dark:text-zinc-100';
 
 export function MakeScreen({
-  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, ideaSource = 'waitlist',
-  audience = 'invited',
+  who, onMade, onLookAround, entry = 'first-session', onClose, startImport = false, underHeader = false, idea = null, name: startName = null, ideaSource = 'waitlist',
+  audience = 'invited', threadRootId = null,
 }: {
   who: string;
   onMade: (made: Made) => void;
@@ -407,6 +424,12 @@ export function MakeScreen({
    * one, the screen opens on Your own idea with it in the box.
    */
   idea?: string | null;
+  /**
+   * #6781: the name Homeroom bot suggested with its offer (Create, from a
+   * private thread's New project). The screen opens with it in the name
+   * field, editable, and it counts as typed: a tile picked later keeps it.
+   */
+  name?: string | null;
   /** Where `idea` came from (IdeaSource): the line under the box says so. */
   ideaSource?: IdeaSource;
   /**
@@ -415,6 +438,12 @@ export function MakeScreen({
    * and the first session make it a private project otherwise.
    */
   audience?: CreateAudience;
+  /**
+   * #6784: the private thread New project was tapped in (Create, from a
+   * thread with Homeroom bot). Sent with the brief, so the project is made
+   * from the plan agreed there, not from a line of it.
+   */
+  threadRootId?: number | null;
 }) {
   const t = useMessages('onboarding');
   // The look, read here with the other hooks: under one of the frame's
@@ -422,6 +451,8 @@ export function MakeScreen({
   // standard render, at the foot of this function).
   const look = useLiveSkin();
   const waitlistIdea = typeof idea === 'string' && idea.trim() ? idea : null;
+  // #6781: a name handed in counts as theirs: it survives a tile picked later.
+  const handedName = typeof startName === 'string' && startName.trim() ? startName.trim().slice(0, 60) : null;
   const fromCreate = entry === 'create';
   // At the allowance's limit (or a full server), Make it and Import it are
   // pale and the row above says why (the retired dialog's rule: never offer
@@ -430,10 +461,11 @@ export function MakeScreen({
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
   // N9: Create's form as it was last left (keptDraft), read once at mount.
-  // An idea handed in (a private thread's) wins over a kept draft.
+  // An idea handed in (a private thread's) wins over a kept draft; a name
+  // handed in drops it before the screen mounts (forgetKeptDraft).
   const [draft] = useState(() => (fromCreate && !startImport && !waitlistIdea && keptDraft?.who === who ? keptDraft : null));
   const [brief, setBrief] = useState(draft ? draft.brief : waitlistIdea ?? '');
-  const [name, setName] = useState(draft ? draft.name : '');
+  const [name, setName] = useState(draft ? draft.name : handedName ?? '');
   // The tile picked: a template, Your own idea, or nothing yet.
   const [picked, setPicked] = useState<Template | typeof OWN_IDEA | null>(draft ? draft.picked : waitlistIdea ? OWN_IDEA : null);
   // The template's choice, and their own words: in its blank, or the rest
@@ -443,8 +475,9 @@ export function MakeScreen({
   // "Write it yourself": the sentence it put in the plain box. The template
   // stays picked until they change those words.
   const [written, setWritten] = useState<string | null>(draft ? draft.written : null);
-  // A name they typed: from then on a choice no longer suggests one.
-  const [nameTyped, setNameTyped] = useState(draft ? draft.nameTyped : false);
+  // A name they typed: from then on a choice no longer suggests one. A name
+  // handed in (#6781) counts as typed from the start.
+  const [nameTyped, setNameTyped] = useState(draft ? draft.nameTyped : !!handedName);
   // Who can change it (#4666): You or the group, unless Change picked another.
   // Sent only when it is another, as the project's own governance block.
   const [rule, setRule] = useState<PresetKey>(draft ? draft.rule : DEFAULT_PRESET);
@@ -693,6 +726,9 @@ export function MakeScreen({
         name: name.trim(),
         audience,
         ...(ready ? { template: ready.template } : { brief: text.trim(), ...(starter ? { template: starter.template } : {}) }),
+        // #6784: the thread the plan was agreed in, never with a ready-made
+        // app (which has no brief to build from, and no thread to make).
+        ...(threadRootId && !ready ? { thread: { rootId: threadRootId } } : {}),
         // A ready-made app's description is the choice's own line. A game or
         // Your own words is built from what they typed, so the line is only
         // the card's fallback: the model writes its tagline from their words
@@ -860,7 +896,8 @@ export function MakeScreen({
               },
               onScroll: (e) => setBriefScrolled(briefFades(e.currentTarget)),
               fade: briefScrolled ? BRIEF_FADE : '',
-              kept: waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? { attr: 'data-make-waitlist-idea', text: t(WAITLIST_IDEA_LINE) }
+              kept: threadRootId ? { attr: 'data-make-thread-idea', text: t(THREAD_IDEA_LINE) }
+                : waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? { attr: 'data-make-waitlist-idea', text: t(WAITLIST_IDEA_LINE) }
                 : waitlistIdea && brief === waitlistIdea && ideaSource === 'search' ? { attr: 'data-make-search-idea', text: t(SEARCH_IDEA_LINE) }
                   : null,
             }}
@@ -1101,6 +1138,7 @@ export function MakeScreen({
                     placeholder={t('onboarding:firstSession.make.briefPlaceholder')}
                     className={`${BRIEF_INPUT}${briefScrolled ? ` ${BRIEF_FADE}` : ''} resize-none leading-[22px]`}
                   />
+                  {threadRootId ? <p data-make-thread-idea="" className={HINT}>{t(THREAD_IDEA_LINE)}</p> : null}
                   {waitlistIdea && brief === waitlistIdea && ideaSource === 'waitlist' ? <p data-make-waitlist-idea="" className={HINT}>{t(WAITLIST_IDEA_LINE)}</p> : null}
                   {waitlistIdea && brief === waitlistIdea && ideaSource === 'search' ? <p data-make-search-idea="" className={HINT}>{t(SEARCH_IDEA_LINE)}</p> : null}
                 </>

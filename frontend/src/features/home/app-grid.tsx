@@ -64,6 +64,7 @@ import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
+import { useLiveSkin } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
@@ -164,7 +165,9 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
-function AppCardTile({ app, style, yours, live, editing }: {
+function AppCardTile({ app, style, yours, live, editing, rich = false }: {
+  /** Standard (WIP): under the name, the app's sentence and its contributors. */
+  rich?: boolean;
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
 }) {
   const t = useMessages('home');
@@ -407,6 +410,17 @@ function AppCardTile({ app, style, yours, live, editing }: {
             {app.statusLabel}
           </p>
         ) : null}
+        {rich && !app.statusLabel ? (
+          <>
+            {app.description ? <p className="app-card-desc" title={app.description}>{app.description}</p> : null}
+            {app.contributors ? (
+              <p className="app-card-people">
+                <UserGroupIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('home:discover.card.contributors', { count: app.contributors })}</span>
+              </p>
+            ) : null}
+          </>
+        ) : null}
       </div>
     </div>
   );
@@ -424,6 +438,8 @@ function AppCardTile({ app, style, yours, live, editing }: {
 export function AppGrid() {
   const t = useMessages('home');
   const state = useStoreState(gridStore);
+  // Standard (WIP), lib/skin.ts: the tile also says what the app is.
+  const rich = useLiveSkin() === 'wip';
   const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -518,6 +534,7 @@ export function AppGrid() {
           yours={state.view === 'grid'}
           live={live.includes(item.app.slug)}
           editing={state.editing}
+          rich={rich}
         />
       ))}
       {/*
@@ -537,7 +554,7 @@ export function AppGrid() {
           on the "Show all N apps" line before), outside this canvas, so the
           markup in every state is what it was.
       */}
-      {state.create && !state.create.heldBack ? (
+      {state.create && !state.create.heldBack && !state.create.inCard ? (
         <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
       ) : null}
     </div>

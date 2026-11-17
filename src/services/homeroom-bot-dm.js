@@ -2014,12 +2014,19 @@ function requestNews(kind, dm, context) {
           + `can do it: ${clip(dm.reason, 600)}`;
       }
       if (dm.done) return doneText(line, dm);
+      // 17 Nov 2026 (#6770): a request that only asked for an explanation has
+      // the answer itself, and a close vote under it, not a Go ahead.
+      if (dm.explanation || dm.blocker === 'explanation') {
+        return `${line}\n\n${require('./homeroom-bot-live').cannotLead('explanation')}: ${clip(dm.reason, 600)}\n\n`
+          + 'Anyone in the project can propose to close it once this answers the question. '
+          + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+      }
       // 6 Nov 2026 (#6430): a go-ahead cannot settle this kind of change, so
       // it says a person has to build it, and never tells the person who just
       // approved that somebody needs to approve.
       if (dm.goAheadDecides === false) {
         return `${line}\n\nThis needs a person to build, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
-          + 'I don\'t build changes like this myself, even with a go-ahead. A person has to build it, '
+          + `${require('./homeroom-bot-live').cannotLead(dm.blocker)}. A person has to build it, `
           + 'for example you with a coding agent, and the group votes on it as usual. '
           + require('./homeroom-bot-live').canBuildPart(dm.firstStep);
       }
@@ -2412,7 +2419,7 @@ async function relayIssuePost({
   // so one verdict is one message and rings once (homeroom-bot-move.js).
   const move = require('./homeroom-bot-move');
   const offerKind = kind === 'person' && dm.platform ? 'move_request'
-    : (kind === 'person' || kind === 'empty') && dm.done ? 'close_request' : null;
+    : (kind === 'person' || kind === 'empty') && (dm.done || dm.explanation) ? 'close_request' : null;
   const offer = offerKind ? await move.foldOffer(pool, {
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
   }) : null;
@@ -5106,6 +5113,17 @@ async function answerOwed(pool, config, {
   const sent = attempt > 0
     ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
     : await noteUserMessage(pool, config, { user, conversationId: Number(conversationId), message, deps: turnDeps });
+  // #6764 (17 Nov 2026): once the bot has answered in a new thread, name it
+  // with a short summary of the exchange, in the background, so the answer
+  // is never slower. It stores nothing when the thread has a name already,
+  // or when the exchange was only a greeting; a failure keeps the first words.
+  if (sent) {
+    const name = deps.autoTitle
+      || ((args) => require('./private-threads').autoTitle(pool, args));
+    Promise.resolve()
+      .then(() => name({ userId: Number(userId), conversationId: Number(conversationId), messageId: Number(messageId), deps }))
+      .catch(() => {});
+  }
   return { sent: !!sent, later };
 }
 
@@ -6194,6 +6212,169 @@ async function postFirstDesignPlan(pool, config, { row, issueNumber, deps = {} }
   }
 }
 
+// ── A project from an idea thread (#6784, 17 Nov 2026) ───────────────────
+//
+// New project in a private thread with Homeroom bot makes the project from
+// the plan agreed there, not from one line: the bot's newest plan reply, the
+// person's answers to its questions, and their own words. The project then
+// knows the thread (homeroom_bot_first_versions.idea_thread_id), the thread's
+// head says what it was made into, and the project's first-version thread
+// quotes the plan.
+
+/** Pure: a title for the thread, from its stored title or the first line of its root. */
+function threadTitleOf(row, root) {
+  const stored = row && typeof row.title === 'string' ? row.title.trim() : '';
+  if (stored) return clip(stored, 60);
+  const first = String(root?.content || '').split('\n').map((line) => line.trim()).find(Boolean) || '';
+  return clip(first, 60);
+}
+
+/**
+ * Pure: the brief a project made from an idea thread is built from, and the
+ * plan it was agreed on. `said` (what the create screen sent) comes first and
+ * wins; then the bot's newest reply that offered a New project (never an
+ * earlier one it took back), the answers to its questions, and the person's
+ * own messages. Cut to MAX_BRIEF_CHARS.
+ */
+function threadBrief({ said = null, messages = [], userId, botId }) {
+  const own = typeof said === 'string' ? said.replace(/\r\n?/g, '\n').trim().slice(0, 1600) : '';
+  const rows = Array.isArray(messages) ? messages : [];
+  const bot = Number(botId);
+  const mine = Number(userId);
+  const botSaid = rows.filter((m) => Number(m.sender_id) === bot && typeof m.content === 'string' && m.content.trim());
+  // Newest first, and the newest one that offered a New project wins: a limit
+  // the bot claimed and withdrew later is in an earlier reply, and left out.
+  const newest = [...botSaid].reverse();
+  const planRow = newest.find((m) => m.metadata?.homeroomBot?.newProject === true) || newest[0] || null;
+  const planText = planRow ? clip(planRow.content, 1800) : '';
+  const answers = [];
+  for (const m of rows) {
+    const card = m.metadata?.homeroomBot?.card;
+    if (Number(m.sender_id) !== bot || !card || card.type !== 'questions' || !Array.isArray(card.answered)) continue;
+    const asked = Array.isArray(card.questions) ? card.questions : [];
+    card.answered.forEach((answer, i) => {
+      if (typeof answer !== 'string' || !answer.trim()) return;
+      const question = asked[i] && typeof asked[i].question === 'string' ? asked[i].question.trim() : '';
+      answers.push(question ? `${question} ${answer.trim()}` : answer.trim());
+    });
+  }
+  const ownWords = [];
+  for (const m of [...rows].reverse()) {
+    if (Number(m.sender_id) !== mine || typeof m.content !== 'string' || !m.content.trim()) continue;
+    ownWords.push(`- ${clip(m.content, 300)}`);
+  }
+  const parts = [];
+  if (own) parts.push(`${own}\n\nWhat they wrote on the new project's screen comes first: where it differs from the rest, it wins.`);
+  if (planText) parts.push(`The plan agreed with Homeroom bot in their thread:\n${planText}`);
+  if (answers.length) parts.push(`Their answers:\n${clip(answers.map((a) => `- ${a}`).join('\n'), 400)}`);
+  if (ownWords.length) parts.push(`Their own words in the thread (newest first):\n${ownWords.join('\n')}`);
+  return { brief: parts.join('\n\n').slice(0, MAX_BRIEF_CHARS), planText };
+}
+
+/**
+ * The thread POST /api/apps is asked to make a project from ({ rootId }):
+ * one of the person's own private threads with Homeroom bot that has no
+ * project yet, and that made none before. Resolves { ok, thread: { rootId,
+ * privateThreadId, title }, brief, planText } or a refusal { ok: false,
+ * status, error }.
+ */
+async function threadForProject(pool, { user, thread: ref, brief = null, deps = {} }) {
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return { ok: false, status: 400, error: 'thread must be { rootId }' };
+  const rootId = Number(ref.rootId);
+  if (!Number.isSafeInteger(rootId) || rootId <= 0) return { ok: false, status: 400, error: 'thread must be { rootId }' };
+  if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'Not available for this account' };
+  const threads = deps.privateThreads || require('./private-threads');
+  const bot = await botAccount(pool);
+  const root = await threads.ownRoot(pool, { user, bot, rootId });
+  if (!root) return { ok: false, status: 404, error: 'No such thread' };
+  const { rows: [row] = [] } = await pool.query(
+    `SELECT p.id, p.kind, p.state, p.title,
+            EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id) AS design
+       FROM private_threads p
+      WHERE p.root_message_id = $1 AND p.user_id = $2`,
+    [rootId, user.id],
+  );
+  if (row) {
+    const { rows: [made] } = await pool.query(
+      `SELECT a.slug, a.name FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+        WHERE f.idea_thread_id = $1 LIMIT 1`,
+      [row.id],
+    );
+    if (made) return { ok: false, status: 409, error: `This thread already made ${made.name || made.slug}.` };
+    // A draft, a design, or a thread that already went somewhere is not an
+    // idea to make a project from.
+    if (row.design || (row.kind !== 'idea' && row.kind !== 'ask') || row.state !== 'open') {
+      return { ok: false, status: 409, error: 'This thread cannot be made into a project.' };
+    }
+  }
+  const { rows: messages } = await pool.query(
+    `SELECT id, sender_id, content, metadata FROM conversation_messages
+      WHERE (id = $1 OR thread_root_id = $1) AND deleted_at IS NULL
+      ORDER BY id`,
+    [rootId],
+  );
+  const rootRow = messages.find((m) => Number(m.id) === rootId) || null;
+  const built = threadBrief({ said: brief, messages, userId: user.id, botId: bot?.id });
+  return {
+    ok: true,
+    thread: { rootId, privateThreadId: row ? Number(row.id) : null, title: threadTitleOf(row, rootRow) },
+    brief: built.brief,
+    planText: built.planText,
+  };
+}
+
+// In the create's transaction (`db`): the thread's row is the new project's
+// (kind 'idea' when it had none, kept when it had one), and the first version
+// remembers which thread its plan was agreed in.
+async function recordIdeaThread(db, { app, user, thread }) {
+  const rootId = Number(thread?.thread?.rootId);
+  if (!app?.id || !user?.id || !Number.isSafeInteger(rootId) || rootId <= 0) return;
+  const { rows: [row] } = await db.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+     SELECT $1, m.conversation_id, m.id, $2, 'idea', 'filed'
+       FROM conversation_messages m
+      WHERE m.id = $3 AND m.deleted_at IS NULL
+     ON CONFLICT (root_message_id) DO UPDATE
+       SET app_id = EXCLUDED.app_id, state = 'filed', updated_at = NOW()
+     RETURNING id`,
+    [user.id, app.id, rootId],
+  );
+  if (row) await db.query('UPDATE homeroom_bot_first_versions SET idea_thread_id = $2 WHERE app_id = $1', [app.id, row.id]);
+}
+
+/**
+ * The project's first-version thread gets one more message: the thread the
+ * project came from, linked, with the plan agreed there as a quote. Never a
+ * reason the create fails. The bot's own thread, found by `firstVersion`.
+ */
+async function noteThreadSource(pool, config, { app, user, thread }) {
+  try {
+    if (!app?.id || !user?.id || !thread?.thread?.rootId) return null;
+    const settings = await settingsModule().readSettings(pool);
+    if (!(await botWorksFor(pool, settings, user))) return null;
+    const bot = await settingsModule().ensureBotUser(pool, config);
+    if (!bot) return null;
+    const rootId = Number(thread.thread.rootId);
+    const title = String(thread.thread.title || 'this thread').replace(/[[\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const plan = clip(thread.planText || '', 1500);
+    const quoted = plan ? `\n\n${plan.split('\n').map((line) => `> ${line}`.trimEnd()).join('\n')}` : '';
+    return await sendDm(pool, {
+      bot,
+      userId: user.id,
+      idempotencyKey: `hrbot-thread-source-${app.id}`,
+      content: `Made from your thread [${title}](#homeroom-bot/thread/${rootId}). The plan you agreed there:${quoted}`,
+      // `threadRootId` is sendDm's own (the thread it is said in), never this.
+      metadata: {
+        kind: 'first_version_source', firstVersion: true,
+        appSlug: app.slug, appName: app.name || app.slug,
+      },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not say which thread a project came from', { app: app?.slug, err: err.message });
+    return null;
+  }
+}
+
 async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false, fromDesign = false }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
@@ -6975,6 +7156,10 @@ module.exports = {
   designBrief,
   designForProject,
   postFirstDesignPlan,
+  threadBrief,
+  threadForProject,
+  recordIdeaThread,
+  noteThreadSource,
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,

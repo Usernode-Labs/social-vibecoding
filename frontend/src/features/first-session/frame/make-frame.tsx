@@ -104,8 +104,13 @@ export interface MakeBriefPlain {
   onScroll: (event: UIEvent<HTMLTextAreaElement>) => void;
   /** The box's top edge fades while it is scrolled (the standard box's own class). */
   fade: string;
-  /** The line under it while it still holds what they said before: its `data-*` name and words. */
-  kept: { attr: 'data-make-waitlist-idea' | 'data-make-search-idea'; text: string } | null;
+  /**
+   * The line under it: the `data-*` name and its words. The waitlist and
+   * search lines say where the box's words came from, so they show while it
+   * still holds them; a thread's plan comes along with an edited brief too,
+   * so that line shows whenever the screen came from a thread (#6784).
+   */
+  kept: { attr: 'data-make-waitlist-idea' | 'data-make-search-idea' | 'data-make-thread-idea'; text: string } | null;
 }
 
 /** "What should it do?" as a picked idea's sentence, with its blank and its choices. */

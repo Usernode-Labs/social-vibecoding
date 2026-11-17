@@ -242,3 +242,84 @@ test('#6682: the plan_card_other rule cuts the wrong sentence, not the whole rep
   // Beside a request draft there is no plan card, so the sentence is left alone.
   assert.deepEqual(await claims.checkReply(pool(), { offer: { app: { id: 4, slug: 'ear', name: 'Ear Trainer' } } }, text), []);
 });
+
+// ── #6763: New project is pointed at only when it is showing ───────────────
+
+const SCREENSHOT_REPLY = 'I can help. Tap New project under this reply to start it, then tell me what the app is for '
+  + 'and who it is for. I will ask a couple of questions if I need to, and put a plan here for you before anything gets built.';
+
+/** A chat turn in a private thread: the surface that offers New project. */
+const threadTurn = (extra = {}) => ({ user: { id: 1 }, appIds: new Set(), newProjectOffer: false, deps: {}, ...extra });
+
+test('#6763: "Tap New project under this reply" with no button showing is flagged, and cut', async () => {
+  const turn = threadTurn();
+  const found = await claims.checkReply(pool(), turn, SCREENSHOT_REPLY);
+  assert.deepEqual(found.map((p) => p.kind), ['new_project']);
+  const out = claims.cut(SCREENSHOT_REPLY, found, turn);
+  assert.equal(out, 'I can help. I will ask a couple of questions if I need to, and put a plan here for you before anything gets built.');
+  assert.doesNotMatch(out, /New project/);
+  // Words that only mention an idea are not a pointer at the button.
+  assert.deepEqual(await kinds(pool(), turn, 'That could be a new project of its own.'), []);
+  assert.deepEqual(await kinds(pool(), turn, 'Your new project on Home is where it goes.'), []);
+  // A leftover "New project" sentence goes with the false one.
+  const more = 'Tap New project below. The New project button asks what it should do. The rest is up to you.';
+  assert.equal(claims.cut(more, await claims.checkReply(pool(), turn, more), turn), 'The rest is up to you.');
+});
+
+test('#6763: a turn that offers New project, or a thread whose foot shows it, backs the pointer', async () => {
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectOffer: true }), SCREENSHOT_REPLY), []);
+  // The thread the bot opened for a new project: its root carries the door.
+  assert.deepEqual(await kinds(pool(), threadTurn({ deps: { threadDraft: { kind: 'ask', changeKind: 'project' } } }), SCREENSHOT_REPLY), []);
+  // A thread with a drawn screen for no project yet: the B04 door.
+  assert.deepEqual(await kinds(pool(), threadTurn({ deps: { threadDesign: { title: 'x', app: null } } }), SCREENSHOT_REPLY), []);
+  // A drawn screen of a project that exists has no New project, so it does not.
+  assert.deepEqual(await kinds(pool(), threadTurn({ deps: { threadDesign: { title: 'x', app: { slug: 'notes' } } } }), SCREENSHOT_REPLY), ['new_project']);
+  // Another thread the bot opened (a draft's, a first version's) shows no door either.
+  assert.deepEqual(await kinds(pool(), threadTurn({ deps: { threadDraft: { kind: 'draft_request', state: 'open', appSlug: 'notes' } } }), SCREENSHOT_REPLY), ['new_project']);
+  // The design bot's turn carries no newProjectOffer: its replies are left as they are.
+  assert.deepEqual(await kinds(pool(), { user: { id: 1 }, appIds: new Set(), deps: {} }, SCREENSHOT_REPLY), []);
+});
+
+test('#6763: the repair note asks for the offer, or says not to mention it', () => {
+  const problems = [{ kind: 'new_project', said: 'points at a New project button under it' }];
+  const withTool = claims.repairNote(problems, { tools: new Set(['reply', 'offer_new_project']) });
+  assert.match(withTool, /call offer_new_project now, then reply/);
+  assert.match(withTool, /otherwise ask what the app is for and do not mention New project\./);
+  const without = claims.repairNote(problems, { tools: new Set(['reply', 'offer_request']) });
+  assert.doesNotMatch(without, /offer_new_project/);
+  assert.match(without, /Do not mention New project\./);
+  for (const note of [withTool, without]) {
+    assert.doesNotMatch(note, /—/);
+    assert.doesNotMatch(note, /retract/i);
+  }
+});
+
+// ── #6784: the plan in the reply, not a line of it, is what is offered ─────
+
+const PLAN_REPLY = [
+  'Here is the plan as it now stands, with your answers kept.',
+  '- Home page: popular public lists, ranked by how many people saved them',
+  '- Lists: public or private, who can see each',
+  '- Adding places: search, results on a real map, tap one to add it',
+  '- Sharing: invite link with a role, or by username; viewer and editor',
+].join('\n');
+
+test('#6784: a one-line idea beside a longer plan is asked for again with the whole plan', async () => {
+  const turn = threadTurn({ newProjectOffer: true, newProjectBrief: { idea: 'An app for collecting saved places into lists on a real map.' } });
+  const found = await claims.checkReply(pool(), turn, PLAN_REPLY);
+  assert.deepEqual(found.map((p) => p.kind), ['short_brief']);
+  const note = claims.repairNote(found, { tools: new Set(['reply', 'offer_new_project']) });
+  assert.match(note, /Your offer_new_project idea is shorter than the plan in your reply\. Call offer_new_project again with idea holding every point of the plan and every answer they gave, as bullets, then reply\./);
+  assert.doesNotMatch(note, /—/);
+  // The bullets are harmless in the reply: nothing is cut for this.
+  assert.equal(claims.cut(PLAN_REPLY, found, turn), PLAN_REPLY);
+});
+
+test('#6784: a bullet idea, or a short idea with a short reply, is no problem', async () => {
+  const full = ['- Home page: popular lists', '- Lists: public or private', '- Sharing: by invite link', '- First version: the whole loop'].join('\n');
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectBrief: { idea: full } }), PLAN_REPLY), []);
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectBrief: { idea: 'A small app for lists.' } }), 'Here is the plan:\n- Lists'), []);
+  assert.deepEqual(await kinds(pool(), threadTurn({}), PLAN_REPLY), [], 'no idea, nothing to compare');
+  assert.equal(claims.briefShortOfPlan('', PLAN_REPLY), false);
+  assert.equal(claims.briefShortOfPlan('A line', PLAN_REPLY), true);
+});

@@ -737,6 +737,32 @@ test('each In progress and Waiting row says its stage and its second line, in th
   assert.equal(heroWords(0, 0), null);
 });
 
+test('the hero counts what the project filter shows (request 6744)', () => {
+  const { showsPicked } = loadTsx('frontend/src/features/ai/lines.ts');
+  const garden = { slug: 'garden' };
+  // All picked nothing: every project shows, and a private row in no project too.
+  assert.equal(showsPicked([])(garden), true);
+  assert.equal(showsPicked([])(null), true);
+  // One project picked: it shows; another project, and a private row in no
+  // project, do not, as the lists leave them out.
+  assert.equal(showsPicked(['garden'])(garden), true);
+  assert.equal(showsPicked(['garden'])({ slug: 'bread' }), false);
+  assert.equal(showsPicked(['garden'])(null), false);
+  // The lists and the line under the bot's name ask the same rule, so a
+  // saved filter's counts cannot disagree with the list below them.
+  const lines = read('frontend/src/features/ai/lines.ts');
+  assert.match(lines, /const shows = showsPicked\(picked\);/, 'the lists narrow by the shared rule');
+  assert.match(lines, /progressShown: progressShown\.length,/, 'the hook reports the in-progress count it shows');
+  const page = read('frontend/src/features/ai/index.tsx');
+  assert.match(page, /const heroShows = showsPicked\(picked\);/, 'the hero narrows by the same rule');
+  assert.match(
+    page,
+    /heroWords\(owedCount\(heroRows\), progress\.filter\(\(th\) => heroShows\(th\.app\)\)\.length, freshCount\(heroRows\)\)/,
+    'the hero counts the picked projects\' needs, in progress and new',
+  );
+  assert.doesNotMatch(page, /heroWords\(owed, progress\.length, fresh\)/, 'not every project, as it did before');
+});
+
 test('a row\'s one word on the right, and on a phone the reason where it is news', () => {
   const { shortWords, whyOf, threadWhy, needsYou, upNext } = loadTsx(MODEL);
   const row = (what, extra = {}) => thread(1, 7, what, extra);
@@ -2474,6 +2500,67 @@ test('the search lists the messages that match under the threads, each a link to
   assert.match(page, /const search = useBotSearch\(searchOpen \? query : '', \{/);
   assert.equal((page.match(/found=\{search\.found\}/g) || []).length, 2, 'the standard list and the look\'s');
   assert.equal((page.match(/onFoundRetry=\{search\.retry\}/g) || []).length, 2);
+});
+
+// #6738: a person searched "improve", opened a message from the results, and
+// the message glowed for about two seconds and then looked like any other.
+// The words a result was opened by stay marked in that message while it is
+// read, until the search is cleared or changed.
+test('#6738: the words a result was opened by stay marked in the message it opens', () => {
+  const plain = (v) => JSON.parse(JSON.stringify(v));
+  const store = loadTsx('frontend/src/features/ai/search-mark.ts');
+  assert.equal(store.currentSearchMark(), null, 'nothing marked at rest');
+  store.setSearchMark({ messageId: 71, q: 'improve' });
+  assert.deepEqual(plain(store.currentSearchMark()), { messageId: 71, q: 'improve' });
+  store.setSearchMark({ messageId: 'seventy-one', q: 'improve' });
+  assert.equal(store.currentSearchMark(), null, 'an id that is not one marks nothing');
+  store.setSearchMark({ messageId: 71, q: '' });
+  assert.equal(store.currentSearchMark(), null, 'no query, no marks');
+  store.setSearchMark({ messageId: 71, q: 'improve' });
+  store.clearSearchMark();
+  assert.equal(store.currentSearchMark(), null, 'cleared when the search moves on');
+
+  // A found row's press marks the message before it follows its address, so
+  // the message is drawn already marked; a press left to the browser sets none.
+  const seen = [];
+  const { followFound } = loadTsx('frontend/src/features/ai/found.tsx', {
+    stubs: {
+      './door': { goBotAddress: (href) => seen.push(['go', href]) },
+      './search-mark': { setSearchMark: (mark) => seen.push(['mark', mark]) },
+    },
+  });
+  const press = (over) => ({
+    defaultPrevented: false, button: 0, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false,
+    preventDefault() { this.defaultPrevented = true; }, ...over,
+  });
+  followFound(press(), '#homeroom-bot/thread/60/m/88', { messageId: 88, q: 'improve' });
+  assert.deepEqual(seen, [['mark', { messageId: 88, q: 'improve' }], ['go', '#homeroom-bot/thread/60/m/88']]);
+  seen.length = 0;
+  followFound(press({ metaKey: true }), '#elsewhere', { messageId: 88, q: 'improve' });
+  assert.deepEqual(seen, [], 'a new tab is the browser\'s, and marks nothing');
+
+  // Both faces hand the row's message and query to that press.
+  for (const face of ['frontend/src/features/ai/lists.tsx', 'frontend/src/features/ai/frame-list.tsx']) {
+    assert.match(read(face), /onClick=\{\(e\) => followFound\(e, line\.href, \{ messageId: line\.messageId, q: line\.q \}\)\}/, face);
+  }
+  assert.match(read('frontend/src/features/ai/lines.ts'), /messageId: row\.messageId,\s*q: found\.q,/,
+    'the line carries the message its link opens, and the query the answer was for');
+
+  // The page clears the mark when the box is closed, emptied or says
+  // something else; the box is not in the address, so nothing outlives it.
+  assert.match(read('frontend/src/features/ai/index.tsx'),
+    /const marked = cleanQuery\(searchOpen \? query : ''\);\s*useEffect\(\(\) => \{\s*const mark = currentSearchMark\(\);\s*if \(mark && mark\.q !== marked\) clearSearchMark\(\);\s*\}, \[marked\]\);/);
+
+  // The row reads the mark by its own id, so only the opened message is
+  // marked, and hands it to its words and their translation.
+  const row = read('frontend/src/features/messages/message-row.tsx');
+  assert.match(row, /const marks = useSearchMark\(message\.id\);/);
+  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} marks=\{marks\} \/>;/);
+  assert.match(row, /<BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} marks=\{marks\} \/>/);
+  assert.match(row, /<MessageMarkdown content=\{translation\.texts\[0\]\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} marks=\{marks\} \/>/);
+  assert.match(read('frontend/src/features/messages/bot-head-card.tsx'),
+    /<MessageMarkdown content=\{text\} channels=\{channels\} appSlug=\{head\.appSlug\} marks=\{marks\} \/>/,
+    'the bot\'s words before and after its card are marked too');
 });
 
 // #6389: the person's own change, made through a coding agent, whose votes
