@@ -12,20 +12,25 @@
  * them. Its job is to let an organizer picture their own group here and
  * start one.
  *
- * Top to bottom: the headline with one button, the kinds of group it is for
- * (cards, each with what that group might make), how it works as three
- * steps down one card, who decides (what approval means for the group,
- * beside the four rules a community can pick), how a community goes from
- * just you to private to public, and a closing band with the button again.
+ * Top to bottom: the headline with its two buttons, how it works as three
+ * steps (first, because the landing's button to this page says "How it
+ * works for private communities"), the kinds of group it is for (cards,
+ * each with what that group might make), who decides (what approval means
+ * for the group, beside the four rules a community can pick), how a
+ * community goes from just you to private to public, and a closing band
+ * with the button again.
  * Each section is drawn its own way on purpose: six sections of identical
  * cards read as one long list.
  *
  * DRAWN IN THE WEBSITE'S LOOK (13 Nov 2026), as the landing's short story
- * is: a sky band with a white window for the headline, then bands of the
- * site's colours down the page, serif headings, sun on an ink outline. Every
- * colour is a variable of public/css/app.css's "THE WEBSITE'S LOOK ON THE
- * SIGNED-OUT PAGES", which the dark shell moves, so nothing here names a
- * dark class. The first button is the Button primitive, repainted there.
+ * is, and since 17 Nov 2026 in the landing's hero frame: clouds with a white
+ * window for the headline, its words centred, the hero's lighter serif, the
+ * landing's two pills (features/auth/story.tsx), and the people on the
+ * window's bottom edge until this page has a picture of its own. Then bands
+ * of the site's colours down the page, serif headings, sun on an ink
+ * outline. Every colour is a variable of public/css/app.css's "THE WEBSITE'S
+ * LOOK ON THE SIGNED-OUT PAGES", which the dark shell moves, so nothing here
+ * names a dark class.
  *
  * THE APPROVAL RULES ARE THE PRODUCT'S: their names and lines are the Who
  * decides dialog's own messages (features/dialogs/who-decides.tsx), and the
@@ -33,9 +38,10 @@
  * describe a rule or an audience the product does not have.
  *
  * ONE WAY IN: the button opens the landing's own start sheet, and says
- * "Join the waitlist" while new accounts wait, as the bar's does. The links
- * back to the public apps are plain links to `/`: this page and the guest
- * Discover are two addresses of one document.
+ * "Join the waitlist" while new accounts wait, as the bar's does. The white
+ * button beside it and the link in the last stage go back to the public
+ * apps, plain links to `/`: this page and the guest Discover are two
+ * addresses of one document.
  *
  * Mounted only at its address, never in the prerender, so nothing here is in
  * the landing's first commit.
@@ -43,12 +49,10 @@
 
 import type { ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
 import {
   BallotIcon,
   BookmarkIcon,
   CheckIcon,
-  ChevronLeftIcon,
   CupIcon,
   GlobeIcon,
   HandRaisedIcon,
@@ -62,10 +66,11 @@ import {
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { noteSignUpFrom } from '../auth/sign-up-from';
+import { HERO_PRIMARY, HERO_SECONDARY, SITE_DISPLAY, SITE_LABEL } from '../auth/story';
 
 const SERIF = 'font-[family-name:var(--site-serif)] font-normal';
 // The page's own headline.
-const HEADLINE = `${SERIF} text-[32px] leading-9 tracking-[-0.015em] text-[color:var(--site-ink)] text-balance md:text-[50px] md:leading-[54px]`;
+const HEADLINE = `${SITE_DISPLAY} text-[31px] leading-[35px] tracking-[-0.03em] text-[color:var(--site-ink)] text-balance md:text-[46px] md:leading-[50px] xl:text-[54px] xl:leading-[58px]`;
 // A section's heading: larger than a label over a card, smaller than the
 // page's own headline.
 const HEADING = `${SERIF} text-[28px] leading-[34px] tracking-[-0.01em] text-[color:var(--site-ink)] text-balance md:text-[38px] md:leading-[44px]`;
@@ -153,69 +158,39 @@ export function GuestCommunities({ waitlist, onStart }: {
 
   return (
     <div data-guest-groups="" className="flex w-full grow flex-col">
-      <section className="site-band [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-4 md:pt-6 md:pb-8">
-        <div className="border border-[color:var(--site-line)] bg-[var(--site-panel)]">
-          <div className={STRIP} aria-hidden="true">
-            <span className={`${DOT} bg-[#e8452e]`} />
-            <span className={`${DOT} bg-[#f2a531]`} />
-            <span className={`${DOT} bg-[#3cc23c]`} />
-          </div>
-          <div className="flex items-end gap-14 px-4 pt-2 md:px-10 md:pt-5">
-            <div className="flex min-w-0 flex-1 flex-col items-start pb-6 md:pb-11">
-              <a
-                href="/"
-                data-guest-groups-back=""
-                className="inline-flex min-h-11 items-center gap-1 text-[15px] font-medium text-[color:var(--site-ink)] no-underline"
-              >
-                <ChevronLeftIcon className="h-4 w-4" aria-hidden="true" />
-                {t('auth:guest.groups.back')}
-              </a>
-              <h1 className={`mt-1.5 max-w-[640px] ${HEADLINE}`}>
-                {t('auth:guest.groups.title')}
-              </h1>
-              <p className="mt-3.5 max-w-[620px] text-[17px] leading-[26px] text-[color:var(--site-muted)] md:mt-4 md:text-[19px] md:leading-7">
-                {t('auth:guest.groups.lead')}
-              </p>
-              <Button
-                type="button"
-                variant="pillAccent"
-                size="none"
-                ink="solid"
-                data-guest-groups-start=""
-                className="mt-6 inline-flex h-12 items-center justify-center px-6 text-base font-medium"
-                onClick={start}
-              >
+      {/* THE LANDING'S HERO FRAME (17 Nov 2026): the white window on the
+          clouds, its words centred in the left part, the two buttons, and
+          the people on the window's bottom edge. */}
+      <section className="site-band site-clouds [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-6 md:pt-5 md:pb-6 lg:pb-20">
+        <div className="border border-[color:var(--site-line)] bg-[var(--site-panel)] lg:grid lg:grid-cols-[minmax(0,11fr)_minmax(0,9fr)] lg:items-center">
+          <div className="flex min-w-0 flex-col items-center px-4 pt-6 pb-6 text-center md:px-8 md:pt-10 md:pb-12 lg:ps-6 lg:pe-0 lg:pt-14 lg:pb-16">
+            <div className={`${SITE_LABEL} hidden md:block`}>{t('auth:guest.groups.label')}</div>
+            <h1 className={`${HEADLINE} md:mt-4`}>
+              {t('auth:guest.groups.title')}
+            </h1>
+            <p className="mt-3 text-balance text-[17px] leading-[24px] text-[color:var(--site-muted)] md:mt-4 md:text-[20px] md:leading-[28px]">
+              <RichMessage id="auth:guest.groups.sub" components={[<span className="block" />, <span className="block" />]} />
+            </p>
+            <div className="mt-5 flex flex-wrap justify-center gap-2.5 md:mt-6">
+              <button type="button" data-guest-groups-start="" className={HERO_PRIMARY} onClick={start}>
                 {startLabel}
-              </Button>
-              <p className="mt-4 text-[15px] leading-[21px] text-[color:var(--site-muted)]">
-                <RichMessage id="auth:guest.groups.publicLine" components={[<a href="/" data-guest-groups-public="" className={LINK} />]} />
-              </p>
+              </button>
+              <a href="/" data-guest-groups-public="" className={HERO_SECONDARY}>
+                {t('auth:guest.groups.explore')}
+              </a>
             </div>
+          </div>
+          <div className="hidden min-w-0 self-end px-6 lg:block" aria-hidden="true">
             <img
-              src="/brand/people.png"
+              src="/brand/landing-people.webp"
               alt=""
-              width={816}
-              height={612}
+              width={619}
+              height={434}
               draggable={false}
-              className="hidden h-auto w-[330px] shrink-0 lg:block"
+              className="relative z-10 mx-auto -mb-14 h-auto w-[400px] max-w-full"
             />
           </div>
         </div>
-      </section>
-
-      <section className={BAND}>
-        <h2 className={HEADING}>{t('auth:guest.groups.for.heading')}</h2>
-        <ul className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-          {groups.map((g, i) => (
-            <li key={g.key} className={`${CARD} flex flex-col gap-3 p-5`}>
-              <div className="flex items-center gap-3">
-                <span className={`${TILE} ${TILE_FILLS[i % TILE_FILLS.length]}`} aria-hidden="true">{g.icon}</span>
-                <h3 className={`min-w-0 ${ROW_TITLE}`}>{g.title}</h3>
-              </div>
-              <p className={ROW_LINE}>{g.body}</p>
-            </li>
-          ))}
-        </ul>
       </section>
 
       <section className={`site-band [--band:var(--site-leaf)] ${BAND}`}>
@@ -232,6 +207,21 @@ export function GuestCommunities({ waitlist, onStart }: {
             </li>
           ))}
         </ol>
+      </section>
+
+      <section className={BAND}>
+        <h2 className={HEADING}>{t('auth:guest.groups.for.heading')}</h2>
+        <ul className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
+          {groups.map((g, i) => (
+            <li key={g.key} className={`${CARD} flex flex-col gap-3 p-5`}>
+              <div className="flex items-center gap-3">
+                <span className={`${TILE} ${TILE_FILLS[i % TILE_FILLS.length]}`} aria-hidden="true">{g.icon}</span>
+                <h3 className={`min-w-0 ${ROW_TITLE}`}>{g.title}</h3>
+              </div>
+              <p className={ROW_LINE}>{g.body}</p>
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className={`site-band [--band:var(--site-sun-pale)] ${BAND}`}>

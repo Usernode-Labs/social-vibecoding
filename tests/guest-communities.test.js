@@ -39,14 +39,22 @@ const render = (over = {}) => renderComponent(PAGE, 'GuestCommunities', { waitli
   stubs: { '../auth/sign-up-from': { noteSignUpFrom() {} } },
 });
 
-test('the page, top to bottom: who it is for, how it works, who decides, private until you say otherwise, and one way in', () => {
+test('the page, top to bottom: how it works, who it is for, who decides, private until you say otherwise, and one way in', () => {
   const html = render();
   assert.deepEqual(text(html), [
-    'Public apps',
-    'An app for your group, made by your group.',
-    message('auth:guest.groups.lead'),
+    'Private communities',
+    'An app for your group, made by your group',
+    // Two sentences, a line each.
+    'Say what your group needs and Homeroom builds it.', 'Only the people you invite can see it.',
     'Join the waitlist',
-    "Curious what's possible?", 'See the public apps people have built', '.',
+    'Explore public apps',
+    // How it works comes first under the hero: it is what the landing's
+    // button to this page promises.
+    'How it works',
+    message('auth:guest.groups.how.sub'),
+    '01', 'Say what you need', message('auth:guest.groups.how.say.body'),
+    '02', 'Invite your people', message('auth:guest.groups.how.invite.body'),
+    '03', 'Change it together', message('auth:guest.groups.how.change.body'),
     'Made for groups like yours',
     'Friend groups', message('auth:guest.groups.for.friends.body'),
     'School clubs and classes', message('auth:guest.groups.for.school.body'),
@@ -54,11 +62,6 @@ test('the page, top to bottom: who it is for, how it works, who decides, private
     'Studios and collectives', message('auth:guest.groups.for.studios.body'),
     'Neighborhoods', message('auth:guest.groups.for.neighbors.body'),
     'Towns and cities', message('auth:guest.groups.for.towns.body'),
-    'How it works',
-    message('auth:guest.groups.how.sub'),
-    '01', 'Say what you need', message('auth:guest.groups.how.say.body'),
-    '02', 'Invite your people', message('auth:guest.groups.how.invite.body'),
-    '03', 'Change it together', message('auth:guest.groups.how.change.body'),
     'You choose who decides',
     message('auth:guest.groups.decides.lead'),
     'Anyone can suggest changes', 'Describe it. A coding agent builds it.',
@@ -115,11 +118,13 @@ test('one way in, which says what it does and notes where the sign-up came from'
   // to the guest Discover: this page and that one are two addresses of one
   // document.
   assert.equal([...waiting.matchAll(/<button /g)].length, 2);
-  assert.deepEqual([...waiting.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]), ['/', '/', '/']);
-  assert.match(waiting, /<a href="\/" data-guest-groups-back="" class="[^"]*">/);
-  // The line under the first button points at the apps people have built:
-  // somebody deciding whether to bring a group wants to see one first.
-  assert.match(waiting, /<a href="\/" data-guest-groups-public="" class="[^"]*">See the public apps people have built<\/a>/);
+  assert.deepEqual([...waiting.matchAll(/<a [^>]*href="([^"]+)"/g)].map((m) => m[1]), ['/', '/']);
+  // The white button beside the first one is the way back, and the way to
+  // see what people have built: somebody deciding whether to bring a group
+  // wants to see one first. It stands where a back link and a line under
+  // the button were.
+  assert.match(waiting, /<button type="button" data-guest-groups-start="" class="[^"]*">Join the waitlist<\/button><a href="\/" data-guest-groups-public="" class="[^"]*bg-\[var\(--site-panel\)\][^"]*">Explore public apps<\/a>/);
+  assert.doesNotMatch(waiting, /data-guest-groups-back/);
   const src = read(PAGE);
   assert.match(src, /const start = \(\) => \{ noteSignUpFrom\('groups'\); onStart\(\); \};/);
   assert.match(src, /const startLabel = waitlist \? t\('auth:guest\.hero\.joinWaitlist'\) : t\('auth:guest\.groups\.start'\);/);
@@ -166,20 +171,27 @@ test('drawn in the website\'s look: bands and windows, every colour a variable o
   // A sky band with a window for the headline, then the site's green, pale
   // sun and sun bands down the page; the two sections between sit on the
   // page's own cream ground.
-  assert.deepEqual([...html.matchAll(/site-band \[--band:var\(--site-([a-z-]+)\)\]/g)].map((m) => m[1]), ['sky', 'leaf', 'sun-pale', 'sun-deep']);
-  // Two windows, each opened by a strip of three dots: the headline's, and
-  // the approval rules'.
-  assert.equal([...html.matchAll(/bg-\[#e8452e\]/g)].length, 2);
-  // Headings in the site's serif: the headline, four of the five section
-  // headings (How it works is the small label over its line, which takes
-  // the serif instead), and the closing band's.
-  assert.match(html, /<h1 class="[^"]*font-\[family-name:var\(--site-serif\)\][^"]*">An app for your group, made by your group\.<\/h1>/);
+  assert.deepEqual([...html.matchAll(/site-band (?:site-clouds )?\[--band:var\(--site-([a-z-]+)\)\]/g)].map((m) => m[1]), ['sky', 'leaf', 'sun-pale', 'sun-deep']);
+  // THE LANDING'S HERO FRAME (17 Nov 2026): the sky band is the clouds, its
+  // window has no strip of dots, and the words are centred. The one window
+  // opened by a strip of three dots is the approval rules'.
+  assert.match(html, /<section class="site-band site-clouds \[--band:var\(--site-sky\)\] [^"]*">/);
+  assert.equal([...html.matchAll(/bg-\[#e8452e\]/g)].length, 1);
+  // The headline in the hero's own lighter serif, as the landing's is; four
+  // of the five section headings in the site's serif (How it works is the
+  // small label over its line, which takes the serif instead), and the
+  // closing band's.
+  assert.match(html, /<div class="[^"]* hidden md:block">Private communities<\/div><h1 class="font-\[family-name:var\(--site-display\)\] font-normal [^"]*">An app for your group, made by your group<\/h1>/);
+  assert.match(html, /<span class="block">Say what your group needs and Homeroom builds it\.<\/span> <span class="block">Only the people you invite can see it\.<\/span>/);
+  // The people, for the eye only, sit on the window's bottom edge from lg
+  // until this page has a picture of its own.
+  assert.match(html, /<div class="hidden [^"]*\blg:block\b[^"]*" aria-hidden="true"><img src="\/brand\/landing-people\.webp" alt=""[^>]*class="[^"]*-mb-14[^"]*"/);
   assert.match(html, /<h2 class="[^"]*uppercase[^"]*">How it works<\/h2><p class="[^"]*font-\[family-name:var\(--site-serif\)\][^"]*">From one sentence/);
-  // The first button is the shell's primitive, which the stylesheet repaints
-  // as a sun pill under this page; the closing band's is a white pill.
-  assert.match(html, /<button [^>]*data-guest-groups-start=""[^>]*class="[^"]*bg-violet-600[^"]*"/);
+  // The first button is the landing's sun pill and the one beside it its
+  // white pill (features/auth/story.tsx); the closing band's is a white pill.
+  assert.match(html, /<button type="button" data-guest-groups-start="" class="[^"]*bg-\[var\(--site-sun\)\] text-\[color:var\(--site-on-sun\)\]"/);
+  assert.match(src, /import \{ HERO_PRIMARY, HERO_SECONDARY, SITE_DISPLAY, SITE_LABEL \} from '\.\.\/auth\/story';/);
   const css = read('public/css/app.css');
-  assert.match(css, /#auth-landing-screen \[data-guest-groups\] \.bg-violet-600 \{\s+background-color: var\(--site-sun\);\s+color: var\(--site-on-sun\);/);
   // No colour of the app's own palette and no dark class: the look's
   // variables are the only inks, and the dark shell moves them in one rule.
   assert.doesNotMatch(src, /\b(?:text|bg|border|shadow)-(?:zinc|violet|white|black)\b/);

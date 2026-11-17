@@ -699,10 +699,14 @@ carry most of them.
 - **The signed-out pages wear the website's look, not the shell's (13 Nov
   2026).** The guest Discover (its short story and its list) and the page
   about private communities are a visitor's next click after onhomeroom.com,
-  so they are drawn as that site is: a sky band with a white window in it,
-  serif headlines (Young Serif, the stand-in the new look already ships),
-  sun pills on an ink outline, outlined cards, and bands of colour down the
-  page. `public/css/app.css` ("THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES")
+  so they are drawn as that site is: clouds with a white window in them,
+  serif headlines (Young Serif, the stand-in the new look already ships;
+  the two heroes' headline and buttons are Source Serif 4, `--site-display`,
+  lighter and tighter), sun pills on an ink outline, outlined cards, and
+  bands of colour down the page. The two heroes share one frame (17 Nov
+  2026): the words centred in the window, two pills under them, and the
+  people on the window's bottom edge; the pictures are in `public/brand/`,
+  whose README says where each came from. `public/css/app.css` ("THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES")
   declares that look's variables on `#auth-landing-screen` and moves them for
   the dark shell in one rule. The two components drawn only there
   (`features/auth/story.tsx`'s short story, `features/guest/guest-communities.tsx`)

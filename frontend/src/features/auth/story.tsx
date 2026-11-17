@@ -39,6 +39,7 @@ import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { Message, RichMessage } from '../../lib/i18n/react';
 import { noteSignUpFrom } from './sign-up-from';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
@@ -62,18 +63,40 @@ export const COMMUNITIES_PATH = '/communities';
 // ON THE SIGNED-OUT PAGES", which the dark shell moves; nothing below names a
 // dark class of its own.
 const SITE_SERIF = 'font-[family-name:var(--site-serif)] font-normal';
+// The hero's own face (Drea's mock-up, 17 Nov 2026): a lighter, tighter serif
+// than the section headings', at a sturdy optical size.
+export const SITE_DISPLAY = "font-[family-name:var(--site-display)] font-normal [font-variation-settings:'opsz'_28]";
 // The small label over a headline, as the site sets "Currently in early testing".
-const SITE_LABEL = 'text-[13px] leading-[18px] uppercase tracking-[0.04em] text-[color:var(--site-label)]';
+export const SITE_LABEL = 'text-[13px] leading-[18px] uppercase tracking-[0.04em] text-[color:var(--site-label)]';
 // A link inside a sentence: ink, underlined (the site has no second accent).
 const SITE_LINK = 'font-semibold text-[color:var(--site-ink)] underline decoration-1 underline-offset-[3px] un-touch-target';
 // One of the three dots a window's strip carries.
 const WINDOW_DOT = 'h-2 w-2 rounded-full border border-[color:var(--site-line)] md:h-2.5 md:w-2.5';
 
+// The short story's two buttons: a sun pill on an ink outline, as the bar's
+// button is, and its plain twin beside it.
+const HERO_PILL = 'inline-flex min-h-11 items-center justify-center rounded-full whitespace-nowrap px-[18px] py-2 text-center font-[family-name:var(--site-display)] text-[16px] leading-[22px] font-medium no-underline shadow-[inset_0_0_0_1px_var(--site-line),0_2px_0_var(--site-line)] un-touch-target';
+export const HERO_PRIMARY = `${HERO_PILL} bg-[var(--site-sun)] text-[color:var(--site-on-sun)]`;
+export const HERO_SECONDARY = `${HERO_PILL} bg-[var(--site-panel)] text-[color:var(--site-ink)]`;
+
+// "Explore apps" brings what follows the story (the communities, which start
+// right under it) to the top of the screen, clear of the bar.
+function exploreApps(event: { currentTarget: HTMLElement }): void {
+  let next = event.currentTarget.closest('[data-landing-story]')?.nextElementSibling as HTMLElement | null;
+  // A block that is put away (the search, while nothing is pinned) has no height: pass it.
+  while (next && !next.offsetHeight) next = next.nextElementSibling as HTMLElement | null;
+  if (!next) return;
+  next.style.scrollMarginTop = '52px';
+  const calm = reducedMotion();
+  next.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+}
+
 // The short story's headline. On a phone it leads the page, the welcome label
 // being a wide screen's; under a greeted address (`welcomeEmail`) the label
 // shows on a phone too, so the headline keeps its room above there as well.
-const HERO_HEADLINE = `${SITE_SERIF} text-[28px] leading-[32px] tracking-[-0.01em] text-[color:var(--site-ink)] text-balance md:mt-2.5 md:text-[46px] md:leading-[50px]`;
-const HERO_HEADLINE_AFTER = `mt-2 ${SITE_SERIF} text-[28px] leading-[32px] tracking-[-0.01em] text-[color:var(--site-ink)] text-balance md:text-[46px] md:leading-[50px]`;
+const HERO_HEADLINE_TYPE = `${SITE_DISPLAY} text-[31px] leading-[35px] tracking-[-0.03em] text-[color:var(--site-ink)] md:text-[50px] md:leading-[54px] xl:text-[60px] xl:leading-[64px]`;
+const HERO_HEADLINE = `${HERO_HEADLINE_TYPE} md:mt-4`;
+const HERO_HEADLINE_AFTER = `mt-2 ${HERO_HEADLINE_TYPE}`;
 
 // THE STORY SHRINKS TO FIT ITS SCREEN (Evan, 10 Oct 2026, iPhone Safari): on
 // a phone shorter than the story, Get started fell below the fold, under
@@ -140,15 +163,14 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   onSignIn?: () => void;
   /**
    * THE SHORT STORY, over the guest Discover (features/guest/guest-discover.tsx):
-   * the headline, one line that says what this place is like, how an app
-   * here changes as three numbered points, and a closing line that points
-   * at the apps below. No button: the 21 Oct 2026 review found two Sign ins,
-   * then two Sign ups, on one screen read as a mistake, and the hero's own
-   * button, put back for the waitlist weeks, went again on 13 Nov 2026 when
-   * the bar's filled button took its words ("Join the waitlist" while new
-   * accounts wait, landing.tsx). No examples (the real apps follow it) and,
-   * on a phone, no picture and no lines under the points, so the first apps
-   * are near the first screen; nothing to fit, so no steps.
+   * the headline, two short lines that say what this place is like, and two
+   * buttons: Explore apps, which brings the list under it to the top, and
+   * the door to the page about private communities. Neither makes an
+   * account: the 21 Oct 2026 review found two Sign ins, then two Sign ups, on
+   * one screen read as a mistake, so that is the bar's filled button alone
+   * ("Join the waitlist" while new accounts wait, landing.tsx). No examples
+   * (the real apps follow it) and, on a phone, no pictures, so the first
+   * apps are near the first screen; nothing to fit, so no steps.
    */
   compact?: boolean;
   /**
@@ -270,118 +292,115 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   if (compact) {
     // On the page itself, as the story always was, and short. THE PITCH
     // (Evan, 13 Nov 2026): Homeroom is the app library anyone can edit, said
-    // the way Wikipedia says it of an encyclopedia. The headline, one line
-    // that makes the comparison, then how an app here changes as three
-    // numbered points (somebody makes a change, its community votes, the app
-    // is the community's), each with its line from md, and a closing line
-    // that points at the apps below.
+    // the way Wikipedia says it of an encyclopedia. The headline, then the
+    // comparison as two lines, then two buttons. The three numbered points
+    // and the closing line that were here (13 Nov) went on 17 Nov 2026: they
+    // stood between a visitor and the apps, which say it better.
     //
-    // NO BUTTON OF ITS OWN: the bar's filled button is the one way to make an
-    // account, and says "Join the waitlist" while new accounts wait
-    // (landing.tsx). A second one under the headline asked before a visitor
-    // had a reason to answer.
+    // TWO BUTTONS, NEITHER AN ACCOUNT: Explore apps scrolls to the list under
+    // the hero, and the white one is the door to the page about private
+    // communities (../guest/guest-communities.tsx), a different promise from
+    // the one this hero makes. The bar's filled button is still the one way
+    // to make an account (landing.tsx).
     //
-    // BESIDE IT from md: the picture, "This month" (how many changes went
-    // live across the public apps and how many people made them, once the
-    // directory's read has brought them: `month`), and the door to the page
-    // about private communities (../guest/guest-communities.tsx). A private
-    // community is a different promise from the one this hero makes, so it
-    // is a card of its own and not a fourth point.
+    // THE PICTURES are for the eye only: the communities page beside the
+    // words from lg, and from md the people on the window's bottom edge with
+    // "This month" beside them (how many changes went live across the public
+    // apps and how many people made them, once the directory's read has
+    // brought them: `month`). From lg the yellow window laps over the white
+    // one and the people over the page under the sky.
     //
     // ON A PHONE the apps should start near the first screen: no "Welcome to
-    // Homeroom" (the wordmark is directly above), the points' titles only,
-    // the two figures as one line, and the closing line carries the door.
-    const points = [
-      { title: t('auth:guest.hero.change.title'), body: t('auth:guest.hero.change.body') },
-      { title: t('auth:guest.hero.vote.title'), body: t('auth:guest.hero.vote.body') },
-      { title: t('auth:guest.hero.owned.title'), body: t('auth:guest.hero.owned.body') },
-    ];
+    // Homeroom" (the wordmark is directly above), no pictures, and the two
+    // figures as one line.
     const figures = month ? [
       { id: 'auth:guest.hero.month.changes', count: month.changes },
       { id: 'auth:guest.hero.month.contributors', count: month.contributors },
     ] : [];
     return (
-      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="site-band [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-4 md:pt-6 md:pb-8">
-        <div data-landing-story-window="" className="border border-[color:var(--site-line)] bg-[var(--site-panel)]">
-          <div className="flex h-6 items-center gap-1.5 border-b border-[color:var(--site-line)] px-2.5 md:h-8 md:px-3" aria-hidden="true">
-            <span className={`${WINDOW_DOT} bg-[#e8452e]`} />
-            <span className={`${WINDOW_DOT} bg-[#f2a531]`} />
-            <span className={`${WINDOW_DOT} bg-[#3cc23c]`} />
-          </div>
-          <div className="flex items-center gap-10 px-4 pt-4 pb-5 md:px-10 md:py-8">
-            <div className="flex min-w-0 flex-1 flex-col items-start text-start">
-              <div className={welcomeEmail ? SITE_LABEL : `${SITE_LABEL} hidden md:block`}>{t('auth:story.welcome')}</div>
-              {welcomeEmail ? (
-                <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-[color:var(--site-muted)] [overflow-wrap:anywhere]">{welcomeEmail}</div>
-              ) : null}
-              <h1 className={welcomeEmail ? HERO_HEADLINE_AFTER : HERO_HEADLINE}>
-                {t('auth:guest.hero.headline')}
-              </h1>
-              <p className="mt-2 text-[17px] leading-[23px] text-[color:var(--site-muted)] text-balance md:mt-3 md:text-xl md:leading-[27px]">{t('auth:guest.hero.sub')}</p>
-              {month ? (
-                <p data-landing-story-month="" className="mt-2.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[15px] leading-5 text-[color:var(--site-muted)] md:hidden">
-                  <span>{t('auth:guest.hero.month.title')}</span>
-                  {figures.map((f) => (
-                    <span key={f.id}>
-                      <RichMessage id={f.id} values={{ count: f.count, total: f.count.toLocaleString() }} components={[<strong className="font-semibold text-[color:var(--site-ink)]" />]} />
-                    </span>
-                  ))}
-                </p>
-              ) : null}
-              <ol data-landing-story-points="" className="mt-4 flex flex-col gap-2.5 md:mt-6 md:gap-3.5">
-                {points.map((p, i) => (
-                  <li key={p.title} className="flex min-w-0 items-center gap-2.5 md:items-start md:gap-3.5">
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-[color:var(--site-line)] bg-[var(--site-sun)] text-sm font-semibold text-[color:var(--site-on-sun)]" aria-hidden="true">
-                      {i + 1}
-                    </span>
-                    <span className="min-w-0">
-                      <span className={`block ${SITE_SERIF} text-[17px] leading-[22px] text-[color:var(--site-ink)] md:text-[21px] md:leading-[27px]`}>{p.title}</span>
-                      <span className="hidden text-[15px] leading-[21px] text-[color:var(--site-muted)] md:block">{p.body}</span>
-                    </span>
-                  </li>
+      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="site-band site-clouds [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-6 md:pt-5 md:pb-6 lg:pb-0">
+        {/* DREA'S HERO (17 Nov 2026): one white window on the clouds, its
+            words centred in the left part and a picture of the communities
+            page on the right; the people sit on the window's bottom edge and
+            "This month" is a yellow window on the sky beside them. */}
+        <div data-landing-story-window="" className="border border-[color:var(--site-line)] bg-[var(--site-panel)] lg:grid lg:grid-cols-[minmax(0,9fr)_minmax(0,11fr)] lg:items-center">
+          <div className="flex min-w-0 flex-col items-center px-4 pt-6 pb-6 text-center md:px-8 md:pt-10 md:pb-20 lg:ps-6 lg:pe-0 lg:pt-14 lg:pb-20">
+            <div className={welcomeEmail ? SITE_LABEL : `${SITE_LABEL} hidden md:block`}>{t('auth:story.welcome')}</div>
+            {welcomeEmail ? (
+              <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-[color:var(--site-muted)] [overflow-wrap:anywhere]">{welcomeEmail}</div>
+            ) : null}
+            <h1 className={welcomeEmail ? HERO_HEADLINE_AFTER : HERO_HEADLINE}>
+              {t('auth:guest.hero.headline')}
+            </h1>
+            {/* Its two sentences are a line each, at every width. */}
+            <p className="mt-3 text-[17px] leading-[24px] text-[color:var(--site-muted)] md:mt-4 md:text-[20px] md:leading-[28px]">
+              <RichMessage id="auth:guest.hero.sub" components={[<span className="block" />, <span className="block" />]} />
+            </p>
+            {month ? (
+              <p data-landing-story-month="" className="mt-2.5 flex flex-wrap justify-center gap-x-3 gap-y-0.5 text-[15px] leading-5 text-[color:var(--site-muted)] md:hidden">
+                <span>{t('auth:guest.hero.month.title')}</span>
+                {figures.map((f) => (
+                  <span key={f.id}>
+                    <RichMessage id={f.id} values={{ count: f.count, total: f.count.toLocaleString() }} components={[<strong className="font-semibold text-[color:var(--site-ink)]" />]} />
+                  </span>
                 ))}
-              </ol>
-              <p data-landing-story-next="" className="mt-4 hidden text-[15px] leading-[21px] text-[color:var(--site-muted)] md:mt-6 md:block">{t('auth:guest.hero.start')}</p>
-              <p data-landing-story-next="" className="mt-4 text-[15px] leading-[21px] text-[color:var(--site-muted)] md:hidden">
-                <RichMessage id="auth:guest.hero.startShort" components={[<a href={COMMUNITIES_PATH} data-landing-story-private="" className={SITE_LINK} />]} />
               </p>
+            ) : null}
+            <div data-landing-story-actions="" className="mt-5 flex flex-wrap justify-center gap-2.5 md:mt-6">
+              <button type="button" data-landing-story-explore="" className={HERO_PRIMARY} onClick={exploreApps}>
+                {t('auth:guest.hero.explore')}
+              </button>
+              <a href={COMMUNITIES_PATH} data-landing-story-private="" className={HERO_SECONDARY}>
+                {t('auth:guest.hero.privateHow')}
+              </a>
             </div>
-            <div className="hidden w-[320px] shrink-0 flex-col items-center gap-3.5 md:flex">
-              <img
-                src="/brand/people.png"
-                alt=""
-                width={816}
-                height={612}
-                draggable={false}
-                className="h-auto w-[190px] shrink-0"
-              />
-              {month ? (
-                <div data-landing-story-month="" className="w-full border border-[color:var(--site-line)] bg-[var(--site-window)]">
-                  <div className="flex h-7 items-center gap-2 border-b border-[color:var(--site-line)] bg-[var(--site-sun)] px-2.5 text-[13px] leading-[18px] font-semibold text-[color:var(--site-on-sun)]">
-                    <span className="flex gap-1" aria-hidden="true">
-                      <span className="h-2 w-2 rounded-full border border-[color:var(--site-on-sun)] bg-[#e8452e]" />
-                      <span className="h-2 w-2 rounded-full border border-[color:var(--site-on-sun)] bg-[#f2a531]" />
-                      <span className="h-2 w-2 rounded-full border border-[color:var(--site-on-sun)] bg-[#3cc23c]" />
-                    </span>
-                    {t('auth:guest.hero.month.title')}
-                  </div>
-                  <div className="grid grid-cols-2">
-                    {figures.map((f, i) => (
-                      <p key={f.id} className={i ? 'min-w-0 border-s border-[color:var(--site-line)] px-4 pt-2.5 pb-3 text-[13px] leading-[18px] text-[color:var(--site-muted)]' : 'min-w-0 px-4 pt-2.5 pb-3 text-[13px] leading-[18px] text-[color:var(--site-muted)]'}>
-                        <RichMessage id={f.id} values={{ count: f.count, total: f.count.toLocaleString() }} components={[<strong className={`block ${SITE_SERIF} text-[34px] leading-[38px] tracking-[-0.02em] text-[color:var(--site-ink)]`} />]} />
+          </div>
+          <div className="hidden min-w-0 py-7 ps-6 pe-8 lg:block xl:pe-10" aria-hidden="true">
+            <img
+              src="/brand/landing-communities.webp"
+              alt=""
+              width={1060}
+              height={656}
+              draggable={false}
+              className="mx-auto h-auto w-full max-w-[640px]"
+            />
+          </div>
+        </div>
+        {/* The yellow window laps over the white one, and the people over the
+            page under the sky (from lg, where there is room for both). */}
+        <div className="relative z-10 -mt-16 hidden grid-cols-[minmax(0,9fr)_minmax(0,11fr)] items-start md:grid lg:-mb-7">
+          <div className="flex min-w-0 justify-center ps-4 lg:ps-6">
+            <img
+              src="/brand/landing-people.webp"
+              alt=""
+              width={619}
+              height={434}
+              draggable={false}
+              className="h-auto w-[280px] max-w-full shrink-0 lg:w-[380px]"
+            />
+          </div>
+          <div className="flex min-w-0 justify-center px-6 pt-20 lg:pt-10">
+            {month ? (
+              <div data-landing-story-month="" className="w-full max-w-[460px] border border-[color:var(--site-on-sun)] bg-[var(--site-sun)] text-[color:var(--site-on-sun)]">
+                <div className="flex h-8 items-center gap-2.5 border-b border-[color:var(--site-on-sun)] px-3 text-[13px] leading-[18px] font-semibold uppercase tracking-[0.04em]">
+                  <span className="flex gap-1.5" aria-hidden="true">
+                    <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#e8452e]" />
+                    <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#f2a531]" />
+                    <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#3cc23c]" />
+                  </span>
+                  {t('auth:guest.hero.month.title')}
+                </div>
+                <div className="p-3">
+                  <div className="grid grid-cols-2 border border-[color:var(--site-on-sun)] bg-[var(--site-sun-pale)] py-3.5">
+                    {figures.map((f) => (
+                      <p key={f.id} className="min-w-0 px-3 text-center text-[15px] leading-5 uppercase tracking-[0.02em]">
+                        <RichMessage id={f.id} values={{ count: f.count, total: f.count.toLocaleString() }} components={[<strong className="mb-1 block text-[40px] leading-[44px] font-normal tracking-[-0.03em]" />]} />
                       </p>
                     ))}
                   </div>
                 </div>
-              ) : null}
-              <a href={COMMUNITIES_PATH} data-landing-story-private="" className="flex w-full items-center gap-2.5 rounded-xl border border-[color:var(--site-line)] bg-[var(--site-panel)] py-3 ps-4 pe-3 no-underline shadow-[0_2px_0_var(--site-line)]">
-                <span className="min-w-0 flex-1">
-                  <span className={`block ${SITE_SERIF} text-[19px] leading-6 text-[color:var(--site-ink)]`}>{t('auth:guest.hero.private.title')}</span>
-                  <span className="mt-0.5 block text-[13px] leading-[18px] text-[color:var(--site-muted)]">{t('auth:guest.hero.private.body')}</span>
-                </span>
-                <ChevronRightIcon className="h-5 w-5 shrink-0 text-[color:var(--site-ink)]" />
-              </a>
-            </div>
+              </div>
+            ) : null}
           </div>
         </div>
       </div>

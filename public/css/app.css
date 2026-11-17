@@ -4612,6 +4612,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    have to stay together and directly before the new look's. */
 #auth-landing-screen {
   --site-serif: 'Young Serif', Georgia, 'Times New Roman', serif;
+  --site-display: 'Source Serif 4', 'Young Serif', Georgia, 'Times New Roman', serif;
   --site-sans: 'Geist', ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --site-ink: #121a0e;
   --site-muted: #41483c;
@@ -4663,6 +4664,20 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   background-color: var(--band);
   border-image: conic-gradient(var(--band) 0 0) fill 0 / 0 / 0 var(--platform-usable-w);
 }
+/* The sky band is the website's own sky, clouds and all, in light. It is a
+   picture, so it is laid behind the band as wide as the usable box rather
+   than as a border image, which would stretch it. Dark has no sky band. */
+html:not(.dark) #auth-landing-screen .site-clouds { position: relative; isolation: isolate; }
+html:not(.dark) #auth-landing-screen .site-clouds::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset-block: 0;
+  left: 50%;
+  width: var(--platform-usable-w);
+  transform: translateX(-50%);
+  background: var(--site-sky) url('/brand/sky.webp') center / cover no-repeat;
+}
 /* The ground under the two pages is the site's cream, flat: the washes of
    the app's wallpaper are the app's. The bar's faked glass follows it. Not
    under a look (html[data-skin]), which paints its own ground and draws the
@@ -4678,17 +4693,16 @@ html:not(.dark):not([data-skin]) #auth-landing-screen:has(:is([data-guest-discov
   font-family: var(--site-sans);
 }
 /* DO THIS is a sun pill on an ink outline: the bar's button on every
-   signed-out page, and the page's own. The primitive's classes stay
-   (tests/shell-primitive-adoption.test.js); its fill is repainted. */
-#auth-landing-screen #landing-header [data-landing-sign-up],
-#auth-landing-screen [data-guest-groups] .bg-violet-600 {
+   signed-out page. The primitive's classes stay
+   (tests/shell-primitive-adoption.test.js); its fill is repainted. The
+   heroes' own pills are spelled in features/auth/story.tsx. */
+#auth-landing-screen #landing-header [data-landing-sign-up] {
   background-color: var(--site-sun);
   color: var(--site-on-sun);
   font-family: var(--site-sans);
   box-shadow: inset 0 0 0 1px var(--site-line), 0 2px 0 var(--site-line);
 }
-#auth-landing-screen #landing-header [data-landing-sign-up]:hover,
-#auth-landing-screen [data-guest-groups] .bg-violet-600:hover {
+#auth-landing-screen #landing-header [data-landing-sign-up]:hover {
   background-color: var(--site-sun-lit);
 }
 #auth-landing-screen #landing-header [data-landing-sign-in] {
@@ -31229,6 +31243,13 @@ html[data-skin="sunrise"][data-skin] .fr-barline{border-bottom:0}
   font-family: 'Geist Mono';
   src: url('/fonts/geist-mono/GeistMono-Variable.woff2') format('woff2');
   font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Source Serif 4';
+  src: url('/fonts/source-serif-4/source-serif-4-latin-opsz-normal.woff2') format('woff2');
+  font-weight: 200 900;
   font-style: normal;
   font-display: swap;
 }
