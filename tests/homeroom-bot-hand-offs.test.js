@@ -26,7 +26,8 @@ test('the triage sends an approval-rule or visibility change to the sheet, as a 
   assert.match(bot.deciderNote({ requester: 'ann', members: 19, requesterDecides: true, role: 'creator' }), /is not code: @ann can change it on the project's page/);
   assert.match(bot.deciderNote({ requester: 'ann', members: 1, requesterDecides: true }), /is not code: its creator or admins can change it/);
   // In the note, which a look on a project with somebody to name carries: the
-  // triage prompt itself has no room to spare (a triage prompt stays small).
+  // triage prompt's parts each have a budget of their own
+  // (homeroom-bot-prompt-parts.js).
   assert.doesNotMatch(read('src/prompts/homeroom-bot-triage.md'), /Who can see & change it/);
 });
 

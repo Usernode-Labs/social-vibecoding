@@ -797,6 +797,10 @@ function checksFixPrompt({
   // is shown as the build's log rather than as a check that did not pass.
   const buildFailed = failing.filter((f) => f && f.previewBuild);
   const checkFailures = failing.filter((f) => !(f && f.previewBuild));
+  // #6777: a failure of the triage prompt's size rule names the part that
+  // went over, so the fix is to trim that part, not to raise one shared cap.
+  const triageSizeFailed = checkFailures.some((f) => f
+    && /triage prompt (part|stays small|ceiling)/i.test(`${f.name || ''} ${f.reason || ''}`));
   const shown = checkFailures.slice(0, MAX_FAILING_SHOWN);
   const more = checkFailures.length - shown.length;
   const tried = Array.isArray(broken) ? broken : [];
@@ -822,6 +826,10 @@ function checksFixPrompt({
       '',
       ...shown.map(describeFailing),
       ...(more > 0 ? [`- and ${more} more, not listed here`] : []),
+      ...(triageSizeFailed ? [
+        '',
+        'One of these is the triage prompt\'s size rule, and it names the part that went over its budget. Trim the text in that part that this change grew, or move detail only a builder needs out of what the triage prompt includes (into the build\'s work order or a code-built note). Raise only that part\'s own budget on its marker, and say why in `summary`, when the words are really needed for a triage. Never raise the whole prompt\'s ceiling to pass.',
+      ] : []),
       '',
     ] : []),
     ...(tried.length ? [
