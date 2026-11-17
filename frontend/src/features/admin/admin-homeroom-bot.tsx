@@ -1052,11 +1052,14 @@ const NOT_OFFERED_WORDS: Record<string, string> = {
  */
 export function moveOffersLine(m: MoveOffers | null | undefined): string {
   if (!m || (!m.sent && !m.notOffered)) return '';
+  // #6771: `toOtherProjects` counts offers that named another project, so it
+  // is part of `sent` — not a fifth decision beside moved, kept, open and
+  // failed, which would count the same offer twice.
+  const other = Number(m.toOtherProjects) || 0;
   const decided = countsLine([
     [m.moved, 'moved'], [m.kept, 'kept'], [m.open, 'not answered yet'], [m.failed, 'failed'],
-    [Number(m.toOtherProjects) || 0, 'to other projects'],
   ]);
-  const sent = `${m.sent} offer${m.sent === 1 ? '' : 's'} to move a request to Homeroom in the last ${m.days || 7} days${decided ? ` (${decided})` : ''}`;
+  const sent = `${m.sent} offer${m.sent === 1 ? '' : 's'} to move a request to Homeroom in the last ${m.days || 7} days${other ? `, ${other} of them to another project's board` : ''}${decided ? ` (${decided})` : ''}`;
   if (!m.notOffered) return `${sent}.`;
   const why = Object.entries(m.notOfferedByWhy || {}).filter(([, n]) => n > 0)
     .map(([k, n]) => `${n} ${NOT_OFFERED_WORDS[k] || k.replace(/_/g, ' ')}`).join(', ');
