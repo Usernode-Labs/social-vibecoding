@@ -5282,6 +5282,93 @@ test('get_proposal carries the problems the shots agent noticed beside the shot 
   } finally { c.restore(); }
 });
 
+// #6779: a failed shots run's step, read through the diagnostics route, which
+// keeps its own owner-or-manager rule. A 404 is simply no diagnosis.
+const D_FAILED_SHOTS = {
+  state: 'failed', required: true, impact: 'ui', rationale: 'Shows the toast.',
+  claims: [], baseSha: 'a'.repeat(40), headSha: 'b'.repeat(40),
+  failureCode: 'shots_agent_failed',
+  failureReason: 'The shots agent stopped with an error before it finished.',
+  repairAvailable: false, planHash: 'c'.repeat(64), verifiedReason: null,
+  overriddenBy: null, overriddenAt: null, overrideReason: null,
+  artifacts: [], updatedAt: '2026-11-17T14:30:00.000Z',
+};
+const D_DIAGNOSIS = {
+  runId: 'd'.repeat(32),
+  state: 'failed',
+  failureCode: 'shots_agent_failed',
+  terminalClass: 'agent_never_started',
+  stoppedAt: {
+    kind: 'auth_bootstrap', side: 'base', persona: 'member', outcome: 'error',
+    failureCode: 'invalid_session_cookie', failureStage: 'exchange', responseStatus: 200,
+  },
+  agentStarted: false,
+  toolsUsed: 0,
+  lastWords: null,
+  timingsMs: { provisioning: 900 },
+  workerOutOfMemory: false,
+};
+
+function shotsPlatform({ change = 4303, state = 'failed', diagnostics = D_DIAGNOSIS, status = 404, calls = [] } = {}) {
+  const shots = { ...D_FAILED_SHOTS, state };
+  return (method, pathname) => {
+    calls.push(pathname);
+    if (pathname === `/api/sessions/${change}`) {
+      return { session: { id: change, app_slug: 'recipe-box', status: 'promoted', shots } };
+    }
+    if (pathname === `/api/sessions/${change}/status`) return { busy: false };
+    if (pathname === `/api/apps/recipe-box/proposals/${change}/shots/diagnostics`) {
+      if (status !== 200) return { __http: { ok: false, status, body: {} } };
+      return { diagnostics: { runId: diagnostics.runId, state: 'failed', diagnosis: diagnostics } };
+    }
+    throw new Error(`unexpected platform call: ${pathname}`);
+  };
+}
+
+test('#6779 — get_change and get_proposal carry the failed shots diagnosis a manager may read', async () => {
+  const calls = [];
+  const c = connector(shotsPlatform({ diagnostics: D_DIAGNOSIS, status: 200, calls }));
+  try {
+    const proposal = validateOutput(c.specs.get('get_proposal'),
+      await c.handlers.get('get_proposal')({ proposalId: 4303 }));
+    assert.ok(proposal.success, proposal.success ? '' : proposal.error.message);
+    assert.equal(proposal.data.shots.diagnosis.stoppedAt.kind, 'auth_bootstrap');
+    assert.equal(proposal.data.shots.diagnosis.stoppedAt.failureCode, 'invalid_session_cookie');
+    assert.equal(proposal.data.shots.diagnosis.agentStarted, false);
+
+    const change = validateOutput(c.specs.get('get_change'),
+      await c.handlers.get('get_change')({ changeId: 4303 }));
+    assert.ok(change.success, change.success ? '' : change.error.message);
+    assert.equal(change.data.shots.state, 'failed');
+    assert.equal(change.data.shots.diagnosis.stoppedAt.failureCode, 'invalid_session_cookie');
+  } finally { c.restore(); }
+});
+
+test('#6779 — anybody else gets no diagnosis, and a non-failed run makes no diagnostics call', async () => {
+  const denied = [];
+  const c = connector(shotsPlatform({ status: 404, calls: denied }));
+  try {
+    const result = await c.handlers.get('get_change')({ changeId: 4303 });
+    const parsed = validateOutput(c.specs.get('get_change'), result);
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    assert.equal('diagnosis' in parsed.data.shots, false, 'a 404 leaves the public shape alone');
+    assert.equal(parsed.data.shots.state, 'failed');
+  } finally { c.restore(); }
+  assert.ok(denied.includes('/api/apps/recipe-box/proposals/4303/shots/diagnostics'),
+    'the route itself decides who may read it');
+
+  const calls = [];
+  const ok = connector(shotsPlatform({ state: 'verified', calls }));
+  try {
+    const parsed = validateOutput(c.specs.get('get_change'),
+      await ok.handlers.get('get_change')({ changeId: 4303 }));
+    assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+    assert.equal('diagnosis' in parsed.data.shots, false);
+  } finally { ok.restore(); }
+  assert.equal(calls.some((pathname) => pathname.endsWith('/shots/diagnostics')), false,
+    'a run that did not fail has no diagnosis to read');
+});
+
 test('#2137 — nextStep says the verdict is waiting on a sync with main, and where to look', () => {
   const step = tools.shapeProposal(DEFERRED_ROW, ORIGIN).nextStep;
   assert.match(step, /DEFERRED, not running/, 'a decision, not a run in flight');
