@@ -80,7 +80,7 @@ import {
 } from './first-visit';
 // S01: the made screen kept across a reload (./first-visit.ts oweMade).
 import { clearMade, oweMade, owedMade } from './first-visit';
-import { type CreateAudience, type IdeaSource, type Made, type MakeEntry, MakeScreen } from './make';
+import { type CreateAudience, type IdeaSource, type Made, type MakeEntry, MakeScreen, forgetKeptDraft } from './make';
 import { MadeScreen, madeAppOf, madeAppUrl } from './made';
 import { noteMoment } from './made-moments';
 import { APP_MENU, BOTTOM_BARS, homeWalkSteps, lookAroundSteps, type TourScreen, type TourStep } from './tour-steps';
@@ -1217,6 +1217,9 @@ export function openCreate(
   startImport = false,
   start: { idea?: string | null; name?: string | null; ideaSource?: IdeaSource; audience?: CreateAudience } = {},
 ): boolean {
+  // #6781: a name handed in is a new start, as a brief is: the form left
+  // from Create does not come back under it (make.tsx forgetKeptDraft).
+  if (!startImport && start.name) forgetKeptDraft();
   let opened = false;
   flushSync(() => setMode((prev) => {
     const turning = prev.kind === 'make' && prev.entry === 'create' && !!prev.startImport !== startImport;

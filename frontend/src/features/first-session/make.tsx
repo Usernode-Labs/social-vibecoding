@@ -365,6 +365,16 @@ type MakeDraft = {
 };
 let keptDraft: (MakeDraft & { who: string }) | null = null;
 
+/**
+ * #6781: a name handed in (a private thread's New project, which offers it
+ * with the brief) is a new start, as a brief is: drop the draft left from
+ * Create before the screen mounts, so it does not open with that name over
+ * the bot's. Called by the door that hands one in (./index.tsx openCreate).
+ */
+export function forgetKeptDraft(): void {
+  keptDraft = null;
+}
+
 /** The draft to keep, or null when the form holds nothing worth keeping. Pure. */
 export function draftWorthKeeping(draft: MakeDraft | null): MakeDraft | null {
   if (!draft) return null;
@@ -438,8 +448,9 @@ export function MakeScreen({
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
   // N9: Create's form as it was last left (keptDraft), read once at mount.
-  // An idea or name handed in (a private thread's) wins over a kept draft.
-  const [draft] = useState(() => (fromCreate && !startImport && !waitlistIdea && !handedName && keptDraft?.who === who ? keptDraft : null));
+  // An idea handed in (a private thread's) wins over a kept draft; a name
+  // handed in drops it before the screen mounts (forgetKeptDraft).
+  const [draft] = useState(() => (fromCreate && !startImport && !waitlistIdea && keptDraft?.who === who ? keptDraft : null));
   const [brief, setBrief] = useState(draft ? draft.brief : waitlistIdea ?? '');
   const [name, setName] = useState(draft ? draft.name : handedName ?? '');
   // The tile picked: a template, Your own idea, or nothing yet.
