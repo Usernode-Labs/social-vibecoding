@@ -14,10 +14,12 @@ import { mountFlows } from './onboarding-flows/engine.js';
 // where they arrived from to where they are now. Five views redraw the same
 // threads around one question each: the whole funnel, who is in a private
 // app with someone, who takes part in public apps, how sharing brings the
-// next person in, and who drops off. The chart fills the section and is
-// moved like a map (drag, two-finger scroll, pinch or wheel to zoom); a box
-// or a thread opens a pop-up with the people behind it, and Notes holds the
-// counted findings, the tables and how each number is defined.
+// next person in, and who drops off. The Who menu draws them over everyone,
+// a season, or the people let off the waitlist on one day. The chart fills
+// the section and is moved like a map (drag, two-finger scroll, pinch or
+// wheel to zoom); a box or a thread opens a pop-up with the people behind
+// it, each column title says how many people reach that step, and Notes
+// holds the counted findings, the tables and how each number is defined.
 //
 // The chart is a drawn surface with its own layout, morph and pan and zoom,
 // so it is one imperative module (onboarding-flows/engine.js) rather than a
@@ -76,10 +78,10 @@ const Frame = memo(function Frame({ demo, cut }: { demo: boolean; cut: boolean }
             <div className="tabs" role="tablist" aria-label="View" data-of="tabs" />
             <div className="ctlrow">
               <ul className="legend" data-of="legend" aria-label="Legend" />
-              <button className="tgl" data-of="s1Toggle" type="button" aria-pressed="false">
-                <span className="knob" aria-hidden="true" />
-                Exclude earlier members
-              </button>
+              <label className="whobox" data-of="whoBox">
+                <span className="wholabel">Who</span>
+                <select data-of="who" aria-label="Who to draw: everyone, a season, or the people let off the waitlist on one day" />
+              </label>
             </div>
           </div>
           <button className="fab" id="admin-of-notes-open" data-of="notesBtn" type="button" aria-expanded="false" aria-controls="admin-of-notes">Notes</button>
@@ -124,7 +126,7 @@ const Frame = memo(function Frame({ demo, cut }: { demo: boolean; cut: boolean }
             <p className="note">
               A step is from one card to the next card its people reach, one column to the right. People are
               lost at a step when the card they land in leads no further. Columns that only break the previous
-              card down (Time on waitlist, Admit mail) are not steps of their own: the card they break down
+              card down (Time on waitlist, Admit mail, What to make?) are not steps of their own: the card they break down
               carries the total of its parts, so its people are counted there and again on the parts. Only
               cards with 10 or more people are ranked. Every card on the chart carries a mark for its next
               step: a clay tag with the people lost when more than 10% are, filled when half or more are; a
@@ -133,6 +135,20 @@ const Frame = memo(function Frame({ demo, cut }: { demo: boolean; cut: boolean }
               whose people mostly came through one door can hide a large loss among the rest: the door split
               says when that is so.
             </p>
+          </section>
+          <section className="card" aria-labelledby="admin-of-steps-title">
+            <h2 id="admin-of-steps-title">How many reach each step</h2>
+            <div className="tablewrap" data-of="stepswrap" />
+            <p className="note" data-of="stepsNote" />
+          </section>
+          <section className="card" aria-labelledby="admin-of-onb-title" data-of="onbCard" hidden>
+            <h2 id="admin-of-onb-title">Getting in and getting started</h2>
+            <h3>The admit mail or a nudge</h3>
+            <div className="tablewrap" data-of="mailwrap" />
+            <p className="note" data-of="mailNote" />
+            <h3>What do you want to make?</h3>
+            <div className="tablewrap" data-of="askwrap" />
+            <p className="note" data-of="askNote" />
           </section>
           <section className="card" aria-labelledby="admin-of-table-title">
             <h2 id="admin-of-table-title" data-of="tableTitle" />
