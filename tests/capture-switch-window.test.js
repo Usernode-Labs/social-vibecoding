@@ -56,7 +56,12 @@ function collect() {
 // A page whose sub-route renders `renderAfterMs` after a hash switch reaches
 // it (`renderOnHash`), or only when the document is loaded at it, `coldRenderMs`
 // into that load. `errorAfterMs` logs a console error that long after a switch.
-function makePage({ renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0, errorAfterMs = null } = {}) {
+// `loadError` ({ hash, afterMs, text }) logs one that long after a load at
+// `hash`, through the same probe path as a switch's late error (see below).
+function makePage({
+  renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0,
+  errorAfterMs = null, loadError = null,
+} = {}) {
   const handlers = new Map();
   const timers = [];
   // A switch's late error is handed to the listeners by the page's own clock,
@@ -87,7 +92,15 @@ function makePage({ renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0, e
       page.gotos.push(u);
       const i = String(u).indexOf('#');
       page.loaded = i === -1 ? '' : String(u).slice(i);
-      page.readyAt = performance.now() + coldRenderMs;
+      const now = performance.now();
+      page.readyAt = now + coldRenderMs;
+      // A boot error goes through the presence probe for the same reason as a
+      // switch's: a timer of its own can be delivered after the probe that
+      // answers "present", and the console is then frozen without it.
+      if (loadError && String(u).endsWith(loadError.hash)) {
+        errorAt = now + loadError.afterMs;
+        errorText = loadError.text;
+      }
       return { status: () => 200 };
     },
     async waitForNetworkIdle() {},
@@ -199,14 +212,14 @@ test('a coldLoad check is judged on a load of its address: no switch, the full w
       return {
         async newPage() {
           // A screen drawn only by a load at it, 0.3s in; a load at #/y also
-          // logs an error at 0.25s, while its screen is still coming.
-          const p = makePage({ coldRenderMs: 300 });
-          const goto = p.goto;
-          p.goto = async (u) => {
-            const r = await goto(u);
-            if (String(u).endsWith('#/y')) p.later(() => p.emitError('boot script error'), 250);
-            return r;
-          };
+          // logs an error at 0.25s, while its screen is still coming. The
+          // error is the page's own clock, not a timer: it is emitted by the
+          // same probe that can answer "present", so a stalled event loop
+          // cannot deliver the screen's poll before a due error.
+          const p = makePage({
+            coldRenderMs: 300,
+            loadError: { hash: '#/y', afterMs: 250, text: 'boot script error' },
+          });
           pages.push(p);
           return p;
         },
