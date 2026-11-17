@@ -95,10 +95,31 @@ test('the overview: a north star, a funnel with a cohort on top, and the people 
   assert.ok(growth.includes('id="admin-journey-north-star"'), 'the tiles keep the declared check\'s anchor');
   assert.match(growth, /term\('together', 'Active groups'\)/, 'and its words');
   assert.match(growth, /const STEPS = \['Let in', 'Opened Homeroom', 'Stayed 30 s\+', 'Used it with a group', 'Came back together'\];/);
-  assert.match(growth, /aria-label=\{`List the people at \$\{label\}`\}/, 'a step opens its people');
-  assert.match(growth, /<Drawer kicker="Reached this step"/);
-  assert.match(growth, /onClick=\{\(\) => onOpenPerson\(p\.userId!\)\}/, 'a person opens in Journey');
+  assert.match(growth, /<Count row \{\.\.\.stepOf\(i\)\} className="relative block h-11">/, 'a step opens its people');
+  assert.match(growth, /kicker: 'Reached this step', title: STEPS\[i\], list: atStep\(i\)/);
+  assert.match(growth, /onClick=\{\(\) => onOpenPerson\(p\.userId!\)\}/, 'a person still opens on its own page');
   assert.match(growth, /const SAVED_KEY = 'homeroom\.admin\.growth\.cohorts';/, 'saved cohorts stay in this browser');
+});
+
+test('every number or bar that counts people opens them in one sidebar', () => {
+  assert.match(growth, /const PeopleCtx = createContext</, 'one sidebar for the page');
+  assert.match(growth, /<PeopleDrawer key=\{shown\.seq\}/);
+  assert.match(growth, /disabled=\{!list\.length\}/, 'an empty count opens nothing');
+  // Each place a count is drawn: its Count, so a tap lists exactly those people.
+  for (const kicker of ['Admit mail', 'Stopped here', 'First active', 'Weeks active, last 4', 'Last 7 days',
+    "In Analytics' WAU", 'Group', 'Heard about it', 'Way in', 'Admit day', 'This scope']) {
+    assert.ok(growth.includes(`kicker="${kicker}"`) || growth.includes(`kicker: '${kicker}'`), `${kicker} opens its people`);
+  }
+  assert.match(growth, /<Bars values=\{vals\} labels=\{labels\} fade=\{fade\} tone=\{tone\} lists=\{lists\} \/>/, 'every weekly bar');
+  assert.match(growth, /aria-label="Previous person"/);
+  assert.match(growth, /aria-label="Next person"/);
+  assert.match(src, /renderPerson=\{\(id\) => <PersonView userId=\{id\} onBack=\{NOOP\} onName=\{NOOP\} embedded \/>\}/,
+    'a person opens in Journey\'s own view, inside the sidebar');
+});
+
+test('Analytics\' WAU is broken down by what its people did', () => {
+  assert.match(growth, /term\('wauDid', 'What they did in those 7 days'\)/);
+  for (const row of ['Acted: wrote, voted or built', 'Stayed 30 s+, no act', 'Glanced: under 30 s, or kudos']) assert.ok(growth.includes(`'${row}'`), row);
 });
 
 test('nothing from the API is a link, and no chart library is loaded', () => {
