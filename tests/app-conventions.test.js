@@ -376,25 +376,38 @@ test('conventions doc says a game draws its play area on a canvas, with what tha
 // read as a ban on every outside API, so the bot told someone a real map
 // with place search could not be built, though Homeroom Maps does exactly
 // that. The rules now say what is allowed, and the data rule distinguishes a
-// library the app serves itself from a script on another origin.
-test('conventions allow outside data services, with keys in secrets (#6766)', () => {
+// library the app serves itself from a script on another origin. The group's
+// follow-up on the request gave the allowed list, the two bans and their
+// reasons, and the guidance worded as a preference.
+test('conventions allow outside data services and content, with two bans (#6766)', () => {
   const doc = getAppConventions();
-  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->'));
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->')).replace(/\s+/g, ' ');
   // The phrase the bot and two projects read as a platform limit is gone.
   assert.doesNotMatch(excerpt, /don't call\s+third-party APIs directly/);
-  assert.match(excerpt, /\*\*AI goes through the platform's LLM proxy and uploads through its file\s+storage\. Other outside services \(map tiles, place search, weather,\s+public data APIs\) are fine\.\*\*/);
-  assert.match(excerpt, /declare any key in `dapp\.json`\s+`secrets` \(rule 7\) for the owner to set in the Secrets UI/);
-  assert.match(excerpt, /Never ask the people using the app for an API\s+key\./);
-  assert.match(excerpt, /keyless\s+providers need no secret/);
-  // Rule 12 names the bundled library and the fetched tiles.
-  assert.match(excerpt, /an npm library bundled and served from the app's\s+own origin is its own code; fetching tiles or JSON is not loading a\s+script/);
-  assert.match(excerpt, /no `<script>` tags\s+from another origin/);
+  assert.match(excerpt, /\*\*AI goes through the platform's LLM proxy and uploads through its file storage\. Other outside services \(map tiles, place search, weather, public data APIs\) are fine\.\*\*/);
+  assert.match(excerpt, /declare any key in `dapp\.json` `secrets` \(rule 7\) for the owner to set in the Secrets UI/);
+  assert.match(excerpt, /Never ask the people using the app for an API key\./);
+  assert.match(excerpt, /keyless providers need no secret/);
+  // Rule 12 names what may come from another site.
+  assert.match(excerpt, /Everything else from other sites is fine: images, video and audio; map tiles and map styles; web fonts; data from public APIs, from the app's server or from the browser when the API allows it; and embedded players such as YouTube or Vimeo in an `<iframe>`\./);
+  // Ban 1: an outside script, with the governance reason, and npm instead.
+  assert.match(excerpt, /No trackers, analytics, ad SDKs, pixels or beacons in any form, including image pixels: a privacy promise to the people using the apps \(see also request #6048\)\. No `<script>` tag from another origin: the group votes on the code in the repository, and an outside script can change after the vote, so the app would run code nobody voted on and nobody can see in the repo\./);
+  assert.match(excerpt, /Install libraries from npm and serve them from the app's own origin, as Homeroom Maps does with MapLibre\./);
+  // Guidance is a preference, never a ban.
+  assert.match(excerpt, /Prefer fonts from npm \(`@fontsource\/\*`\) over Google Fonts, YouTube's `youtube-nocookie\.com` embed, and calls from the app's server rather than the browser so visitors' IP addresses are not sent too\./);
 
   const data = getConventionSection('data-rules-what-no-app-may-collect-or-load');
   assert.ok(data && data.content, 'the data rules section exists');
   const section = data.content.replace(/\s+/g, ' ');
-  assert.match(section, /an npm library from its own origin is its own code/);
-  assert.match(section, /fetching tiles or JSON elsewhere is not a script/);
-  assert.match(section, /no `<script>` from another origin/);
-  assert.match(section, /Server-side calls hide IPs, but typed words reach the provider\./);
+  // The line that read as "the app's own code and Homeroom's assets only"
+  // is gone, replaced by the allowed list.
+  assert.doesNotMatch(section, /An app loads its own code and the centrally hosted Homeroom assets only/);
+  assert.match(section, /Everything else from other sites is fine: images, video and audio hosted elsewhere; map tiles and map styles; web fonts; public API data \(from the app's server, or the browser where the API allows it\); and embedded players such as YouTube or Vimeo in an `<iframe>`\./);
+  // Ban 1: an outside script, because the group voted on the repository.
+  assert.match(section, /No `<script>` tag from another origin either: the group votes on the code in the repository, and an outside script can change after the vote, so the app would run code nobody voted on and nobody can see in the repo\./);
+  assert.match(section, /Install libraries from npm and serve them from the app's own origin, as Homeroom Maps does with MapLibre\./);
+  // Ban 2: trackers and pixels in any form, a privacy promise (#6048).
+  assert.match(section, /No trackers, analytics, ads, pixels or beacons in any form, including image pixels: a privacy promise to the people using the apps \(see also request #6048\)\./);
+  // Calling from the app's server keeps IP addresses away, not the words.
+  assert.match(section, /A server-side call still sends what people type to the provider, so choose providers knowingly\./);
 });

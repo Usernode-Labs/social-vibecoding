@@ -38,8 +38,10 @@ const CONVENTIONS = fs.readFileSync(
 // data rules (#5117): no trackers, sensitive data, child audience,
 // passwords or card data, or a login of the app's own. Raised again for
 // #6766: which outside data services are allowed, and the difference
-// between a library the app serves and a script on another origin.
-const MAX_ESSENTIALS_BYTES = 8.5 * 1024;
+// between a library the app serves and a script on another origin, and then
+// the group's allowed-content list and two bans. The excerpt stays a few
+// kilobytes, never the whole document.
+const MAX_ESSENTIALS_BYTES = 9 * 1024;
 
 test('the work-order markers exist in app-conventions.md, exactly once each', () => {
   const begins = CONVENTIONS.split(prompts.WORK_ORDER_BEGIN).length - 1;
@@ -87,7 +89,7 @@ test('the excerpt covers what an offline agent gets wrong, in priority order', (
   assert.match(essentials, /Content rules/);
   assert.match(essentials, /loot boxes/);
   assert.match(essentials, /Data rules/);
-  assert.match(essentials, /passwords or card data/);
+  assert.match(essentials, /passwords or card\s+data/);
 });
 
 test('the excerpt states the vendoring rule without claiming a check enforces it', () => {

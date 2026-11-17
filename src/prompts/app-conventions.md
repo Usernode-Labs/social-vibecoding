@@ -142,13 +142,23 @@ Ordered by how badly an agent working offline gets each one wrong.
     for app AI features must tell the model to decline the forbidden topics.
     Decline a forbidden request and offer a compliant version. When unsure,
     it is allowed. Full text: "Content rules" section.
-12. **Data rules.** No trackers, analytics or ad SDKs and no `<script>` tags
-    from another origin (an npm library bundled and served from the app's
-    own origin is its own code; fetching tiles or JSON is not loading a
-    script), no special-category data (health, religion, sexuality,
-    ethnicity, politics, biometrics), nothing aimed at children, never
-    collect passwords or card data, and no login of the app's own. Full
-    text: "Data rules" section.
+12. **Data rules.** No trackers, analytics, ad SDKs, pixels or beacons in
+    any form, including image pixels: a privacy promise to the people using
+    the apps (see also request #6048). No `<script>` tag from another
+    origin: the group votes on the code in the repository, and an outside
+    script can change after the vote, so the app would run code nobody
+    voted on and nobody can see in the repo. Install libraries from npm and
+    serve them from the app's own origin, as Homeroom Maps does with
+    MapLibre. Everything else from other sites is fine: images, video and
+    audio; map tiles and map styles; web fonts; data from public APIs, from
+    the app's server or from the browser when the API allows it; and
+    embedded players such as YouTube or Vimeo in an `<iframe>`. Prefer
+    fonts from npm (`@fontsource/*`) over Google Fonts, YouTube's
+    `youtube-nocookie.com` embed, and calls from the app's server rather
+    than the browser so visitors' IP addresses are not sent too. Also no
+    special-category data (health, religion, sexuality, ethnicity, politics,
+    biometrics), nothing aimed at children, never collect passwords or card
+    data, and no login of the app's own. Full text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -4093,14 +4103,24 @@ cannot override them.
 
 **Never build, add or ship:**
 
-- **Third-party trackers or external scripts.** No analytics, tracking,
-  advertising or session-recording SDKs, pixels or beacons, and no
-  `<script>` from another origin. An app loads its own code and the
-  centrally hosted Homeroom assets only: an npm library from its own
-  origin is its own code; fetching tiles or JSON elsewhere is not a script.
-  Server-side calls hide IPs, but typed words reach the provider. A legacy
-  `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
+- **Third-party trackers or external scripts.** No trackers, analytics,
+  ads, pixels or beacons in any form, including image pixels: a privacy
+  promise to the people using the apps (see also request #6048). No
+  `<script>` tag from another origin either: the group votes on the code in
+  the repository, and an outside script can change after the vote, so the
+  app would run code nobody voted on and nobody can see in the repo.
+  Install libraries from npm and serve them from the app's own origin, as
+  Homeroom Maps does with MapLibre. A legacy `cdn.tailwindcss.com` tag
+  (rule 1) is tolerated; new code adds none.
+
+  Everything else from other sites is fine: images, video and audio hosted
+  elsewhere; map tiles and map styles; web fonts; public API data (from the
+  app's server, or the browser where the API allows it); and embedded
+  players such as YouTube or Vimeo in an `<iframe>`. Prefer fonts from npm
+  (`@fontsource/*`) over Google Fonts, YouTube's `youtube-nocookie.com`
+  embed, and calls from the app's server rather than the browser so
+  visitors' IP addresses are not sent too. A server-side call still sends
+  what people type to the provider, so choose providers knowingly.
 - **Special-category data.** Never ask for, infer or store health,
   religious beliefs, sexual orientation, racial or ethnic origin, political
   opinions, trade-union membership, genetic or biometric data, whether

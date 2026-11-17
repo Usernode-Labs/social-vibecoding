@@ -20,7 +20,7 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 // place search).
 test('#6766: outside data services are allowed, and it never invents a limit', () => {
   const prompt = mayor.systemPrompt({ username: 'ada' });
-  assert.match(prompt, /trackers, ads or `<script>` tags from other\n  sites/);
+  assert.match(prompt, /trackers, ads or `<script>` tags from another\n  origin/);
   assert.match(prompt, /Maps, place search and other outside data services are\n  allowed: the app calls them from its server, with any key in its secrets\./);
   assert.match(prompt, /Never tell anyone a feature cannot be built on Homeroom unless the platform rules plainly forbid it\./);
   assert.match(prompt, /Homeroom Maps has a real\n  map and place search\) shows it can be built\./);
