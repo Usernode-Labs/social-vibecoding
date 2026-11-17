@@ -28,8 +28,15 @@
 // more round for a refused stand-in, two for a claims correction) and reads
 // its rounds when it records the turn. Behaviour is each loop's own, as it
 // was: this module decides nothing a profile did not decide before.
+//
+// A turn a person can stop (their chat with the bot: homeroom-bot-stop.js)
+// hands its `signal` on the profile. The round looks at it at its two safe
+// points, before the model is asked and before each tool call, and throws
+// the stop there: a call that has started always finishes. A profile with
+// no signal (a project's thread) is never stopped here.
 
 const log = require('./logger');
+const botStop = require('./homeroom-bot-stop');
 
 /** Pure: a tool result as the model reads it, cut at `max` characters. */
 function resultText(result, max, cut) {
@@ -51,6 +58,8 @@ async function runRound(state, profile, override = null) {
   round.last = typeof profile.isLast === 'function' ? !!profile.isLast(round) : state.rounds >= state.limit;
   const offered = override || profile.offer(round);
   if (offered.note) profile.messages.push({ role: 'user', content: offered.note });
+  // A safe point: nothing of this round has been asked or done yet.
+  botStop.check(profile.signal);
   const res = await profile.ask({
     messages: profile.messages,
     tools: offered.tools,
@@ -66,6 +75,8 @@ async function runRound(state, profile, override = null) {
   if (typeof profile.onCalls === 'function' && profile.onCalls(res, calls, round) === 'stop') return true;
   profile.messages.push({ role: 'assistant', content: res.content || null, tool_calls: calls });
   for (const call of calls) {
+    // A safe point: the calls before this one are done, this one not begun.
+    botStop.check(profile.signal);
     const name = call.function.name;
     const args = profile.parseArgs(call.function.arguments);
     const result = await profile.call(call, name, args, round);

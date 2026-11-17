@@ -46,6 +46,17 @@ function fakeIndexedDb() {
           later(() => { request.result = [...rows.values()].map((value) => structuredClone(value)); request.onsuccess?.(); });
           return request;
         },
+        get(key) {
+          const request = {};
+          later(() => {
+            request.result = rows.has(key) ? structuredClone(rows.get(key)) : undefined;
+            request.onsuccess?.();
+            // A lookup-only transaction still completes (a delete issued in
+            // onsuccess schedules its own completion).
+            later(() => tx.oncomplete?.());
+          });
+          return request;
+        },
       };
       tx.objectStore = () => store;
       return tx;
@@ -63,33 +74,49 @@ function fakeIndexedDb() {
 
 const answer = (status, data = {}) => ({ ok: status >= 200 && status < 300, status, json: async () => data });
 
+/** One server, shared by two tabs: the same POST log and the same answer. */
+function sharedServer() {
+  return { sent: [], reply: () => Promise.resolve(answer(200)) };
+}
+
+/** Web Locks, in miniature: passes run one after another, as across tabs. */
+function fakeLocks() {
+  let tail = Promise.resolve();
+  return {
+    request(_name, fn) {
+      const run = tail.then(() => fn());
+      tail = run.catch(() => {});
+      return run;
+    },
+  };
+}
+
 /** A window with a signed-in viewer, a probe and a server whose answers the test picks. */
-function harness({ viewer = 7 } = {}) {
+function harness({ viewer = 7, idb = fakeIndexedDb(), server = sharedServer(), locks = null } = {}) {
   const events = new EventTarget();
-  const sent = [];
+  const sent = server.sent;
   const outcomes = [];
   const timers = [];
-  let reply = () => Promise.resolve(answer(200));
   let offline = false;
   const win = {
     App: { user: { id: viewer }, _sessionFromSnapshot: false },
     Offline: { isOffline: () => offline },
+    navigator: locks ? { locks } : undefined,
     addEventListener: events.addEventListener.bind(events),
     dispatchEvent: events.dispatchEvent.bind(events),
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
     clearTimeout: () => {},
     fetch: (url, init) => {
       sent.push({ url, method: init.method, body: JSON.parse(init.body) });
-      return reply(url, init);
+      return server.reply(url, init);
     },
   };
   win.addEventListener('usernode:action-outbox', (event) => outcomes.push(event.detail));
-  const idb = fakeIndexedDb();
   const engine = loadTsx(OUTBOX);
   const outbox = engine.createActionOutbox(win, idb, 50);
   return {
-    engine, outbox, win, idb, sent, outcomes, timers,
-    answer: (fn) => { reply = fn; },
+    engine, outbox, win, idb, sent, outcomes, timers, server,
+    answer: (fn) => { server.reply = fn; },
     goOffline: (value) => { offline = value; },
   };
 }
@@ -162,7 +189,9 @@ test('no answer keeps the rest for later, in order, and tries again on a slow lo
   h.answer(() => Promise.resolve(answer(200)));
   h.sent.length = 0;
   h.timers[0].fn();
-  await new Promise((resolve) => setTimeout(resolve, 20));
+  // The flush returns the pass the timer started: wait for it rather than
+  // for a fixed delay, which a busy runner could fire before the second send.
+  await h.outbox.flush();
   assert.deepEqual(h.sent.map((item) => item.url), ['/api/sessions/21/vote', '/api/sessions/22/vote']);
 });
 
@@ -219,6 +248,68 @@ test('a dropped or cleared record is never sent', async () => {
   h.sent.length = 0;
   await h.outbox.flush();
   assert.deepEqual(h.sent, []);
+});
+
+// #6736: "voted while the signal was gone, the queue badge showed 1, then
+// wifi returned and the proposal counted 2 from me". One kept vote, however
+// many triggers fire at once, is one POST, and the store is empty afterwards.
+
+test('one queued vote, the connection triggers fired together: one POST, an empty store, one sent', async () => {
+  const h = harness();
+  assert.equal(await h.outbox.queue(vote(61, 'yes')), true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  // `online`, `usernode:offline-change` and `sv:session` reach flush together
+  // (the shell's three listeners); concurrent flushes are one pass.
+  h.win.dispatchEvent(new Event('online'));
+  h.win.dispatchEvent(new CustomEvent('usernode:offline-change', { detail: { offline: false } }));
+  await Promise.all([h.outbox.flush(), h.outbox.flush(), h.outbox.flush()]);
+  assert.deepEqual(h.sent.map((item) => item.url), ['/api/sessions/61/vote'], 'the kept vote is posted once');
+  assert.deepEqual(h.outcomes.map((item) => item.outcome), ['sent']);
+  assert.equal(h.idb.rows.size, 0, 'and the record is gone');
+  // A page opened later with the same store says nothing is waiting.
+  const later = h.engine.createActionOutbox(h.win, h.idb, 50);
+  await later.announceKept();
+  assert.deepEqual(h.outcomes.map((item) => item.outcome), ['sent'], 'nothing is announced as queued');
+});
+
+test('two tabs over one store, with Web Locks, post a kept vote once', async () => {
+  const idb = fakeIndexedDb();
+  const server = sharedServer();
+  const locks = fakeLocks();
+  const tabA = harness({ idb, server, locks });
+  const tabB = harness({ idb, server, locks });
+  assert.equal(await tabA.outbox.queue(vote(71, 'yes')), true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await Promise.all([tabA.outbox.flush(), tabB.outbox.flush()]);
+  assert.deepEqual(server.sent.map((item) => item.url), ['/api/sessions/71/vote'],
+    'the second tab loads the store after the first one dropped the record');
+  assert.equal(idb.rows.size, 0);
+  assert.deepEqual([...tabA.outcomes, ...tabB.outcomes].map((item) => item.outcome), ['sent']);
+});
+
+test('a newer record under the same key survives the older send and goes next', async () => {
+  const h = harness();
+  assert.equal(await h.outbox.queue(vote(81, 'yes')), true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  h.answer((url, init) => (JSON.parse(init.body).vote === 'yes'
+    ? held.then(() => answer(200))
+    : Promise.resolve(answer(200))));
+  const firstPass = h.outbox.flush();
+  for (let i = 0; i < 50 && h.sent.length === 0; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(h.sent.length, 1, 'the Yes is in flight');
+  // A No replaces the kept Yes while the Yes send has not yet been answered.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(await h.outbox.queue(vote(81, 'no')), true);
+  release();
+  await firstPass;
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual([...h.idb.rows.keys()], ['vote:81'], 'the newer record is not deleted with the older');
+  assert.equal(h.idb.rows.get('vote:81').body.vote, 'no');
+  await h.outbox.flush();
+  assert.deepEqual(h.sent.map((item) => item.body.vote), ['yes', 'no'], 'and it is the next thing sent');
+  assert.equal(h.idb.rows.size, 0);
 });
 
 test('the shell sends on the connection coming back, and clears on sign-out', () => {

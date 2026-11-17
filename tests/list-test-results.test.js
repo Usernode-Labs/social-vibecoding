@@ -103,7 +103,7 @@ function loadAppView() {
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
-    `${read('public/js/merge-status.js')}\n${read('public/js/session-transcript.js')}\n`
+    `${read('public/js/merge-status.js')}\n`
     + `${read('public/js/app-view.js')}\n;globalThis.__AppView = AppView;`, sandbox);
   return sandbox.__AppView;
 }

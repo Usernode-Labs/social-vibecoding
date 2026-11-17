@@ -102,6 +102,19 @@ test('a card still going takes its step from its request\'s work state; with not
   // Waiting its turn to be read, or on hold, it says so.
   assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'queued', place: 2 }, whoseMove: 'bot' }).stage, 'queued');
   assert.equal(activity.entryOfWork({ stage: 'reading', line: { code: 'cooldown' }, whoseMove: 'bot' }).stage, 'cooldown');
+  // 13 Nov 2026: and whose line it waits in, in the bot's own words: its own,
+  // which starts by itself. "Ready to build · Number 1 in line" did not say
+  // whether it waited for the bot, for another person or for its requester.
+  const doing = (w) => activity.entryOfWork({ whoseMove: 'bot', ...w }).doing;
+  assert.equal(doing({ stage: 'building', line: { code: 'queued', place: 1 } }), 'Ready to build · Number 1 in my own line; I\'ll start by myself');
+  assert.equal(doing({ stage: 'building', line: { code: 'queued' } }), 'Ready to build · Waiting its turn in my own line; I\'ll start by myself');
+  assert.equal(doing({ stage: 'reading', line: { code: 'queued', place: 2 } }), 'Not started yet · Number 2 in my own line; I\'ll start by myself');
+  // A limit that holds it keeps the words every screen says.
+  assert.equal(doing({ stage: 'building', line: { code: 'held_builds' } }), 'Ready to build · Waiting for one of the project\'s builds to finish');
+  // Held for its requester's plan, whatever it had reached: it waits on them, and is no build under way.
+  const planning = activity.entryOfWork({ stage: 'planning', line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' });
+  assert.deepEqual([planning.doing, planning.waitingOn, planning.typicalMinutes],
+    ['Planning · Planning it with you in a private thread', 'them', undefined]);
   // A request that ended, or was handed back, has no work going on.
   for (const ended of [{ stage: 'live' }, { stage: 'closed' }, { stage: 'stopped', reason: 'build_failed' },
     { stage: 'waiting_for_you', why: 'decide' }]) {
@@ -772,7 +785,7 @@ test('the row draws a bot\'s activity message as the card, in place of its words
   // #3770: handed the words a message is drawn with, for a card with nothing on record.
   // #4097: led by the card of what they are about when they open with its line.
   // Task 2020: or a chat answer laid out, with the words as its fallback (./bot-html.tsx).
-  assert.match(row, /const markdown = <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>;\s*const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} \/>\s*: richHtml \? <BotHtmlReply html=\{richHtml\} fallback=\{markdown\} \/> : markdown;/);
+  assert.match(row, /const markdown = <MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} marks=\{marks\} \/>;\s*const words = !message\.content \? null : head\s*\? <BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} marks=\{marks\} \/>\s*: richHtml \? <BotHtmlReply html=\{richHtml\} fallback=\{markdown\} \/> : markdown;/);
   // B5: led by the bot's hello, on the first card it sends somebody.
   // B6: then a plan and two questions at once, which stand in place of their words too.
   assert.match(row, /\) : isActivityMessage\(message\) \? \([\s\S]{0,600}homeroomBot\?\.hello \? <p className="messages-bot-hello">[\s\S]{0,120}<BotCardOrTrack message=\{message\} words=\{words\} \/>\s*<\/>\s*\) : isPlanMessage\(message\) \? \(/);
@@ -841,26 +854,35 @@ test('an older card the server keeps no state for draws its message\'s words; on
   assert.match(draw(landedWith([30], { failed: true })), /Couldn’t load how far along this is\./);
 });
 
-test('only the bot\'s DM keeps the cards current, beside its tray', () => {
+test('only the bot\'s chat keeps the cards current, beside its tray, while one of its threads is drawn', () => {
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /\{botDm \? <BotWorkSync [^\n]*\n[^\n]*\n\s*\{botDm \? <BotActivitySync conversationId=\{conversationId\} newsKey=\{newestBotMessageId\(snap\.messages\)\} \/> : null\}/);
+  // 14 Nov 2026: the chat is its threads only, and the open thread's newest
+  // message from the bot is the news that moves them on (BotThreadsSync).
+  const sync = screen.slice(screen.indexOf('function BotThreadsSync('), screen.indexOf('export function MessagesScreen('));
+  assert.match(sync, /const newsKey = thread \? newestBotMessageId\(thread\.messages\) : null;/);
+  assert.match(sync, /<BotWorkSync conversationId=\{conversationId\} newsKey=\{newsKey\} \/>\s+<BotActivitySync conversationId=\{conversationId\} newsKey=\{newsKey\} \/>/);
+  assert.match(screen, /\{here \? <BotThreadsSync conversationId=\{conversationId\} \/> : null\}/, 'mounted by the threads-only chat alone');
+  // A conversation's own transcript mounts neither: no chat with the bot is drawn as one.
+  const stream = screen.slice(screen.indexOf('function ConversationThread('), screen.indexOf('function ThreadActivityRow('));
+  assert.doesNotMatch(stream, /BotWorkSync|BotActivitySync/);
 });
 
-test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, Main Chat its list\'s first row', () => {
+test('the staging preview\'s declared check follows the demo DM to the Homeroom bot tab, which has New chat and no Main Chat row', () => {
   // 1 Nov 2026: the chat with the bot is the Homeroom bot tab's alone. Its
   // Activity bar was drawn over it on the Messages screen only, where it is
   // no longer drawn: the tab's own lists say what needs you and what is in
-  // progress. Its check now follows the demo DM's Messages address to the
-  // tab: Main Chat, lit, first, with the demo chat in the column beside it.
+  // progress. Its check follows the demo DM's Messages address to the tab.
+  // 14 Nov 2026: there it finds no Main Chat row and no Main Chat head, and
+  // New chat, the labelled button beside search, in the page's head.
   const tests = JSON.parse(read('dapp.json')).tests;
   assert.ok(!tests.some((t) => t.id === 'homeroom-bot-dm-activity-tray'), 'the bar\'s check is retired');
-  const check = tests.find((t) => t.id === 'homeroom-bot-main-chat-row');
+  assert.ok(!tests.some((t) => t.id === 'homeroom-bot-main-chat-row'), 'and so is Main Chat\'s row\'s');
+  const check = tests.find((t) => t.id === 'homeroom-bot-new-chat');
   assert.equal(check.path, '/?demo=1#messages/910005', 'its old address, which lands on the tab');
-  // #6207: Main Chat holds no request's news, so the check no longer waits for a news row in it.
-  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):has\(#ai-main-pane\[data-ai-column=main\] > \[data-ai-main-head\] \+ \.messages-layout\[data-main-chat\]\)/);
-  assert.match(check.expectSelector, /\[data-ai-sheet=main\] > \[data-ai-main-row\]\[data-ai-lit\]\[aria-current=true\]$/);
+  assert.match(check.expectSelector, /^#ai-screen:not\(\.hidden\):not\(:has\(\[data-ai-main-row\], \[data-ai-main-head\]\)\)/);
+  assert.match(check.expectSelector, /\[data-ai-hero\] > button\[data-ai-search-toggle\] \+ button\[data-ai-new-chat\]$/);
   assert.ok(check.expectSelector.length <= 256, 'within what the runner reads');
-  assert.equal(check.expectText, 'Main Chat');
+  assert.equal(check.expectText, 'New chat');
   for (const file of ['frontend/src/features/ai/**', 'src/services/staging-messages.js', 'src/routes/conversations.js']) {
     assert.ok(check.impact.includes(file), file);
   }
@@ -1256,7 +1278,7 @@ test('B6: a card going says how long its step usually takes, beside how long so 
   assert.doesNotMatch(draw({ card: working() }), /usually/, 'nothing said without a range');
 });
 
-test('B6: the transcript leaves out a card Build it moved under its plan, and the client keeps where it went', () => {
+test('B6: a thread leaves out a card Build it moved under its plan, and the client keeps where it went', () => {
   const { isMovedActivity } = loadTsx(CARD);
   const message = (meta, extra = {}) => ({
     id: 800, sender: { id: 1, username: 'homeroom_bot', bot: true }, content: 'words', metadata: { homeroomBot: { ...META, ...meta } }, ...extra,
@@ -1269,8 +1291,11 @@ test('B6: the transcript leaves out a card Build it moved under its plan, and th
   assert.equal(normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 950 } }).homeroomBot.movedTo, 950);
   assert.equal('movedTo' in normalizeBotMeta({ homeroomBot: { kind: 'activity', movedTo: 'x' } }).homeroomBot, false);
   const screen = read('frontend/src/features/messages/index.tsx');
-  assert.match(screen, /const message = snap\.messages\[index\];\s*\/\/[^\n]*\n\s*if \(isMovedActivity\(message\)\) continue;\s*\/\/[^\n]*\n\s*if \(plans\.hidden\.has\(message\.id\)\) continue;\s*\/\/[^\n]*\n\s*if \(newsFold\?\.hidden\.has\(message\.id\)\) continue;\s*const day = dayKey\(message\);/,
-    'skipped before its day and its name are counted, so the row after it is drawn as it would be (and so is news folded into a newer row about its request)');
-  // #4564 joined isActivityMessage to the import, for the change blocks' read of what a row shows.
+  // 14 Nov 2026: a first version's cards are replies of its own thread,
+  // read there as the stream they were: the moved card is not among the
+  // replies drawn (nor one whose step its plan carries).
+  assert.match(screen, /const carried = \(message: ConversationMessage\) => botChat && !cardId\s+&& \(flatPlans\.hidden\.has\(message\.id\) \|\| isMovedActivity\(message\)\);/);
+  assert.match(screen, /\.\.\.replies\.filter\(\(message\) => !carried\(message\)\)\.map\(\(message\) => \(\{ kind: 'reply' as const, message \}\)\),/,
+    'left out before the rows are ordered and grouped, so the row after it is drawn as it would be');
   assert.match(screen, /import \{ BotActivitySync, isActivityMessage, isMovedActivity \} from '\.\/bot-activity';/);
 });

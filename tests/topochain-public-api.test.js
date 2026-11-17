@@ -48,6 +48,9 @@ const SEASON_EVENTS = [
     id: 100, name: 'Sprint One', description: 'Regular fixture event', starts_at: T(-10), ends_at: T(10),
     is_active: true, internal: false, display_leaderboard: true, disclaimer: 'Please read the rules.',
     season_id: 10, type: 'regular', chain_id: 'chain-1', start_epoch: 1, end_epoch: 3,
+    // The event's own ledger weight, as an event with an epoch range has
+    // (#6735: the viewer's row is caught up with the builder's arithmetic).
+    scoring_formula: { metrics: [], offchain_weight: 1 },
   },
   {
     // starts_at/ends_at both in the past (already ended) so this event is
@@ -368,6 +371,35 @@ function makeMockPool() {
             wallet_address: acct ? acct.public_key : null, bech32m: acct ? acct.address : null,
           };
         });
+      return { rows };
+    }
+
+    // #6735: the viewer's own ledger points per event in scope
+    // (event-standings.js VIEWER_LEDGER_TOTALS_SQL).
+    if (sql.includes('COALESCE(SUM(ua.points), 0) AS ledger_points')) {
+      const [userId, eventIds] = params;
+      const rows = eventIds.map((eventId) => {
+        const event = SEASON_EVENTS.find((e) => e.id === eventId);
+        const points = USER_ACTIVITIES
+          .filter((a) => Number(a.user_id) === Number(userId) && a.season_event_id === eventId)
+          .reduce((sum, a) => sum + Number(a.points), 0);
+        return {
+          season_event_id: eventId,
+          start_epoch: event ? event.start_epoch : null,
+          end_epoch: event ? event.end_epoch : null,
+          scoring_formula: event ? event.scoring_formula : null,
+          ledger_points: String(points),
+        };
+      });
+      return { rows };
+    }
+    // #6735: a season board's scope — every non-internal event of the
+    // season (all public events when it names none).
+    if (sql.includes('AND ($1::bigint IS NULL OR season_id = $1)')) {
+      const [seasonId] = params;
+      const rows = SEASON_EVENTS
+        .filter((e) => !e.internal && (seasonId == null || e.season_id === seasonId))
+        .map((e) => ({ id: e.id }));
       return { rows };
     }
 
@@ -843,6 +875,54 @@ test('GET /leaderboard: the viewer\'s own row rides along, and a masked row carr
   const other = await (await get('/api/v4/leaderboard?season_event_id=100', { headers: { 'x-test-user': '7' } })).json();
   assert.equal(other.data.viewer_row, null);
   assert.ok(other.data.leaderboard.every((r) => r.is_viewer === false));
+});
+
+test('GET /leaderboard: the viewer\'s own row reads the ledger, so it is not stuck at a stale figure (#6735)', async () => {
+  // dave's snapshot says 500, of which 10 is ledger points; the ledger now
+  // holds 150 for the event, so his row catches up to 490 + 150 = 640 at the
+  // rank the standings gave him. bob's row is the standings', untouched.
+  const res = await get('/api/v4/leaderboard?season_event_id=100', { headers: { 'x-test-user': '4' } });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const own = body.data.viewer_row;
+  assert.equal(own.total_points, 640, 'the ledger\'s figure, not the snapshot\'s 500');
+  assert.equal(own.pending_points, 140, 'the points the standings have not counted yet');
+  assert.equal(own.rank, 1, 'the rank is still the standings\'');
+  const mine = body.data.leaderboard.find((r) => r.is_viewer);
+  assert.equal(mine.total_points, 640, 'and the row on the page says the same');
+  assert.equal(mine.pending_points, 140);
+
+  const bob = body.data.leaderboard.find((r) => r.wallet_address === 'pk-bob-100');
+  assert.equal(bob.total_points, 300, 'nobody else\'s row is reconciled');
+  assert.equal('pending_points' in bob, false, 'and nobody else\'s row carries the field');
+
+  // Only a viewer's row is corrected: bob as the viewer sees his own figure
+  // rise while dave's stays at the snapshot's.
+  const bobs = await (await get('/api/v4/leaderboard?season_event_id=100', { headers: { 'x-test-user': '2' } })).json();
+  assert.equal(bobs.data.viewer_row.total_points, 450, '300 - 0 + the ledger\'s 150');
+  assert.equal(bobs.data.viewer_row.pending_points, 150);
+  assert.equal(bobs.data.leaderboard.find((r) => r.wallet_address === 'pk-dave-100').total_points, 500);
+});
+
+test('GET /leaderboard: the ledger behind the snapshot keeps the standings figure (#6735)', async () => {
+  // carol's snapshot is 50 and the ledger holds nothing: not a lagging
+  // snapshot, just an earned total. A guest gets no pending field at all.
+  const carol = await (await get('/api/v4/leaderboard?season_event_id=100', { headers: { 'x-test-user': '3' } })).json();
+  assert.equal(carol.data.viewer_row.total_points, 50);
+  assert.equal(carol.data.viewer_row.pending_points, 0);
+
+  const guest = await (await get('/api/v4/leaderboard?season_event_id=100')).json();
+  assert.equal(guest.data.viewer_row, null);
+  assert.ok(guest.data.leaderboard.every((r) => !('pending_points' in r)),
+    'a guest\'s rows are the standings, unchanged');
+});
+
+test('GET /leaderboard: a season board sums the season\'s events for the viewer\'s row (#6735)', async () => {
+  const body = await (await get('/api/v4/leaderboard?season_event_id=103', { headers: { 'x-test-user': '4' } })).json();
+  assert.equal(body.data.event.type, 'season');
+  assert.equal(body.data.viewer_row.total_points, 640,
+    'the season aggregate (500, 10 of it ledger) plus the event\'s 150 ledger points');
+  assert.equal(body.data.viewer_row.pending_points, 140);
 });
 
 test('GET /leaderboard: include_non_podium=1 shows the excluded rows, ranks unchanged from the default view (#3887)', async () => {

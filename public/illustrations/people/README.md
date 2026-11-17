@@ -5,8 +5,9 @@ Two figures from the illustration on the Homeroom website's front page
 on the log with a laptop. Each is cut out of the site's own transparent
 hero image, cropped to one figure and sized for a 2x screen.
 
-The shell shows them only in the **new look**, an experiment that is off by
-default (Settings › Experimental; `data-skin="brand"` on `<html>`), as a
+The shell shows them only in the **brand look** ("Paper, simplified, with
+brand styling"), one of the looks of Settings › Experimental › Look, off by
+default (`data-skin="brand"` on `<html>`), as a
 picture above two empty states: Messages before the first conversation
 (`phone.png`), and Homeroom bot when nothing needs you (`log.png`). They are
 background images of rules scoped to that attribute, so a browser with the

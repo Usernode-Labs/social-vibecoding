@@ -7,13 +7,13 @@
 // module maps them onto a single schema the UI already understands, so
 // progress rendering and /status stay backend-neutral.
 //
-// The progress "events" below are the same strings the existing
-// dev-chat progress card and cc-progress-summary.js already understand.
+// The progress "events" below are the same strings worker.js already writes
+// into the progress log.
 // We define the vocabulary centrally here so PR5's Codex JSONL adapter
 // and this module share the same constants instead of each inventing its
 // own labels.
 
-// Action-line prefixes (the "steps" cc-progress-summary counts).
+// Action-line prefixes (the lines a progress log counts as steps).
 const ACTION_PREFIXES = ["Reading ", "Writing ", "Editing ", "$ ", "Using "];
 
 function isActionLabel(text) {

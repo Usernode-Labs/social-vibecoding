@@ -111,12 +111,30 @@ export async function readPrGate(db: Queryable, g: PrGateInputs): Promise<Govern
     // #4666: a rules project decides by who voted and what its groups are.
     const { active } = await electorate(db, g.appId, gov, meta);
     const wantsActive = gov.rules.rules.some((x) => x.kind === 'percentOfActive' && x.group !== 'members');
+    // #6669: a group the app keeps is read live, in place of the dapp.json
+    // snapshot. A kept group never reported is empty, so its rule does not
+    // pass yet, exactly like an empty group today.
+    const keptKeys = gov.rules.groups.filter((x: any) => x.keptByApp).map((x: any) => x.key);
+    const keptIds = new Map<string, number[]>();
+    if (keptKeys.length) {
+      const { rows } = await db.query(
+        `SELECT g.key, COALESCE(array_agg(m.user_id) FILTER (WHERE m.user_id IS NOT NULL), '{}') AS ids
+           FROM app_groups g
+           LEFT JOIN app_group_members m ON m.group_id = g.id
+          WHERE g.app_id = $1 AND g.key = ANY($2::text[])
+          GROUP BY g.id`,
+        [g.appId, keptKeys]
+      );
+      for (const row of rows as Array<{ key: string; ids: unknown[] }>) {
+        keptIds.set(row.key, (row.ids || []).map(Number).filter(Number.isFinite));
+      }
+    }
     const facts: RulesFacts = {
       creatorId: !r.self_hosted && r.created_by ? Number(r.created_by) : null,
       memberCount: Number(r.member_count) || 0,
       membersActive: Math.max(Number(active) || 0, 1),
       adminIds: ((r.admin_ids || []) as unknown[]).map(Number).filter(Number.isFinite),
-      groups: new Map(gov.rules.groups.map((x) => [x.key, x.ids || []])),
+      groups: new Map(gov.rules.groups.map((x: any) => [x.key, x.keptByApp ? (keptIds.get(x.key) || []) : (x.ids || [])])),
       activeIds: wantsActive ? new Set(await activeUserIds(db, g.appId, meta)) : null,
     };
     const voters = {

@@ -23,8 +23,8 @@
  * ── The initial value is the prerender ─────────────────────────────────
  *
  * `frontend/scripts/build-shell.mjs` renders the island in Node from exactly
- * these values, so they have to describe the CLOSED, EMPTY panel: no target, no
- * sessions, nothing loaded. Anything that fetches does so from an effect or a
+ * these values, so they have to describe the CLOSED, EMPTY panel: no target,
+ * nothing loaded. Anything that fetches does so from an effect or a
  * controller call, never from render — a first render that disagrees with the
  * prerendered document is a hydration mismatch, and a console error on any
  * route fails proposal checks.
@@ -39,11 +39,9 @@ import { t } from '../../lib/i18n/runtime';
  * Workshop and Board are one screen in two layouts and the layout IS the
  * route — `/workshop` and `/board`, mapped back to a layout by the alias
  * block in app.js's `restoreFromHash`, which also applies it. So "go to the
- * board" is not a fixed address, and the two places that answer it have to
- * agree: `Improve._routeHref` (what a session captures as its origin) and
- * `topicBackHref` below (where a topic's back control points: the header's
- * arrow until #2916, the in-pane "‹ Workshop" chip since). One expression,
- * used by both.
+ * board" is not a fixed address: `topicBackHref` and `topicWorkshopHref`
+ * below (where a topic's back control and its Workshop chip point) both
+ * answer it with this one expression.
  *
  * Anything that is not 'kanban' is the Workshop, matching
  * `AppView._getViewMode()`'s own terminal fallback.
@@ -75,12 +73,9 @@ export function boardHref(slug, boardView) {
  * …UNLESS IT WAS OPENED FROM MESSAGES (#3103). A proposal or issue card
  * shared into a conversation opens the same topic route, and its way back is
  * the conversation it was tapped in, not a Workshop the reader never saw.
- * The card records that as it navigates (`Improve.enterTopicFrom`, the
- * sibling of `enterSessionFrom`), `Improve.setTab` captures it as
- * `topicOrigin`, and it wins over the board here.
- *
- * Dev SESSIONS are not topics (subTab 'sessions'). A change is an agent
- * conversation, a thread of Messages, and keeps the header's arrow (#2770).
+ * The card records that as it navigates (`Improve.enterTopicFrom`),
+ * `Improve.setTab` captures it as `topicOrigin`, and it wins over the board
+ * here.
  *
  * @param {{ slug: string|null, tab: string|null, subTab: string|null, boardView: string, topicOrigin?: string|null }} route
  * @returns {string|null}
@@ -154,44 +149,6 @@ export function topicWorkshopHref(route) {
 }
 
 /**
- * One row in the panel's list. TWO KINDS share this shape (#1417):
- *
- *   'session'  a chat_sessions row — a real dev session with a container, a
- *              transcript and a worker. Opens its session page.
- *   'task'     an OPEN connector work order: work handed to a coding agent
- *              running on the user's own machine. It has no container, no
- *              transcript and no worker, so there is no session page to open
- *              — it points at the request it was prepared from instead.
- *
- * They are one shape because they answer one question ("what of mine is in
- * flight?"), and one list because splitting them would ask the reader to
- * know which mechanism produced their work before they can find it. `href`
- * is what keeps them honest: each kind names its own destination rather than
- * the panel inferring one from an id that means different things.
- *
- * @typedef {object} ImproveSession
- * @property {string} key         Unique across both kinds; ids are not.
- * @property {'session'|'task'} kind
- * @property {number} id
- * @property {string} appSlug
- * @property {string} appName
- * @property {{kind:'image',src:string}|{kind:'emoji',emoji:string}|{kind:'letter',letter:string}} icon
- *   The app's artwork for the row's leading tile, in the shape
- *   AppCard.iconViewFor publishes. Resolved by the controller from the two
- *   `app_icon_*` columns both list endpoints carry, so the row renders a fact
- *   rather than deciding one; a letter from the app's name is the fallback.
- * @property {string} title
- * @property {string} href        Where the row goes when clicked.
- * @property {string|null} status Display label ("Working…", "Paused"), or null.
- * @property {boolean} busy       An AI turn is in flight right now.
- * @property {boolean} awaitingInput
- *   The session is waiting on the user (#1959): answer chips still up, or a
- *   finished spec with open Questions. Never true while busy; never true
- *   for a task. The pill reads "Needs you" from it.
- * @property {number} sortAt      Recency, ms since epoch. Mixed-kind ordering.
- */
-
-/**
  * @typedef {object} ImproveState
  * @property {'app'|'platform'|null} target
  * @property {string|null} slug
@@ -208,13 +165,8 @@ export function topicWorkshopHref(route) {
  * @property {boolean} showTerminal
  * @property {boolean} canShare
  * @property {boolean} canReport
- * @property {string|null} sessionOrigin
  * @property {string|null} topicOrigin
  * @property {'app'|'dev'|'other'} tab
- * @property {ImproveSession[]} sessions
- * @property {ImproveSession[]} otherSessions
- * @property {boolean} loadingSessions
- * @property {boolean} sessionsLoaded
  * @property {boolean} working
  * @property {'idle'|'deploying'|'downloading'|'ready'|'failed'} versionState
  *   Every value Improve.setVersionState() can publish. It read
@@ -225,12 +177,8 @@ export function topicWorkshopHref(route) {
  *   annotation, which had been quietly wrong for as long as a consumer
  *   happened to read the store in a way that widened it to `string`.
  * @property {boolean} appUpdateReady
- * @property {'forum'|'chat'|'sessions'|'topic'|null} subTab
+ * @property {'forum'|'chat'|'topic'|null} subTab
  * @property {'workshop'|'kanban'} boardView
- * @property {number|null} previewSessionId
- * @property {string|null} previewUrl
- * @property {boolean} previewBuildable
- * @property {boolean} previewActive
  */
 
 /** @type {ImproveState} */
@@ -312,14 +260,9 @@ const INITIAL = {
   canShare: false,
   /** Report eligibility from the app API; unknown targets cannot be reported. */
   canReport: false,
-  /** Active sessions belonging to `slug`. */
-  sessions: [],
-  /** Active sessions on every OTHER app — the overflow area. */
-  otherSessions: [],
-  /** True while /api/me/active-sessions is in flight for the first time. */
-  loadingSessions: false,
-  /** True once a session load has resolved at least once. */
-  sessionsLoaded: false,
+  // `sessions`, `otherSessions`, `loadingSessions` and `sessionsLoaded` held
+  // the cross-app list of the viewer's changes in flight. Its last surface,
+  // Messages' Agents section, went on 16 Nov 2026, and the list with it.
 
   // ── The indicators the store carries with the panel shut ─────────────
   //
@@ -329,9 +272,8 @@ const INITIAL = {
   // renders them — the same reason #feedback-queue-dot goes through the
   // visibility store rather than being toggled by id.
   //
-  // Neither is derived from `sessions` below, deliberately: that array is
-  // only loaded while the panel is OPEN, and both of these have to be true
-  // when it is shut. They come from sources that run at boot instead —
+  // Neither was ever derived from a loaded session list: both have to be
+  // true with nothing open. They come from sources that run at boot instead —
   // SessionState's live entries and the platform version pill.
   //
   // There used to be a third and a fourth, `sessionUnread` / `sessionDone`:
@@ -365,9 +307,8 @@ const INITIAL = {
    */
   appUpdateReady: false,
   /**
-   * Which dev sub-view is on screen ('forum' | 'chat' | 'sessions' | 'topic'),
-   * or null off the Dev half. Republished with `tab` from App.switchTab —
-   * the header's eye needs to know whether it is looking at a SESSION.
+   * Which dev sub-view is on screen ('forum' | 'chat' | 'topic'), or null
+   * off the Dev half. Republished with `tab` from App.switchTab.
    */
   subTab: null,
   /**
@@ -389,22 +330,6 @@ const INITIAL = {
    */
   boardView: 'workshop',
   /**
-   * WHERE THE OPEN DEV SESSION WAS ENTERED FROM, as an href — or null.
-   *
-   * The header's back arrow on a session route points here. It used to point
-   * unconditionally at `#app/<slug>/board`, which was right for the common
-   * case and wrong for every other one: a session opened from the app itself,
-   * or from a proposal card, or from another app's board, sent you to a Board
-   * you had not been looking at.
-   *
-   * Captured by `Improve.setTab` at the moment the route BECOMES a session,
-   * from the route it is leaving — see the note there for why that is the one
-   * place with both halves in hand. Null on a cold deep link (there is no
-   * screen behind it), and the header falls back to the Board, which is where
-   * the session's own card lives.
-   */
-  sessionOrigin: null,
-  /**
    * WHERE THE OPEN TOPIC WAS ENTERED FROM, as an href, when that was not its
    * board — or null (#3103). Only a door that knows says so: a shared card
    * in a Messages conversation records the conversation's address before it
@@ -413,36 +338,6 @@ const INITIAL = {
    * route and by leaving the app view (App._showOnlyScreen).
    */
   topicOrigin: null,
-  /**
-   * The open session's staging PREVIEW, or null when there is none.
-   *
-   * The header's eye is the preview affordance on a session screen — the
-   * same eye glyph the cards use (AppView.PREVIEW_EYE_SVG, gated on
-   * `staging_url`) — so it only renders when there is something to preview.
-   * Published by DevChat._publishPreview() at every point the open session
-   * or its staging_url changes.
-   */
-  previewSessionId: null,
-  previewUrl: null,
-  /**
-   * #2069: whether a preview could be BUILT for the open session, even
-   * though none is live. `ensure-staging` rebuilds from the branch's latest
-   * commit, so "no URL" stopped meaning "nothing to see" when #439 landed —
-   * but the eye kept the old gate and vanished on exactly the condition the
-   * rebuild exists for. Separate from previewUrl because the two answer
-   * different questions: one is "is there a page", the other "is there a
-   * commit".
-   */
-  previewBuildable: false,
-  /**
-   * True while a staging preview is actually ON SCREEN — the "seeing" half
-   * of the board's doing↔seeing loop. Set by AppView.ensureStaging (the one
-   * funnel every preview open goes through, #439) and cleared by
-   * AppView.closeStagingOverlay. Distinct from previewUrl, which says a
-   * preview EXISTS; this says the viewer is looking at it — it drives the
-   * eye/pencil pair's active state and the session strip's Preview chip.
-   */
-  previewActive: false,
 };
 
 export const improveStore = createStore(INITIAL);

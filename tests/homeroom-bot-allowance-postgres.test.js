@@ -219,19 +219,24 @@ test('weekly building time against the full PostgreSQL schema', { timeout: 18000
     assert.equal(await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'quota-card', settings }), null);
     // 85% of the week spent: the warning that rode on the card, or on a line
     // under it, still reaches her before the look spends more, as the
-    // account notice it is (dm.noteAllowanceLow: kind 'allowance', `low`),
-    // once a week.
+    // account notice it is, once a week. 14 Nov 2026: in her bell, not her
+    // chat with the bot (dm.noteAllowanceLow, homeroom-bot-notices.js): Main
+    // Chat is gone, and a notice about her account belongs to no thread.
+    const copy = require('../src/services/homeroom-bot-notify-copy');
     const notices = async () => (await pool.query(
-      `SELECT m.content FROM conversation_messages m
-        WHERE m.sender_id = $1 AND m.metadata->'homeroomBot'->>'kind' = 'allowance'
-          AND (m.metadata->'homeroomBot'->>'low')::boolean IS TRUE
-          AND m.conversation_id IN (SELECT conversation_id FROM conversation_members WHERE user_id = $2)`,
-      [bot.id, ada.id])).rows;
+      `SELECT kind, detail, conversation_message_id FROM notifications WHERE user_id = $1 AND source_user_id = $2 ORDER BY id`,
+      [ada.id, bot.id])).rows.filter((n) => copy.parseBotDetail(n.detail)?.said === 'low');
+    const chatLines = async () => Number((await pool.query(
+      `SELECT COUNT(*)::int AS n FROM conversation_messages m
+        WHERE m.sender_id = $1 AND m.metadata->'homeroomBot'->>'kind' = 'allowance'`, [bot.id])).rows[0].n);
+    const linesBefore = await chatLines();
     await spend(12, 42.50);
     await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'quota-look-1', settings });
     const said = await notices();
     assert.equal(said.length, 1, 'she hears that the week is nearly spent');
-    assert.equal(said[0].content, 'You\'re close to this week\'s building time.');
+    assert.deepEqual([said[0].kind, said[0].conversation_message_id], ['build_stopped', null], 'a bell row, with no message behind it');
+    assert.equal(copy.botMomentCopy(said[0].detail).body, 'You\'re close to this week\'s building time.');
+    assert.equal(await chatLines(), linesBefore, 'nothing is said in her chat');
     assert.deepEqual(await lowLines(12), [], 'not as a line under a card');
     await activity.startCard(pool, { app, issueNumber: 12, requester, bot, jobKey: 'quota-look-2', settings });
     assert.equal((await notices()).length, 1, 'once a week');

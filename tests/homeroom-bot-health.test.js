@@ -200,7 +200,7 @@ test('step 5: reads per request, why it read by week, Main Chat repairs and dead
     surfaces: { thread: { taps: 10, notFound: 1, gone: 2 }, chat: { taps: 5, notFound: 0, gone: 1 } },
   });
   assert.deepEqual(r.byWeek[2], { week: '2026-10-26', reads: 0, why: {}, taps: 3, notFound: 0, gone: 0, surfaces: { card: { taps: 3, notFound: 0, gone: 0 } } });
-  assert.deepEqual(r.claimRepair, { recovered: 2, turns: 30, rate: 2 / 30 }, 'the Main Chat answers of the same week');
+  assert.deepEqual(r.claimRepair, { recovered: 2, turns: 30, rate: 2 / 30 }, 'the chat answers of the same week');
   assert.equal(r.duplicateNotes, null, 'not counted: no count was read');
   // Step 4: counted from the posts' said-once keys (bot-post.js duplicateNotes).
   assert.equal(health.shapeRereads({ ...REREAD_ROWS, duplicates: 4 }).duplicateNotes, 4);

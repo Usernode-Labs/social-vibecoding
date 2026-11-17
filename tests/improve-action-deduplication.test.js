@@ -13,7 +13,7 @@
 // menu keeps its row): the same method, Improve.startSession, from both.
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { englishPlatformI18n, message } = require('./lib/platform-i18n');
+const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
@@ -240,8 +240,8 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
   // button is Suggest an improvement now (the same dialog). New change —
-  // "Build it now" — left the menu with its Agent chats section (#4729) and
-  // is Messages' "+" choice, because what it opens is an agent session.
+  // "Build it now" — left the menu with its Agent chats section (#4729); it
+  // opens a new chat with Homeroom bot about the project.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
   // ONE method, whichever surface it is on.
@@ -256,10 +256,6 @@ test('Suggest an improvement and Start a new change each exist once, and the rea
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 0,
     'and the menu carries no start-a-change row any more (#4729)');
-  // Messages' "+" is Agent chat, opening an agent session.
-  assert.equal(message('messages:inbox.new.agent.label'), 'Agent chat');
-  assert.match(read('frontend/src/features/messages/index.tsx'),
-    /startAgentSession\(\{ entry: 'messages' \}\)/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and
   // only on a writeable board (it is inside the menu's readOnly gate).
   const ROW = read('frontend/src/features/dev-board/actions-row.tsx');
@@ -333,28 +329,15 @@ function improveHarness(currentApp = 'demo') {
         sandbox.App.currentApp = args[0];
       },
     },
-    AppView: { createProposal: () => calls.push(['new-change', sandbox.App.currentApp]) },
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  // The one surface still listing these sessions. Flip `sheet.open` in a
-  // test that needs the reload gate open; it is the notifications sheet's
-  // flag, not the Improve panel's — that panel retired (#2718 review).
-  const sheet = { open: false };
+  // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review): `open()` forwards to
+  // the app-context sheet. Nor does it list sessions (16 Nov 2026), so it no
+  // longer imports the words, the icons or the bell's open flag the list
+  // needed: the store and the shell snapshot are all it reads.
   runModules(sandbox, [['improve-controller.js', CONTROLLER]], {
     imports: {
-      // The module reads its words through the language runtime: the real one, in English.
-      '../../lib/i18n/runtime': englishPlatformI18n(),
-      '../apps/app-card.js': { iconViewFor() {} },
-      // THE CONTROLLER PRESENTS NOTHING NOW (#2718 review). It adopted the
-      // Improve panel's root through lib/kit-surface and swept the other
-      // sheets through lib/sheet-controller; the panel retired, `open()`
-      // forwards to the app-context sheet, and both stubs went with it. What
-      // it does import is the notifications sheet's own open flag — the one
-      // surface still listing these sessions, and the gate on reloading them.
-      '../notifications/notifications-sheet-store.js': {
-        notificationsSheetStore: { get: () => sheet, subscribe: () => () => {} },
-      },
       './improve-store.js': { improveStore: store },
       '../../lib/shell-snapshot': { saveShellSnapshot() {} },
     },
@@ -400,17 +383,16 @@ test('#4730: Give feedback waits for the menu to be gone before opening the dial
 });
 
 // #2770 sent New change straight to the app's classic unsent-change screen
-// (/dev/sessions/new). #2779: classic sessions are no longer created, so it
-// opens an unsent agent session focused on the target app, whichever app is
-// open, and navigates nowhere else itself.
+// (/dev/sessions/new). Agent chats and dev chats are retired: it opens a new
+// chat with Homeroom bot about the target app, whichever app is open, where
+// the builder is chosen, and creates nothing itself.
 for (const currentApp of ['demo', 'other']) {
-  test(`New change opens an agent session on the target app from ${currentApp}`, () => {
+  test(`New change opens a new chat with Homeroom bot about the target app from ${currentApp}`, () => {
     const h = improveHarness(currentApp);
     const { Improve, calls } = h;
-    const started = [];
-    h.sandbox.UsernodeReact = { agentSession: { start: (hint) => { started.push(JSON.parse(JSON.stringify(hint))); } } };
+    h.sandbox.location = { hash: '' };
     Improve.startSession();
-    assert.deepEqual(started, [{ slug: 'demo', entry: 'improve' }]);
+    assert.equal(h.sandbox.location.hash, '#homeroom-bot/new?project=demo');
     assert.deepEqual(calls, [['close']], 'no board, no classic screen, and nothing is created by the click');
   });
 }

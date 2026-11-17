@@ -140,7 +140,7 @@ test('nothing pans the page or moves it: places are the Hub\'s rows, All communi
   assert.doesNotMatch(island, /addEventListener\('touch|createPortal|style\.transform/, 'no strip, no pan, no transform on #app-view');
   assert.doesNotMatch(island, /pushDismissible/, 'no Back record: there is no level off the page to hold one for');
   // A gesture surface, not a page slide (tests/phone-no-page-slides.test.js).
-  for (const file of ['nav-drawer.tsx', 'drawer-store.ts', 'header-drawer.tsx', 'bot-drawer.ts']) {
+  for (const file of ['nav-drawer.tsx', 'drawer-store.ts', 'header-drawer.tsx']) {
     assert.doesNotMatch(read(`${DIR}/${file}`), /PlatformUI\.transition\(/, file);
   }
   const css = read('public/css/app.css');
@@ -224,7 +224,7 @@ test('the lit tab climbs the same ladder on a phone: a place to its Hub, the Hub
 
 test('its words are catalog entries', () => {
   const core = JSON.parse(read('frontend/locales/en/core.json'));
-  for (const key of ['header.drawer.toHome', 'header.drawer.toHub', 'header.drawer.toPlace', 'header.drawer.toBot',
+  for (const key of ['header.drawer.toHome', 'header.drawer.toHub', 'header.drawer.toPlace',
     'header.drawer.messages', 'header.drawer.toMessages']) {
     assert.ok(core[key] && core[key].description, key);
   }
@@ -264,9 +264,9 @@ test('Messages\' header: no colour, and the conversation arrives with its line u
   assert.equal(math.headerFrame(2, 44, false, true).inner.opacity, 1, 'a depth past 1 is the conversation');
 });
 
-test('Messages\' drawer holds the list, conversations and agent sessions, on a phone only', () => {
+test('Messages\' drawer holds the list and conversations, on a phone only', () => {
   const { messagesDrawerApplies } = loadTsx(`${DIR}/messages-drawer.ts`);
-  const list = { phone: true, open: true, conversationId: null, appSlug: null, agent: null, threadRootId: null };
+  const list = { phone: true, open: true, conversationId: null, appSlug: null, threadRootId: null };
   assert.equal(messagesDrawerApplies(list), true);
   assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, activeKind: 'group' }), true);
   assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, activeKind: null }), true, 'before the conversation has loaded');
@@ -274,28 +274,21 @@ test('Messages\' drawer holds the list, conversations and agent sessions, on a p
   assert.equal(messagesDrawerApplies({ ...list, open: false }), false, 'another screen');
   assert.equal(messagesDrawerApplies({ ...list, conversationId: 1, activeKind: 'channel' }), false, 'a channel is its community\'s');
   assert.equal(messagesDrawerApplies({ ...list, appSlug: 'notes' }), false);
-  // Evan, 18 Oct 2026: an agent session is the drawer's second level on a
-  // phone too, so a swipe goes back to the list; a dev session still opens
-  // on its project's page.
-  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'agent', id: 3 } }), true, 'an agent session');
-  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'agent', id: 'new' } }), true, 'one not sent yet');
-  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'chat', id: 'c-1' } }), false, 'a removed Global Chat thread is no thread');
-  assert.equal(messagesDrawerApplies({ ...list, agent: { kind: 'session', slug: 'notes', id: 4 } }), false, 'a dev session opens on its project\'s page');
   assert.equal(messagesDrawerApplies({ ...list, conversationId: 8, threadRootId: 40 }), false, 'a reply thread is a level over its conversation');
   assert.equal(messagesDrawerApplies({ ...list, embedded: true }), false);
 });
 
 test('the Messages screen: the panes are the levels, the list is alone, the arrow is the drawer\'s', () => {
   const index = read('frontend/src/features/messages/index.tsx');
-  assert.match(index, /const agentWords = useAgentThreadWords\(snap\.route\.agent\);\s*const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, threadWords, agentWords\);/);
+  assert.match(index, /const drawer = useMessagesDrawer\(layoutRef, snap\.route, snap\.active, threadWords\);/);
   // 3 Nov 2026: no peek. The list is alone on its level, the whole screen.
   assert.match(index, /const drawerClass = drawer\.on \? ` messages-drawer\$\{drawer\.level === 0 \? ' messages-drawer-alone' : ''\}` : '';/);
   assert.match(index, /<ConversationList drawer=\{drawer\.on\} \/>\s*<ConversationThread \/>/);
   assert.doesNotMatch(index, /ConversationPeek|messages-peek-body/);
-  assert.match(index, /className=\{`messages-list-pane \$\{specBeside \? 'hidden' : drawer \? 'flex' : /, 'the list stays drawn under a conversation');
+  assert.match(index, /className=\{`messages-list-pane \$\{drawer \? 'flex' : /, 'the list stays drawn under a conversation');
   assert.match(index, /\{inDrawer \? null : channel/, 'no avatar in the sheet\'s title row');
   const store = read('frontend/src/features/messages/store.ts');
-  assert.match(store, /if \(\(state\.route\.conversationId \|\| state\.route\.agent\) && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
+  assert.match(store, /if \(state\.route\.conversationId && messagesDrawerApplies\(\{[\s\S]*?\}\)\) \{\s*app\.setBackIcon\?\.\('none'\);/,
     'no href\'d arrow, so WebKit\'s history swipe stays off');
   const drawer = read('frontend/src/features/messages/phone-drawer.tsx');
   // Polish #16: the panes start sliding in the release's own task, and the

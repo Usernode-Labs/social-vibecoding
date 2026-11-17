@@ -1,17 +1,18 @@
-// Tests for the dev-chat spec-markdown rendering fixes (F1–F8).
+// Tests for the spec-markdown rendering fixes (F1–F8).
 //
-// Two layers:
+// Three layers:
 //   1. Rendering assertions — configure `marked` exactly as
-//      frontend/src/features/dev-chat/dev-chat.js renderMarkdown() does and assert the
-//      structural output the fixes guarantee (distinct heading levels,
-//      ordered-list `start`, table class, task-item spans, and the
+//      frontend/src/lib/platform-markdown.js PlatformMarkdown.render() does
+//      and assert the structural output the fixes guarantee (distinct heading
+//      levels, ordered-list `start`, table class, task-item spans, and the
 //      per-call `breaks` option). marked's tokenizer is the half that's
 //      hard to fake, so we exercise the real library; DOMPurify only
 //      strips/keeps tags and is covered by the source guards below.
-//   2. Source guards on dev-chat.js — assert the real file still wires
-//      the DOMPurify allowlist ('h5', 'start') and passes
-//      { breaks: false } at both spec surfaces, so the renderer config
-//      under test can't silently drift from what ships.
+//   2. Source guards on platform-markdown.js — assert the real file still
+//      wires the DOMPurify allowlist ('h5', 'start') and the load-failure
+//      fallback, and that the spec surface (a request's spec card) passes
+//      { breaks: false }, so the renderer config under test can't silently
+//      drift from what ships.
 //   3. buildSpecPreview() — the whitespace-aware truncation (F8).
 //
 // Run with: node --test tests/spec-markdown.test.js
@@ -23,7 +24,7 @@ const path = require('node:path');
 const { marked } = require('marked');
 const { buildSpecPreview } = require('../src/routes/sessions.js');
 
-// ── Renderer config mirrored from dev-chat.js renderMarkdown() ──
+// ── Renderer config mirrored from platform-markdown.js PlatformMarkdown.render() ──
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 marked.use({
   breaks: true,
@@ -115,8 +116,8 @@ test('breaks:false keeps soft newlines as whitespace; breaks:true makes <br> (F5
 });
 
 test('a single fenced code block with the lang:filepath convention renders fully (F6)', () => {
-  const html = render('```js:public/js/dev-chat.js\nconst x = 1;\n```');
-  assert.match(html, /<div class="dc-code-header">public\/js\/dev-chat\.js<\/div>/);
+  const html = render('```js:public/js/app-view.js\nconst x = 1;\n```');
+  assert.match(html, /<div class="dc-code-header">public\/js\/app-view\.js<\/div>/);
   assert.match(html, /<pre class="dc-code-block"><code>const x = 1;<\/code><\/pre>/);
 });
 
@@ -130,26 +131,28 @@ test('a malformed (unterminated) fence auto-closes and the rest still parses (F6
 
 // ── 2. Source guards on the shipped renderer ──
 
-const devChatSrc = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'), 'utf8');
+const markdownSrc = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', 'platform-markdown.js'), 'utf8');
+const appViewSrc = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
 
 test('DOMPurify allowlist keeps h5 and ol start (F2/F3)', () => {
-  const tags = devChatSrc.match(/ALLOWED_TAGS:\s*\[([\s\S]*?)\]/);
-  const attrs = devChatSrc.match(/ALLOWED_ATTR:\s*\[([\s\S]*?)\]/);
+  const tags = markdownSrc.match(/ALLOWED_TAGS:\s*\[([\s\S]*?)\]/);
+  const attrs = markdownSrc.match(/ALLOWED_ATTR:\s*\[([\s\S]*?)\]/);
   assert.ok(tags, 'ALLOWED_TAGS present');
   assert.ok(attrs, 'ALLOWED_ATTR present');
   assert.match(tags[1], /'h5'/);
   assert.match(attrs[1], /'start'/);
 });
 
-test('both spec surfaces render with breaks:false (F5)', () => {
-  // preview snippet + viewer body must opt out of chat-style hard breaks.
-  const matches = devChatSrc.match(/renderMarkdown\([^,)]+,\s*\{\s*breaks:\s*false\s*\}\)/g) || [];
-  assert.ok(matches.length >= 2, `expected >=2 breaks:false render sites, found ${matches.length}`);
+test('the spec surface renders with breaks:false (F5)', () => {
+  // A request's spec card (Homeroom bot's spec comment) must opt out of
+  // chat-style hard breaks.
+  const matches = appViewSrc.match(/PlatformMarkdown\.render\([^,)]+,\s*\{\s*breaks:\s*false\s*\}\)/g) || [];
+  assert.ok(matches.length >= 1, `expected a breaks:false render site, found ${matches.length}`);
 });
 
 test('the load-failure fallback uses a <pre> view with a notice (F7)', () => {
-  assert.match(devChatSrc, /dc-md-fallback-notice/);
-  assert.match(devChatSrc, /class="dc-md-fallback"/);
+  assert.match(markdownSrc, /dc-md-fallback-notice/);
+  assert.match(markdownSrc, /class="dc-md-fallback"/);
 });
 
 // ── 3. buildSpecPreview (F8) ──

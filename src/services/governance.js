@@ -395,7 +395,10 @@ function viewerDecides(gov, { approverIds, facts, explicitApproval, explicitReas
 // platform's own app has no creator (a rule on `creator` there never passes).
 async function rulesFacts(pool, appId, gov, { fresh = false } = {}) {
   const hit = fresh ? null : factsCache.get(appId);
-  if (hit && Date.now() - hit.at < GOV_CACHE_TTL_MS) return withGroups(hit.value, gov);
+  const keptKeys = keptGroupKeys(gov);
+  if (hit && Date.now() - hit.at < GOV_CACHE_TTL_MS && (!keptKeys.length || hit.value.keptIds)) {
+    return withGroups(hit.value, gov);
+  }
   const { rows } = await pool.query(
     `SELECT a.created_by, a.self_hosted, a.collab_visibility,
             (SELECT COUNT(*)::int FROM community_members m WHERE m.community_id = a.community_id) AS member_count,
@@ -419,13 +422,39 @@ async function rulesFacts(pool, appId, gov, { fresh = false } = {}) {
     const ids = await activeUsers().listActiveUserIds(pool, appId);
     value.activeIds = new Set(ids.map((id) => parseInt(id, 10)));
   }
+  // #6669: a group the app keeps is read live, so a person who drops out of
+  // the app's latest list stops counting at the next read (and counts again
+  // if they return). The app's rows are stored by routes/app-groups.js.
+  if (keptKeys.length) {
+    value.keptIds = new Map();
+    value.keptReported = new Map();
+    const { rows } = await pool.query(
+      `SELECT g.key, g.reported_at, COALESCE(array_agg(m.user_id) FILTER (WHERE m.user_id IS NOT NULL), '{}') AS ids
+         FROM app_groups g
+         LEFT JOIN app_group_members m ON m.group_id = g.id
+        WHERE g.app_id = $1 AND g.key = ANY($2::text[])
+        GROUP BY g.id`,
+      [appId, keptKeys]
+    );
+    for (const r of rows) {
+      value.keptIds.set(r.key, (r.ids || []).map((id) => parseInt(id, 10)).filter(Number.isFinite));
+      value.keptReported.set(r.key, r.reported_at || null);
+    }
+  }
   factsCache.set(appId, { at: Date.now(), value });
   return withGroups(value, gov);
 }
 
+// The keys of a rules value's groups the app keeps.
+function keptGroupKeys(gov) {
+  return ((gov && gov.rules && gov.rules.groups) || []).filter((g) => g.keptByApp).map((g) => g.key);
+}
+
 function withGroups(value, gov) {
   const groups = new Map();
-  for (const g of (gov && gov.rules && gov.rules.groups) || []) groups.set(g.key, g.ids || []);
+  for (const g of (gov && gov.rules && gov.rules.groups) || []) {
+    groups.set(g.key, g.keptByApp ? (value.keptIds?.get(g.key) || []) : (g.ids || []));
+  }
   return { ...value, groups };
 }
 
@@ -665,7 +694,13 @@ async function describeApproval(pool, appId, gov) {
       group: r.group, kind: r.kind, n: r.n, size: r.size, need: r.need, empty: r.empty,
       ...(r.min != null ? { min: r.min } : {}),
     })),
-    groups: gov.rules.groups.map((g) => ({ name: g.name, key: g.key, people: g.people })),
+    groups: gov.rules.groups.map((g) => (g.keptByApp
+      ? {
+        name: g.name, key: g.key, people: [], keptByApp: true,
+        size: (facts.groups.get(g.key) || []).length,
+        reportedAt: facts.keptReported?.get(g.key) || null,
+      }
+      : { name: g.name, key: g.key, people: g.people, keptByApp: false })),
     creatorId: facts.creatorId,
     required: gate.required,
   };

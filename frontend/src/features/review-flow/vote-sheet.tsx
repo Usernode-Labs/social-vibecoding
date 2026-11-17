@@ -177,9 +177,12 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
     return () => { live = false; };
   }, [state, item.key]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // #6019: Ask privately is the AI tab's chat with Homeroom bot now, with
-  // this change attached (messages/store.ts openBot, as the change page's
-  // Ask for changes does). The questions asked here before stay readable.
+  // #6019: Ask privately is the Homeroom bot tab's (messages/store.ts
+  // openBot, as the change page's Ask for changes does). 14 Nov 2026: a
+  // change opens the private thread about it, by its number; a group
+  // decision, which has no such thread, a new chat set to its project with
+  // the decision attached in its box. The questions asked here before stay
+  // readable.
   const askInAi = () => {
     void openBot(item.kind === 'governance'
       ? {
@@ -188,7 +191,7 @@ export function VoteSheet({ item, vote, state, setState, onVote, onUndo, onNext,
         // reference carries its number and the bot's answer names the request.
         ...(item.request ? { issueNumber: item.request } : {}),
       }
-      : { type: 'proposal', sessionId: item.id, appSlug: item.app.slug, title: item.title });
+      : { type: 'proposal', sessionId: item.id, appSlug: item.app.slug, title: item.title, number: item.number || null });
   };
 
   const cast = async (v: Vote, reason?: string): Promise<boolean> => {

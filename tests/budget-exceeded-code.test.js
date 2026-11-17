@@ -1,80 +1,26 @@
 // #463: budget-exhaustion 429s must be distinguishable from rate-limit
-// 429s so the client can show "you're out of free credits — add your own
+// 429s so a client can show "you're out of free credits — add your own
 // API key" instead of "Rate limit reached".
 //
-// Source-level checks (same style as the SELECT check in
-// chat-edit-render.test.js): every `resolveBillingPath → 429` site that a
-// browser client consumes tags its body with code: 'budget_exceeded',
-// while the generic rate-limit middleware stays untagged — that contrast
-// is exactly what the dev-chat 429 branch keys on.
+// A budget refusal carries code: 'budget_exceeded' (routes/workshop-ask.js,
+// routes/report-ai.js, the proxies); these source-level checks pin the other
+// half of that contrast, that the generic rate-limit middleware stays
+// untagged, and that checkBudget (#1788) names the weekly refusal and the
+// no-allowance one under reasons of their own.
 //
 // Run with: node --test tests/budget-exceeded-code.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { message } = require('./lib/platform-i18n');
 const fs = require('node:fs');
 const path = require('node:path');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
-const TAGGED_429 =
-  /res\.status\(429\)\.json\(\{\s*error: billing\.error,\s*code: 'budget_exceeded',/g;
-
-test('sessions.js tags both billing 429s (chat turn + headless start) with budget_exceeded', () => {
-  const src = read('src/routes/sessions.js');
-  const tagged = src.match(TAGGED_429) || [];
-  assert.equal(tagged.length, 1, 'the headless-session billing 429 carries the code');
-  // The chat turn's payer is resolveClassicPayer (the route and the turn,
-  // as it runs, ask it), whose refusal is the route's 429 body.
-  const payer = src.slice(src.indexOf('async function resolveClassicPayer('), src.indexOf('const MAYOR_TURN_DEPS'));
-  assert.match(payer, /status: 429,\s*body: \{ error: r\.error, code: 'budget_exceeded', reason: r\.reason \|\| null,/);
-  assert.match(src, /if \(!payer\.ok\) return res\.status\(payer\.status\)\.json\(payer\.body\);/);
-  // No billing 429 left untagged. Extra entitlement fields are allowed so
-  // the client can render a direct identity-unlock action.
-  assert.doesNotMatch(src,
-    /res\.status\(429\)\.json\(\{ error: billing\.error \}\)/,
-    'a bare billing 429 (no code) would be indistinguishable from a throttle');
-});
-
-// (#827 removed routes/proposal-discuss.js — the "Ask AI" advisor and its
-// own billing 429 — so sessions.js is the only remaining browser-facing
-// resolveBillingPath site.)
-
 test('rate-limit middleware 429s stay code-free (the discriminator the client relies on)', () => {
   const src = read('src/middleware/rate-limits.js');
   assert.doesNotMatch(src, /budget_exceeded/,
     'throttle responses must NOT claim budget exhaustion');
-});
-
-test('dev-chat branches the 429 handler on the budget_exceeded code', () => {
-  const src = read('frontend/src/features/dev-chat/dev-chat.js');
-  assert.match(src, /data\.code === 'budget_exceeded'/,
-    'the chat send path distinguishes budget exhaustion from throttling');
-  // The words are in the catalog now; the banner the budget branch raises reads them by id.
-  assert.match(src, /PlatformI18n\.t\('devchat:banner\.credits\.out\.leadWeekly'\)/,
-    'the budget branch names the actual problem');
-  assert.match(message('devchat:banner.credits.out.leadWeekly'), /free AI credits/,
-    'the budget branch names the actual problem');
-});
-
-// ── #1788: a weekly refusal must not be reported as a daily one ──────────
-//
-// The 429 body is all the client gets, and its copy differs by window
-// ("Resets Monday 00:00 UTC" vs "at midnight UTC"). checkBudget already
-// words the sentence, so the only thing these guard is that the discriminator
-// survives the hop: `reason` is forwarded rather than flattened, and the two
-// new reasons are actually spelled by the service.
-
-test('the billing 429s forward checkBudget’s reason, so weekly and daily stay distinct', () => {
-  const src = read('src/routes/sessions.js');
-  // Scoped to the two tagged response bodies themselves — `billing.reason`
-  // is also threaded into several log lines, which is not what this is about.
-  const forwarded = src.match(
-    /code: 'budget_exceeded',\s*reason: (?:billing|r)\.reason \|\| null,/g
-  ) || [];
-  assert.equal(forwarded.length, 2,
-    'both browser-facing billing 429s carry the reason: the headless start\'s and the chat payer\'s');
 });
 
 test('checkBudget names the weekly refusal and the no-allowance one', () => {

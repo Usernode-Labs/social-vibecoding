@@ -814,7 +814,7 @@ test('?q= seeds the search on the first load, and only the first (#2090)', () =>
 test('a text filter now applies to session cards too (they used to be exempt)', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [
-    issue({ number: 5, title: 'beta bug', headless: { status: 'generating' } }),
+    issue({ number: 5, title: 'beta bug', in_progress: { count: 1, users: ['them'], claims: [] } }),
   ];
   AppView._envIssueNumbers = new Set();
   AppView._proposals = [];
@@ -894,7 +894,7 @@ test('priority / category are a VISIBLE no-op on session cards', () => {
   // A dev session carries no such metadata, so hiding it would be silently
   // wrong — it stays, and the column SAYS why the filter didn't apply.
   assert.match(html, /Dark mode work/, 'the session survives an inapplicable filter');
-  assert.match(html, /Agent sessions don&#x27;t carry priority, category or assignee/);
+  assert.match(html, /Changes in progress don&#x27;t carry priority, category or assignee/);
   assert.match(html, /not filtered by priority/);
 
   // The predicate itself keeps the attribute filters as an explicit no-op.
@@ -955,7 +955,7 @@ test('imported Underway cards do not trigger the regular-session filter exceptio
   AppView._kanbanFilters = { ...none, priority: 'high' };
   const html = kanbanHtml(AppView);
   assert.match(html, /Imported checks work/);
-  assert.doesNotMatch(html, /Regular dev sessions don&#x27;t carry/);
+  assert.doesNotMatch(html, /Changes in progress don&#x27;t carry/);
 });
 
 // ── #1112: the column is titled "Underway", keyed `inprogress` ─────────────
@@ -967,7 +967,7 @@ test('imported Underway cards do not trigger the regular-session filter exceptio
 test('the second column reads "Underway" but keeps its inprogress key and id', () => {
   const AppView = makeAppView();
   AppView._ghIssues = [
-    issue({ number: 5, title: 'beta bug', headless: { status: 'generating' } }),
+    issue({ number: 5, title: 'beta bug', in_progress: { count: 1, users: ['them'], claims: [] } }),
   ];
   AppView._envIssueNumbers = new Set();
   AppView._proposals = [];

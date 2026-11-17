@@ -21,7 +21,7 @@
   },
   "preview.loader.rebuildingSub": {
     "text": "The preview was paused after a while of inactivity. Rebuilding it from the session’s latest changes. This usually takes 20–60 seconds.",
-    "description": "Explanation under the heading on the loading screen of a change's preview while a paused preview is rebuilt. \"Session\" is the agent session in which the change is being built."
+    "description": "Explanation under the heading on the loading screen of a change's preview while a paused preview is rebuilt. \"Session\" is the change being built."
   },
   "preview.loader.loadingTitle": {
     "text": "Loading the preview…",
@@ -347,21 +347,9 @@
     "text": "Not shared yet",
     "description": "Status at the end of the small line on the card of a change that is still being built, when only its owner can see it."
   },
-  "card.actions.continueBuilding": {
-    "text": "Continue building",
-    "description": "Button on the card of a person's own proposal: opens the agent session where the change is built so they can keep working on it. \"Building\" is a verb."
-  },
-  "card.actions.continueBuildingTitle": {
-    "text": "Open the agent session behind this change",
-    "description": "Tooltip on the Continue building button of a proposal's card. \"Open\" is a verb; \"change\" is a noun."
-  },
   "card.actions.explore": {
     "text": "Explore in a coding agent",
-    "description": "Button on a proposal's card: starts a chat with an AI coding agent, with a message about this proposal already written, so the person can ask what it does."
-  },
-  "card.actions.exploreButton": {
-    "text": "Explore in a coding agent",
-    "description": "Label, after a sparkle icon, of the button on a proposal in the vote list: starts a chat with an AI coding agent, with a message about this proposal already written."
+    "description": "Button on a proposal's card: opens the viewer's own conversation with Homeroom bot (Homeroom's building assistant) about this proposal, so the person can ask what it does or ask for changes."
   },
   "card.actions.moveBack": {
     "text": "Move back to Underway",
@@ -433,7 +421,7 @@
   },
   "card.proposal.mineIconTitle": {
     "text": "This is your PR. Its session is under ⋯.",
-    "description": "Tooltip of the icon on a proposal's card that the viewer made. \"PR\" abbreviates pull request; \"session\" is the agent session that built it; ⋯ is the card's menu button and stays as it is."
+    "description": "Tooltip of the icon on a proposal's card that the viewer made. \"PR\" abbreviates pull request; \"session\" is the viewer's own work on the change, whose actions are in the card's menu; ⋯ is the card's menu button and stays as it is."
   },
   "card.provenance.importedBy": {
     "text": "imported from GitHub ({{author}})",
@@ -625,7 +613,7 @@
   },
   "board.divider.private": {
     "text": "Yours · not shared",
-    "description": "Label of a divider in the Workshop board's \"Underway\" column, above the viewer's own agent sessions that nobody else can see."
+    "description": "Label of a divider in the Workshop board's \"Underway\" column, above the viewer's own changes in progress that nobody else can see."
   },
   "board.divider.privateTitle": {
     "text": "Only you can see your active sessions here. Their code is public.",
@@ -633,7 +621,7 @@
   },
   "board.divider.visible": {
     "text": "Yours · visible",
-    "description": "Label of a divider in the Workshop board's \"Underway\" column, above the viewer's own agent sessions that everyone can see."
+    "description": "Label of a divider in the Workshop board's \"Underway\" column, above the viewer's own changes in progress that everyone can see."
   },
   "board.divider.visibleTitle": {
     "text": "Visible to everyone, including a live preview of your changes.",
@@ -641,67 +629,67 @@
   },
   "board.divider.others": {
     "text": "Others",
-    "description": "Label of a divider in the Workshop board's \"Underway\" column, above agent sessions that belong to other people."
+    "description": "Label of a divider in the Workshop board's \"Underway\" column, above changes in progress that belong to other people."
   },
   "board.divider.othersTitle": {
-    "text": "Agent sessions other people have made visible.",
+    "text": "Changes in progress that other people have made visible.",
     "description": "Tooltip of the \"Others\" divider in the Workshop board's \"Underway\" column."
   },
   "board.sessionNote.priority_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by priority.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by priority.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.priority_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by priority.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by priority.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.category_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by category.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by category.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.category_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by category.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by category.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.assignee_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.assignee_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.priorityCategory_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by priority or category.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or category and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by priority or category.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or category and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.priorityCategory_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by priority or category.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or category and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by priority or category.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or category and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.priorityAssignee_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by priority or assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by priority or assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.priorityAssignee_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by priority or assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by priority or assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority or assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.categoryAssignee_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by category or assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category or assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by category or assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category or assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.categoryAssignee_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by category or assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category or assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by category or assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by category or assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.all_one": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session card below is not filtered by priority, category or assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority, category or assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such card below is not filtered by priority, category or assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority, category or assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "board.sessionNote.all_other": {
-    "text": "Agent sessions don't carry priority, category or assignee. The {{count}} session cards below are not filtered by priority, category or assignee.",
-    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority, category or assignee and agent session cards are shown anyway, because sessions have none of those. {{count}} is how many session cards are below."
+    "text": "Changes in progress don't carry priority, category or assignee. The {{count}} such cards below are not filtered by priority, category or assignee.",
+    "description": "Note at the top of the Workshop board's \"Underway\" column when the board is filtered by priority, category or assignee and the cards of changes in progress are shown anyway, because those have none of them. {{count}} is how many such cards are below."
   },
   "request.fallbackTitle": {
     "text": "Issue #{{number}}",
@@ -959,14 +947,6 @@
     "text": "Ask Homeroom bot to change this, in your chat with it",
     "description": "Tooltip on the Ask for changes row in the ⋯ menu of a proposal's page. \"Homeroom bot\" is the name of the platform's assistant; \"change\" is a verb."
   },
-  "page.menu.buildOwnerTitle": {
-    "text": "Open the agent session behind this change",
-    "description": "Tooltip on the row, in the ⋯ menu of a person's own change, that opens the agent session where the change is built. \"Open\" is a verb; \"change\" is a noun."
-  },
-  "page.menu.buildReadTitle": {
-    "text": "Read the agent session that built this change",
-    "description": "Tooltip on the row, in the ⋯ menu of somebody else's change, that opens the published record of the agent session that built it."
-  },
   "page.actions.openApp": {
     "text": "Open app",
     "description": "Button on the page of a change that is live: opens the running app. \"Open\" is a verb."
@@ -1022,22 +1002,6 @@
   "page.menu.openOnGitHub": {
     "text": "Open on GitHub",
     "description": "Row in the ⋯ menu of a request's page, for a request that is an issue on GitHub: opens the issue on GitHub in a new tab. \"Open\" is a verb."
-  },
-  "page.build.continueInSession": {
-    "text": "Continue in agent session",
-    "description": "Button on a person's own change that was started from a coding agent: opens that agent session."
-  },
-  "page.build.continueBuilding": {
-    "text": "Continue building",
-    "description": "Button on a person's own change that is still being built: opens the session where it is built. \"Building\" is a verb."
-  },
-  "page.build.openBuild": {
-    "text": "Open build",
-    "description": "Button on a person's own change that is up for a vote or finished: opens the session where it was built. \"Open\" is a verb and \"build\" a noun."
-  },
-  "page.build.readBuild": {
-    "text": "Read the build",
-    "description": "Button on somebody else's change whose author published the session it was built in: opens that record to read. \"Build\" is a noun."
   },
   "page.sample.note": {
     "text": "This is a display-only sample. To try editing a description, open \"[Preview sample] Your editable change\" in your sessions.",
@@ -1376,56 +1340,8 @@
     "description": "Stands in for the description of a visible change in the before/after screenshots of a change, when the author gave none. It names the pair of screenshots."
   },
   "explore.title": {
-    "text": "Open an agent session with a message about this change ready to edit and send",
-    "description": "Tooltip on the Explore in a coding agent button of a proposal. \"Open\" is a verb; \"change\" is a noun."
-  },
-  "explore.seed.pr": {
-    "text": "Let's explore PR {{number}} in this app: \"{{title}}\".",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. {{number}} is the pull request number and {{title}} its title."
-  },
-  "explore.seed.prBy": {
-    "text": "Let's explore PR {{number}} in this app: \"{{title}}\" by {{author}}.",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. {{number}} is the pull request number, {{title}} its title and {{author}} the username of its author."
-  },
-  "explore.seed.prUntitled": {
-    "text": "PR {{number}}",
-    "description": "Stands in for the title, inside the quotes, in the message written for a coding agent about a pull request that has no title. {{number}} is the pull request number."
-  },
-  "explore.seed.proposal": {
-    "text": "Let's explore the proposal \"{{title}}\" in this app.",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. Used when the proposal has no pull request number. {{title}} is its title."
-  },
-  "explore.seed.proposalBy": {
-    "text": "Let's explore the proposal \"{{title}}\" in this app by {{author}}.",
-    "description": "First line of the message Homeroom writes for the person to send to an AI coding agent when they press Explore in a coding agent on a proposal. They can edit it before sending. Keep the straight double quotes around the title. Used when the proposal has no pull request number. {{title}} is its title and {{author}} the username of its author."
-  },
-  "explore.seed.proposalUntitled": {
-    "text": "this proposal",
-    "description": "Stands in for the title, inside the quotes, in the message written for a coding agent about a proposal that has no title. Lower case."
-  },
-  "explore.seed.prLink": {
-    "text": "PR link: {{url}}",
-    "description": "Line in the message written for a coding agent about a proposal, giving the address of its pull request on GitHub. {{url}} is that address."
-  },
-  "explore.seed.changeLink": {
-    "text": "Change page: {{url}}",
-    "description": "Line in the message written for a coding agent about a proposal that has no pull request on GitHub, giving the address of the change's own page in Homeroom. {{url}} is that address."
-  },
-  "explore.seed.linkedIssues": {
-    "text": "Linked issues: {{issues}}.",
-    "description": "Line in the message written for a coding agent about a proposal, listing the requests it is linked to. {{issues}} is their numbers, for example \"#12, #15\"."
-  },
-  "explore.seed.merged": {
-    "text": "This proposal is already merged.",
-    "description": "Line in the message written for a coding agent about a proposal that has already been merged into the project."
-  },
-  "explore.seed.merging": {
-    "text": "This proposal is currently being merged.",
-    "description": "Line in the message written for a coding agent about a proposal that is being merged into the project right now."
-  },
-  "explore.seed.tail": {
-    "text": "Please read it and explain in plain terms what it changes, how it works, and anything risky or worth checking. Just explain it for now, don't change any code or open a PR.",
-    "description": "Last paragraph of the message Homeroom writes for the person to send to an AI coding agent about a proposal: what the agent is asked to do. \"PR\" is a pull request."
+    "text": "Open your thread with Homeroom bot about this change",
+    "description": "Tooltip on the Explore in a coding agent button of a proposal: it opens the viewer's own conversation with Homeroom bot about that change. \"Open\" is a verb; \"change\" is a noun. Homeroom bot is the name of Homeroom's building assistant."
   },
   "workshop.category.fallbackName": {
     "text": "Category",
@@ -1511,18 +1427,6 @@
     "text": "Picked up",
     "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: somebody has taken it on and has not started building yet."
   },
-  "workshop.row.tag.autoSolving": {
-    "text": "Auto-solving",
-    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: Homeroom's agent is working on it by itself, without a person driving."
-  },
-  "workshop.row.tag.needsAnswer": {
-    "text": "Needs an answer",
-    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: the agent working on it has asked a question and waits for somebody to reply."
-  },
-  "workshop.row.tag.draftReady": {
-    "text": "Draft ready",
-    "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a request: the agent has finished a first draft of a change for it, ready to be looked at."
-  },
   "workshop.row.tag.changeBeingWorkedOn": {
     "text": "Being worked on",
     "description": "Small status tag on a row in the lists of a project's Workshop tab (Your work, Since your last visit and a week's page). On a change that is still being made: its agent is working right now."
@@ -1561,7 +1465,7 @@
   },
   "session.fallbackTitle": {
     "text": "Session #{{id}}",
-    "description": "Title shown on an agent session's card when the session has no title, pull request title or branch name. {{id}} is the session's number. A \"session\" is one working conversation with a coding agent."
+    "description": "Title shown on the card of a change in progress when it has no title, pull request title or branch name. {{id}} is its number. A \"session\" is one change being worked on."
   },
   "session.prFallbackTitle": {
     "text": "PR {{number}}",
@@ -1569,19 +1473,19 @@
   },
   "session.venueTitle": {
     "text": "{{venue}}: {{blurb}}",
-    "description": "Tooltip of the chip on an agent session's card that says where the session is being built. {{venue}} is the name of that place and {{blurb}} a short sentence describing it."
+    "description": "Tooltip of the chip on the card of a change in progress that says where it is being built. {{venue}} is the name of that place and {{blurb}} a short sentence describing it."
   },
   "session.failing.names": {
     "text": "Failing: {{checks}}",
-    "description": "Line on the viewer's own agent session card naming the automated checks that are failing. {{checks}} is one or two check names."
+    "description": "Line on the viewer's own card for a change in progress naming the automated checks that are failing. {{checks}} is one or two check names."
   },
   "session.failing.namesAndMore_one": {
     "text": "Failing: {{checks}} · +{{count}} more",
-    "description": "Line on the viewer's own agent session card naming the automated checks that are failing. {{checks}} is the first two check names and {{count}} how many more are failing."
+    "description": "Line on the viewer's own card for a change in progress naming the automated checks that are failing. {{checks}} is the first two check names and {{count}} how many more are failing."
   },
   "session.failing.namesAndMore_other": {
     "text": "Failing: {{checks}} · +{{count}} more",
-    "description": "Line on the viewer's own agent session card naming the automated checks that are failing. {{checks}} is the first two check names and {{count}} how many more are failing."
+    "description": "Line on the viewer's own card for a change in progress naming the automated checks that are failing. {{checks}} is the first two check names and {{count}} how many more are failing."
   },
   "session.failing.reason": {
     "text": "{{check}} — {{reason}}",
@@ -1593,7 +1497,7 @@
   },
   "session.chip.working": {
     "text": "working…",
-    "description": "Status chip with a spinner on an agent session's card while the AI agent is busy working in that session."
+    "description": "Status chip with a spinner on the card of a change in progress while the AI agent is busy building it."
   },
   "session.chip.importedPr": {
     "text": "Imported PR",
@@ -1609,59 +1513,43 @@
   },
   "session.menu.viewPr": {
     "text": "View PR on GitHub",
-    "description": "Item in the ⋯ menu of an agent session's card, for a session whose pull request is on GitHub: opens it on GitHub in a new tab."
+    "description": "Item in the ⋯ menu of the card of a change in progress, when its pull request is on GitHub: opens it on GitHub in a new tab."
   },
   "session.menu.viewCode": {
     "text": "View code",
-    "description": "Item in the ⋯ menu of an agent session's card, for a session whose code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
-  },
-  "session.menu.stopSharingChat": {
-    "text": "Chat shared. Stop sharing",
-    "description": "Item in the ⋯ menu of the viewer's own agent session card when others can read the session's chat. It states that and, when pressed, stops others reading it."
-  },
-  "session.menu.stopSharingChatTitle": {
-    "text": "Stop others reading this chat (they keep the card and the discussion)",
-    "description": "Tooltip of the \"Chat shared. Stop sharing\" item in the ⋯ menu of the viewer's own agent session card."
-  },
-  "session.menu.shareChat": {
-    "text": "Share chat",
-    "description": "Item in the ⋯ menu of the viewer's own agent session card: lets everyone read the conversation with the agent. \"Share\" is a verb."
-  },
-  "session.menu.shareChatTitle": {
-    "text": "Let everyone read this chat, read-only. They can't reply in it, and can't see your costs or uploaded files",
-    "description": "Tooltip of the \"Share chat\" item in the ⋯ menu of the viewer's own agent session card."
+    "description": "Item in the ⋯ menu of the card of a change in progress, when its code is on Homeroom's own git host rather than GitHub: opens that code in a new tab. \"View\" is a verb."
   },
   "session.menu.openDiscussion": {
     "text": "Open public discussion",
-    "description": "Item in the ⋯ menu of the viewer's own agent session card: opens the public discussion thread about that session. \"Open\" is a verb."
+    "description": "Item in the ⋯ menu of the viewer's own card for a change in progress: opens the public discussion thread about that change. \"Open\" is a verb."
   },
   "session.menu.openDiscussionCount_one": {
     "text": "Open public discussion ({{count}})",
-    "description": "Item in the ⋯ menu of the viewer's own agent session card: opens the public discussion thread about that session. {{count}} is how many messages it has. \"Open\" is a verb."
+    "description": "Item in the ⋯ menu of the viewer's own card for a change in progress: opens the public discussion thread about that change. {{count}} is how many messages it has. \"Open\" is a verb."
   },
   "session.menu.openDiscussionCount_other": {
     "text": "Open public discussion ({{count}})",
-    "description": "Item in the ⋯ menu of the viewer's own agent session card: opens the public discussion thread about that session. {{count}} is how many messages it has. \"Open\" is a verb."
+    "description": "Item in the ⋯ menu of the viewer's own card for a change in progress: opens the public discussion thread about that change. {{count}} is how many messages it has. \"Open\" is a verb."
   },
   "session.menu.openDiscussionTitle": {
     "text": "Open the public discussion on this session",
-    "description": "Tooltip of the \"Open public discussion\" item in the ⋯ menu of the viewer's own agent session card."
+    "description": "Tooltip of the \"Open public discussion\" item in the ⋯ menu of the viewer's own card for a change in progress."
   },
   "session.menu.viewChecks": {
     "text": "View checks",
-    "description": "Item in the ⋯ menu of an agent session's card: opens the results of the automated checks that ran on the session's change."
+    "description": "Item in the ⋯ menu of the card of a change in progress: opens the results of the automated checks that ran on it."
   },
   "session.menu.rerunChecks": {
     "text": "Re-run checks",
-    "description": "Item in the ⋯ menu of an agent session's card: runs the automated checks on the session's change again."
+    "description": "Item in the ⋯ menu of the card of a change in progress: runs its automated checks again."
   },
   "session.menu.archive": {
     "text": "Archive",
-    "description": "Item in the ⋯ menu of the viewer's own agent session card: archives the session. A verb."
+    "description": "Item in the ⋯ menu of the viewer's own card for a change in progress: archives the change. A verb."
   },
   "session.menu.archiveTitle": {
     "text": "Archive this session (closes the PR, frees the slot)",
-    "description": "Tooltip of the \"Archive\" item in the ⋯ menu of the viewer's own agent session card. \"The slot\" is one of the limited number of sessions a person may have open at once. \"PR\" abbreviates pull request."
+    "description": "Tooltip of the \"Archive\" item in the ⋯ menu of the viewer's own card for a change in progress. \"The slot\" is one of the limited number of changes a person may have in progress at once. \"PR\" abbreviates pull request."
   },
   "session.mine.importedBy": {
     "text": "Imported by {{author}} · not waiting for approval yet",
@@ -1671,21 +1559,17 @@
     "text": "Imported by unknown author · not waiting for approval yet",
     "description": "Line under the title of the viewer's own card for an imported pull request that has not been put up for a vote, when the pull request's author is not known."
   },
-  "session.mine.visibleChatReadable": {
-    "text": "Visible to everyone · chat readable",
-    "description": "Line under the title of the viewer's own agent session card when everyone can see the session and also read its chat."
-  },
   "session.mine.visible": {
     "text": "Visible to everyone",
-    "description": "Line under the title of the viewer's own agent session card when everyone can see the session but not read its chat."
+    "description": "Line under the title of the viewer's own card for a change in progress when everyone can see the change but not read its build chat."
   },
   "session.mine.private": {
     "text": "Only you can see this here. Its code is public.",
-    "description": "Line under the title of the viewer's own agent session card when the session is not shared with the group."
+    "description": "Line under the title of the viewer's own card for a change in progress when the change is not shared with the group."
   },
   "session.mine.workingTitle": {
     "text": "AI is working: {{title}}",
-    "description": "Tooltip of the viewer's own agent session card while the AI agent is busy. {{title}} is the session's title."
+    "description": "Tooltip of the viewer's own card for a change in progress while the AI agent is busy. {{title}} is the change's title."
   },
   "session.actions.askForApproval": {
     "text": "Ask for approval",
@@ -1697,27 +1581,27 @@
   },
   "session.actions.hide": {
     "text": "Hide",
-    "description": "Button on the viewer's own agent session card when the session is visible to everyone: makes it private again. A verb."
+    "description": "Button on the viewer's own card for a change in progress when the change is visible to everyone: makes it private again. A verb."
   },
   "session.actions.hideTitle": {
     "text": "Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)",
-    "description": "Tooltip of the \"Hide\" button on the viewer's own agent session card."
+    "description": "Tooltip of the \"Hide\" button on the viewer's own card for a change in progress."
   },
   "session.actions.makeVisible": {
     "text": "Make visible",
-    "description": "Button on the viewer's own agent session card when only they can see the session: shows it to everyone in the project."
+    "description": "Button on the viewer's own card for a change in progress when only they can see it: shows it to everyone in the project."
   },
   "session.actions.makeVisibleTitle": {
-    "text": "Show this session in everyone's In progress area. Others can comment and open its live preview, but can't read your chat unless you also share it",
-    "description": "Tooltip of the \"Make visible\" button on the viewer's own agent session card."
+    "text": "Show this change in everyone's In progress area, where others can comment and open its live preview",
+    "description": "Tooltip of the \"Make visible\" button on the viewer's own card for a change in progress."
   },
   "session.shared.working": {
     "text": "{{owner}} is working on this",
-    "description": "Line under the title of another person's agent session card. {{owner}} is that person's account name."
+    "description": "Line under the title of another person's card for a change in progress. {{owner}} is that person's account name."
   },
   "session.shared.workingSomeone": {
     "text": "someone is working on this",
-    "description": "Line under the title of another person's agent session card when that person's name is not known. It starts in lower case because a name normally stands there."
+    "description": "Line under the title of another person's card for a change in progress when that person's name is not known. It starts in lower case because a name normally stands there."
   },
   "session.shared.imported": {
     "text": "Imported pull request by {{author}} · imported by {{owner}}",
@@ -1737,43 +1621,23 @@
   },
   "session.visibility.failedHttp": {
     "text": "Failed (HTTP {{status}}).",
-    "description": "Toast shown when making an agent session visible to everyone, or hiding it again, was refused by the server without an explanation. {{status}} is the HTTP status number, for example 500."
+    "description": "Toast shown when making a change in progress visible to everyone, or hiding it again, was refused by the server without an explanation. {{status}} is the HTTP status number, for example 500."
   },
   "session.visibility.failed": {
     "text": "Failed: {{error}}",
-    "description": "Toast shown when making an agent session visible to everyone, or hiding it again, could not be sent. {{error}} is the technical error message."
-  },
-  "session.shareChat.failedHttp": {
-    "text": "Failed (HTTP {{status}}).",
-    "description": "Toast shown when sharing an agent session's chat with everyone, or stopping that, was refused by the server without an explanation. {{status}} is the HTTP status number, for example 500."
-  },
-  "session.shareChat.failed": {
-    "text": "Failed: {{error}}",
-    "description": "Toast shown when sharing an agent session's chat with everyone, or stopping that, could not be sent. {{error}} is the technical error message."
-  },
-  "session.shareChat.confirmTitle": {
-    "text": "Let everyone read this chat?",
-    "description": "Title of the dialog that asks the owner of an agent session to confirm before its chat is made readable by everyone."
-  },
-  "session.shareChat.confirmMessage": {
-    "text": "Anyone who can see this app will be able to read the whole conversation. your messages, the AI's replies, and what the coding agent did. They can't reply in your chat, and they can't see your costs or your uploaded files. You can turn this off at any time.",
-    "description": "Body of the dialog that asks the owner of an agent session to confirm before its chat is made readable by everyone. It says what others will and will not be able to see."
-  },
-  "session.shareChat.confirmLabel": {
-    "text": "Share chat",
-    "description": "Confirm button of the dialog that asks whether to let everyone read an agent session's chat. \"Share\" is a verb."
+    "description": "Toast shown when making a change in progress visible to everyone, or hiding it again, could not be sent. {{error}} is the technical error message."
   },
   "session.unarchive.failed": {
     "text": "Failed to unarchive session",
-    "description": "Toast shown when restoring an archived agent session failed and the server gave no explanation."
+    "description": "Toast shown when restoring an archived change failed and the server gave no explanation."
   },
   "session.unarchive.failedWith": {
     "text": "Unarchive failed: {{error}}",
-    "description": "Toast shown when restoring an archived agent session could not be sent. {{error}} is the technical error message."
+    "description": "Toast shown when restoring an archived change could not be sent. {{error}} is the technical error message."
   },
   "session.unarchive.restoredTitle": {
     "text": "Session restored",
-    "description": "Title of the notice shown after an archived agent session was restored but the AI no longer remembers the earlier conversation."
+    "description": "Title of the notice shown after an archived change was restored but the AI no longer remembers the earlier conversation."
   },
   "session.unarchive.restoredMessage": {
     "text": "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.",
@@ -1781,7 +1645,7 @@
   },
   "session.archive.confirmTitle": {
     "text": "Archive \"{{title}}\"?",
-    "description": "Title of the dialog that asks the person to confirm archiving an agent session or an imported pull request. {{title}} is its title. \"Archive\" is a verb."
+    "description": "Title of the dialog that asks the person to confirm archiving a change in progress or an imported pull request. {{title}} is its title. \"Archive\" is a verb."
   },
   "session.archive.confirmMessageImported": {
     "text": "This closes the imported pull request on GitHub and archives its card. The source branch is kept.",
@@ -1789,27 +1653,27 @@
   },
   "session.archive.confirmMessage": {
     "text": "This closes the PR and frees the slot. You can Unarchive it later to restore it (chat memory is kept for 30 days).",
-    "description": "Body of the dialog that asks the person to confirm archiving their agent session. \"The slot\" is one of the limited number of sessions a person may have open. \"Unarchive\" is the name of the button that restores it. \"PR\" abbreviates pull request."
+    "description": "Body of the dialog that asks the person to confirm archiving their change in progress. \"The slot\" is one of the limited number of changes a person may have in progress. \"Unarchive\" is the name of the button that restores it. \"PR\" abbreviates pull request."
   },
   "session.archive.confirmLabel": {
     "text": "Archive",
-    "description": "Confirm button of the dialog that asks whether to archive an agent session or an imported pull request. A verb."
+    "description": "Confirm button of the dialog that asks whether to archive a change in progress or an imported pull request. A verb."
   },
   "session.archive.failedHttp": {
     "text": "Archive failed (HTTP {{status}}).",
-    "description": "Toast shown when archiving an agent session was refused by the server without an explanation. {{status}} is the HTTP status number."
+    "description": "Toast shown when archiving a change in progress was refused by the server without an explanation. {{status}} is the HTTP status number."
   },
   "session.archive.failedWith": {
     "text": "Archive failed: {{error}}",
-    "description": "Toast shown when archiving an agent session could not be sent. {{error}} is the technical error message."
+    "description": "Toast shown when archiving a change in progress could not be sent. {{error}} is the technical error message."
   },
   "archiveUndo.archived_one": {
     "text": "Archived “{{title}}”",
-    "description": "Bottom notice shown right after a person archives one of their agent sessions on a project's board, with an Undo button beside it. {{title}} is the session's title. {{count}} (1 here) is how many archives can be undone in a row, newest first."
+    "description": "Bottom notice shown right after a person archives one of their changes in progress on a project's board, with an Undo button beside it. {{title}} is the change's title. {{count}} (1 here) is how many archives can be undone in a row, newest first."
   },
   "archiveUndo.archived_other": {
     "text": "Archived “{{title}}”. {{count}} to undo",
-    "description": "Bottom notice shown right after a person archives an agent session when earlier archives can still be undone too, with an Undo button beside it. {{title}} is the session's title; {{count}} is how many can be undone in a row, newest first, this one included."
+    "description": "Bottom notice shown right after a person archives a change in progress when earlier archives can still be undone too, with an Undo button beside it. {{title}} is the change's title; {{count}} is how many can be undone in a row, newest first, this one included."
   },
   "archiveUndo.withdrawn_one": {
     "text": "Withdrew “{{title}}”",
@@ -1833,35 +1697,7 @@
   },
   "archiveUndo.undo": {
     "text": "Undo",
-    "description": "Button on the bottom notice shown after archiving or withdrawing an agent session: brings the most recent one back. A verb."
-  },
-  "transcript.readSession": {
-    "text": "Read the agent session",
-    "description": "Label of the section on a change's page that expands to show the conversation between the author and the coding agent, which the author chose to share."
-  },
-  "transcript.pageTitle": {
-    "text": "Agent session",
-    "description": "Heading of the page that shows a shared conversation between a person and a coding agent, read-only."
-  },
-  "transcript.readOnlyTag": {
-    "text": "read-only",
-    "description": "Small tag after the heading of a shared agent session's page, marking that the viewer can read the conversation but not write in it."
-  },
-  "transcript.loading": {
-    "text": "Loading the chat…",
-    "description": "Shown in place of a shared agent session's conversation while it is being fetched."
-  },
-  "transcript.notShared": {
-    "text": "This chat is no longer shared.",
-    "description": "Shown in place of a shared agent session's conversation when its owner has stopped sharing it."
-  },
-  "transcript.loadFailedHttp": {
-    "text": "Couldn't load the chat (HTTP {{status}}).",
-    "description": "Shown in place of a shared agent session's conversation when the server refused to send it. {{status}} is the HTTP status number."
-  },
-  "transcript.loadFailedWith": {
-    "text": "Couldn't load the chat: {{error}}",
-    "description": "Shown in place of a shared agent session's conversation when it could not be fetched. {{error}} is the technical error message."
+    "description": "Button on the bottom notice shown after archiving or withdrawing a change in progress: brings the most recent one back. A verb."
   },
   "explicit.fallback.sentence": {
     "text": "This change needs a Yes from another member.",
@@ -2379,14 +2215,6 @@
     "text": "Admin merge",
     "description": "Item in a proposal's ⋯ menu, shown to administrators: merges the change immediately without waiting for the vote."
   },
-  "proposal.menu.openSession": {
-    "text": "Open session",
-    "description": "Item in the ⋯ menu of the viewer's own proposal: opens the agent session that built the change. \"Open\" is a verb."
-  },
-  "proposal.menu.openSessionTitle": {
-    "text": "Open the agent session behind this change",
-    "description": "Tooltip of the \"Open session\" item in the ⋯ menu of the viewer's own proposal."
-  },
   "proposal.menu.moveBack": {
     "text": "Move back to Underway",
     "description": "Item in the ⋯ menu of the viewer's own proposal: takes it out of the vote and returns it to the \"Underway\" column so they can keep working on it."
@@ -2453,7 +2281,7 @@
   },
   "proposal.menu.explore": {
     "text": "Explore in a coding agent",
-    "description": "Item in a proposal's ⋯ menu: opens an agent session with a message about this change ready to send, so the viewer can ask the agent to explain it."
+    "description": "Item in a proposal's ⋯ menu: opens the viewer's own conversation with Homeroom bot (Homeroom's building assistant) about this change, so the viewer can ask it to explain the change."
   },
   "proposal.menu.retryPreview": {
     "text": "Retry preview",
@@ -2478,6 +2306,14 @@
   "proposal.menu.screenshotsTitle": {
     "text": "Open this proposal and expand its before/after captures",
     "description": "Tooltip of the \"Before/after screenshots\" item in a proposal's ⋯ menu."
+  },
+  "proposal.menu.copyLink": {
+    "text": "Copy link",
+    "description": "Row in a change's ⋯ menu: copies the address of the change's page to the clipboard."
+  },
+  "proposal.menu.copyLinkDone": {
+    "text": "Link copied",
+    "description": "Brief notice after pressing Copy link in a change's ⋯ menu: the link is on the clipboard."
   },
   "proposal.menu.share": {
     "text": "Share to…",
@@ -2988,40 +2824,40 @@
     "description": "First sentence of the note on an imported proposal's page about a conflict with the main branch, when the code lives in the project's own repository. \"It\" is the conflict."
   },
   "remedy.rest.resolveInChat": {
-    "text": "<0>{{creator}}</0> needs to resolve it: run \"Sync with main\" from the session's dev-chat.",
-    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a command; \"dev-chat\" is the chat with the coding agent. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+    "text": "<0>{{creator}}</0> needs to resolve it: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a button on the change's page. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
   },
   "remedy.rest.resolveInChatUnnamed": {
-    "text": "<0>the proposal’s creator</0> needs to resolve it: run \"Sync with main\" from the session's dev-chat.",
-    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a command; \"dev-chat\" is the chat with the coding agent. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
+    "text": "<0>the proposal’s creator</0> needs to resolve it: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page after automatic resolution failed. \"Sync with main\" is the name of a button on the change's page. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.needsSync": {
-    "text": "<0>{{creator}}</0> needs to bring it up to date: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+    "text": "<0>{{creator}}</0> needs to bring it up to date: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a button on the change's page. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
   },
   "remedy.rest.needsSyncUnnamed": {
-    "text": "<0>the proposal’s creator</0> needs to bring it up to date: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a command. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
+    "text": "<0>the proposal’s creator</0> needs to bring it up to date: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page when the author must bring the change up to date with main. \"Sync with main\" is the name of a button on the change's page. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.nobody": {
     "text": "Nobody needs to do anything.",
     "description": "Sentence in the conflict note on a proposal's page while Homeroom is resolving the conflict by itself."
   },
   "remedy.rest.canSyncSooner": {
-    "text": "<0>{{creator}}</0> can bring it up to date sooner: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+    "text": "<0>{{creator}}</0> can bring it up to date sooner: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a button on the change's page. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
   },
   "remedy.rest.canSyncSoonerUnnamed": {
-    "text": "<0>the proposal’s creator</0> can bring it up to date sooner: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a command. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
+    "text": "<0>the proposal’s creator</0> can bring it up to date sooner: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict after the vote, but the author may do it earlier. \"Sync with main\" is the name of a button on the change's page. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.canAlsoSyncSooner": {
-    "text": "<0>{{creator}}</0> can also bring it up to date sooner: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a command. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
+    "text": "<0>{{creator}}</0> can also bring it up to date sooner: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a button on the change's page. <0>{{creator}}</0> is the account name of the change's author, shown in bold."
   },
   "remedy.rest.canAlsoSyncSoonerUnnamed": {
-    "text": "<0>the proposal’s creator</0> can also bring it up to date sooner: open the agent session and run \"Sync with main\".",
-    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a command. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
+    "text": "<0>the proposal’s creator</0> can also bring it up to date sooner: run \"Sync with main\" on the change's page.",
+    "description": "Sentence in the conflict note on a proposal's page when Homeroom will resolve the conflict automatically, but the author may do it earlier. \"Sync with main\" is the name of a button on the change's page. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold and stay in lower case in English."
   },
   "remedy.rest.resubmit": {
     "text": "<0>{{creator}}</0> needs to bring the branch up to date with main in the coding agent that wrote it, then submit it again as an update to this proposal. Homeroom keeps this branch itself, so the merge is retried once the update lands.",
@@ -3048,12 +2884,12 @@
     "description": "Text of the conflict note on an imported proposal's page when the code lives in its author's own copy (fork) of the repository. Used when the author's account name is not known: the words in the tags, which name the author instead, are shown in bold both times and stay in lower case in English."
   },
   "remedy.detail.failed": {
-    "text": "The change’s owner needs to resolve it from their agent session.",
+    "text": "The change’s owner needs to resolve it from the change’s page.",
     "description": "Short explanation, in a tooltip, of why a proposal is blocked after automatic conflict resolution failed. \"It\" is the conflict with the main branch."
   },
   "remedy.detail.conflict": {
-    "text": "Its creator needs to bring it up to date from their agent session (\"Sync with main\").",
-    "description": "Short explanation, in a tooltip, of why a proposal that conflicts with the main branch is blocked. \"Sync with main\" is the name of a command."
+    "text": "Its creator needs to bring it up to date from the change’s page (\"Sync with main\").",
+    "description": "Short explanation, in a tooltip, of why a proposal that conflicts with the main branch is blocked. \"Sync with main\" is the name of a button on the change's page."
   },
   "remedy.label": {
     "text": "Needs author to sync with main",
@@ -3177,11 +3013,11 @@
   },
   "recheck.label": {
     "text": "Re-run checks",
-    "description": "Button on a proposal or an agent session whose automated checks did not pass: runs them again."
+    "description": "Button on a change whose automated checks did not pass: runs them again."
   },
   "recheck.title": {
     "text": "Rebuild the staging preview if needed and re-run the automated tests",
-    "description": "Tooltip of the \"Re-run checks\" button on a proposal or an agent session."
+    "description": "Tooltip of the \"Re-run checks\" button on a change."
   },
   "recheck.botFixing": {
     "text": "Homeroom bot is fixing this. Re-running now would restart its fix.",
@@ -3869,127 +3705,127 @@
   },
   "checks.none.heading": {
     "text": "No checks yet",
-    "description": "Heading of the checks note on a proposal's or agent session's page when the change is still being worked on and its automated checks have never run."
+    "description": "Heading of the checks note on a change's page when the change is still being worked on and its automated checks have never run."
   },
   "checks.none.body": {
     "text": "Checks run once the agent commits a change: a staging preview is built, then the automated tests run against it.",
-    "description": "Body of the checks note on a proposal's or agent session's page under \"No checks yet\": says when the automated checks will first run. \"Checks run\" is a statement (the checks will run), not a command; \"the agent\" is the AI coding agent working on the change."
+    "description": "Body of the checks note on a change's page under \"No checks yet\": says when the automated checks will first run. \"Checks run\" is a statement (the checks will run), not a command; \"the agent\" is the AI coding agent working on the change."
   },
   "checks.starting.heading": {
     "text": "Checks are starting…",
-    "description": "Heading of the checks note on a proposal's or agent session's page, beside a spinner, when a first run of the automated checks is about to begin."
+    "description": "Heading of the checks note on a change's page, beside a spinner, when a first run of the automated checks is about to begin."
   },
   "checks.starting.body": {
     "text": "The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.",
-    "description": "Body of the checks note on a proposal's or agent session's page under \"Checks are starting…\". \"Merge\" is the noun: putting the change into the live app."
+    "description": "Body of the checks note on a change's page under \"Checks are starting…\". \"Merge\" is the noun: putting the change into the live app."
   },
   "checks.starting.stuck": {
     "text": "If this has been stuck for a while, the platform re-runs the checks automatically, or re-run them now.",
-    "description": "Small print in the checks note on a proposal's or agent session's page when the checks have been \"starting\" for over ten minutes; a \"Re-run checks\" button follows it. \"re-run them now\" addresses the reader."
+    "description": "Small print in the checks note on a change's page when the checks have been \"starting\" for over ten minutes; a \"Re-run checks\" button follows it. \"re-run them now\" addresses the reader."
   },
   "checks.deferred.heading": {
     "text": "Checks deferred until this merges cleanly.",
-    "description": "Heading of the checks note on a proposal's or agent session's page when the preview was built but the tests were put off because the proposal conflicts with the main line of code. \"this\" is the proposal."
+    "description": "Heading of the checks note on a change's page when the preview was built but the tests were put off because the proposal conflicts with the main line of code. \"this\" is the proposal."
   },
   "checks.deferred.body": {
     "text": "This proposal conflicts with main, so its preview was built but the automated tests were not run: they would judge a tree that cannot merge. They run automatically once it merges cleanly, and the merge waits for them.",
-    "description": "Body of the checks note on a proposal's or agent session's page when the tests were put off. \"main\" is the name of the project's main line of code and stays as it is; \"a tree\" is a version of the code."
+    "description": "Body of the checks note on a change's page when the tests were put off. \"main\" is the name of the project's main line of code and stays as it is; \"a tree\" is a version of the code."
   },
   "checks.deferred.builtWhen": {
     "text": "Preview built {{when}}.",
-    "description": "Small print in the checks note on a proposal's or agent session's page when the tests were put off: when the preview was built. {{when}} is a relative time such as \"5 minutes ago\"."
+    "description": "Small print in the checks note on a change's page when the tests were put off: when the preview was built. {{when}} is a relative time such as \"5 minutes ago\"."
   },
   "checks.deferred.rerun": {
     "text": "To test this head as it stands anyway, re-run the checks.",
-    "description": "Small print in the checks note on a proposal's or agent session's page when the tests were put off; a \"Re-run checks\" button follows it. \"this head\" is the proposal's latest commit."
+    "description": "Small print in the checks note on a change's page when the tests were put off; a \"Re-run checks\" button follows it. \"this head\" is the proposal's latest commit."
   },
   "checks.pending.waitingSince": {
     "text": "Waiting since {{when}}.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the run waits its turn for a free slot. {{when}} is a relative time such as \"4 minutes ago\"."
+    "description": "Small print in the checks note on a change's page while the run waits its turn for a free slot. {{when}} is a relative time such as \"4 minutes ago\"."
   },
   "checks.pending.started": {
     "text": "Started {{when}}.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks are running: when this run began. {{when}} is a relative time such as \"4 minutes ago\"."
+    "description": "Small print in the checks note on a change's page while the automated checks are running: when this run began. {{when}} is a relative time such as \"4 minutes ago\"."
   },
   "checks.pending.movedConflict_one": {
     "text": "Main has moved {{count}} commit ahead and this proposal conflicts with it. This run is judged against the commit before that, so when the platform resolves the conflict the run starts again on the resolved commit.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal conflicts with. \"run\" is a noun: this run of the checks."
+    "description": "Small print in the checks note on a change's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal conflicts with. \"run\" is a noun: this run of the checks."
   },
   "checks.pending.movedConflict_other": {
     "text": "Main has moved {{count}} commits ahead and this proposal conflicts with it. This run is judged against the commit before that, so when the platform resolves the conflict the run starts again on the resolved commit.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal conflicts with. \"run\" is a noun: this run of the checks."
+    "description": "Small print in the checks note on a change's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal conflicts with. \"run\" is a noun: this run of the checks."
   },
   "checks.pending.movedClean_one": {
     "text": "Main has moved {{count}} commit ahead. That does not restart this run: a proposal that still merges cleanly merges as it stands.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal does not conflict with. \"run\" is a noun: this run of the checks."
+    "description": "Small print in the checks note on a change's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal does not conflict with. \"run\" is a noun: this run of the checks."
   },
   "checks.pending.movedClean_other": {
     "text": "Main has moved {{count}} commits ahead. That does not restart this run: a proposal that still merges cleanly merges as it stands.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal does not conflict with. \"run\" is a noun: this run of the checks."
+    "description": "Small print in the checks note on a change's page while the checks are running and the project's main line of code (\"main\", kept as it is) has gained {{count}} commits that this proposal does not conflict with. \"run\" is a noun: this run of the checks."
   },
   "checks.pending.stuck": {
     "text": "If this has been running for a while, the platform re-runs the checks automatically, or re-run them now.",
-    "description": "Small print in the checks note on a proposal's or agent session's page when a run of the checks has been going for over ten minutes; a \"Re-run checks\" button follows it. \"re-run them now\" addresses the reader."
+    "description": "Small print in the checks note on a change's page when a run of the checks has been going for over ten minutes; a \"Re-run checks\" button follows it. \"re-run them now\" addresses the reader."
   },
   "checks.pending.left_one": {
     "text": "About {{count}} minute left.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks run: how much longer they should take, from this project's usual time. {{count}} is the estimated number of minutes."
+    "description": "Small print in the checks note on a change's page while the automated checks run: how much longer they should take, from this project's usual time. {{count}} is the estimated number of minutes."
   },
   "checks.pending.left_other": {
     "text": "About {{count}} minutes left.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks run: how much longer they should take, from this project's usual time. {{count}} is the estimated number of minutes."
+    "description": "Small print in the checks note on a change's page while the automated checks run: how much longer they should take, from this project's usual time. {{count}} is the estimated number of minutes."
   },
   "checks.pending.leftUnder": {
     "text": "Less than a minute left.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while the automated checks run: under a minute should remain."
+    "description": "Small print in the checks note on a change's page while the automated checks run: under a minute should remain."
   },
   "checks.pending.longer_one": {
     "text": "This is taking longer than usual (usually about {{count}} minute).",
-    "description": "Small print in the checks note on a proposal's or agent session's page when a run has gone past its usual total time. {{count}} is how many minutes a whole run usually takes here."
+    "description": "Small print in the checks note on a change's page when a run has gone past its usual total time. {{count}} is how many minutes a whole run usually takes here."
   },
   "checks.pending.longer_other": {
     "text": "This is taking longer than usual (usually about {{count}} minutes).",
-    "description": "Small print in the checks note on a proposal's or agent session's page when a run has gone past its usual total time. {{count}} is how many minutes a whole run usually takes here."
+    "description": "Small print in the checks note on a change's page when a run has gone past its usual total time. {{count}} is how many minutes a whole run usually takes here."
   },
   "checks.pending.wait_one": {
     "text": "About {{count}} minute until it starts.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while a run waits for a free slot: how long its wait should be. {{count}} is the estimated number of minutes."
+    "description": "Small print in the checks note on a change's page while a run waits for a free slot: how long its wait should be. {{count}} is the estimated number of minutes."
   },
   "checks.pending.wait_other": {
     "text": "About {{count}} minutes until it starts.",
-    "description": "Small print in the checks note on a proposal's or agent session's page while a run waits for a free slot: how long its wait should be. {{count}} is the estimated number of minutes."
+    "description": "Small print in the checks note on a change's page while a run waits for a free slot: how long its wait should be. {{count}} is the estimated number of minutes."
   },
   "checks.pending.waitLonger": {
     "text": "This wait is longer than usual.",
-    "description": "Small print in the checks note on a proposal's or agent session's page when a run has waited for a free slot longer than its rough wait suggested."
+    "description": "Small print in the checks note on a change's page when a run has waited for a free slot longer than its rough wait suggested."
   },
   "checks.pending.rough": {
     "text": "A rough estimate from other projects, since this one has few finished runs.",
-    "description": "Small print in the checks note on a proposal's or agent session's page when the time shown is borrowed from recent runs across Homeroom: the project has too few finished runs of its own."
+    "description": "Small print in the checks note on a change's page when the time shown is borrowed from recent runs across Homeroom: the project has too few finished runs of its own."
   },
   "checks.error.heading": {
     "text": "⚠ Checks couldn't run.",
-    "description": "Heading of the checks note on a proposal's or agent session's page when the automated checks could not be run at all (the build or the test run broke). Keep the warning sign."
+    "description": "Heading of the checks note on a change's page when the automated checks could not be run at all (the build or the test run broke). Keep the warning sign."
   },
   "checks.error.generic": {
     "text": "The staging build or the test run itself broke, so the platform can't confirm the app works.",
-    "description": "Body of the checks note on a proposal's or agent session's page under \"Checks couldn't run.\" when no more specific reason was recorded."
+    "description": "Body of the checks note on a change's page under \"Checks couldn't run.\" when no more specific reason was recorded."
   },
   "checks.error.blocked": {
     "text": "Merge is blocked until checks pass. Pushing a fix rebuilds the preview and re-runs the checks.",
-    "description": "Small print in the checks note on a proposal's or agent session's page under \"Checks couldn't run.\". \"Merge\" is the noun: putting the change into the live app. \"Pushing a fix\" is uploading a corrected commit."
+    "description": "Small print in the checks note on a change's page under \"Checks couldn't run.\". \"Merge\" is the noun: putting the change into the live app. \"Pushing a fix\" is uploading a corrected commit."
   },
   "checks.skipped.heading": {
     "text": "Checks skipped.",
-    "description": "Heading of the checks note on a proposal's or agent session's page when the automated checks were left out on purpose because there was nothing for them to test."
+    "description": "Heading of the checks note on a change's page when the automated checks were left out on purpose because there was nothing for them to test."
   },
   "checks.skipped.withReason": {
     "text": "Checks were skipped: {{reason}}. It can still go live.",
-    "description": "Body of the checks note on a proposal's or agent session's page under \"Checks skipped.\". {{reason}} is the reason the platform recorded, in its own words, without a full stop. \"It\" is the change; \"go live\" means be merged and running."
+    "description": "Body of the checks note on a change's page under \"Checks skipped.\". {{reason}} is the reason the platform recorded, in its own words, without a full stop. \"It\" is the change; \"go live\" means be merged and running."
   },
   "checks.skipped.nothingToTest": {
     "text": "Checks were skipped: there was nothing to test. It can still go live.",
-    "description": "Body of the checks note on a proposal's or agent session's page under \"Checks skipped.\" when no reason was recorded. \"It\" is the change; \"go live\" means be merged and running."
+    "description": "Body of the checks note on a change's page under \"Checks skipped.\" when no reason was recorded. \"It\" is the change; \"go live\" means be merged and running."
   },
   "checks.reason.failedRuns_one": {
     "text": "Failed {{fails}} of {{count}} runs on this build.",
@@ -4859,18 +4695,6 @@
     "text": "auto-title pending",
     "description": "Item on the small line under a request's title on its card: the title shown is a stand-in and an AI-written one is on its way. Lower case, it follows other items."
   },
-  "issue.card.icon.generating": {
-    "text": "A proposal is being generated for this issue",
-    "description": "Tooltip of the pulsing icon on a request's card while an AI drafts a proposal (a change to vote on) for it."
-  },
-  "issue.card.icon.mine": {
-    "text": "You have a session for this issue. Go to it.",
-    "description": "Tooltip of the icon on a request's card when the viewer already has a working session started from it."
-  },
-  "issue.card.icon.ready": {
-    "text": "Proposal ready. Review it to start a session",
-    "description": "Tooltip of the icon on a request's card when an AI-drafted proposal for it is ready to look at."
-  },
   "issue.card.closing": {
     "text": "Closing…",
     "description": "Status chip, beside a spinner, on a request's card once the vote to close it has passed and it is being closed. Keep the ellipsis."
@@ -4943,69 +4767,9 @@
     "text": "The Homeroom bot is building this request now",
     "description": "Tooltip of the disabled \"Homeroom bot is on it\" / \"Homeroom bot is building…\" button on a request's card."
   },
-  "issue.action.generating": {
-    "text": "Drafting a change…",
-    "description": "Main button on a request's card (a request is a filed issue): disabled, shown while an automatic AI run drafts a change (to vote on) for the request. Keep the ellipsis."
-  },
-  "issue.action.generatingTitle": {
-    "text": "A headless AI session is working on this request",
-    "description": "Tooltip of the disabled \"Drafting a change…\" button on a request's card. \"headless\" means the AI session runs on its own with nobody chatting with it."
-  },
-  "issue.action.generatingTitleBy": {
-    "text": "A headless AI session is working on this request (started by {{username}})",
-    "description": "Tooltip of the disabled \"Drafting a change…\" button on a request's card. \"headless\" means the AI session runs on its own. {{username}} is the person who started it."
-  },
-  "issue.action.goToSession": {
-    "text": "Go to session",
-    "description": "Main button on a request's card (a request is a filed issue): opens the working session the viewer already started from this request's AI-drafted proposal."
-  },
-  "issue.action.goToSessionTitle": {
-    "text": "You already started a session from this request. Open it",
-    "description": "Tooltip of the \"Go to session\" button on a request's card. \"Open it\" is an instruction."
-  },
-  "issue.action.answer": {
-    "text": "Answer & regenerate",
-    "description": "Main button on a request's card (a request is a filed issue): shown when an automatic AI run stopped to ask a question; opens the place to answer it, after which the run tries again."
-  },
-  "issue.action.answerMineTitle": {
-    "text": "Your auto-solve run is waiting on an answer. Open its session to read the question and reply",
-    "description": "Tooltip of the \"Answer & regenerate\" button on a request's card, for the person who started the run. An auto-solve run is an automatic AI attempt at the request. \"Open\" is a verb."
-  },
-  "issue.action.answerOthersTitle": {
-    "text": "This auto-solve run has a question. Answer it on this request",
-    "description": "Tooltip of the \"Answer & regenerate\" button on a request's card, for people who did not start the run. An auto-solve run is an automatic AI attempt at the request."
-  },
-  "issue.action.startWork": {
-    "text": "Start work",
-    "description": "Main button on a request's card (a request is a filed issue): starts a working session with an AI agent on the request."
-  },
-  "issue.action.runFinished.spec": {
-    "text": "An auto-solve run finished here (it drafted a plan). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: a written plan."
-  },
-  "issue.action.runFinished.code": {
-    "text": "An auto-solve run finished here (it pushed a code change). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: a code change."
-  },
-  "issue.action.runFinished.specCode": {
-    "text": "An auto-solve run finished here (it drafted a plan and pushed a code change). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: a written plan and a code change."
-  },
-  "issue.action.runFinished.other": {
-    "text": "An auto-solve run finished here (it finished a run). Start an agent session on this request",
-    "description": "Tooltip of the \"Start work\" button on a request's card after an automatic AI run (an auto-solve run) finished on it; the words in parentheses say what the run produced: nothing more specific is known."
-  },
   "issue.action.askBot": {
     "text": "Ask Homeroom bot to build this",
     "description": "Main button on a request's card (a request is a filed issue): asks the platform's builder bot, named Homeroom bot, to build what the request asks for."
-  },
-  "issue.action.startMore": {
-    "text": "Start more work",
-    "description": "Main button on a request's card (a request is a filed issue): shown when the viewer already has a session on this request; starts another one."
-  },
-  "issue.action.startMoreTitle": {
-    "text": "Start another agent session on this request",
-    "description": "Tooltip of the \"Start more work\" button on a request's card. An agent session is a working conversation with an AI coding agent."
   },
   "issue.action.workWithBot": {
     "text": "Work on this with Homeroom bot",
@@ -5074,18 +4838,6 @@
   "issue.bot.onIt": {
     "text": "Homeroom bot is on it.",
     "description": "Toast shown after Homeroom bot was asked to build a request. \"is on it\" means it has taken the job."
-  },
-  "issue.menu.startMore": {
-    "text": "Start more work",
-    "description": "Row in the ⋯ menu of a request's card: starts another working session on the request after an automatic AI run finished on it."
-  },
-  "issue.menu.buildNow": {
-    "text": "Build it now",
-    "description": "Row in the ⋯ menu of a request's card: starts a session where the viewer builds the request with an AI coding agent, instead of asking Homeroom bot. \"Build\" is a verb."
-  },
-  "issue.menu.buildInSession": {
-    "text": "Build it in an agent session",
-    "description": "Row in the ⋯ menu of a request's card: starts a session where the viewer builds the request with an AI coding agent, instead of working on it with Homeroom bot. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
   },
   "issue.menu.alreadyBountied": {
     "text": "You already placed a bounty on this issue",
@@ -5278,106 +5030,6 @@
   "issue.claim.clearFailedWith": {
     "text": "Couldn't stop working on this: {{error}}",
     "description": "Toast shown when \"Stop working on this\" on a request failed. {{error}} is the error's own message."
-  },
-  "issue.autoRun.setupLoading": {
-    "text": "Coding-agent setup is still loading. Try again.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was asked for before the page finished loading the viewer's coding-agent settings."
-  },
-  "issue.autoRun.openRouterModelsFailed": {
-    "text": "Could not load OpenRouter models.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the list of AI models from OpenRouter (a service's name) could not be loaded and the server gave no message."
-  },
-  "issue.autoRun.modelListFailed": {
-    "text": "Could not load the model list.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the list of AI models could not be loaded and the server gave no message."
-  },
-  "issue.autoRun.modelListRetry": {
-    "text": "Couldn't load the model list. Try again.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when loading the list of AI models failed with no message at all."
-  },
-  "issue.autoRun.noOpenRouterModels": {
-    "text": "No OpenRouter models are available under your key.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the viewer's OpenRouter key gives access to no AI model. \"OpenRouter\" is a service's name; \"key\" is an API key."
-  },
-  "issue.autoRun.noModels": {
-    "text": "Couldn't load the model list. Try again.",
-    "description": "Toast shown before an automatic AI run that drafts a proposal for a request (\"Generate proposal\") when the list of AI models came back empty."
-  },
-  "issue.autoRun.openRouterStartFailed": {
-    "text": "The OpenRouter run could not start.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not start on the viewer's OpenRouter budget and the server gave no message. \"run\" is a noun."
-  },
-  "issue.autoRun.startFailedHttp": {
-    "text": "Couldn't start generating the proposal (HTTP {{status}}).",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started and the server gave no message. {{status}} is the HTTP status number."
-  },
-  "issue.autoRun.startFailedWith": {
-    "text": "Couldn't start generating the proposal: {{error}}",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") could not be started. {{error}} is the error's own message."
-  },
-  "issue.autoRun.outOfCredits": {
-    "text": "You're out of free AI credits.",
-    "description": "Toast shown when an automatic AI run that drafts a proposal for a request (\"Generate proposal\") was refused because the viewer has used up the week's free AI allowance, and no fuller message came back."
-  },
-  "issue.autoRun.model.free": {
-    "text": "Free",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: using this model costs nothing."
-  },
-  "issue.autoRun.model.low": {
-    "text": "Low cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: this model is cheap to use."
-  },
-  "issue.autoRun.model.medium": {
-    "text": "Medium cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: this model has a middling price."
-  },
-  "issue.autoRun.model.high": {
-    "text": "High cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: this model is expensive to use."
-  },
-  "issue.autoRun.model.recommendedFree": {
-    "text": "Recommended · Free",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and using it costs nothing."
-  },
-  "issue.autoRun.model.recommendedLow": {
-    "text": "Recommended · Low cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and it is cheap to use."
-  },
-  "issue.autoRun.model.recommendedMedium": {
-    "text": "Recommended · Medium cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and it has a middling price."
-  },
-  "issue.autoRun.model.recommendedHigh": {
-    "text": "Recommended · High cost",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model, and it is expensive to use."
-  },
-  "issue.autoRun.model.recommended": {
-    "text": "Recommended",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: Homeroom recommends this model; its price is not known."
-  },
-  "issue.autoRun.model.openRouter": {
-    "text": "Available through OpenRouter",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: nothing more is known about it than that it can be used through OpenRouter (a service's name)."
-  },
-  "issue.autoRun.model.available": {
-    "text": "Available model",
-    "description": "Line under a model's name in the list of AI models to choose from in the \"Generate proposal\" dialog: nothing more is known about it than that it can be used."
-  },
-  "issue.autoRun.billing.included": {
-    "text": "Uses your included OpenRouter credits.",
-    "description": "Note in the \"Generate proposal\" dialog saying what the run is paid from: the OpenRouter credits that come with the viewer's Homeroom account. \"OpenRouter\" is a service's name."
-  },
-  "issue.autoRun.billing.openRouter": {
-    "text": "Uses your OpenRouter account.",
-    "description": "Note in the \"Generate proposal\" dialog saying what the run is paid from: the viewer's own OpenRouter account. \"OpenRouter\" is a service's name."
-  },
-  "issue.autoRun.billing.homeroom": {
-    "text": "Uses your available Homeroom credits.",
-    "description": "Note in the \"Generate proposal\" dialog saying what the run is paid from: the viewer's AI credits on Homeroom (the product's name)."
-  },
-  "issue.autoRun.intro": {
-    "text": "Homeroom will inspect the issue and repository, then create a proposal for review.",
-    "description": "First line of the \"Generate proposal\" dialog on a request: what the automatic AI run will do. \"Homeroom\" is the product's name; \"the issue\" is the request."
   },
   "badge.reason.conflictFailed.label": {
     "text": "Needs manual resolution",
@@ -7045,23 +6697,11 @@
   },
   "chips.work.working": {
     "text": "Being worked on",
-    "description": "Chip on a request's card: someone has an agent session open that is working on this request."
-  },
-  "chips.work.autoSolving": {
-    "text": "Auto-solving…",
-    "description": "Chip on a request's card while an automatic run is trying to solve the request without a person. A spinner is drawn before it."
+    "description": "Chip on a request's card: someone has a change in progress for this request."
   },
   "chips.work.started": {
     "text": "Started",
     "description": "Chip on a request's card: someone began work on this request but is not working on it right now. A past participle describing the request."
-  },
-  "chips.work.answerNeeded": {
-    "text": "Needs an answer",
-    "description": "Chip on a request's card: an automatic run got part way and asked a question that someone must answer before it can go on."
-  },
-  "chips.work.draftReady": {
-    "text": "Draft ready to review",
-    "description": "Chip on a request's card: an automatic run finished and left a draft of the change for someone to look over."
   },
   "chips.work.pickedUp": {
     "text": "Picked up",
@@ -7116,124 +6756,124 @@
     "description": "Note on a request (its page and the work chip's tooltip) when an unnamed person turned their work on it into a proposal. \"This\" is the request."
   },
   "chips.workNote.working.you": {
-    "text": "You are working on this in an agent session.",
-    "description": "Note on a request when the viewer has an agent session (a chat with the coding agent) open for it and its last activity time is unknown. \"This\" is the request."
+    "text": "You are working on a change for this.",
+    "description": "Note on a request when the viewer has a change in progress for it and the time it was last worked on is unknown. \"This\" is the request."
   },
   "chips.workNote.working.named": {
-    "text": "{{name}} is working on this in an agent session.",
-    "description": "Note on a request when someone has an agent session (a chat with the coding agent) open for it and its last activity time is unknown. {{name}} is that person's username."
+    "text": "{{name}} is working on a change for this.",
+    "description": "Note on a request when someone has a change in progress for it and the time it was last worked on is unknown. {{name}} is that person's username."
   },
   "chips.workNote.working.someone": {
-    "text": "Someone is working on this in an agent session.",
-    "description": "Note on a request when an unnamed person has an agent session (a chat with the coding agent) open for it and its last activity time is unknown."
+    "text": "Someone is working on a change for this.",
+    "description": "Note on a request when an unnamed person has a change in progress for it and the time it was last worked on is unknown."
   },
   "chips.workNote.workingWhen.you.justNow": {
-    "text": "You are working on this in an agent session, last active just now.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active less than two minutes ago."
+    "text": "You are working on a change for this, last active just now.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on less than two minutes ago."
   },
   "chips.workNote.workingWhen.you.minutes_one": {
-    "text": "You are working on this in an agent session, last active {{count}} minute ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+    "text": "You are working on a change for this, last active {{count}} minute ago.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on some minutes ago; {{count}} is the number of minutes."
   },
   "chips.workNote.workingWhen.you.minutes_other": {
-    "text": "You are working on this in an agent session, last active {{count}} minutes ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+    "text": "You are working on a change for this, last active {{count}} minutes ago.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on some minutes ago; {{count}} is the number of minutes."
   },
   "chips.workNote.workingWhen.you.hours_one": {
-    "text": "You are working on this in an agent session, last active an hour ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+    "text": "You are working on a change for this, last active an hour ago.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.workingWhen.you.hours_other": {
-    "text": "You are working on this in an agent session, last active {{count}} hours ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "text": "You are working on a change for this, last active {{count}} hours ago.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
   },
   "chips.workNote.workingWhen.you.yesterday": {
-    "text": "You are working on this in an agent session, last active yesterday.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active about a day ago."
+    "text": "You are working on a change for this, last active yesterday.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on about a day ago."
   },
   "chips.workNote.workingWhen.you.days_one": {
-    "text": "You are working on this in an agent session, last active {{count}} day ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+    "text": "You are working on a change for this, last active {{count}} day ago.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on some days ago; {{count}} is the number of days."
   },
   "chips.workNote.workingWhen.you.days_other": {
-    "text": "You are working on this in an agent session, last active {{count}} days ago.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+    "text": "You are working on a change for this, last active {{count}} days ago.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on some days ago; {{count}} is the number of days."
   },
   "chips.workNote.workingWhen.you.onDate": {
-    "text": "You are working on this in an agent session, last active on {{date}}.",
-    "description": "Note on a request when the viewer has an agent session open for it. Used when the session was last active a month or more ago; {{date}} is that date in the reader's own format."
+    "text": "You are working on a change for this, last active on {{date}}.",
+    "description": "Note on a request when the viewer has a change in progress for it. Used when the change was last worked on a month or more ago; {{date}} is that date in the reader's own format."
   },
   "chips.workNote.workingWhen.named.justNow": {
-    "text": "{{name}} is working on this in an agent session, last active just now.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active less than two minutes ago."
+    "text": "{{name}} is working on a change for this, last active just now.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on less than two minutes ago."
   },
   "chips.workNote.workingWhen.named.minutes_one": {
-    "text": "{{name}} is working on this in an agent session, last active {{count}} minute ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+    "text": "{{name}} is working on a change for this, last active {{count}} minute ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on some minutes ago; {{count}} is the number of minutes."
   },
   "chips.workNote.workingWhen.named.minutes_other": {
-    "text": "{{name}} is working on this in an agent session, last active {{count}} minutes ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+    "text": "{{name}} is working on a change for this, last active {{count}} minutes ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on some minutes ago; {{count}} is the number of minutes."
   },
   "chips.workNote.workingWhen.named.hours_one": {
-    "text": "{{name}} is working on this in an agent session, last active an hour ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+    "text": "{{name}} is working on a change for this, last active an hour ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.workingWhen.named.hours_other": {
-    "text": "{{name}} is working on this in an agent session, last active {{count}} hours ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "text": "{{name}} is working on a change for this, last active {{count}} hours ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
   },
   "chips.workNote.workingWhen.named.yesterday": {
-    "text": "{{name}} is working on this in an agent session, last active yesterday.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active about a day ago."
+    "text": "{{name}} is working on a change for this, last active yesterday.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on about a day ago."
   },
   "chips.workNote.workingWhen.named.days_one": {
-    "text": "{{name}} is working on this in an agent session, last active {{count}} day ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+    "text": "{{name}} is working on a change for this, last active {{count}} day ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on some days ago; {{count}} is the number of days."
   },
   "chips.workNote.workingWhen.named.days_other": {
-    "text": "{{name}} is working on this in an agent session, last active {{count}} days ago.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+    "text": "{{name}} is working on a change for this, last active {{count}} days ago.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on some days ago; {{count}} is the number of days."
   },
   "chips.workNote.workingWhen.named.onDate": {
-    "text": "{{name}} is working on this in an agent session, last active on {{date}}.",
-    "description": "Note on a request when someone, whose username is {{name}}, has an agent session open for it. Used when the session was last active a month or more ago; {{date}} is that date in the reader's own format."
+    "text": "{{name}} is working on a change for this, last active on {{date}}.",
+    "description": "Note on a request when someone, whose username is {{name}}, has a change in progress for it. Used when the change was last worked on a month or more ago; {{date}} is that date in the reader's own format."
   },
   "chips.workNote.workingWhen.someone.justNow": {
-    "text": "Someone is working on this in an agent session, last active just now.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active less than two minutes ago."
+    "text": "Someone is working on a change for this, last active just now.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on less than two minutes ago."
   },
   "chips.workNote.workingWhen.someone.minutes_one": {
-    "text": "Someone is working on this in an agent session, last active {{count}} minute ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+    "text": "Someone is working on a change for this, last active {{count}} minute ago.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on some minutes ago; {{count}} is the number of minutes."
   },
   "chips.workNote.workingWhen.someone.minutes_other": {
-    "text": "Someone is working on this in an agent session, last active {{count}} minutes ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some minutes ago; {{count}} is the number of minutes."
+    "text": "Someone is working on a change for this, last active {{count}} minutes ago.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on some minutes ago; {{count}} is the number of minutes."
   },
   "chips.workNote.workingWhen.someone.hours_one": {
-    "text": "Someone is working on this in an agent session, last active an hour ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
+    "text": "Someone is working on a change for this, last active an hour ago.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\". {{count}} is available in this form too, although English does not show it: a language whose singular form is also used for 21 or 101 should print the number."
   },
   "chips.workNote.workingWhen.someone.hours_other": {
-    "text": "Someone is working on this in an agent session, last active {{count}} hours ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
+    "text": "Someone is working on a change for this, last active {{count}} hours ago.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on some hours ago; {{count}} is the number of hours, and the singular form says \"an hour\"."
   },
   "chips.workNote.workingWhen.someone.yesterday": {
-    "text": "Someone is working on this in an agent session, last active yesterday.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active about a day ago."
+    "text": "Someone is working on a change for this, last active yesterday.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on about a day ago."
   },
   "chips.workNote.workingWhen.someone.days_one": {
-    "text": "Someone is working on this in an agent session, last active {{count}} day ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+    "text": "Someone is working on a change for this, last active {{count}} day ago.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on some days ago; {{count}} is the number of days."
   },
   "chips.workNote.workingWhen.someone.days_other": {
-    "text": "Someone is working on this in an agent session, last active {{count}} days ago.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active some days ago; {{count}} is the number of days."
+    "text": "Someone is working on a change for this, last active {{count}} days ago.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on some days ago; {{count}} is the number of days."
   },
   "chips.workNote.workingWhen.someone.onDate": {
-    "text": "Someone is working on this in an agent session, last active on {{date}}.",
-    "description": "Note on a request when a person whose name is not known has an agent session open for it. Used when the session was last active a month or more ago; {{date}} is that date in the reader's own format."
+    "text": "Someone is working on a change for this, last active on {{date}}.",
+    "description": "Note on a request when a person whose name is not known has a change in progress for it. Used when the change was last worked on a month or more ago; {{date}} is that date in the reader's own format."
   },
   "chips.workNote.pausedWhen.you.justNow": {
     "text": "You started work on this and last worked on it just now, so nobody is working on it at the moment.",
@@ -7627,18 +7267,6 @@
     "text": "It opens up for others again on {{date}} if nothing happens.",
     "description": "Second sentence of the note on a request someone picked up without starting: on {{date}} (a date in the reader's own format) the request becomes free for others to pick up. \"It\" is the request."
   },
-  "chips.workNote.autoSolving": {
-    "text": "An auto-solve run is working on this right now.",
-    "description": "Note on a request while an automatic run is trying to solve it without a person. \"This\" is the request."
-  },
-  "chips.workNote.answerNeeded": {
-    "text": "An auto-solve run got part way and asked a question. It needs an answer from someone before it can go further.",
-    "description": "Note on a request when an automatic run stopped to ask a question. \"It\" is the run."
-  },
-  "chips.workNote.draftReady": {
-    "text": "An auto-solve run finished and left a draft here for someone to look over.",
-    "description": "Note on a request when an automatic run finished and left a draft of the change."
-  },
   "chips.workNote.bot.askedYou": {
     "text": "You asked Homeroom bot to build this.",
     "description": "First sentence of the note on a request the viewer asked the Homeroom bot (the platform's own building agent, a name) to build. \"This\" is the request."
@@ -7679,10 +7307,6 @@
     "text": "Also: picked up by {{names}}.",
     "description": "Closing sentence of the note on a request, naming others who said they would work on it. {{names}} is a list of usernames."
   },
-  "chips.workNote.also.claimsAuto": {
-    "text": "Also: picked up by {{names}}; an auto-solve run is on it too.",
-    "description": "Closing sentence of the note on a request: others said they would work on it, and an automatic run is working on it as well. {{names}} is a list of usernames."
-  },
   "chips.workNote.also.claimsBotReading": {
     "text": "Also: picked up by {{names}}; the Homeroom bot is reading it.",
     "description": "Closing sentence of the note on a request: others said they would work on it, and the Homeroom bot (a name) is reading the request. {{names}} is a list of usernames."
@@ -7690,26 +7314,6 @@
   "chips.workNote.also.claimsBotBuilding": {
     "text": "Also: picked up by {{names}}; the Homeroom bot is building it.",
     "description": "Closing sentence of the note on a request: others said they would work on it, and the Homeroom bot (a name) is building the request. {{names}} is a list of usernames."
-  },
-  "chips.workNote.also.claimsAutoBotReading": {
-    "text": "Also: picked up by {{names}}; an auto-solve run is on it too; the Homeroom bot is reading it.",
-    "description": "Closing sentence of the note on a request: others said they would work on it, an automatic run is working on it, and the Homeroom bot (a name) is reading it. {{names}} is a list of usernames."
-  },
-  "chips.workNote.also.claimsAutoBotBuilding": {
-    "text": "Also: picked up by {{names}}; an auto-solve run is on it too; the Homeroom bot is building it.",
-    "description": "Closing sentence of the note on a request: others said they would work on it, an automatic run is working on it, and the Homeroom bot (a name) is building it. {{names}} is a list of usernames."
-  },
-  "chips.workNote.also.auto": {
-    "text": "Also: an auto-solve run is on it too.",
-    "description": "Closing sentence of the note on a request: besides what was just said, an automatic run is working on it."
-  },
-  "chips.workNote.also.autoBotReading": {
-    "text": "Also: an auto-solve run is on it too; the Homeroom bot is reading it.",
-    "description": "Closing sentence of the note on a request: an automatic run is working on it and the Homeroom bot (a name) is reading it."
-  },
-  "chips.workNote.also.autoBotBuilding": {
-    "text": "Also: an auto-solve run is on it too; the Homeroom bot is building it.",
-    "description": "Closing sentence of the note on a request: an automatic run is working on it and the Homeroom bot (a name) is building it."
   },
   "chips.workNote.also.botReading": {
     "text": "Also: the Homeroom bot is reading it.",
@@ -7814,14 +7418,6 @@
   "frame.open.sharedSessionRebuild": {
     "text": "Open this session’s staging preview (rebuilds it if it went to sleep)",
     "description": "Tooltip and accessible name of the Preview control on someone else's shared build session when the preview may have been shut down for inactivity and pressing it builds it again."
-  },
-  "frame.open.issueRun": {
-    "text": "Open the generated proposal’s staging preview",
-    "description": "Tooltip and accessible name of the Preview control on a request that an automatic run turned into a draft proposal: opens the running preview of that draft. \"Open\" is a verb."
-  },
-  "frame.open.issueRunRebuild": {
-    "text": "Open the generated proposal’s staging preview (rebuilds it if it went to sleep)",
-    "description": "Tooltip and accessible name of the Preview control on a request that an automatic run turned into a draft proposal, when the preview may have been shut down for inactivity and pressing it builds it again."
   },
   "frame.open.unavailableBecause": {
     "text": "Preview unavailable: {{error}}",
@@ -8023,10 +7619,6 @@
     "text": "This app could not be loaded. Check your connection and try again.",
     "description": "Message shown in place of a project's build screens when the app's record could not be fetched, above a \"Try again\" button."
   },
-  "session.unavailable": {
-    "text": "That session is private or no longer exists.",
-    "description": "Brief notice after following a link to a build session that the viewer cannot open; they land on the project's Workshop instead. A session is a chat with the coding agent."
-  },
   "menu.secrets.noManifest": {
     "text": "No manifest yet",
     "description": "Small status beside \"App secrets\" in a project's \"+\" menu before the app has been deployed for the first time, so its list of required settings (its manifest) is not known yet."
@@ -8176,8 +7768,8 @@
     "description": "Title of the preview's loading screen when rebuilding the preview failed."
   },
   "frame.unavailable.rebuildFailed": {
-    "text": "The preview failed to build. See the agent session for details.",
-    "description": "Text under \"Preview couldn’t be rebuilt\" when the server gave no reason. The agent session is the chat with the coding agent that made the change."
+    "text": "The preview failed to build. See the change’s page for details.",
+    "description": "Text under \"Preview couldn’t be rebuilt\" when the server gave no reason. The change's page is the page of the change this preview belongs to."
   },
   "frame.unavailable.noAddress": {
     "text": "This preview did not provide a usable address.",
@@ -8190,22 +7782,6 @@
   "frame.title.plain": {
     "text": "Preview",
     "description": "Title in the bar above a staging preview when the app's name is not known. A noun."
-  },
-  "frame.fullscreen.enter": {
-    "text": "Full screen",
-    "description": "Button in the bar above a preview docked beside the build chat: expands the preview to fill the screen."
-  },
-  "frame.fullscreen.exit": {
-    "text": "Exit full screen",
-    "description": "Button in the bar above a full-screen preview that was opened from the build chat: puts it back beside the chat."
-  },
-  "frame.fullscreen.enterTitle": {
-    "text": "Expand the preview to fill the screen",
-    "description": "Tooltip of the \"Full screen\" button in the bar above a docked preview."
-  },
-  "frame.fullscreen.exitTitle": {
-    "text": "Dock the preview back beside the chat",
-    "description": "Tooltip of the \"Exit full screen\" button in the bar above a preview: puts the preview back in its panel beside the build chat."
   },
   "frame.testing.useButton": {
     "text": "Use the button above to jump to the changed feature.",
@@ -8328,12 +7904,12 @@
     "description": "Opening line of the dialog that asks whether an app may use AI, when it would be paid for with the person's own Anthropic API key. Anthropic is a company's name. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
   },
   "dialog.llm.introBudget": {
-    "text": "This lets {{app}} spend from your weekly AI budget (the same one your agent sessions use) up to the daily cap below.",
-    "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. {{app}} is the app's name; the cap is the spending limit set in the field below."
+    "text": "This lets {{app}} spend from your weekly AI budget (the same one Homeroom bot uses when it builds for you) up to the daily cap below.",
+    "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. {{app}} is the app's name; the cap is the spending limit set in the field below. Homeroom bot is the name of Homeroom's building assistant."
   },
   "dialog.llm.introBudgetUnnamed": {
-    "text": "This lets This app spend from your weekly AI budget (the same one your agent sessions use) up to the daily cap below.",
-    "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. The cap is the spending limit set in the field below. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it."
+    "text": "This lets This app spend from your weekly AI budget (the same one Homeroom bot uses when it builds for you) up to the daily cap below.",
+    "description": "Opening line of the dialog that asks whether an app may use AI on the person's daily Homeroom AI budget. The cap is the spending limit set in the field below. Used when the app's name is not known; \"This app\" is written as the dialog has always shown it. Homeroom bot is the name of Homeroom's building assistant."
   },
   "dialog.llm.capSuggested": {
     "text": "Suggested by this app. You can change it.",
@@ -8463,6 +8039,14 @@
     "text": "{{stage}} · {{line}}",
     "description": "The one sentence on the status card of a request's page that says where the request stands: its stage, then what that means now. {{stage}} and {{line}} are already translated, the same words every screen uses (for example Ready to build and Number 2 in line). Keep the dot between them as a separator."
   },
+  "request.status.lead.botLineAt": {
+    "text": "{{stage}}. Number {{place}} in Homeroom bot’s line; it starts by itself.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, while it waits its turn in Homeroom bot's own line on its project: its stage, then its place in that line. Nobody else builds it and nobody has to do anything: the bot starts on it by itself when it has a free slot. {{stage}} is the stage's own words, already translated (Ready to build, or Not started yet). {{place}} is a number, 1 for next. Homeroom bot is the platform's assistant that builds changes; keep its name."
+  },
+  "request.status.lead.botLine": {
+    "text": "{{stage}}. Waiting its turn in Homeroom bot’s line; it starts by itself.",
+    "description": "The one sentence on the status card of a request's page that says where the request stands, while it waits its turn in Homeroom bot's own line on its project and its place is not known: its stage, then whose line it is. Nobody else builds it and nobody has to do anything: the bot starts on it by itself when it has a free slot. {{stage}} is the stage's own words, already translated (Ready to build, or Not started yet). Homeroom bot is the platform's assistant that builds changes; keep its name."
+  },
   "request.status.lead.standsSaid": {
     "text": "{{stage}}. {{said}}",
     "description": "The status card of a request's page, when Homeroom bot handed the request back with a reason of its own: the stage, as a sentence, then the bot's reason. {{stage}} is already translated (for example Waiting for you to decide). {{said}} is \"Homeroom bot:\" followed by the bot's own sentence, already ending in its own full stop."
@@ -8486,18 +8070,6 @@
   "request.status.lead.review": {
     "text": "A change for this is waiting for approval.",
     "description": "The one sentence on the status card of a request's page that says where the request stands. Somebody's change (a proposal that fulfils the request) is up for the group's vote, and its author is not named. \"Change\" is a noun."
-  },
-  "request.status.lead.autoSolving": {
-    "text": "An auto-solve run is working on this.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. An auto-solve run is an automatic AI session started on the request."
-  },
-  "request.status.lead.answerNeeded": {
-    "text": "An auto-solve run asked a question that needs an answer.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. An auto-solve run is an automatic AI session started on the request; it stopped to ask something."
-  },
-  "request.status.lead.draftReady": {
-    "text": "An auto-solve run left a draft to look over.",
-    "description": "The one sentence on the status card of a request's page that says where the request stands. An auto-solve run is an automatic AI session started on the request; it finished and left a draft change for a person to review."
   },
   "request.status.lead.startedYou": {
     "text": "You started working on this.",
@@ -8605,11 +8177,11 @@
   },
   "request.status.action.continueWork": {
     "text": "Continue your work",
-    "description": "Main button on the status card of a request's page, for a person who already has an agent session on the request: opens that session."
+    "description": "Main button on the status card of a request's page, for a person who already has a change in progress for the request: opens that change's page."
   },
   "request.status.action.continueWorkTitle": {
-    "text": "Open your agent session on this request",
-    "description": "Tooltip on the Continue your work button of a request's status card. An agent session is a working conversation with an AI coding agent; \"Open\" is a verb."
+    "text": "Open your change for this request",
+    "description": "Tooltip on the Continue your work button of a request's status card: it opens the page of the change the person already has in progress for the request. \"Open\" is a verb; \"change\" is a noun."
   },
   "request.status.action.goAhead": {
     "text": "Go ahead",
@@ -8650,14 +8222,6 @@
   "request.status.closed.byVoteWhen": {
     "text": "This request was closed by vote, {{when}}.",
     "description": "The sentence on the status card of a closed request's page, shown in place of its progress, when the group voted to close it. {{when}} is how long ago or a date, for example \"3h ago\" or \"Oct 5\"."
-  },
-  "request.menu.startMore": {
-    "text": "Start more work",
-    "description": "Row in the ⋯ menu at the top of a request's page, for a person who already has an agent session on the request: starts another one."
-  },
-  "request.menu.startMoreTitle": {
-    "text": "Start another agent session on this request",
-    "description": "Tooltip on the Start more work row in the ⋯ menu of a request's page. An agent session is a working conversation with an AI coding agent."
   },
   "request.menu.releaseClaim": {
     "text": "Release {{username}}’s claim",

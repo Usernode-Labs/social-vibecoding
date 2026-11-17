@@ -64,8 +64,9 @@ const ROW_CLASS = 'ui-mini rounded-lg bg-white dark:bg-zinc-900 px-3 py-2 text-x
  * back so the click is an informed one.
  *
  * The button is the language's compact accent action — the `compact` + `xs`
- * string #agent-files-save writes, one card over. Revoke above keeps its
- * hand-written red tint because it is destructive; this is the opposite act.
+ * string the App permissions rows' Re-enable writes, one card over. Revoke
+ * above keeps its hand-written red tint because it is destructive; this is the
+ * opposite act.
  */
 function RevokedRow({ grant }: { grant: GrantView }) {
   const t = useMessages('settings');

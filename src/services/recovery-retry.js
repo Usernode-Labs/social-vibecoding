@@ -80,7 +80,7 @@ function isDurableTurnCleanupError(err) {
 // interrupted turn nothing could pick up again was found by its owner. The
 // platform signals file a request for them (signal-observers/
 // turn-recovery.js). The key is `<recovery>:<session id>` (services/turns.js:
-// `interactive:` for a coding run, `headless:`). Written to `pool`, or the
+// `interactive:` for a coding run). Written to `pool`, or the
 // process's shared pool (db/pool.js) when the caller passes none. Never
 // throws, and never waits: what the user sees is terminalized either way.
 function recordGaveUp({ pool = null, key, err, failures }) {

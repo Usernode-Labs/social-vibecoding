@@ -102,6 +102,18 @@ test('the description says what changed against today\'s rules', async (t) => {
   assert.ok(body.includes('Crew: @ana.'));
 });
 
+test('a group the app keeps is described as kept by the app (#6669)', async (t) => {
+  const now = rules.parseRulesBlock({
+    groups: [{ name: 'App users', keptByApp: true }],
+    rules: [{ group: 'App users', majority: true }],
+  });
+  const { body } = await bodyFor(t, { visibility: null, governance: now });
+  assert.ok(body.includes('- Most active people in App users say yes, over time.'));
+  assert.ok(body.includes('App users: kept by the app.'));
+  // A kept group adds no "adds @…" line, and needs no username lookup.
+  assert.ok(!body.includes('App users: nobody yet.'));
+});
+
 test('a project on the old two columns gets one "Until now" line instead', async (t) => {
   const was = { rules: null, approverPolicy: 'anyone', approvalsRequired: null };
   const { body } = await bodyFor(t, { visibility: null, governance: screenshotRules(), was });

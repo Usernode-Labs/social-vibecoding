@@ -1,11 +1,15 @@
 /**
- * #6071 follow-up: a new thread with Homeroom bot, from its "+" (the
- * Homeroom bot tab's header, and the bot chat's header in Messages).
+ * NEW CHAT: a new chat with Homeroom bot (#6071 follow-up; 14 Nov 2026).
+ * Every conversation with the bot is a thread, so this is how one starts:
+ * the labelled New chat button in the Homeroom bot tab's head, the phone's
+ * Ask bar, and every door that names a project or a thing to ask about
+ * (../ai/door.ts botNewAddress; ./store.ts openBot).
  *
- * The "+" opens a BLANK thread where a thread pane goes. Nothing is saved
- * yet: the thread is made when the person sends their first message
+ * It opens a NEW CHAT where a thread pane goes. Nothing is saved yet: the
+ * thread is made when the person sends their first message
  * (POST /api/conversations/homeroom-bot/new-thread, then the message as its
- * first reply), and a stray tap leaves nothing behind.
+ * first reply), and a stray tap leaves nothing behind. Nothing is ever sent
+ * outside a thread.
  *
  * 5 Nov 2026 (Evan): it opens on what you can do, not on two web selects.
  *
@@ -17,16 +21,24 @@
  *   ( I want to design a new page… )    into the box, caret after them
  *   ( I have a question about… )
  *
- *   [▦ Any project ⌄]                  ← the project, floating over the box
+ *   [▦ Garden club ⌄]                  ← the project, floating over the box
  *   [ + | Message Homeroom bot | 🎙 | ↑ ] ← the same box as every chat
  *
  * The project is chosen as a community is (./project-picker.tsx: the "Your
- * communities" rows, a sheet on a phone, a menu from 768px). Any project is
- * the default. The kind of change the thread is for is no longer picked: it
- * is read off the start the message begins with (`startOf`), so the server
+ * communities" rows, a sheet on a phone, a menu from 768px). It comes
+ * already set by whoever opened it (the page's one picked chip, the project
+ * the person was last in, the project a door is about); Any project when
+ * nothing says. The kind of change the thread is for is not picked: it is
+ * read off the start the message begins with (`startOf`), so the server
  * still gets the kind it knows (services/private-threads.js CHANGE_KINDS)
- * and names the thread's line in Main by it. A design start says Homeroom
- * bot draws the screen (services/design-bot.js write_screen), over the box.
+ * and names the thread by it. A design start says Homeroom bot draws the
+ * screen (services/design-bot.js write_screen), over the box.
+ *
+ * WHAT A DOOR CARRIED (14 Nov 2026). A door that used to put something in
+ * Main Chat's box, an item to ask about (Ask for changes on a change, a
+ * request open beside the lists), puts it here: the item is a chip in the
+ * box's card, sent with the first message, and the box asks what the door
+ * asked ("What should change?"). Its × takes it off.
  *
  * 10 Nov 2026: a second chip beside the project's says who works on it
  * (./thread-builder.tsx): Homeroom bot, as above, or the person's own Claude
@@ -47,14 +59,17 @@ import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIc
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
 import { SpeakButton } from '../dictation/speak-button';
 import * as api from './api';
 import { closeThread, openThread } from './store';
-import { BOT_AVATAR, fileSize } from './format';
-import type { MessageAttachment } from './types';
-import { loadCommunities } from '../workshop/community-scope';
+import { useStagedCard } from './composer';
+import { BOT_AVATAR, fileSize, pendingObjectLabel } from './format';
+import { takeCarried } from './new-chat-carry';
+import type { MessageAttachment, SharedObjectReference, StagedObject } from './types';
+import { communityScopeStore, describe, loadCommunities } from '../workshop/community-scope';
 import { ProjectChip, ProjectPicker } from './project-picker';
 import {
   BUILDER_NAME, BUILDER_PRODUCT, BuilderChip, BuilderPicker, BuilderSetup, HANDOFF_MAX, builderLink, useBuilderConnections, type Builder,
@@ -108,38 +123,49 @@ let blankIn: number | null = null;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((fn) => fn());
 
-/** What a blank thread opens already set to, when its door named them (../ai/door.ts botNewAddress). */
+/** What a new chat opens already set to, when its door named them (../ai/door.ts botNewAddress). */
 export interface NewThreadPreset {
   project: string | null;
   builder: Builder;
+  /** An item the door is about, attached in the box and sent with the first message. */
+  object?: StagedObject | null;
+  /** What the box asks while that item is attached (a catalog text, already read). */
+  placeholder?: string | null;
 }
+
 // The last door's settings, and how many doors have named any: a thread
 // already open takes a later door's too.
 let preset: NewThreadPreset | null = null;
 let presetTurn = 0;
 
 /**
- * Open a blank thread beside the bot chat `conversationId` (closing a thread
- * open there). The "+" opens it on Any project and Homeroom bot; a door that
- * names a project or who works on it passes them as `fresh`.
+ * Open a new chat in the bot chat `conversationId` (closing a thread open
+ * there). Whoever opens it says what it is set to (`fresh`): the project,
+ * who works on it, and an item it is about. An item a door carried for it
+ * (./new-chat-carry.ts) is taken here, and is what the chat is about.
  */
 export function startNewThread(conversationId: number, fresh?: NewThreadPreset | null): void {
   if (!conversationId) return;
   closeThread();
-  preset = fresh || null;
-  if (fresh) presetTurn += 1;
+  const held = takeCarried();
+  // What a door just carried is what this chat is about, over anything the
+  // page would have attached on its own.
+  preset = held
+    ? { project: fresh?.project ?? null, builder: fresh?.builder || 'homeroom', object: held.object, placeholder: held.placeholder }
+    : fresh || null;
+  if (preset) presetTurn += 1;
   blankIn = conversationId;
   notify();
 }
 
-/** Close the blank thread. */
+/** Close the new chat. */
 export function closeNewThread(): void {
   if (blankIn === null) return;
   blankIn = null;
   notify();
 }
 
-/** Whether a blank thread is open beside `conversationId`. */
+/** Whether a new chat is open in `conversationId`. */
 export function useNewThread(conversationId: number | null | undefined): boolean {
   const open = useSyncExternalStore(
     (fn) => { listeners.add(fn); return () => { listeners.delete(fn); }; },
@@ -149,12 +175,18 @@ export function useNewThread(conversationId: number | null | undefined): boolean
   return !!conversationId && open === conversationId;
 }
 
-/** A started thread's name in its head: the kind of change it is for, or New thread. */
+/** A started thread's name in its head: the kind of change it is for, or New chat. */
 export function startedThreadTitle(t: (id: string) => string, changeKind: string | null | undefined): string {
   if (changeKind === 'fix') return t('messages:newThread.kinds.fix');
   if (changeKind === 'add') return t('messages:newThread.kinds.add');
   if (changeKind === 'design') return t('messages:newThread.kinds.design');
   return t('messages:newThread.title');
+}
+
+/** The reference alone, as the server takes it: the staged title stays on the chip (./composer.tsx). */
+function referenceOf(object: StagedObject): SharedObjectReference {
+  const { type, appId, appSlug, issueNumber, sessionId, proposalId, version } = object;
+  return { type, appId, appSlug, issueNumber, sessionId, proposalId, version };
 }
 
 const KEY_CHARS = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -164,30 +196,7 @@ function key(): string {
   return out;
 }
 
-/** The "+" that opens a blank thread with Homeroom bot. */
-export function NewThreadButton({ conversationId, className, onOpen }: {
-  conversationId: number | null;
-  className: string;
-  /** Before the blank thread opens: to bring the chat it opens beside into view. */
-  onOpen?: () => void;
-}): ReactNode {
-  const t = useMessages('messages');
-  if (!conversationId) return null;
-  return (
-    <button
-      type="button"
-      className={className}
-      aria-label={t('messages:newThread.start')}
-      title={t('messages:newThread.start')}
-      data-bot-new-thread=""
-      onClick={() => { onOpen?.(); startNewThread(conversationId); }}
-    >
-      <PlusIcon aria-hidden="true" />
-    </button>
-  );
-}
-
-/** The blank thread itself, in a thread pane's place. */
+/** The new chat itself, in a thread pane's place. */
 export function NewThreadPanel({ conversationId }: { conversationId: number }): ReactNode {
   const t = useMessages('messages');
   const [project, setProject] = useState(() => preset?.project || '');
@@ -209,6 +218,12 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const chipRef = useRef<HTMLButtonElement | null>(null);
   // Who works on it: Homeroom bot, or the person's own Claude Code or ChatGPT.
   const [builder, setBuilder] = useState<Builder>(() => preset?.builder || 'homeroom');
+  // What the door that opened it is about: a chip in the box's card, sent
+  // with the first message; the box asks the door's own question meanwhile.
+  const [object, setObject] = useState<StagedObject | null>(() => preset?.object || null);
+  const [prompt, setPrompt] = useState<string | null>(() => preset?.placeholder || null);
+  // The server's reading of the item, so its chip names its title and project (./composer.tsx).
+  const stagedCard = useStagedCard(object);
   const [pickingBuilder, setPickingBuilder] = useState(false);
   const [missed, setMissed] = useState(false);
   const builderChipRef = useRef<HTMLButtonElement | null>(null);
@@ -221,6 +236,8 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const scroller = useRef<HTMLDivElement>(null);
   useComposerKeyboard(scroller);
   useAutoGrow(inputRef, words);
+  // Plain Enter sends on this device: the hint and the tooltip say so.
+  const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
   const starts = NEW_THREAD_STARTS.map((start) => ({ ...start, text: t(start.text) }));
   const begun = startOf(words, starts);
@@ -239,13 +256,39 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     turnTaken.current = turn;
     setProject(preset.project || '');
     setBuilder(preset.builder);
+    setObject(preset.object || null);
+    setPrompt(preset.placeholder || null);
     setMissed(false);
-  }, [turn]);
+    if (preset.object) toField();
+  }, [turn]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A door's item arrives with the caret in the box, ready for the question.
+  useEffect(() => { if (object) toField(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A door named the project: the chip says its name once the communities
   // you are in are known, which the picker would otherwise read on opening.
+  // 14 Nov 2026: a door can name a project the person is not in (a public
+  // project's Workshop row, followed as a link, or a chip the bot page drew
+  // from its address): the chip said "Any project" over a chat that was set
+  // to that project all the same. Its name and icon are read once then.
   useEffect(() => {
-    if (project) void loadCommunities();
+    if (!project) return undefined;
+    let live = true;
+    void loadCommunities().then(() => {
+      if (!live || communityScopeStore.get().info[project]) return null;
+      return fetch(`/api/apps/${encodeURIComponent(project)}`, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body) => {
+          const app = body && typeof body === 'object' ? (body.app || body) : null;
+          if (!live || !app || app.slug !== project || typeof app.name !== 'string' || !app.name) return;
+          describe(project, {
+            name: app.name,
+            iconUrl: app.icon_url || (app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null),
+            iconEmoji: app.icon_emoji || null,
+            iconColor: app.icon_color || null,
+          });
+        });
+    }).catch(() => { /* the chip keeps Any project; the picker still chooses */ });
+    return () => { live = false; };
   }, [project]);
 
   // Their own Claude Code or ChatGPT is picked, by the picker or by a door:
@@ -335,6 +378,8 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const handOff = (content: string) => {
     if (!own) return;
     if (attachments.length) { setError(t('messages:newThread.builder.files', { builder: ownName })); return; }
+    // Nor can an attached item: only the person's own words go into the link.
+    if (object) { setError(t('messages:newThread.builder.item', { builder: ownName })); return; }
     const link = builderLink(own, content, project || null);
     if (!link) { setError(t('messages:newThread.builder.tooLong', { max: HANDOFF_MAX })); return; }
     const tab = window.open(link, '_blank');
@@ -347,14 +392,17 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   const send = async (event?: FormEvent) => {
     event?.preventDefault();
     const content = words.trim();
-    if (busy || dictating || uploading || (!content && !attachments.length)) return;
+    if (busy || dictating || uploading || (!content && !attachments.length && !object)) return;
     if (own) { handOff(content); return; }
     setBusy(true);
     setError(null);
     try {
       const kind: ChangeKind = startOf(content, starts)?.kind || 'any';
       const made = await api.startBotThread({ project: project || null, kind });
-      await api.sendMessage(conversationId, { content, threadRootId: made.rootId, attachmentIds: attachments.map((item) => item.id), idempotencyKey: key() });
+      await api.sendMessage(conversationId, {
+        content, threadRootId: made.rootId, attachmentIds: attachments.map((item) => item.id), idempotencyKey: key(),
+        ...(object ? { object: referenceOf(object) } : {}),
+      });
       closeNewThread();
       openThread(made.rootId);
     } catch (err) {
@@ -366,6 +414,9 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
 
   // Where the count turns amber, as in every other box.
   const nearLimit = words.length > 7600;
+  // What the keys do, once the text runs to a second line, as under every
+  // message box (./composer.tsx).
+  const keysHint = enterKey && words.includes('\n') && !nearLimit;
 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
@@ -468,6 +519,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
         <div className="messages-composer-card">
           {/* The files staged for the first message, as a reply thread draws
               them: name, size, and a × that takes it back off. */}
+          {object ? (
+            <div className="messages-pending-object" data-bot-new-thread-object={object.type}>
+              <span aria-hidden="true">◆</span>
+              <span className="truncate">{pendingObjectLabel(object, stagedCard)}</span>
+              <button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button>
+            </div>
+          ) : null}
           {attachments.length || uploading ? (
             <div className="dc-attach-strip dc-attach-strip-active">
               {attachments.map((item) => (
@@ -504,12 +562,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               value={words}
               rows={1}
               maxLength={8000}
-              placeholder={own ? t('messages:newThread.builder.placeholder') : t('messages:newThread.placeholder')}
+              placeholder={own ? t('messages:newThread.builder.placeholder') : (object && prompt) || t('messages:newThread.placeholder')}
               aria-label={own ? t('messages:newThread.builder.placeholderLabel', { builder: ownName }) : t('messages:newThread.placeholder')}
               onChange={(e) => setWords(e.currentTarget.value)}
               onPaste={(e) => { const files = [...e.clipboardData.files]; if (files.length) { e.preventDefault(); void addFiles(files); } }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) { e.preventDefault(); void send(); }
+                // Enter sends where there is a keyboard, as in every message box (lib/enter-sends.ts).
+                if (enterSends(e.nativeEvent)) { e.preventDefault(); void send(); }
               }}
             />
             <SpeakButton scope="messages:new-thread" getText={() => inputRef.current?.value || ''} onText={setWords} maxLength={8000} onBusyChange={setDictating} disabled={busy} />
@@ -520,12 +579,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
                 <ArrowTopRightOnSquareIcon aria-hidden="true" />
               </button>
             ) : (
-              <button type="submit" className="messages-send" onMouseDown={(event) => event.preventDefault()} disabled={busy || dictating || uploading > 0 || (!words.trim() && !attachments.length)} aria-label={t('messages:composer.send')} data-bot-new-thread-send="">
+              <button type="submit" className="messages-send" onMouseDown={(event) => event.preventDefault()} disabled={busy || dictating || uploading > 0 || (!words.trim() && !attachments.length && !object)} aria-label={t('messages:composer.send')} title={enterKey ? t('messages:composer.sendShortcut') : undefined} data-bot-new-thread-send="">
                 <ArrowUpIcon aria-hidden="true" />
               </button>
             )}
           </div>
           {error ? <p role="alert" className="mt-1 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+          {keysHint ? <p className="mt-1 px-3 text-end text-[11px] leading-[15px] text-zinc-500 dark:text-zinc-400" data-enter-hint="">{t('messages:composer.newLineHint')}</p> : null}
           <div className="messages-composer-count mt-1 px-1 flex justify-end h-[15px]" data-near-limit={nearLimit ? '' : undefined} aria-hidden={!words.length}><span className={`text-[10px] leading-[15px] ${nearLimit ? 'text-amber-800 dark:text-amber-300' : 'text-zinc-500 dark:text-zinc-400'}`}>{words.length ? `${words.length}/8000` : ''}</span></div>
         </div>
         {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}

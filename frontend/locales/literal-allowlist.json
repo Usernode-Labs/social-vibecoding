@@ -11,35 +11,6 @@
       "all": true,
       "why": "Every literal is an icon component's displayName, an identifier for React DevTools. The file has no <title> or aria-label."
     },
-    "frontend/src/features/agent-session/composer-parts.tsx": {
-      "texts": [
-        "Claude Code",
-        "Codex"
-      ],
-      "why": "Product names: the Build with sheet's tab labels (BUILD_TABS), beside the bare name Homeroom."
-    },
-    "frontend/src/features/agent-session/handoff.tsx": {
-      "texts": [
-        "Claude Code",
-        "Codex",
-        "Claude",
-        "ChatGPT"
-      ],
-      "why": "Product names in AGENT_LABELS / AGENT_PRODUCT; passed as {{agent}} / {{product}} parameters to whole messages."
-    },
-    "frontend/src/features/agent-session/model-choice.ts": {
-      "texts": [
-        "Claude"
-      ],
-      "why": "Product name standing in for a model with no name."
-    },
-    "frontend/src/features/agent-session/transcript.ts": {
-      "texts": [
-        "Codex",
-        "Claude Code"
-      ],
-      "why": "Product names of the coding tool on a run's row."
-    },
     "frontend/src/features/improve/improve-controller.js": {
       "texts": [
         "Claude Code",
@@ -184,64 +155,6 @@
         "Escape"
       ],
       "why": "MentionAutocomplete.BOT_NAME: the assistant's name used as data (matched against what is typed after @, inserted into the message as the mention). A product name, never translated. `PR #n: title` is matched against the start of a server-composed line to cut it off, never drawn. The key names are KeyboardEvent.key values."
-    },
-    "frontend/src/features/dev-chat/dev-chat.js": {
-      "texts": [
-        "Homeroom · OpenRouter",
-        "Homeroom · Claude",
-        "OpenRouter",
-        "Claude Code",
-        "Claude",
-        "ChatGPT",
-        "Sonnet 5.5",
-        "Opus 5.5",
-        "Fable 5.1",
-        "One small thing at a time: a text tweak, a colour, a single file.",
-        "Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.",
-        "Design and taste (how a screen looks, reads, and feels) plus the most difficult coding work.",
-        "Staging deployed!",
-        "Staging build failed: ${…}",
-        "Claude Code progress",
-        "Error",
-        "Weekly limit reached ($50.00). Resets Monday 00:00 UTC.",
-        "This week",
-        "Monday 00:00 UTC",
-        "Staging demo draft: also make the header sticky when scrolling.",
-        "Staging demo draft: rename the \"Submit\" button to \"Publish\".",
-        "Also widen the meter a little",
-        "Daily",
-        "Weekly",
-        "Monthly",
-        "What issues are open right now?",
-        "Change the colors",
-        "Add a new feature",
-        "Fix something that's broken",
-        "What does issue #",
-        "ask for?",
-        "Propose it to the group",
-        "Make a tweak",
-        "What did it change?",
-        "Build the plan",
-        "Revise the plan",
-        "What will this change?",
-        "Make a change",
-        "What's the current state?",
-        "included"
-      ],
-      "why": "Product, venue and model names. They are passed to messages as {{venue}}, {{agent}}, {{product}} and never translated. DevChat.MODELS default table: a copy of the server's /api/models answer (label and changeSize), replaced wholesale by loadModels(). Server-worded data; the 'short' hints beside them are the same. System-row `content` in the server's own vocabulary: the server persists the same sentences (src/routes/sessions.js) and the client's live echo must equal the reloaded row; code also keys off them. stagingErrorName 'Error' is an error class name. Fixtures for ?shot= / demo states: they stand in for server sentences and for text a person typed. Key suffixes that pick an id from _OPENROUTER_TITLE_IDS, not text. Quick-reply pills (STARTER_QUICK_REPLIES, _starterQuickReplies and FALLBACK_QUICK_REPLIES): the server holds the same literals (RECOVERY_PILLS / BANNED_GENERIC_PILLS in src/services/recovery-pills.js, pinned equal by tests/quick-reply-fallback.test.js) and compares against them, and a pressed pill is sent as the person's message. They need a server-side decision before they can be worded per language. 'included' is a key into the _OPENROUTER_TITLE_IDS table of message ids, never shown."
-    },
-    "frontend/src/features/dev-chat/launchpad.js": {
-      "texts": [
-        "Continue work already started on the Homeroom app `",
-        "Create a proposal for the Homeroom app `",
-        "What to build:",
-        "Read the issue and its discussion before starting, and link the proposal to issue #",
-        "Continue",
-        "Read its saved plan and conversation, and start from the current head of that branch.",
-        "Preserve the existing work. Do not start over or open a second proposal.",
-        "Updating the existing proposal clears its votes and asks reviewers to re-review."
-      ],
-      "why": "prefillText() builds the prompt handed to the person's coding agent (model input), not interface text."
     },
     "frontend/src/features/comment-pin/picture.ts": {
       "texts": [
@@ -426,16 +339,12 @@
         "Dragging a card scrolls the board back to the top.",
         "The board scrolls back to the top when I drag a card.",
         "Example App",
-        "Staging deployed!",
-        "Staging build failed: ${…}",
         "Error",
-        "Codex log",
-        "Claude Code log",
         "Homeroom",
         "staging",
         "dev"
       ],
-      "why": "Fixtures of the ?shot= screenshot-state links: made-up names, a made-up community and text 'a person wrote', standing in for user and server data. One of them (\"Example App\") is also compared by the pose loop. Live copies of server-composed system rows pushed into the dev chat transcript from WebSocket events. The server persists and compares the same literals (src/routes/sessions.js 'Staging deployed!', 'Staging build failed', 'Claude Code log'; src/db/migrate.js seeds them), and a reload shows the server's row. 'Error' is the default error class name. Left as the task's out-of-scope rule says; the dev chat's own row painters decide how they read. \"Homeroom\" as the bare product name in the header title; 'staging' and 'dev' are environment identifiers shown as the version label when no commit SHA exists."
+      "why": "Fixtures of the ?shot= screenshot-state links: made-up names, a made-up community and text 'a person wrote', standing in for user and server data. One of them (\"Example App\") is also compared by the pose loop. 'Error' is the default error class name. \"Homeroom\" as the bare product name in the header title; 'staging' and 'dev' are environment identifiers shown as the version label when no commit SHA exists."
     },
     "public/js/build-venues.js": {
       "texts": [
@@ -444,22 +353,12 @@
       ],
       "why": "Product names."
     },
-    "public/js/dev-flow-select.js": {
-      "texts": [
-        "Claude Code",
-        "Codex",
-        "ChatGPT",
-        "Claude"
-      ],
-      "why": "Product names (agent names, connector products and the two vendor buttons)."
-    },
     "public/js/credit-options.js": {
       "texts": [
         "Today",
-        "midnight UTC",
-        "<button type=\"button\" class=\"dc-pr-btn dc-credits-go\" data-credits-verify=\"1\""
+        "midnight UTC"
       ],
-      "why": "Fallbacks for fields of the server's budget payload (windowLabel, resetLabel) in creditState(). Nothing renders windowLabel from this state; resetLabel is the server's own name for the boundary and only reaches a sentence where window.ResetTime is absent (a bare unit sandbox), as the {{boundary}}/{{when}} parameter. Markup only; the inventory's html heuristic. Its label is session:credits.verify.cta."
+      "why": "Fallbacks for fields of the server's budget payload (windowLabel, resetLabel) in creditState(). Nothing renders windowLabel from this state; resetLabel is the server's own name for the boundary and only reaches a sentence where window.ResetTime is absent (a bare unit sandbox), as the {{boundary}}/{{when}} parameter."
     },
     "public/js/build-log.js": {
       "texts": [
@@ -502,15 +401,6 @@
         "Native bridge capability probe was inconclusive"
       ],
       "why": "Thrown inside the capability probe and caught by it; never shown."
-    },
-    "public/js/session-options.js": {
-      "texts": [
-        "git clone …",
-        "node ./tools/social-vibecoding login",
-        "node ./tools/social-vibecoding agent run --session …",
-        "<session-id>"
-      ],
-      "why": "Shell commands."
     },
     "public/js/merge-status.js": {
       "texts": [

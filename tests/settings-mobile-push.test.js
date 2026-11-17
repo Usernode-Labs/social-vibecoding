@@ -18,8 +18,7 @@ const CATEGORIES = [
   ['messages', 'Messages', true],
   ['direct_interactions', 'Direct interactions', true],
   ['invitations', 'Invitations', true],
-  ['shared_work', 'Shared work', true],
-  ['developer_sessions', 'Agent sessions', true],
+  ['developer_sessions', 'Your coding agent', true],
   ['proposal_alerts', 'Change alerts', true],
   ['app_alerts', 'App alerts', true],
   ['lightweight_activity', 'Lightweight activity', false],
@@ -139,9 +138,11 @@ test('settings reflects saved state and persists a changed category', async () =
   });
 });
 
-test('one story: Settings describes every push category in the server\'s own words', () => {
+test('one story: Settings describes every push category the server lists in the server\'s own words', () => {
   const { CATEGORY_DEFINITIONS } = require('../src/services/mobile-push-preferences');
-  for (const category of CATEGORY_DEFINITIONS) {
+  // A category the server keeps defined but unlisted (`listed: false`) has
+  // no row on the screen, so nothing to describe.
+  for (const category of CATEGORY_DEFINITIONS.filter((c) => c.listed !== false)) {
     const id = `settings:alerts.push.${category.key.replace(/_(\w)/g, (_, c) => c.toUpperCase())}`;
     assert.equal(message(`${id}.description`), category.description, `${category.key}: one description, server and screen`);
   }

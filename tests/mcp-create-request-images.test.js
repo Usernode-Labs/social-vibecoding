@@ -298,7 +298,7 @@ test('a failed upload stops before the request is filed, in the platform\'s word
 
 // ── 4. Who is offered it, and where it may go ──────────────────────────
 
-test('an external client is told about images; the Mayor is not offered them', async () => {
+test('an external client is told about images; Homeroom bot\'s read grant files no request at all', async () => {
   const external = connector();
   const mayor = connector({ delegation: { kind: 'agent_mayor' } });
   try {
@@ -308,14 +308,7 @@ test('an external client is told about images; the Mayor is not offered them', a
     assert.match(ext.description, /SHA-256/);
     assert.match(ext.description, new RegExp(`${tools.MCP_REQUEST_BODY_KB} KB`));
 
-    const own = mayor.specs.get('create_request');
-    assert.ok(own, 'the Mayor still files requests');
-    assert.equal(own.inputSchema.images, undefined, 'but is not offered images');
-    assert.doesNotMatch(own.description, /SHA-256/);
-    const out = await mayor.handlers.get('create_request')({
-      slug: 'cool-app', title: 'Broken', images: [inline(PNG)],
-    });
-    assert.equal(out.isError, true, 'images reaching the Mayor\'s handler are refused, not dropped');
+    assert.equal(mayor.specs.get('create_request'), undefined, 'a read grant is offered no tool that files');
     assert.equal(mayor.calls.length, 0);
   } finally { external.restore(); mayor.restore(); }
 });

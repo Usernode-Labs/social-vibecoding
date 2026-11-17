@@ -1,7 +1,8 @@
 # Making an app load fast on a poor connection
 
-Hand this to an app's dev chat when the app is quick offline, quick on wifi,
-and painful on a weak mobile signal.
+Hand this to whoever builds the app's next change (Homeroom bot, or your own
+coding agent) when the app is quick offline, quick on wifi, and painful on a
+weak mobile signal.
 
 **Read the "Offline — apps that open with no connection" section of the
 platform conventions first.** It is the binding contract; this document is
@@ -273,7 +274,7 @@ app warms inside the platform shell is a different partition from the one it
 warms when opened standalone. Both work; they do not share, so expect the
 first load in each context to be cold.
 
-## Prompt to paste into the app's dev chat
+## Prompt to paste into Homeroom bot or your coding agent
 
 > Our app loads fast on wifi and fast when fully offline, but very slowly on
 > a weak connection. Please fix it following

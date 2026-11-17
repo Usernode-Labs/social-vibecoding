@@ -2165,7 +2165,6 @@ test('#6124: every list of changes reads the chosen title before the session nam
   // keep the old name with no migration to fix them.
   const files = {
     'services/threads.js': ['cs'],            // the request page and its "elsewhere"
-    'services/agent-sessions.js': ['c'],      // the agent chat's change rows
     'routes/workshop-overview.js': ['cs', 'rb'], // Workshop, Needs you, and a ballot's choices
   };
   for (const [file, aliases] of Object.entries(files)) {
@@ -2177,14 +2176,11 @@ test('#6124: every list of changes reads the chosen title before the session nam
       assert.match(src, order, `${file}: ${alias}.proposed_pr_title sits between pr_title and session_title`);
     }
   }
-  // The chat's Changes ready card reads a session row from /api/sessions,
-  // which must carry the column it falls back to.
+  // The shared-sessions list (/api/apps/:slug/shared-sessions) must carry
+  // the column a client falls back to.
   const sessionsRoute = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
   assert.match(sessionsRoute, /cs\.session_title, cs\.proposed_pr_title, cs\.status, cs\.linked_issues, cs\.shared_at/,
     'the shared-sessions list carries proposed_pr_title');
-  const devChat = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-chat/dev-chat.js'), 'utf8');
-  assert.match(devChat, /title: session\?\.pr_title \|\| session\?\.proposed_pr_title \|\| session\?\.session_title \|\| ''/,
-    'the Changes ready card reads it before the session name');
   // The Workshop's own cards and the project hub's "Your work" row are
   // built on the client from /api/me/active-sessions rows.
   const appView = fs.readFileSync(path.join(__dirname, '../public/js/app-view.js'), 'utf8');

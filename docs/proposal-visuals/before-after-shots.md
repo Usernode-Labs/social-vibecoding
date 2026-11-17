@@ -195,8 +195,6 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
    reach by themselves (`src/services/shots-demo-states.js`). The copies have
    no model key and run nothing in the background, and most staging fixtures
    belong to the read-only admin. The demo states include:
-   - for the member: an agent run in progress and one asked to stop, a change
-     with a deployed preview, and enough agent sessions for "Show more";
    - a proposal with a vote of the member's on an earlier version, and a
      threshold that moved since voting opened;
    - a proposal of the member's to make the app private, flagged for
@@ -245,10 +243,10 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
      are part-way through: preview built, the unit suite finished, 620 of
      840 declared checks done (#4727);
    - for the full admin: a weekly building allowance nearly spent ($4.00 of
-     an admin-set $50.00 left), so the credits pill beside Send is red and a
-     new agent conversation shows the low-credits note (#4784). It is the
-     full admin's because the member is shot far more often, and every one
-     of the member's agent conversations would show the red pill.
+     an admin-set $50.00 left), so Settings' AI credit line says what is left
+     this week, in red (#4784). It is the full admin's because the member is
+     shot far more often, and theirs would read as nearly spent in every one
+     of those shots.
 
    States that write as the Homeroom bot never write a bot run: one would
    put the request in the bot's tray, on every shot of the member's chat
@@ -433,7 +431,7 @@ together:
 
 - **One clone, one moment.** Both databases are copies of one prepared
   source. Every row the platform then writes into them (the identities,
-  session copies and demo states) is stamped from one moment, read once
+  fixtures and demo states) is stamped from one moment, read once
   per reset and handed to both sides (`shots-fixtures.pairMoment`). A
   `NOW()` in their SQL is bound to it (`atMoment`), and a time worked out in
   JavaScript reads `ctx.at`. Before, each side read its own transaction's
@@ -1156,8 +1154,8 @@ first card showing that picture.
 
 ## A change of the Homeroom bot's
 
-The bot's build declares its changes with `declare_visible_changes`, as a dev
-chat's build does (`homeroom-bot-live.buildPrompt`). When it did not, the bot
+The bot's build declares its changes with `declare_visible_changes`, as any
+hosted build does (`homeroom-bot-live.buildPrompt`). When it did not, the bot
 records one derived from its HTML spec just before it proposes
 (`spec-visible-changes.recordForBotProposal`): each `<ol data-changes>` item
 becomes a change with the item's words as its claim, its `data-steps` as the
@@ -1256,7 +1254,7 @@ and its phone browser under `SHOTS_DIR/<persona>_phone`.
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
-| Fixture identities and session copies; demo states for the personas; the pair's one moment (`pairMoment`, `atMoment`) | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
+| Fixture identities and the hosted app and invited fixtures; demo states for the personas; the pair's one moment (`pairMoment`, `atMoment`) | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
 | What a declaration is told about the copies' data (`availableStates`, `dataNote`, data warnings) | `src/services/shots-ready-states.js` |
 | Persona sign-in on both sides, and the demo data a copy makes on first view (`warmDemoData`) | `worker/shots-browser-bootstrap.js` |
 | Every shots page's init script (install strip dismissed unless `shots-install-strip=show`; the Workshop's visit stamp dropped) | `worker/shots-page-init.js` |

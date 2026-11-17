@@ -86,8 +86,8 @@ test('only the shots agent\'s turn is exempt, and only for the merge queue\'s as
   assert.throws(() => movingTurnSql('cs; DROP'), /bad alias/);
   const factsSrc = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/facts.ts'), 'utf8');
   assert.match(factsSrc, /\$\{movingTurnSql\('cs'\)\} AS moving_turn/);
-  assert.match(factsSrc, /mergeMoving: !!r\.moving_turn \|\| !!r\.local_turn \|\| !!r\.moving_operations/);
-  assert.match(factsSrc, /moving: !!r\.active_turn \|\| !!r\.local_turn \|\| !!r\.moving_operations/,
+  assert.match(factsSrc, /mergeMoving: !!r\.moving_turn \|\| !!r\.moving_operations/);
+  assert.match(factsSrc, /moving: !!r\.active_turn \|\| !!r\.moving_operations/,
     'a promote, an unpromote and a sync still wait for the shots agent\'s turn');
   const machineSrc = fs.readFileSync(path.join(__dirname, '../src/workflow/proposal/machine.ts'), 'utf8');
   const ask = machineSrc.slice(machineSrc.indexOf('function askRefusal'), machineSrc.indexOf('const mergeRequested'));

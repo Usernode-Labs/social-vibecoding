@@ -22,7 +22,7 @@ const composer = read('frontend/src/features/messages/composer.tsx');
 const attachmentLimits = read('frontend/src/features/attachments/limits.ts');
 const row = read('frontend/src/features/messages/message-row.tsx');
 const markdown = read('frontend/src/features/messages/format.tsx');
-const devChat = read('frontend/src/features/dev-chat/dev-chat.js');
+const platformMarkdown = read('frontend/src/lib/platform-markdown.js');
 const dapp = JSON.parse(read('dapp.json'));
 
 test('Messages is a hidden React-owned top-level screen with global navigation', () => {
@@ -86,11 +86,9 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   const messagesRoute = app.slice(routeStart, app.indexOf("if (parts[0] === 'topochain')", routeStart));
   assert.match(messagesRoute, /parts\[1\] === 'app' && parts\[2\]/, 'the inbox reads the address');
   // #2387: what follows the slug — a reply thread, a message link — rides
-  // along as a fourth argument (App._messagesExtras).
-  assert.match(messagesRoute, /if \(App\._appChatToHub\(parts\[2\], parts\.slice\(3\), hash\)\) return;\s*App\.navigateToMessages\(null, parts\[2\], null, App\._messagesExtras\(parts\.slice\(3\)\)\)/);
-  // #2813 added the agent thread as a third argument, last in precedence;
-  // #2387 the thread/link extras as a fourth.
-  assert.match(app, /navigateToMessages\(conversationId, appSlug, agent, extras\)/);
+  // along as a third argument (App._messagesExtras).
+  assert.match(messagesRoute, /if \(App\._appChatToHub\(parts\[2\], parts\.slice\(3\), hash\)\) return;\s*App\.navigateToMessages\(null, parts\[2\], App\._messagesExtras\(parts\.slice\(3\)\)\)/);
+  assert.match(app, /navigateToMessages\(conversationId, appSlug, extras\)/);
   // The hub's record still names the room at this address; the hub's own
   // Discussion row opens the project page's Discussion place, where the
   // room is drawn whole, and links nowhere else.
@@ -106,7 +104,7 @@ test('an app\'s channel address goes to its project page\'s Discussion tab; only
   // …and it drops BOTH portals on the way out, the transcript's first.
   assert.match(screen, /unmountTranscript\?\.\(list\)[\s\S]{0,120}unmountGeneralChat\?\.\(el\)/);
   // The list collapses for a discussion exactly as it does for a thread.
-  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \|\| snap\.route\.agent \? 'hidden md:flex' : 'flex'/);
+  assert.match(screen, /snap\.route\.conversationId \|\| snap\.route\.appSlug \? 'hidden md:flex' : 'flex'/);
 });
 
 test('deep links validate ids and route list/thread without a client events socket send', () => {
@@ -150,7 +148,7 @@ test('an invitation resolves metadata before deciding whether history may be fet
     store.indexOf('export async function loadOlder('));
   const detailAt = fn.indexOf('await api.getConversation(conversationId, read)');
   const statusAt = fn.indexOf("active.membershipStatus === 'member'");
-  const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read, pageSize(active))');
+  const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read)');
   assert.ok(detailAt > -1 && detailAt < statusAt && statusAt < messagesAt);
   assert.match(screen, /t\('messages:invitation\.invitedBy', \{ username: requesterUser\.username \}\)/);
   assert.match(message('messages:invitation.invitedBy', { username: 'ada' }), /^@ada invited you\. Accepting gives you access to the complete retained conversation history\.$/);
@@ -379,7 +377,7 @@ test('composer and moderation payloads match the backend contracts', () => {
     'selecting or creating a destination consumes the one-shot on route change');
   // The pending-share effect's own dependencies (this used to match the
   // typing cleanup's `[conversationId]` instead, which now names the thread).
-  assert.match(composer, /window\.removeEventListener\('usernode:messages-attach', attachPending\);\s*\};\s*\}, \[conversationId, inThread\]\);/,
+  assert.match(composer, /window\.removeEventListener\('usernode:messages-share', onShare\);\s*\};\s*\}, \[conversationId, inThread\]\);/,
     'the pending-share effect follows destination changes');
   const share = store.slice(store.indexOf('export async function share('),
     store.indexOf('export function takePendingShare'));
@@ -402,29 +400,24 @@ test('composer and moderation payloads match the backend contracts', () => {
 
 });
 
-test('#6212: the composer keeps the list\'s attachment apart from the person\'s own', () => {
-  // Where the chip came from decides whether moving around the bot page may
-  // take it off; the person's own (Share, Ask for changes, the picker) stays.
-  assert.match(composer, /const objectFrom = useRef<'list' \| 'person' \| null>\(null\);/);
-  assert.match(composer, /const objectRef = useRef<StagedObject \| null>\(null\);/);
-  assert.match(composer, /const \{ conversationId: to, source, \.\.\.object \} = detail;/, 'the source never rides along as part of the item');
-  assert.match(composer, /if \(source === 'list' && objectFrom\.current === 'person' && objectRef\.current\) return;/,
-    'the list never replaces an item the person chose');
-  assert.match(composer, /setChip\(object, source === 'list' \? 'list' : 'person'\)/, 'a detail with no source is the person\'s');
-  assert.match(composer, /setChip\(pending\.object, 'person'\)/, 'Ask for changes is the person\'s');
-  assert.match(composer, /window\.addEventListener\('usernode:messages-object-cleared', onCleared\);/);
-  assert.match(composer, /window\.removeEventListener\('usernode:messages-object-cleared', onCleared\);/);
-  assert.match(composer, /const onCleared = \(event: Event\) => \{[\s\S]{0,420}if \(objectFrom\.current !== 'list'\) return;\s+setChip\(null, null\);/,
-    'a clear takes off only what the list attached');
-  // Sending, changing scope and × also forget where the chip came from.
-  assert.match(composer, /objectRef\.current = null; objectFrom\.current = null;\s+const input = \{ content: value\.trim\(\)/,
-    'sending forgets where the chip came from');
-  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\); setChip\(null, null\);/);
-  assert.match(composer, /onClick=\{\(\) => \{ setChip\(null, null\); setPrompt\(null\); \}\}/);
-  // A request page opened from a bot message in Main Chat is the same
-  // automatic attach the list itself makes.
-  assert.match(read('frontend/src/features/messages/request-page.ts'),
-    /issueNumber: page\.issueNumber, title: page\.label, conversationId, source: 'list' \}/);
+test('the composer\'s chip is only an item the person chose: nothing attaches one for them', () => {
+  // #6212 kept the Homeroom bot tab's list attaching what a row opened to
+  // Main Chat's box, apart from an item the person chose. 14 Nov 2026: Main
+  // Chat is gone, so nothing attaches for the person: no source rides on the
+  // event, no clear event takes a chip off, and Ask for changes carries its
+  // change into a new chat's box (new-thread.tsx,
+  // tests/ask-for-changes-attach.test.js).
+  assert.match(composer, /const \[object, setObject\] = useState<StagedObject \| null>\(null\);/);
+  assert.match(composer, /const \{ conversationId: to, \.\.\.object \} = detail;\n\s+if \(to != null && to !== conversationId\) return;\n\s+setObject\(object\); inputRef\.current\?\.focus\(\);/,
+    'the conversation it is addressed to never rides along as part of the item');
+  assert.doesNotMatch(composer, /objectFrom|objectRef|setChip|source === 'list'|messages-object-cleared|setPrompt|focusWanted/);
+  // Sending, changing scope and × take the chip off.
+  assert.match(composer, /setValue\(''\); setAttachments\(\[\]\); setObject\(null\);/, 'sending');
+  assert.match(composer, /setValue\(draftFor\(scope\)\); setAttachments\(draftAttachmentsFor\(scope\)\); setObject\(null\);/);
+  assert.match(composer, /onClick=\{\(\) => setObject\(null\)\} aria-label=\{t\('messages:composer\.removeSharedItem'\)\}/);
+  // A request's page opened from a bot message attaches nothing either.
+  assert.doesNotMatch(read('frontend/src/features/messages/request-page.ts'), /messages-object-selected|source: 'list'/);
+  assert.doesNotMatch(read('frontend/src/features/ai/index.tsx'), /messages-object-selected|messages-object-cleared/);
 });
 
 test('#6249: attached files are kept with the draft they were attached in', () => {
@@ -474,12 +467,11 @@ test('blocking and access-revocation purge an active direct thread locally', () 
 });
 
 test('message Markdown delegates only to the established DOMPurify allowlist', () => {
-  assert.match(markdown, /window\.DevChat\.renderMarkdown\(content, \{ breaks: true \}\)/);
-  // `out`, because the sanitized html is cached before it is returned
-  // (tests/dev-chat-smoothness.test.js pins that it is byte-identical).
-  assert.match(devChat, /const out = DOMPurify\.sanitize\(html, \{/);
-  assert.match(devChat, /ALLOW_DATA_ATTR: false/);
-  assert.match(devChat, /ALLOWED_TAGS:/);
+  assert.match(markdown, /window\.PlatformMarkdown\.render\(content, \{ breaks: true \}\)/);
+  // `out`, because the sanitized html is cached before it is returned.
+  assert.match(platformMarkdown, /const out = DOMPurify\.sanitize\(html, \{/);
+  assert.match(platformMarkdown, /ALLOW_DATA_ATTR: false/);
+  assert.match(platformMarkdown, /ALLOWED_TAGS:/);
 });
 
 test('staging demo stays server-authored while the client forwards demo=1', () => {

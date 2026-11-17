@@ -3,9 +3,9 @@
  *
  * ── What this replaces ─────────────────────────────────────────────────
  *
- * Chunk G (#1084) mounted the Dev board and the Dev session chat with their own
+ * Chunk G (#1084) mounted the Dev board with its own
  * `createRoot` per host, because `#app-content` ships empty and every Dev
- * surface is written into it at runtime by `AppView.renderDevView()` — there was
+ * surface is written into it at runtime by app-view.js — there was
  * nothing in the prerendered document for the body root to hydrate. That helper
  * (`lib/interim-root.ts`) said in its own header that chunk H folds these
  * regions into the main tree and its call sites disappear. This is that file.
@@ -156,8 +156,8 @@ export function unmountLegacyPortal(host: Element | null): void {
  * Drop every live portal.
  *
  * The Dev surfaces are mutually exclusive and each swap discards whatever the
- * previous one mounted, so the owner calls this once at the top of
- * `renderDevView` rather than tracking which branch ran last.
+ * previous one mounted, so the owner calls this once before each swap
+ * (`AppView._teardownDevRoots`) rather than tracking which branch ran last.
  */
 export function unmountAllLegacyPortals(): void {
   if (!entries.size) return;

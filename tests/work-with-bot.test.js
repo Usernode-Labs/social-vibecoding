@@ -1,10 +1,10 @@
 'use strict';
 
 // Threads, one loop (phase B, 1 Nov 2026): "Work on this with Homeroom bot"
-// replaces "Build it now" as a request's one action; Build it now moves into
-// the ⋯ as "Build it in an agent session"; a change gets a quiet version of
-// the button; and while the bot waits for the requester's plan the request
-// says so, with "Let the bot build it now". The server half is pinned in
+// replaces "Build it now" as a request's one action (the agent session that
+// "Build it in an agent session" opened from the ⋯ is retired); a change
+// gets a quiet version of the button; and while the bot waits for the
+// requester's plan the request says so, with "Let the bot build it now". The server half is pinned in
 // tests/private-thread-about-postgres.test.js, the sent screen's in
 // tests/feedback-first-ui.test.js.
 //
@@ -80,7 +80,7 @@ const standing = (stage, extra = {}) => withWords({
   change: null, asks: null, said: null, mine: true, voteOwed: false, ...extra,
 });
 
-test('a request nobody is building: Work on this with Homeroom bot, and the agent session in its ⋯', () => {
+test('a request nobody is building: Work on this with Homeroom bot', () => {
   const { AppView } = makeAppView();
   const status = plain(AppView._requestStatusView(baseIssue()));
   assert.deepEqual(status.action, {
@@ -89,22 +89,18 @@ test('a request nobody is building: Work on this with Homeroom bot, and the agen
     disabled: false,
     act: { fn: 'workOnIssueWithBot', args: [3] },
   });
-  assert.equal(status.agentSession, true, 'the page\'s ⋯ offers Build it in an agent session');
   assert.equal(status.lead, 'Nobody is working on this yet.');
-  // The page's own ⋯ lists it beside Build it with your own Claude Code
-  // (request-head.tsx), so the card menu it shares does not list it twice.
+  // The agent session is retired: neither the page's ⋯ nor the card's offers one.
   const pageRows = AppView._requestMenuItems(baseIssue()).map((row) => row.label);
   assert.ok(!pageRows.includes('Build it in an agent session'));
   const cardRows = AppView._issueMenuItems(baseIssue(), { progressOnFace: true }).map((row) => row.label);
-  assert.equal(cardRows[0], 'Build it in an agent session', 'the board card\'s ⋯ leads with it');
+  assert.ok(!cardRows.includes('Build it in an agent session'));
   // The other primary states stay: Continue work, the bot on it, a change waiting.
   assert.equal(AppView._requestStatusView(baseIssue({ myPrSessionId: 9 })).action.label, 'Continue your work');
-  assert.equal(AppView._requestStatusView(baseIssue({ myPrSessionId: 9 })).agentSession, false);
   const botOn = AppView._requestStatusView(baseIssue({ standing: standing('building', { whoseMove: 'bot' }) }));
   // #6401: the progress card under this one already says where the bot is,
   // so the page offers no button that scrolls to it.
   assert.equal(botOn.action, null);
-  assert.equal(botOn.agentSession, false);
   // The Workshop list keeps it (its page is not the one the press lands on).
   assert.equal(plain(AppView._issuePrimaryActionSpec(
     baseIssue({ standing: standing('building', { whoseMove: 'bot' }) }),
@@ -115,7 +111,6 @@ test('a request nobody is building: Work on this with Homeroom bot, and the agen
     track: { work: { stage: 'reading' } },
   })));
   assert.equal(tracked.action, null, 'no See progress while the progress card is drawn');
-  assert.equal(tracked.agentSession, false);
   // #6210 (3 Nov 2026): her own plan waits for her: "you", and the plan
   // with its Build it is right under this card, so the card has no button.
   const plan = (mine) => standing('waiting_for_you', { why: 'plan', whoseMove: 'requester', mine });
@@ -143,12 +138,11 @@ test('a request the bot holds until later says so, offers no Ask and does not sp
   assert.equal(held.action, null, 'no Ask Homeroom bot to build this');
   assert.equal(held.botSays, true);
   assert.equal(held.ownAgent, false);
-  assert.equal(held.agentSession, false);
   assert.equal(AppView._issueWorkState(baseIssue({ standing: onHold })), null, 'no bot state, so no working spinner');
   assert.equal(AppView._issueInProgress(baseIssue({ standing: onHold })), false, 'and no Underway card');
   // Its turn in the line: it spins, and says so.
   const queued = baseIssue({ standing: standing('reading', { line: { code: 'queued' }, whoseMove: 'bot' }) });
-  assert.equal(AppView._requestStatusView(queued).lead, 'Not started yet · Waiting its turn');
+  assert.equal(AppView._requestStatusView(queued).lead, 'Not started yet. Waiting its turn in Homeroom bot’s line; it starts by itself.');
   assert.equal(AppView._issueWorkState(queued).spinner, true);
   // Nobody on it: Nobody, with Ask; a standing nobody has started says so
   // in its own words, with Ask; and a stage this client does not know is no
@@ -182,7 +176,6 @@ test('while the bot waits for her plan, the request says so, with Let the bot bu
     act: { fn: 'letBotBuildNow', args: [3] },
   });
   assert.equal(status.botSays, true, 'no "Plan v1 is ready" after it');
-  assert.equal(status.agentSession, false);
   assert.equal(AppView._issuePrimaryActionSpec(held).act.fn, 'letBotBuildNow', 'the board card says the same');
   // A row from an older server, with only the hold, reads the same.
   const legacy = baseIssue({ botHold: hold });
@@ -193,6 +186,38 @@ test('while the bot waits for her plan, the request says so, with Let the bot bu
   assert.equal(AppView._planHeld({ ...held, standing: standing('reading', { whoseMove: 'bot' }) }), false);
   assert.equal(AppView._planHeld({ ...held, state: 'closed' }), false);
   assert.equal(AppView._planHeld(baseIssue()), false);
+});
+
+// 13 Nov 2026: a tester's own private thread held a request whose build had
+// already reached the line. Its page read "Ready to build · Number 1 in
+// line" beside Let the bot build it now, so nobody could tell who it waited
+// for. The server now says it is held for their plan whatever it had reached
+// (services/work-state.js: `ready` marks the build behind the hold), and the
+// page draws exactly what it draws for one still waiting to be read.
+test('held at the build line, the request reads as waiting for her plan, not as a place in line', () => {
+  const { AppView } = makeAppView();
+  const hold = { rootId: 77, href: '#homeroom-bot/thread/77' };
+  const reading = baseIssue({ botHold: hold, standing: standing('planning', { line: { code: 'planning_with_you' }, whoseMove: 'requester' }) });
+  const atLine = baseIssue({
+    botHold: hold,
+    // Its page's `bot`, read off the same row (work-state.js botWorkOf): the build still waits in the bot's queue.
+    bot: { what: 'queued', since: null, mine: true },
+    standing: standing('planning', { line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' }),
+  });
+  const status = plain(AppView._requestStatusView(atLine));
+  assert.equal(status.lead, 'Planning · Planning it with you in a private thread');
+  assert.doesNotMatch(status.lead, /in line|Ready to build/);
+  assert.deepEqual(status.action, plain(AppView._requestStatusView(reading)).action);
+  assert.equal(status.action.act.fn, 'letBotBuildNow');
+  assert.deepEqual(status.words, plain(AppView._requestStatusView(reading)).words, 'the same words as a held request still waiting to be read');
+  assert.equal(AppView._planHeld(atLine), true);
+  assert.equal(AppView._botOn(atLine), null, 'nothing of the bot\'s is under way: no spinner, no "Homeroom bot is building"');
+  assert.equal(AppView._issuePrimaryActionSpec(atLine).act.fn, 'letBotBuildNow', 'the Workshop card says the same');
+  // With no hold, the same build says whose line it waits in, and offers nothing to press.
+  const queued = baseIssue({ standing: standing('building', { line: { code: 'queued', place: 1 }, whoseMove: 'bot' }) });
+  const line = plain(AppView._requestStatusView(queued));
+  assert.equal(line.lead, 'Ready to build. Number 1 in Homeroom bot’s line; it starts by itself.');
+  assert.notEqual(line.action && line.action.act && line.action.act.fn, 'letBotBuildNow');
 });
 
 test('the request page\'s button opens the thread on the bot tab; Let the bot build it now lifts the hold', async () => {

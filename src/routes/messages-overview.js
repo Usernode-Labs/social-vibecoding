@@ -26,7 +26,7 @@
 // about an app you build was to open the app and look.
 //
 // The navigation change makes Messages the platform's ONE inbox: people,
-// app discussions and agent chats in one list, told apart by a pill. That
+// app discussions and changes in flight in one list, told apart by a pill. That
 // is the arrangement every host in the study lands on — Slack and Teams put
 // a channel, a DM and a bot thread in one sidebar — and it is why this
 // endpoint is a LIST OF DISCUSSIONS rather than a count: an inbox row has to

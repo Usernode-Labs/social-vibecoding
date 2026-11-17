@@ -42,9 +42,9 @@ test('createHandle fills the whole shape both call sites rely on', () => {
 });
 
 test('the default phase is mayor1, which is stoppable', () => {
-  const { killsWorkerInPhase } = require('../src/services/stop-policy');
+  const { classifyStopRequest } = require('../src/services/stop-policy');
   assert.equal(stopRegistry.createHandle({ sessionId: 1 }).phase, 'mayor1');
-  assert.equal(killsWorkerInPhase(stopRegistry.createHandle({ sessionId: 1 }).phase), true);
+  assert.equal(classifyStopRequest({ handle: stopRegistry.createHandle({ sessionId: 1 }) }), 'stop');
 });
 
 test('a handle registered by one module is visible to another', () => {

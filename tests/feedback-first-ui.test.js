@@ -23,7 +23,7 @@ function element(id) {
     querySelectorAll() { return []; },
   };
 }
-function harness({ response = { firstFeedback: moment }, ok = true, patchResult } = {}) {
+function harness({ response = { firstFeedback: moment }, ok = true, patchResult, botDoor = { typicalMinutes: 8 } } = {}) {
   const els = new Map(), timers = new Map(), intervals = new Map(), calls = [], fixes = [], nav = [], toasts = [], closes = [];
   const threads = [];
   let id = 0, queueHooks, failedReads = 0, clock = 0;
@@ -63,7 +63,9 @@ function harness({ response = { firstFeedback: moment }, ok = true, patchResult 
     App: { user: { id: 7 }, currentApp: 'other-app', currentTab: 'app', async navigateToApp(...args) {
       nav.push(args); this.currentApp = args[0]; sandbox.AppView.appData = { slug: args[0] };
     } },
-    AppView: { appData: { slug: 'other-app', name: 'Other App', repo_url: 'https://github.com/owner/other' }, issueStateAvailable: () => false, async createPrForIssue(n) { fixes.push(n); } },
+    // Build it asks Homeroom bot where it builds requests for this viewer
+    // (AppView._botDoor); `botDoor: null` is a project where it does not.
+    AppView: { appData: { slug: 'other-app', name: 'Other App', repo_url: 'https://github.com/owner/other' }, issueStateAvailable: () => false, _botDoor: () => botDoor, async askBotToBuild(n) { fixes.push(n); } },
     PlatformUI: { toast: message => toasts.push(message) },
     FeedbackQueue: {
       init(opts) { queueHooks = opts; }, count: async () => 0,
@@ -126,11 +128,18 @@ test('the board action uses the filed destination, not the currently open app', 
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
   assert.equal(h.fixes.length, 0);
 });
-test('try a fix opens the filed issue through the existing editable-draft flow', async () => {
+test('try a fix opens the filed request and asks Homeroom bot to build it, once', async () => {
   const h = harness(); await h.submit();
   h.el('feedback-first-fix').click(); h.el('feedback-first-fix').click(); await settle();
   assert.deepEqual(h.nav, [['filed-app', 'dev', 41, 'issues']]);
   assert.deepEqual(h.fixes, [41]);
+});
+test('where Homeroom bot does not build requests, the fix opens the request and asks nothing', async () => {
+  // The request page's own-agent link is then the way to build it.
+  const h = harness({ botDoor: null }); await h.submit();
+  h.el('feedback-first-fix').click(); await settle();
+  assert.deepEqual(h.nav, [['filed-app', 'dev', 41, 'issues']]);
+  assert.deepEqual(h.fixes, []);
 });
 // #3683: closing spends the dialog's back-button record with a history.back()
 // that the browser queues, so it lands after an address written later in the
@@ -451,7 +460,7 @@ test('#3971: the group path is thanked and still says where it went', async () =
     'Your idea is on the board now.');
   assert.ok(h.el('feedback-sent-first').classList.contains('hidden'));
 });
-test('B8: Build it now opens the request on the board and starts a change from it', async () => {
+test('B8: Build it now opens the request on the board and asks Homeroom bot to build it', async () => {
   const h = harness({ response: { homeroomBot: BOT } });
   await h.submit();
   h.el('feedback-sent-fix').click(); await settle();

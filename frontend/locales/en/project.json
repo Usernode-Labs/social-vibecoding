@@ -457,7 +457,7 @@
   },
   "boardEmpty.start": {
     "text": "Start a change",
-    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person who builds changes here. It opens a new session to build a change. \"Change\" is a noun."
+    "description": "Button under the note on a project's Hub or All items page when the project has no requests or proposals, for a person Homeroom bot does not build changes for here. It opens a new chat on the Homeroom bot tab, set to this project, where the person says what to change and picks who builds it. \"Change\" is a noun."
   },
   "boardEmpty.startBot": {
     "text": "Tell Homeroom bot what to change",
@@ -489,7 +489,7 @@
   },
   "hub.startHere.start": {
     "text": "Start a new change",
-    "description": "Button in the prompt at the top of an unstarted project's Hub: opens a new session with a coding agent to build a change to the app. Change is a noun."
+    "description": "Button in the prompt at the top of an unstarted project's Hub: opens a new chat on the Homeroom bot tab, set to this project, where the person says what to change and picks who builds it. Change is a noun."
   },
   "hub.startHere.bot.title": {
     "text": "What do you want to change?",
@@ -505,7 +505,7 @@
   },
   "hub.card.close": {
     "text": "Close this card",
-    "description": "Accessible name and tooltip of the small close (✕) button at the top right of two cards on a project's hub: \"Share it\" and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
+    "description": "Accessible name and tooltip of the small close (✕) button at the top right of the cards on a project's hub: \"Share it\", the Invite card and \"What do you want to change?\". Closing one hides it on that project for good; what it offered stays elsewhere on the page."
   },
   "hub.update.title": {
     "text": "Update from {{project}}",
@@ -747,6 +747,14 @@
     "text": "Opens Homeroom bot, showing your work in {{project}}",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The row's tooltip. {{project}} is the project's name."
   },
+  "workshop.desk.newChat": {
+    "text": "New chat about {{project}}",
+    "description": "The second row of the Your work card on a project's Workshop tab, under the Your work row, with a plus before it: opens a new chat with Homeroom bot (the platform's own assistant) that is already set to this project. The row's title. {{project}} is the project's name."
+  },
+  "workshop.desk.newChatSub": {
+    "text": "Ask Homeroom bot for a change, a fix or an answer",
+    "description": "The line under the title of the New chat row on a project's Workshop tab (\"New chat about Garden club\"): what the person can ask Homeroom bot for in the chat it opens."
+  },
   "workshop.desk.both": {
     "text": "Needs you: <0>{{needs}}</0> · In progress: {{progress}}",
     "description": "The Your work row on a project's Workshop tab (a card of its own under Overview): how much of the person's own work there is in this project, opening the Homeroom bot tab (the platform's own assistant, whose page lists everything of theirs) narrowed to this project. The count at the row's right end, in the Homeroom bot tab's own words: how many things wait on the person, and how many are being worked on. <0></0> marks the number that asks for them, drawn in the accent."
@@ -805,7 +813,7 @@
   },
   "workshop.fresh.buildIt": {
     "text": "Build it",
-    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: starts building it, by asking Homeroom bot or with the viewer's own coding agent, whichever the request's own page offers."
+    "description": "Button on a new request's row in the \"New for you\" card on the Workshop tab of a project's page: asks Homeroom bot to build it."
   },
   "workshop.fresh.workOnIt": {
     "text": "Work on it",
@@ -1857,11 +1865,27 @@
   },
   "hub.topics.title": {
     "text": "Topics",
-    "description": "On a phone, small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under the For you card. Pressing a row opens that topic's channel."
+    "description": "Small heading over the card on a project's Hub that lists the project's topics, each a channel of its own, one row a topic, under or beside the For you card. Pressing a row opens that topic's channel."
   },
   "hub.forYou.title": {
     "text": "For you",
     "description": "Small heading over the card of what on a project is this person's: the votes they owe, their own work and the project's discussion, on the project's Hub."
+  },
+  "hub.invite.title": {
+    "text": "Know someone who'd like it here?",
+    "description": "Heading of the Invite card at the top of a project's Hub, shown to a member of a community that other people are in. A friendly question asking whether they know somebody who would enjoy this community."
+  },
+  "hub.invite.text": {
+    "text": "Invite them to {{community}}. They can join the discussion, suggest ideas and vote on changes.",
+    "description": "Text of the Invite card at the top of a project's Hub, under its heading \"Know someone who'd like it here?\". {{community}} is the community's name. Says what an invited person can do once they join."
+  },
+  "hub.invite.button": {
+    "text": "Invite people",
+    "description": "Button of the Invite card at the top of a project's Hub. A verb: opens the pane that makes an invite link to the community."
+  },
+  "hub.invite.membersActive": {
+    "text": "{{members}} · {{active}}",
+    "description": "Small line at the foot of the Invite card at the top of a project's Hub. {{members}} is how many members the community has, already in the reader's language, like \"236 members\"; {{active}} is how many were active this week, already in the reader's language, like \"25 active this week\". Only the order and the separator are yours to change."
   },
   "hub.forYou.needs.firstAndMore_one": {
     "text": "{{title}}, and {{count}} more",
@@ -2579,10 +2603,6 @@
     "text": "Homeroom’s reading of the test output.",
     "description": "Small note under the plain explanation of why a change's checks failed: the explanation was written by Homeroom (with AI) from the tests' technical output, so it may be imperfect. Homeroom is the product's name; do not translate it."
   },
-  "topic.checks.fixing": {
-    "text": "Fixing…",
-    "description": "Text of the disabled Fix it button in a change's list of checks while the AI agent is fixing the checks that failed."
-  },
   "topic.checks.showPassing_one": {
     "text": "Show {{count}} passing checks",
     "description": "Label that unfolds the list of automated checks that passed, in the checks box under a proposal. {{count}} is how many passed."
@@ -2698,10 +2718,6 @@
   "topic.hero.howItsBuilt": {
     "text": "How it’s built",
     "description": "Label that unfolds the technical design part of a change's summary on the change's page, under the part written for the people deciding on it. \"It\" is the change."
-  },
-  "topic.transcript.readOnly": {
-    "text": "read-only",
-    "description": "Small lower-case tag on the fold that shows the chat in which a change was built: the chat can be read here but not continued."
   },
   "topic.change.refreshFailed": {
     "text": "Could not refresh this change.",
@@ -2905,31 +2921,11 @@
   },
   "topic.change.gate.fix": {
     "text": "Fix it",
-    "description": "Main button on the Testing card of a change's page when its automated checks failed, shown to the change's author: asks the AI agent that built the change to fix what failed. \"It\" is what failed."
-  },
-  "topic.change.gate.fixAsking": {
-    "text": "Asking…",
-    "description": "Text of the Fix it button on the Testing card of a change's page while the request to the AI agent is being sent."
+    "description": "Main button on the Testing card of a change's page, and in its list of checks, when its automated checks failed, shown to the change's author: opens their chat with Homeroom bot about this change, where they can ask it to fix what failed. \"It\" is what failed."
   },
   "topic.change.gate.fixNote": {
-    "text": "Fix it asks the agent that built this change to fix what failed, using your credits. You can stay on this page: the checks run again by themselves when it’s done.",
-    "description": "Line under the Fix it button on the Testing card of a change's page, shown to the change's author. \"The agent\" is the AI coding agent; credits are what an agent's work is paid with. \"It\" in the last sentence is the agent."
-  },
-  "topic.change.gate.fixing": {
-    "text": "Fixing",
-    "description": "Status at the right of the Testing card's name on a change's page while the AI agent is fixing the checks that failed."
-  },
-  "topic.change.gate.fixingLabel": {
-    "text": "The agent is fixing what failed",
-    "description": "Accessible name of the Testing card's progress bar on a change's page while the AI agent is fixing the checks that failed."
-  },
-  "topic.change.gate.fixingNote": {
-    "text": "The agent is fixing what failed. When it’s done, the checks run again by themselves.",
-    "description": "Line under the Testing card of a change's page while the AI agent is fixing the checks that failed. \"It\" is the agent."
-  },
-  "topic.change.gate.noteWatch": {
-    "text": "{{note}} <0>Watch it work</0>",
-    "description": "The line under the Testing card on a change's page while the AI agent fixes the checks that failed. {{note}} is one or more whole sentences, already worded. <0></0> is a link-style button that opens the conversation where the agent is working."
+    "text": "Fix it opens your chat with Homeroom bot about this change, where you can ask it to fix what failed.",
+    "description": "Line under the Fix it button on the Testing card of a change's page, shown to the change's author. \"Homeroom bot\" is the name of Homeroom's assistant; keep it as it is. The \"it\" after \"ask\" is Homeroom bot."
   },
   "topic.change.gate.closesHead_one": {
     "text": "Closes {{count}} request when it merges",
@@ -3542,10 +3538,6 @@
   "topic.request.ownAgent.summary": {
     "text": "Build it with your own Claude Code",
     "description": "Folded line under the status card on a request's page; opening it shows a link that hands this request to Claude Code on the web, on the person's own Claude plan. \"Claude Code\" is a product name."
-  },
-  "topic.request.agentSession.summary": {
-    "text": "Build it in an agent session",
-    "description": "Row in the ⋯ menu of a request's page, next to \"Build it with your own Claude Code\": starts a session where the viewer builds the request with an AI coding agent. An agent session is a working conversation with an AI coding agent. \"Build\" is a verb."
   },
   "topic.workWithBot.ask": {
     "text": "Ask Homeroom bot privately",
@@ -4281,11 +4273,11 @@
   },
   "card.explore.unavailable": {
     "text": "AI chat isn't configured on this deployment.",
-    "description": "Tooltip on the disabled \"Explore in a coding agent\" button on a card when this Homeroom installation has no AI model set up."
+    "description": "Tooltip on the disabled \"Ask Homeroom bot\" button on a card when this Homeroom installation has no AI model set up."
   },
   "card.explore.label": {
-    "text": "Explore in a coding agent",
-    "description": "Button on a proposal's card, after a sparkles emoji: opens a chat with a coding agent about this proposal so the person can ask about or try the change. \"Explore\" is a verb."
+    "text": "Ask Homeroom bot",
+    "description": "Button on a proposal's card, after a sparkles emoji: opens the person's chat with Homeroom bot about this proposal, so they can ask about it or ask for changes to it. \"Homeroom bot\" is the name of Homeroom's assistant; keep it as it is."
   },
   "card.menu.more": {
     "text": "More actions",
@@ -4483,10 +4475,6 @@
     "text": "Open card",
     "description": "Link button on an unfolded card: goes to that proposal's or request's own page. \"Open\" is a verb."
   },
-  "card.fold.openSession": {
-    "text": "Open session ›",
-    "description": "Link under an unfolded card about the person's own coding session: goes to that session's chat. \"Open\" is a verb; keep the › last."
-  },
   "feedThread.reply.placeholder": {
     "text": "Reply…",
     "description": "Placeholder of the reply box under an open card: the person writes a reply in that proposal's or request's discussion thread. A verb."
@@ -4569,7 +4557,7 @@
   },
   "menu.build.title": {
     "text": "Build it now",
-    "description": "Row in a project's ⋯ menu: starts a new change to the project that the person builds themselves with a coding agent. 'Build' is a verb; 'it' is the improvement they have in mind."
+    "description": "Row in a project's ⋯ menu: opens a new chat on the Homeroom bot tab, set to this project, where the person says what to build and picks who builds it (Homeroom bot, or their own Claude Code or ChatGPT). 'Build' is a verb; 'it' is the improvement they have in mind."
   },
   "menu.build.sub": {
     "text": "With a coding agent, then ask for approval",
@@ -4581,7 +4569,7 @@
   },
   "menu.importPr.sub": {
     "text": "Your computer · your own tools. You have already built it, so there is no chat for this one",
-    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no coding-agent chat is opened. Keep the middle dot between the first two phrases."
+    "description": "Second line of the 'Import Feature from a PR' row in a project's ⋯ menu. It says the work was done on the person's own machine with their own tools, so no conversation with Homeroom bot is opened. Keep the middle dot between the first two phrases."
   },
   "menu.settings.title": {
     "text": "Settings & rules",
@@ -5135,82 +5123,6 @@
     "text": "Apps can customize these rules: restricting approvals to <0>invited approvers</0> (everyone else’s votes stay visible but advisory) and/or requiring a fixed <1>“at least N approvals”</1> instead of the timed majority system.",
     "description": "Last rule in the voting help popover: an app may set its own approval rules. Both tagged phrases are shown in bold; N stands for a number the app chooses."
   },
-  "modals.generate.title": {
-    "text": "Generate proposal for issue #{{number}}?",
-    "description": "Title of the dialog that asks before an AI agent writes a proposal for a request. {{number}} is the request's issue number. 'Generate' is a verb."
-  },
-  "modals.generate.modelLabel": {
-    "text": "Model",
-    "description": "Small uppercase label above the name of the AI model that will write the proposal, in the 'Generate proposal' dialog."
-  },
-  "modals.generate.changeModel": {
-    "text": "Change model",
-    "description": "Link beside the chosen AI model in the 'Generate proposal' dialog: opens the list of models to pick another. 'Change' is a verb."
-  },
-  "modals.generate.confirm": {
-    "text": "Generate proposal",
-    "description": "Main button of the 'Generate proposal' dialog: starts the AI agent that writes a proposal for the request. 'Generate' is a verb."
-  },
-  "modals.generate.picker.back": {
-    "text": "Back to proposal summary",
-    "description": "Accessible name of the back arrow on the model list of the 'Generate proposal' dialog: returns to the dialog's first view without changing the model."
-  },
-  "modals.generate.picker.title": {
-    "text": "Choose a model",
-    "description": "Title of the model list in the 'Generate proposal' dialog, where the person picks which AI model writes the proposal."
-  },
-  "modals.generate.picker.intro": {
-    "text": "Recommended models are shown first. Search only if you need another model.",
-    "description": "Line under the 'Choose a model' title in the 'Generate proposal' dialog."
-  },
-  "modals.generate.picker.ownKey.title": {
-    "text": "Using your own OpenRouter key",
-    "description": "Bold first line of a note in the model list, shown when the person pays for AI with their own key for OpenRouter, a service that gives access to many AI models. OpenRouter is a name."
-  },
-  "modals.generate.picker.ownKey.body": {
-    "text": "Model availability follows your OpenRouter privacy settings. To exclude providers that may train on your data, review those settings.",
-    "description": "Body of the note about using one's own OpenRouter key in the model list. OpenRouter is a name."
-  },
-  "modals.generate.picker.ownKey.link": {
-    "text": "Review privacy settings",
-    "description": "Link under the note about using one's own OpenRouter key: opens the privacy settings page on OpenRouter's website."
-  },
-  "modals.generate.picker.searchLabel": {
-    "text": "Search models",
-    "description": "Accessible label of the search box above the list of AI models in the 'Generate proposal' dialog."
-  },
-  "modals.generate.picker.searchPlaceholder": {
-    "text": "Search all available models…",
-    "description": "Placeholder of the search box above the list of AI models in the 'Generate proposal' dialog."
-  },
-  "modals.generate.picker.listLabel": {
-    "text": "Available models",
-    "description": "Accessible name of the list of AI models to choose from in the 'Generate proposal' dialog."
-  },
-  "modals.generate.picker.noMatches": {
-    "text": "No models match that search.",
-    "description": "Shown in place of the list of AI models when the search text matches none."
-  },
-  "modals.generate.picker.noRecommended": {
-    "text": "No recommended models are available.",
-    "description": "Shown in place of the list of AI models when nothing was searched and there is no recommended model to show."
-  },
-  "modals.generate.picker.truncated_one": {
-    "text": "Showing the first {{shown}} of {{count}} match. Keep typing to narrow the list.",
-    "description": "Note under the list of AI models when a search matches more than are shown. {{shown}} is how many are listed and {{count}} how many matched."
-  },
-  "modals.generate.picker.truncated_other": {
-    "text": "Showing the first {{shown}} of {{count}} matches. Keep typing to narrow the list.",
-    "description": "Note under the list of AI models when a search matches more than are shown. {{shown}} is how many are listed and {{count}} how many matched."
-  },
-  "modals.generate.picker.useNamed": {
-    "text": "Use {{model}}",
-    "description": "Main button under the list of AI models, and its tooltip: confirms the selected model. {{model}} is that model's name."
-  },
-  "modals.generate.picker.use": {
-    "text": "Use this model",
-    "description": "Main button under the list of AI models while no model is selected; it is disabled then."
-  },
   "modals.aiConsent.title": {
     "text": "Allow {{app}} to use AI?",
     "description": "Title of the dialog shown when an app asks to make AI requests paid from the person's own AI budget. {{app}} is the app's name."
@@ -5254,10 +5166,6 @@
   "modals.permission.notNow": {
     "text": "Not now",
     "description": "Button in the dialog where an app asks for a permission, such as notifications: closes it without granting the permission."
-  },
-  "modals.credits.notNow": {
-    "text": "Not now",
-    "description": "Button under the card offering ways to get more AI credit: closes the card without choosing one."
   },
   "modals.checks.title": {
     "text": "Proposal checks",
@@ -6427,9 +6335,13 @@
     "text": "Up for a vote",
     "description": "Status pill beside a request's number in its page's header: a change built for it is up for a vote."
   },
+  "topic.thread.pill.checking": {
+    "text": "Checking",
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs and its own tests are still running."
+  },
   "topic.thread.pill.approved": {
     "text": "Approved",
-    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs, and it waits for its checks before it goes live."
+    "description": "Status pill beside a request's number in its page's header: the change built for it has the votes its project's rule needs and has passed its own tests, and it waits for GitHub's required checks before it goes live."
   },
   "topic.thread.pill.close": {
     "text": "Vote to close",
@@ -6567,6 +6479,18 @@
     "text": "No longer needed. Voting has ended.",
     "description": "Line under the Votes card on a governance vote's page once something else settled what it was about, so the vote no longer applies."
   },
+  "workRow.twin": {
+    "text": "Similar to <0>#{{number}}</0>",
+    "description": "Hint below a request in the Workshop: links to another open request with a similar title. It does not merge them."
+  },
+  "topic.request.twin": {
+    "text": "Similar to <0>#{{number}} {{title}}</0>",
+    "description": "Hint below a request title: links to the closest similar open request, with its number and title."
+  },
+  "topic.request.fromThread": {
+    "text": "Open the thread it came from",
+    "description": "Link under a request's words, shown only to the person whose private Homeroom bot design thread filed the request or posted its plan there. Opens that thread in the Homeroom bot column."
+  },
   "frame.hub.people": {
     "text": "People",
     "description": "A project's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Label of the group in the context column that says who is active and who the community is for."
@@ -6650,5 +6574,97 @@
   "topic.thread.page.claimConfirmed": {
     "text": "You confirmed this closes it",
     "description": "Line in place of the Confirm and \"This doesn't close it\" buttons on the card for a change that says it closes the viewer's request, after the filer pressed Confirm. Shown only to the filer."
+  },
+  "topic.rail.title": {
+    "text": "How it got here",
+    "description": "Heading over the timeline of a thread's big events on a request's or a change's page: who asked, the plan, each change built, its tests, and where it stands now. Also the section's accessible name."
+  },
+  "topic.rail.asked": {
+    "text": "Asked",
+    "description": "Name of the first step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the request was filed."
+  },
+  "topic.rail.planned": {
+    "text": "Planned",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): a plan was posted for the request."
+  },
+  "topic.rail.plannedVersion": {
+    "text": "Planned, v{{version}}",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the newest plan is a later version than the first. {{version}} is its number, 2 or more."
+  },
+  "topic.rail.built": {
+    "text": "Built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): a change was built."
+  },
+  "topic.rail.builtNumbered": {
+    "text": "Change #{{number}} built",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) when the request has more than one change: which change was built. {{number}} is the change's number."
+  },
+  "topic.rail.tested": {
+    "text": "Tested",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the change's tests ran and passed."
+  },
+  "topic.rail.testedAll": {
+    "text": "All checks passed.",
+    "description": "Line under the Tested step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card)."
+  },
+  "topic.rail.testsFailed_one": {
+    "text": "{{count}} test failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red: how many of the change's tests failed. One test."
+  },
+  "topic.rail.testsFailed_other": {
+    "text": "{{count}} tests failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red: how many of the change's tests failed. Several tests."
+  },
+  "topic.rail.testsFailedPlain": {
+    "text": "Tests failed",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red, when the number of failed tests is not known."
+  },
+  "topic.rail.voted": {
+    "text": "Approved",
+    "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the change got the yes votes it needed."
+  },
+  "topic.rail.yesVotes_one": {
+    "text": "{{count}} yes vote.",
+    "description": "Line under the Approved step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): how many members voted yes. One vote."
+  },
+  "topic.rail.yesVotes_other": {
+    "text": "{{count}} yes votes.",
+    "description": "Line under the Approved step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): how many members voted yes. Several votes."
+  },
+  "topic.rail.by": {
+    "text": "By {{name}}.",
+    "description": "Line under a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): who did it. {{name}} is a username or Homeroom bot."
+  },
+  "topic.rail.since": {
+    "text": "since {{when}}",
+    "description": "Stamp beside the last step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), the one that says where the thread stands now: how long it has stood there. {{when}} is a short date such as Nov 13 or Today."
+  },
+  "topic.rail.readRequest": {
+    "text": "Read the request",
+    "description": "Link on the Asked step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the request's own words, whole, in the reader beside the thread."
+  },
+  "topic.rail.readPlan": {
+    "text": "Read plan",
+    "description": "Link on the Planned step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the plan in the reader beside the thread."
+  },
+  "topic.rail.seeFailed": {
+    "text": "See what failed",
+    "description": "Link on the tests-failed step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): opens the change's details, which list the failed tests."
+  },
+  "topic.rail.openChange": {
+    "text": "Open",
+    "description": "Link on a change's step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) when the request has more than one change: brings that change's section of the page into view."
+  },
+  "topic.rail.showEarlier_one": {
+    "text": "Show {{count}} earlier step",
+    "description": "Link beside the folded pile of step markers in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen: opens the earlier steps. One step."
+  },
+  "topic.rail.showEarlier_other": {
+    "text": "Show {{count}} earlier steps",
+    "description": "Link beside the folded pile of step markers in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen: opens the earlier steps. Several steps."
+  },
+  "topic.rail.showLess": {
+    "text": "Show less",
+    "description": "Link beside the heading in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card) on a narrow screen, once the earlier steps are open: folds them back into the pile."
   }
 }

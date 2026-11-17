@@ -103,7 +103,7 @@ export function ChecksGreenCard({ conversationId, card }: BotCardProps) {
   const openFixRequest = () => {
     if (!fix) return;
     const page = requestPage({ appSlug: fix.project, appName: null, issueNumber: fix.number });
-    if (page) openRequestPage(page, conversationId);
+    if (page) openRequestPage(page);
   };
   const openFixChange = () => {
     if (!fix?.sessionId || typeof window === 'undefined') return;

@@ -32,9 +32,10 @@
  *
  * ── Two widths, two keys (3 Nov 2026) ─────────────────────────────────
  *
- * Main Chat's edge and the side panel's look alike and are dragged the same
- * way, but they are not the same width: a panel narrowed beside an app used
- * to narrow Main too, because both read one key. Main has its own key now
+ * The edge of the Homeroom bot page's column (a thread's, `#ai-main-pane`)
+ * and the side panel's look alike and are dragged the same way, but they
+ * are not the same width: a panel narrowed beside an app used to narrow
+ * that column too, because both read one key. The column has its own key now
  * (`AI_MAIN_WIDTH_KEY`) and its own property (`--ai-main-chosen-w`), and the
  * panel beside an app keeps `--side-panel-w`. A width remembered before this
  * is still the panel's; Main starts from its default.
@@ -73,7 +74,7 @@
 export const WIDTH_KEY = 'usernode_side_panel_w_v1';
 
 /**
- * Main Chat's own width on the Homeroom bot page, kept apart from the side
+ * The column's own width on the Homeroom bot page, kept apart from the side
  * panel's: the two are dragged in different places. The property it drives is
  * `--ai-main-chosen-w`, which only app.css's `--ai-main-w` reads.
  */
@@ -217,8 +218,8 @@ export function applyWidth(
   else root.style.setProperty(property, `${Math.round(width)}px`);
 }
 
-/** Is the Homeroom bot page the one on screen? Main Chat's column is drawn
- *  only there, and that is the width its edge sets. */
+/** Is the Homeroom bot page the one on screen? Its column is drawn only
+ *  there, and that is the width its edge sets. */
 export function aiPageUp(doc: Document = document): boolean {
   try {
     const ai = doc.getElementById('ai-screen');

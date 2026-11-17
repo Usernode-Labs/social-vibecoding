@@ -3,9 +3,10 @@
 // #4417: A PROJECT'S PLACES, AS ONE LIST.
 //
 // The four tabs (Hub · Discussion · Needs you · Workshop) became one list:
-// Hub, Needs you and Workshop, a line, then Channels (#general) and Topics,
-// each a group under its heading. On a phone it is the drawer's middle
-// level, or a tray behind the place bar's button; from 768px it is nested
+// Hub, Needs you and Workshop, a line, then Channels (#general) under its
+// heading. A topic's channel is reached from the Hub's Topics card, not here
+// (#6709). On a phone it is the drawer's middle
+// level, or a tray behind the merged header's button; from 768px it is nested
 // under the community's row in the sidebar (tests/desktop-sidebar-nested.test.js),
 // with the project's App row first (tests/desktop-sidebar-apps.test.js).
 // These pin the list, the bar and the tray,
@@ -51,25 +52,27 @@ function list(props) {
   }));
 }
 
-test('the list: the pages, a line, then Channels over #general and Topics over the live topics, in order', () => {
+test('the list: the pages, a line, then Channels over #general, and no Topics group', () => {
   const html = list({});
   const order = [...html.matchAll(/data-place="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(order, ['status', 'needs', 'workshop', 'discussion', 'c:onboarding', 'c:homeroom-bot', 'c:infra'],
-    'a merged topic is not listed; its channel stays readable by its links');
+  assert.deepEqual(order, ['status', 'needs', 'workshop', 'discussion'],
+    'no topic is a row: its channel is reached from the Hub\'s Topics card');
   assert.match(html, /^<div class="dev-ws-places" data-places="homeroom"><nav class="dev-ws-places-nav" aria-label="Homeroom&#x27;s places">/);
   // A line between the pages and the channels.
   assert.ok(html.indexOf('data-place="workshop"') < html.indexOf('role="separator"'));
   assert.ok(html.indexOf('role="separator"') < html.indexOf('data-place="discussion"'));
-  // Each group is labelled by its heading.
+  // The one group is labelled by its heading, and it is the last thing drawn.
   const groups = [...html.matchAll(/<div class="dev-ws-places-group" role="group" aria-labelledby="([^"]+)" data-places-group="([a-z]+)"><div id="([^"]+)" class="dev-ws-places-head">([A-Za-z]+)<\/div>/g)];
-  assert.deepEqual(groups.map((g) => [g[2], g[4]]), [['channels', 'Channels'], ['topics', 'Topics']]);
+  assert.deepEqual(groups.map((g) => [g[2], g[4]]), [['channels', 'Channels']]);
   for (const g of groups) assert.equal(g[1], g[3], `${g[4]} is labelled by its own heading`);
+  assert.doesNotMatch(html, /data-places-group="topics"/, 'no Topics group (#6709)');
+  assert.doesNotMatch(html, />Topics</, 'and no Topics heading');
+  assert.doesNotMatch(html, /data-place="c:/, 'and no topic channel row');
   // #general by its handle, a channel's glyph the #.
   assert.match(html, /data-place="discussion"[^>]*><svg[^>]*dev-ws-place-hash[\s\S]*?<span class="dev-ws-place-label">general<\/span>/);
   // Every entry is a link with an address of its own.
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/hub" data-place="status"/);
   assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/discussion" data-place="discussion"/);
-  assert.match(html, /<a class="dev-ws-place" href="\/app\/homeroom\/dev\/c\/onboarding" data-place="c:onboarding" title="Onboarding"/);
 });
 
 test('a project with no topics has no Topics heading: Hub, Needs you, Workshop and #general', () => {
@@ -84,7 +87,8 @@ test('a project with no topics has no Topics heading: Hub, Needs you, Workshop a
 test('the open place is the current page, lit as the rail lights a row; a page under a place lights it', () => {
   const lit = (place) => [...list({ place }).matchAll(/data-place="([^"]+)" aria-current="page"/g)].map((m) => m[1]);
   assert.deepEqual(lit('status'), ['status']);
-  assert.deepEqual(lit('c:homeroom-bot'), ['c:homeroom-bot']);
+  // #6709: no topic channel is a row, so none is lit, even the one you read.
+  assert.deepEqual(lit('c:homeroom-bot'), []);
   assert.deepEqual(lit('discussion'), ['discussion']);
   assert.deepEqual(lit('all'), ['workshop'], 'All items lights the Workshop');
   assert.deepEqual(lit('plan'), ['status'], 'the plan lights the Hub');
@@ -105,8 +109,9 @@ test('counts say what they count aloud, and a zero says nothing', () => {
   assert.equal(countPhrase('c:x', 150), '150 unread');
   const html = list({ owed: 29 });
   assert.match(html, /data-place="needs"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span><\/a>/);
-  assert.match(html, /data-place="c:onboarding"[\s\S]*?title="3 unread">3 unread<\/span><span class="sr-only"> \(3 unread\)<\/span><\/a>/);
-  assert.match(html, /data-place="c:infra"[\s\S]*?title="1 unread">1 unread<\/span><span class="sr-only"> \(1 unread\)<\/span><\/a>/);
+  // #general is the list's one channel row, and it counts like any channel.
+  const unread = list({ places: { owed: 0, channels: [channel({ kind: 'general', handle: 'general', unread: 2 })] } });
+  assert.match(unread, /data-place="discussion"[\s\S]*?title="2 unread">2 unread<\/span><span class="sr-only"> \(2 unread\)<\/span><\/a>/);
   // #general has nothing unread here, and the Hub never counts: no number.
   const general = html.slice(html.indexOf('data-place="discussion"'), html.indexOf('</a>', html.indexOf('data-place="discussion"')));
   assert.doesNotMatch(general, /data-place-count/);
@@ -117,11 +122,12 @@ test('counts say what they count aloud, and a zero says nothing', () => {
 // it — as the place bar already leaves it out of its unread. The count of
 // Needs you stays while you are there: the rule is for channels.
 test('the channel on screen draws no count; Needs you keeps its own while lit', () => {
-  const reading = list({ place: 'c:onboarding' });
-  const onboarding = reading.slice(reading.indexOf('data-place="c:onboarding"'), reading.indexOf('</a>', reading.indexOf('data-place="c:onboarding"')));
-  assert.doesNotMatch(onboarding, /data-place-count/, 'no pill while you read there');
-  assert.doesNotMatch(onboarding, /sr-only/, 'and no phrase for a screen reader');
-  assert.match(reading, /data-place="c:infra"[\s\S]*?title="1 unread">1 unread<\/span>/, 'another channel keeps its pill');
+  const places = { owed: 0, channels: [channel({ kind: 'general', handle: 'general', unread: 4 })] };
+  const reading = list({ place: 'discussion', places });
+  const general = reading.slice(reading.indexOf('data-place="discussion"'), reading.indexOf('</a>', reading.indexOf('data-place="discussion"')));
+  assert.doesNotMatch(general, /data-place-count/, 'no pill while you read there');
+  assert.doesNotMatch(general, /sr-only/, 'and no phrase for a screen reader');
+  assert.match(list({ places }), /data-place="discussion"[\s\S]*?title="4 unread">4 unread<\/span>/, 'away from it, it keeps its pill');
   const needs = list({ place: 'needs', owed: 29 });
   assert.match(needs, /data-place="needs" aria-current="page"[\s\S]*?<span class="dev-ws-place-count" data-place-count="" aria-hidden="true">29<\/span><span class="sr-only"> \(29 to vote\)<\/span>/,
     'Needs you still counts while you are on it');
@@ -132,20 +138,16 @@ test('the tray\'s list ends with Switch community; the column\'s does not', () =
   assert.doesNotMatch(list({}), /Switch community/);
 });
 
-test('the place bar: the tray\'s button, a dot while something waits, then the place\'s name', () => {
+test('the place bar names the place and nothing else: the header holds the places button', () => {
   const { PlaceBar, waitingPhrase } = loadTsx(BAR);
-  const bar = (props) => renderToHtml(createElement(PlaceBar, {
-    name: 'Homeroom', place: 'c:homeroom-bot', owed: 29, unread: 4, open: false, trayId: 'tray-1', onToggle: () => {}, ...props,
-  }));
+  const bar = (props) => renderToHtml(createElement(PlaceBar, { place: 'c:homeroom-bot', ...props }));
   const html = bar({});
   assert.match(html, /^<div class="dev-ws-tabs dev-ws-band dev-ws-placebar" data-ws-band="" data-place-bar="c:homeroom-bot"><div class="dev-ws-tabtrack">/,
     'the band\'s box, which pins and is measured');
-  assert.match(html, /<button type="button" class="dev-ws-places-btn" data-places-btn="" aria-label="Homeroom&#x27;s places" aria-expanded="false">/);
-  assert.match(html, /<span class="dev-ws-places-dot" data-places-waiting="" aria-hidden="true"><\/span><span class="sr-only"> \(29 to vote, 4 unread\)<\/span><\/button>/);
   assert.match(html, /<h2 class="dev-ws-place-title" data-place-title=""><span class="dev-ws-place-title-hash">#<\/span>homeroom-bot<\/h2>/,
     'a channel by its handle, with a #');
-  assert.match(bar({ open: true }), /aria-expanded="true" aria-controls="tray-1"/);
-  assert.doesNotMatch(bar({ owed: 0, unread: 0 }), /data-places-waiting/, 'nothing waiting, no dot');
+  assert.doesNotMatch(html, /data-places-btn/, 'the places button is the header\'s alone (#6671)');
+  assert.doesNotMatch(html, /data-places-waiting/, 'and the dot rides that button');
   assert.match(bar({ place: 'all' }), /data-place-title="">Workshop<\/h2>/, 'All items is the Workshop\'s page');
   assert.match(bar({ place: 'needs' }), /data-place-title="">Needs you<\/h2>/);
   assert.equal(waitingPhrase(0, 2), '2 unread');

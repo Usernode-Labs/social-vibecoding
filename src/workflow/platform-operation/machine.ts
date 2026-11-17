@@ -70,17 +70,14 @@ export function requested(p: any): Request {
   if (p.op.startsWith('previewProject.') && (!id(p.input.sessionId) || !Number.isSafeInteger(p.input.projectId) || p.input.projectId < 1)) {
     throw new Error('A preview project\'s operation must name its preview and project');
   }
-  // commits: a local agent's commit (services/proposal-commit-operation.js),
-  // a hand-off's upload or a build turn's, which names its turn and lease.
+  // commits: a hand-off's upload (services/proposal-commit-operation.js).
   // The head it builds on may be none (the branch then says it moved).
   if (p.op === 'proposal.commit') {
     const i = p.input;
     const sha = (v: unknown) => typeof v === 'string' && /^[0-9a-f]{40}$/i.test(v);
-    const rowId = (v: unknown) => /^[1-9][0-9]{0,18}$/.test(String(v ?? ''));
-    if (!id(i.sessionId) || !['handoff', 'turn'].includes(i.surface) || typeof i.branch !== 'string' || !i.branch
+    if (!id(i.sessionId) || i.surface !== 'handoff' || typeof i.branch !== 'string' || !i.branch
         || ![i.localCommitSha, i.parentSha, i.parentTreeSha, i.treeSha].every(sha)
-        || !(i.expectedParent === null || sha(i.expectedParent))
-        || (i.surface === 'turn' && !(rowId(i.turnId) && rowId(i.leaseId)))) {
+        || !(i.expectedParent === null || sha(i.expectedParent))) {
       throw new Error('A commit must name its change, its surface and its commits');
     }
   }

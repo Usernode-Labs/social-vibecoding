@@ -148,7 +148,8 @@ test('the shell draws a change page as the request page’s sheet, with Messages
     fill: true, withHeader: true, readOnly: false, notice: '', placeholder: 'Reply…', maxLength: 4000, change: true,
   });
   assert.match(html, /^<div class="dev-request dev-change platform-kb-column"><div id="gc-thread-back" class="dev-request-back"><\/div><section class="dev-request-sheet dc-lift dc-lift-session" aria-label="Change"><div id="gc-thread-bar" class="dev-request-bar"><\/div>/);
-  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-messages"><\/div>/);
+  // 15 Nov 2026: "How it got here" has its host between the two (tests/thread-rail.test.js).
+  assert.match(html, /<div id="gc-thread-head"><\/div><div id="gc-thread-rail" class="dev-request-rail"><\/div><div id="gc-thread-messages"><\/div>/);
   assert.doesNotMatch(html, /gc-thread-pin/, 'a change page has no pin host any more (#6419)');
   // The bar is the chat foot's (1 November 2026), Messages' own classes kept.
   assert.match(html, /class="messages-composer messages-composer-thread chat-composer-bar platform-safe-bar"/);
@@ -159,11 +160,13 @@ test('the shell draws a change page as the request page’s sheet, with Messages
   assert.doesNotMatch(request, /gc-thread-pin/, 'a request page has no pin host');
 });
 
-// #6419 (replacing #5725's repeat): on a long change page the real Votes
-// and Testing card pair sticks under the sheet's header and shrinks to one
-// line each, and lets go at the end of the change's own content, above the
-// replies. There is no second Votes card any more.
-test('a change page’s gate pair sticks and shrinks instead of repeating', () => {
+// #6419 (replacing #5725's repeat): on a long change page the real Votes and
+// Testing card pair stays in sight under the sheet's header. #6615: it does
+// that without resizing anything in the page's flow — the cards keep their
+// full size where they are, and the one-line rows float in a strip drawn
+// outside the flow — so the page no longer jumps while the change updates.
+// There is no second Votes card any more.
+test('a change page keeps its gate pair at full size and floats the one-line rows', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
   assert.doesNotMatch(src, /dev-change-gate-repeat|topInView|gc-thread-pin/);
   assert.doesNotMatch(src, /repeat\?: boolean/);
@@ -177,10 +180,19 @@ test('a change page’s gate pair sticks and shrinks instead of repeating', () =
   assert.match(src, /const scroller = el \? el\.closest<HTMLElement>\('#gc-thread-scroll'\) : null;/);
   assert.match(src, /\{ root: scroller, rootMargin: '4px 0px 0px 0px' \}/);
   assert.doesNotMatch(src, /document\.getElementById\('gc-thread-(scroll|pin)'\)/);
+  // #6615: the pair never shrinks in place and no margin gives height back.
+  assert.doesNotMatch(src, /marginBlockEnd|setGive|full\.current/);
+  assert.match(src, /<div className="dev-change-pair-float">/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.dev-change-pair\[data-stick\] \{ position: sticky; top: -4px; z-index: 10; \}/);
+  // The cards stay where they are, in the flow, and opt out of scroll anchoring.
+  assert.match(css, /\.dev-change-pair\[data-stick\] \{ overflow-anchor: none; \}/);
+  assert.doesNotMatch(css, /\.dev-change-pair\[data-stick\] \{ position: sticky;/);
+  // The zero-height sticky holder, and the strip absolutely positioned in it.
+  assert.match(css, /\.dev-change-pair-float \{ position: sticky; top: -4px; z-index: 10; height: 0; overflow-anchor: none; \}/);
+  assert.match(css, /\.dev-change-pair-float > \.dev-change-pair \{ position: absolute; inset-inline: 0; top: 0; margin-top: 0; \}/);
   assert.match(css, /\.dev-change-pair\[data-stuck\] \{[^}]*background-color: var\(--dc-sheet-solid\);[^}]*\}/);
   assert.match(css, /\.dev-change-pair\[data-stuck\] :is\([^)]*\.dev-change-bar[^)]*\) \{ display: none; \}/);
+  assert.match(css, /\.dev-change-pair\[data-stuck\] \[data-change-gate-line="testing"\] \.dev-change-gate-act \{ display: none; \}/);
   assert.doesNotMatch(css, /\.dev-change-gate-repeat|#gc-thread-pin/);
 });
 
@@ -197,7 +209,7 @@ test('the gate pair paints plain and decides in the browser whether it sticks', 
   const plain = renderComponent('frontend/src/features/dev-board/topic/change-head.tsx', 'ChangeGates', {
     id: 7, card: {}, v,
   });
-  assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick/);
+  assert.doesNotMatch(plain, /dev-change-pair-mark|data-stick|dev-change-pair-float/);
   assert.match(plain, /^<div class="dev-change-pair">/);
   assert.ok(plain.indexOf('data-change-gate="votes"') < plain.indexOf('data-change-gate="testing"'), 'Votes leads');
   // #6563: the Merging card is a third card, and only while a merge is held.
@@ -303,7 +315,10 @@ test('a moving bar is the lit ink, a finished one green with its check, and AGEN
 // checks run on a page nobody scrolled).
 test('a gate card always carries its own data-change-gate, and nothing selects the stuck form', () => {
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
-  assert.match(src, /data-change-gate=\{which\}/);
+  // #6615: the strip's one-line rows carry `data-change-gate-line` instead,
+  // so the card itself is the only `data-change-gate`.
+  assert.match(src, /data-change-gate=\{line \? undefined : which\}/);
+  assert.match(src, /data-change-gate-line=\{line \? which : undefined\}/);
   const dapp = JSON.parse(read('dapp.json'));
   const selectors = dapp.tests.map((t) => t.expectSelector).filter(Boolean);
   assert.ok(selectors.some((s) => String(s).includes('[data-change-gate=')), 'declared checks read the attribute');
@@ -321,9 +336,11 @@ test('on a phone the gate card stacks its buttons under its line', () => {
   assert.ok(phone, 'the change page has a phone block');
   assert.match(phone, /\.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\); \}/);
   assert.match(phone, /\.dev-change-gate-act \{[^}]*order: 1;[^}]*flex-wrap: wrap;[^}]*\}/);
-  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: wrap; row-gap: 2px; \}/);
-  assert.match(phone, /\.dev-change-gate-name \{ min-width: 0; \}/);
-  assert.match(phone, /\.dev-change-gate-figure \{ white-space: nowrap; \}/);
+  // #6726: the head keeps its name and figure on one line, so a two-digit
+  // count cannot take a second row and push the Vote button down.
+  assert.match(phone, /\.dev-change-gate-head \{ flex-wrap: nowrap; row-gap: 2px; \}/);
+  assert.match(phone, /\.dev-change-gate-name \{ flex: none; min-width: 0; \}/);
+  assert.match(phone, /\.dev-change-gate-figure \{ min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; \}/);
   // #6419: while stuck the pair keeps one line on a phone too, the Vote
   // button back on the card's own line rather than under it.
   assert.match(phone, /\.dev-change-pair\[data-stuck\] \.dev-change-gate \{ grid-template-columns: minmax\(0, 1fr\) auto; padding: 8px 12px; \}/);

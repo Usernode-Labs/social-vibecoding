@@ -1311,13 +1311,10 @@ function stagingMockProposals(viewer) {
         0.6, 0, 0, 0, { required: 3, windowEndsAt: null }),
       check_state: 'failing',
       // The app's own tests failed on one test, so its page says what went
-      // wrong in plain words and offers its author Fix it, which needs the
-      // build conversation the change was made in (990804 is the staging
-      // fixture's, migrate.js seedStagingAgentFailingChecks). The sentence
+      // wrong in plain words and offers its author Fix it. The sentence
       // is what the model writes for such a run (services/
       // checks-explanation.js), served by the ?demo=1 branch of
       // GET /api/sessions/:id/checks-explanation, since a preview has none.
-      agent_session_id: 990804,
       checks_explanation: 'Every message the app shows needs a Spanish version, and this one doesn’t have one yet: “Pick a date, or choose I don’t remember.”',
       test_results: [
         { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [] },
@@ -2341,7 +2338,7 @@ function prImportFailureBody(err) {
 // The linked-issue set an import may carry (#1217). Bounded and sanitized by
 // pr-metadata's own helper — the one that renders `Closes #N` — so the column
 // and the PR body can never disagree about what counts as a linked issue.
-// The cap matches the local-agent handoff route's.
+// The cap matches the CLI handoff route's.
 const MAX_IMPORT_LINKED_ISSUES = 50;
 
 function parseImportLinkedIssues(body) {
@@ -2447,48 +2444,101 @@ function parseExpectedEpoch(raw) {
 // botChangeKey.
 // Each value is SQL: a parameter or a column of `from`, a row source the
 // statement already has.
-const botChangeVotedSql = ({ from = null, sessionId, voterId, voter, vote, epoch }) => `
+const botChangeVotedSql = ({ from = null, sessionId, voterId, voter, vote, epoch, announce = null }) => `
   INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
   SELECT wi.machine, wi.key, wi.app_id, 'Voted',
          jsonb_build_object('sessionId', ${sessionId}, 'voterId', ${voterId}, 'voter', ${voter}, 'vote', ${vote}, 'epoch', ${epoch}),
          '{"kind":"route","name":"vote"}'::jsonb, NULL, 'voted:' || gen_random_uuid(), NULL
     FROM ${from ? `${from}, ` : ''}wf_instances wi
    WHERE wi.machine = 'bot-change' AND wi.key = 'session:' || ${sessionId}
+     ${announce ? `AND ${announce}` : ''}
   RETURNING id`;
 
+// A vote, in one transaction, under the row lock the proposal machine reads
+// its facts under (workflow/proposal/facts.ts readRow): the previous vote is
+// read in its OWN statement after the lock, so after waiting for another
+// request it sees what that request committed (READ COMMITTED: each
+// statement takes a fresh snapshot). Deciding "same side" from a read taken
+// before the lock let two overlapping POSTs of the same vote both count as
+// new — the offline queue's replay when the network came back, or two tabs
+// — so each posted its line and rang the author (bug #6736, #6728).
+//
+// The row must still be up for a vote, so a vote racing an unpromote either
+// lands before it (and is voided with the epoch it bumps) or finds the
+// proposal Underway and is refused. The stamp is the epoch read under that
+// lock. An epoch the voter's screen was drawn at (#2782) is held to when
+// the revision is enforced. The bot's change machine hears a real vote (not
+// a repeat or a same-side new sentence) in the same transaction
+// (botChangeVotedSql).
 async function recordVote({
   pool, session, userId, vote, headSha, revisionEnforced, reason = null, expectedEpoch = null, voter = null,
 }) {
-  // One statement for every proposal, an imported one's included (bug 5):
-  // the row is locked and must be up for a vote, so a vote racing an
-  // unpromote either lands before it (and is voided with the epoch it
-  // bumps) or finds the proposal Underway and is refused. The stamp is the
-  // epoch read under that lock. An epoch the voter's screen was drawn at
-  // (#2782) is held to when the revision is enforced. The bot's change
-  // machine hears it in the same statement (botChangeVotedSql).
-  return pool.query(
-    `WITH current_session AS (
-       SELECT id, approval_epoch
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: [locked] = [] } = await client.query(
+      `SELECT id, approval_epoch
          FROM chat_sessions
         WHERE id = $1
           AND status IN ('promoted', 'merging')
-        FOR UPDATE
-     ),
-     v AS (
-     INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
-     SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
-      WHERE $6::integer IS NULL OR approval_epoch = $6::integer
-     ON CONFLICT (session_id, user_id) DO UPDATE
-       SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
-           approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
-           ${VOTE_REASON_UPSERT_SQL}
-     RETURNING id, reason, session_id, approval_epoch
-     ),
-     told AS (${botChangeVotedSql({ from: 'v', sessionId: 'v.session_id', voterId: '$2::int', voter: '$7::text', vote: '$3::text', epoch: 'v.approval_epoch' })})
-     SELECT v.id, v.reason, (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1) IS NOT NULL AS told
-       FROM v`,
-    [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null, voter]
-  );
+        FOR UPDATE`,
+      [session.id]
+    );
+    if (!locked) {
+      await client.query('ROLLBACK');
+      return { rowCount: 0, rows: [], previousVote: null, unchanged: false, reasonOnly: false };
+    }
+    const { rows: [previous] = [] } = await client.query(
+      `SELECT vote, reason, approval_epoch
+         FROM pr_votes
+        WHERE session_id = $1 AND user_id = $2`,
+      [session.id, userId]
+    );
+    const previousVote = previous?.vote || null;
+    const previousReason = previous?.reason || null;
+    const sameSide = previousVote === vote
+      && previous?.approval_epoch != null
+      && previous.approval_epoch === locked.approval_epoch;
+    const unchanged = sameSide && (reason === null || reason === previousReason);
+    const reasonOnly = sameSide && !unchanged;
+    const recorded = await client.query(
+      `WITH current_session AS (
+         SELECT id, approval_epoch
+           FROM chat_sessions
+          WHERE id = $1
+            AND status IN ('promoted', 'merging')
+          FOR UPDATE
+       ),
+       v AS (
+       INSERT INTO pr_votes (session_id, user_id, vote, head_sha, approval_epoch, reason)
+       SELECT id, $2, $3, $4, approval_epoch, $5 FROM current_session
+        WHERE $6::integer IS NULL OR approval_epoch = $6::integer
+       ON CONFLICT (session_id, user_id) DO UPDATE
+         SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha,
+             approval_epoch = EXCLUDED.approval_epoch, created_at = NOW(),
+             ${VOTE_REASON_UPSERT_SQL}
+       RETURNING id, reason, session_id, approval_epoch
+       ),
+       told AS (${botChangeVotedSql({ from: 'v', sessionId: 'v.session_id', voterId: '$2::int', voter: '$7::text', vote: '$3::text', epoch: 'v.approval_epoch', announce: '$8::boolean' })})
+       SELECT v.id, v.reason, (SELECT pg_notify('wf_events', 'bot-change') FROM told LIMIT 1) IS NOT NULL AS told
+         FROM v`,
+      [session.id, userId, vote, headSha, reason, revisionEnforced ? parseExpectedEpoch(expectedEpoch) : null, voter,
+        !unchanged && !reasonOnly]
+    );
+    await client.query('COMMIT');
+    return {
+      rowCount: recorded.rowCount,
+      rows: recorded.rows,
+      previousVote,
+      unchanged,
+      reasonOnly,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // Take a vote back (DELETE /api/sessions/:id/vote, the review flow's Undo).
@@ -2651,17 +2701,6 @@ function mergedRowSelect() {
            cs.included_in_session_id,
            inc.pr_number AS included_in_pr_number,
            inc.pr_title  AS included_in_pr_title,
-           -- #2779: the agent session the change was started from. Only its
-           -- id: the conversation itself answers to its owner alone.
-           cs.agent_session_id,
-           -- Transcript sharing: true when this proposal's owner published
-           -- the dev chat that produced it, so the proposal page can offer
-           -- "Read the dev chat". A boolean only — the transcript itself is
-           -- served by GET /api/sessions/:id/transcript, which re-checks
-           -- both share flags. shared_at survives promotion and merge, so
-           -- this stays meaningful on merged rows too (the post-hoc "how
-           -- did this change come about?" read).
-           (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
            -- #687 (PR-import): provenance for the "Imported PR" badge +
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
@@ -2823,9 +2862,8 @@ function noNewerMergedTwin(alias = 'cs') {
 // token: the local Homeroom CLI's proposal_promote, or a connector's
 // promote_change and submit_work `propose: true`. cli-auth.js sets
 // req.cliAuthenticated for those two token kinds only, never for a browser
-// session. A delegated grant is the platform's own agent session, whose
-// conversation already tells its owner, and the Homeroom bot promotes
-// in-process as itself; neither counts.
+// session. A delegated grant is the Homeroom bot's own tools, and the bot
+// promotes in-process as itself; neither counts.
 function promotedByOwnersAgent(req) {
   return req.cliAuthenticated === true && !req.mcpDelegation
     && !(req.user && req.user.is_synthetic);
@@ -2933,8 +2971,8 @@ function voteRoutes(config) {
   // ── #687: import an existing GitHub PR as a proposal ────────────────
   //
   // The three endpoints (candidate list, preview, import) let a collaborator pull an
-  // externally-authored PR into the vote flow instead of building it in the
-  // platform's AI dev-chat. Preview/candidates are read-only; import creates
+  // externally-authored PR into the vote flow instead of building it on the
+  // platform. Preview/candidates are read-only; import creates
   // a shared `source='imported'` In-progress row. Automated submission paths
   // may explicitly request the historical straight-to-vote result.
   //
@@ -3527,28 +3565,11 @@ function voteRoutes(config) {
       // rebuilds stepping on each other's tempdirs and container names.
       // The DB upsert itself is still safe (UNIQUE(session_id,user_id))
       // but we avoid the side-effects on a no-op.
-      const { rows: prevRows } = await pool.query(
-        `SELECT pv.vote, pv.reason, pv.approval_epoch, cs.approval_epoch AS current_epoch
-           FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id
-          WHERE pv.session_id = $1 AND pv.user_id = $2`,
-        [session.id, req.user.id]
-      );
-      const previousVote = prevRows[0]?.vote || null;
-      const previousReason = prevRows[0]?.reason || null;
+      //
+      // #6736: the answer is decided INSIDE recordVote's row lock, so a
+      // replay that waited for the first request sees the vote it wrote and
+      // answers unchanged rather than announcing the vote a second time.
       const voteHeadSha = reviewedHeadForSession(session);
-      // #2038: "unchanged" means the same person voting the same way on the
-      // same PROPOSAL. Keying it on the commit made a re-vote after a
-      // mechanical sync look like a change, re-posting to group chat and
-      // re-entering the merge gate for a click that moved nothing.
-      const sameSide = previousVote === vote
-        && prevRows[0]?.approval_epoch != null
-        && prevRows[0].approval_epoch === prevRows[0].current_epoch;
-      const unchanged = sameSide && (reason === null || reason === previousReason);
-      // Same side, new words (#1688): the row is updated and the roster
-      // re-reads it, but nothing is announced or re-counted — the vote did
-      // not move.
-      const reasonOnly = sameSide && !unchanged;
-
       // Stamp every GitHub proposal vote with its reviewed PR head. Imported
       // proposals retain imported_pr_head_sha; native proposals use the new
       // reviewed_head_sha populated above. Governance counts only approvals
@@ -3564,6 +3585,10 @@ function voteRoutes(config) {
         expectedEpoch: req.body?.expectedEpoch,
         voter: req.user.username || null,
       });
+      // Same side at this revision: nothing to announce or merge. Same side
+      // with new words (#1688): the row is updated and the roster re-reads
+      // it, but nothing is announced or re-counted — the vote did not move.
+      const { unchanged, reasonOnly } = recorded;
       // The line the row now carries: the one sent, or the earlier one the
       // upsert kept for a same-side re-cast (a Yes carried onto a new
       // version brings its sentence along).
@@ -4261,6 +4286,11 @@ function voteRoutes(config) {
       // (services/merge-requirements.js FORCE_SQL), so the card can say it is
       // queued, which step it waits on, and that it skips the vote.
       const { FORCE_SQL: forceSql, FORCE_DROPPED_SQL: forceDroppedSql } = require('../services/merge-requirements');
+      // Whether a change is open for votes now: the Needs you feed's own
+      // fragment (work_states.vote_open), so the project's count of votes
+      // owed, worked out from these rows, and its Needs you page, which
+      // reads the feed, ask for a vote at the same moment.
+      const voteOpenSql = require('./workshop-overview').VOTE_OPEN_SQL;
       // Include 'merging' alongside 'promoted' so the PR stays visible
       // during the GitHub merge + prod rebuild + staging teardown
       // pipeline (~30s). Otherwise the card disappears the instant the
@@ -4273,12 +4303,6 @@ function voteRoutes(config) {
            -- #4490: the card's picture when it has no shots: the author's
            -- diagram, and "What it touches" for the head it was read at.
            cs.pr_diagram, cs.pr_diagram_source, cs.pr_touches, cs.pr_touches_sha,
-           -- #2779: the agent session the change was started from. Only its
-           -- id, as mergedRowSelect carries it for a merged row: the
-           -- conversation itself answers to its owner alone. This list was
-           -- the one copy of a change without it, so the owner's door on a
-           -- change up for a vote led to its dev session instead (#3712).
-           cs.agent_session_id,
            -- #687 (PR-import): provenance so the client can render the
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
@@ -4386,6 +4410,13 @@ function voteRoutes(config) {
            (SELECT pv.vote FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.user_id = $2
                AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
+           -- Open for votes now (its checks passed on its head, it merges
+           -- cleanly, its before & after shots are taken, no update on its
+           -- way): the stored work state's answer, which the Needs you feed
+           -- lists by. The card still shows the change and its real status
+           -- while this is false; only "this waits on your vote" reads it
+           -- (AppView._devCardMatches, needsVote).
+           ${voteOpenSql('cs')} AS vote_open,
            -- #6282: an update on its way. The Votes card says so and holds
            -- its Vote button until it lands (AppView._changeVotesView).
            ${updateComingSql('cs')} AS update_coming,
@@ -5277,7 +5308,7 @@ function voteRoutes(config) {
         proposal.bot_fix = await require('../services/homeroom-bot-progress')
           .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
         // #6116: what it has cost so far at list price, for its author or an
-        // admin only, as the dev chat's meter (services/session-cost.js).
+        // admin only (services/session-cost.js).
         proposal.cost_total_cents = await require('../services/session-cost')
           .sessionCostForViewer(pool, proposal, req.user);
         // #4479: the plan it was built from, for the page's plan card.
@@ -6294,8 +6325,8 @@ async function evaluateMergeGate(config, pool, session, options = {}) {
           : step.actor === 'author' && /checks could not run/.test(step.note || '')
           ? 'Its checks could not run either; once they are re-run and pass, the platform resolves the conflict.'
           : step.actor === 'author'
-          ? `The platform cannot resolve this one; ${owner} needs to resolve it from the session's dev-chat.`
-          : `The platform will try to resolve it automatically; if it can't, ${owner} needs to resolve it from the session's dev-chat.`);
+          ? `The platform cannot resolve this one; ${owner} needs to resolve it.`
+          : `The platform will try to resolve it automatically; if it can't, ${owner} needs to resolve it.`);
       await sendSystemMessage(pool, session.app_id, msg, 'system',
         null, { type: 'session', ref: session.id }).catch(() => {});
       dstep({
@@ -6866,7 +6897,7 @@ async function attemptMerge(config, pool, sessionId, {
     // to date with main once, which runs them again on today's main.
     const githubChecks = kind === 'blocked' ? githubChecksOf(said) : null;
     const message = kind === 'conflict'
-      ? `${label} hit a conflict with main during a merge attempt. Homeroom resolves it automatically when it can; if it can't, ${owner_} can run "Sync with main" from the session's dev-chat.`
+      ? `${label} hit a conflict with main during a merge attempt. Homeroom resolves it automatically when it can; if it can't, ${owner_} can run "Sync with main" on the change.`
       : kind === 'draft'
         ? `${label} wasn't merged: it is a draft on GitHub. Its author has to mark it ready for review, and it merges then.`
         : kind === 'base_moved'
@@ -7060,7 +7091,7 @@ async function attemptMerge(config, pool, sessionId, {
 // the merge vote on the revert PR is the single checkpoint.
 //
 // `decider` is the user who requested the undo — becomes the revert
-// session's user_id so they own the resulting PR in dev-chat.
+// session's user_id so they own the resulting PR.
 async function checkAndOpenRevert(config, pool, session, decider, { steps = durableSteps.none() } = {}) {
   // #16: opening a revert is now a direct action (like proposing a
   // forward change) — there's no separate undo-vote gate to clear. We

@@ -139,6 +139,17 @@ function checksLine(row, now) {
 }
 
 /**
+ * Pure (#6616): whether a change's votes are in. The one predicate every
+ * reader of `votes_in` shares — services/work-state.js's stages and the
+ * Needs you feed's `authorGateMet` — so the list that leaves a vote to the
+ * feed and the feed that keeps the row can never disagree. A missing answer
+ * (a failed gate read) is false: the row stays a Vote.
+ */
+function votesIn(row) {
+  return row?.votes_in === true;
+}
+
+/**
  * Pure (#6531, 11 Nov 2026): a change that conflicts with main where only a
  * yes can move it (syncStand 'vote'). It is up for a vote, and so open for
  * votes, only while it could take one, as voteReadySql reads it: its checks
@@ -188,7 +199,7 @@ function checkingState(row, since, now, onYes = requestOnYes) {
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
   // #6594: its votes are in, so its checks are what it waits on now, not a
   // vote it no longer needs.
-  if (row.votes_in === true) return state('checking', { since, line: { code: 'approved_checking' } });
+  if (votesIn(row)) return state('checking', { since, line: { code: 'approved_checking' } });
   const line = checksLine(row, now);
   return state('checking', { since, ...(line ? { line } : {}) });
 }
@@ -336,7 +347,7 @@ function fromStage(s, row, now = new Date()) {
         if (hold) return state(hold.stage, { since, line: { code: hold.code } });
       }
       // #6594: its votes are in; it is being merged, not voted on.
-      if (row.votes_in === true) return state('going_live', { since });
+      if (votesIn(row)) return state('going_live', { since });
       return upForVote(row, since);
     case 'merging':
       return state('going_live', { since: row.merged_at || since });
@@ -375,9 +386,11 @@ function deriveFacts(row, { now = new Date() } = {}) {
   if (status === 'promoted' && out) out = withUpdate(out, { coming: row.update_coming, failed: row.update_failed });
   // A private thread of the requester's holds it for their plan: nothing
   // queued overtakes that until a change is up (1 Nov 2026).
-  if (row.awaiting_plan === true && !status && (!out || out.stage === 'reading')) {
-    return state('planning', { since: row.request_at || row.run_at, line: { code: 'planning_with_you' }, whoseMove: 'requester' });
-  }
+  const planHeld = row.awaiting_plan === true && !status;
+  const planning = (line = {}) => state('planning', {
+    since: row.request_at || row.run_at, line: { code: 'planning_with_you', ...line }, whoseMove: 'requester',
+  });
+  if (planHeld && (!out || out.stage === 'reading')) return planning();
   // 16 Oct 2026: ready, but a person has the request now (a claim, or a
   // change of their own under way): the bot leaves it alone, so it is
   // theirs, not a wait for a slot.
@@ -391,6 +404,14 @@ function deriveFacts(row, { now = new Date() } = {}) {
       line: { code: 'claimed', by: personBuilding || claimFirst }, whoseMove: 'builder',
     });
   }
+  // 13 Nov 2026: the same hold on a request that had already reached the
+  // build line (its build waits its turn, or one of the project's limits
+  // holds it). The lane starts no build and takes no held verdict back up
+  // while the thread holds it (rules/bot-loop.ts BUILD_CANDIDATES_SQL,
+  // READ_CANDIDATES_SQL), so it waits for its requester, not for a slot: it
+  // read "Ready to build · Number 1 in line" beside Let the bot build it
+  // now. `ready` says a build is waiting behind the hold (botWorkOf).
+  if (planHeld && out && out.stage === 'building' && READY.has(out.line?.code)) return planning({ ready: true });
   if (out) return out;
 
   // A change somebody made for it, when Homeroom bot has none of its own:
@@ -559,7 +580,7 @@ function promotedChange(row, now) {
   // nothing about it: its own checks are still to come. #6594: with its
   // votes in, it is approved and those checks are what it waits on.
   if (!changeChecksOnHead(row)) {
-    return state('checking', { since, ...(row.votes_in === true ? { line: { code: 'approved_checking' } } : {}) });
+    return state('checking', { since, ...(votesIn(row) ? { line: { code: 'approved_checking' } } : {}) });
   }
   // A passing change that has since stopped merging cleanly moves back to
   // Waiting to sync with main: its verdict no longer describes what lands.
@@ -570,7 +591,7 @@ function promotedChange(row, now) {
   if (shotsHeld(row, now)) return state('checking', { since, line: { code: 'shots' } });
   // #6594: its votes are in (the project's rule would let it merge now): it
   // is being merged, not voted on, so it is not open for votes either.
-  if (row.votes_in === true) return state('going_live', { since: row.promoted_at });
+  if (votesIn(row)) return state('going_live', { since: row.promoted_at });
   return upForVote(row, row.promoted_at);
 }
 
@@ -673,9 +694,15 @@ function stagePhrase(item, yours) {
   // #6531: a conflicting change the lane is catching up says so in the stage
   // word itself ("Syncing with main", not "Checking"), and carries no line.
   if (item.stage === 'checking' && code === 'syncing') return { id: 'core:work.stage.syncing' };
-  // #6594: its votes are in, so it is approved and its checks are what it
-  // waits on, not a vote.
-  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.approved' };
+  // #6594: its votes are in, so nothing asks for a vote any more. #6695: its
+  // own tests are still running, so the word says what is happening
+  // (Checking), not Approved: Approved waits only on GitHub's required
+  // checks now (below).
+  if (item.stage === 'checking' && code === 'approved_checking') return { id: 'core:work.stage.checking' };
+  // Its tests passed and only its before & after screenshots are left: the
+  // stage word says that ("Taking screenshots"), not "Checking", which read
+  // as tests that might still fail.
+  if (item.stage === 'checking' && code === 'shots') return { id: 'core:work.stage.shots' };
   // #6563: an approved change whose merge GitHub holds is not going live yet;
   // its word says so, and its second line says on what. #6594: waiting on
   // GitHub's checks is still approved; only GitHub itself holding it back
@@ -774,7 +801,11 @@ function botWorkOf(item) {
       if (BOT_NOT_STARTED.has(code) || (code === 'reply' && item.line.soon)) return null;
       return { what: 'reading', since };
     case 'planning':
-      return code === 'planning_with_you' ? null : { what: 'building', since };
+      // Held for its requester's plan: nothing of the bot's is under way.
+      // One whose build already waits behind the hold (`ready`) is still the
+      // bot's, in its queue, so asking it to build it again is refused.
+      if (code === 'planning_with_you') return item.line.ready ? { what: 'queued', since } : null;
+      return { what: 'building', since };
     case 'building':
       if (code === 'held_builds' || code === 'held_waiting') {
         return { what: 'queued', since, held: true, ...(code === 'held_builds' ? { turn: true } : {}) };
@@ -2066,6 +2097,7 @@ module.exports = {
   phrasesOf,
   english,
   APPROVED_SQL,
+  votesIn,
   stageSays,
   lineSays,
   says,

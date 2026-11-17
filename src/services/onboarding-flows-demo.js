@@ -37,7 +37,7 @@ function demo() {
     k: (id += 1), n: `sample_${pick(FIRST)}_${String(id).slice(-3)}`,
     door: 'direct', src: 'unrecorded', s1: false, tooNew: false, linkJoin: false, cohort: null, wait: null,
     got: 'in', stuck: null, stuckReason: null, first: 'none', opened: false, st: '', kinds: [], days: 0,
-    failed: 0, taps: 0, mail: null, signup: null, acct: null, access: null, noAccount: false, arr: null, via: null,
+    failed: 0, taps: 0, mail: null, mailIn: null, nudges: 0, ask: null, signup: null, acct: null, access: null, noAccount: false, arr: null, via: null,
     made: [], inv: null, shared: [], sent: 0, useDays: 0, useApps: 0, pubApp: null, pubDays: 0, pubN: 0,
     pubContrib: false, accepted: 0, lastA: null, lastC: null, recent: false,
     ...over,
@@ -80,7 +80,14 @@ function demo() {
         src: pick(['x', 'x', 'friend', 'event', 'other', 'unrecorded']), mail: [chance(0.6), chance(0.2)],
         arr: chance(0.25) ? { t: 'rec', l: pick(['X', 'Reddit', 'Campaign: launch']) } : (chance(0.2) ? { t: 'noref' } : null),
       });
-      if (chance(0.55)) {
+      if (chance(0.14)) {
+        // Signed up while waiting, let in later, not back since.
+        Object.assign(p, {
+          acct: '2026-09-02', access: cohort, got: p.tooNew ? 'new' : 'away', stuck: 'opened',
+          stuckReason: 'Has access, never opened Homeroom', mail: [chance(0.4), false],
+        });
+        people.push(p);
+      } else if (chance(0.55)) {
         p.noAccount = true;
         p.got = p.tooNew ? 'new' : (chance(0.25) ? 'mail_none' : 'mail_ignored');
         p.stuck = p.got === 'mail_none' ? 'mail_sent' : 'code_asked';
@@ -119,6 +126,29 @@ function demo() {
     host.shared.push({ n: app, aud, own: true, inv: reached });
     host.sent += size + between(0, 3);
   });
+
+  // The admit mail's two nudges, from each person's id rather than the seed,
+  // so the people above stay who they were: everyone off the waitlist who has
+  // not signed in got the ones due by now (two days on, then six), and those
+  // who did came in after the admit mail, or after the first or last nudge.
+  for (const p of people) {
+    // Their answer to the first session's "What do you want to make?", for
+    // everyone who came in after it was asked (not the first season).
+    if (!p.s1 && p.got === 'in' && p.opened) p.ask = ['template', 'template', 'template', 'custom', 'custom', 'look', 'look'][p.k % 7];
+    // Making an app answers it, so whoever answered that way made one (a new project starts private).
+    if ((p.ask === 'template' || p.ask === 'custom') && !p.made.length) {
+      p.made = [{ n: ['Reading List', 'Plant Log', 'Book Swap'][p.k % 3], aud: 'private', at: p.acct || '2026-10-01' }];
+    }
+    if (p.door !== 'waitlist') continue;
+    const dueNow = p.days >= 6 ? 2 : (p.days >= 2 ? 1 : 0);
+    if (p.got === 'in') {
+      const r = p.k % 20;
+      p.mailIn = r < 11 ? 'admit' : (r < 16 ? 'nudge1' : 'nudge2');
+      p.nudges = { admit: 0, nudge1: 1, nudge2: 2 }[p.mailIn];
+    } else {
+      p.nudges = dueNow;
+    }
+  }
 
   const out = people.map((p) => flows.classify(p));
   const pubApps = PUBLIC_APPS.map((n) => ({

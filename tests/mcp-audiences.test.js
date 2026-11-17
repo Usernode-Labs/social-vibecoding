@@ -1,10 +1,10 @@
 'use strict';
 
-// One registry, three audiences (#2779). registerTools serves an external
-// chat product, the Mayor of an agent session, and the coding agent inside a
-// change's worker. What each one sees, what each one is told, and which routes
-// each one's tools actually reach are pinned here by driving registerTools
-// itself, not by reading its source.
+// One registry, several audiences (#2779). registerTools serves an external
+// chat product, Homeroom bot reading for the person it answers, and the coding
+// agent inside a change's worker. What each one sees, what each one is told,
+// and which routes each one's tools actually reach are pinned here by driving
+// registerTools itself, not by reading its source.
 //
 // Run with: node --test tests/mcp-audiences.test.js
 
@@ -27,8 +27,8 @@ const ORIGIN = 'https://usernode.example';
 function delegationFor(kind) {
   if (kind === 'external') return null;
   return kind === 'worker_read'
-    ? { kind, grantId: 'g'.repeat(22), changeId: 50, appId: 3, appSlug: 'recipe-box', agentSessionId: null }
-    : { kind, grantId: 'g'.repeat(22), changeId: null, appId: null, appSlug: null, agentSessionId: 4 };
+    ? { kind, grantId: 'g'.repeat(22), changeId: 50, appId: 3, appSlug: 'recipe-box' }
+    : { kind, grantId: 'g'.repeat(22), changeId: null, appId: null, appSlug: null };
 }
 
 function register(kind, { pool = null } = {}) {
@@ -52,24 +52,26 @@ function register(kind, { pool = null } = {}) {
 
 // ── What each kind sees ────────────────────────────────────────────────
 
-test('an external client sees everything but the Mayor-only change lifecycle', () => {
+test('an external client reads a change and re-runs its checks, and moves it no other way', () => {
   const { specs } = register('external');
-  for (const name of audiences.DELEGATED_ONLY_TOOLS) {
-    assert.ok(!specs.has(name), `${name} is not offered to an external client`);
+  // No tool is kept from an external client for being a delegated kind's own.
+  assert.equal(audiences.DELEGATED_ONLY_TOOLS, undefined);
+  for (const name of ['start_change', 'promote_change', 'sync_change', 'withdraw_change']) {
+    assert.ok(!specs.has(name), `${name} is not a connector tool`);
   }
   assert.ok(specs.has('get_change'), 'get_change is');
   assert.ok(specs.has('recheck_change'), 'and so is recheck_change');
   assert.ok(specs.has('submit_work') && specs.has('prepare_work'), 'today\'s surface is intact');
 });
 
-test('the Mayor sees exactly its list, and every name on it is a real tool', () => {
+test('Homeroom bot sees exactly its list, and every name on it is a real tool', () => {
   const { specs } = register('agent_mayor');
   assert.deepEqual([...specs.keys()].sort(), [...audiences.AGENT_MAYOR_TOOLS].sort());
-  for (const never of ['prepare_work', 'submit_work', 'start_platform_build', 'demo_vote', 'get_checkout_status']) {
-    assert.ok(!specs.has(never), `${never} is for a human-driven client, not the Mayor`);
+  assert.equal(specs.size, 13);
+  for (const never of ['prepare_work', 'submit_work', 'recheck_change', 'demo_vote', 'get_checkout_status']) {
+    assert.ok(!specs.has(never), `${never} is for a human-driven client, not Homeroom bot's reads`);
   }
-  // #6384: the Mayor reads a plan posted on a request, as the Homeroom bot's
-  // chat does, and the tool is a plain read.
+  // #6384: it reads a plan posted on a request, and the tool is a plain read.
   assert.equal(audiences.toolVisibleTo('agent_mayor', 'get_spec'), true);
   assert.ok(specs.has('get_spec'));
   assert.equal(specs.get('get_spec').annotations.readOnlyHint, true);
@@ -91,14 +93,11 @@ test('an unknown kind sees nothing at all', () => {
   assert.equal(audiences.toolVisibleTo('__proto__', 'get_app'), false);
 });
 
-test('the Mayor\'s writes are exactly the confirmed tools plus recheck', () => {
+test('Homeroom bot\'s grant sees no tool that writes', () => {
   const { specs } = register('agent_mayor');
-  const writes = [...specs].filter(([, spec]) => spec.annotations.readOnlyHint === false).map(([name]) => name);
-  assert.deepEqual(writes.sort(), [...audiences.MAYOR_CONFIRMED_TOOLS, 'recheck_change'].sort(),
-    'every Mayor write except recheck runs only on a confirmation card');
-  for (const name of audiences.MAYOR_CONFIRMED_TOOLS) {
-    assert.ok(audiences.AGENT_MAYOR_TOOLS.includes(name), `${name} is on the Mayor's list`);
-  }
+  const writes = [...specs].filter(([, spec]) => spec.annotations.readOnlyHint !== true).map(([name]) => name);
+  assert.deepEqual(writes, [], 'every tool on its list is a read');
+  assert.equal(audiences.MAYOR_CONFIRMED_TOOLS, undefined, 'and no list of writes is kept for it');
 });
 
 test('every description fits the budget for every kind', () => {
@@ -132,16 +131,7 @@ const SAMPLE_ARGS = {
   whoami: {},
   list_apps: {},
   list_my_proposals: {},
-  create_request: { slug: 'recipe-box', title: 'A request', body: 'Details.' },
-  claim_request: { slug: 'recipe-box', number: 12 },
-  release_request: { slug: 'recipe-box', number: 12 },
-  propose_close_request: { slug: 'recipe-box', number: 12, reason: 'Shipped in PR #901.' },
-  update_proposal_issues: { proposalId: 50, addIssues: [12] },
-  start_change: { slug: 'recipe-box', title: 'Dark mode', linkedIssues: [12, 13] },
-  promote_change: { changeId: 50 },
   recheck_change: { changeId: 50 },
-  sync_change: { changeId: 50 },
-  withdraw_change: { changeId: 50 },
 };
 
 function fakePlatform(overrides = {}) {
@@ -157,12 +147,7 @@ function fakePlatform(overrides = {}) {
     'GET /api/sessions/50/status': { busy: false },
     'GET /api/apps/recipe-box/issues/12/specs': { specs: [{ sessionId: 50, version: 2 }] },
     'GET /api/sessions/50/specs/2': { spec: { content: '# A plan' } },
-    'POST /api/apps/recipe-box/sessions': { session: { id: 77, status: 'active' } },
-    'PATCH /api/sessions/77/linked-issues': { linkedIssues: [12, 13] },
-    'POST /api/sessions/50/promote': { ok: true, prNumber: 901, prUrl: 'https://github.com/o/r/pull/901' },
     'POST /api/sessions/50/recheck': { status: 'running', checkState: 'pending' },
-    'POST /api/sessions/50/sync-main': { ok: true, syncResult: 'clean', behind: 0, pushOk: true, conflictFiles: [] },
-    'POST /api/sessions/50/archive': { ok: true },
     ...overrides,
   };
   const fetchImpl = async (url, init = {}) => {
@@ -239,7 +224,7 @@ test('each delegated kind is told what it is, with the safety clauses first', ()
 
 test('nothing written for a human-driven client reaches a delegated kind', () => {
   const humanOnly = ['setup-tip-relay', 'verify-your-checkout', 'work-order-handling', 'no-code-here',
-    'you-may-be-both', 'two-destinations', 'platform-build-fallback', 'read-this-first'];
+    'you-may-be-both', 'two-destinations', 'no-coding-agent', 'read-this-first'];
   for (const kind of ['agent_mayor', 'worker_read']) {
     const ids = charter.sectionsFor(kind).map((s) => s.id);
     for (const id of humanOnly) {
@@ -250,9 +235,9 @@ test('nothing written for a human-driven client reaches a delegated kind', () =>
   // The worker cannot call get_connector_guidance, so it is not pointed at it.
   assert.doesNotMatch(charter.instructionsFor('worker_read'), /get_connector_guidance/);
   assert.match(charter.instructionsFor('worker_read'), /READ-ONLY/);
-  // The Mayor is told a chat "yes" is not a confirmation.
-  assert.match(charter.instructionsFor('agent_mayor'), /Confirm/);
-  assert.match(charter.instructionsFor('agent_mayor'), /"yes" in chat is not a confirmation/);
+  // Homeroom bot is told its grant reads and nothing else.
+  assert.match(charter.instructionsFor('agent_mayor'), /READ-ONLY grant for this turn/);
+  assert.match(charter.charterFor('agent_mayor'), /cannot write: nothing is filed, claimed, put up for a vote, synced or withdrawn through these tools/);
   assert.equal(charter.charterFor('bogus'), '');
   assert.equal(charter.instructionsFor('bogus'), '');
 });
@@ -307,14 +292,14 @@ test('get_change merges the live status and speaks the caller\'s vocabulary', as
     assert.equal(mayor.structuredContent.hasBranch, true);
     assert.match(mayor.structuredContent.title, /<untrusted-content>Dark mode<\/untrusted-content>/);
     assert.match(mayor.structuredContent.nextStep, /^Checks on PR #12 \(change 50\) are failing/);
-    assert.match(mayor.structuredContent.nextStep, /Dispatch the coding agent/);
+    assert.match(mayor.structuredContent.nextStep, /They are fixed by revising the change/);
     assert.equal(mayor.structuredContent.webPath,
       require('../src/services/change-destination').changeWebPath(ORIGIN, 'recipe-box', 50));
 
     const worker = await register('worker_read').handlers.get('get_change')({ changeId: 50 });
     assert.match(worker.structuredContent.nextStep, /Fix the failing tests in this turn/);
     const external = await register('external').handlers.get('get_change')({ changeId: 50 });
-    assert.match(external.structuredContent.nextStep, /from the change's own page/);
+    assert.match(external.structuredContent.nextStep, /asking Homeroom bot on the change's own page/);
     assert.doesNotMatch(external.structuredContent.nextStep, /promote_change|Dispatch/);
   });
 });
@@ -336,9 +321,9 @@ test('the next step walks a change through its whole life', () => {
   assert.match(step({ status: 'active' }, { busy: true, turn: { kind: 'scout' } }), /working on Change 50 right now/);
   assert.match(step({ status: 'active' }, { sync: { phase: 'merging' } }), /being synced with main/);
   assert.match(step({ status: 'active', check_state: 'pending' }), /Checks are running/);
-  assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. sync_change/);
+  assert.match(step({ status: 'active', check_state: 'pending', check_phase: 'deferred' }), /conflicts with main\. Syncing it with main from its page/);
   assert.match(step({ status: 'active', check_state: 'error' }), /errored before any test reported/);
-  assert.match(step({ status: 'active', check_state: 'passing' }), /ready to go up for a vote: promote_change/);
+  assert.match(step({ status: 'active', check_state: 'passing' }), /ready to go up for a vote: its owner puts it there from its page/);
   assert.match(step({ status: 'paused', check_state: 'passing' }), /It is idle/);
   assert.match(step({ status: 'promoted', check_state: 'passing', pr_number: 9, yes_count: 1, votes_required: 3, behind_main: 2 }),
     /PR #9 \(change 50\) is up for the group's vote\. It has 1 of 3 yes votes\. It is 2 commit\(s\) behind main/);
@@ -375,121 +360,52 @@ test('a busy status with no turn on record is idle and retryable', () => {
   assert.match(change({}, { busy: true, sync: { phase: 'merging' } }).nextStep, /being synced with main/);
 });
 
-test('start_change creates, names and links, and reports what did not stick', async () => {
-  const platform = fakePlatform();
-  await withFetch(platform.fetchImpl, async () => {
-    const result = await register('agent_mayor').handlers.get('start_change')(SAMPLE_ARGS.start_change);
-    assert.equal(result.structuredContent.changeId, 77);
-    assert.deepEqual(result.structuredContent.linkedIssues, [12, 13]);
-    assert.deepEqual(result.structuredContent.warnings, []);
-    assert.match(result.structuredContent.nextStep, /dispatch the coding agent/);
-  });
-  const sequence = platform.calls.map((c) => `${c.method} ${c.path}`);
-  assert.deepEqual(sequence, [
-    'POST /api/apps/recipe-box/sessions',
-    'PATCH /api/sessions/77/linked-issues',
-  ]);
-  assert.deepEqual(platform.calls[0].body, { issueNumber: 12, title: 'Dark mode' },
-    'the first request seeds and claims, and the name rides on the create');
-  assert.deepEqual(platform.calls[1].body, { addIssues: [13] });
-
-  const partial = fakePlatform({ 'PATCH /api/sessions/77/linked-issues': { __status: 500, body: {} } });
-  await withFetch(partial.fetchImpl, async () => {
-    const result = await register('agent_mayor').handlers.get('start_change')({
-      slug: 'recipe-box', title: 'x', linkedIssues: [12, 13],
-    });
-    assert.equal(result.isError, undefined, 'the change exists, so this is not a failure');
-    assert.equal(result.structuredContent.warnings.length, 1);
-    assert.deepEqual(result.structuredContent.linkedIssues, [12]);
-  });
-
-  const bare = fakePlatform();
-  await withFetch(bare.fetchImpl, async () => {
-    await register('agent_mayor').handlers.get('start_change')({ slug: 'recipe-box', title: 'x' });
-  });
-  assert.deepEqual(bare.calls[0].body, { title: 'x' }, 'no request, no seed');
-  assert.equal(bare.calls.length, 1);
-});
-
-test('start_change refuses bad input before anything is created', async () => {
-  const platform = fakePlatform();
-  await withFetch(platform.fetchImpl, async () => {
-    const handler = register('agent_mayor').handlers.get('start_change');
-    assert.equal((await handler({ slug: 'Bad Slug', title: 'x' })).structuredContent.code, 'invalid_request');
-    assert.equal((await handler({ slug: 'recipe-box', title: '   ' })).structuredContent.code, 'invalid_request');
-    assert.equal((await handler({ slug: 'recipe-box', title: 'x'.repeat(257) })).structuredContent.code, 'title_too_long');
-  });
-  assert.equal(platform.calls.length, 0);
-});
-
-test('a refused lifecycle call repeats the platform\'s own sentence', async () => {
+test('a refused recheck repeats the platform\'s own sentence', async () => {
   const platform = fakePlatform({
-    'POST /api/sessions/50/promote': {
+    'POST /api/sessions/50/recheck': {
       __status: 409,
-      body: { error: 'proposal_not_ready', message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.' },
-    },
-    'POST /api/apps/recipe-box/sessions': {
-      __status: 429, body: { error: 'You already have 5 running sessions. Pause or archive one first.' },
+      body: { error: 'proposal_closed', message: 'This proposal is merged, so its checks cannot be re-run.' },
     },
   });
   await withFetch(platform.fetchImpl, async () => {
-    const mayor = register('agent_mayor').handlers;
-    const promoted = await mayor.get('promote_change')({ changeId: 50 });
-    assert.equal(promoted.structuredContent.code, 'proposal_not_ready');
-    assert.match(promoted.structuredContent.message, /not ready yet/);
-    const started = await mayor.get('start_change')({ slug: 'recipe-box', title: 'x' });
-    assert.equal(started.structuredContent.code, 'at_capacity');
-    assert.match(started.structuredContent.message, /5 running sessions/);
+    const refused = await register('external').handlers.get('recheck_change')({ changeId: 50 });
+    assert.equal(refused.isError, true);
+    assert.equal(refused.structuredContent.code, 'proposal_closed');
+    assert.match(refused.structuredContent.message, /cannot be re-run/);
   });
 });
 
-test('recheck, promote, sync and withdraw report what happened', async () => {
+test('recheck reports what happened', async () => {
   const platform = fakePlatform();
   await withFetch(platform.fetchImpl, async () => {
-    const mayor = register('agent_mayor').handlers;
-    const recheck = await mayor.get('recheck_change')({ changeId: 50 });
+    const recheck = await register('external').handlers.get('recheck_change')({ changeId: 50 });
     assert.equal(recheck.structuredContent.started, true);
-    const promoted = await mayor.get('promote_change')({ changeId: 50 });
-    assert.equal(promoted.structuredContent.prNumber, 901);
-    assert.match(promoted.structuredContent.nextStep, /^PR #901 \(change 50\) is up for the group's vote/);
-    const synced = await mayor.get('sync_change')({ changeId: 50 });
-    assert.equal(synced.structuredContent.synced, true);
-    const withdrawn = await mayor.get('withdraw_change')({ changeId: 50 });
-    assert.equal(withdrawn.structuredContent.withdrawn, true);
   });
+  assert.deepEqual(platform.calls.map((c) => `${c.method} ${c.path}`), ['POST /api/sessions/50/recheck']);
 
-  const conflicted = fakePlatform({
-    'POST /api/sessions/50/sync-main': {
-      ok: false, syncResult: 'conflict', behind: 3, pushOk: false, conflictFiles: ['src/app.js'],
-    },
+  const unavailable = fakePlatform({
     'POST /api/sessions/50/recheck': { status: 'unavailable', reason: 'demo' },
   });
-  await withFetch(conflicted.fetchImpl, async () => {
-    const mayor = register('agent_mayor').handlers;
-    const synced = await mayor.get('sync_change')({ changeId: 50 });
-    assert.equal(synced.structuredContent.synced, false);
-    assert.deepEqual(synced.structuredContent.conflictFiles, ['<untrusted-content>src/app.js</untrusted-content>']);
-    const recheck = await mayor.get('recheck_change')({ changeId: 50 });
+  await withFetch(unavailable.fetchImpl, async () => {
+    const recheck = await register('external').handlers.get('recheck_change')({ changeId: 50 });
     assert.equal(recheck.structuredContent.started, false);
   });
 });
 
-test('a read-only grant cannot start a write even if it could see the tool', async () => {
+test('a read-only grant cannot start a write even when it can see the tool', async () => {
   const handlers = new Map();
   tools.registerTools({
     registerTool(name, _spec, handler) { handlers.set(name, handler); },
   }, {
-    accessToken: 'svmcd_test', scopes: [READ_SCOPE],
-    user: { id: 7, username: 'ada' }, clientName: 'Homeroom', clientId: 'c1',
+    accessToken: 'svmcp_test', scopes: [READ_SCOPE],
+    user: { id: 7, username: 'ada' }, clientName: 'Claude', clientId: 'c1',
     origin: ORIGIN, baseUrl: 'http://platform.internal', pool: null, config: {},
-    tokenId: 1, grantId: 'g'.repeat(22), delegation: delegationFor('agent_mayor'),
+    tokenId: 1, grantId: 'g'.repeat(22), delegation: null,
   });
   const platform = fakePlatform();
   await withFetch(platform.fetchImpl, async () => {
-    for (const name of ['start_change', 'promote_change', 'recheck_change', 'sync_change', 'withdraw_change']) {
-      const result = await handlers.get(name)(SAMPLE_ARGS[name]);
-      assert.equal(result.structuredContent.code, 'insufficient_scope', `${name} needs the write scope`);
-    }
+    const result = await handlers.get('recheck_change')(SAMPLE_ARGS.recheck_change);
+    assert.equal(result.structuredContent.code, 'insufficient_scope', 'recheck_change needs the write scope');
   });
   assert.equal(platform.calls.length, 0);
 });

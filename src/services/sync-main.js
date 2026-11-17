@@ -5,8 +5,8 @@
 // pushed head as its revision.
 //
 // Every sync is the proposal machine's `branch.sync` work
-// (src/workflow/proposal/), whoever asks for it: a person ("Sync with main",
-// the connector's sync_change, the CLI), a resume of a session behind main,
+// (src/workflow/proposal/), whoever asks for it: a person ("Sync with main"),
+// a resume of a session behind main,
 // the merge queue's conflict lane, a preview that will not start because
 // main moved (boot-failure-sync.js) and a check main has fixed since
 // (fixed-check-sync.js, the Homeroom bot). The machine decides whether it may
@@ -49,7 +49,7 @@ const SYNC_PHASE_MAP = new Map([
 const SYNC_BUDGET_MS = 20 * 60 * 1000;
 
 // #8: persist the latest behind-origin/main count for a session and
-// broadcast a session_update so the dev-chat banner refreshes live. A count
+// broadcast a session_update so the change's "Behind main" pill refreshes live. A count
 // for display: nothing decides on it (the merge reads the mirror's
 // measurement, services/integration.js). Best-effort.
 async function persistBehindMain(pool, session, behind) {
@@ -92,16 +92,13 @@ async function persistConflictState(pool, session, { state, files }) {
 }
 
 // A platform sync's wait for the session to be free (the old boot-failure
-// sync's waitForIdle): somebody's turn, a local agent's, or a live operation
-// on the session, read as the proposal machine reads them.
+// sync's waitForIdle): somebody's turn or a live operation on the session, read as the proposal machine reads them.
 const IDLE_POLL_MS = 3000;
 const IDLE_WAIT_MS = 10 * 60 * 1000;
 async function sessionBusy(pool, sessionId) {
   const { botLookingSql, buildHoldSql, operationsLiveSql, shotsRunningSql } = require('../workflow/session-work.ts');
   const { rows: [r] } = await pool.query(
     `SELECT cs.active_turn IS NOT NULL
-            OR EXISTS (SELECT 1 FROM local_agent_turns t
-                        WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
             OR ${operationsLiveSql('cs.id')}
             OR ${shotsRunningSql('cs.id')}
             OR ${buildHoldSql('cs')}
@@ -126,7 +123,7 @@ async function getSyncState(pool, sessionId) {
   }
 }
 
-// #252: lifecycle broadcast for the dev-chat sync banner. Same
+// #252: lifecycle broadcast for a change's sync state. Same
 // session_update channel as behind_main; clients key on
 // action='sync_status'. state ∈ starting | merging | resolving |
 // pushing | done | failed; terminal events carry syncResult/message.
@@ -254,11 +251,9 @@ async function runSyncWork(config, pool, {
   const send = (type, data) => {
     try {
       const { broadcastGlobal } = require('./ws');
-      const sessionBus = require('./session-bus');
       const event = { type, _seq: `s${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`, ...data };
       broadcastGlobal({ ...event, type: 'session_event', sessionId: session.id, event: type });
-      sessionBus.publish(session.id, event);
-    } catch (_) { /* ws/bus failures are non-fatal */ }
+    } catch (_) { /* a socket failure is non-fatal */ }
   };
   const sendStatus = async (text, metadata) => {
     send('status', { text, ...(metadata || {}) });

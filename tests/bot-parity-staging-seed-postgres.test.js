@@ -135,9 +135,19 @@ test('the staging preview\'s private threads with Homeroom bot, with their new c
       WHERE p.user_id = $1 ORDER BY p.root_message_id`,
     [viewer.id],
   );
+  // 14 Nov 2026: Main Chat is gone, and the demo's chat is all threads: the
+  // bot's hello, a project's first version and Earlier chat beside the four
+  // from the "+" (tests/bot-chat-threads-postgres.test.js pins those
+  // three).
+  const all = (await pool.query(
+    `SELECT kind, COUNT(*)::int AS n FROM private_threads WHERE user_id = $1 GROUP BY kind ORDER BY kind`, [viewer.id])).rows;
+  assert.deepEqual(all, [
+    { kind: 'ask', n: 4 }, { kind: 'earlier', n: 1 }, { kind: 'first_version', n: 1 }, { kind: 'hello', n: 1 },
+  ]);
+  threads.splice(0, threads.length, ...threads.filter((th) => th.kind === 'ask'));
   // #6250: the fourth is filed as a request, so the list keeps its row and
   // says where it went; the other three are open.
-  assert.equal(threads.length, 4, 'four private threads');
+  assert.equal(threads.length, 4, 'four private threads from the "+"');
   const filed = threads.find((th) => th.state === 'filed');
   assert.ok(filed, 'one of them is filed');
   assert.deepEqual([filed.result_ref, filed.app_id != null], [404, true], 'and names the demo project and a request');

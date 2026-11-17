@@ -96,7 +96,7 @@ export function forgetDescriptionDraft(store: Storage | null,
 }
 
 function Preview({ text }: { text: string }) {
-  const render = (window as any).DevChat?.renderMarkdown;
+  const render = (window as any).PlatformMarkdown?.render;
   return typeof render === 'function'
     ? <Html className="dev-issue-body" html={render(text)} />
     : <p className="whitespace-pre-wrap">{text}</p>;

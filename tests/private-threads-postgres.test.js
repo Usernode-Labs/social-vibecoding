@@ -170,7 +170,7 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     assert.deepEqual(await privateThreads.stateOf(pool, { user: sam, rootId: root.id }), { state: 'open', kind: 'idea', app: null, target: null, mine: true });
   });
 
-  await t.test('a new thread from the bot\'s "+" hangs off its line in Main, and the bot reads what it is for', async () => {
+  await t.test('a new thread from the bot\'s "+" is led by the bot\'s line, and the bot reads what it is for', async () => {
     const dm = require('../src/services/homeroom-bot-dm');
     const aiWork = require('../src/services/ai-work');
     const made = await privateThreads.startThread(pool, { user: ada, project: app.slug, kind: 'fix' });
@@ -180,7 +180,7 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
       'SELECT sender_id, thread_root_id, content, metadata FROM conversation_messages WHERE id = $1', [made.rootId],
     );
     assert.equal(root.sender_id, bot.id);
-    assert.equal(root.thread_root_id, null, 'a line of Main');
+    assert.equal(root.thread_root_id, null, 'the thread\'s first message');
     assert.equal(root.content, 'New thread, to fix something broken on Seed swap.');
     assert.deepEqual(
       { kind: root.metadata.homeroomBot.kind, changeKind: root.metadata.homeroomBot.changeKind, appSlug: root.metadata.homeroomBot.appSlug },
@@ -190,6 +190,7 @@ test('private threads against the full schema', { timeout: 120000 }, async (t) =
     const where = await dm.messageThread(pool, { userId: ada.id, conversationId: opened.conversationId, message: first });
     assert.deepEqual(where, {
       rootId: made.rootId,
+      kind: 'ask',
       draft: { kind: 'ask', state: 'open', appSlug: 'pt-seed-swap', appName: 'Seed swap', changeKind: 'fix' },
     });
     // The Homeroom bot tab lists it by her first words in it, not the bot's line.

@@ -71,7 +71,7 @@ const repoRef = require('../services/repo-ref');
 // proposal owned by the partner, already promoted. Imported is the right
 // source: the preview, checks, head-sync and merge machinery all key off it
 // (services/pr-import-sync.js, evaluateMergeGate) and none of it needs a
-// dev-chat worker. Then it does the one thing pr-import's own straight-to-
+// worker. Then it does the one thing pr-import's own straight-to-
 // vote path does not: the pr_proposed fan-out, which is the notification the
 // viewer is waiting for.
 //

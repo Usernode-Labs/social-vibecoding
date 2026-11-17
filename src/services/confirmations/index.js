@@ -3,9 +3,11 @@
 // Sealed one-use confirmations: the part that does not depend on where the
 // confirmation is stored.
 //
-// Global Chat introduced these for its writes; it has since been removed, and
-// agent sessions confirm the Mayor's writes this way (#2779). The rules live
-// here, apart from any one consumer's storage:
+// Global Chat introduced these for its writes, and agent chats confirmed the
+// Mayor's writes this way (#2779); both are retired. An admin's confirm cards
+// in their chat with Homeroom bot use them now
+// (homeroom-bot-thread-tools/admin.js). The rules live here, apart from any
+// one consumer's storage:
 //
 //   * the bearer token is 32 random bytes, returned once to the authenticated
 //     client and never placed in model context, logs or transcripts. Only its
@@ -18,8 +20,7 @@
 //     an item that changed after it was shown.
 //
 // Each consumer keeps its own table and its own SQL, so every statement stays
-// static and each table's ownership check (an agent session's, today) is
-// written where that table is.
+// static and each table's ownership check is written where that table is.
 
 const crypto = require('node:crypto');
 const secrets = require('../secrets');

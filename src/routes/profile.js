@@ -1287,7 +1287,7 @@ function profileRoutes(config) {
   // ── POST /api/me/avatar ──────────────────────────────────────────────
   // Raw bytes (application/octet-stream) — deliberately sidesteps the
   // global express.json() parser, same reasoning as the feedback
-  // screenshot and dev-chat attachment uploads. The 2mb parser ceiling
+  // screenshot and conversation attachment uploads. The 2mb parser ceiling
   // sits above the 1 MB cap so an over-size body reaches
   // validateAvatarUpload and gets a sentence a human can act on.
   router.post(

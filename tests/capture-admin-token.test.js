@@ -137,12 +137,7 @@ test('owner-scoped declared-check fixtures resolve the exact capture admin', () 
   assert.match(helper, /WHERE username = \$1/);
   assert.match(helper, /\['usernode-capture-admin'\]/);
   for (const name of [
-    'seedStagingStartScreenSession',
-    'seedStagingSavedDrafts',
-    'devFlowFixtureContext',
-    'seedStagingCcCohortRuns',
-    'seedStagingQuickReplyFallback',
-    'seedStagingRestartRecoveredPills',
+    'seedStagingOwnReviewChange',
   ]) {
     const start = src.indexOf(`async function ${name}`);
     const next = src.indexOf('\nasync function ', start + 1);

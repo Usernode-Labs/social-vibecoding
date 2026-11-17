@@ -342,7 +342,7 @@ test('the run\'s bar: back, the title and ⌄; the title, ⌄ or the line opens 
   assert.match(src, /<button type="button" className="rf-back" onClick=\{onDone\} aria-label=\{backName\} data-rf-back="">/);
   assert.match(src, /header="project"/);
   assert.match(read('frontend/src/features/workshop/index.tsx'), /onDone=\{leaveNeeds\}/, 'from Needs you, back to Home (One Home, #6361)');
-  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} \/>/, 'from a project, back to its hub');
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /<ProjectReviewFlow slug=\{slug\} onDone=\{\(\) => openTab\('status'\)\} project=\{projectName\} \/>/, 'from a project, back to its hub');
   // Three ways in, one state.
   assert.match(src, /<button type="button" className="rf-bar-title-btn" onClick=\{\(\) => setDesc\(\(d\) => !d\)\} aria-expanded=\{desc\} aria-controls="rf-desc">\{item\.title\}<\/button>/);
   assert.match(src, /className="rf-bar-toggle"\s+aria-expanded=\{desc\}/);

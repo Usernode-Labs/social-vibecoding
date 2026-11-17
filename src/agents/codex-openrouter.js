@@ -304,7 +304,7 @@ function emitError(state, msg) {
   const text = describeProviderError({ ...classification, raw, requestDiagnostic: state.providerRequest });
   // One provider failure can arrive twice: a top-level error, then the
   // turn.failed that follows it. Both still update the turn state; only
-  // the repeated progress line is dropped, so dev chat shows it once.
+  // the repeated progress line is dropped, so the progress log shows it once.
   const duplicate = state.lastEmittedErrorText === text;
   state.lastEmittedErrorText = text;
   return {

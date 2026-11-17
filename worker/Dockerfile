@@ -20,8 +20,6 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
   && mv /usr/local/lib/node_modules/undici /usr/local/lib/node_modules/npm/node_modules/undici \
   && npm cache clean --force
 
-# unzip backs `usernode-attachments <id> --unzip <dir>` — extracting
-# user-attached reference zips inside this disposable container.
 # python3/make/g++ are node-gyp's toolchain: native npm deps (bcrypt et al)
 # normally install a prebuilt binding, but node-pre-gyp falls back to
 # building from source whenever the prebuilt download misses (new node ABI,
@@ -32,9 +30,12 @@ RUN npm install --global npm@11.21.1 undici@6.29.1 \
 # The base image's own packages are upgraded first: the release's image scan
 # refuses a fixed advisory left unpatched (OpenSSL CVE-2026-84782, 26 Oct
 # 2026), and a cached layer would otherwise keep the old package.
+# linux-libc-dev is named in the install so this layer rebuilds and takes
+# Debian's patched release instead of the cached one (audit of 14 Nov 2026:
+# 6.12.117-1 or later).
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends \
-    git curl wget ca-certificates unzip python3 make g++ \
+    git curl wget ca-certificates unzip python3 make g++ linux-libc-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # ── The shots browser's system font (#4087) ────────────────────────────
@@ -74,11 +75,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # This layer sits BEFORE the CLAUDE_CODE_CACHE_BUST ARG below on purpose,
 # so the apt install and initdb stay layer-cached across the daily
 # Claude-Code rebuild.
-RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
+#
+# Bumping the date below re-runs this cached layer, which is how an
+# audit-driven package upgrade (17.11 → 17.12 today) picks up Debian's
+# current 17.x server, client and libpq. The version check fails the build
+# loudly if the mirror would still ship anything older than 17.12, so a
+# stale cached layer cannot quietly keep the old packages.
+ARG POSTGRES_PACKAGES_REFRESHED=2026-11-14
+RUN echo "postgres packages refreshed: ${POSTGRES_PACKAGES_REFRESHED}" \
+  && mkdir -p /etc/postgresql-common/createcluster.conf.d \
   && echo 'create_main_cluster = false' \
        > /etc/postgresql-common/createcluster.conf.d/no-main-cluster.conf \
   && apt-get update && apt-get install -y --no-install-recommends \
     postgresql-17 postgresql-contrib-17 \
+  && for p in libpq5 postgresql-17 postgresql-client-17; do \
+       v="$(dpkg-query -W -f='${Version}' "$p")"; \
+       dpkg --compare-versions "$v" ge 17.12-0+deb13u1 \
+         || { echo "$p $v is older than 17.12-0+deb13u1" >&2; exit 1; }; \
+     done \
   && rm -rf /var/lib/apt/lists/*
 
 # Debian keeps the server binaries (pg_ctl/initdb/postgres) off PATH —
@@ -257,23 +271,6 @@ COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # untruncated body via `usernode-issues <number>` — in both build and
 # scout modes. Authenticates with the read-only ISSUES_JWT, never WORKER_JWT.
 COPY usernode-issues /usr/local/bin/usernode-issues
-# usernode-attachments is read-only like usernode-issues (same ISSUES_JWT
-# auth, works in scout + build): it lists the session's user-attached
-# dev-chat files, downloads one into the container so Claude Code can
-# Read it (images/binaries — text files are already inlined in the
-# prompt), or downloads + extracts a zip attachment via --unzip so the
-# agent can browse a whole reference project. See src/routes/internal.js
-# attachments routes (#450).
-COPY usernode-attachments /usr/local/bin/usernode-attachments
-# usernode-report-platform-issue is the worker's escalation valve: a
-# build-turn write path (WORKER_JWT) that DRAFTS a
-# platform-repo issue when the agent hits a blocker it can't fix in this
-# app's repo (shared bridge, native WebView, staging pipeline, checks
-# gate). Human-gated: the draft renders as a confirm/dismiss card in the
-# dev chat and nothing reaches GitHub until a user taps confirm.
-# Platform-side dedup + rate limit bound the spam. See
-# src/routes/internal.js + src/routes/sessions.js (confirm route).
-COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
 # usernode-run-checks runs declared dapp.json assertions against the in-loop
 # app before commit. A manifest can configure a loopback-only fixture login
 # for protected routes. It drives the pinned Chromium and writes nothing
@@ -318,8 +315,6 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/write-shots-mcp-config.js \
               /usr/local/bin/homeroom-read-mcp.js \
               /usr/local/bin/usernode-issues \
-              /usr/local/bin/usernode-attachments \
-              /usr/local/bin/usernode-report-platform-issue \
               /usr/local/bin/usernode-run-checks \
               /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \

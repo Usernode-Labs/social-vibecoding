@@ -504,6 +504,9 @@ async function showCard(pool, { wait, change, syncWhy = null, deps = {} }) {
       metadata: {
         kind: 'step', step: 'checks_green', appSlug: change.slug, appName: change.name || change.slug, issueNumber,
         ...(requester.issueTitle && !requester.firstVersion ? { issueTitle: requester.issueTitle } : {}),
+        // 14 Nov 2026: a first version has no request page yet, so its note
+        // is said in the project's first-version thread (sendDm placeFor).
+        ...(requester.firstVersion ? { firstVersion: true } : {}),
         card,
       },
     });
@@ -556,6 +559,8 @@ async function ringPerson(pool, { change, wait, text, deps = {} }) {
       metadata: {
         kind: 'needs_look', appSlug: change.slug, appName: change.name || change.slug, issueNumber,
         ...(requester.issueTitle && !requester.firstVersion ? { issueTitle: requester.issueTitle } : {}),
+        // 14 Nov 2026: a first version's, in its first-version thread.
+        ...(requester.firstVersion ? { firstVersion: true } : {}),
       },
     });
     if (sent?.messageId) {

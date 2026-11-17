@@ -2,9 +2,9 @@
 //
 //   1. issueChipsHtml — the reverse "#N" chip helper (sanitize / dedupe /
 //      sort, in-app navigation, no pr_url requirement).
-//   2. _issueWorkState / _inProgressChipHtml / _issueInProgress — the seven
-//      states (#1112), their precedence, tones and "+N" headcount, plus the
-//      chip's clickable-vs-informational variants.
+//   2. _issueWorkState / _inProgressChipHtml / _issueInProgress — the five
+//      states (#1112, #17), their precedence, tones and "+N" headcount, plus
+//      the chip's clickable-vs-informational variants.
 //   3. _renderIssueRow — chip placement, the claim/release button, the
 //      topic-head work note (#1112) and the topic-view admin claim list.
 //   4. Session cards + proposal cards — reverse chips (live proposals and
@@ -92,7 +92,7 @@ function makeAppView(opts) {
 const baseIssue = (over) => ({
   number: 3, title: 'Fix the thing', body: '', htmlUrl: 'https://github.com/o/r/issues/3',
   bounty_count: 0, my_bounty: false, created_by_username: 'someone',
-  headless: null, in_progress: null, myPrSessionId: null,
+  in_progress: null, myPrSessionId: null,
   chatCount: 0, lastMessageAt: null, title_fallback: false,
   priority: null, assignee: null, category: null,
   ...over,
@@ -123,9 +123,9 @@ test('issueChipSpecs sanitizes, dedupes, sorts, and navigates in-app', () => {
 
 // ── 2. the work-state chip ───────────────────────────────────────────────
 //
-// #1112: one chip, seven mutually exclusive states, first match wins in the
-// order in_review > working > auto_solving > paused > answer_needed >
-// draft_ready > claimed. The old chip said "In progress" for all seven.
+// #1112: one chip, mutually exclusive states, first match wins in the order
+// in_review > working > bot > paused > claimed (the bot's is #17's, section
+// 6 below). The old chip said "In progress" for all of them.
 
 // A session as composeInProgress now reports it (`sessions[]`, #1112).
 const sess = (over) => ({
@@ -134,18 +134,15 @@ const sess = (over) => ({
   ...over,
 });
 
-test('_issueInProgress ORs sessions/claims with live headless state', () => {
+test('_issueInProgress reads the sessions and claims', () => {
   const AppView = makeAppView();
   assert.equal(AppView._issueInProgress(baseIssue()), false);
   assert.equal(AppView._issueInProgress(baseIssue({
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: null },
   })), true);
-  assert.equal(AppView._issueInProgress(baseIssue({ headless: { status: 'generating' } })), true);
-  assert.equal(AppView._issueInProgress(baseIssue({ headless: { status: 'ready' } })), true);
-  assert.equal(AppView._issueInProgress(baseIssue({ headless: { status: 'failed' } })), false);
 });
 
-test('_issueWorkState names each of the seven states with its own tone', () => {
+test('_issueWorkState names each of a person\'s states with its own tone', () => {
   const AppView = makeAppView();
   const st = (over) => AppView._issueWorkState(baseIssue(over));
   const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
@@ -169,25 +166,10 @@ test('_issueWorkState names each of the seven states with its own tone', () => {
   assert.equal(busy.tone, 'emerald');
   assert.equal(busy.spinner, true);
 
-  const auto = st({ headless: { status: 'generating' } });
-  assert.equal(auto.key, 'auto_solving');
-  assert.equal(auto.label, 'Auto-solving…');
-  assert.equal(auto.spinner, true);
-
   const paused = st({ in_progress: ip({ sessions: [sess({ status: 'paused' })] }) });
   assert.equal(paused.key, 'paused');
   assert.equal(paused.label, 'Started · maya', 'the word "paused" is never shown');
   assert.equal(paused.tone, 'zinc');
-
-  const question = st({ headless: { status: 'ready', outcome: 'question' } });
-  assert.equal(question.key, 'answer_needed');
-  assert.equal(question.label, 'Needs an answer');
-  assert.equal(question.tone, 'amber');
-
-  const draft = st({ headless: { status: 'ready', outcome: 'spec' } });
-  assert.equal(draft.key, 'draft_ready');
-  assert.equal(draft.label, 'Draft ready to review');
-  assert.equal(draft.tone, 'amber');
 
   const claimed = st({
     in_progress: ip({
@@ -206,31 +188,23 @@ test('_issueWorkState names each of the seven states with its own tone', () => {
 test('_issueWorkState precedence: first match wins, in the documented order', () => {
   const AppView = makeAppView();
   const st = (over) => AppView._issueWorkState(baseIssue(over)).key;
-  const withSess = (sessions, headless, claims) => ({
+  const withSess = (sessions, claims) => ({
     in_progress: {
       count: sessions.length, users: sessions.map((s) => s.username), peopleTotal: 1,
       mine: false, claims: claims || [], sessions, target: null,
     },
-    headless: headless || null,
   });
 
   // in_review beats everything else that could be true at once.
   assert.equal(st(withSess(
     [sess({ status: 'promoted' }), sess({ sessionId: 2, status: 'active', busy: true })],
-    { status: 'generating' },
     [{ username: 'bob', mine: false }]
   )), 'in_review');
-  // working beats an auto-solve run and a claim.
-  assert.equal(st(withSess([sess()], { status: 'generating' }, [{ username: 'bob', mine: false }])), 'working');
-  // auto_solving beats a paused session.
-  assert.equal(st(withSess([sess({ status: 'paused' })], { status: 'generating' })), 'auto_solving');
-  // paused beats a finished run and a claim.
-  assert.equal(st(withSess([sess({ status: 'paused' })], { status: 'ready', outcome: 'question' })), 'paused');
-  // answer_needed beats draft_ready (which is the other `ready` outcome) …
-  assert.equal(st(withSess([], { status: 'ready', outcome: 'question' })), 'answer_needed');
-  // … and both beat a bare claim.
-  assert.equal(st(withSess([], { status: 'ready', outcome: 'code' }, [{ username: 'bob', mine: false }])), 'draft_ready');
-  assert.equal(st(withSess([], null, [{ username: 'bob', mine: false }])), 'claimed');
+  // working beats a paused session and a claim.
+  assert.equal(st(withSess([sess(), sess({ sessionId: 2, status: 'paused' })], [{ username: 'bob', mine: false }])), 'working');
+  // paused beats a claim.
+  assert.equal(st(withSess([sess({ status: 'paused' })], [{ username: 'bob', mine: false }])), 'paused');
+  assert.equal(st(withSess([], [{ username: 'bob', mine: false }])), 'claimed');
 });
 
 test('chip names the viewer as "you" and suffixes the TRUE extra headcount', () => {
@@ -261,10 +235,6 @@ test('chip names the viewer as "you" and suffixes the TRUE extra headcount', () 
     count: 5, users: ['maya', 'bob', 'cara', 'dan', 'eve'], peopleTotal: 6, mine: false,
     claims: [], sessions: [sess()], target: null,
   }), /Being worked on · maya \+5/);
-  // The three bot states name nobody — there is no person at a keyboard.
-  const auto = workChipHtml(AppView, baseIssue({ headless: { status: 'generating' } }));
-  assert.match(auto, /Auto-solving…/);
-  assert.ok(!auto.includes(' · '), 'no name on a bot state');
 });
 
 test('the chip is exactly ONE badge carrying its state key', () => {
@@ -313,15 +283,6 @@ test('chip is a button when a target exists, a plain span otherwise', () => {
   }));
   assert.match(plain, /<span/);
   assert.ok(!plain.includes('openInProgressTarget'));
-
-  // Headless-only status renders the informational chip (its row's own
-  // auto-solve buttons navigate).
-  const headlessOnly = workChipHtml(AppView, baseIssue({
-    headless: { status: 'generating' },
-  }));
-  assert.match(headlessOnly, /<span/);
-  assert.match(headlessOnly, /Auto-solving…/);
-  assert.match(headlessOnly, /auto-solve/i);
 });
 
 test('openInProgressTarget always opens the lifecycle-aware change page', () => {
@@ -576,7 +537,7 @@ test('MERGED kanban card opens "Closed #N" in the Homeroom issue topic', () => {
 
 // ── 5. kanban routing ────────────────────────────────────────────────────
 
-test('_bucketDevItems routes in-progress issues (sessions, claims, headless) to the In-progress column', () => {
+test('_bucketDevItems routes in-progress issues (sessions, claims) to the In-progress column', () => {
   const AppView = makeAppView();
   const plain = baseIssue({ number: 1 });
   const viaSessions = baseIssue({
@@ -587,14 +548,13 @@ test('_bucketDevItems routes in-progress issues (sessions, claims, headless) to 
     number: 3,
     in_progress: { count: 0, users: [], mine: false, claims: [{ username: 'bob', userId: 5, mine: false }], target: null },
   });
-  const viaHeadless = baseIssue({ number: 4, headless: { status: 'generating' } });
   const behindProposal = baseIssue({
     number: 5,
     in_progress: { count: 1, users: ['maya'], mine: false, claims: [], target: { kind: 'proposal', sessionId: 77 } },
   });
 
   const buckets = AppView._bucketDevItems({
-    issues: [plain, viaSessions, viaClaim, viaHeadless, behindProposal],
+    issues: [plain, viaSessions, viaClaim, behindProposal],
     proposals: [{ id: 77, status: 'promoted', linked_issues: [5] }],
     gov: [], merged: [], mySessions: [], sharedSessions: [],
   });
@@ -609,7 +569,7 @@ test('_bucketDevItems routes in-progress issues (sessions, claims, headless) to 
   // #1251: the issue an open promoted proposal addresses is In progress
   // too — it used to be dropped from both issue columns, which left it
   // visible in the list feed but findable nowhere on the board.
-  assert.deepEqual(inProgressNums, [2, 3, 4, 5]);
+  assert.deepEqual(inProgressNums, [2, 3, 5]);
 });
 
 // ── 6. #17: the Homeroom bot on the request ──────────────────────────────
@@ -663,7 +623,6 @@ test('#17: precedence: a person in review or at work outranks the bot; the bot o
   const working = st({ in_progress: ip({ sessions: [sess()] }) });
   assert.equal(working.key, 'working');
   assert.match(working.note, /Also: the Homeroom bot is building it\./, 'the note still says the bot is on it');
-  assert.equal(st({ headless: { status: 'generating' } }).key, 'bot');
   assert.equal(st({ in_progress: ip({ sessions: [sess({ status: 'paused' })] }) }).key, 'bot');
   assert.equal(st({
     in_progress: ip({ count: 0, users: [], claims: [{ username: 'bob', userId: 8, mine: false }] }),
@@ -747,25 +706,22 @@ test('B10c: a picked-up request says who said they would work on it, and when it
 
 // ── A change already waiting for approval ───────────────────────────────
 //
-// Build it now is hidden while a change for the request is up for approval
-// (the work state is in_review, or addressed_by is in review), and the
-// "Waiting for approval" chip is filled rather than tinted so it reads as
-// the request's status. Every other action stays.
+// Nothing that starts the work is offered while a change for the request is
+// up for approval (the work state is in_review, or addressed_by is in
+// review): not Work on this with Homeroom bot, and not the bot's own ask
+// where its door is on. Every other action stays.
 
-test('a request with a change waiting for approval offers no Build it now, on the card or in ⋯', () => {
+test('a request with a change waiting for approval offers nothing to start, on the card or its page', () => {
   const AppView = makeAppView();
   const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
   const inReview = baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted' })] }) });
   const mineInReview = baseIssue({ in_progress: ip({ users: ['me'], mine: true, sessions: [sess({ status: 'promoted', mine: true, username: 'me' })] }) });
   const addressed = baseIssue({ addressed_by: { sessionId: 7, state: 'review', prNumber: 12 } });
 
-  // The control: an ordinary request offers it. 1 Nov 2026: its face is
-  // Work on this with Homeroom bot, and Build it now is the ⋯'s first row,
-  // as an agent session.
-  const work = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: true }), (it) => it.label);
+  // The control: an ordinary request's face is Work on this with Homeroom
+  // bot (1 Nov 2026).
   assert.equal(AppView._issuePrimaryActionSpec(baseIssue()).label, 'Work on this with Homeroom bot');
   assert.ok(hasAction(AppView._issueCardModel(baseIssue()), 'workOnIssueWithBot'));
-  assert.equal(work(baseIssue())[0], 'Build it in an agent session');
 
   for (const issue of [inReview, mineInReview, addressed]) {
     assert.equal(AppView._issueAwaitingApproval(issue), true);
@@ -775,7 +731,6 @@ test('a request with a change waiting for approval offers no Build it now, on th
       assert.ok(!hasAction(model, 'workOnIssueWithBot'));
       assert.ok(!cardHtml(model).includes('Build it now'));
     }
-    assert.ok(!work(issue).includes('Build it in an agent session'), 'nor its ⋯ row');
     // The other actions stay: Claim on the face, the rest in the detail list.
     assert.ok(hasAction(AppView._issueCardModel(issue), 'markIssueInProgress')
       || hasAction(AppView._issueCardModel(issue), 'clearIssueClaim'));
@@ -786,15 +741,14 @@ test('a request with a change waiting for approval offers no Build it now, on th
   // A change merged, or still being worked on, does not hide it.
   assert.equal(AppView._issueAwaitingApproval(baseIssue({ addressed_by: { sessionId: 7, state: 'merged' } })), false);
   assert.equal(AppView._issuePrimaryActionSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) })).label, 'Work on this with Homeroom bot');
-  // The viewer's own Start more work is not Build it now, and stays.
-  assert.equal(AppView._issuePrimaryActionSpec({ ...inReview, myPrSessionId: 5 }).label, 'Start more work');
 
-  // Where the bot's button is on the face, Build it now is the ⋯'s row: hidden too.
+  // Where the bot's door is on, its ask is the face's act: hidden too.
   AppView._ghIssuesMeta = { myRemaining: 5, homeroomBot: { typicalMinutes: 8 } };
-  const rows = (issue) => Array.from(AppView._issueMenuItems(issue, { progressOnFace: true }), (it) => it.label);
-  assert.ok(rows(baseIssue()).includes('Build it now'));
-  assert.ok(!rows(inReview).includes('Build it now'));
-  assert.ok(!rows(addressed).includes('Build it now'));
+  assert.ok(hasAction(AppView._issueCardModel(baseIssue()), 'askBotToBuild'));
+  for (const issue of [inReview, addressed]) {
+    assert.equal(AppView._issuePrimaryActionSpec(issue), null);
+    assert.ok(!hasAction(AppView._issueCardModel(issue), 'askBotToBuild'));
+  }
 });
 
 test('"Waiting for approval" is a quiet grey tint, never a filled chip', () => {

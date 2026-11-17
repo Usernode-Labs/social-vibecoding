@@ -1,16 +1,15 @@
 'use strict';
 
-// The OpenRouter session Mayor (#2809/#2810): the Anthropic Messages shapes
-// the chat route speaks, translated to OpenRouter Chat Completions and back,
-// and the per-session setup that decides whether a session gets a Mayor at
-// all. No network: the client takes an injected fetch.
+// The OpenRouter chat client (services/openrouter-mayor.js, from the session
+// Mayor of #2809/#2810; the Homeroom bot's reviewer reads a change through
+// it): the Anthropic Messages shapes its callers speak, translated to
+// OpenRouter Chat Completions and back. No network: the client takes an
+// injected fetch.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const mayor = require('../src/services/openrouter-mayor');
-const credentialStore = require('../src/services/credential-store');
-const agentModels = require('../src/services/agent-models');
 const llmTelemetry = require('../src/services/llm-telemetry');
 
 const DISPATCH_TOOL = {
@@ -360,92 +359,6 @@ test('each call records content-free telemetry on the session', async (t) => {
   assert.equal(event.outcome, 'success');
   assert.equal(JSON.stringify(event).includes('secret prompt text'), false);
   assert.equal(JSON.stringify(event).includes('Hello there'), false);
-});
-
-test('a session gets a Mayor only with a usable key and a model that calls tools', async (t) => {
-  const originals = {
-    readMetadata: credentialStore.readMetadata,
-    readSecret: credentialStore.readSecret,
-    resolveModelPricing: agentModels.resolveModelPricing,
-  };
-  t.after(() => Object.assign(credentialStore, {
-    readMetadata: originals.readMetadata,
-    readSecret: originals.readSecret,
-  }));
-  t.after(() => { agentModels.resolveModelPricing = originals.resolveModelPricing; });
-
-  let meta = { status: 'valid', revision: 3, metadata: { source: 'usernode_managed' } };
-  let catalog = { id: 'z-ai/glm-5.3-flash', supportsTools: true, supportsReasoning: true };
-  credentialStore.readMetadata = async () => meta;
-  credentialStore.readSecret = async ({ expectedRevision }) => (expectedRevision === 3 ? 'sk-or-v1-x' : null);
-  agentModels.resolveModelPricing = async () => catalog;
-
-  const config = {
-    openrouterSessionMayorEnabled: true,
-    codexOpenrouterEnabled: true,
-    openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
-  };
-  const session = { id: 7, agent_model: 'deepseek/deepseek-v4.1-flash' };
-
-  const resolved = await mayor.resolveForSession({ pool: {}, config, session, userId: 1 });
-  assert.equal(resolved.error, undefined);
-  assert.equal(resolved.model, 'deepseek/deepseek-v4.1-flash', 'the session-pinned model is the Mayor');
-  assert.equal(resolved.modelLabel, 'openrouter/deepseek/deepseek-v4.1-flash');
-  assert.equal(resolved.usesIncludedKey, true);
-
-  meta = { ...meta, metadata: { source: 'user' } };
-  assert.equal((await mayor.resolveForSession({ pool: {}, config, session, userId: 1 })).usesIncludedKey, false);
-
-  assert.deepEqual(
-    await mayor.resolveForSession({ pool: {}, config: { ...config, openrouterSessionMayorEnabled: false }, session, userId: 1 }),
-    { error: 'disabled' },
-  );
-  assert.deepEqual(
-    await mayor.resolveForSession({ pool: {}, config: { ...config, codexOpenrouterEnabled: false }, session, userId: 1 }),
-    { error: 'backend_disabled' },
-  );
-
-  catalog = { ...catalog, supportsTools: false };
-  assert.deepEqual(await mayor.resolveForSession({ pool: {}, config, session, userId: 1 }), { error: 'model_without_tools' });
-  catalog = null; // catalog unavailable: tool support unknown, not refused
-  assert.equal((await mayor.resolveForSession({ pool: {}, config, session, userId: 1 })).error, undefined);
-
-  meta = { status: 'invalid', revision: 3 };
-  assert.deepEqual(await mayor.resolveForSession({ pool: {}, config, session, userId: 1 }), { error: 'credential_required' });
-});
-
-test('a session\'s Mayor takes the platform\'s host shortlist for its own model', async (t) => {
-  const originals = {
-    readMetadata: credentialStore.readMetadata,
-    readSecret: credentialStore.readSecret,
-    resolveModelPricing: agentModels.resolveModelPricing,
-  };
-  t.after(() => Object.assign(credentialStore, {
-    readMetadata: originals.readMetadata,
-    readSecret: originals.readSecret,
-  }));
-  t.after(() => { agentModels.resolveModelPricing = originals.resolveModelPricing; });
-  credentialStore.readMetadata = async () => ({ status: 'valid', revision: 1, metadata: { source: 'usernode_managed' } });
-  credentialStore.readSecret = async () => 'sk-or-v1-x';
-  agentModels.resolveModelPricing = async () => ({ supportsTools: true });
-
-  const config = {
-    openrouterSessionMayorEnabled: true,
-    codexOpenrouterEnabled: true,
-    openrouterDefaultCodexModel: 'z-ai/glm-5.3-flash',
-    openrouterProviderShortlists: { 'deepseek/deepseek-v4.1-flash-1017': 'parasail', 'z-ai/glm-5.3-flash': 'none' },
-  };
-  const sent = async (agentModel) => {
-    const { fetchImpl, calls } = fakeFetch(completion({ content: 'ok' }));
-    const { client } = await mayor.resolveForSession({
-      pool: {}, config, session: { id: 7, agent_model: agentModel }, userId: 1, fetchImpl,
-    });
-    await client.streamChat({ messages: [{ role: 'user', content: 'hi' }] });
-    return calls[0].body.provider;
-  };
-  assert.deepEqual((await sent('openrouter/deepseek/deepseek-v4.1-flash-1017')).only, ['parasail']);
-  assert.deepEqual(await sent(null), { ...LISTENER_PREFERENCES, allow_fallbacks: true }, 'the default model, unlisted by `none`');
-  assert.deepEqual(await sent('m/x'), { allow_fallbacks: true, ...DENY });
 });
 
 test('#3557: a PDF goes to OpenRouter as a file part only for a model listed as taking files', async () => {

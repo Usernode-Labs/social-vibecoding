@@ -110,7 +110,8 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   // #3206: on All a kind chip may narrow it (tests/notifications-kind-filter.test.js).
   assert.match(screen, /const rows = tab === 'unread' \? unread\s*: kindOn \? all\.filter\(/);
   assert.match(screen, /at: view\.createdAtMs \|\| 0/);
-  assert.match(screen, /entry\.at >= boundary/);
+  // #6479: Today / Earlier is the picked zone's calendar day (splitToday).
+  assert.match(screen, /const \{ today, earlier \} = splitToday\(entries\)/);
   assert.match(screen, /_onItemClick\(view\.id\)/);
   assert.match(screen, /markAllRead\(\)/);
   assert.match(screen, /loadOlder\(\)/);

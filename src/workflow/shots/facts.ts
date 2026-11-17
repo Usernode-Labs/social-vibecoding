@@ -1,8 +1,7 @@
 // What the shots machine reads inside a transition: the proposal's row
 // (locked first, so a turn or a merge committed while the lock was waited
 // for is seen), its app, whether its preview serves a head, and whether
-// anyone else works on it (a coding turn, a turn on a local agent, an old
-// flow's operation).
+// anyone else works on it (a coding turn, an old flow's operation).
 
 import type { Tx } from '../kernel/index.ts';
 import { botLookingSql, operationsLiveSql, syncWorkingSql } from '../session-work.ts';
@@ -23,8 +22,7 @@ export interface Session {
   // A head its preview serves, or whose checks settled (a verdict that
   // needed no preview): ready to be shot.
   readyHeads: string[];
-  // Its agent is free: no coding turn, no turn on a local agent, no old
-  // flow's operation.
+  // Its agent is free: no coding turn, no old flow's operation.
   agentBusy: boolean;
   // The slot as [main] left it, read when the machine first takes the
   // proposal.
@@ -50,8 +48,6 @@ export async function readFacts(tx: Tx, sessionId: number): Promise<Facts> {
             cs.shots_state, cs.shots_run_id, cs.shots_detail,
             r.id AS run_id, r.state AS run_state, r.head_sha AS run_head, r.failure_code AS run_failure_code,
             (cs.active_turn IS NOT NULL
-              OR EXISTS (SELECT 1 FROM local_agent_turns t
-                          WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'running'))
               OR ${operationsLiveSql('cs.id')} OR ${syncWorkingSql('cs.id', { started: true })} OR ${botLookingSql('cs.id')}) AS agent_busy,
             a.slug AS app_slug
        FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id

@@ -207,6 +207,10 @@
     "text": "Nothing is waiting on your vote in any of your projects.",
     "description": "Shown in place of the Needs you feed on the Communities screen only when nothing at all is waiting for this person: no proposal, competing change, question or group decision."
   },
+  "reel.emptyProject": {
+    "text": "Nothing is waiting on your vote in {{project}}.",
+    "description": "Shown on one project's own Needs you page when nothing in that project is waiting for this person: no proposal, competing change, question or group decision. {{project}} is the project's name. Other projects may still have votes waiting, so it speaks for this project only."
+  },
   "reel.done": {
     "text": "Back to Home",
     "description": "Button on the card at the end of the Needs you page (every vote waiting on the person across their projects): returns to Home, where their communities are."

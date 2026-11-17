@@ -345,7 +345,7 @@ export function mergeGate(active: Count, yesCount: Count, noCount: Count, opened
 //      columns (computeRulesGate). Stored in apps.governance_rules; null
 //      keeps regimes 1-3.
 
-export interface StoredGroup { name: string; key: string; people: string[]; ids: number[] }
+export interface StoredGroup { name: string; key: string; people: string[]; ids: number[]; keptByApp?: boolean }
 export interface StoredRules { preset: PresetKey | null; groups: StoredGroup[]; rules: Rule[] }
 
 export interface Governance {
@@ -367,6 +367,7 @@ export function rulesFromColumn(raw: unknown): StoredRules | null {
     key: groupKey(g.name),
     people: Array.isArray(g.people) ? g.people.filter((p: unknown) => typeof p === 'string') : [],
     ids: Array.isArray(g.ids) ? g.ids.map((id: unknown) => parseInt(String(id), 10)).filter(Number.isFinite) : [],
+    ...(g.keptByApp ? { keptByApp: true } : {}),
   })) : [];
   const keys = new Set(groups.map((g) => g.key));
   const rules: Rule[] = v.rules.filter((r: any) => r && typeof r.group === 'string'

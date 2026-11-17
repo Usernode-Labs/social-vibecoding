@@ -4,16 +4,23 @@
  * request used to open a thread of the chat's own beside it: the request's
  * card again, its updates, and a box to "Reply about this request…". That
  * was a second view of a thread that already has one, the request's public
- * page, and it was reachable from nowhere else: not Main Chat, and not the
- * bot page's list of threads. So a thread in this chat is now only one the
- * person started (or a draft the bot opened for them, which the list shows
- * with a lock), and everything about a request opens the request's page:
- * beside the bot page on a desktop, in Main Chat's place (the side panel,
- * as the list's rows do), else the page itself.
+ * page, and it was reachable from nowhere else: not the bot page's list of
+ * threads. So a thread in this chat is only one the person started (or one
+ * the bot opened for them, which the list shows with a lock), and
+ * everything about a request opens the request's page: beside the bot page
+ * on a desktop, in its column (the side panel, as the list's rows do), else
+ * the page itself.
  *
- * What still waits on the person in the chat (a question to answer, a plan
- * to build, a button to press) is drawn whole in Main Chat, where they answer
- * it (./bot-news-line.tsx asksInChat), so nothing is left only in a thread.
+ * A project's first version is not a request's story (15 Nov 2026). Its
+ * news used to stand for the project's hub here, which was right while that
+ * news was a line of Main Chat. Since 14 Nov 2026 it is the first message of
+ * a thread the bot page lists ("Plant Pal, first version"): the one a
+ * person's old Main Chat messages were listed as (services/earlier-chat.js),
+ * or the one a first version's own notice opens (homeroom-bot-dm.js
+ * placeFor). Standing for the hub, that thread closed as it opened and the
+ * project's hub came up in its place, so it could never be read. It stands
+ * for no page, as the server has it (conversations.js isRequestNewsMeta: a
+ * first version "has no request page yet").
  */
 
 import { t } from '../../lib/i18n/runtime';
@@ -26,8 +33,8 @@ export interface RequestPage {
   label: string;
   /** Its project, as the side panel's header names it. */
   place: { slug: string; name: string };
-  /** The request, as Main Chat's composer can carry it. Null for a first version. */
-  issueNumber: number | null;
+  /** The request's number. */
+  issueNumber: number;
 }
 
 /** What a request is known by: a bot message's metadata, or a tray job. */
@@ -40,16 +47,16 @@ export interface RequestAbout {
 }
 
 /**
- * Pure: the page a request's story opens on: the request's own, or for a
- * project's first version (which has no request) the project's hub. Null
- * when it names neither.
+ * Pure: the page a request's story opens on, the request's own. Null when it
+ * names no request, and for a project's first version: its number (1, under
+ * its own project) is not a request's, and its story is its thread.
  */
 export function requestPage(about: RequestAbout | null | undefined): RequestPage | null {
   const slug = String(about?.appSlug || '').trim();
   if (!slug) return null;
   const name = String(about?.appName || '').trim() || slug;
   const app = encodeURIComponent(slug);
-  if (about?.firstVersion) return { route: `app/${app}/dev`, label: name, place: { slug, name }, issueNumber: null };
+  if (about?.firstVersion) return null;
   const number = Number(about?.issueNumber);
   if (!Number.isInteger(number) || number <= 0) return null;
   return {
@@ -64,7 +71,8 @@ export function requestPage(about: RequestAbout | null | undefined): RequestPage
  * Pure: the page a bot message about a request stands for, or null for
  * anything else. The bot's own private threads (a draft it opened for the
  * person, a design thread) start on a message of the bot's too: those are
- * the person's threads, listed on the bot page, and stay threads.
+ * the person's threads, listed on the bot page, and stay threads. So does a
+ * first version's, whatever its first message is.
  */
 export function requestPageOf(message: ConversationMessage | null | undefined): RequestPage | null {
   if (!message?.sender?.bot) return null;
@@ -75,34 +83,26 @@ export function requestPageOf(message: ConversationMessage | null | undefined): 
     appName: meta.appName,
     issueNumber: meta.issueNumber,
     firstVersion: meta.firstVersion,
-    title: meta.firstVersion ? null : (meta.requestTitle || meta.issueTitle || null),
+    title: meta.requestTitle || meta.issueTitle || null,
   });
 }
 
 /**
  * Open a request's page from the chat with the bot. Beside the bot page on a
- * desktop the side panel takes it, in Main Chat's place, and Main Chat's
- * composer carries the request (as the list's rows do: features/ai/); anywhere
- * else the page itself, which goes back to where it was opened from.
+ * desktop the side panel takes it, in the page's column (as the list's rows
+ * do: features/ai/); anywhere else the page itself, which goes back to where
+ * it was opened from.
  */
-export function openRequestPage(page: RequestPage, conversationId: number | null = null): void {
+export function openRequestPage(page: RequestPage): void {
   if (typeof window === 'undefined') return;
   const w = window as any;
   try {
-    if (w.UsernodeReact?.sidePanel?.take?.(page.route, { place: page.place, label: page.label })) {
-      if (conversationId && page.issueNumber) {
-        window.dispatchEvent(new CustomEvent('usernode:messages-object-selected', {
-          detail: { type: 'issue', appSlug: page.place.slug, issueNumber: page.issueNumber, title: page.label, conversationId, source: 'list' },
-        }));
-      }
-      return;
-    }
+    if (w.UsernodeReact?.sidePanel?.take?.(page.route, { place: page.place, label: page.label })) return;
   } catch {
     /* the page instead */
   }
   try {
-    if (page.issueNumber) w.Improve?.enterTopicFrom?.(window.location.hash || '#homeroom-bot');
-    else w.AppView?._landOnHub?.(page.place.slug);
+    w.Improve?.enterTopicFrom?.(window.location.hash || '#homeroom-bot');
   } catch {
     /* the page opens all the same */
   }

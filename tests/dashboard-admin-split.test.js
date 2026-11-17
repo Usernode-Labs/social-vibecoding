@@ -10,7 +10,7 @@
 //      the box is off and is dropped when it is on).
 //   2. Source guards — pin the SQL companions on src/routes/dashboard.js and
 //      the staging seed contract on src/db/migrate.js (string-assertion
-//      style, matching tests/ai-progress-estimate.test.js).
+//      style).
 //   3. Client — admin-analytics.js (was public/js/dashboard.js before #860
 //      folded the page into the #admin/analytics section) registers a
 //      per-card tooltip definition for each

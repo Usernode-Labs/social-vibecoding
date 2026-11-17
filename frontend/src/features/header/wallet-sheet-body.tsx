@@ -16,7 +16,7 @@
  * `_showSend`/`_showReceive` wrote into a `#wallet-sheet-expand` div and
  * `_clearExpand()` blanked it — so a wallet refresh landing mid-typing threw
  * away a half-entered address. The expand is a `useState` now and survives a
- * repaint, which is the same fix the dev chat's share popover got.
+ * repaint.
  *
  * Send calls `window.sendTransaction`, which maps to the exact admitted native
  * `submitTransaction` operation. Social owns the returned txId and receipt.

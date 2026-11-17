@@ -166,13 +166,13 @@ test('every icon tile carries .app-icon-tile and no violet colouring', () => {
     assert.doesNotMatch(tile[0], /bg-violet/, 'no violet tile background');
     assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
   }
-  // The Create tile is NOT an app tile: its face is an EMPTY slot (the
-  // prototype's `.tile.create .aic` — a dashed ring, no fill), so it is not
-  // drawn in the shared app-icon face, which is a filled surface. It keeps the
+  // The Create tile is NOT an app tile: its face is its own (the accent as
+  // a gradient since 17 Nov 2026, a dashed ring when locked), so it is not
+  // drawn in the shared app-icon face. It keeps the
   // app face's 56px `rounded-2xl` geometry so it lines up with its neighbours.
   const create = createTileHtml();
   assert.doesNotMatch(create, /app-icon-tile/);
-  assert.match(create, /class="home-create-glyph[^"]*\bh-14 w-14\b[^"]*rounded-2xl[^"]*border-dashed/);
+  assert.match(create, /class="home-create-glyph[^"]*\bh-14 w-14\b[^"]*rounded-2xl/);
 });
 
 // The fainter letter is CSS-side: the tile tags its kind with

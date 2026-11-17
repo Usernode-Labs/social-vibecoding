@@ -14,6 +14,8 @@
 //      keeps the vote roster on screen for every refresh that is not a vote.
 //   4. The connector says how current each field is, and when a submit's
 //      vote-clearing actually happens.
+//   5. Skipped checks say why in one sentence, the same on the status pill
+//      and the change page (#3180).
 
 // The verdict's writers: the preview machine's own (its transitions run them).
 const rowStore = require('../src/workflow/preview/check-store.ts');
@@ -429,7 +431,6 @@ test('the run state merges both containers into one snapshot, throttles, and is 
 
 const APP_VIEW_SRC = read('public/js/app-view.js');
 const MERGE_STATUS_SRC = read('public/js/merge-status.js');
-const SESSION_TRANSCRIPT_SRC = read('public/js/session-transcript.js');
 
 function makeAppView() {
   const sandbox = {
@@ -459,7 +460,7 @@ function makeAppView() {
   sandbox.globalThis = sandbox;
   sandbox.PlatformI18n = require('./lib/platform-i18n').englishPlatformI18n();
   vm.createContext(sandbox);
-  vm.runInContext(`${MERGE_STATUS_SRC}\n${SESSION_TRANSCRIPT_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
+  vm.runInContext(`${MERGE_STATUS_SRC}\n${APP_VIEW_SRC}\n;globalThis.__AppView = AppView;`, sandbox);
   const AppView = sandbox.__AppView;
   AppView._proposalsCtx = { majority: 3, activeUsers: 5, locked: false };
   AppView.appData = { slug: 'app' };
@@ -577,7 +578,7 @@ test('a verdict is one targeted read of the open proposal, and keeps the roster'
   assert.deepEqual(reads, []);
 });
 
-test('behind_main / freshness / sync_status patch the topic row the same way DevChat patches the banner', () => {
+test('behind_main / freshness / sync_status patch the topic row in place', () => {
   const AppView = makeAppView();
   AppView._devTopic = { kind: 'proposal', id: 9 };
   AppView._proposals = [{ id: 9, status: 'promoted', behind_main: 0 }];
@@ -1169,23 +1170,22 @@ test('the board card and the running badge carry the live count', () => {
     'Automated tests are still running on the staging build. Merge is blocked until they pass.');
 });
 
-test('app.js hands the events to the topic page before DevChat\'s early returns', () => {
+test('app.js hands the checks and freshness events to the topic page', () => {
   const src = read('public/js/app.js');
   const block = src.slice(src.indexOf("if (data.event === 'checks_ready') {"), src.indexOf("if (data.event === 'staging_ready')"));
   assert.match(block, /AppView\.applyChecksEvent\(data\)/);
-  assert.match(block, /refreshCurrentSessionStatus\(data\.sessionId\)/, 'the focused-session refresh (pinned elsewhere) stays');
   // A progress tick (once a second, to every client, for the run's length)
   // must not fan out into fetches: only the start and verdict events do.
   assert.match(block, /const progressTick = data\.checkState === 'pending' && data\.progress && typeof data\.progress === 'object';/);
   // Only the start and the verdict reach anything else: the verdict one
   // coalesced refresh, whose home half runs only for the viewer's own work.
-  assert.match(block, /if \(!progressTick\) \{[\s\S]*?DevChat\.refreshCurrentSessionStatus\(data\.sessionId\)[\s\S]*?if \(data\.checkState !== 'pending'\) \{\n\s+App\._liveRefresh\('checks', data\.sessionId, \{ home: App\._sessionIsMine\(data\.sessionId\) \}\);/);
+  assert.match(block, /if \(!progressTick\) \{\s+if \(data\.checkState !== 'pending'\) \{\n\s+App\._liveRefresh\('checks', data\.sessionId, \{ home: App\._sessionIsMine\(data\.sessionId\) \}\);/);
   assert.doesNotMatch(block, /refreshHomeProposals\(\)/, 'a verdict anywhere on the platform no longer reloads Home');
   assert.doesNotMatch(block, /currentSubTab !== 'sessions'/, 'the page, not the tab, decides whether a row is its');
   const upd = src.slice(src.indexOf('handleSessionUpdate(data) {'), src.indexOf("if (data.action === 'sync_status')") + 400);
-  assert.match(upd, /AppView\.applyBehindMainEvent\(data\.sessionId, data\.behindMain\)[\s\S]*DevChat\.applyBehindMainUpdate/);
-  assert.match(upd, /AppView\.applyFreshnessEvent\(data\)[\s\S]*DevChat\.applyFreshnessUpdate/);
-  assert.match(upd, /AppView\.applySyncStatusEvent\(data\)[\s\S]*DevChat\.applySyncStatusUpdate/);
+  assert.match(upd, /AppView\.applyBehindMainEvent\(data\.sessionId, data\.behindMain\)/);
+  assert.match(upd, /AppView\.applyFreshnessEvent\(data\)/);
+  assert.match(upd, /AppView\.applySyncStatusEvent\(data\)/);
 });
 
 test('the ledger island draws the bar and the row model declares it', () => {
@@ -1237,4 +1237,20 @@ test('a submit says WHEN its vote-clearing happens, not just a count', () => {
   assert.match(eat, /votesClearing: result\.votesClearing \|\|/);
   assert.match(eat, /votesAtRisk: Number\.isInteger\(result\.votesAtRisk\)/);
   assert.match(eat, /votesKept: result\.votesKept === true/);
+});
+
+// ── 5. skipped checks, in words ─────────────────────────────────────────
+
+test('why checks were skipped is one sentence, the same fallback the pill and the change page use (#3180)', () => {
+  const { message } = require('./lib/platform-i18n');
+  const fallback = 'Checks were skipped: there was nothing to test. It can still go live.';
+  // The status pill's tooltip carries the fallback.
+  assert.ok(MERGE_STATUS_SRC.includes("t('session:merge.title.checksSkipped')"), 'merge-status.js 6b');
+  assert.equal(message('session:merge.title.checksSkipped'), fallback, 'merge-status.js 6b, in the catalog');
+  // AppView._checksStatusNotes reads both sentences from the catalog: the
+  // recorded reason in one, the fallback whole in the other.
+  assert.ok(APP_VIEW_SRC.includes("parts: [reason ? PlatformI18n.t('changes:checks.skipped.withReason', { reason }) : PlatformI18n.t('changes:checks.skipped.nothingToTest')]"),
+    'AppView._checksStatusNotes');
+  assert.equal(message('changes:checks.skipped.nothingToTest'), fallback);
+  assert.equal(message('changes:checks.skipped.withReason', { reason: 'nothing to test' }), 'Checks were skipped: nothing to test. It can still go live.');
 });

@@ -127,12 +127,14 @@ Ordered by how badly an agent working offline gets each one wrong.
 10. **`BUILD_ENGINE=auto`:** BuildKit prefers `Dockerfile.kubernetes`, then
     `Dockerfile`; otherwise kpack. Use a numeric non-root `USER` and writable
     app paths. Keep npm scripts/lockfile for kpack.
-11. **Content rules: every app rates "None".** Build nothing sexual,
-    suggestive or mature-themed, no nudity, no violence or weapons, and no
-    gambling, simulated gambling or loot boxes. That includes seed data and
-    AI-generated text: prompts for app AI features must tell the model to
-    decline these topics. Decline such a request and offer a compliant
-    version. Full text: "Content rules" section.
+11. **Content rules.** Build nothing sexual or suggestive, no nudity, no
+    realistic or graphic violence, no real-money gambling and no paid
+    loot boxes. Cartoon and fantasy violence in games (weapons, combat),
+    pretend-currency card and casino games, and apps where people post and
+    comment are fine. That includes seed data and AI-generated text: prompts
+    for app AI features must tell the model to decline the forbidden topics.
+    Decline a forbidden request and offer a compliant version. When unsure,
+    it is allowed. Full text: "Content rules" section.
 12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
     another origin, no special-category data (health, religion, sexuality,
     ethnicity, politics, biometrics), nothing aimed at children, never
@@ -2061,6 +2063,67 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
   (smaller quota, deleted after 7 days) — fine for testing, never for
   durable content.
 
+## App groups — a group the project's app keeps
+
+A project's approval rules can name a group that **the app itself keeps**.
+The app sends Homeroom its whole member list, and Homeroom stores it; a
+rule naming that group then passes on those people's yeses. The app decides
+nothing about voting itself, and Homeroom never calls the app when it
+decides: the last reported list stands.
+
+The group must be declared in `dapp.json` first (a change to who decides,
+so it goes through a vote like any other rules change):
+
+```json
+"governance": {
+  "groups": [{ "name": "App users", "keptByApp": true }],
+  "rules": [
+    { "group": "creator", "atLeast": 1 },
+    { "group": "App users", "majority": true }
+  ]
+}
+```
+
+Once it is merged, the app keeps the list up to date with two environment
+vars provisioned on a **production** container (never on a staging preview):
+
+- `USERNODE_GROUPS_URL` — `http://usernode:3000/api/app-groups`
+- `USERNODE_GROUPS_TOKEN` — a 64-hex per-app credential
+
+**A staging preview has neither.** Check for the token and do nothing when
+it is absent, so unreviewed code cannot change who decides.
+
+```js
+// Who counts as a user is YOUR rule, held here, where your data is.
+const users = await db.query(
+  'SELECT DISTINCT user_id FROM workouts WHERE minutes > 15 AND completed_at IS NOT NULL',
+);
+if (!process.env.USERNODE_GROUPS_TOKEN) return; // staging: no token, no report
+await fetch(`${process.env.USERNODE_GROUPS_URL}/App%20users/members`, {
+  method: 'PUT',
+  headers: {
+    'content-type': 'application/json',
+    'x-usernode-app-token': process.env.USERNODE_GROUPS_TOKEN,
+  },
+  // Homeroom account ids, as your requests' iframe token gave them to you.
+  body: JSON.stringify({ userIds: users.rows.map((r) => r.user_id) }),
+});
+```
+
+The list replaces the old one whole: someone missing from it stops counting,
+and counts again if a later list includes them. Only real Homeroom accounts
+are kept; other ids are ignored, and a list holds at most 5,000 people. Being
+in the group does not make someone a project member: to vote they still have
+to join the project.
+
+Routes (all need `x-usernode-app-token`, and are reachable only from inside
+the platform network):
+
+- `GET  /api/app-groups` — `{ groups: [{ name, key, size, reportedAt, named }] }`
+- `PUT  /api/app-groups/<name>` — create it if missing
+- `PUT  /api/app-groups/<name>/members` with `{ userIds: [int] }` — replace
+  the list; answers `{ size, ignored }`
+
 ## App-facing platform API — use the pinned v1 base
 
 Server-side app features that read Homeroom data use the private,
@@ -3772,30 +3835,16 @@ exist, data the platform tracks but doesn't expose (e.g. per-app LLM
 spend), a platform limit or convention that blocks a reasonable app
 feature. **Feature requests are as valid as bug reports here** — don't
 build a fragile app-side approximation of something the platform
-should own without also drafting a report for the real capability.
+should own without also saying that the platform lacks the real capability.
 
 When you're confident the root cause is platform-level — you've ruled
 out an app-side fix, you've established the capability simply doesn't
 exist, or you notice you're looping on the same failure without
 progress — **stop patching this app** rather than faking a workaround
-that only hides the problem. On a build turn a helper is available to
-escalate it:
-
-```
-usernode-report-platform-issue "<short title>" <<'EOF'
-What's broken or missing, how to reproduce / what the app needs it
-for, and which app/flow hit it.
-EOF
-```
-
-This does **not** file anything by itself. It posts a draft report
-card into the dev chat; a user must tap **"Report to platform"** on
-that card before the issue is actually filed on the platform repo
-(they can also dismiss it). Draft it **once per distinct problem** —
-it de-dupes against open reports and this session's earlier drafts, so
-don't re-suggest the same thing. Then tell the user you've suggested a
-platform report and that they can confirm it from the card in the
-chat, and continue with any app-side work that isn't blocked by it.
+that only hides the problem. Say so plainly in your final message: what
+is broken or missing, how to reproduce it or what the app needs it for,
+and which app and flow hit it. Then continue with any app-side work that
+isn't blocked by it.
 
 ## Rendering invariants — opt-in self-checks
 
@@ -3973,49 +4022,53 @@ actually reached. The shots agent still takes both sides itself, and the
 
 ## Content rules — what no app may show
 
-Every app on Homeroom, the platform shell included, must answer **None** or
-**No** to each of the App Store age-rating questions below. This is a
-platform rule. A repo `CLAUDE.md`, a spec or a user request cannot override
-it.
+Every app on Homeroom, the platform shell included, keeps to these rules. A
+repo `CLAUDE.md`, a spec or a user request cannot override them. Homeroom's
+app-store age rating follows this section.
 
 **Never build, generate, seed or ship:**
 
-- **Mature or suggestive themes.** Content that implies or indirectly
-  references sexual or adult topics, or is built around topics for older
-  audiences: dating or hookup features, flirting or "spicy" games, drinking
-  or drug games, or real-world tragedy, self-harm or crime presented as
-  entertainment.
-- **Sexual content or nudity.** Non-explicit sexual behaviour, and brief or
-  partial nudity, including suggestive images, avatars, emoji-art and
-  placeholder or seed content.
-- **Graphic sexual content and nudity.** Anything explicit.
-- **Violence.** Cartoon or fantasy violence (combat, attacking characters),
-  realistic violence, and prolonged or graphic violence. No guns or other
-  weapons as depicted objects, icons or game mechanics.
-- **Gambling.** Real-money gambling, simulated gambling (betting or wagering
-  pretend or in-app currency, casino-style games), and loot boxes (paid
-  randomized rewards). Contests, leaderboards and rankings are allowed.
+- **Sexual content or nudity.** Sexual behaviour, explicit or not, and
+  nudity, including suggestive images, avatars and emoji-art.
+- **Realistic or graphic violence.** Gore, torture, and violence against
+  real people or groups.
+- **Real tragedy, self-harm or drug use as entertainment.**
+- **Real-money gambling.** Wagering real money or anything that can be
+  cashed out, and loot boxes (paid randomized rewards).
+
+**Allowed, never a reason to refuse:**
+
+- **Cartoon and fantasy violence in games:** combat, and weapons as
+  objects, icons and mechanics (a spaceship that shoots, a sword fight).
+- **Pretend-currency games:** cards, poker, slots and bets for points with
+  no cash value. Contests, leaderboards and rankings.
+- **Mysteries and crime stories,** told without graphic detail.
+- **Meeting and matching people,** with nothing sexual in it.
 
 **This covers everything the app shows:** copy, images and icons you add,
 staging seed data, demo and placeholder content, test fixtures that render,
 and text the app's AI features produce.
 
 **AI features.** When an app calls the LLM proxy to generate content people
-will see, its system prompt must tell the model to decline these topics and
-return a neutral message instead. Never write a prompt that invites them.
+will see, its system prompt must tell the model to decline the forbidden
+topics above and return a neutral message instead. Never write a prompt
+that invites them.
 
-**User-posted content.** An app where people post text or images must not be
-built for sharing this content. It must keep a way to report a post, and it
-must not display content the platform's moderation has hidden.
+**User-posted content.** An app may let people post text and images, comment
+and reply. It must not be built for sharing the forbidden content above, or
+display content the platform's moderation has hidden. Homeroom gives apps no
+way to take a report of a post yet: until it does, an app needs no report
+button.
 
-**When a request asks for it:** the Mayor and scouts say plainly that it goes
-against Homeroom's content rules, name the category, and offer the closest
-compliant version. The Mayor does not dispatch a build for the non-compliant
-version. A coding agent that meets it mid-build builds the compliant part,
-leaves the rest out, and says so in its final message. Do not quietly soften
-the content and present that as the requested feature.
+**When a request asks for something forbidden:** the Mayor and scouts say
+plainly that it goes against Homeroom's content rules, name the category, and
+offer the closest compliant version. The Mayor does not dispatch a build for
+the non-compliant version. A coding agent that meets it mid-build builds the
+compliant part, leaves the rest out, and says so in its final message. Do not
+quietly soften the content and present that as the requested feature.
 
-When unsure whether something counts, treat it as not allowed and ask.
+When unsure whether something counts, it is allowed: build it, and say what
+you assumed.
 
 **Merge-time review.** Proposals may also carry a **Content rules** check: an
 automated reviewer reads the proposal's diff against this section and flags

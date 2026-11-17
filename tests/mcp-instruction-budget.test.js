@@ -203,7 +203,7 @@ test('the charter carries what the instructions had to drop', () => {
   assert.match(full, /update that same proposal instead of opening a second one/);
   assert.match(full, /EXACTLY as returned/);
   assert.match(full, /never append a correction/);
-  assert.match(full, /start_platform_build/);
+  assert.match(full, /This connector starts no build on Homeroom itself/);
   assert.ok(
     full.length > tools.SERVER_INSTRUCTIONS.length * 3,
     'the charter is substantially more than the briefs — otherwise the split bought nothing'

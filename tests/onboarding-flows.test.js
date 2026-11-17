@@ -64,7 +64,7 @@ test('a lane holds only while the person is active', () => {
   assert.equal(flows.classify({ ...base, recent: false }).out, 'none', 'never in a lane is not lapsed');
 });
 
-test('the door is the invite when it came first, else the waitlist, else let in directly', () => {
+test('the door is the invite when it was followed before they were in, else the waitlist, else let in directly', () => {
   const invite = { by: 'ben', project: 'Garden', slug: 'garden', how: 'signed_up', status: 'joined', openedAt: '2026-09-30T09:00:00Z' };
   const out = assembled([
     person({ userId: 1, name: 'direct' }),
@@ -73,6 +73,9 @@ test('the door is the invite when it came first, else the waitlist, else let in 
     person({ userId: 4, name: 'inside_first', invite, inviteAt: '2026-10-20T09:00:00Z' }),
     person({ userId: 5, name: 'both_ways', invite, inviteAt: '2026-08-20T09:00:00Z', releasedAt: '2026-09-28T10:00:00Z', waitlist: { joinedAt: '2026-09-01T10:00:00Z', waitedDays: 27, discovery: null } }),
     person({ userId: 6, name: 'typed', releasedAt: '2026-09-28T10:00:00Z', waitlist: { joinedAt: '2026-09-01T10:00:00Z', waitedDays: 27, discovery: 'a podcast' } }),
+    // Signed up through a link: queued on the waitlist a moment before the
+    // invite was recorded, and let in a week later.
+    person({ userId: 7, name: 'queued_invitee', invite, inviteAt: '2026-09-21T10:00:05Z', releasedAt: '2026-09-28T10:00:00Z', waitlist: { joinedAt: '2026-09-21T10:00:00Z', waitedDays: 7, discovery: 'Friend' } }),
   ]);
   const by = Object.fromEntries(out.people.map((p) => [p.n, p]));
   assert.deepEqual([by.direct.door, by.direct.src], ['direct', 'unrecorded']);
@@ -80,6 +83,8 @@ test('the door is the invite when it came first, else the waitlist, else let in 
   assert.deepEqual([by.invited.door, by.invited.src, by.invited.linkJoin], ['invite', 'invite', false]);
   assert.deepEqual([by.inside_first.door, by.inside_first.linkJoin], ['direct', true], 'an invite followed from inside is not the door');
   assert.equal(by.both_ways.door, 'invite', 'the invite came before they joined the waitlist');
+  assert.deepEqual([by.queued_invitee.door, by.queued_invitee.src, by.queued_invitee.wait], ['invite', 'invite', 7],
+    'a waitlist row of their own does not make the waitlist their door');
   assert.equal(by.typed.src, 'other', 'anything else they typed');
   assert.deepEqual(by.invited.inv, { by: 'ben', n: 'Garden', aud: 'private', how: 'signed_up', status: 'joined', seen: true });
 });
@@ -103,6 +108,38 @@ test('how far they got: in, waiting, the mail not followed, or too early to say'
   assert.equal(by[2].got, 'waiting');
   assert.deepEqual([by[3].got, by[3].first, by[3].opened], ['in', 'none', false]);
   assert.deepEqual(out.rules, { recentDays: 28, tooNewDays: 7, returnDays: 2 });
+});
+
+test('an account made while waiting, not opened since being let in, is the waitlist\'s loss; a join the platform applied is not an act', () => {
+  const waitlist = { joinedAt: '2026-08-20T10:00:00Z', waitedDays: 40, discovery: null };
+  const idle = [done('account'), done('access'), open('opened'), open('first_act')];
+  const at = (key, when, note) => ({ key, state: 'done', at: when, note: note || null });
+  const out = assembled([
+    // Signed up in August, let in in October, never back.
+    person({ userId: 1, name: 'away', accountAt: '2026-08-21T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00Z', waitlist, steps: idle }),
+    // The same, let in three days ago.
+    person({ userId: 2, name: 'fresh', accountAt: '2026-08-21T10:00:00Z', releasedAt: '2026-11-10T10:00:00Z', accessAt: '2026-11-10T10:00:00Z', waitlist, steps: idle }),
+    // The same, and came back.
+    person({ userId: 3, name: 'back', accountAt: '2026-08-21T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00Z', waitlist }),
+    // Made the account from the admit mail, minutes after being let off, and never opened it.
+    person({ userId: 4, name: 'from_mail', accountAt: '2026-10-01T10:20:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:20:00Z', waitlist, steps: idle }),
+    // A queued invite, joined for them at the moment they were let in.
+    person({ userId: 5, name: 'queued', accountAt: '2026-09-10T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00.000Z', waitlist,
+      steps: [done('account'), done('access'), { key: 'opened', state: 'skipped' }, at('first_act', '2026-10-01T10:00:00.000Z', 'joined')] }),
+    // Joined a community themselves, a day after being let in.
+    person({ userId: 6, name: 'joiner', accountAt: '2026-09-10T10:00:00Z', releasedAt: '2026-10-01T10:00:00Z', accessAt: '2026-10-01T10:00:00Z', waitlist,
+      steps: [done('account'), done('access'), done('opened'), at('first_act', '2026-10-02T09:00:00Z', 'joined')] }),
+    // Never on the waitlist: an old account given access later is not this.
+    person({ userId: 7, name: 'old_hand', accountAt: '2026-05-01T10:00:00Z', accessAt: '2026-08-01T10:00:00Z', steps: idle }),
+  ]);
+  const by = Object.fromEntries(out.people.map((p) => [p.n, p]));
+  assert.deepEqual([by.away.got, by.away.noAccount, by.away.first, by.away.lane], ['away', false, 'none', 'none']);
+  assert.deepEqual([by.fresh.got, by.fresh.tooNew, by.fresh.noAccount], ['new', true, false], 'this week: too early to say, with an account');
+  assert.deepEqual([by.back.got, by.back.first], ['in', 'app'], 'came back: in, like anyone else');
+  assert.deepEqual([by.from_mail.got, by.from_mail.opened], ['in', false], 'signed up on being let in: a loss after signing up');
+  assert.deepEqual([by.queued.got, by.queued.first], ['away', 'none'], 'the platform joined them; they did nothing');
+  assert.deepEqual([by.joiner.got, by.joiner.first], ['in', 'joined']);
+  assert.equal(by.old_hand.got, 'in');
 });
 
 test('projects are private or public by their audience, and a lane lapses after four weeks', () => {
@@ -174,7 +211,7 @@ test('the demo is whole, made up, the same every time, and follows the real lane
     assert.deepEqual([again.lane, again.out], [p.lane, p.out]);
   }
   for (const lane of ['none', 'pub', 'share', 'both']) assert.ok(a.people.some((p) => p.lane === lane), `somebody in ${lane}`);
-  for (const got of ['in', 'new', 'waiting', 'mail_ignored', 'mail_none']) assert.ok(a.people.some((p) => p.got === got), got);
+  for (const got of ['in', 'new', 'away', 'waiting', 'mail_ignored', 'mail_none']) assert.ok(a.people.some((p) => p.got === got), got);
   assert.ok(a.people.some((p) => p.out === 'lapsed'), 'somebody lapsed');
   const keys = new Set(a.people.map((p) => p.k));
   assert.equal(keys.size, a.people.length, 'one thread each');
@@ -199,6 +236,48 @@ test('the route answers the demo under staging without reading the database', as
   const body = await res.json();
   assert.equal(body.demo, true);
   assert.equal(body.people.length, demo.demo().people.length);
+});
+
+test('who came in from the admit mail, and who after a nudge', () => {
+  const let_ = '2026-10-01T10:00:00Z', first = '2026-10-03T10:00:00Z', last = '2026-10-07T10:00:00Z';
+  const base = { door: 'waitlist', got: 'in', releasedAt: let_, nudgedAt: [first, last], hadAccount: false };
+  assert.equal(flows.mailIn({ ...base, signedInAt: '2026-10-01T11:00:00Z' }), 'admit', 'before any nudge went');
+  assert.equal(flows.mailIn({ ...base, signedInAt: '2026-10-04T09:00:00Z' }), 'nudge1');
+  assert.equal(flows.mailIn({ ...base, signedInAt: '2026-10-07T10:00:00Z' }), 'nudge2', 'the moment the last went counts as after it');
+  assert.equal(flows.mailIn({ ...base, nudgedAt: [first, null], signedInAt: '2026-10-20T09:00:00Z' }), 'nudge1', 'only the first went');
+  assert.equal(flows.mailIn({ ...base, nudgedAt: [null, null], signedInAt: '2026-10-20T09:00:00Z' }), 'admit', 'let off before the nudges began');
+  // No sign-in dated by the mail's link or a code: an account made since dates it, one made before does not.
+  assert.equal(flows.mailIn({ ...base, accountAt: '2026-10-05T09:00:00Z' }), 'nudge1');
+  assert.equal(flows.mailIn({ ...base, accountAt: '2026-08-21T10:00:00Z', hadAccount: true }), 'had');
+  assert.equal(flows.mailIn({ ...base, accountAt: '2026-08-21T10:00:00Z' }), null);
+  // Only for somebody off the waitlist who got in.
+  assert.equal(flows.mailIn({ ...base, got: 'mail_ignored', signedInAt: null }), null);
+  assert.equal(flows.mailIn({ ...base, door: 'invite', signedInAt: '2026-10-01T11:00:00Z' }), null);
+
+  const waitlist = { joinedAt: '2026-09-01T10:00:00Z', waitedDays: 30, discovery: null };
+  const none = { hasAccount: false, userId: null, accountAt: null, accessAt: null, steps: [open('account')], waitlist };
+  const out = assembled([
+    person({ userId: 1, name: 'nudged_in', releasedAt: let_, accountAt: '2026-10-04T09:00:00Z', accessAt: '2026-10-04T09:00:00Z', waitlist,
+      signedInAt: '2026-10-04T09:00:00Z', nudgedAt: [first, null], firstAnswer: 'template' }),
+    person({ ...none, signupId: 11, releasedAt: let_, stuckAt: 'code_asked', nudgedAt: [first, last] }),
+    person({ userId: 2, name: 'old_hand', accountAt: '2026-05-01T10:00:00Z', accessAt: '2026-08-01T10:00:00Z', firstAnswer: 'look' }),
+  ]);
+  const by = Object.fromEntries(out.people.map((p) => [p.k, p]));
+  assert.deepEqual([by[1].mailIn, by[1].nudges, by[1].ask], ['nudge1', 1, 'template']);
+  assert.deepEqual([by.s11.mailIn, by.s11.nudges, by.s11.ask], [null, 2, null], 'nudged twice, not in: no answer without an account');
+  assert.deepEqual([by[2].mailIn, by[2].nudges, by[2].ask], [null, 0, 'look'], 'never on the waitlist: no mail, but the question still asked');
+});
+
+test('the demo carries the nudges and the first answers, and they agree with what each person did', () => {
+  const d = demo.demo();
+  const wl = d.people.filter((p) => p.door === 'waitlist');
+  assert.ok(wl.some((p) => p.mailIn === 'nudge1') && wl.some((p) => p.mailIn === 'nudge2') && wl.some((p) => p.mailIn === 'admit'));
+  assert.ok(wl.some((p) => p.got !== 'in' && p.nudges > 0));
+  for (const ask of ['template', 'custom', 'look']) assert.ok(d.people.some((p) => p.ask === ask), ask);
+  for (const p of d.people) {
+    if (p.mailIn) assert.equal(p.door, 'waitlist');
+    if (p.ask === 'template' || p.ask === 'custom') assert.ok(p.made.length > 0, `${p.n} made an app from the question`);
+  }
 });
 
 test('the read is on the Journey gate: any admin reads, and the left-out list applies', () => {

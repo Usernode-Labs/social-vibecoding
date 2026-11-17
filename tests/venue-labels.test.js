@@ -23,8 +23,8 @@ const vm = require('vm');
 
 const registry = require('../src/agents/registry');
 
-// The six venues, in group order: three that build in this chat, three that
-// build somewhere else. Kept in sync with public/js/build-venues.js VENUES.
+// The six venues a change can be built in. Kept in sync with
+// public/js/build-venues.js VENUES.
 const VENUE_LABELS = {
   'usernode-claude': 'Homeroom · Claude',
   'usernode-openrouter': 'Homeroom · OpenRouter',
@@ -91,63 +91,18 @@ run('the backend registry uses the two in-chat venue labels', () => {
 
 run('build-venues.js is the single list and matches this vocabulary', () => {
   const BuildVenues = loadBrowserModule('public/js/build-venues.js', 'BuildVenues');
-  const byId = new Map(BuildVenues.VENUES.map((v) => [v.id, v]));
-  assert.strictEqual(byId.size, 6, 'expected exactly six venues');
+  // The list itself is module-private; a stored build_venue names a venue
+  // verbatim, so each id is reached through the one function a change card
+  // reads (sessionVenue).
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'public/js/build-venues.js'), 'utf8');
+  const list = SRC.slice(SRC.indexOf('var VENUES = ['), SRC.indexOf('];', SRC.indexOf('var VENUES = [')));
+  const ids = Array.from(list.matchAll(/^\s*id: '([^']+)',/gm), (m) => m[1]);
+  assert.strictEqual(ids.length, 6, 'expected exactly six venues');
   for (const [id, label] of Object.entries(VENUE_LABELS)) {
-    assert.ok(byId.has(id), `missing venue ${id}`);
-    assert.strictEqual(byId.get(id).label, label, `venue ${id} label drifted`);
-  }
-});
-
-run('dev-flow-select titles are the three venues it owns', () => {
-  const DevFlowSelect = loadBrowserModule('public/js/dev-flow-select.js', 'DevFlowSelect');
-  // Array.from: FLOWS is built inside the vm realm, so its Array has a
-  // different prototype and deepStrictEqual refuses it on identity alone.
-  const titles = Array.from(DevFlowSelect.FLOWS.map((f) => f.title));
-  assert.deepStrictEqual(titles, [
-    VENUE_LABELS['usernode-claude'],
-    VENUE_LABELS['web-claude-code'],
-    VENUE_LABELS['web-codex'],
-  ]);
-});
-
-run('credit-options offers the local pair as two distinct venues', () => {
-  const CreditOptions = loadBrowserModule('public/js/credit-options.js', 'CreditOptions');
-  // sessionBridgeEnabled since #1281: the CLI-lease venue is opt-in now, so
-  // the flag has to be on for it to be in any list at all. What this test
-  // pins is unchanged — that the two "on your computer" answers are two
-  // distinct venues with the shared vocabulary's names, not one row saying
-  // "use a coding tool on your computer" about both.
-  const titles = CreditOptions.options({
-    externalFlowsAvailable: true, sessionBridgeEnabled: true,
-  }).map((o) => o.title);
-  assert.ok(titles.includes(VENUE_LABELS.local), 'missing the CLI-lease venue');
-  assert.ok(titles.includes(VENUE_LABELS['own-tools-pr']), 'missing the own-tools/PR venue');
-  assert.ok(titles.includes(VENUE_LABELS['web-claude-code']));
-  assert.ok(titles.includes(VENUE_LABELS['web-codex']));
-  // Both local venues survive the no-external-flows deployment too.
-  const offline = CreditOptions.options({
-    externalFlowsAvailable: false, sessionBridgeEnabled: true,
-  }).map((o) => o.title);
-  assert.ok(offline.includes(VENUE_LABELS.local));
-  assert.ok(offline.includes(VENUE_LABELS['own-tools-pr']));
-});
-
-run('session-options states no venue name of its own', () => {
-  // The "⋯" menu used to enumerate the routes itself, one row per tool,
-  // which is one of the two places the two "Claude Code"s were offered
-  // inches apart. It carried a single door to the shared list after #1086,
-  // and #1353 removed the button and the menu with it — what is left of the
-  // module is the local-CLI card. So the guard is that the file names no
-  // venue at all now: the card describes a lease, and the venue vocabulary
-  // is build-venues.js's alone.
-  const SRC = fs.readFileSync(path.join(__dirname, '..', 'public/js/session-options.js'), 'utf8');
-  const code = stripComments(SRC);
-  for (const label of Object.values(VENUE_LABELS)) {
-    assert.ok(
-      !code.includes(label),
-      `session-options re-states the venue label ${label} instead of deferring to build-venues.js`,
-    );
+    assert.ok(ids.includes(id), `missing venue ${id}`);
+    const v = BuildVenues.sessionVenue({ buildVenue: id });
+    assert.strictEqual(v && v.id, id, `venue ${id} does not resolve to itself`);
+    assert.strictEqual(v.label, label, `venue ${id} label drifted`);
   }
 });
 
@@ -165,10 +120,7 @@ run('no retired label survives in any copy-owning module', () => {
   const files = [
     'src/agents/registry.js',
     'public/js/build-venues.js',
-    'public/js/dev-flow-select.js',
     'public/js/credit-options.js',
-    'public/js/session-options.js',
-    'frontend/src/features/dev-chat/dev-chat.js',
   ];
   for (const rel of files) {
     const src = stripComments(fs.readFileSync(path.join(__dirname, '..', rel), 'utf8'));

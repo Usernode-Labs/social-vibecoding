@@ -20,6 +20,15 @@
 // message that rang (MailOwed → dm.mail, appended in that message's own
 // transaction: homeroom-bot-dm.js sendDm), one per message.
 // workflow-foundation's design-bot-replies.md is the design.
+//
+// Task 2148: the person's Stop (StopRequested, routes/conversations.js). The
+// answer under way is marked stopped and its work is left running: the work
+// ends the turn at its next safe point and says "Stopped." in the answer's
+// place (services/homeroom-bot-stop.js, which reads the mark). Its work is
+// not cancelled: a cancelled item's turn would run on while the next
+// message's answer started beside it, and nothing would know what it had
+// done. A try waiting to be asked again is dropped and says so (dm.stopped);
+// so does an answer that deferred, or failed for good, after the Stop.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, Machine, Outcome, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
@@ -33,7 +42,13 @@ export const WORK = Object.freeze({
   act: 'dm.act',
   hello: 'dm.hello',
   mail: 'dm.mail',
+  stopped: 'dm.stopped',
 });
+
+// A Stop is for the answer the person was looking at: one heard this long
+// after it was pressed (asked again after a rollout, platform.reaskRefused)
+// stops nothing.
+export const STOP_FRESH_MS = 5 * 60 * 1000;
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -44,7 +59,9 @@ interface Note { kind: string; status: 'pending' | 'done' | 'failed' | 'exhauste
 // again, on the word that the newer answer reads the older message too. It
 // did not, and two promised answers never came. Now the newer answer is told
 // which messages it owes as well (answerOwed), oldest first.
-interface Owed { messageId: number; conversationId: number; attempt: number; also?: number[] }
+// `stop`: the person stopped this answer (task 2148): its work ends its turn
+// and says so, and nothing is asked again for it.
+interface Owed { messageId: number; conversationId: number; attempt: number; also?: number[]; stop?: true }
 export interface Data {
   userId: number;
   // Messages written and not answered yet, oldest first.
@@ -106,7 +123,18 @@ const EVENTS = {
     if (!p?.mail || typeof p.mail !== 'object' || Array.isArray(p.mail)) throw new Error('mail must be an object');
     return { userId: int(p?.userId, 'userId'), messageId: int(p?.messageId, 'messageId'), mail: p.mail as Record<string, Json> };
   },
+  // Their Stop of the answer to `messageId` (the one the bot's typing named
+  // on their screen), pressed at `at`.
+  StopRequested: (p: any) => {
+    const at = typeof p?.at === 'string' ? Date.parse(p.at) : NaN;
+    if (!Number.isFinite(at)) throw new Error('at must be a time');
+    return {
+      userId: int(p?.userId, 'userId'), conversationId: int(p?.conversationId, 'conversationId'),
+      messageId: int(p?.messageId, 'messageId'), at: new Date(at).toISOString(),
+    };
+  },
 };
+// Never StopRequested: a Stop with no instance has nothing to stop.
 const CREATE = ['Wrote', 'Tapped', 'Greet', 'MailOwed'];
 
 // ── Moves ───────────────────────────────────────────────────────────────
@@ -170,6 +198,15 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
   return (s: DState, e: Event<WorkResultPayload>, _f: Facts, ctx: TransitionContext): Outcome<DState> => {
     const cur = (s as Live).data.current!;
     const d: Data = { ...(s as Live).data, done: Math.max((s as Live).data.done || 0, cur.messageId) };
+    const laterAsked = Number((e.payload.result as any)?.later) || 0;
+    // Stopped by the person. Its work said so when it ended the turn; one
+    // that failed for good instead, or deferred before it saw the Stop, is
+    // said here, under the key of the try that will now never run, and
+    // nothing is asked again or owed by the next message.
+    if (cur.stop) {
+      if (status === 'done' && !(laterAsked > 0 && laterAsked <= DEFER_DELAYS_MS.length)) return next(d);
+      return stoppedLine(d, status === 'done' ? { ...cur, attempt: laterAsked } : cur);
+    }
     if (status !== 'done') {
       // Failed for good: they hear the bot could not answer, once.
       const key = `sorry:${cur.messageId}`;
@@ -177,7 +214,7 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
       const withNote = d.notes[key] ? d : { ...d, notes: { ...d.notes, [key]: { kind: WORK.sorry, status: 'pending' as const } } };
       return next(withNote, d.notes[key] ? {} : { work: [sorry] });
     }
-    const later = Number((e.payload.result as any)?.later) || 0;
+    const later = laterAsked;
     if (later > 0 && later <= DEFER_DELAYS_MS.length && !d.queue.length) {
       const o: Owed = { ...cur, attempt: later };
       return step('trying_later', { ...d, current: null, later: o },
@@ -192,6 +229,40 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
     return next(d);
   };
 }
+
+// The one line a stopped answer says when no turn is there to say it
+// (dm.stopped, under the key of try `o`), once; then the next message.
+function stoppedLine(d: Data, o: Owed): Outcome<DState> {
+  const key = `stopped:${o.messageId}${o.attempt ? `:d${o.attempt}` : ''}`;
+  if (d.notes[key]) return next(d);
+  const work: WorkRequest = { kind: WORK.stopped, key, input: { userId: d.userId, messageId: o.messageId, conversationId: o.conversationId, attempt: o.attempt } };
+  return next({ ...d, notes: { ...d.notes, [key]: { kind: WORK.stopped, status: 'pending' as const } } }, { work: [work] });
+}
+
+// Whether a Stop is for `o` (the answer under way, or the try waiting):
+// theirs, in that conversation, of that message, and pressed just now.
+const stopFor = (o: Owed | null) => (_s: DState, e: Event<any>, _f: Facts, ctx: TransitionContext): Check => {
+  if (ctx.key !== dmKey(e.payload.userId)) return reject('key_mismatch');
+  if (!o || o.messageId !== e.payload.messageId || o.conversationId !== e.payload.conversationId) return reject('not_this_answer');
+  if (Math.abs(ctx.now.getTime() - Date.parse(e.payload.at)) > STOP_FRESH_MS) return reject('too_late');
+  return ok();
+};
+const stopAnswering = {
+  guard: (s: DState, e: Event<any>, f: Facts, ctx: TransitionContext): Check => stopFor((s as Live).data.current)(s, e, f, ctx),
+  // Marked, and left to its work. A second Stop finds it marked already.
+  to: (s: DState): Outcome<DState> => {
+    const d = (s as Live).data;
+    return step('answering', d.current!.stop ? d : { ...d, current: { ...d.current!, stop: true } });
+  },
+};
+const stopTryingLater = {
+  guard: (s: DState, e: Event<any>, f: Facts, ctx: TransitionContext): Check => stopFor((s as Live).data.later)(s, e, f, ctx),
+  // The try is dropped with its timer, and one line says so.
+  to: (s: DState): Outcome<DState> => {
+    const d = (s as Live).data;
+    return stoppedLine({ ...d, later: null }, d.later!);
+  },
+};
 
 function owe(s: DState, e: Event<any>, work: WorkRequest, more: Partial<Data> = {}): Outcome<DState> {
   const d = live(s, e);
@@ -295,16 +366,22 @@ export function botDm(): Machine<DState, Facts> {
     create: CREATE,
     // What web appends: a person's DM, an action tapped, a greeting a route owes, and the
     // mail a DM owes (web sends mail itself, so the list gives it nothing new).
-    web: ['Wrote', 'Tapped', 'Greet', 'MailOwed'],
+    // Their Stop of the answer under way (task 2148).
+    web: ['Wrote', 'Tapped', 'Greet', 'MailOwed', 'StopRequested'],
     decode: (row) => ({ name: row.state, data: row.data } as DState),
     facts: (tx: Tx, _state: DState, event: Event<any>) => readFacts(tx, event),
-    authorize: { Wrote: route, TryAgain: timer, Tapped: route, Greet: route, MailOwed: route },
-    reply: async (_tx, event) => (event.type === 'Tapped' ? { ok: true, choice: (event.payload as any).choice } as Json : undefined),
+    authorize: { Wrote: route, TryAgain: timer, Tapped: route, Greet: route, MailOwed: route, StopRequested: route },
+    reply: async (_tx, event) => {
+      if (event.type === 'Tapped') return { ok: true, choice: (event.payload as any).choice } as Json;
+      // A Stop that was taken: an answer, or a try that waited, is being stopped.
+      if (event.type === 'StopRequested') return { ok: true, stopping: true } as Json;
+      return undefined;
+    },
     transitions: {
-      [NONE]: { Wrote: keyed(wrote), Tapped: always.Tapped, Greet: always.Greet, MailOwed: always.MailOwed },
-      idle: { Wrote: keyed(wrote), TryAgain: { ignore: 'not_waiting' }, ...always },
-      answering: { Wrote: keyed(wrote), TryAgain: { ignore: 'answering' }, ...always },
-      trying_later: { Wrote: keyed(wrote), TryAgain: { to: tryAgain }, ...always },
+      [NONE]: { Wrote: keyed(wrote), Tapped: always.Tapped, Greet: always.Greet, MailOwed: always.MailOwed, StopRequested: { ignore: 'not_answering' } },
+      idle: { Wrote: keyed(wrote), TryAgain: { ignore: 'not_waiting' }, StopRequested: { ignore: 'not_answering' }, ...always },
+      answering: { Wrote: keyed(wrote), TryAgain: { ignore: 'answering' }, StopRequested: stopAnswering, ...always },
+      trying_later: { Wrote: keyed(wrote), TryAgain: { to: tryAgain }, StopRequested: stopTryingLater, ...always },
     } as any,
   });
 }

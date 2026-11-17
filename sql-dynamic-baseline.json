@@ -96,9 +96,9 @@
     {
       "source": "src/middleware/auth.js",
       "kind": "structural-template",
-      "fingerprint": "54be5fab71b82118b2a5",
+      "fingerprint": "ef2f0b9d89189bbc7836",
       "count": 1,
-      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_e"
+      "preview": "`SELECT s.user_id, s.expires_at, s.created_at, s.last_seen_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.review_flow_enabled, u.private_member_si"
     },
     {
       "source": "src/middleware/topochain-auth.js",
@@ -586,6 +586,20 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
+      "fingerprint": "2bde029ab4c2dc90ff7a",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url, cs.branch_name, cs.status, cs.staging_url, -- #2069, as above: a shared draft has neither"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
+      "fingerprint": "2ed058156ad3706d17f7",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "kind": "structural-template",
       "fingerprint": "42c89c7dc3cd0cb79eb0",
       "count": 1,
       "preview": "`SELECT DISTINCT ON (s.session_id) s.session_id, s.version, s.built_at FROM chat_session_specs s JOIN chat_sessions owner_session ON owner_session.id = s.sessio"
@@ -607,30 +621,9 @@
     {
       "source": "src/routes/sessions.js",
       "kind": "structural-template",
-      "fingerprint": "b8a81527854525d2e351",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.user_id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title, cs.session_title, cs.proposed_pr_title, cs.status, cs.linked_issues, cs.shared_"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
       "fingerprint": "ba8110c429c6037d85c2",
       "count": 1,
       "preview": "`SELECT s.version, s.built_at FROM chat_session_specs s WHERE s.session_id = $1 AND ($2::int = $3::int OR ${specVersionSharedVisibilitySql('s', '$3')}) ORDER BY"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "d6def8d6230e5b0888e6",
-      "count": 1,
-      "preview": "`SELECT cs.id, cs.session_title, cs.pr_title, cs.pr_number, cs.pr_url, cs.branch_name, cs.status, cs.staging_url, -- #2069, as above: a shared draft has neither"
-    },
-    {
-      "source": "src/routes/sessions.js",
-      "kind": "structural-template",
-      "fingerprint": "e16f1722cca1c2b80269",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET last_activity_at = NOW()${userOpened ? ', notify_on_done = FALSE' : ''} WHERE id = $1`"
     },
     {
       "source": "src/routes/status.js",
@@ -929,16 +922,23 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "3bb592f2e4ccdb94f841",
+      "fingerprint": "61a5b0d7edd56fa67c61",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
+      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
     },
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "61a5b0d7edd56fa67c61",
+      "fingerprint": "7465ad937edb1a34afe0",
       "count": 1,
-      "preview": "`${mergedRowSelect()} WHERE cs.app_id = $1 AND cs.id = $3 AND (cs.status IN ('promoted', 'merging', 'merged') OR (cs.status IN ('active', 'paused') AND (cs.user"
+      "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "7fd330324b2641e1a416",
+      "count": 1,
+      "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs."
     },
     {
       "source": "src/routes/votes.js",
@@ -967,13 +967,6 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
-      "fingerprint": "ed2a6965e24f99bc2d8f",
-      "count": 1,
-      "preview": "`WITH current_session AS ( SELECT id, approval_epoch FROM chat_sessions WHERE id = $1 AND status IN ('promoted', 'merging') FOR UPDATE ), v AS ( INSERT INTO pr_"
     },
     {
       "source": "src/routes/votes.js",
@@ -1053,13 +1046,6 @@
       "preview": "`SELECT 1 FROM pr_votes pv JOIN chat_sessions cs ON cs.id = pv.session_id JOIN users u ON u.id = pv.user_id WHERE pv.session_id = $1 AND pv.vote = 'yes' AND ${c"
     },
     {
-      "source": "src/services/agent-sessions.js",
-      "kind": "runtime-expression",
-      "fingerprint": "6c88e7a28c84e859a76f",
-      "count": 1,
-      "preview": "claimed ? 'COMMIT' : 'ROLLBACK'"
-    },
-    {
       "source": "src/services/agent-turn.js",
       "kind": "structural-template",
       "fingerprint": "f3a6d402b0a112ee09c3",
@@ -1072,6 +1058,13 @@
       "fingerprint": "93296debe802876c7936",
       "count": 1,
       "preview": "HISTORY_THREADS_SQL"
+    },
+    {
+      "source": "src/services/ai-search.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "9662e9958db993e75ad7",
+      "count": 1,
+      "preview": "SEARCH_SQL"
     },
     {
       "source": "src/services/ai-work.js",
@@ -1181,6 +1174,13 @@
     {
       "source": "src/services/conversations.js",
       "kind": "structural-template",
+      "fingerprint": "99dddf50b42468c94722",
+      "count": 1,
+      "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
+    },
+    {
+      "source": "src/services/conversations.js",
+      "kind": "structural-template",
       "fingerprint": "a2121dc8de81bb0e308a",
       "count": 1,
       "preview": "`${MESSAGE_SELECT} WHERE m.conversation_id = $1 AND ${MAIN_STREAM_ROW} AND m.id > $3 AND NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $2 AND b.b"
@@ -1198,13 +1198,6 @@
       "fingerprint": "e8c55fd031f16d23f09f",
       "count": 1,
       "preview": "`SELECT CASE WHEN user_low_id = $2 THEN user_high_id ELSE user_low_id END AS other_id FROM conversation_direct_pairs WHERE conversation_id = $1 AND (user_low_id"
-    },
-    {
-      "source": "src/services/conversations.js",
-      "kind": "structural-template",
-      "fingerprint": "fe14b0071e91c113a599",
-      "count": 1,
-      "preview": "`SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer, c.channel_key, me.role AS my_role, me.status AS membership_st"
     },
     {
       "source": "src/services/credential-store.js",
@@ -1333,6 +1326,20 @@
       "preview": "`SELECT ${require('./app-access').nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/earlier-chat.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "1bfb384a37dc329650ef",
+      "count": 1,
+      "preview": "CANDIDATES_SQL"
+    },
+    {
+      "source": "src/services/earlier-chat.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "9d1082139d72c4cb203f",
+      "count": 1,
+      "preview": "PENDING_SQL"
+    },
+    {
       "source": "src/services/first-version-rule.js",
       "kind": "structural-template",
       "fingerprint": "c140a8a07ed7396ca452",
@@ -1404,6 +1411,13 @@
     },
     {
       "source": "src/services/homeroom-bot-dm.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "ade21b8a16632e10def2",
+      "count": 1,
+      "preview": "LIST_THREAD_SQL"
+    },
+    {
+      "source": "src/services/homeroom-bot-dm.js",
       "kind": "structural-template",
       "fingerprint": "489298861dae26782c81",
       "count": 1,
@@ -1426,7 +1440,7 @@
     {
       "source": "src/services/homeroom-bot-followup.js",
       "kind": "structural-template",
-      "fingerprint": "9adf25865a09dcace29e",
+      "fingerprint": "abefa06407c619a5a6a2",
       "count": 1,
       "preview": "`SELECT (cs.active_turn IS NOT NULL AND NOT (cs.active_turn->'owner'->>'machine' IS NOT DISTINCT FROM $2 AND cs.active_turn->'owner'->>'key' IS NOT DISTINCT FRO"
     },
@@ -1734,9 +1748,23 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
+      "fingerprint": "a508e7461d899477aedc",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
       "fingerprint": "b83117b670d097e6e2dc",
       "count": 1,
       "preview": "`UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`"
+    },
+    {
+      "source": "src/services/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "be4d5a33a252f2e45702",
+      "count": 1,
+      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
     },
     {
       "source": "src/services/notifications.js",
@@ -1755,13 +1783,6 @@
     {
       "source": "src/services/notifications.js",
       "kind": "structural-template",
-      "fingerprint": "e92a1adcfc139d96e01e",
-      "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
-    },
-    {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
       "fingerprint": "f4f0d5e27ae9dc187fa1",
       "count": 1,
       "preview": "`INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail) SELECT u, $2, NULL, 'app_health', $3 FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS ( S"
@@ -1774,11 +1795,18 @@
       "preview": "`SELECT COUNT(*)::int AS c FROM notifications AS n WHERE n.user_id = $1 AND n.read_at IS NULL AND NOT ${DECIDED_ASK_SETTLED_SQL} AND ${CONVERSATION_ACCESS_SQL} "
     },
     {
-      "source": "src/services/notifications.js",
-      "kind": "structural-template",
-      "fingerprint": "faa284ed94384d34f690",
+      "source": "src/services/old-chat-move.js",
+      "kind": "runtime-expression",
+      "fingerprint": "6aaaf83182bba1443123",
       "count": 1,
-      "preview": "`SELECT n.id, n.kind, CASE WHEN n.read_at IS NULL AND ${DECIDED_ASK_SETTLED_SQL} THEN COALESCE(cs.merged_at, cs.archived_at, n.created_at) ELSE n.read_at END AS"
+      "preview": "PENDING_SQL[source]"
+    },
+    {
+      "source": "src/services/old-chat-move.js",
+      "kind": "runtime-expression",
+      "fingerprint": "e7042f17451d85e8228a",
+      "count": 1,
+      "preview": "SAID_SQL[source]"
     },
     {
       "source": "src/services/onboarding.js",
@@ -1921,20 +1949,6 @@
       "preview": "sql"
     },
     {
-      "source": "src/services/session-bus.js",
-      "kind": "structural-template",
-      "fingerprint": "2258237abfc603d59087",
-      "count": 1,
-      "preview": "`DELETE FROM stream_watchers w WHERE w.opened_at < NOW() - interval '1 minute' AND NOT ${holderAliveSql('w.holder')}`"
-    },
-    {
-      "source": "src/services/session-bus.js",
-      "kind": "structural-template",
-      "fingerprint": "4a479c3887c1957a2b2e",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS n FROM stream_watchers w WHERE w.stream_key = $1 AND ${holderAliveSql('w.holder')}`"
-    },
-    {
       "source": "src/services/shared-objects.js",
       "kind": "structural-template",
       "fingerprint": "07fc5c0dfd474d4567fc",
@@ -2021,9 +2035,9 @@
     {
       "source": "src/services/sync-main.js",
       "kind": "structural-template",
-      "fingerprint": "95e0e13f01f38d328407",
+      "fingerprint": "13d89e36e62c1cb5d26e",
       "count": 1,
-      "preview": "`SELECT cs.active_turn IS NOT NULL OR EXISTS (SELECT 1 FROM local_agent_turns t WHERE t.session_id = cs.id AND t.status IN ('queued', 'offered', 'accepted', 'ru"
+      "preview": "`SELECT cs.active_turn IS NOT NULL OR ${operationsLiveSql('cs.id')} OR ${shotsRunningSql('cs.id')} OR ${buildHoldSql('cs')} OR ${botLookingSql('cs.id')} AS busy"
     },
     {
       "source": "src/services/thread-moves.js",
@@ -2206,13 +2220,6 @@
       "fingerprint": "a38efb21b8bfcf8de23b",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET active_turn = jsonb_set( active_turn, '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $2::jsonb, true) WHERE id = $1 AND activ"
-    },
-    {
-      "source": "src/services/turn-lifecycle.js",
-      "kind": "structural-template",
-      "fingerprint": "ffdbcfbaa56765b4a618",
-      "count": 1,
-      "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
     },
     {
       "source": "src/services/turn-recovery.js",
@@ -2490,9 +2497,9 @@
     {
       "source": "src/workflow/merge-followups/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "48e2b24d263d197f6dbb",
+      "fingerprint": "6546f4bcb3c26b70439c",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.agent_session_id, cs.active_turn IS NOT NULL AS active_turn, cs"
+      "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.user_id, cs.pr_number, cs.pr_title, cs.linked_issues, cs.active_turn IS NOT NULL AS active_turn, cs.is_headless, CASE WH"
     },
     {
       "source": "src/workflow/merge-followups/services.ts",
@@ -2539,7 +2546,7 @@
     {
       "source": "src/workflow/preview/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "9080cc5d6581aec071a8",
+      "fingerprint": "7735b563301b21a31c5b",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.shared_at, cs.branch_name, cs.pr_number, cs.imported_pr_head_sha, cs.reviewed_hea"
     },
@@ -2553,7 +2560,7 @@
     {
       "source": "src/workflow/proposal/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "3923886dc8bca9263782",
+      "fingerprint": "f0bfda8303e734d58580",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, cs.source, cs.is_headless, cs.pr_number, cs.pr_title, cs.branch_name, cs.reviewed_head_sha, cs.imported_pr_head"
     },
@@ -2609,7 +2616,7 @@
     {
       "source": "src/workflow/shots/facts.ts",
       "kind": "structural-template",
-      "fingerprint": "82f09b6e822a16d8913e",
+      "fingerprint": "fbf40c7bd9d0b6f936e5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.app_id, cs.status, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha, cs.staging_commit_sha,"
     },
@@ -2623,9 +2630,9 @@
     {
       "source": "src/workflow/turn/machine.ts",
       "kind": "structural-template",
-      "fingerprint": "9d44871cf656aeabb6da",
+      "fingerprint": "ff36a9a8b1ab2eb7b023",
       "count": 1,
-      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, cs.is_headless, cs.headless_status, cs.headless_outcome, cs.headless_issu"
+      "preview": "`SELECT cs.id, cs.app_id, cs.user_id, cs.status, (cs.shared_at IS NOT NULL) AS shared, a.slug AS app_slug, ${workedOnSql({ turns: false })} AS other_work FROM c"
     }
   ]
 }

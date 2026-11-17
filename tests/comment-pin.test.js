@@ -1136,8 +1136,8 @@ test('requestDesignPicture takes only this frame\'s answer with the id it sent, 
 test('the request is the comment\'s words, plus a link to the change it was pinned in', () => {
   assert.equal(post.descriptionFor('  Make it bigger  ', ''), 'Make it bigger', 'nothing else is added');
   assert.equal(post.descriptionFor('Make it bigger', post.changeLine(4223, 'milkdrop')),
-    'Make it bigger\n\nChange: #app/milkdrop/dev/sessions/4223');
-  assert.equal(post.changeLine(4223, 'milkdrop'), 'Change: #app/milkdrop/dev/sessions/4223');
+    'Make it bigger\n\nChange: #app/milkdrop/dev/proposals/4223');
+  assert.equal(post.changeLine(4223, 'milkdrop'), 'Change: #app/milkdrop/dev/proposals/4223');
   assert.equal(post.changeLine(4223, null), '', 'no slug, no link');
   assert.equal(post.changeLine(null, 'milkdrop'), '', 'no preview, no link');
   assert.equal(post.descriptionFor('Make it bigger', post.changeLine(4223, null)), 'Make it bigger');

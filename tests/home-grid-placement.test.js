@@ -1562,11 +1562,13 @@ test('render() and load() are the only publishers of the grid model', () => {
 const revealHome = () => {
   const h = makeHome({ width: 390 });
   installListEl(h);
-  h.Home._apps = ['a', 'b', 'far'].map(app);
+  // Three rows hold something before the far one: the least Home shows.
+  h.Home._apps = ['a', 'b', 'c', 'far'].map(app);
   h.Home._layouts = {
     4: [
       { type: 'app', slug: 'a', col: 0, row: 0 },
       { type: 'app', slug: 'b', col: 0, row: 1 },
+      { type: 'app', slug: 'c', col: 0, row: 2 },
       { type: 'app', slug: 'far', col: 0, row: 5 },
     ],
   };

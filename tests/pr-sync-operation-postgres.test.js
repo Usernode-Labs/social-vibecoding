@@ -78,7 +78,7 @@ test('a pull request\'s metadata is conductor work', { timeout: 90000 }, async (
     const keys = Object.keys(columns);
     const { rows: [s] } = await pool.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, branch_name, session_title${keys.map((k) => `, ${k}`).join('')})
-       VALUES ($1, $2, 'active', $3, 'Cloned build'${keys.map((_, i) => `, $${i + 4}`).join('')}) RETURNING id`,
+       VALUES ($1, $2, 'active', $3, 'A change'${keys.map((_, i) => `, $${i + 4}`).join('')}) RETURNING id`,
       [a.id, u.id, `dev/sync-${seq}`, ...Object.values(columns)]);
     return { userId: u.id, appId: a.id, sessionId: s.id, branch: `dev/sync-${seq}` };
   }
@@ -107,7 +107,7 @@ test('a pull request\'s metadata is conductor work', { timeout: 90000 }, async (
     const c = await change();
     const before = host.calls.length;
     host.loseNextReply = true;
-    const key = await ask(c, { write: 'create', from: 'clone' });
+    const key = await ask(c, { write: 'create', from: 'staging' });
     assert.equal(host.calls.length, before, 'the web append writes nothing to GitHub');
     await settle();
     const done = await instance(key);
@@ -121,7 +121,7 @@ test('a pull request\'s metadata is conductor work', { timeout: 90000 }, async (
     assert.equal((await row(c.sessionId)).pr_number, pr.number, 'the row learned the number');
 
     // Asked again, the change has its pull request.
-    const again = await ask(c, { write: 'create', from: 'clone' });
+    const again = await ask(c, { write: 'create', from: 'staging' });
     await settle(2);
     assert.equal((await instance(again)).data.created, false);
     assert.equal(host.calls.filter((w) => w[0] === 'createPR').length, writes.filter((w) => w[0] === 'createPR').length);

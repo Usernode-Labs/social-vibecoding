@@ -56,6 +56,17 @@ const PREVIEW = 2;
 /** Fetch a few more than are shown, so "N earlier" is right without a count query. */
 const FETCH_LIMIT = 20;
 
+/**
+ * #6730: the mark that says "this is the comment I already tried to send".
+ * A retry after a failed or hung send reuses it, so the server returns the
+ * row the first attempt stored instead of writing a second one. Same shape
+ * as the Messages composer's key (features/messages/store.ts).
+ */
+function newClientKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function demoQS(): string {
   try {
     return new URLSearchParams(window.location.search).get('demo') === '1' ? '&demo=1' : '';
@@ -152,8 +163,8 @@ export function MessageLine({ m }: { m: FeedThreadMessage }): ReactNode {
  * that make #1584 visible are executable in isolation: the controlled value
  * grows a textarea, and an always-present arrow sends it. Plain Enter is not
  * intercepted — it adds a line; submission belongs to the adjacent arrow and,
- * since #2145, to ⌘/Ctrl+Enter, the chord the dev chat, Close issue and Send
- * feedback already answer to.
+ * since #2145, to ⌘/Ctrl+Enter, the chord Close issue and Send feedback
+ * already answer to.
  *
  * Typing `@` opens the people list (./mention-typeahead.tsx), and `PR#` or a
  * bare `#` the pull-request and issue list (./ref-typeahead.tsx): the group
@@ -224,7 +235,7 @@ export function FeedReplyComposer({
           if (!posting && draft.trim()) void onSubmit();
         }}
       />
-      {/* The dev session's send disc: a 36px filled accent circle with the
+      {/* The send disc: a 36px filled accent circle with the
           up-arrow (app.css `.dev-feed-send`), so every "send" on the platform
           is the same object. */}
       <Button
@@ -281,6 +292,10 @@ export function FeedThread({
   const t = useMessages('project');
   const hostRef = useRef<HTMLDivElement>(null);
   const [draft, setDraft] = useState('');
+  // #6730: the key of the comment currently being sent, and the words it was
+  // sent with. A failure keeps it, so pressing Send again with the same
+  // words is the same comment; editing them makes it a new one.
+  const pendingKeyRef = useRef<{ key: string; content: string } | null>(null);
 
   const load = useCallback(async () => {
     if (readThread(key).loading) return;
@@ -334,14 +349,22 @@ export function FeedThread({
   const submit = useCallback(async () => {
     const content = draft.trim();
     if (!content || readThread(key).posting) return;
+    const pending = pendingKeyRef.current;
+    if (!pending || pending.content !== content) {
+      pendingKeyRef.current = { key: newClientKey(), content };
+    }
+    const clientKey = pendingKeyRef.current.key;
     patchThread(key, { posting: true, error: null });
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, thread_type: type, thread_ref: refId }),
+        body: JSON.stringify({ content, thread_type: type, thread_ref: refId, client_key: clientKey }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Stored (201) or matched to the row the first attempt stored (200):
+      // either way this comment is done, and the next press is a new one.
+      pendingKeyRef.current = null;
       setDraft('');
       patchThread(key, { posting: false });
       // Re-read rather than append what we sent: the server assigns the id and

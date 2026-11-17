@@ -2,25 +2,22 @@
 
 // `proposal.commit`, a platform operation (services/platform-operations.js):
 // a commit a local coding agent made and tested, rebuilt by the code host on
-// a change's branch, on a conductor. Two routes take one, check it, answer
-// their own refusals and ask for this, waiting for its answer:
+// a change's branch, on a conductor. One route takes one, checks it, answers
+// its own refusals and asks for this, waiting for its answer:
 //
 //   handoff  POST /api/sessions/:id/proposal-handoff/commits
 //            (routes/proposal-handoff.js): a CLI hand-off's upload. Under the
 //            proposal lock, as every revision writer of a proposal is; then a
 //            draft PR for a change that has none yet, and for a promoted
 //            proposal the head people vote on (proposal-update.js
-//            reconcileManagedCommitUpload);
-//   turn     POST /api/cli/agent/turns/:id/commit (routes/cli-agent.js): the
-//            commit of a local agent's build turn, under its lease, recorded
-//            as the turn's head.
+//            reconcileManagedCommitUpload).
 //
 // On every attempt, before any write it still has to make, the conductor
 // reads again what the route checked: the change is the requester's and
-// still open, the requester's collab access, that nothing else works on a
-// hand-off, a turn's live lease and its own build turn, the branch and
-// repository the route saw, and the head the route expected to build on. A head this very
-// request moved (its `commit` step) is its own, not a competing one.
+// still open, the requester's collab access, that nothing else works on the
+// hand-off, the branch and repository the route saw, and the head the route
+// expected to build on. A head this very request moved (its `commit` step)
+// is its own, not a competing one.
 //
 // The commit (services/github.js createProposalCommit: the tested tree
 // rebuilt exactly, the branch moved only from the expected parent), its
@@ -32,7 +29,7 @@
 //
 // Input: { surface, sessionId, branch, repoUrl, expectedParent,
 //          localCommitSha, parentSha, parentTreeSha, treeSha, authoredAt,
-//          committedAt, turnId?, leaseId? }
+//          committedAt }
 // Payload: { message, files }, the commit itself (platform-operations, "an
 // operation's large input"), read by the commit step and dropped once it is
 // made or refused.
@@ -40,17 +37,15 @@
 const github = require('./github');
 const githubBudget = require('./github-budget');
 const appAccess = require('./app-access');
-const localAgent = require('./local-agent');
 const prMetadata = require('./pr-metadata');
 const proposalUpdate = require('./proposal-update');
 const previewWorkflow = require('./preview-workflow');
-const repoRef = require('./repo-ref');
 const summaryFreshness = require('./summary-freshness');
 const durableSteps = require('./durable-steps');
 const { beginSessionOperation } = require('./active-workers');
 const log = require('./logger');
 
-const SURFACES = new Set(['handoff', 'turn']);
+const SURFACES = new Set(['handoff']);
 const STATE_CHANGED = Object.freeze({ status: 409, error: 'session_state_changed' });
 // The payload is gone (never in practice: it is dropped only once no write
 // needs it): the same commit asked again is a new request with its files.
@@ -65,10 +60,10 @@ function handoff() {
   return require('../routes/proposal-handoff');
 }
 
-function surfaceOf(request) {
-  const surface = request.input?.surface;
-  if (!SURFACES.has(surface)) throw Object.assign(new Error('Unknown commit surface'), { permanent: true });
-  return surface;
+function requireSurface(request) {
+  if (!SURFACES.has(request.input?.surface)) {
+    throw Object.assign(new Error('Unknown commit surface'), { permanent: true });
+  }
 }
 
 // A head this request's own commit step made.
@@ -115,46 +110,9 @@ async function handoffState(pool, request, user, steps) {
   return { refusal: null, session, revisionKind, repo };
 }
 
-async function turnState(pool, request, user, steps) {
-  const input = request.input;
-  const { rows: [lease] } = await pool.query(
-    `SELECT * FROM session_agent_leases
-      WHERE id = $1 AND user_id = $2 AND released_at IS NULL AND expires_at > NOW()`,
-    [input.leaseId, user.id]
-  );
-  if (!lease) return { refusal: { status: 409, error: 'lease_lost' } };
-  const turn = await localAgent.getTurn(pool, input.turnId);
-  if (!turn || String(turn.lease_id) !== String(lease.id)) return { refusal: { status: 404, error: 'not_found' } };
-  if (!['accepted', 'running'].includes(turn.status)) return { refusal: { status: 409, error: 'turn_not_running' } };
-  if (turn.mode !== 'build') return { refusal: { status: 409, error: 'read_only_turn' } };
-  const { rows: [session] } = await pool.query(
-    `SELECT cs.id, cs.app_id, cs.branch_name, a.repo_url,
-            a.collab_visibility, a.view_visibility, a.moderation_suspended_at
-       FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
-      WHERE cs.id = $1 AND cs.user_id = $2 AND cs.status = 'active'`,
-    [turn.session_id, user.id]
-  );
-  if (!session || Number(session.id) !== Number(input.sessionId)
-      || Number(session.app_id) !== Number(request.appId)) return { refusal: STATE_CHANGED };
-  if (!(await appAccess.checkAppAccess(pool, { ...session, id: session.app_id }, user, 'collab'))) {
-    return { refusal: { status: 404, error: 'not_found' } };
-  }
-  const repo = repoRef.ownerRepo(session.repo_url);
-  if (!github.isEnabled() || !repo || !session.branch_name) return { refusal: { status: 400, error: 'repo_unavailable' } };
-  if (!sameTarget(session, input)) return { refusal: STATE_CHANGED };
-  const head = turn.head_sha || turn.base_sha || null;
-  if (head !== input.expectedParent && !ownHead(steps, head)) return { refusal: STATE_CHANGED };
-  return { refusal: null, session, repo };
-}
-
-function stateOf(pool, request, user, steps) {
-  return surfaceOf(request) === 'turn'
-    ? turnState(pool, request, user, steps)
-    : handoffState(pool, request, user, steps);
-}
-
 async function authorize({ pool }, request, user, { steps = null } = {}) {
-  return (await stateOf(pool, request, user, steps)).refusal;
+  requireSurface(request);
+  return (await handoffState(pool, request, user, steps)).refusal;
 }
 
 function operations() {
@@ -172,26 +130,25 @@ async function abandon({ pool }, request) {
   await dropPayload(pool, request);
 }
 
-// What the code host's refusal is answered with, in each route's own words.
-async function hostRefusal(pool, request, session, err) {
-  const handoffSurface = request.input.surface === 'handoff';
+// What the code host's refusal is answered with, in the route's own words.
+async function hostRefusal(pool, session, err) {
   if (err.code === 'branch_moved') {
-    return handoffSurface ? {
+    return {
       status: 409, error: 'branch_moved',
       message: 'The proposal branch changed. Fetch its current head and rebase the local commit before retrying.',
-    } : { status: 409, error: 'branch_moved' };
+    };
   }
   if (err.code === 'tree_mismatch') {
-    return handoffSurface ? {
+    return {
       status: 409, error: 'tree_mismatch',
       message: 'The uploaded files did not reconstruct the tested local Git tree.',
-    } : { status: 409, error: 'tree_mismatch' };
+    };
   }
   if (err.code === 'parent_tree_mismatch') {
-    return handoffSurface ? {
+    return {
       status: 409, error: 'parent_tree_mismatch',
       message: 'The local commit parent does not match the current proposal tree. Upload local commits in order or rebase onto the current proposal branch.',
-    } : { status: 409, error: 'parent_tree_mismatch' };
+    };
   }
   // The change's branch did not come across when Homeroom moved off GitHub
   // (services/code-missing.js, read live): said so, not as GitHub being
@@ -203,7 +160,7 @@ async function hostRefusal(pool, request, session, err) {
   const detail = github.describeGithubError(err);
   // Never log the host's response data here: a provider validation error may
   // echo fields from the source upload.
-  log.warn('proposal-commit', handoffSurface ? 'Bot-owned commit upload failed' : 'Local agent commit upload failed', {
+  log.warn('proposal-commit', 'Bot-owned commit upload failed', {
     sessionId: Number(session.id), status: detail.status, requestId: detail.requestId, message: detail.message,
   });
   return { status: 503, ...githubBudget.githubUnavailableBody(err) };
@@ -211,7 +168,7 @@ async function hostRefusal(pool, request, session, err) {
 
 // The commit, kept as a step: a retry resumes past it and never asks the
 // host to commit again. A host that refuses is answered at once, with its
-// reason, as these routes always answered; the person or the agent asks
+// reason, as the route always answered; the person or the agent asks
 // again, and the branch then says whether the commit is already there.
 async function commit(pool, request, session, repo, steps) {
   const input = request.input;
@@ -242,7 +199,7 @@ async function commit(pool, request, session, repo, steps) {
   } catch (err) {
     if (steps.stopped || durableSteps.isStopped(err)) throw err;
     await dropPayload(pool, request);
-    return { ok: false, ...(await hostRefusal(pool, request, session, err)) };
+    return { ok: false, ...(await hostRefusal(pool, session, err)) };
   }
   // No write still needs the files.
   await dropPayload(pool, request);
@@ -372,33 +329,9 @@ async function runHandoff({ config, pool }, request, user, steps) {
   });
 }
 
-async function runTurn({ pool }, request, user, steps) {
-  const input = request.input;
-  const state = await turnState(pool, request, user, steps);
-  if (state.refusal) {
-    await dropPayload(pool, request);
-    return { ok: false, ...state.refusal };
-  }
-  const { session, repo } = state;
-  const committed = await commit(pool, request, session, repo, steps);
-  if (!committed.ok) return committed;
-  const { uploaded } = committed;
-  // Multiple commits in one turn upload oldest-first; each expects the
-  // previous one as its parent, which is the turn's head recorded here.
-  const advanced = await steps.once('record', async () => !!(await localAgent.recordTurnHead(pool, {
-    turnId: input.turnId, leaseId: input.leaseId, headSha: uploaded.sha,
-  })));
-  if (!advanced) return { ok: false, status: 409, error: 'turn_not_running' };
-  return {
-    surface: 'turn', headSha: uploaded.sha, treeSha: uploaded.treeSha, branch: session.branch_name,
-    uploaded: !!uploaded.created,
-  };
-}
-
 async function run(deps, request, user, steps) {
-  return surfaceOf(request) === 'turn'
-    ? runTurn(deps, request, user, steps)
-    : runHandoff(deps, request, user, steps);
+  requireSurface(request);
+  return runHandoff(deps, request, user, steps);
 }
 
 module.exports = { authorize, abandon, run, SURFACES };

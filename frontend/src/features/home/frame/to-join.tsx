@@ -65,7 +65,6 @@ function PictureCard({ app, to, flag, badge, meta, end }: {
       badge={badge}
       title={app.name || app.slug}
       line={app.description || undefined}
-      two
       meta={meta}
       end={end}
     />

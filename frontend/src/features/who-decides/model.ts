@@ -17,8 +17,17 @@ export type Kind = 'atLeast' | 'percentOfActive' | 'percentOfEveryone' | 'majori
  * goes live on.
  */
 export interface Rule { group: string; kind: Kind; n: number | null; min?: number | null }
-/** A named group, by the usernames in it. */
-export interface Group { name: string; people: string[] }
+/** A named group: the usernames in it, or, when the app keeps it, its size. */
+export interface Group {
+  name: string;
+  people: string[];
+  /** #6669: the app keeps this group's people; nobody picks them here. */
+  keptByApp?: boolean;
+  /** For a kept group, how many people the app last reported. */
+  size?: number;
+  /** For a kept group, when it last sent its list (ISO), or null. */
+  reportedAt?: string | null;
+}
 /** A rule list, with the groups it can name. `preset` when it is one by name. */
 export interface RulesValue { preset: PresetKey | null; groups: Group[]; rules: Rule[] }
 
@@ -83,7 +92,9 @@ export function blockFor(value: RulesValue): Record<string, unknown> {
   if (same) return { preset: same };
   const nameOf = new Map(value.groups.map((g) => [groupKey(g.name), g.name]));
   const out: Record<string, unknown> = {};
-  if (value.groups.length) out.groups = value.groups.map((g) => ({ name: g.name, people: [...g.people] }));
+  if (value.groups.length) out.groups = value.groups.map((g) => (g.keptByApp
+    ? { name: g.name, keptByApp: true }
+    : { name: g.name, people: [...g.people] }));
   out.rules = value.rules.map((r) => {
     const group = isBuiltIn(r.group) ? r.group : (nameOf.get(r.group) || r.group);
     const rule: Record<string, unknown> = r.kind === 'majority' ? { group, majority: true } : { group, [r.kind]: r.n };
@@ -108,7 +119,7 @@ export interface ApprovalPayload {
   mode?: 'rules' | 'columns';
   preset?: PresetKey | null;
   rules?: Array<Rule & { size?: number; need?: number | null; empty?: boolean }> | null;
-  groups?: Array<{ name: string; key?: string; people: string[] }>;
+  groups?: Array<{ name: string; key?: string; people: string[]; keptByApp?: boolean; size?: number; reportedAt?: string | null }>;
   creator?: { id: number; username: string; display_name?: string | null } | null;
   /** The creator's account no longer exists (apps.created_by is NULL on a
       project that is not the platform's own). Absent from an older server. */
@@ -151,7 +162,10 @@ export function ruleGroupChoices(
 export function currentValue(approval: ApprovalPayload | null | undefined): RulesValue | null {
   if (!approval) return null;
   if (approval.mode === 'rules' && Array.isArray(approval.rules) && approval.rules.length) {
-    const groups = (approval.groups || []).map((g) => ({ name: g.name, people: [...(g.people || [])] }));
+    const groups = (approval.groups || []).map((g) => ({
+      name: g.name, people: [...(g.people || [])],
+      ...(g.keptByApp ? { keptByApp: true, size: g.size ?? 0, reportedAt: g.reportedAt ?? null } : {}),
+    }));
     const rules = approval.rules.map((r): Rule => {
       const rule: Rule = { group: r.group, kind: r.kind, n: r.kind === 'majority' ? null : r.n };
       return minOf(r) != null ? { ...rule, min: minOf(r) } : rule;
@@ -249,12 +263,23 @@ export function rulePhrase(rule: Rule, ctx: { groups: readonly Group[]; creator:
   return translate('dialogs:whoDecides.rule.phrase.atLeast', { group, count: rule.n ?? 1 });
 }
 
+/**
+ * What the line under a group's name counts (#6669): the people picked here,
+ * or, for a group the app keeps, how many it last reported. A kept group the
+ * app has not reported yet reads as any empty group does — "Nobody yet".
+ */
+export function groupPeopleKind(g: Group): 'nobody' | 'people' | 'keptByApp' {
+  if (g.keptByApp) return g.reportedAt ? 'keptByApp' : 'nobody';
+  return g.people.length ? 'people' : 'nobody';
+}
+
 /** How many people a group has, from what the screen knows. Null when it cannot say. */
 export function groupSize(group: string, ctx: { groups: readonly Group[]; creator: string | null; memberCount: number; adminCount: number | null }): number | null {
   if (group === 'creator') return ctx.creator ? 1 : 0;
   if (group === 'members') return ctx.memberCount;
   if (group === 'admins') return ctx.adminCount;
   const g = ctx.groups.find((x) => groupKey(x.name) === group);
+  if (g && g.keptByApp) return g.size ?? 0;
   return g ? g.people.length : 0;
 }
 

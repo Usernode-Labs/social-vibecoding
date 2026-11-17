@@ -281,25 +281,48 @@ test('proposal, app admin: Admin merge, except on an admins-changing PR', () => 
   assert.ok(!escalating.some((l) => /Admin merge/.test(l)));
 });
 
-test('proposal, author: Open session + Withdraw, and no Explore', () => {
+test('proposal, author: Withdraw, and no Explore and no Open session', () => {
+  // "Open session" opened the dev chat behind the author's proposal, which
+  // retired with dev chats; the card itself opens the change page.
   const AppView = makeAppView();
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ user_id: ME })));
-  assert.ok(labels.some((l) => /Open session/.test(l)));
   assert.ok(labels.some((l) => /^Withdraw$/.test(l)));
   assert.ok(!labels.some((l) => /Explore in a coding agent/.test(l)));
-});
-
-test('proposal, author, imported PR: no Open session (there is no in-app session)', () => {
-  const AppView = makeAppView();
-  const labels = menuLabels(AppView, proposalCardHtml(AppView, 
-    PR({ user_id: ME, source: 'imported' })));
   assert.ok(!labels.some((l) => /Open session/.test(l)));
+  const imported = menuLabels(AppView, proposalCardHtml(AppView,
+    PR({ user_id: ME, source: 'imported' })));
+  assert.ok(!imported.some((l) => /Open session/.test(l)));
 });
 
 test('proposal, read-only viewer: only read-safe rows survive', () => {
   const AppView = makeAppView({ readOnly: true, admin: true });
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ pr_url: 'https://github.com/o/r/pull/7' })));
-  assert.equal(labels.join('|'), 'Share to…|View PR on GitHub');
+  assert.equal(labels.join('|'), 'Copy link|Share to…|View PR on GitHub');
+});
+
+test('proposal menu: Copy link copies the change’s address, and only says so when it worked', async () => {
+  const AppView = makeAppView({ readOnly: true });
+  AppView.appData = { slug: 'plant-pal', can_collaborate: false };
+  AppView.__sandbox.location = { origin: 'https://h.test' };
+  const copied = [];
+  const toasts = [];
+  let ok = true;
+  AppView.__sandbox.PlatformUI.copyText = async (text) => { copied.push(text); return ok; };
+  AppView.__sandbox.PlatformUI.toast = (msg) => { toasts.push(msg); };
+  const items = menuItems(AppView, proposalCardHtml(AppView,
+    PR({ id: 4209, pr_url: 'https://github.com/o/r/pull/4209' })));
+  assert.equal(items[0].label, 'Copy link', 'first row');
+  assert.equal(items[0].icon, 'link');
+  items[0].act();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(copied, ['https://h.test/#app/plant-pal/dev/proposals/4209']);
+  assert.deepEqual(toasts, ['Link copied']);
+  // A refused clipboard is silent, as on a governance vote's page.
+  ok = false;
+  items[0].act();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(copied.length, 2);
+  assert.deepEqual(toasts, ['Link copied'], 'no notice when nothing was copied');
 });
 
 test('issue and proposal menus open Share to… with their exact card references (#3660)', () => {
@@ -441,10 +464,10 @@ test('issue: the full demoted set, and Open on GitHub last', () => {
   const labels = menuLabels(AppView, issueCardHtml(AppView, 
     ISSUE({ htmlUrl: 'https://github.com/o/r/issues/5' })));
   // 1 Nov 2026: Build it now left the face for Work on this with Homeroom
-  // bot, and leads the ⋯ as an agent session.
-  assert.equal(labels[0], 'Build it in an agent session');
-  assert.equal(labels[1], 'Pledge kudos');
-  assert.ok(labels.some((l) => /Pledge kudos/.test(l)));
+  // bot. The ⋯ row that built it in an agent session went with agent
+  // sessions, so Pledge kudos leads.
+  assert.equal(labels[0], 'Pledge kudos');
+  assert.ok(!labels.some((l) => /agent session/.test(l)));
   // The claim toggle is PROMOTED to the action band, so it left the menu.
   assert.ok(!labels.some((l) => /Claim it/.test(l)), 'promoted onto the face');
   assert.ok(hasAction(AppView._issueCardModel(ISSUE()), 'markIssueInProgress'),
@@ -512,7 +535,7 @@ test('gov: Admin merge / View campaign / Withdraw by role', () => {
   assert.equal(menuKeyOf(rename), null);
 });
 
-test('own session: visibility, chat-sharing, discussion and Archive', () => {
+test('own session: visibility, discussion and Archive', () => {
   const AppView = makeAppView();
   AppView._sharedById = { 51: { id: 51, chat_count: 2 } };
   const sess = (over) => ({ id: 51, session_title: 'Mine', status: 'active', ...over });
@@ -532,12 +555,14 @@ test('own session: visibility, chat-sharing, discussion and Archive', () => {
   const visHtml = cardHtml(visHtmlModel);
   assert.ok(hasAction(visHtmlModel, '_setSessionShared', 51, false), 'the same pill, flipped');
   assert.match(visHtml, /gc-card-actions[\s\S]*?>Hide</);
+  // The card's "Share chat" row shared the dev chat's transcript; it went
+  // with the dev chat, and the change page keeps its own share.
   assert.equal(menuLabels(AppView, visHtml).join('|'),
-    'Share chat|Open public discussion (2)|View checks|Archive');
+    'Open public discussion (2)|View checks|Archive');
 
   const shared = menuItems(AppView, mySessionCardHtml(AppView, 
     sess({ shared_at: '2026-06-01T00:00:00Z', transcript_shared_at: '2026-06-01T01:00:00Z' })));
-  assert.ok(shared.some((i) => /Chat shared/.test(i.label)));
+  assert.ok(!shared.some((i) => /Chat shared|Share chat/.test(i.label)));
   assert.ok(shared.find((i) => /Archive/.test(i.label)).danger, 'Archive is a danger row');
 });
 

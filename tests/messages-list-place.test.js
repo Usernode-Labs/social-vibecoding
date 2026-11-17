@@ -74,15 +74,12 @@ test('scrollCorrection moves the scroller by how far the held row travelled', ()
   assert.equal(scrollCorrection({ key: 'a', offset: 5 }, 25, 12), 8);
 });
 
-test('the list rows carry their inbox key, and the archived ones do not', () => {
-  // Every live row kind renders the key it was given.
-  assert.equal((LIST.match(/data-inbox-row=\{rowKey\}/g) || []).length, 3);
-  // `inboxRow` is the one place that passes it, for all three kinds.
-  assert.equal((LIST.match(/rowKey=\{entry\.key\}/g) || []).length, 3);
-  // The archived chats' rows are read once per open and never re-sort.
-  const archivedCall = LIST.match(/<MayorSessionRow[^>]*key=\{session\.id\}[^>]*\/>/);
-  assert.ok(archivedCall, 'the archived list still draws Mayor rows');
-  assert.ok(!archivedCall[0].includes('rowKey='), 'the archived rows are not held');
+test('the list rows carry their inbox key', () => {
+  // The one live row kind, a conversation, renders the key it was given (a
+  // change in flight was the second until Agents left Messages, 16 Nov 2026).
+  assert.equal((LIST.match(/data-inbox-row=\{rowKey\}/g) || []).length, 1);
+  // `inboxRow` is the one place that passes it.
+  assert.equal((LIST.match(/rowKey=\{entry\.key\}/g) || []).length, 1);
 });
 
 test('the scroller notes the row it shows and corrects after an order change', () => {
@@ -95,7 +92,7 @@ test('the scroller notes the row it shows and corrects after an order change', (
   assert.ok(LIST.includes('el.scrollTop += delta'));
   // At the very top nothing is held, so new rows show there.
   assert.ok(LIST.includes('if (el.scrollTop <= 0) { anchor.current = null; return; }'));
-  // The reader moving the list (search, fold, older, archived) drops the hold.
+  // The reader moving the list (a search) drops the hold.
   assert.ok(LIST.includes('lastShape.current === listShape'));
 });
 

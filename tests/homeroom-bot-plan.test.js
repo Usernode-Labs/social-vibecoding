@@ -770,10 +770,11 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
 
   // First session, 4 October: Build it collapsed the plan and nothing
   // appeared under it; the build's progress was in a card above the plans.
-  // #6019: Main is one conversation, so the plan is said there, below the
-  // request's card, and Build it moves the card under the plan (B6), where
-  // the person is: one card per request still, ringing nothing.
-  await t.test('Build it is answered in Main: the card moves under the plan, silently', async () => {
+  // #6019: the plan is said below the request's card, and Build it moves the
+  // card under the plan (B6), where the person is: one card per request
+  // still, ringing nothing. 14 Nov 2026: Main Chat is gone; a first version's
+  // card and its plan are in the project's first-version thread, together.
+  await t.test('Build it is answered in the first version\'s thread: the card moves under the plan, silently', async () => {
     const activity = require('../src/services/homeroom-bot-activity');
     const requester = await dm.requesterOf(pool, app.id, 1);
     // Its card, from when it was queued (or the one an earlier Build it moved).
@@ -783,8 +784,14 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     const plan = await planMessage(run);
     const above = await activity.requestCard(pool, { userId: maya.id, appId: app.id, issueNumber: 1 });
     assert.ok(above && above.messageId < Number(plan.id), 'the request\'s card sits above its plan');
-    const { rows: [planRow] } = await pool.query('SELECT thread_root_id FROM conversation_messages WHERE id = $1', [plan.id]);
-    assert.equal(planRow.thread_root_id, null, 'the plan is said in Main');
+    const { rows: [planRow] } = await pool.query(
+      `SELECT m.thread_root_id, COALESCE(m.thread_root_id, m.id) AS root,
+              (SELECT p.kind FROM private_threads p WHERE p.root_message_id = COALESCE(m.thread_root_id, m.id)) AS kind
+         FROM conversation_messages m WHERE m.id = $1`, [plan.id]);
+    assert.equal(planRow.kind, 'first_version', 'the plan is said in the project\'s first-version thread');
+    const { rows: [cardRow] } = await pool.query(
+      'SELECT COALESCE(thread_root_id, id) AS root FROM conversation_messages WHERE id = $1', [above.messageId]);
+    assert.equal(cardRow.root, planRow.root, 'with its card');
 
     const tapped = await mayor.decideOfferTap(pool, {}, { deps: { replies: tapsNow(pool) }, user: maya, actionId: plan.meta.actionId, choice: 'build' });
     assert.equal(tapped.ok, true);

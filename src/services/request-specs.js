@@ -2,16 +2,14 @@
 
 // Specs posted on a request by a person (the connector's post_spec).
 //
-// Until this, only Homeroom's own agents wrote specs: the dev-chat scout, the
-// headless platform build and the Homeroom bot. Somebody working through the
-// MCP connector could plan a request in their own chat but had nowhere to put
+// Until this, only Homeroom's own agents wrote specs. Somebody working
+// through the MCP connector could plan a request in their own chat but had nowhere to put
 // the plan where the group reviews it, so the before/after screens of an HTML
 // spec (#3699) never reached the request it was for.
 //
 // A spec belongs to a session in every reader the platform has: the spec
-// card opens GET /api/sessions/:id/specs/:version, the dev chat's spec panel
-// reads chat_sessions.spec_md and spec_html, and the build prompt reads the
-// same. So a posted spec lives on a PLANNING RECORD: a session owned by its
+// card opens GET /api/sessions/:id/specs/:version, the change page reads
+// chat_sessions.spec_md and spec_html, and the build prompt reads the same. So a posted spec lives on a PLANNING RECORD: a session owned by its
 // author, linked to the request, with no branch and status 'paused'. Paused
 // is the state that holds no worker container and counts against neither
 // session cap (schema.sql, chat_sessions.status), which is what keeps

@@ -2,10 +2,9 @@
  * Homeroom bot's lists under a look (version 2, 11 Nov 2026): the content
  * of the standard page (./lists.tsx AiLists) in the first tour's layout.
  *
- *   [tile] Homeroom bot                         (search) (+)
+ *   [tile] Homeroom bot                  (search) ( + New chat )
  *          Needs you: 18 · In progress: 12
  *   ( All ) ( Homeroom ) ( Game Corner ) ( 15 more ⌄ )     ← tabs, a toggle each
- *   [ Main Chat ]                                           ← a card of its own
  *   NEEDS YOU · 18                   ← a labelled group, one card
  *     [tile] Homeroom
  *      ☑ #6370  Email templates: keep…            (Vote)
@@ -29,15 +28,18 @@ import { BOT_AVATAR } from '../messages/format';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
 import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
-import { dayHeading, useAiLines, type Glyph, type Line } from './lines';
-import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
+import { Marked, followFound } from './found';
+import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
+import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
+import type { Found } from './search';
 
 /** Each glyph's icon in the kit's set (./lines.ts names them). */
 const ICON: Record<Glyph, string> = {
   chat: 'chat', play: 'play', hand: 'hand', check: 'check', again: 'refresh', warning: 'alert', lock: 'lock', ballot: 'vote',
-  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', x: 'x', bubble: 'chat',
+  // The kit has no camera: a picture stands for the screenshots being taken.
+  upload: 'up', eye: 'eye', cog: 'tool', reply: 'reply', code: 'code', clock: 'clock', camera: 'image', x: 'x', bubble: 'chat',
 };
 
 /**
@@ -88,6 +90,35 @@ function LineRow({ line, plain = false, where = false }: { line: Line; plain?: b
       {row}
       <ThreadDoneMenu rootId={rootId} done={false} onChanged={(state) => { if (state === 'done') mark(); }} />
     </div>
+  );
+}
+
+/** The words the search found, in a snippet: the look's accent tint behind its own ink (kit tokens). */
+const FOUND_MARK = 'rounded-[3px] bg-[color:var(--fr-acc-t)] font-semibold text-[color:var(--fr-ink)]';
+
+/**
+ * 13 Nov 2026 (./search.ts): a message the search found, as a kit row that
+ * is a link to it: its snippet with the found words marked, where it is on
+ * the row's own line under it, and its day. The link's name says all of
+ * it, and who wrote it.
+ */
+function FoundRow({ line }: { line: FoundLine }): ReactNode {
+  return (
+    <a
+      className={k('row sm item')}
+      href={line.href}
+      title={line.name}
+      aria-label={line.name}
+      onClick={(e) => followFound(e, line.href, { messageId: line.messageId, q: line.q })}
+      data-ai-found={line.thread ? 'thread' : 'chat'}
+    >
+      <span className={k('ei')} aria-hidden="true"><Icon name="chat" size={18} /></span>
+      <span className={k('tx')}>
+        <span className={k('t')} data-ai-found-words=""><Marked parts={line.parts} className={FOUND_MARK} /></span>
+        <span className={k('s')} data-ai-found-place="">{line.place}</span>
+      </span>
+      <span className={k('meta')}>{line.date}</span>
+    </a>
   );
 }
 
@@ -213,15 +244,18 @@ function useHeld(lines: Line[]) {
 }
 
 export function AiFrameList({
-  heroLine, main, query = '', onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
+  heroLine, query = '', found, onFoundRetry, onQuery, searchOpen, onSearch, searchRef, lit = null, ready, failed = null, onRetry, rows, owed, progress, waiting, live,
   openRow, openThread, onDone, picked: pickedIn = [], onPick, appFor, onNew,
   history = null, historyKind = null, onHistoryKind, openHistory, historyRef,
 }: {
   /** The one sentence under the title: the counts, as the page's own heading says them (./model.ts heroWords). */
   heroLine: Phrase | null;
-  main: { lit: boolean; unread: number; open: () => void };
   /** What the search box says, '' while it is closed (#6398). */
   query?: string;
+  /** 13 Nov 2026: the messages that match it (./search.ts useBotSearch); null while the first answer is on its way. */
+  found?: Found | null;
+  /** Search the messages again, after a read that failed. */
+  onFoundRetry?: () => void;
   onQuery: (next: string) => void;
   /** The search box is open under the head; its round button opens and closes it. */
   searchOpen: boolean;
@@ -256,13 +290,14 @@ export function AiFrameList({
   const {
     searching, ranked, picked, rail, past, setOnly, toggle, freshAll, freshByApp, freshShown, freshProjects,
     needLines, busyLines, stillLines, liveLines, liveBehind, onlyApp, nothingHere, locale, historyLines, historyMonths,
-    owedShown, heads, noMatches,
-  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory });
+    owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
+  } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
   const [more, setMore] = useState<DOMRect | null>(null);
   const [stillOpen, setStillOpen] = useState(false);
   const phone = usePhone();
-  // Needs you draws what is new first, then holds the order under the pointer.
-  const needs = useHeld(freshFirst(needLines));
+  // Needs you draws what is new first, then lifts each project by its newest
+  // activity (#6672), then holds the order under the pointer.
+  const needs = useHeld(recentGroupsFirst(freshFirst(needLines)));
   // A row in the folded part that is where you are opens it.
   const stillShown = stillOpen || stillLines.some((line) => line.lit);
   const first = (n: number) => (searching ? Infinity : n);
@@ -293,9 +328,8 @@ export function AiFrameList({
             >
               <Icon name="search" size={18} />
             </button>
-            <button type="button" className={k('ib more')} aria-label={t('messages:newThread.start')} title={t('messages:newThread.start')} data-bot-new-thread="" onClick={onNew}>
-              <Icon name="plus" size={18} />
-            </button>
+            {/* New chat: the page's one primary, labelled (14 Nov 2026). */}
+            <Btn small icon="plus" data-bot-new-thread="" data-ai-new-chat="" onClick={onNew}>{t('messages:newThread.start')}</Btn>
           </div>
         </div>
         {searchOpen ? (
@@ -350,24 +384,8 @@ export function AiFrameList({
         ) : null}
 
         <div className={k('stack')}>
-          {/* #6398: Main Chat steps aside while a search is on. */}
-          {searching ? null : (
-            <Card className="main">
-              <button
-                type="button"
-                className={k('row sm', main.lit && 'on')}
-                onClick={main.open}
-                data-ai-main-row=""
-                data-ai-lit={main.lit ? '' : undefined}
-                aria-current={main.lit ? 'true' : undefined}
-              >
-                <Tile size={28} name={t('messages:store.header.main')} src={BOT_AVATAR} />
-                <span className={k('tx')}><span className={k('t')}>{t('messages:store.header.main')}</span></span>
-                {main.unread > 0 ? <span className={k('meta')} data-ai-main-unread="">{t('messages:ai.main.new', { count: main.unread })}</span> : null}
-              </button>
-            </Card>
-          )}
-          {noMatches ? <Card pad><span data-ai-search-empty="">{t('messages:ai.search.none', { query: query.trim() })}</span></Card> : null}
+          {/* 13 Nov 2026: no thread and, once the messages have answered, no message either (./lines.ts noneWords). */}
+          {noMatches ? <Card pad><span data-ai-search-empty="">{noneWords}</span></Card> : null}
 
           {!searching || !ready || needLines.length || failed ? (
             <Sec
@@ -464,6 +482,26 @@ export function AiFrameList({
                 </Card>
               </Sec>
             </div>
+          ) : null}
+
+          {/* 13 Nov 2026: the messages that match, under the threads that do, each a link to it. */}
+          {foundLines.length ? (
+            <Sec label={t('messages:ai.search.messages', { count: foundLines.length })} data-ai-list="found">
+              <Card>
+                <div className={k('list')}>
+                  {foundLines.map((line) => <FoundRow key={line.key} line={line} />)}
+                  {foundMore ? <p className={k('txt')} data-ai-found-more="">{t('messages:ai.search.more')}</p> : null}
+                </div>
+              </Card>
+            </Sec>
+          ) : null}
+          {foundFailed ? (
+            <Card pad>
+              <div className={k('txt')} role="status" data-ai-search-failed="">
+                {`${t('messages:ai.search.failed')} `}
+                <button type="button" className={k('link')} onClick={() => onFoundRetry?.()} data-ai-search-retry="">{tco('core:common.tryAgain')}</button>
+              </div>
+            </Card>
           ) : null}
         </div>
       </div>

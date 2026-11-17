@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// The coding agent's read-only Homeroom tools (#2779, spec:
-// docs/agent-sessions.md, "Coding agent").
+// The coding agent's read-only Homeroom tools (#2779).
 //
 // A stdio MCP server that proxies an allowlist of six READ tools to the
 // platform's own MCP endpoint (PLATFORM_URL/mcp), authenticated with the

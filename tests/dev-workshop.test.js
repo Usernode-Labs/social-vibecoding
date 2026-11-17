@@ -1407,10 +1407,10 @@ test('5 Nov 2026: New for you is What happened\'s: a new request nobody has pick
   // Its row ends with the card's own act, worded short. 1 Nov 2026: Work on
   // it, where the card says Work on this with Homeroom bot.
   assert.match(issue, /^data-ws-row="since:issue:12"[^>]* data-new=""[\s\S]*?<span class="dev-ws-arow-act" data-ws-row-act=""><button type="button" data-act="workOnIssueWithBot" title="Talk it through and plan it with Homeroom bot, in a thread only you can see" class="[^"]*\brounded-full\b[^"]*">Work on it<\/button><\/span><\/span><\/span><\/li>/);
-  // A Build it is offered only when the act builds (asking Homeroom bot, or
-  // building it yourself), on a new request that is nobody's yet.
+  // A Build it is offered only when the act builds (asking Homeroom bot to
+  // build it), on a new request that is nobody's yet.
   assert.match(WORKSHOP, /if \(!b \|\| b\.mine \|\| b\.requested \|\| b\.kind !== 'request'\) return null;/);
-  assert.match(WORKSHOP, /if \(a && a\.act && \(a\.act\.fn === 'askBotToBuild' \|\| a\.act\.fn === 'chooseIssueWork'\)\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.buildIt'\)\} \/>;/);
+  assert.match(WORKSHOP, /if \(a && a\.act && a\.act\.fn === 'askBotToBuild'\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.buildIt'\)\} \/>;/);
   assert.match(WORKSHOP, /if \(a && a\.act && a\.act\.fn === 'workOnIssueWithBot'\) \{\s*return <ActButton a=\{a\} label=\{t\('project:workshop\.fresh\.workOnIt'\)\} \/>;/);
   assert.match(WORKSHOP, /act=\{freshAct\}/, 'This week takes it');
   // A seen row asks nothing; nor does the vote, which is Needs you's.
@@ -1766,7 +1766,7 @@ test('#4896: an unstarted project the bot builds for asks what to change, and it
   assert.doesNotMatch(without, /data-ws-start-here-bot|Tell Homeroom bot/);
 });
 
-test('#4896: the button opens the chat with Homeroom bot with this project attached, as Ask for changes attaches a change', async () => {
+test('#4896: the button opens a new chat with Homeroom bot already set to this project', async () => {
   assert.match(WORKSHOP, /import \{ openBot \} from '\.\.\/\.\.\/messages\/store';/);
   assert.match(WORKSHOP, /onClick=\{\(\) => \{ void openBot\(startHereBotReference\(slug, name\)\); \}\}/);
   assert.match(WORKSHOP, /if \(bot && !readOnly && slug\) \{/, 'never for a viewer who may not start a change');
@@ -1774,15 +1774,24 @@ test('#4896: the button opens the chat with Homeroom bot with this project attac
   const ref = plain(startHereBotReference('demo-app', 'Geneva hikes'));
   assert.deepEqual(ref, { type: 'app', appSlug: 'demo-app', title: 'Geneva hikes' });
   assert.equal(plain(startHereBotReference('demo-app', '')).title, null);
-  // A reference naming its project is attached on the bot chat's composer
-  // directly, the box asking "What should change?": no Share item dialog.
-  const fakeApi = new Proxy({ async openBotConversation() { return 77; } },
+  // 14 Nov 2026: it attached the project in Main Chat's box. There is no
+  // Main Chat: a reference that is a project opens a new chat set to it
+  // (#homeroom-bot/new?project=<slug>), with nothing attached.
+  const fakeApi = new Proxy({},
     { get: (t, k) => (k in t ? t[k] : () => { throw new Error(`api.${String(k)} not stubbed`); }) });
-  const store = loadTsx('frontend/src/features/messages/store.ts', { stubs: { './api': fakeApi } });
+  const went = [];
+  const carry = loadTsx('frontend/src/features/messages/new-chat-carry.ts');
+  const store = loadTsx('frontend/src/features/messages/store.ts', {
+    stubs: {
+      './api': fakeApi,
+      './new-chat-carry': carry,
+      '../ai/door': { ...loadTsx('frontend/src/features/ai/door.ts'), goBotAddress: (href) => went.push(href) },
+    },
+  });
   assert.equal(store.stagedComplete(ref), true);
   await store.openBot(ref);
-  assert.equal(store.takePendingShare(), undefined, 'no Share item dialog');
-  assert.deepEqual(plain(store.takePendingAttach(77)), { object: ref, placeholder: 'What should change?' });
+  assert.deepEqual(went, ['#homeroom-bot/new?project=demo-app']);
+  assert.equal(carry.takeCarried(), null, 'a project is the chat\'s chip, not an item in its box');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {
@@ -2475,12 +2484,13 @@ test('#4480: a page opened from the side panel keeps its thread when the panel g
   assert.equal(AppView._devTopic, null);
 });
 
-test('#1887: a card about your own session opens the CARD, with the session a link inside it; the hub names it', () => {
+test('#1887: a card about your own session opens the CARD, and nothing on it leads to a dev chat', () => {
   // Opening a card about your own session used to navigate to the session
   // — the row's page link and the delegated #dev-body handler both went to
   // /dev/sessions/<id>. It is a card like every other now: the row unfolds
-  // it in place, the change's page is the open card's pill (#1886), and the
-  // session is a link INSIDE the open card — the one line under the sheet.
+  // it in place and the change's page is the open card's pill (#1886).
+  // #1887 put the session's dev chat INSIDE the open card as a line under
+  // the sheet; that chat is retired, and its line with it.
   const mine = { id: 51, session_title: 'Bottom tabs', status: 'active', pr_number: null, linked_issues: [],
     created_at: at(1), last_activity_at: at(0) };
   const AppView = makeAppView();
@@ -2494,7 +2504,7 @@ test('#1887: a card about your own session opens the CARD, with the session a li
 
   // THE OPEN CARD, where a fold still draws one (the fold's own rule, which
   // a list that unfolds rows in place gets): its pill in the action band,
-  // and under the sheet one line, the session's.
+  // and nothing under the sheet.
   const { ListRowView } = loadTsx('tests/fixtures/dev-card-api.ts');
   const open = renderToHtml(createElement(ListRowView, {
     row: plain(row), fold: { slug: 'demo-app', canPost: true, open: true, onToggle: () => {} },
@@ -2509,33 +2519,20 @@ test('#1887: a card about your own session opens the CARD, with the session a li
     'the open card carries the pill, and it is the page link');
   assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
   assert.ok(!open.includes('Open page ›'), 'and no second step to reach one');
-  // Under the sheet, the session — alone. #2030's point was that two
-  // controls both reading "Open" confused; the session is a different
-  // destination from the page the pill opens, so it keeps its own link,
-  // and it is the one thing the line holds: no separator, nothing beside it.
-  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#app\/demo-app\/dev\/sessions\/51" class="dev-ws-link" data-ws-open-session="my-session:51">Open session ›<\/a><\/div><\/div>/,
-    'the session link is the line under the sheet, and the last thing in it');
-  assert.equal((open.match(/class="dev-ws-link"/g) || []).length, 1, 'one link under the sheet');
-  assert.equal((open.match(/\/dev\/sessions\/51/g) || []).length, 1, 'the session is linked once, inside the open card');
-  assert.ok(!open.includes('dev-ws-sheet-sep') && !FOLD.includes('dev-ws-sheet-sep') && !/dev-ws-sheet-sep/.test(CSS),
-    'the separator went with the second link');
-  assert.match(CSS, /\.dev-ws-sheet-actions \{ display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 13px; \}/,
-    'the line keeps its rule — #1886 dropped it with the page link; this link is why it is back');
+  assert.ok(!open.includes('dev-ws-sheet-actions'), 'no line under the sheet');
+  assert.ok(!open.includes('data-ws-open-session'), 'no session link');
+  assert.ok(!open.includes('/dev/sessions/51'), 'and nothing on the card leads to the retired dev chat');
+  assert.ok(!/\.dev-ws-sheet-(actions|sep)\b/.test(CSS), 'nor does the stylesheet keep a rule for that line');
 
-  // The helpers, from the bundle: the card's page is the change's, and only
-  // a hook for one of YOUR sessions names a session — an imported PR of
-  // yours has no dev chat, and nobody else's session is yours to open.
-  const { openHref, sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
-  assert.equal(openHref('demo-app', row.card), '#app/demo-app/dev/proposals/51');
-  assert.equal(sessionHref('demo-app', row.card), '#app/demo-app/dev/sessions/51');
-  for (const hook of ['data-shared-session-row', 'data-proposal-row', 'data-issue-row', 'data-gov-row']) {
-    assert.equal(sessionHref('demo-app', { attrs: { [hook]: '51' } }), null, `${hook} is not a session of yours`);
-  }
-  assert.equal(sessionHref('', row.card), null, 'and no app, no route');
+  // The helpers, from the bundle: the card's page is the change's, and the
+  // session helper is gone with the link it built.
+  const fold = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
+  assert.equal(fold.openHref('demo-app', row.card), '#app/demo-app/dev/proposals/51');
+  assert.equal(fold.sessionHref, undefined);
 
   // A tap outside a fold — the delegated #dev-body handler — opens the
-  // change's page too, never the session (#2020). The session's own route
-  // stays for the links that hold it: the one above, and a bookmark.
+  // change's page too, never the session (#2020). An old /dev/sessions/<id>
+  // bookmark is rewritten to that page by the router (App._oldChatAddress).
   const click = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("const sessionChip = e.target.closest('[data-session-chip]');"));
   assert.match(click.slice(0, 400), /AppView\.openTopic\('proposal', parseInt\(sessionChip\.dataset\.sessionChip, 10\)\);/);
   assert.ok(!/switchTab\('dev', parseInt\((?:sessionChip|el)\.dataset\.sessionChip, 10\), 'sessions'\)/.test(APP_VIEW_SRC),
@@ -2555,43 +2552,6 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // door to the Homeroom bot tab now, and its own check pins that.
   assert.ok(!dapp.tests.some((t) => /#1887/.test(t.name)), 'retired with the list it read');
   assert.ok(!/'mine-session'/.test(APP_VIEW_SRC), 'and so is its shot');
-});
-
-test('#3081: an agent session\'s change card opens the AGENT SESSION, not its old dev chat', () => {
-  // A change started from an agent session is revised in that conversation;
-  // its dev chat at /dev/sessions/<id> only shows a strip leading there. The
-  // open card's "Open session ›" went to the dev chat all the same — the old
-  // screen, and not one the owner could type into. It goes where the change
-  // page's door (`_buildDoorView`) already sends the owner.
-  const mine = { id: 52, session_title: 'Agent-built change', status: 'active', pr_number: null, linked_issues: [],
-    agent_session_id: 7301, created_at: at(1), last_activity_at: at(0) };
-  const AppView = makeAppView();
-  seed(AppView);
-  AppView._mySessions = [{ ...mine }];
-  const row = { t: 'card', key: 'my-session:52', card: AppView._mySessionCardModel({ ...mine }) };
-  assert.equal(row.card.attrs['data-session-chip'], '52', 'the change\'s card, with its usual hook');
-  assert.equal(row.card.attrs['data-session-agent'], '7301', 'the card names the conversation it was started from');
-
-  const { ListRowView } = loadTsx('tests/fixtures/dev-card-api.ts');
-  const open = renderToHtml(createElement(ListRowView, {
-    row: plain(row), fold: { slug: 'demo-app', canPost: true, open: true, onToggle: () => {} },
-  }));
-  assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#messages\/agent\/7301" class="dev-ws-link" data-ws-open-session="my-session:52">Open session ›<\/a><\/div>/,
-    'the link under the open card is the agent session');
-  assert.ok(!open.includes('/dev/sessions/52'), 'and nothing on the card leads to the old dev chat');
-  assert.match(open, /href="#app\/demo-app\/dev\/proposals\/52" data-ws-open-card="my-session:52">Open card<\/a>/,
-    'the change page is still the pill');
-
-  const { sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
-  assert.equal(sessionHref('demo-app', row.card), '#messages/agent/7301');
-  // A session with no agent conversation keeps its dev chat.
-  assert.equal(sessionHref('demo-app', { attrs: { 'data-session-chip': '52' } }), '#app/demo-app/dev/sessions/52');
-
-  // Only the viewer's own, non-imported session carries the mark.
-  const imported = AppView._mySessionCardModel({ ...mine, source: 'imported' });
-  assert.equal(imported.attrs['data-session-agent'], undefined);
-  const plainSession = AppView._mySessionCardModel({ ...mine, agent_session_id: null });
-  assert.equal(plainSession.attrs['data-session-agent'], undefined);
 });
 
 test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
@@ -3729,7 +3689,7 @@ test('the band in the community\'s colour is the place bar, not the old pill: no
   assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"|ProjectBand/);
   assert.ok(!fs.existsSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/project-band.tsx')),
     'the four tabs are retired');
-  assert.match(WORKSHOP, /<PlaceBar\s+name=\{projectName\}\s+place=\{tab\}\s+owed=\{owed\}/);
+  assert.match(WORKSHOP, /<PlaceBar\s+place=\{tab\}/);
   assert.ok(!/dev-ws-pagebar/.test(WORKSHOP),
     'All items has no back bar of its own: its way back is in its pinned head (#4486)');
   const bar = read('frontend/src/features/dev-board/workshop/place-bar.tsx');
@@ -4053,13 +4013,14 @@ test('a read-only viewer of the self-hosted app gets no ⋯', async () => {
 
 test('the ⋯ is drawn as Invite’s pill, a circle, and its menu hangs over the cards', () => {
   const decls = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
-  // Invite's fill (`pillNeutral`), on the button itself, as a 32px circle.
+  // Invite's fill (`pillNeutral`), on the button itself, as a circle.
   assert.match(ACTIONS_ROW, /const HERO_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-hero un-touch-target '\s*\+ 'bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-zinc-100';/);
   assert.match(ACTIONS_ROW, /className=\{onCard \? CARD_BTN_CLS : inHero \? HERO_BTN_CLS : 'dev-ws-plus-btn un-touch-target'\}/, 'still a 44px hit box');
   // On the project card it is the card's round glass button, 50px (52px from 768px).
   assert.match(ACTIONS_ROW, /const CARD_BTN_CLS = 'dev-ws-plus-btn dev-ws-plus-btn-card un-touch-target bg-white\/15 hover:bg-white\/25 text-white';/);
   assert.match(decls, /\.dev-ws-plus-btn\.dev-ws-plus-btn-card \{ width: 50px; height: 50px; \}/);
-  assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 32px; height: 32px; \}/);
+  // Bigger on the hub: 48px with a hairline ring, a control of its own.
+  assert.match(decls, /\.dev-ws-hero \.dev-ws-plus-btn \{ width: 48px; height: 48px; box-shadow: inset 0 0 0 1px var\(--app-sheet-line\); \}/);
   // A ⋯, not a "+": on the hub it holds the project's settings as much as
   // anything to add, and a "+" beside Invite read as "add a member".
   assert.match(ACTIONS_ROW, /<EllipsisHorizontalIcon className="dev-ws-plus-glyph" aria-hidden="true" \/>/);
@@ -4576,15 +4537,13 @@ test('Needs you is a fitted screen on a phone, in the page-scrolling layout too'
 });
 
 test('the ask card is padded evenly, so its resting line sits on its own middle', () => {
-  // `.dc-card` ships `0.875rem 1rem 0.625rem` — 14 over, 10 under — which is
-  // right for the dev session's composer, a tall field with controls beneath
-  // it. Here, at rest, the card holds ONE line, and 14 against 10 put that
-  // line 2px below the middle of its own box. That is what "the ask box sits
-  // slightly low" was. Measured at 402x874: a 58px card with a 34px line
-  // starting at 14.
+  // `.dc-card`, the dev session composer's card (retired with the dev chat),
+  // shipped `0.875rem 1rem 0.625rem` — 14 over, 10 under — which was right
+  // for a tall field with controls beneath it. Here, at rest, the card holds
+  // ONE line, and 14 against 10 put that line 2px below the middle of its
+  // own box. That is what "the ask box sits slightly low" was. Measured at
+  // 402x874: a 58px card with a 34px line starting at 14.
   assert.match(CSS, /\.dev-ws-ask-composer \{[^}]*padding: 12px 14px;/);
-  assert.match(CSS, /\.dc-card \{[\s\S]*?padding: 0\.875rem 1rem 0\.625rem;/,
-    'the session card keeps its own, which is why this is an override rather than a change');
 });
 
 test('This week shows its new rows, then a few seen ones, then All of this week, which opens its page', () => {
@@ -5194,6 +5153,45 @@ test('#2182, 5 Nov 2026: a signed-in viewer\'s Your work is one row under Overvi
   assert.equal(AppView._workshopView().mine.bot, true);
 });
 
+test('14 Nov 2026: under Your work, New chat about the project opens a new chat with Homeroom bot set to it', () => {
+  // Main Chat is gone: every conversation with the bot is a thread, so a
+  // project's own door to the bot starts one, already about the project
+  // (frontend/src/features/dev-board/workshop/your-work.tsx NewChatRow).
+  const AppView = makeAppView();
+  seed(AppView);
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
+  AppView._mySessions = [];
+  const html = workshopHtml(AppView, 'workshop');
+  const card = html.slice(html.indexOf('<section class="dev-ws-strip dev-ws-desk" data-ws-desk="">'));
+  const desk = card.slice(0, card.indexOf('</section>'));
+  // The Your work row first, unchanged; a hairline; then the new row.
+  assert.match(desk, /^<section class="dev-ws-strip dev-ws-desk" data-ws-desk=""><a [^>]*href="#homeroom-bot\?project=demo-app"[^>]*data-ws-desk-open=""/);
+  assert.match(desk, /<\/a><div class="mx-1 border-t border-\[color:var\(--app-sheet-line\)\]" aria-hidden="true"><\/div><a [^>]*href="#homeroom-bot\/new\?project=demo-app"[^>]*data-ws-desk-new=""/,
+    'a link (the browser\'s own ways to open it work) to New chat, set to this project');
+  assert.equal((desk.match(/<a /g) || []).length, 2, 'two rows, and no third');
+  const row = desk.slice(desk.indexOf('data-ws-desk-new=""'));
+  // A plus tile where the first row has the bot's picture, then 15 over 13.
+  assert.match(row, /<span class="grid h-\[34px\] w-\[34px\] shrink-0 place-items-center rounded-\[10px\] [^"]*"><svg[^>]*aria-hidden="true"/);
+  const name = AppView.appData?.name || 'demo-app';
+  assert.equal(message('project:workshop.desk.newChat', { project: 'Garden club' }), 'New chat about Garden club');
+  assert.equal(message('project:workshop.desk.newChatSub'), 'Ask Homeroom bot for a change, a fix or an answer');
+  assert.ok(row.includes(`New chat about ${name}`.replace(/&/g, '&amp;')), 'named for the project');
+  assert.ok(row.includes('Ask Homeroom bot for a change, a fix or an answer'));
+  assert.doesNotMatch(row, /rounded-full|bg-violet/, 'no pill on the row: the row itself is the door');
+  const src = read('frontend/src/features/dev-board/workshop/your-work.tsx');
+  assert.match(src, /href=\{botNewAddress\(\{ project: slug \}\)\}/, 'the tab\'s own address for a new chat (ai/door.ts)');
+  // The first-change card keeps its own rows: its Homeroom bot row is this
+  // same door, so the new row is not drawn beside it.
+  assert.match(src, /if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;\n\s+return \(\n\s+<section className="dev-ws-strip dev-ws-desk" data-ws-desk="">\n\s+<YourWorkRow [^\n]+\n\s+<div [^\n]+\n\s+<NewChatRow slug=\{slug\} name=\{name\} className="rounded-\[14px\] px-1 py-2" \/>\n\s+<\/section>/);
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/first-change.tsx'), /NewChatRow|desk\.newChat/);
+  // No Homeroom bot row under a project in the sidebar or its places list.
+  assert.doesNotMatch(read('frontend/src/features/dev-board/workshop/project-places.tsx'), /botNewAddress|desk\.newChat/);
+  assert.doesNotMatch(read('frontend/src/features/nav/rail-nest.tsx'), /botNewAddress|desk\.newChat/);
+  // The demo Workshop's declared check finds both rows.
+  const check = JSON.parse(read('dapp.json')).tests.find((t) => /^Workshop: Your work is a row under Overview/.test(t.name));
+  assert.match(check.expectSelector, /> a\[data-ws-desk-open\]\[href="#homeroom-bot\?project=usernode-2d5619"\] ~ a\[data-ws-desk-new\]\[href="#homeroom-bot\/new\?project=usernode-2d5619"\]$/);
+});
+
 test('10 Nov 2026: somebody who has made nothing here is asked who should build, in Your work\'s place', () => {
   const FIRST = 'frontend/src/features/dev-board/workshop/first-change.tsx';
   const first = loadTsx(FIRST, { stubs: { '../../messages/api': { listConnectors: () => new Promise(() => {}) } } });
@@ -5242,7 +5240,7 @@ test('10 Nov 2026: somebody who has made nothing here is asked who should build,
   assert.match(src, /return \{ show: !closed && !readOnly && firstChangeFor\(desk, made\), close \};/);
   assert.match(read('frontend/src/features/dev-board/workshop/your-work.tsx'),
     /const first = useFirstChange\(slug, useDesk\(slug\)\);\n\s+if \(first\.show\) return <FirstChangeCard slug=\{slug\} onClose=\{first\.close\} \/>;/);
-  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
+  assert.match(read('frontend/src/features/dev-board/workshop/hub-dismissed.ts'), /export type HubCard = 'share' \| 'invite' \| 'start' \| 'first' \| `update:\$\{string\}`;/);
   assert.match(read('src/routes/ai-work.js'), /router\.get\('\/api\/ai\/history', async \(req, res\) => \{/);
 });
 
@@ -5573,9 +5571,10 @@ test('what the strip measures is published in one go: every read, then every wri
 });
 
 test('the board\'s in-flight marks hold still for a reader who asked for less motion', () => {
-  // The arc beside "Checks running…", the ring on a vote that is open, and
-  // the chip on an issue whose proposal is being drafted. They run for as
-  // long as the state lasts, a vote for days, and a board carries dozens (71
+  // The arc beside "Checks running…" and the ring on a vote that is open (a
+  // third, the pulse on an issue whose proposal the headless run was
+  // drafting, went with that run). They run for as long as the state lasts,
+  // a vote for days, and a board carries dozens (71
   // on this repository's own with every card open, 68 of them scrolled out of
   // view). The header's cog already rests under this setting; these did not.
   //
@@ -5585,7 +5584,8 @@ test('the board\'s in-flight marks hold still for a reader who asked for less mo
   const rules = CSS.replace(/\/\*[\s\S]*?\*\//g, '');
   assert.match(rules, /\.dc-status-spinner-arc \{[^}]*animation: dc-spin 0\.8s linear infinite;[^}]*\}\s*@media \(prefers-reduced-motion: reduce\) \{\s*\.dc-status-spinner-arc \{ animation: none; \}\s*\}/);
   assert.match(rules, /\.gc-vote-count-dot-ping \{[^}]*animation: ping 1s[^}]*\}\s*@media \(prefers-reduced-motion: reduce\) \{\s*\.gc-vote-count-dot-ping \{ animation: none; \}\s*\}/);
-  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'), /spec\.pulse \? ' motion-safe:animate-pulse' : ''/);
+  assert.doesNotMatch(read('frontend/src/features/dev-board/card/dev-card.tsx'), /animate-pulse/,
+    'and no card icon pulses any more');
 });
 
 test('the Workshop keeps no swatch of its own — it imports the one the threads use', () => {
@@ -5775,7 +5775,7 @@ test('#6075: a live row keeps its final counted vote beside ✓ Live', () => {
 
 test('a link to the list of requests or changes opens All items by stage, not the Hub (audit N03)', () => {
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'public/js/app.js'), 'utf8');
-  const at = src.indexOf("// dev, dev/issues, dev/proposals, dev/sessions (no id)");
+  const at = src.indexOf("// dev, dev/issues, dev/proposals — all land on the plain");
   assert.ok(at > 0);
   const block = src.slice(at, at + 1200);
   assert.match(block, /subTab = 'forum';/);

@@ -7,16 +7,14 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 
 // Model costs (#admin/model-costs) — #2570.
 //
-// The model picker states what each model is good for and what a change on
-// it is expected to cost. This screen is where that second number is kept
-// honest: beside each estimate it shows what changes on that model ACTUALLY
-// cost over the last 30 days, and an admin who sees the two drift apart
-// types a new estimate in.
+// Each model's expected cost of a change, kept honest: beside each estimate
+// this screen shows what changes on that model ACTUALLY cost over the last
+// 30 days, and an admin who sees the two drift apart types a new estimate in.
 //
 // The observed figure is deliberately NOT applied automatically — a median
-// over a handful of changes moves violently, and a number in the picker
-// that jumps because two people ran long sessions yesterday is worse than a
-// stable one somebody chose. services/model-costs.js has the full reasoning.
+// over a handful of changes moves violently, and an estimate that jumps
+// because two people ran long sessions yesterday is worse than a stable one
+// somebody chose. services/model-costs.js has the full reasoning.
 //
 // #2592: "what changes actually cost" now means the WHOLE change. The
 // observed columns used to count chat turns only, because the coding
@@ -156,7 +154,7 @@ function ModelCostsSection() {
         text: cents == null
           ? `${modelId}: the derived estimate is back.`
           // #2570: never a bare amount in copy a person reads.
-          : `${modelId}: the picker now says about ${money(cents)} for a typical change.`,
+          : `${modelId}: the estimate is now about ${money(cents)} for a typical change.`,
         tone: 'ok',
       });
     } catch (err: any) {

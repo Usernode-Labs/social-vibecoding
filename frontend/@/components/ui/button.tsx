@@ -27,7 +27,7 @@ import { cn } from '@/lib/utils';
  * in the order those strings were written in. Every primary button in the
  * shell is written in exactly this order:
  *
- *   [lead] [layout] [radius + surface] [disabled] [padding + weight] [ink]
+ *   [layout] [radius + surface] [disabled] [padding + weight] [ink]
  *   shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm
  *   font-medium text-white transition-colors
  *
@@ -66,18 +66,6 @@ import { cn } from '@/lib/utils';
  */
 const buttonVariants = cva('', {
   variants: {
-    /**
-     * A styling class from app.css that LEADS the string, ahead of everything
-     * else this table draws — the same group, for the same reason, that
-     * input.tsx's `lead` carries. It is a variant rather than a `className`
-     * because className lands LAST and this does not.
-     *
-     * `devSend` is `.dc-send-btn`, whose whole rule is a 64px min-width, a
-     * 38px height and a centring flex — the send button has to keep its box
-     * while its label swaps between a word, a square and a spinner. Call
-     * site: features/dev-chat/composer.tsx.
-     */
-    lead: { devSend: 'dc-send-btn', none: '' },
     /**
      * Utilities the shell writes BEFORE the box. Every value here leads a
      * real class string; there is no combinatorial expansion, only the pairs
@@ -131,14 +119,17 @@ const buttonVariants = cva('', {
       // The bell drawer's invite Accept button — a `text-xs` action row inside
       // the notifications panel, one radius step up from `compact`.
       pill: 'rounded-md bg-violet-600 hover:bg-violet-500',
-      // #agent-files-save — the same action inside a `text-xs` inline card,
-      // where the smaller radius matches the card.
+      // The settings rows' Re-enable and Use defaults (grants-list.tsx,
+      // app-permissions-list.tsx, notification-prefs-list.tsx) — the same
+      // action inside a `text-xs` row card, where the smaller radius matches
+      // the card.
       compact: 'rounded bg-violet-600 hover:bg-violet-500',
       // #browse-detail-open. Radius only: the browse detail page writes its
       // transition BEFORE the fill, so on that one button the surface travels
       // in `ink` instead — see `fillLate` / `unavailableLate` below.
       roundedFull: 'rounded-full',
-      // #agent-files-cancel — the neutral bordered sibling of `compact`.
+      // The neutral bordered sibling of `compact`: the Connectors pane's Copy
+      // buttons and the welcome tour's Back.
       //
       // THIS VARIANT CARRIES NO INK, and the default ink is `solid` (white).
       // `variant="outline"` on its own therefore renders white text on a
@@ -195,10 +186,8 @@ const buttonVariants = cva('', {
       dim: 'disabled:opacity-50',
       // #create-app-import-check.
       block: 'disabled:opacity-50 disabled:cursor-not-allowed',
-      // #dc-new-change-btn — the dev chat's "Start a new change" banner
-      // button, which writes the same pair one step less dim. Transcribed,
-      // not normalised: folding it into `block` would be a visual change on
-      // the one strip this value exists for.
+      // The avatar crop dialog's Save (features/profile/avatar-crop-dialog.tsx),
+      // which writes the same pair one step less dim.
       dim60: 'disabled:opacity-60 disabled:cursor-not-allowed',
     },
     /** Padding, optional text size, and weight — written as one run. */
@@ -222,7 +211,8 @@ const buttonVariants = cva('', {
       flushBold: 'py-2 text-sm font-semibold',
       // The members dialog's row actions.
       sm: 'px-3 py-1.5 text-sm font-medium',
-      // #agent-files-save / #agent-files-cancel.
+      // The settings rows' compact Re-enable and Use defaults, and the board's
+      // merges-paused Resume, which inherit their text size from the row.
       xs: 'px-3 py-1 font-medium',
       // The same box, with the text size the bell drawer's invite buttons
       // spell out rather than inherit.
@@ -265,7 +255,8 @@ const buttonVariants = cva('', {
       fillLate: 'transition-colors bg-violet-600 hover:bg-violet-500 text-white',
       unavailableLate:
         'transition-colors bg-zinc-200 dark:bg-zinc-800 text-zinc-500 cursor-not-allowed dark:text-zinc-400',
-      // #agent-files-cancel.
+      // The quiet secondary label: `outline`'s Copy and Back, and the
+      // dialogs' Cancel and Done.
       muted:
         'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors',
       // The ink that goes with `variant: 'neutral'` — near-black, which is
@@ -286,7 +277,6 @@ const buttonVariants = cva('', {
     },
   },
   defaultVariants: {
-    lead: 'none',
     layout: 'none',
     variant: 'default',
     disabledStyle: 'off',
@@ -313,13 +303,13 @@ export interface ButtonProps
 // call site, which a like-for-like conversion does not do — `type` simply
 // rides along in `props`.
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, lead, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
+  ({ className, layout, variant, disabledStyle, size, ink, disabled, ...props }, ref) => (
     <button
       ref={ref}
       {...props}
       disabled={disabled}
       className={cn(
-        buttonVariants({ lead, layout, variant, disabledStyle, size, ink }),
+        buttonVariants({ layout, variant, disabledStyle, size, ink }),
         className,
       )}
     />

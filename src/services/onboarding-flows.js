@@ -22,6 +22,15 @@
 //     day in an app within RECENT_DAYS. Before that they are 'lapsed'.
 //   * Somebody let off the waitlist within TOO_NEW_DAYS who has not made an
 //     account yet is 'new', too early to say, not lost.
+//   * Somebody who signed up while they were waiting, was let off the
+//     waitlist later and has not opened Homeroom since is 'away': the
+//     waitlist's loss, not a loss after making an account. In their first
+//     TOO_NEW_DAYS they are 'new' as well.
+//   * A queued invite's join, applied by the platform the moment a person is
+//     let in, is not something they did, so it is not a first act.
+//   * Somebody off the waitlist who signed in came in after the last mail
+//     that had gone to them by then: the admit mail, or its first or last
+//     reminder (a nudge). See mailIn.
 
 const journey = require('./journey');
 
@@ -30,6 +39,12 @@ const RECENT_DAYS = 28;
 const TOO_NEW_DAYS = 7;
 // "Came back to" a project: its app used on this many days or more.
 const RETURN_DAYS = 2;
+// An account made at least this long before the person was let off the
+// waitlist was made while they waited, not on being let in.
+const PRE_ADMIT_MS = 60 * 60 * 1000;
+// A join recorded within this long of access being granted, by someone who
+// has never opened Homeroom, is the platform applying a queued invite.
+const SYSTEM_JOIN_MS = 60 * 1000;
 
 // What people answer when the waitlist asks where they heard of Homeroom.
 // Anything else they typed is 'other'.
@@ -95,6 +110,29 @@ function classify(p) {
 }
 
 /**
+ * Pure: which mail somebody let off the waitlist came in after. The admit
+ * mail goes when they are let off; two reminders, the nudges, follow while
+ * they have not signed in (services/waitlist-reminders.js). Their first
+ * sign-in since being let off is dated by the admit link followed or a
+ * sign-in code asked for, else by an account made since. It came after the
+ * last mail sent before it: 'admit', 'nudge1' or 'nudge2'. 'had' is somebody
+ * who had an account before they were let off and whose sign-in since is not
+ * dated. null when they have not signed in, or did not come off the waitlist.
+ */
+function mailIn({ door, got, releasedAt, signedInAt, accountAt, nudgedAt, hadAccount }) {
+  if (door !== 'waitlist' || !releasedAt || (got !== 'in' && got !== 'acct')) return null;
+  const ms = (v) => (v ? new Date(v).getTime() : null);
+  const released = ms(releasedAt);
+  let at = ms(signedInAt);
+  if (at == null && ms(accountAt) != null && ms(accountAt) >= released) at = ms(accountAt);
+  if (at == null) return hadAccount ? 'had' : null;
+  const [first, last] = (nudgedAt || []).map(ms);
+  if (last != null && at >= last) return 'nudge2';
+  if (first != null && at >= first) return 'nudge1';
+  return 'admit';
+}
+
+/**
  * Pure: the reading, from the five Journey readings it joins.
  *
  * `people` are one row each, keyed `k` (the user id, or 's<signupId>' for a
@@ -119,15 +157,17 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
     const apps = fp ? fp.apps : [];
     const appOf = (a) => appBySlug.get(a.slug) || null;
 
-    // The door: the invite, when it came before they were in; else the
-    // waitlist, when they were let off it; else they were let in directly.
-    const inviteFirst = !!m.invite && m.inviteAt
+    // The door: the invite, when they followed it before they were in; else
+    // the waitlist, when they were let off it; else they were let in
+    // directly. Journey's own rule for one person (cameIn.door). Somebody who
+    // signs up through an invite link is queued on the waitlist until they
+    // are let in, so a waitlist row of their own does not make the waitlist
+    // their door; an invite followed from inside is not a door at all.
+    const inviteFirst = !!m.invite && !!m.inviteAt
       && (!m.accessAt || new Date(m.inviteAt).getTime() <= new Date(m.accessAt).getTime());
-    const waitJoined = m.releasedAt && m.waitlist && m.waitlist.joinedAt ? new Date(m.waitlist.joinedAt).getTime() : null;
     let door = 'direct';
-    if (inviteFirst && (waitJoined == null || new Date(m.inviteAt).getTime() <= waitJoined)) door = 'invite';
+    if (inviteFirst) door = 'invite';
     else if (m.releasedAt) door = 'waitlist';
-    else if (inviteFirst) door = 'invite';
 
     const s1 = earlyUntil != null && !!m.accountAt && new Date(m.accountAt).getTime() <= earlyUntil;
     const said = m.waitlist && m.waitlist.discovery ? String(m.waitlist.discovery).toLowerCase() : null;
@@ -146,11 +186,20 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
     } else if (!stepDone(m, 'account')) got = 'acct';
 
     const firstAct = step(m, 'first_act');
+    const opened = step(m, 'opened');
+    const openedDone = !!opened && opened.state === 'done';
+    const systemJoin = !!firstAct && firstAct.state === 'done' && firstAct.note === 'joined' && !openedDone
+      && !!firstAct.at && !!m.accessAt
+      && Math.abs(new Date(firstAct.at).getTime() - new Date(m.accessAt).getTime()) <= SYSTEM_JOIN_MS;
     let first = 'none';
-    if (got === 'in' && firstAct && firstAct.state === 'done') {
+    if (got === 'in' && firstAct && firstAct.state === 'done' && !systemJoin) {
       first = firstAct.note === 'app' ? 'app' : (firstAct.note === 'joined' ? 'joined' : 'spoke');
     }
-    const opened = step(m, 'opened');
+    // Signed up while waiting, let in later, not back since: the waitlist's
+    // loss (or, this week, too early to say), not a loss after signing up.
+    const hadAccount = !!m.releasedAt && !!m.accountAt
+      && new Date(m.releasedAt).getTime() - new Date(m.accountAt).getTime() >= PRE_ADMIT_MS;
+    if (got === 'in' && hadAccount && !openedDone && first === 'none') got = tooNew ? 'new' : 'away';
 
     const st = sg ? [['A', 'arrive'], ['E', 'explore'], ['V', 'activate'], ['B', 'belong'], ['U', 'use'], ['S', 'stay']]
       .filter(([, key]) => sg[key] === true).map(([ch]) => ch).join('') : '';
@@ -202,12 +251,15 @@ function assemble({ mile, flows, stages, last, waiting, early = null, now = new 
       stuck: m.stuckAt || null,
       stuckReason: m.stuckReason || null,
       first,
-      opened: opened && opened.state === 'done',
+      opened: openedDone,
       st, kinds,
       days: m.daysSince,
       failed: m.failedAttempts || 0,
       taps: m.repeatedTaps || 0,
       mail: m.mail ? [m.mail.opened === true, m.mail.clicked === true] : null,
+      mailIn: mailIn({ door, got, releasedAt: m.releasedAt, signedInAt: m.signedInAt, accountAt: m.accountAt, nudgedAt: m.nudgedAt, hadAccount }),
+      nudges: door === 'waitlist' ? (m.nudgedAt || []).filter(Boolean).length : 0,
+      ask: m.hasAccount ? (m.firstAnswer || null) : null,
       signup: m.signupMethod || null,
       acct: day(m.accountAt),
       access: day(m.accessAt),
@@ -309,6 +361,7 @@ module.exports = {
   EARLY_SQL,
   channel,
   classify,
+  mailIn,
   assemble,
   earlySeason,
   reading,

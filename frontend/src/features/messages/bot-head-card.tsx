@@ -197,7 +197,7 @@ export function BotHeadCard({ head, objects, draft = null }: { head: BotHead; ob
   const t = useMessages('messages');
   const carried = objects.find((object) => object.available && isHeadCard(head, object)) || null;
   // A project's card wears the project's own icon (run four, 13 Oct: it was
-  // "◆"): the tray's, as the strip and the news lines draw it, else the
+  // "◆"): the tray's, as the strip draws it, else the
   // emoji the message carries, else (B21, overnight audit, 1 Nov 2026) the
   // project's own hub card, read for its icon alone: a newcomer's first
   // project is in none of the tray's lists once it is live, and its icon is
@@ -238,14 +238,16 @@ export function BotHeadCard({ head, objects, draft = null }: { head: BotHead; ob
 }
 
 /** The words before the line, the card it names, then the words after it. */
-export function BotHeadWords({ head, objects, channels, draft = null }: {
+export function BotHeadWords({ head, objects, channels, draft = null, marks = null }: {
   head: BotHead;
   objects: readonly SharedObjectCard[];
   channels?: ReadonlySet<string>;
   /** #6248: the preview an open draft's card opens, when this is one. */
   draft?: DraftPreview | null;
+  /** #6738: the words a search result opened, marked in this message (../ai/search-mark.ts). */
+  marks?: string | null;
 }) {
-  const words = (text: string) => (text ? <MessageMarkdown content={text} channels={channels} appSlug={head.appSlug} /> : null);
+  const words = (text: string) => (text ? <MessageMarkdown content={text} channels={channels} appSlug={head.appSlug} marks={marks} /> : null);
   if (head.hidden) return words([head.before, head.rest].filter(Boolean).join('\n\n'));
   return (
     <>

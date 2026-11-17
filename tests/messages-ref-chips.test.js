@@ -131,33 +131,6 @@ test('in a message that names its project, #N is a link to that project\'s reque
   assert.doesNotMatch(html(none), /<a href="#app/);
 });
 
-test('#5728: linkRefsInHtml chips a rendered reply when it names its project, and changes nothing when it does not', () => {
-  const { makeHtmlDocument } = require('./lib/html-dom');
-  const { linkRefsInHtml } = loadTsx(CHANNELS);
-
-  assert.equal(linkRefsInHtml('<p>see #34</p>', null), '<p>see #34</p>', 'no project: untouched');
-  assert.equal(linkRefsInHtml('<p>see #34</p>', ''), '<p>see #34</p>', 'no project: untouched');
-  assert.equal(linkRefsInHtml('', 'goal-champions'), '', 'nothing to decorate');
-  // Off a browser there is no document to parse with, and nothing to change.
-  assert.equal(linkRefsInHtml('<p>see #34</p>', 'goal-champions'), '<p>see #34</p>');
-
-  globalThis.document = makeHtmlDocument();
-  globalThis.window = { App: { user: { username: 'Ada' } } };
-  try {
-    assert.equal(linkRefsInHtml('<p>see #34 and PR #118, and <code>#3</code>, and <a href="https://x.test/">#5</a></p>', 'goal-champions'),
-      '<p>see <a href="#app/goal-champions/dev/issues/34" class="gc-ref gc-ref-issue" data-ref-type="issue" data-ref-number="34">#34</a> and '
-      + '<a href="#app/goal-champions/dev/changes/118" class="gc-ref gc-ref-pr" data-ref-type="pr" data-ref-number="118">PR#118</a>, and '
-      + '<code>#3</code>, and <a href="https://x.test/">#5</a></p>',
-      'a request opens its board page, a PR its proposal page; code and links keep their text');
-    assert.match(linkRefsInHtml('<p>ping @ada</p>', 'goal-champions'),
-      /<a class="gc-mention gc-mention-self" href="#leaderboard\/users\/ada" data-mention="ada">@ada<\/a>/,
-      'the reader\'s own mention wears the shared decoration');
-  } finally {
-    delete globalThis.document;
-    delete globalThis.window;
-  }
-});
-
 test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s stays text', () => {
   const { decorateRefs, personHref } = loadTsx(CHANNELS);
   assert.equal(personHref('ada'), '#leaderboard/users/ada', 'the address a project\'s contributors open');
@@ -175,15 +148,15 @@ test('#4029: @name is a link to the person\'s page in Messages; Homeroom bot\'s 
 
 test('the row hands a bot message\'s project to its markdown, and a chip press records where it was opened from', () => {
   const row = read('frontend/src/features/messages/message-row.tsx');
-  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} \/>/,
+  assert.match(row, /<MessageMarkdown content=\{message\.content\} channels=\{channels\} appSlug=\{botMeta\(message\)\?\.appSlug\} requestColors=\{!!botMeta\(message\)\} marks=\{marks\} \/>/,
     'only the bot\'s own message (botMeta reads it off a bot sender only), whose request numbers wear their tag colour');
   assert.match(read('frontend/src/features/messages/bot-question.tsx'),
     /export function botMeta\(message: ConversationMessage\): HomeroomBotMeta \| null \{\s*if \(!message\.sender\.bot\) return null;/);
 
   const format = read('frontend/src/features/messages/format.tsx');
   const fn = format.slice(format.indexOf('export function MessageMarkdown('), format.indexOf('\n}\n', format.indexOf('export function MessageMarkdown(')));
-  assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);[\s\S]*?return root\.innerHTML;\s*\}, \[content, channels, appSlug, requestColors\]\);/,
-    'the chips are rebuilt when the project changes, or whether they wear their request colours');
+  assert.match(fn, /decorateRefs\(root, channels \|\| NO_CHANNELS, me, appSlug\);[\s\S]*?return root\.innerHTML;\s*\}, \[content, channels, appSlug, requestColors, marks\]\);/,
+    'the chips are rebuilt when the project changes, whether they wear their request colours, or the words a search marked change');
   assert.match(fn, /const chip = \(event\.target as Element \| null\)\?\.closest\?\.\('a\.gc-ref\[href\]'\);/);
   assert.match(fn, /\n    recordObjectOrigin\(event, href\);\n  \};/, 'any chip it does not handle in place (#4241) records its origin');
   assert.match(fn, /onClick=\{appSlug \? openRef : undefined\} dangerouslySetInnerHTML=\{inner\}/,

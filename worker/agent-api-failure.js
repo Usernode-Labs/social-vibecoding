@@ -16,12 +16,10 @@
 // tell the difference. For a BUILD turn that message is only a summary
 // line. For a SCOUT turn it is the deliverable: the host stores the
 // agent's final message verbatim as the session's spec doc (see
-// runScoutTool in routes/sessions.js, whose prompt tells the scout "the
-// host captures that final message verbatim"). Undetected, the notice
-// BECOMES the spec — it overwrites the previous draft, freezes as an
-// immutable version in chat_session_specs, and the dev chat announces
-// "Scout drafted a 1-line spec from the codebase". That is exactly what
-// users reported as "spec result of 'API Error: Connection lost
+// persistScoutPublication in routes/sessions.js). Undetected, the notice
+// BECOMES the spec — it overwrites the previous draft and freezes as an
+// immutable version in chat_session_specs. That is exactly what users
+// reported as "spec result of 'API Error: Connection lost
 // mid-response'".
 //
 // Detection is anchored to the first or last line, never a substring

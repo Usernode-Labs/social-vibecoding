@@ -11,10 +11,8 @@
  * proposal you came to read.
  *
  * ./chat-frame.tsx retired its own for the same reason ("Activity is a row,
- * the header's title tab names it"), and the dev session's strip retired its
- * `←` too — see features/dev-chat/session-header.tsx, whose note reads "one
- * back control, in the bar the board draws it in". This page was the one that
- * kept its copy; it does not any more.
+ * the header's title tab names it"). This page was the one that kept its
+ * copy; it does not any more.
  *
  * ── #2916 PUT BACK INSIDE THE PANE, AND NOT HERE ──────────────────────
  *

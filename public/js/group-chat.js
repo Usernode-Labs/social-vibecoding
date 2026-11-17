@@ -75,6 +75,11 @@ const GroupChat = {
   _reconnectAttempts: 0,
   _reconnectTimer: null,
   _pendingOutgoing: [],
+  // #6730: comments sent on an open socket whose echo has not come back,
+  // keyed by the per-press clientKey. If the socket drops underneath one,
+  // it goes back to the front of _pendingOutgoing (so the reconnect flush
+  // retries it with the same key) and the server's key match stores it once.
+  _inFlight: new Map(),
 
   // #15: Signal-style reply. `replyDraft` is the quote to attach to the
   // NEXT outgoing message (or null). `_tap` records the last pointerdown
@@ -526,6 +531,9 @@ const GroupChat = {
       // Bail if disconnect() ran (we changed apps / left the
       // surface entirely); the existing socket reference is stale.
       if (GroupChat.ws !== ws) return;
+      // #6730: comments sent but not echoed were never confirmed; retry them
+      // after the reconnect with the keys they were first sent under.
+      GroupChat._requeueInFlight();
       GroupChat._renderStatusLine();
       GroupChat._scheduleReconnect(ev.code);
     };
@@ -570,6 +578,9 @@ const GroupChat = {
     for (const payload of queue) {
       try {
         GroupChat.ws.send(JSON.stringify(payload));
+        // #6730: now waiting on its echo, like anything sent on an open
+        // socket; a drop before the echo requeues it.
+        if (payload.clientKey) GroupChat._inFlight.set(payload.clientKey, payload);
       } catch {
         // Socket closed mid-flush — re-queue whatever didn't go
         // and let the next reconnect try again.
@@ -577,6 +588,28 @@ const GroupChat = {
         break;
       }
     }
+  },
+
+  // #6730: stop waiting for this comment's echo — it arrived (a `chat`
+  // frame), the server already had it (`chat_ack`), or it was refused.
+  _settleInFlight(key) {
+    if (typeof key !== 'string' || !key) return;
+    GroupChat._inFlight.delete(key);
+  },
+
+  // #6730: a socket that closed with comments un-echoed. They were on the
+  // wire but may never have arrived, so put them back at the front of the
+  // offline queue — each keeps its key, so the flush after the reconnect
+  // stores each one once, whether or not the first attempt got there.
+  _requeueInFlight() {
+    if (!GroupChat._inFlight.size) return;
+    const queued = new Set(GroupChat._pendingOutgoing.map((p) => p && p.clientKey));
+    const kept = [];
+    for (const [key, payload] of GroupChat._inFlight) {
+      if (!queued.has(key)) kept.push(payload);
+    }
+    GroupChat._inFlight.clear();
+    if (kept.length) GroupChat._pendingOutgoing.unshift(...kept);
   },
 
   disconnect() {
@@ -610,6 +643,7 @@ const GroupChat = {
     // we switch apps, drop them rather than silently sending them
     // to whatever room reconnects next.
     GroupChat._pendingOutgoing.length = 0;
+    GroupChat._inFlight.clear();
   },
 
   // A block changes which persisted posts this viewer may see. Drop every
@@ -727,13 +761,23 @@ const GroupChat = {
         // Posting here is for the app's members (services/communities.js).
         // The server answered THIS socket's own message with the question
         // rather than dropping it; see _answerJoinRequired.
+        // #6730: that comment is no longer waiting on an echo.
+        GroupChat._settleInFlight(msg.clientKey || (msg.retry && msg.retry.clientKey));
         void GroupChat._answerJoinRequired(msg);
+        break;
+      }
+      case 'chat_ack': {
+        // #6730: the server already had this comment (a retry after a lost
+        // answer); it says so on the sender's socket alone.
+        GroupChat._settleInFlight(msg.clientKey);
         break;
       }
       case 'rate_limited': {
         // The server refused THIS socket's own message, edit or reaction for
         // coming too fast (admitSocketFrame in services/ws.js). The composer
         // already cleared itself, so say it was not sent and when to retry.
+        // #6730: the refused comment is not waiting on an echo either.
+        GroupChat._settleInFlight(msg.clientKey || (msg.retry && msg.retry.clientKey));
         window.PlatformUI?.toast?.(GroupChat._rateLimitedText(msg));
         break;
       }
@@ -741,10 +785,13 @@ const GroupChat = {
         // A refusal the server explains in words, such as Homeroom's old
         // channel being read-only (`channel_moved`). It answers a message
         // this socket sent, so it used to vanish along with that message.
+        GroupChat._settleInFlight(msg.clientKey);
         GroupChat._showSocketError(msg);
         break;
       }
       case 'chat': {
+        // #6730: an echo is the comment arriving; stop waiting on it.
+        GroupChat._settleInFlight(msg.clientKey);
         // #194: thread messages never land in the general stream — they
         // route to the mounted thread (if it matches) or bump the
         // chat-count badge on their issue/proposal row. #2387 follow-up:
@@ -1055,6 +1102,16 @@ const GroupChat = {
   // preserve the user's most recent intent.
   PENDING_LIMIT: 50,
 
+  // #6730: a random mark for one press of Send. Same shape as the Messages
+  // composer's key (the server validates it as [A-Za-z0-9._:-]{8,64}); it
+  // never leaves this device except on the comment it belongs to.
+  _newClientKey() {
+    try {
+      if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    } catch { /* older browser: fall through */ }
+    return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  },
+
   // Submit a chat message. Either ships it now (socket OPEN) or
   // queues it for the next reconnect. Never silently drops — that
   // was the visible half of #7 ("messages fail to send without
@@ -1072,6 +1129,10 @@ const GroupChat = {
     if (GroupChat._readOnly()) return;
     // #194: thread sends carry their scope.
     const payload = { type: 'chat', content };
+    // #6730: one press, one comment. The key is made here, at the press,
+    // and rides with the payload through every retry (a queued flush, a
+    // reconnect, a Join and resend) so the server can match it.
+    payload.clientKey = GroupChat._newClientKey();
     if (thread && thread.type && thread.ref) {
       payload.thread = { type: thread.type, ref: Number(thread.ref) };
     }
@@ -1106,6 +1167,7 @@ const GroupChat = {
     GroupChat._setAttachError(null, thread);
 
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      GroupChat._inFlight.set(payload.clientKey, payload);
       GroupChat.ws.send(JSON.stringify(payload));
       return;
     }
@@ -1142,6 +1204,9 @@ const GroupChat = {
     } catch { joined = false; }
     if (joined && msg.retry && msg.retry.type === 'chat') {
       if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+        // #6730: the retry is the same comment, so it keeps its key and is
+        // waited on under it again.
+        if (msg.retry.clientKey) GroupChat._inFlight.set(msg.retry.clientKey, msg.retry);
         GroupChat.ws.send(JSON.stringify(msg.retry));
       } else {
         GroupChat._pendingOutgoing.push(msg.retry);
@@ -1203,7 +1268,7 @@ const GroupChat = {
   // transcript.tsx renders it and is the only writer below #gc-messages.
   //
   // `bodyHtml` stays markup: renderMessageBody runs the content through
-  // DevChat.renderMarkdown and a sanitizer, and a second copy of that pipeline
+  // PlatformMarkdown.render and a sanitizer, and a second copy of that pipeline
   // in React is exactly how the two drift apart.
   // The same "is this mine" rule `_messageView` stamps on each row.
   _isOwnMessage(msg) {
@@ -1429,7 +1494,20 @@ const GroupChat = {
       botSuggest: GroupChat._botSuggestView(kind === 'message' && !deleted ? meta : null),
       // #6533: what a change looks like, under Homeroom bot's reply in its thread.
       botGallery: GroupChat._botGalleryView(kind === 'message' && !deleted ? meta : null),
+      // #6684: a note sent into a build from this request, under the reply
+      // that says so (homeroom-bot-voice.js say).
+      botBuildNote: GroupChat._botBuildNoteView(kind === 'message' && !deleted ? meta : null),
     };
+  },
+
+  // #6684: the build note card under Homeroom bot's reply on a request
+  // (homeroom-bot-voice.js say, services/homeroom-bot-steer.js), or null.
+  // The server writes it and every reader sees it; its redo buttons, if any,
+  // are the offer's (BotOfferButtons).
+  _botBuildNoteView(meta) {
+    const bot = meta && meta.homeroomBot;
+    const note = bot && bot.buildNote;
+    return note && typeof note === 'object' && !Array.isArray(note) ? note : null;
   },
 
   /** #6533: the pictures under a reply (homeroom-bot-voice.js say), or null. */
@@ -1589,6 +1667,8 @@ const GroupChat = {
     GroupChat._react()?.patchTranscriptMessage(Number(frame.id), {
       botOffer: view.botOffer,
       botSuggest: view.botSuggest,
+      // #6684: the build note card says where the note is now.
+      botBuildNote: view.botBuildNote,
       ...(frame.metadata.specShare ? { specShare: view.specShare } : {}),
     });
   },
@@ -1611,7 +1691,7 @@ const GroupChat = {
     const container = document.getElementById('gc-messages');
     if (!container) return;
     // (Re)establish the portal: #gc-messages is created fresh by
-    // AppView.renderDevChatTab on every tab switch, so the previous mount is
+    // AppView.renderGroupChatTab on every tab switch, so the previous mount is
     // pointing at a detached node by now.
     GroupChat._react()?.mountTranscript(container);
     // #4417 follow-up: a topic's channel says so when it is empty, as it did
@@ -3558,9 +3638,9 @@ const GroupChat = {
   },
 
   // The stages at which a card's request is still going (homeroom-bot-chat.js
-  // CARD_STAGES), or waiting on approval that may come in at any time, or on
-  // the project's first version going live.
-  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'building', 'checking', 'proposed', 'approved', 'fixing']),
+  // CARD_STAGES), or waiting on approval that may come in at any time, on
+  // the project's first version going live, or on its requester's own plan.
+  _BOT_CARD_GOING: new Set(['waiting_first_version', 'reading', 'waiting', 'waiting_plan', 'building', 'checking', 'proposed', 'approved', 'fixing']),
 
   // Whether one card still has somewhere to go.
   _botCardGoing(card) {
@@ -3641,14 +3721,16 @@ const GroupChat = {
     } catch { /* it comes back on the next load, and can be dismissed again */ }
   },
 
-  // B9: the chat with Homeroom bot (See progress, Open chat). 16 Oct 2026
-  // (C4): See progress opens it at the request's own thread, its story.
+  // B9: Homeroom bot, from a request's card here (See progress, Open chat).
+  // 16 Oct 2026 (C4): See progress opens the request's own story: its plan's
+  // thread, else its page. 14 Nov 2026: Open chat, with no request, is a new
+  // chat with the bot set to this project (there is no Main Chat to open).
   openBotChat(issueNumber) {
     const messages = window.UsernodeReact && window.UsernodeReact.messages;
     const n = Number(issueNumber);
     if (messages && n && GroupChat.appSlug && typeof messages.openBotRequest === 'function') messages.openBotRequest(GroupChat.appSlug, n);
-    else if (messages && typeof messages.openBot === 'function') messages.openBot();
-    else location.hash = '#messages';
+    else if (messages && typeof messages.openBot === 'function') messages.openBot(GroupChat.appSlug ? { type: 'app', appSlug: GroupChat.appSlug } : undefined);
+    else location.hash = '#homeroom-bot';
   },
 
   // Fix in place: the change a fix went to, on its page (See change).
@@ -3751,20 +3833,27 @@ const GroupChat = {
     // (#6103) — the same rule lib/timestamp.ts reads. The device default
     // stands where the runtime predates it, or where this file is evaluated
     // without one (a bare test sandbox).
-    const locale = typeof PlatformI18n !== 'undefined' && PlatformI18n.dateLocale
-      ? PlatformI18n.dateLocale() : undefined;
+    const i18n = typeof PlatformI18n !== 'undefined' ? PlatformI18n : null;
+    const locale = i18n && i18n.dateLocale ? i18n.dateLocale() : undefined;
+    // The zone the account picked (#6479), and the day an instant falls on
+    // in it; the device's own where none is picked or the runtime predates it.
+    const timeZone = i18n && i18n.timeZone ? i18n.timeZone() : undefined;
+    const zone = timeZone ? { timeZone } : {};
+    const dayOf = (x) => (i18n && i18n.zonedDay
+      ? i18n.zonedDay(x)
+      : { year: x.getFullYear(), month: x.getMonth() + 1, day: x.getDate() });
     // No zero-padded hour (polish N5): "4:14 AM", as lib/timestamp.ts.
-    const time = d.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit' });
+    const time = d.toLocaleTimeString(locale, { ...zone, hour: 'numeric', minute: '2-digit' });
     const title = d.toLocaleString(locale, {
-      year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+      ...zone, year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     });
-    const sameDay = d.getFullYear() === today.getFullYear()
-      && d.getMonth() === today.getMonth()
-      && d.getDate() === today.getDate();
+    const a = dayOf(d);
+    const b = dayOf(today);
+    const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
     if (sameDay) return { text: time, title };
-    const date = d.toLocaleDateString(locale, d.getFullYear() === today.getFullYear()
-      ? { month: 'short', day: 'numeric' }
-      : { year: 'numeric', month: 'short', day: 'numeric' });
+    const date = d.toLocaleDateString(locale, a.year === b.year
+      ? { ...zone, month: 'short', day: 'numeric' }
+      : { ...zone, year: 'numeric', month: 'short', day: 'numeric' });
     return { text: `${date}, ${time}`, title };
   },
 
@@ -4116,8 +4205,7 @@ const GroupChat = {
 
   // ── #694: file attachments ──────────────────────────────────────────
   //
-  // Upload-before-send, ported from dev-chat (#450, public/js/dev-chat.js
-  // _setupAttachments and friends): each picked/pasted/dropped file is
+  // Upload-before-send (#450): each picked/pasted/dropped file is
   // validated client-side (mirroring src/services/attachments.js
   // validateChatUpload), POSTed as raw octet-stream to
   // /api/apps/:slug/chat-attachments, and parked in `pendingAttachments`
@@ -5020,19 +5108,12 @@ const GroupChat = {
   // `meta.title` is set by the share endpoint when the spec content starts
   // with an H1; older shares predate that field and fall back to
   // "Spec v<n>". The snippet is rendered as markdown so the preview matches
-  // what the user sees in the dev-chat spec viewer (shared markdown helper
-  // from DevChat).
-  //
-  // Reach DevChat via a bare reference and a `typeof` guard rather than
-  // `window.DevChat` — DevChat is declared with `const` at dev-chat.js's top
-  // level, which does NOT install it as a property on `window` (only `var` /
-  // function declarations do). It IS visible as a global identifier across
-  // <script> tags because both files share the same script scope, so a bare
-  // `DevChat.renderMarkdown(...)` works; the `typeof` keeps things safe if
-  // dev-chat.js ever fails to load.
+  // what the user sees in the spec viewer (the platform's markdown renderer,
+  // PlatformMarkdown). The `typeof` guard keeps things safe if it ever fails
+  // to load.
   _specShareView(meta, msg) {
-    const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown
-      ? (str) => DevChat.renderMarkdown(str)
+    const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render
+      ? (str) => PlatformMarkdown.render(str)
       : null;
     // #1808: composed from `_stamp` rather than spelling its own options
     // table, which had no `year` — a spec built last June read "Jun 16,
@@ -5060,7 +5141,7 @@ const GroupChat = {
       botNote: ['building', 'waiting', 'replaced', 'stopped'].includes(meta.botNote) ? meta.botNote : null,
       waitingFor: meta.botNote === 'waiting' && typeof meta.waitingFor === 'string' && meta.waitingFor ? meta.waitingFor : null,
       // Markdown, so `dangerouslySetInnerHTML`; null when the share carried
-      // no snippet, or when dev-chat.js is not loaded to render one.
+      // no snippet, or when the renderer is not loaded to render one.
       snippetHtml: meta.snippet && renderMd ? renderMd(meta.snippet) : null,
       // …and the raw text as the fallback, escaped by React as a text child.
       snippetText: meta.snippet && !renderMd ? String(meta.snippet) : null,
@@ -5584,7 +5665,7 @@ function renderRefChips(html) {
 }
 
 // #328: the authoritative renderer for a USER message body. Renders a safe
-// markdown subset via the shared DevChat.renderMarkdown (marked + DOMPurify,
+// markdown subset via the shared PlatformMarkdown.render (marked + DOMPurify,
 // strict allowlist, https-only links, raw HTML escaped) and then layers the
 // existing @mention + PR/issue-ref decoration on top. All three message
 // surfaces (main chat, thread replies, inline edit) funnel through here so
@@ -5601,16 +5682,16 @@ function renderRefChips(html) {
 // markdown source on the wire and in the DB — this is display-only.
 //
 // Falls back to the plain renderWithMentions path when the markdown libs /
-// DevChat aren't available (CDN blocked, native shell, the test sandbox).
+// PlatformMarkdown aren't available (CDN blocked, native shell, the test sandbox).
 function renderMessageBody(raw) {
   const text = raw == null ? '' : String(raw);
-  const renderMd = typeof DevChat !== 'undefined' && DevChat.renderMarkdown;
+  const renderMd = typeof PlatformMarkdown !== 'undefined' && PlatformMarkdown.render;
   if (!renderMd || typeof document === 'undefined' || !document.createElement) {
     return renderWithMentions(text);
   }
   let html;
   try {
-    html = DevChat.renderMarkdown(text, { breaks: true });
+    html = PlatformMarkdown.render(text, { breaks: true });
   } catch {
     return renderWithMentions(text);
   }
@@ -5766,7 +5847,7 @@ function tokenizeMentionsAndRefs(text, me, channels, opts) {
 // here, and stays text. The guard comes out of every text node, display
 // only, so what reads (and copies) is what was typed, a code block's
 // `@scope/pkg` included. Takes and returns sanitized HTML (the output of
-// DevChat.renderMarkdown); app-view.js calls it for a request's body and its
+// PlatformMarkdown.render); app-view.js calls it for a request's body and its
 // GitHub comments.
 const GC_MENTION_GUARD = '@​';
 

@@ -41,7 +41,6 @@ const delivery = createDelivery({
   },
   refuse: (client, reason) => {
     globalClients.delete(client);
-    unwatchAllSessions(client);
     laggingClients.delete(client);
     if (client.appId != null) leaveRoom(client.appId, client);
     try {
@@ -96,7 +95,7 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       return;
     case 'session':
       // #4318: the same routing the emitting pod ran, against THIS pod's
-      // sockets and THIS pod's watch list.
+      // sockets.
       if (r.sessionId != null) deliverSessionEvent(payload, r);
       return;
     case 'account_deleted':
@@ -119,13 +118,14 @@ function _onBusMessage({ kind, routing, data, oversize, fromWorkflow }) {
       }
       revalidateClients();
       return;
-    // A turn's stream has a new row (services/session-bus.js): this
-    // process's subscribers to it read on. Never a socket event.
-    case 'stream':
-      if (fromWorkflow && r.key != null) require('./session-bus').wake(r.key, Number(r.id) || null);
-      return;
     case 'turn_byok':
       if (!oversize) require('./worker').receiveTurnByok(payload);
+      return;
+    // #6674: what Homeroom bot is doing, as the pod that runs it said. Kept
+    // only so a read of its status handled here can answer; nothing goes to
+    // a socket (the typing event itself crossed the bus as usual).
+    case 'bot_typing':
+      if (!oversize) require('./bot-typing-mirror').note(payload);
       return;
     default:
       log.warn('ws', 'unknown bus kind', { kind });
@@ -395,16 +395,12 @@ function attach(server, config) {
         // the handshake, not from its next poll.
         sendPlatformVersion(ws, 'connected');
 
-        // #4318: the one thing a tab says on this socket — which sessions
-        // it has on screen (see handleEventsFrame).
-        ws.on('message', (raw) => {
-          void handleEventsFrame(pool, client, raw)
-            .catch((err) => log.warn('ws', 'events frame failed', { err: err.message }));
-        });
+        // The one thing a tab says on this socket: a `ping` after a quiet
+        // spell (see handleEventsFrame).
+        ws.on('message', (raw) => handleEventsFrame(client, raw));
 
         ws.on('close', () => {
           globalClients.delete(client);
-          unwatchAllSessions(client);
           laggingClients.delete(client);
           log.debug('ws', 'Global events client disconnected', { userId: user.id });
         });
@@ -741,8 +737,8 @@ function deliverGlobal(data) {
 function broadcastGlobal(data) {
   // #4318: a session's live events are routed by session, not sent to
   // every socket on the platform. Every caller that streams a run (agent
-  // runs, Mayor turns, checks, previews, sync-main, recovery) reaches it
-  // through here, so the routing is decided in one place.
+  // runs, checks, previews, sync-main, recovery) reaches it through here,
+  // so the routing is decided in one place.
   if (data?.type === 'session_event') {
     if (positiveSessionId(data.sessionId) != null) broadcastSessionEvent(data);
     return;
@@ -759,23 +755,16 @@ function broadcastGlobal(data) {
 // ── Session events, routed by session (#4318) ──────────────────────────
 //
 // `session_event` is the live stream of one session: the coding agent's
-// progress lines, the Mayor's status rows and replies, checks, previews.
-// It used to go to EVERY /ws/events socket, so the work grew as open tabs ×
-// running sessions × events. Now each event goes to:
+// progress lines, checks, previews. It used to go to EVERY /ws/events
+// socket, so the work grew as open tabs × running sessions × events. Now
+// each event goes to:
 //
-//   * the session owner's sockets (as before, and also what keeps a tab
-//     still running an older build working: it sends no watch frames);
-//   * sockets that WATCH the session: a tab sends `watch_session` while it
-//     has that session open (DevChat — the session chat and the Mayor chat
-//     — on the owner's or an admin's screen) and `unwatch_session` when it
-//     leaves, and re-sends its watches whenever the socket reconnects;
+//   * the session owner's sockets;
 //   * for the few events lists and boards also draw (SESSION_FANOUT_EVENTS:
 //     a checks run's progress and verdict, a preview built, woken or
 //     failed),
 //     everyone who may VIEW the app as well — the broadcastGlobalScoped
-//     audience. Those are the events App.handleSessionEvent handles before
-//     its "is this the open session" gate; every other event it drops
-//     unless DevChat has that session open.
+//     audience. Those are the events App.handleSessionEvent handles.
 //
 // Cached owner/app metadata and the bus routing select candidates. The
 // receiving pod checks current identity, session ownership and app access
@@ -784,8 +773,6 @@ function broadcastGlobal(data) {
 // rebuilt one: a member who pressed Try it on somebody else's change waits
 // for it behind the same loader, so it goes to the same audience.
 const SESSION_FANOUT_EVENTS = new Set(['checks_ready', 'staging_ready', 'staging_awake', 'staging_failed']);
-const MAX_WATCHED_SESSIONS_PER_SOCKET = 16;
-const sessionWatchers = new Map(); // sessionId -> Set<client>
 
 function positiveSessionId(value) {
   const n = Number(value);
@@ -885,7 +872,7 @@ function deliverSessionEvent(data, routing) {
   if (sessionId == null) return;
   if (data.type === 'session_event' && positiveSessionId(data.sessionId) !== sessionId) return;
   const json = JSON.stringify(data);
-  const targets = new Set(sessionWatchers.get(sessionId) || []);
+  const targets = new Set();
   if (r.userId != null) {
     const ownerId = Number(r.userId);
     for (const client of globalClients) {
@@ -894,43 +881,14 @@ function deliverSessionEvent(data, routing) {
   }
   // Routing is a candidate list, never authorization. The delivery query
   // reads the session's CURRENT owner and app, and checks current project
-  // access even for its owner or a tab that watched before access changed.
-  // A missing/failed lookup cannot turn this into a global event.
+  // access even for its owner. A missing/failed lookup cannot turn this
+  // into a global event.
   const fanout = !!r.fanout && (data.type === 'resync_hint' || sessionEventAudience(data) === 'app');
   if (fanout && r.appId == null && !r.appSlug) return;
   if (fanout) for (const client of globalClients) targets.add(client);
   for (const client of targets) {
-    sendToEventsClient(client, json, { sessionId, watching: !!client.watching?.has(sessionId), fanout });
+    sendToEventsClient(client, json, { sessionId, fanout });
   }
-}
-
-// Who may watch a session's live events: exactly who may open its live
-// stream, GET /api/sessions/:id/events in routes/sessions.js — its owner or
-// an admin. (The session chat itself, GET /api/sessions/:id, is the same.)
-function canWatchSessionRow(row, user) {
-  if (!row || !user) return false;
-  return !!user.isAdmin || (row.user_id != null && Number(row.user_id) === Number(user.id));
-}
-
-function watchSession(client, sessionId) {
-  if (!client.watching) client.watching = new Set();
-  client.watching.add(sessionId);
-  let set = sessionWatchers.get(sessionId);
-  if (!set) { set = new Set(); sessionWatchers.set(sessionId, set); }
-  set.add(client);
-}
-
-function unwatchSession(client, sessionId) {
-  if (client.watching) client.watching.delete(sessionId);
-  const set = sessionWatchers.get(sessionId);
-  if (!set) return;
-  set.delete(client);
-  if (!set.size) sessionWatchers.delete(sessionId);
-}
-
-function unwatchAllSessions(client) {
-  if (client.wantWatch) client.wantWatch.clear();
-  for (const sessionId of [...(client.watching || [])]) unwatchSession(client, sessionId);
 }
 
 function replyToEventsClient(client, frame) {
@@ -939,18 +897,17 @@ function replyToEventsClient(client, frame) {
   } catch { /* closed between the frame and the answer */ }
 }
 
-// A tab's frames on /ws/events. Small, few (a tab sends one when it opens
-// or leaves a session, and a `ping` after a quiet spell), and capped per
-// socket so a script cannot make one socket cost a query per frame for long.
+// A tab's frames on /ws/events. Small, few (a `ping` after a quiet spell),
+// and capped per socket.
 const EVENTS_FRAME_MAX_BYTES = 512;
 const EVENTS_FRAME_BUDGET = 120; // per socket per minute
-async function handleEventsFrame(pool, client, raw) {
+function handleEventsFrame(client, raw) {
   const size = typeof raw === 'string' ? Buffer.byteLength(raw) : (raw && raw.length) || 0;
   if (size > EVENTS_FRAME_MAX_BYTES) return;
   let msg;
   try { msg = JSON.parse(raw); } catch { return; }
   if (!msg || typeof msg !== 'object') return;
-  if (msg.type !== 'watch_session' && msg.type !== 'unwatch_session' && msg.type !== 'ping') return;
+  if (msg.type !== 'ping') return;
   const now = Date.now();
   if (!client.frameWindow || client.frameWindow.resetAt <= now) {
     client.frameWindow = { used: 0, resetAt: now + SOCKET_RATE_WINDOW_MS };
@@ -960,44 +917,7 @@ async function handleEventsFrame(pool, client, raw) {
   // that passes nothing, an open socket never closes, so the tab only learns
   // it is dead when no answer comes (public/js/app.js, _checkEvents).
   // Answered at once, with no query.
-  if (msg.type === 'ping') {
-    replyToEventsClient(client, { type: 'pong' });
-    return;
-  }
-  const sessionId = positiveSessionId(msg.sessionId);
-  if (sessionId == null) return;
-  if (!client.wantWatch) client.wantWatch = new Map();
-  if (msg.type === 'unwatch_session') {
-    client.wantWatch.delete(sessionId);
-    unwatchSession(client, sessionId);
-    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false });
-    return;
-  }
-  // A session this socket already watches is checked again like a new one:
-  // its answer reflects access now (after a demotion, say), not when the
-  // watch began, and a refusal ends the watch.
-  if (client.wantWatch.size >= MAX_WATCHED_SESSIONS_PER_SOCKET && !client.wantWatch.has(sessionId)) {
-    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'too_many' });
-    return;
-  }
-  // A token, so an unwatch that lands while this check is in flight wins.
-  const token = Symbol('watch');
-  client.wantWatch.set(sessionId, token);
-  let allowed = false;
-  try {
-    allowed = await delivery.check(client, { sessionId, watchRequest: true });
-  } catch (err) {
-    log.warn('ws', 'session watch check failed', { sessionId, err: err.message });
-  }
-  if (client.wantWatch.get(sessionId) !== token) return;
-  if (!allowed || !globalClients.has(client)) {
-    client.wantWatch.delete(sessionId);
-    unwatchSession(client, sessionId);
-    replyToEventsClient(client, { type: 'session_watch', sessionId, watching: false, code: 'not_found' });
-    return;
-  }
-  watchSession(client, sessionId);
-  replyToEventsClient(client, { type: 'session_watch', sessionId, watching: true });
+  replyToEventsClient(client, { type: 'pong' });
 }
 
 // ── A slow socket is skipped, then told to re-read (#4318) ─────────────
@@ -1197,9 +1117,60 @@ function refuseChat(client, msg, code, message = null) {
   if (!msg || msg.type !== 'chat') return;
   try {
     if (client.ws && client.ws.readyState === 1) {
-      client.ws.send(JSON.stringify({ type: 'error', code, ...(message ? { message } : {}) }));
+      // #6730: name the comment's client key when it had one, so the
+      // composer can stop expecting an echo for it.
+      const key = typeof msg.clientKey === 'string' && msg.clientKey ? { clientKey: msg.clientKey } : {};
+      client.ws.send(JSON.stringify({ type: 'error', code, ...(message ? { message } : {}), ...key }));
     }
   } catch { /* a closed socket has nobody to tell */ }
+}
+
+// #6730: the comment a client key already stored, if the sender's first
+// press reached us after all. Scoped to the app and the user, exactly as
+// the partial unique index is, so a key replayed elsewhere never matches.
+async function findClientKeyMessage(pool, client, clientKey) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, content, msg_type, metadata, thread_type, thread_ref,
+            posted_via, created_at
+       FROM chat_messages
+      WHERE app_id = $1 AND user_id = $2 AND client_key = $3
+      LIMIT 1`,
+    [client.appId, client.user.id, clientKey]
+  );
+  return rows[0] || null;
+}
+
+// The same frame shape the first press's insert broadcasts, rebuilt from the
+// stored row, so the send that was retried looks delivered to its sender.
+function duplicateChatOutMsg(row, client, clientKey) {
+  const thread = row.thread_type && row.thread_ref != null
+    ? { type: row.thread_type, ref: Number(row.thread_ref) }
+    : null;
+  const metadata = row.metadata && typeof row.metadata === 'object'
+    && Object.keys(row.metadata).length ? row.metadata : null;
+  return {
+    type: 'chat',
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    username: client.user.username,
+    content: row.content,
+    msgType: row.msg_type || 'message',
+    ...(metadata ? { metadata } : {}),
+    ...(thread ? { thread } : {}),
+    createdAt: row.created_at,
+    postedVia: row.posted_via || null,
+    ...(clientKey ? { clientKey } : {}),
+  };
+}
+
+function answerDuplicateChat(client, row, clientKey) {
+  const message = duplicateChatOutMsg(row, client, clientKey);
+  try {
+    if (client.ws && client.ws.readyState === 1) {
+      client.ws.send(JSON.stringify({ type: 'chat_ack', clientKey, id: message.id }));
+    }
+  } catch { /* a closed socket has nobody to tell */ }
+  return { ok: true, duplicate: true, message };
 }
 
 async function canWriteChat(pool, client) {
@@ -1334,6 +1305,19 @@ async function handleMessage(pool, client, msg) {
             }
           } catch { /* a closed socket has nobody to tell */ }
           return { ok: false, code: 'topic_closed' };
+        }
+      }
+
+      // #6730: a key made when Send was first pressed. A malformed one is
+      // treated as absent: the comment is still stored, never refused. A
+      // match means the first press DID reach us (its answer was lost), so
+      // this one answers with the row already stored and writes nothing.
+      const clientKey = require('./conversations').normalizeIdempotencyKey(msg.clientKey);
+      if (clientKey) {
+        const existing = await findClientKeyMessage(pool, client, clientKey);
+        if (existing) {
+          storedChats.add(msg);
+          return answerDuplicateChat(client, existing, clientKey);
         }
       }
 
@@ -1501,12 +1485,12 @@ async function handleMessage(pool, client, msg) {
         }
       }
 
-      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via)
-         VALUES ($1, $2, $3, 'message', $4, $5, $6, $7)
+      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref, posted_via, client_key)
+         VALUES ($1, $2, $3, 'message', $4, $5, $6, $7, $8)
          RETURNING id, created_at`;
       // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
       const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
-        thread ? thread.type : null, thread ? thread.ref : null, postedVia];
+        thread ? thread.type : null, thread ? thread.ref : null, postedVia, clientKey];
       // 17 Oct 2026: a person's message in any place but a governance vote's
       // is heard by the Homeroom bot's voice there (src/workflow/bot-voice/)
       // in the statement that inserts it: an answer it owes is never only in
@@ -1520,26 +1504,41 @@ async function handleMessage(pool, client, msg) {
         ? require('../workflow/platform.ts').insertHeard(db, insertSql, insertParams, { appId: client.appId, thread: thread || null })
         : db.query(insertSql, insertParams).then((r) => r.rows));
       let rows;
-      if (attRows.length) {
-        // Insert + link atomically — a half-linked send would render
-        // chips that 404 while the orphan sweeper still owns the rows.
-        const cx = await pool.connect();
-        try {
-          await cx.query('BEGIN');
-          rows = await insert(cx);
-          await cx.query(
-            `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
-            [rows[0].id, attIds]
-          );
-          await cx.query('COMMIT');
-        } catch (err) {
-          try { await cx.query('ROLLBACK'); } catch { /* connection gone */ }
-          throw err;
-        } finally {
-          cx.release();
+      try {
+        if (attRows.length) {
+          // Insert + link atomically — a half-linked send would render
+          // chips that 404 while the orphan sweeper still owns the rows.
+          const cx = await pool.connect();
+          try {
+            await cx.query('BEGIN');
+            rows = await insert(cx);
+            await cx.query(
+              `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
+              [rows[0].id, attIds]
+            );
+            await cx.query('COMMIT');
+          } catch (err) {
+            try { await cx.query('ROLLBACK'); } catch { /* connection gone */ }
+            throw err;
+          } finally {
+            cx.release();
+          }
+        } else {
+          rows = await insert(pool);
         }
-      } else {
-        rows = await insert(pool);
+      } catch (err) {
+        // #6730: two frames carrying one key raced past the lookup above.
+        // The index refused the second; the first is the comment, so answer
+        // with it rather than failing a send that was actually stored.
+        if (clientKey && err && err.code === '23505'
+            && String(err.constraint || '').includes('idx_chat_messages_client_key')) {
+          const existing = await findClientKeyMessage(pool, client, clientKey);
+          if (existing) {
+            storedChats.add(msg);
+            return answerDuplicateChat(client, existing, clientKey);
+          }
+        }
+        throw err;
       }
       storedChats.add(msg);
 
@@ -1574,6 +1573,10 @@ async function handleMessage(pool, client, msg) {
         // Always present on a human row, so a live row and a loaded one
         // carry the same fact (`posted_via` on the REST payload).
         postedVia,
+        // #6730: the sender's own per-press key, so its composer knows this
+        // echo is the comment it was waiting for. Meaningless to everyone
+        // else (a random value).
+        ...(clientKey ? { clientKey } : {}),
       };
 
       await broadcastFromSender(pool, client.appId, outMsg, client.user.id);
@@ -2510,8 +2513,7 @@ function pushSessionUpdate(data) {
 // has activity.
 //
 //   shared  → broadcastGlobalScoped, i.e. everyone who may VIEW the app
-//             (which is exactly who already sees the shared session card
-//             or the auto-run's issue card).
+//             (which is exactly who already sees the shared session card).
 //   private → the owner's own sockets only. A session nobody else can see
 //             must not announce itself, not even as an anonymous id.
 //
@@ -2754,4 +2756,4 @@ function pushConversationEvent(memberUserIds, payload, { excludeUserId = null, a
 
 const pushNotificationToUser = pushToUser;
 
-module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, closeAllForRelease, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, canWatchSessionRow, SESSION_FANOUT_EVENTS, MAX_WATCHED_SESSIONS_PER_SOCKET, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };
+module.exports = { noteBoardChange, broadcastThreadSummary, connectedUserIds, disconnectUser, closeAllForRelease, attach, broadcast, _onBusMessage, _onBusListening, broadcastGlobal, broadcastSessionEvent, sessionEventAudience, SESSION_FANOUT_EVENTS, SLOW_CLIENT_MAX_BUFFERED, SLOW_CLIENT_RESUME_BUFFERED, _checkLaggingClients: checkLaggingClients, _sessionMetaCache: sessionMetaCache, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, sendBotMessage, sendFirstVersionMessage, getOnlineUsers, pushAppStatusUpdate, pushAppCreationPhase, pushSessionUpdate, pushSessionState, sessionStateAudience, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushWorkshopUpdate, onBoardChange, pushToUser, pushConversationEvent, pushNotificationToUser, pushPlatformVersion, getReactionsForMessages, validateThread, TOPIC_CLOSED_MESSAGE, handleMessage, admitSocketFrame, SOCKET_RATE_BUDGETS, SOCKET_RATE_WINDOW_MS, MAX_CHAT_LEN };

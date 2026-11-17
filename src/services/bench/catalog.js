@@ -5,8 +5,7 @@
 // The list is a starting point, not an allowlist. Every model runs through
 // the same OpenRouter path the bot's own turns use (agent-turn
 // resolveCodexRuntimeContext), which takes any id OpenRouter serves; nothing
-// here widens what a member may pick in the dev chat, which reads its own
-// catalog. An admin may add any OpenRouter id to a run.
+// here widens what a member may pick, which reads its own catalog. An admin may add any OpenRouter id to a run.
 //
 // Prices and context windows are NOT written down here. They come from the
 // OpenRouter catalog the platform already stores (openrouter_model_catalog,

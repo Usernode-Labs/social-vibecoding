@@ -224,31 +224,35 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
   const uma = Number((await one('SELECT id FROM users WHERE username = $1', ['uma'])).id);
   let nudge = null;
 
-  await t.test('nudged once: the message, its buttons, and never again for that project', async () => {
+  // 14 Nov 2026: the nudge is a bell row (kind `invite_nudge`), not a message
+  // in Main Chat, which is gone. No chat message, no card, no push.
+  await t.test('nudged once: a bell row for the project, no chat message, and never again for that project', async () => {
     const before = Number((await one('SELECT COUNT(*) AS n FROM notifications')).n);
+    const messagesBefore = Number((await one('SELECT COUNT(*) AS n FROM conversation_messages')).n);
     const sent = await nudges.nudge(pool, { userId: uma, appId: runClub.id }, steps());
     assert.equal(sent.said, 'sent');
     nudge = await one('SELECT * FROM invite_nudges WHERE user_id = $1 AND app_id = $2', [uma, runClub.id]);
     assert.equal(nudge.act, 'message');
-    assert.ok(nudge.sent_at && nudge.card_id && Number(nudge.message_id) === Number(sent.messageId));
-    const card = await one('SELECT * FROM bot_cards WHERE id = $1', [nudge.card_id]);
-    assert.deepEqual([card.kind, card.status, card.place, Number(card.user_id), Number(card.app_id), Number(card.message_id)],
-      ['invite_friends', 'open', 'dm', uma, runClub.id, Number(sent.messageId)]);
-    const message = await one('SELECT * FROM conversation_messages WHERE id = $1', [sent.messageId]);
-    assert.equal(Number(message.sender_id), bot);
-    assert.equal(Number(card.conversation_id), Number(message.conversation_id));
-    assert.equal(message.thread_root_id, null, 'in Main');
-    assert.equal(message.content,
-      'You posted in Run Club. Run Club is better with your people: invite one or two friends?\n\nThey can use it straight away and help shape it.');
-    const meta = message.metadata.homeroomBot;
-    assert.deepEqual([meta.kind, meta.appSlug, meta.appName, meta.act, meta.actionId, meta.status],
-      ['invite_friends', 'run-club', 'Run Club', 'message', Number(card.id), 'open']);
-    assert.deepEqual(meta.actions, [
-      { id: 'invite_people', label: 'Invite people', type: 'invite', style: 'primary' },
-      { id: 'no', label: 'Not now', style: 'secondary', type: 'server' },
-    ]);
-    assert.equal(meta.moment, undefined, 'it rings nothing');
-    assert.equal(Number((await one('SELECT COUNT(*) AS n FROM notifications')).n), before, 'no bell row');
+    assert.ok(nudge.sent_at && Number(nudge.notification_id) === Number(sent.notificationId));
+    assert.deepEqual([nudge.card_id, nudge.message_id], [null, null], 'no card and no message');
+    const row = await one('SELECT * FROM notifications WHERE id = $1', [nudge.notification_id]);
+    assert.deepEqual(
+      [row.kind, row.detail, Number(row.user_id), Number(row.app_id), Number(row.source_user_id), row.conversation_id,
+        row.conversation_message_id, row.read_at],
+      ['invite_nudge', 'message', uma, runClub.id, bot, null, null, null]);
+    assert.equal(Number((await one('SELECT COUNT(*) AS n FROM notifications')).n), before + 1, 'one bell row');
+    assert.equal(Number((await one('SELECT COUNT(*) AS n FROM conversation_messages')).n), messagesBefore, 'nothing is said in the chat');
+    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM bot_cards WHERE user_id = $1 AND kind = 'invite_friends'`, [uma])).n), 0);
+    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM mobile_push_kind_categories WHERE kind = 'invite_nudge'`)).n), 0,
+      'it wakes no phone, as the message rang nothing');
+    // The bell lists it, under its project.
+    const listed = await require('../src/services/notifications').listForUser(pool, uma, {});
+    const mine = (listed.items || listed).find((n) => n.kind === 'invite_nudge');
+    assert.deepEqual([mine.detail, mine.app_slug, mine.app_name], ['message', 'run-club', 'Run Club']);
+    // The send again (a retried step) rings nothing twice.
+    assert.deepEqual(await nudges.send(pool, { nudgeId: nudge.id, userId: uma, appId: runClub.id, act: 'message', slug: 'run-club', name: 'Run Club' }),
+      { said: 'sent', notificationId: Number(nudge.notification_id) });
+    assert.equal(Number((await one('SELECT COUNT(*) AS n FROM notifications')).n), before + 1);
     // Once per project, ever: asked again, nothing; the sweep no longer lists them.
     assert.deepEqual(await nudges.nudge(pool, { userId: uma, appId: runClub.id }, steps()), { skipped: 'not_due' });
     assert.equal((await ids()).has(uma), false);
@@ -262,8 +266,8 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     assert.equal(both.filter((c) => c.nudgeId).length, 1);
     assert.deepEqual(both.filter((c) => !c.nudgeId), [{ skipped: 'not_due' }]);
     assert.equal(Number((await one('SELECT COUNT(*) AS n FROM invite_nudges WHERE user_id = $1', [sol])).n), 1);
-    // Its card is written with its message (step 3), not by the claim.
-    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM bot_cards WHERE user_id = $1 AND kind = 'invite_friends'`, [sol])).n), 0);
+    // The claim rings nothing: its bell row is the send's.
+    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM notifications WHERE user_id = $1 AND kind = 'invite_nudge'`, [sol])).n), 0);
   });
 
   await t.test('one a week across projects', async () => {
@@ -278,8 +282,24 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     assert.equal((await nudges.nudge(pool, { userId: xia, appId: runClub.id }, steps())).said, 'sent');
   });
 
-  await t.test('Not now: decided once, recorded, and never asked again for that project', async () => {
+  // A nudge sent as a chat card, before nudges moved to the bell, keeps its
+  // Not now: the card and its message written as that send wrote them.
+  await t.test('Not now on a nudge sent as a chat card before: decided once, recorded, and never asked again', async () => {
+    const dmSvc = require('../src/services/homeroom-bot-dm');
+    const botUser = await dmSvc.botAccount(pool);
+    const old = await dmSvc.sendDm(pool, {
+      bot: botUser, userId: uma, content: dmSvc.inviteNudgeText({ act: 'message', appName: 'Run Club' }),
+      idempotencyKey: `hrbot-invite-nudge-${nudge.id}`,
+      metadata: dmSvc.inviteNudgeMeta({ slug: 'run-club', appName: 'Run Club', act: 'message', actionId: null }),
+      card: {
+        kind: dmSvc.INVITE_NUDGE_KIND, appId: runClub.id, title: 'Invite friends to Run Club',
+        onInsert: (db, { cardId }) => db.query('UPDATE invite_nudges SET card_id = $2 WHERE id = $1', [nudge.id, cardId]),
+      },
+    });
+    await pool.query('UPDATE invite_nudges SET message_id = $2 WHERE id = $1', [nudge.id, old.messageId]);
+    nudge = await one('SELECT * FROM invite_nudges WHERE id = $1', [nudge.id]);
     const card = Number(nudge.card_id);
+    assert.ok(card > 0);
     const user = { id: uma };
     const deps = { ws: { pushConversationEvent: (ids, event) => { pushed.push({ ids, event }); return 1; } } };
     assert.deepEqual(await mayor.decideOfferTap(pool, {}, { user, actionId: card, choice: 'yes', deps }),
@@ -302,15 +322,18 @@ test('the bring-a-friend nudge, against the real schema', { timeout: 180000 }, a
     assert.equal((await ids()).has(uma), false);
   });
 
-  await t.test('a chat that refuses the message: nothing sent, no card, and not asked again', async () => {
+  await t.test('somebody who blocked the bot: nothing rings, and they are not asked again', async () => {
     const tam = Number((await one('SELECT id FROM users WHERE username = $1', ['tam'])).id);
-    const sent = await nudges.nudge(pool, { userId: tam, appId: runClub.id }, steps(), {
-      dm: { ...require('../src/services/homeroom-bot-dm'), sendDm: async () => null },
-    });
+    // Claimed while the bot still worked for them; blocked before the send.
+    const settings = await require('../src/services/homeroom-bot').readSettings(pool);
+    const claimed = await nudges.claim(pool, { userId: tam, appId: runClub.id, deps: { settings } });
+    assert.ok(claimed.nudgeId);
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [tam, bot]);
+    const sent = await nudges.send(pool, claimed);
     assert.deepEqual(sent, { said: 'not_sent' });
     const row = await one('SELECT * FROM invite_nudges WHERE user_id = $1', [tam]);
-    assert.equal(row.sent_at, null);
-    assert.equal(row.card_id, null, 'no card without its message');
+    assert.deepEqual([row.sent_at, row.notification_id, row.card_id], [null, null, null]);
+    assert.equal(Number((await one(`SELECT COUNT(*) AS n FROM notifications WHERE user_id = $1 AND kind = 'invite_nudge'`, [tam])).n), 0);
     assert.equal((await ids()).has(tam), false);
   });
 });

@@ -9,7 +9,7 @@
 //      row rendered again; the thread head was a fresh copy each render.
 //   2. Messages inbox: every keystroke in the search box re-ran buildInbox and
 //      re-rendered every row, and so did every publish of the agent
-//      sessions' store (and of Global Chat's, before it was removed).
+//      sessions' store and of Global Chat's (both since removed).
 //   3. Topic head: nine blocks of another renderer's markup took an inline
 //      `{ __html }` object, and the head republishes on the 20s checks poll
 //      and on websocket events, so each block's innerHTML (the before/after
@@ -111,7 +111,7 @@ test('the open reply thread lights its chip through a prop, read on every render
 
 test('the inbox rows are memo()\'d and the list filters on the deferred query', () => {
   const src = read('frontend/src/features/messages/index.tsx');
-  for (const name of ['ConversationRow', 'GeneralChannelRow', 'AppChannelRow', 'AgentSessionRow', 'MayorSessionRow']) {
+  for (const name of ['ConversationRow', 'GeneralChannelRow', 'AppChannelRow']) {
     assert.match(src, new RegExp(`^const ${name} = memo\\(function ${name}\\(`, 'm'), `${name} is memo()'d`);
   }
   const list = src.slice(src.indexOf('function ConversationList('));
@@ -120,9 +120,6 @@ test('the inbox rows are memo()\'d and the list filters on the deferred query', 
   assert.match(body, /const q = deferredQuery\.trim\(\)\.toLowerCase\(\);/, 'rows are matched against the deferred query');
   assert.match(body, /value=\{query\}/, 'while the field shows every keystroke at once');
   assert.match(body, /const inbox = useMemo\(\(\) => buildInbox\(/, 'the inbox is built once per change to its inputs');
-  // Other stores are read through the fields the list draws.
-  assert.match(body, /const mayorSessions = useAgentSessions\(\);/);
-  assert.doesNotMatch(body, /useAgentSessionState\(/);
 });
 
 // ── 3. Topic head ───────────────────────────────────────────────────────

@@ -6,9 +6,9 @@
  * effect could have published anything.
  *
  *   window.UsernodeReact.sidePanel       the TOP document's controller
- *                                        (./controller.ts): App.openAppTab,
- *                                        the Messages store and New change
- *                                        `take` routes, App._syncPlatformTabs
+ *                                        (./controller.ts): App.openAppTab
+ *                                        and the Messages store `take`
+ *                                        routes, App._syncPlatformTabs
  *                                        reports `appPresence`, and the panel's
  *                                        own document talks to `embedded`.
  *   window.UsernodeReact.sidePanelEmbed  the PANEL document's runtime

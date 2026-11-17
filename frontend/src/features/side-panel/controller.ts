@@ -33,8 +33,7 @@
  *     Navigation API) a script's `location.hash = …`. Both refuse the
  *     navigation, so the top window's history is untouched — reverting a hash
  *     after the fact leaves a dead Back entry. The JavaScript entry points
- *     (App.openAppTab, the Messages store, New change, the agent-session
- *     store) call `take` directly.
+ *     (App.openAppTab, the Messages store) call `take` directly.
  *   - The panel's own history: a stack of the pages opened in it, then the
  *     climb to the list a page belongs to (./routes.ts parentRoute). It is kept
  *     HERE rather than in the browser's session history, because an iframe's
@@ -56,7 +55,6 @@ import { isBotChatRoute } from '../ai/door';
 import { stashWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from '../dev-board/workshop/panel-target';
 import {
   embeddedAllows,
-  expandRoute,
   frameUrl,
   isPanelRoute,
   isPointer,
@@ -80,8 +78,8 @@ import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
 export const DESKTOP_QUERY = '(min-width: 1024px)';
 
 /**
- * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column
- * Main Chat docks in, which the page draws from 768px (features/ai/), so it
+ * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column a
+ * thread docks in, which the page draws from 768px (features/ai/), so it
  * takes a page there from 768px too: there is no app beside it to keep
  * 480px for. Keep in step with the `(max-width: 1023.98px)` rule for
  * #platform-side-panel in public/css/app.css.
@@ -110,33 +108,18 @@ export interface PanelHeadReport {
   menuKey: string | null;
 }
 
-/** A one-shot instruction that rides along with a navigation into the panel. */
+/** What the door says of the page it opens in the panel, for the column's header row. */
 export interface PanelHint {
-  /** Show the "what a proposal is" hint on the unsent change (New change). */
-  proposalHint?: boolean;
-  /**
-   * What an unsent agent session (`agent/new`, #2779) is about: the app, the
-   * request or the proposal New change was pressed on. The session is
-   * created with it on the first message, in the panel's own document.
-   * `message` and `handoff` are the screen's alone, like the title: the box's
-   * first message and the "Build with" tab it opens on.
-   */
-  agentHint?: {
-    slug?: string; issueNumber?: number; proposalId?: number; entry?: string; issueTitle?: string;
-    message?: string; handoff?: 'claude-code' | 'codex';
-  } | null;
   /**
    * The project of the page being opened, as the door names it (the AI
    * tab's list: its row's tile and name). Beside that page the header row
-   * draws it as the way to the project (./side-panel.tsx). The top
-   * document's alone: the panel's document is not told.
+   * draws it as the way to the project (./side-panel.tsx).
    */
   place?: { slug: string; name: string; icon_url?: string | null; icon_emoji?: string | null } | null;
   /**
    * What the page being opened is called, as the door names it (the AI
    * tab's row: a request's or a change's title). Beside that page the header
-   * row titles the column with it while the panel is still on that page. The
-   * top document's alone, as `place` is.
+   * row titles the column with it while the panel is still on that page.
    */
   label?: string | null;
 }
@@ -144,7 +127,7 @@ export interface PanelHint {
 /**
  * The class on the panel DOCUMENT's <html> while the panel stands beside
  * the AI tab's page rather than an app. That page draws the panel as its
- * own column, with ‹ Main Chat and the project over it (./side-panel.tsx), so
+ * own column, with a × and the project over it (./side-panel.tsx), so
  * the page in it leaves out its own way back (app.css: the topic's
  * "‹ Workshop" chip), which would be a second one to somewhere else.
  */
@@ -164,7 +147,7 @@ interface AppLike {
 }
 
 interface EmbedLike {
-  go?: (route: string, hint: PanelHint | null) => void;
+  go?: (route: string) => void;
 }
 
 function app(): AppLike | null {
@@ -192,8 +175,6 @@ let stack: string[] = [];
 // A panel is a column of recent pages, not an archive: the oldest fall off.
 const STACK_CAP = 30;
 let desired: string | null = null;
-let desiredHint: PanelHint | null = null;
-let bootHint: PanelHint | null = null;
 let ready = false;
 let reported = '';
 /**
@@ -350,11 +331,11 @@ function restoreFromAddress(): void {
   window.setTimeout(attempt, 0);
 }
 
-function go(route: string, hint: PanelHint | null): void {
+function go(route: string): void {
   const target = embed();
   if (!target || typeof target.go !== 'function') return;
   try {
-    target.go(route, hint);
+    target.go(route);
   } catch {
     /* a frame that is going away mid-call: the next open starts a new one */
   }
@@ -373,10 +354,10 @@ function go(route: string, hint: PanelHint | null): void {
  *
  * BESIDE THE HOMEROOM BOT TAB, THE NATIVE APP TOO (1 Nov 2026). Unfolded and
  * held sideways, iPhone Duo draws the tab's page with Main docked, and a
- * request opened from its list took the whole screen instead of Main's
- * place. That page is a root with no back arrow, so the WebView's back swipe
+ * request opened from its list took the whole screen instead of the
+ * column's place. That page is a root with no back arrow, so the WebView's back swipe
  * is off there already (header/native-back-navigation.ts), and the column's
- * own ‹ Main Chat is the way back. Beside an app the native app keeps the
+ * own × is the way back. Beside an app the native app keeps the
  * whole screen.
  */
 export function canTake(): boolean {
@@ -409,19 +390,13 @@ export function take(route: string, hint?: PanelHint | null): boolean {
 /** Put `route` in the panel, starting its document if there is none yet. */
 export function open(route: string, given?: PanelHint | null): void {
   const s = sidePanelStore.get();
-  // The project is this document's to draw; the rest is the page's.
-  const { place = null, label = null, ...rest } = given || {};
-  const hint: PanelHint | null = given ? rest : null;
+  const { place = null, label = null } = given || {};
   if (!s.frameSrc) {
     stack = [];
     reported = '';
     head = null;
     ready = false;
     desired = route;
-    desiredHint = null;
-    // The first page is the frame's own address, so a hint has to reach the
-    // document before its router runs: ./embedded.ts asks for it at boot.
-    bootHint = hint;
     sidePanelStore.set({
       open: true,
       frameSrc: frameUrl(route, window.location.search),
@@ -437,20 +412,15 @@ export function open(route: string, given?: PanelHint | null): void {
   else if (s.route && !samePage(s.route, route)) remember(s.route);
   if (!samePage(s.route, route)) { reported = ''; head = null; }
   desired = route;
-  desiredHint = hint;
   sidePanelStore.set({ open: true });
   publish(route, { place, label: label ? { route, text: label } : null });
   markBeside();
-  if (ready) {
-    desiredHint = null;
-    go(route, hint);
-  }
+  if (ready) go(route);
 }
 
 /** Close: the panel only. The frame stays, so reopening is a navigation. */
 export function close(): void {
   stack = [];
-  desiredHint = null;
   if (sidePanelStore.get().open) sidePanelStore.set({ open: false });
   writeAddress(null);
 }
@@ -459,8 +429,6 @@ export function close(): void {
 export function drop(): void {
   stack = [];
   desired = null;
-  desiredHint = null;
-  bootHint = null;
   ready = false;
   reported = '';
   head = null;
@@ -496,9 +464,8 @@ export function back(): void {
   reported = '';
   head = null;
   desired = target;
-  desiredHint = null;
   publish(target);
-  if (ready) go(target, null);
+  if (ready) go(target);
 }
 
 /**
@@ -524,8 +491,7 @@ function navigateTop(route: string): void {
 }
 
 /**
- * Expand: the page, full width (an agent session: beside the inbox, see
- * ./routes.ts expandRoute). That leaves the app — which parks it in the
+ * Expand: the page, full width. That leaves the app — which parks it in the
  * recent-app strip, so Resume brings it back (App._syncParkedApp) — and the
  * router's own leave drops the panel in the same transition
  * (App._syncPlatformTabs → appPresence). The drop below covers a route that,
@@ -533,10 +499,7 @@ function navigateTop(route: string): void {
  */
 export function expand(): void {
   const route = sidePanelStore.get().route;
-  if (route) {
-    carryAgentPane();
-    navigateTop(expandRoute(route));
-  }
+  if (route) navigateTop(route);
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
 }
 
@@ -565,26 +528,6 @@ export function openInWorkshop(): void {
   try { (window as any).AppView?._landOnTab?.(item.slug, 'workshop'); } catch { /* the page's own tab */ }
   navigateTop(`app/${encodeURIComponent(item.slug)}/workshop`);
   if (sidePanelStore.get().open || sidePanelStore.get().frameSrc) drop();
-}
-
-interface CarriesPane {
-  UsernodeReact?: { agentSession?: { paneToCarry?: () => unknown; adoptPane?: (pane: unknown) => void } };
-}
-
-/**
- * An agent conversation's spec or preview, open over it in the panel, comes
- * along on Expand: the full-width conversation opens with them beside it,
- * which is where the panel sends anything that needs the room. Read from the
- * panel's document before it is dropped; taken by this one's store once the
- * conversation has loaded. Nothing open, or no panel document: nothing moves.
- */
-function carryAgentPane(): void {
-  try {
-    const inner = (sidePanelRefs.frame?.contentWindow as unknown as CarriesPane | null)?.UsernodeReact?.agentSession;
-    const pane = inner?.paneToCarry?.();
-    if (!pane) return;
-    (window as unknown as CarriesPane).UsernodeReact?.agentSession?.adoptPane?.(pane);
-  } catch { /* the panel's document is elsewhere or gone: nothing to carry */ }
 }
 
 /**
@@ -623,15 +566,12 @@ function embeddedReady(route: string, title: string): void {
   markBeside();
   sidePanelStore.set({ loading: false });
   if (desired && !samePage(desired, route)) {
-    const hint = desiredHint;
-    desiredHint = null;
     reported = '';
     head = null;
     publish(desired);
-    go(desired, hint);
+    go(desired);
     return;
   }
-  desiredHint = null;
   if (route) {
     desired = route;
     publish(route);
@@ -641,7 +581,7 @@ function embeddedReady(route: string, title: string): void {
 /**
  * It moved, or retitled. `push` is a navigation the viewer made INSIDE the
  * panel, which Back comes back from; anything else is the same page settling
- * (a canonical address, a title that loaded, the session a new change became).
+ * (a canonical address, a title that loaded).
  */
 function embeddedNavigated(route: string, title: string, push: boolean): void {
   const s = sidePanelStore.get();
@@ -771,13 +711,6 @@ export function runPanelMenuRow(index: number, label: string, event?: Event | nu
   }
 }
 
-/** The hint for the first page, once — ./embedded.ts asks as it installs. */
-function takeBootHint(): PanelHint | null {
-  const hint = bootHint;
-  bootHint = null;
-  return hint;
-}
-
 export const embeddedApi = {
   ready: embeddedReady,
   navigated: embeddedNavigated,
@@ -785,7 +718,6 @@ export const embeddedApi = {
   openApp: embeddedOpenApp,
   leave: embeddedLeave,
   back: embeddedBack,
-  takeBootHint,
 };
 
 // ── The two chokepoints ──────────────────────────────────────────────────
@@ -890,8 +822,6 @@ export const SidePanel = {
 export function _resetForTests(): void {
   stack = [];
   desired = null;
-  desiredHint = null;
-  bootHint = null;
   ready = false;
   reported = '';
   head = null;

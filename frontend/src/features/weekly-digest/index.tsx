@@ -30,6 +30,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { createStore } from '../../lib/plain-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { inZone } from '../../lib/time-zone';
 
 export type WeekItem = {
   sessionId: number;
@@ -103,13 +104,13 @@ function openWorkshop(slug: string): void {
 function dayName(value: string | undefined): string {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { weekday: 'short' });
+  return date.toLocaleDateString(undefined, inZone({ weekday: 'short' }));
 }
 
 function longDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
-  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+  return date.toLocaleDateString(undefined, inZone({ day: 'numeric', month: 'short' }));
 }
 
 export const weeklyDigestController = {

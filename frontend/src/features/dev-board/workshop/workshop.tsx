@@ -98,7 +98,7 @@ import { communityScopeStore, describe as describeCommunity, openSwitcher } from
 import { registerLevel } from '../../workshop/tab-ladder';
 import { firstUnseenIndex, markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import {
-  ApprovalLine, CommunityCard, HubCardClose, ShareItCard, approvalStep, canLeave,
+  ApprovalLine, CommunityCard, HubCardClose, InviteHeroCard, ShareItCard, approvalStep, canLeave,
   communityPending, leaveCommunity, openInviteLinks, reloadCommunity, ruleHasWait, useCommunity,
 } from './community-card';
 import {
@@ -575,10 +575,7 @@ function aiFootnote(meta: DevWorkshopView['meta'], written: boolean): string {
  * menu (#2740 review), an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
  * All items, where it is), and sends "make one yourself" to the ⋯'s own
- * Build it now row. It sent it to the Homeroom menu's until that row
- * showed only for people who have built something themselves (first-session
- * run-through, 5 Oct 2026: ../../app-context/app-context-sheet.tsx
- * AgentChats), so a newcomer would have looked for a row they do not have.
+ * Build it now row.
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
@@ -610,9 +607,10 @@ function EmptyNote({ filtered, loadFailed, onHub = false, start = null }: {
   /**
    * #6111: the one action that starts the first change, for a board that
    * really holds nothing. `bot` says Homeroom bot builds changes for this
-   * viewer here, so the action is its chat rather than a session. It is a
-   * sibling of the note, never inside it, so the sentence every check and
-   * pin selects on is unchanged.
+   * viewer here, so the action is a new chat with it with this project
+   * attached; otherwise it is a new chat set to this project, where they
+   * pick who builds. It is a sibling of the note, never inside it, so the
+   * sentence every check and pin selects on is unchanged.
    */
   start?: { slug: string; name: string; bot: boolean } | null;
 }): ReactNode {
@@ -701,9 +699,9 @@ export function startHereBotReference(slug: string, name: string): StagedObject 
  * ── Why the button is not a second "Start a new change" ─────────────────
  *
  * It is `Improve.startSession()`, the one the Homeroom menu's Start a new
- * change row calls (it was the Improve panel's New change) — imported, not re-implemented, so the navigate-then-create
- * sequence that entry point owns (features/improve/improve-controller.js)
- * can never drift from this copy of it. The gate is the same store field the
+ * change row calls: a new chat on the Homeroom bot tab, set to this project
+ * (features/improve/improve-controller.js). Imported, not re-implemented,
+ * so the two cannot drift. The gate is the same store field the
  * panel gates that row on, for the same reason: a viewer who may not start a
  * change from the panel must not be offered one here. They still get the
  * heading and the line, which say what the app's state IS — that part is not
@@ -3546,8 +3544,8 @@ export function DevWorkshop(): ReactNode {
   // rather than inserted under its figures after (polish board #13).
   useEffect(() => { warmBotSlots(v.slug); }, [v.slug]);
 
-  // #4417: THE PLACES TRAY (./places-tray.tsx), the list behind the place
-  // bar's button, and a swipe from the left edge on a phone. It shuts when
+  // #4417: THE PLACES TRAY (./places-tray.tsx), the list behind the merged
+  // header's button, and a swipe from the left edge on a phone. It shuts when
   // the place or the project changes under it (a door, Back), and a press on
   // a place in it shuts it as a navigating close, so the Back claim it took
   // cannot undo the entry the press pushes. The close itself is the open
@@ -3557,7 +3555,6 @@ export function DevWorkshop(): ReactNode {
   const [trayOpen, setTrayOpen] = useState(false);
   const [trayShown, setTrayShown] = useState(false);
   const trayNav = useRef(false);
-  const placesBtn = useRef<HTMLButtonElement | null>(null);
   const trayId = useId();
   const placesInColumn = useMediaFlag(PLACES_COLUMN_QUERY);
   useEffect(() => { setTrayOpen(false); }, [tab, v.slug, placesInColumn]);
@@ -3591,8 +3588,8 @@ export function DevWorkshop(): ReactNode {
     if (v.slug && !v.loading) publishPlace(v.slug, tab, owed, unreadElsewhere, trayOpen);
   }, [v.slug, v.loading, tab, owed, unreadElsewhere, trayOpen]);
   // #4703: the merged header's places button (place-bar.tsx HeaderPlace)
-  // presses the same toggle the bar's button does, published here so the
-  // header need not own the tray.
+  // opens this page's tray, published here so the header need not own it.
+  // It is the only places button: the place bar draws none (#6671).
   const trayToggleRef = useRef(() => {});
   trayToggleRef.current = () => { trayNav.current = false; setTrayOpen((open) => !open); };
   useEffect(() => {
@@ -3656,8 +3653,8 @@ export function DevWorkshop(): ReactNode {
   /* ── The place bar, the tray behind it, and on All items its back bar ──
      #4417: the four tabs are gone; the project's places are one list (Hub,
      Needs you, Workshop, then its channels: ./project-places.tsx). On a
-     phone it is a tray behind the place bar's button, the bar naming where
-     you are (./place-bar.tsx); on a wide window it is nested under the
+     phone it is a tray behind the merged header's button, the bar naming
+     where you are (./place-bar.tsx); on a wide window it is nested under the
      community's row in the sidebar (../../nav/rail-communities.tsx) and the
      bar is the page's title row. Under the bar, All items leads with its way back to
      the Workshop it is a page of.
@@ -3681,15 +3678,8 @@ export function DevWorkshop(): ReactNode {
   };
   const band = (
     <PlaceBar
-      name={projectName}
       place={tab}
-      owed={owed}
-      unread={unreadElsewhere}
-      open={trayOpen}
-      trayId={trayId}
-      onToggle={() => { trayNav.current = false; setTrayOpen((open) => !open); }}
       barRef={setBar}
-      buttonRef={placesBtn}
     />
   );
   const tray = trayOpen || trayShown ? (
@@ -3699,15 +3689,12 @@ export function DevWorkshop(): ReactNode {
       onClose={() => { trayNav.current = false; setTrayOpen(false); }}
       closing={!trayOpen}
       onClosed={() => setTrayShown(false)}
-      // #4703: focus returns to the button that opened the tray — the merged
-      // header's on a phone, the bar's own on a wide window — whichever is
-      // connected and visible (the band's button is display:none under 768px,
-      // so its offsetParent is null there).
+      // #4703: focus returns to the button that opened the tray, the merged
+      // header's, when it is connected and visible. The bar draws no button
+      // of its own (#6671), so nothing else can have opened it.
       returnTo={() => {
         const header = trayButton();
-        if (header && header.isConnected && header.offsetParent) return header;
-        const bar = placesBtn.current;
-        return bar && bar.isConnected && bar.offsetParent ? bar : null;
+        return header && header.isConnected && header.offsetParent ? header : null;
       }}
       navigating={() => trayNav.current}
     >
@@ -3766,15 +3753,15 @@ export function DevWorkshop(): ReactNode {
   };
   // What happened's new requests nobody has picked up (New for you's, until
   // 5 Nov 2026, folded in here: the same rows were in both): Build it, the
-  // request card's own act when that act is building it (asking Homeroom
-  // bot, or yourself). 1 Nov 2026: or Work on it, where the card's act is
+  // request card's own act when that act is asking Homeroom bot to build
+  // it. 1 Nov 2026: or Work on it, where the card's act is
   // Work on this with Homeroom bot. Never on your own, or on one already
   // somebody's.
   const freshAct = (r: CardRow): ReactNode => {
     const b = r.brief;
     if (!b || b.mine || b.requested || b.kind !== 'request') return null;
     const a = primaryAct(r.card);
-    if (a && a.act && (a.act.fn === 'askBotToBuild' || a.act.fn === 'chooseIssueWork')) {
+    if (a && a.act && a.act.fn === 'askBotToBuild') {
       return <ActButton a={a} label={t('project:workshop.fresh.buildIt')} />;
     }
     if (a && a.act && a.act.fn === 'workOnIssueWithBot') {
@@ -3909,7 +3896,7 @@ export function DevWorkshop(): ReactNode {
       // Build it, on a new request nobody has picked up (freshAct, above).
       const a = fresh && !b.mine && !b.requested && b.kind === 'request' ? primaryAct(row.card) : null;
       const fn = a && a.act ? a.act.fn : '';
-      const actLabel = fn === 'askBotToBuild' || fn === 'chooseIssueWork' ? t('project:workshop.fresh.buildIt')
+      const actLabel = fn === 'askBotToBuild' ? t('project:workshop.fresh.buildIt')
         : fn === 'workOnIssueWithBot' ? t('project:workshop.fresh.workOnIt') : '';
       return {
         key: row.key,
@@ -4142,6 +4129,8 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
+          // Invite is the card after this hero (InviteHeroCard).
+          inviteCard
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4207,6 +4196,9 @@ export function DevWorkshop(): ReactNode {
           )}
         />
       ) : null}
+      {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
+          under it on a phone. See ./community-card.tsx InviteHeroCard. */}
+      {slug ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
@@ -4276,11 +4268,12 @@ export function DevWorkshop(): ReactNode {
           onDiscussion={() => openTab('discussion')}
         />
       ) : null}
-      {/* TOPICS, on a phone (3 Nov 2026): the Hub is the way to every place
-          now that no drawer lists them beside the page, so each live topic's
-          channel has a row here. A wide window lists them in its sidebar.
-          See ./hub-cards.tsx TopicsCard. */}
-      {slug && drawerOn ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
+      {/* TOPICS, at every width (request 6654): each live topic's channel has
+          a row here. It was the phone's alone (3 Nov 2026), a wide window
+          listing them in its sidebar only; now a wide window draws For you
+          and Topics side by side (app.css, "THE HUB IN TWO COLUMNS"). See
+          ./hub-cards.tsx TopicsCard. */}
+      {slug ? <TopicsCard data={community} onOpen={(key) => openTab(key)} /> : null}
       {/* FROM ITS VERSIONS, on an original (docs/plans/versions.md): what
           its versions sent it, what went live in them lately, and how its
           last update went down. Nothing on a project nobody has made a
@@ -4496,7 +4489,10 @@ export function DevWorkshop(): ReactNode {
         // A project's Needs you drawn by the review flow, the same one the
         // Communities tab draws. ../../review-flow/. Its back, "‹ <community>",
         // leaves the run for the community's hub, never an earlier change.
-        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} />
+        // It reads the feed again when a change's state moves, so it lists a
+        // vote when the count above (`owed`) starts to count it; `project`
+        // is the name its empty line says nothing waits in.
+        <ProjectReviewFlow slug={slug} onDone={() => openTab('status')} project={projectName} />
       ) : null}
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:

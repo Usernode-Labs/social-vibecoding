@@ -26,15 +26,6 @@ function makeDb(initial = null, sessionStatus = 'active') {
         activeTurn = JSON.parse(params[1]);
         return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
       }
-      if (/SET headless_status = \$4/.test(text)) {
-        const same = activeTurn && (
-          String(activeTurn.turnId || '') === String(params[1] || '')
-          || String(activeTurn.journal || '') === String(params[1] || '')
-        );
-        if (!same) return { rows: [], rowCount: 0 };
-        activeTurn = { ...activeTurn, ...JSON.parse(params[2]) };
-        return { rows: [{ active_turn: activeTurn }], rowCount: 1 };
-      }
       if (/SET active_turn = active_turn \|\|/.test(text)) {
         const same = activeTurn && (
           String(activeTurn.turnId || '') === String(params[1] || '')
@@ -183,22 +174,6 @@ test('permanent recovery contradictions quarantine the exact durable owner', asy
     (err) => err?.code === 'stale_turn_owner',
   );
   assert.equal(db.activeTurn.turnId, 'turn-a');
-});
-
-test('headless terminal publication atomically enters cleanup_pending', async () => {
-  const db = makeDb({
-    turnId: 'turn-a', phase: 'tail_pending', journal: '/turn-a.log',
-  });
-  const activeTurn = await lifecycle.markHeadlessTerminal(db, {
-    sessionId: 42,
-    turnId: 'turn-a',
-    status: 'ready',
-    outcome: 'code',
-  });
-  assert.equal(activeTurn.phase, 'cleanup_pending');
-  const update = db.calls.find((call) => /SET headless_status = \$4/.test(call.sql));
-  assert.deepEqual(update.params.slice(3, 5), ['ready', 'code']);
-  assert.match(update.sql, /headless_turn_id = NULL/);
 });
 
 test('tail milestones merge only onto the exact tail owner', async () => {

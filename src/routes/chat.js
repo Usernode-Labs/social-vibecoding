@@ -4,7 +4,6 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
-const modelCosts = require('../services/model-costs');
 const github = require('../services/github');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
@@ -408,30 +407,6 @@ function chatRoutes(config) {
   // breaking change for anything else reading this endpoint.
   router.get('/api/models', (_req, res) => {
     res.json({ models: models.list(), default: models.DEFAULT_MODEL });
-  });
-
-  // #2570: what each model is good for, and what a change on it is
-  // expected to cost. The picker reads this once per session open and
-  // renders the note beside each option and under the selected one.
-  //
-  // `models` carries the platform's CURATED ids — the three Anthropic ones
-  // and the OpenRouter models it recommends — because this process has no
-  // user key to read an OpenRouter catalogue with. `typicalChange` is what
-  // lets the client finish the job for every other model: it already holds
-  // that user's catalogue, prices and all, and the estimate is per-token
-  // pricing times this profile. One definition of "a typical change", two
-  // places that can apply it.
-  //
-  // Every figure is an ESTIMATE and is labelled one wherever it is shown.
-  router.get('/api/model-notes', async (_req, res) => {
-    try {
-      res.json(await modelCosts.pickerPayload(pool));
-    } catch (err) {
-      log.warn('chat', 'model notes read failed', { err: err.message });
-      // A picker without notes is the pre-#2570 picker, which is a fine
-      // thing to degrade to. It is never an error the user has to see.
-      res.json({ typicalChange: modelCosts.TYPICAL_CHANGE, models: {} });
-    }
   });
 
   // ── Reading a transcript (#194, #2387) ───────────────────────────
@@ -1000,13 +975,16 @@ function chatRoutes(config) {
       }
 
       const { handleMessage } = require('../services/ws');
+      // #6730: a client key is the composer's own per-press mark, so a
+      // retry after a slow answer returns the row the first attempt stored.
+      const clientKey = typeof body.client_key === 'string' && body.client_key ? body.client_key : null;
       const result = await handleMessage(
         pool,
         // `postedVia` rides on the CLIENT, beside the identity it qualifies,
         // rather than in the message: it describes who is holding the pen,
         // and the body is the one thing a caller gets to write.
         { user: req.user, appId: app.id, appSlug: app.slug, postedVia: postedViaFor(req) },
-        { type: 'chat', content, ...(attIds.length ? { attachmentIds: attIds } : {}), ...(thread ? { thread } : {}) }
+        { type: 'chat', content, ...(clientKey ? { clientKey } : {}), ...(attIds.length ? { attachmentIds: attIds } : {}), ...(thread ? { thread } : {}) }
       );
       if (!result?.ok) {
         if (result?.code === 'not_collaborator') {
@@ -1040,7 +1018,9 @@ function chatRoutes(config) {
       }
 
       const message = result.message;
-      return res.status(201).json({
+      // #6730: the same client key sent again answers with the row the first
+      // send stored, and says so with 200 rather than a fresh 201.
+      return res.status(result.duplicate ? 200 : 201).json({
         message: {
           id: message.id,
           user_id: message.userId,
@@ -1374,8 +1354,7 @@ function chatRoutes(config) {
 
   // ── Group-chat file attachments (#694) ───────────────────────────
   //
-  // Upload happens BEFORE send, mirroring dev-chat (#450,
-  // src/routes/sessions.js): the client POSTs raw bytes here per file,
+  // Upload happens BEFORE send (#450): the client POSTs raw bytes here per file,
   // gets back an attachment id, and passes the ids on the WS 'chat'
   // message, whose handler links them to the message row. The body is
   // always application/octet-stream (real type derived server-side from

@@ -43,8 +43,6 @@ import type { BotTrack } from '../../messages/types';
 export interface CardIconSpec {
   tint: string;
   path: string;
-  /** #250 — the whole chip animates while an auto-solve run is generating. */
-  pulse?: boolean;
   title?: string;
   small?: boolean;
 }
@@ -157,8 +155,15 @@ export interface ActionSpec {
    * that are a badge rather than a button (building, unavailable).
    */
   preview?: PreviewSpec;
-  /** #313/#827 — "Explore in dev chat", claimed by a delegated handler. */
+  /**
+   * #313/#827: "Ask Homeroom bot" about a proposal: the change's id, with its
+   * title and its pull request's number where the row has them
+   * (AppView.askBotForChanges opens the viewer's thread about the change by
+   * that number, and a new chat with the change attached without one).
+   */
   explore?: number;
+  exploreTitle?: string | null;
+  exploreNumber?: number | null;
   /**
    * #1688: on the Yes spec, the viewer's vote on an EARLIER version of the
    * proposal — still on their row, no longer counted. The vote button then
@@ -435,6 +440,7 @@ export interface RowTag {
  * stays the source of the item's hooks and its Yes/No specs.
  */
 export interface RowBrief {
+  twin?: { number: number; title: string } | null;
   /** The neutral tile's glyph. */
   kind: 'request' | 'change' | 'live' | 'vote';
   /** Which word names it ("Change #4456", "Request"): a key, the row reads the message. */
@@ -591,9 +597,9 @@ export interface DevWorkshopView {
    */
   tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | 'bot' | `c:${string}` | null;
   /**
-   * The models the ask box may talk to — the dev session's own list
-   * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
-   * the picker is then not drawn at all.
+   * The models the ask box may talk to: the shared list
+   * (`PlatformModels.MODELS`), not a second one. Empty until it has loaded,
+   * and the picker is then not drawn at all.
    */
   models: { list: { id: string; label: string; note: string }[]; selected: string | null };
   /**

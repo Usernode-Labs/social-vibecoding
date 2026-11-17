@@ -8643,6 +8643,11 @@
       var host = String(location.hostname || "").toLowerCase();
       if (!isDomain(host) || host.split(".").length < 3) return null;
       if (under(host, apps) || under(host, platform.hostname.toLowerCase())) return null;
+      // A staging preview (<slug>--s<id>, or the legacy <slug>--s<id>--<tag>)
+      // lives on the previews domain, which is neither of the two above. It
+      // is never a custom domain, and asking would log a 404 on every
+      // preview load, which a proposal's checks count as a console error.
+      if (/--s\d+(--[0-9a-z]+)?$/.test(host.slice(0, host.indexOf(".")))) return null;
       var tagged = taggedHost();
       if (tagged && tagged !== platform.hostname.toLowerCase()) return null;
       return host;

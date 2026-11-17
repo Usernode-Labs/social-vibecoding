@@ -10,20 +10,20 @@ import { RichMessage, useMessages } from '../../lib/i18n/react';
  *
  * These step lists used to sit inline in sections/connectors.tsx, which was
  * fine while Settings was the only screen that taught the connector. It is
- * not any more: the dev session page's hand-off launchpad asks for the same
- * connector, and #2706 is about teaching it THERE rather than sending the
- * reader to Settings to read it. Two screens, one set of facts — so the
- * facts live in one module and both screens render it.
+ * not any more: a new thread built with Claude Code or ChatGPT asks for the
+ * same connector (../messages/thread-builder.tsx), and teaches it THERE
+ * rather than sending the reader to Settings to read it. Two screens, one
+ * set of facts — so the facts live in one module and both screens render it.
  *
  * Deliberately presentational and state-free: an <ol> of prose that holds no
- * state. That is what lets the dev session page nest it inside a stateful
- * React island (features/dev-chat/connector-setup-inline.tsx) while Settings
+ * state. That is what lets a new thread nest it inside a stateful
+ * React island while Settings
  * keeps rendering it as the static markup settings.js reads around.
  *
  * Only Settings passes `track` (#6136). With it each step's number is a tick
  * button whose `aria-pressed` settings.js owns, and ChatGPT's step 3 carries a
- * Copy settings.js wires. Without it the markup is what it always was, so the
- * hand-off and the launchpad card get no ticks, no Copy and no duplicate id.
+ * Copy settings.js wires. Without it the markup is what it always was, so a
+ * new thread's steps get no ticks, no Copy and no duplicate id.
  *
  * How the connector URL is named splits by product. Claude's steps say
  * "the MCP server URL above" and point at the value each caller renders
@@ -190,7 +190,7 @@ export function ChatgptSetupSteps({ url, track }: { url?: string; track?: string
           {/* The step names the endpoint itself rather than pointing at the
               value rendered above it, but the URL is still never written
               into the copy: the caller hands over the live `${origin}/mcp`
-              (the launchpad card and the hand-off as a prop), and Settings'
+              (a new thread's setup steps, as a prop), and Settings'
               interior ships the placeholder until settings.js fills
               `data-connector-step-url` from the same derived origin the
               #connector-url field shows. */}

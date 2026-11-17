@@ -186,6 +186,20 @@ test('voted in: every step is done, with no fill; a closed request says so inste
   assert.match(closed, /This request was closed by vote\./);
 });
 
+// #6680: the person whose private Homeroom bot thread filed the request (or
+// posted its plan) gets a link under its words back to that thread. Nobody
+// else's read carries `fromThread`, so nothing is drawn for them.
+test('#6680: a request filed from a private thread links its owner back to it', () => {
+  const html = renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372 } } });
+  assert.match(html, /<p class="mt-1 text-\[13px\][^"]*" data-request-from-thread="17372">/);
+  assert.match(html, /href="#homeroom-bot\/thread\/17372"/);
+  assert.match(html, />Open the thread it came from</);
+  // Right after the request's words, before where it stands.
+  assert.match(html, /data-request-words="">[\s\S]*?data-request-from-thread="17372"[\s\S]*?data-request-stage=/);
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: requestView() }), /data-request-from-thread/);
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: null } }), /data-request-from-thread/);
+});
+
 function appView(username = 'evan', globals = {}) {
   const c = {
     ...globals,
@@ -314,7 +328,8 @@ test('the status sentence says who is on it once, and when the claim lapses', ()
   const underway = av._requestStatusView(issue({ myPrSessionId: 77, addressed_by: { sessionId: 77, state: 'underway', title: 'Topics' } }));
   assert.equal(underway.stage, 'built');
   assert.equal(underway.action.label, 'Continue your work');
-  assert.deepEqual(JSON.parse(JSON.stringify(underway.action.act)), { fn: 'openChangeWorkspace', args: [77] });
+  assert.deepEqual(JSON.parse(JSON.stringify(underway.action.act)), { fn: 'openTopic', args: ['proposal', 77] },
+    'the change\'s page');
 });
 
 // #4663: Homeroom bot built this request, its change waits for approval, and
@@ -437,7 +452,7 @@ test('the status card says what Homeroom bot is really doing, or waiting for', (
   // #6156: held for its turn among the project's builds, not for a vote.
   assert.equal(lead({ standing: standing('building', { whoseMove: 'bot', line: { code: 'held_builds' } }) }),
     'Ready to build · Waiting for one of the project\'s builds to finish');
-  assert.equal(lead({ standing: standing('reading', { whoseMove: 'bot', line: { code: 'queued', place: 2 } }) }), 'Not started yet · Number 2 in line');
+  assert.equal(lead({ standing: standing('reading', { whoseMove: 'bot', line: { code: 'queued', place: 2 } }) }), 'Not started yet. Number 2 in Homeroom bot’s line; it starts by itself.');
   // Its sentence is where the work stands: no "Plan v1 is ready for comments." after it.
   assert.match(fs.readFileSync(path.join(__dirname, '..', HEAD), 'utf8'), /const specLine = stage === 'spec' && !s\.botSays/);
   assert.equal(av._requestStatusView(issue({ standing: plan(false) })).botSays, true);
@@ -588,7 +603,7 @@ test('⋯ holds the work rows first, then the author\'s edits and the tags', () 
   const row = issue({ myPrSessionId: 77 });
   av._ghIssues = [row];
   const labels = JSON.parse(JSON.stringify(av._requestMenuItems(row).map((item) => item.label)));
-  assert.deepEqual(labels.slice(0, 4), ['Start more work', 'Claim it', 'Edit title', 'Edit request']);
+  assert.deepEqual(labels.slice(0, 3), ['Claim it', 'Edit title', 'Edit request']);
   assert.ok(labels.includes('Set priority…') && labels.includes('Set category…') && labels.includes('Assign someone…'));
   assert.ok(labels.indexOf('Assign someone…') < labels.indexOf('Open on GitHub') || !labels.includes('Open on GitHub'));
 });
@@ -939,17 +954,22 @@ test('#6594 an approved change says Approved in the header and the list', () => 
   assert.equal(pill.spinner, true);
   const rows = threadRows(payload([change]), here);
   assert.ok(rows[0].facts.some((f) => f.id === 'project:topic.thread.state.approved'), 'the row says Approved');
-  // 11 Nov 2026 (one model): the header reads the request's standing, which
-  // says Approved in its own words (services/work-state.js phrasesOf): while
-  // its checks finish, and while GitHub's do. A change merely going live
-  // keeps Going live.
+  // 11 Nov 2026 (one model): the header reads the request's standing.
+  // #6695: while its own tests run it says Checking; Approved is kept for
+  // waiting on GitHub's required checks. A change merely going live keeps
+  // Going live.
   const standing = (stage, code) => ({
     stage, why: null, reason: null, line: { code }, whoseMove: null, since: null,
-    words: { stage: { id: code === 'github_checks' || code === 'approved_checking' ? 'core:work.stage.approved' : 'core:work.stage.goingLive' },
+    words: { stage: { id: code === 'github_checks' ? 'core:work.stage.approved'
+      : code === 'approved_checking' ? 'core:work.stage.checking' : 'core:work.stage.goingLive' },
       stageOthers: { id: 'core:work.stage.approved' }, line: null },
     change: { id: 7, number: 6569, status: 'promoted', voteOpen: false },
   });
-  assert.equal(requestPill(layout, standing('checking', 'approved_checking'), (id) => id).key, 'approved');
+  const checking = requestPill(layout, standing('checking', 'approved_checking'), (id) => id);
+  assert.equal(checking.key, 'checking');
+  assert.equal(checking.label, 'project:topic.thread.pill.checking');
+  assert.equal(checking.tone, 'progress', 'Checking takes the in-progress look');
+  assert.equal(checking.spinner, true);
   assert.equal(requestPill(layout, standing('going_live', 'github_checks'), (id) => id).key, 'approved');
   assert.equal(requestPill(layout, { ...standing('going_live', 'none'), line: null }, (id) => id).key, 'going_live');
   // A change still asking for its vote keeps today's pill and row.

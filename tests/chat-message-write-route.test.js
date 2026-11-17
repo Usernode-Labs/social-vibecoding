@@ -205,7 +205,6 @@ test('CLI API bearer authenticates all the way through the issue-reply route', a
           is_admin: false,
           admin_readonly: false,
           app_quota: 3,
-          ai_progress_estimate: false,
           locale: null,
         }],
       };
@@ -236,7 +235,6 @@ test('CLI API bearer authenticates all the way through the issue-reply route', a
       adminReadonly: false,
       canAdminWrite: false,
       appQuota: 3,
-      aiProgressEstimate: false,
       locale: null,
     });
   } finally {
@@ -268,6 +266,51 @@ test('POST accepts a decimal string thread ref and supports general chat', async
     const body = await res.json();
     assert.equal(body.message.thread_type, null);
     assert.equal(body.message.thread_ref, null);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST forwards a client_key, and a retry answers 200 with the stored row (#6730)', async () => {
+  reset();
+  const server = await startServer();
+  try {
+    let res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'once', client_key: 'press-6730-route' }),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(handleCalls[0][2].clientKey, 'press-6730-route');
+    const first = await res.json();
+
+    // The same key again: the canonical handler reports the stored row.
+    handleCalls = [];
+    handleResult = { ok: true, duplicate: true, message: handleResult.message };
+    res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'once', client_key: 'press-6730-route' }),
+    });
+    assert.equal(res.status, 200);
+    const again = await res.json();
+    assert.equal(again.message.id, first.message.id);
+    assert.equal(handleCalls[0][2].clientKey, 'press-6730-route');
+
+    // A malformed key is still passed through: the handler treats it as
+    // absent rather than refusing the comment, and a new row is 201 again.
+    handleCalls = [];
+    handleResult = {
+      ok: true,
+      message: { ...handleResult.message, id: 32 },
+    };
+    res = await fetch(urlFor(server), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: 'odd key', client_key: 'x' }),
+    });
+    assert.equal(res.status, 201);
+    assert.equal(handleCalls[0][2].clientKey, 'x');
   } finally {
     server.close();
   }

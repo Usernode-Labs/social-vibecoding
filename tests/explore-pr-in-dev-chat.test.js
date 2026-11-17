@@ -1,20 +1,20 @@
-// #827: "Ask AI" (a private read-only advisor panel) was replaced by
-// "✨ Explore in dev chat" — the card pill opens a conversation with an
-// editable message about the PR pre-filled in the composer and NEVER sent.
-// #2779: that conversation is an unsent agent session focused on the
-// proposal; classic dev chats are no longer created (or reused) for it.
+// "Explore" on a proposal (#827, #1045).
 //
-// These tests pin the contract:
-//   - the seed text is byte-exact (an unedited send must keep the Mayor in
-//     explain-only mode — the closing "don't change any code" line is
-//     load-bearing),
-//   - the seed rides to the agent session as the hint's `message`, with the
-//     app and the proposal as its focus,
-//   - no classic session is created, drafted into or navigated to.
+// #827 replaced "Ask AI" with "✨ Explore in dev chat", which opened a
+// conversation about the PR with an editable message pre-filled; #2779 made
+// that an unsent agent session. Both chats are retired: Explore now opens
+// the viewer's Homeroom bot thread about the change
+// (AppView.askBotForChanges, pinned by tests/ask-for-changes-attach.test.js).
+//
+// What this file pins is who is offered it and where:
+//   - _showExplorePill, the one shared gate: another person's change, or the
+//     viewer's own IMPORTED one; never governance or close-issue rows;
+//   - the read-only rule lives at each render site, not in the gate;
+//   - on a card it is a ⋯ row, never also a face pill;
+//   - the availability probe forwards ?demo=1.
 //
 // app-view.js is a plain browser script (`const AppView = {…}`); we load it
-// into a vm context, stub the globals it reaches, and spy on the agent
-// session controller — same harness as create-proposal-prefill.test.js.
+// into a vm context and stub the globals it reaches.
 //
 // Run with: node --test tests/explore-pr-in-dev-chat.test.js
 
@@ -30,17 +30,11 @@ const SRC = fs.readFileSync(
   'utf8'
 );
 
-function makeHarness(options = {}) {
-  const { coarsePointer = false, drafts = {} } = options;
+function makeHarness() {
   const calls = {
-    createSession: [],
-    setDraft: [],
-    sendMessage: [],
     switchTab: [],
     toast: [],
     refreshCaches: 0,
-    order: [],
-    started: [],
   };
   const sandbox = {
     console,
@@ -58,31 +52,12 @@ function makeHarness(options = {}) {
     },
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     alert: () => {},
-    UsernodeReact: { agentSession: { start: (hint) => { calls.started.push(hint); } } },
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
     App: {
       user: { id: 42 },
-      switchTab: async (...args) => {
-        calls.order.push('switchTab');
-        calls.switchTab.push(args);
-      },
-    },
-    DevChat: {
-      createSession: async (...args) => {
-        calls.createSession.push(args);
-        return { id: 77 };
-      },
-      _drafts: { ...drafts },
-      _getDraft(sessionId) { return this._drafts[sessionId] || ''; },
-      _setDraft(sessionId, value) {
-        calls.order.push('setDraft');
-        calls.setDraft.push([sessionId, value]);
-        this._drafts[sessionId] = value;
-      },
-      sendMessage: (...args) => { calls.sendMessage.push(args); },
-      _isCoarsePointer: () => coarsePointer,
+      switchTab: async (...args) => { calls.switchTab.push(args); },
     },
   };
   sandbox.window = sandbox;
@@ -103,148 +78,6 @@ function makeHarness(options = {}) {
   AppView._merged = [];
   return { AppView, calls, sandbox };
 }
-
-// A promoted proposal by someone else, as cached from GET /promoted.
-const PR = {
-  id: 7,
-  pr_number: 9300,
-  pr_url: 'https://github.com/acme/app/pull/9300',
-  pr_title: 'Adjust kanban breakpoint to 640px',
-  username: 'alice',
-  user_id: 999,
-  status: 'promoted',
-  linked_issues: [822],
-};
-
-// The exact seed is pinned byte-for-byte: the closing sentence is what keeps
-// an unedited send in explain-only mode instead of dispatching the agent.
-const TAIL =
-  'Please read it and explain in plain terms what it changes, how it works, '
-  + "and anything risky or worth checking. Just explain it for now, don't "
-  + 'change any code or open a PR.';
-
-const EXPECTED_SEED =
-  'Let\'s explore PR 9300 in this app: "Adjust kanban breakpoint to 640px" by alice.\n'
-  + 'PR link: https://github.com/acme/app/pull/9300\n'
-  + 'Linked issues: #822.\n\n'
-  + TAIL;
-
-// An unused classic chat: no PR pushed, no title, not mid-turn, and no
-// messages. Explore reused one like it before #2779; it must not now.
-const T0 = '2026-07-28T10:00:00.000Z';
-const CLEAN = {
-  id: 5, pr_number: null, session_title: null, status: 'active', busy: false,
-  created_at: T0, last_activity_at: T0,
-};
-
-// ── Seed wording ───────────────────────────────────────────────────────────
-
-test('seed: full row renders number, title, author, link and linked issues', () => {
-  const { AppView } = makeHarness();
-  assert.equal(AppView._exploreSeed(PR), EXPECTED_SEED);
-});
-
-test('seed: a merged proposal says so, so the reply does not talk about voting', () => {
-  const { AppView } = makeHarness();
-  const seed = AppView._exploreSeed({ ...PR, status: 'merged' });
-  assert.equal(
-    seed,
-    'Let\'s explore PR 9300 in this app: "Adjust kanban breakpoint to 640px" by alice.\n'
-    + 'PR link: https://github.com/acme/app/pull/9300\n'
-    + 'Linked issues: #822.\n'
-    + 'This proposal is already merged.\n\n'
-    + TAIL
-  );
-});
-
-test('seed: a merging proposal gets its own status line', () => {
-  const { AppView } = makeHarness();
-  assert.match(AppView._exploreSeed({ ...PR, status: 'merging' }),
-    /^.*\nThis proposal is currently being merged\.\n\n/s);
-});
-
-test('seed: title-only row drops every optional line', () => {
-  const { AppView } = makeHarness();
-  assert.equal(
-    AppView._exploreSeed({ id: 8, pr_title: 'Tidy empty states' }),
-    'Let\'s explore the proposal "Tidy empty states" in this app.\n\n' + TAIL
-  );
-});
-
-test('seed: non-integer linked_issues entries are dropped', () => {
-  const { AppView } = makeHarness();
-  const seed = AppView._exploreSeed({ ...PR, linked_issues: [822, null, 'x', 91] });
-  assert.match(seed, /^.*Linked issues: #822, #91\.$/m);
-});
-
-// ── Where it opens (#2779) ─────────────────────────────────────────────────
-
-test('opens an unsent agent session on the proposal, carrying the seed', () => {
-  const { AppView, calls } = makeHarness();
-  AppView._proposals = [PR];
-  AppView._mySessions = [CLEAN];
-
-  AppView.exploreProposalInDevChat(7);
-
-  assert.equal(calls.started.length, 1);
-  assert.deepEqual({ ...calls.started[0] }, {
-    slug: 'test-app', proposalId: 7, entry: 'proposal', message: EXPECTED_SEED,
-  });
-  assert.equal(calls.createSession.length, 0, 'no classic session is created');
-  assert.equal(calls.setDraft.length, 0, 'nor is an existing one drafted into, unused or not');
-  assert.equal(calls.switchTab.length, 0);
-  assert.equal(calls.refreshCaches, 0, 'nothing is fetched to choose a session');
-  assert.equal(calls.sendMessage.length, 0, 'nothing is ever sent');
-});
-
-test('resolves a merged row from the Completed cache, skipping close-issue rows', () => {
-  const { AppView, calls } = makeHarness();
-  // An issues.id can collide with a session id — the close_issue row must
-  // never be mistaken for the merged PR proposal.
-  AppView._merged = [
-    { id: 7, row_type: 'close_issue', pr_title: 'Close #12' },
-    { ...PR, status: 'merged' },
-  ];
-
-  AppView.exploreProposalInDevChat(7);
-
-  assert.match(calls.started[0].message, /^Let's explore PR 9300 /);
-  assert.match(calls.started[0].message, /This proposal is already merged\./);
-});
-
-test('a proposal no cache holds still opens the conversation, without a message', () => {
-  const { AppView, calls } = makeHarness();
-  AppView._proposals = [PR];
-
-  AppView.exploreProposalInDevChat(4242);
-
-  assert.deepEqual({ ...calls.started[0] }, { slug: 'test-app', proposalId: 4242, entry: 'proposal' });
-});
-
-test('no app on screen, or no id: a quiet no-op', () => {
-  const { AppView, calls } = makeHarness();
-  AppView.exploreProposalInDevChat('nope');
-  AppView.appData = null;
-  AppView.exploreProposalInDevChat(7);
-  assert.equal(calls.started.length, 0);
-});
-
-// ── Card / topic-head rendering ────────────────────────────────────────────
-
-test('the card pill carries the class, the proposal id and the label', () => {
-  const { AppView } = makeHarness();
-  const html = AppView._exploreChatBtnHtml(PR);
-  assert.match(html, /gc-explore-chat-btn/);
-  assert.match(html, /data-proposal-id="7"/);
-  assert.match(html, /Explore in a coding agent/);
-});
-
-test('read-only viewers get no pill — the dev chat is collab-gated (#621)', () => {
-  const { AppView } = makeHarness();
-  // AppView.readOnly is a getter over appData.can_collaborate (#621).
-  AppView.appData = { slug: 'test-app', can_collaborate: false };
-  assert.equal(AppView._exploreChatBtnHtml(PR), '');
-});
 
 // ── _showExplorePill — the one shared gate (#1045) ─────────────────────────
 //
@@ -268,7 +101,7 @@ test('_showExplorePill: foreign proposals get the pill, native or imported', () 
 test('_showExplorePill: your own NATIVE proposal still gets none (#313/#348)', () => {
   const { AppView } = makeHarness();
   assert.equal(AppView._showExplorePill({ id: 1, user_id: ME_ID }), false,
-    'Open session is the better door to the same dev chat');
+    'the owner works on it from its own change page');
   assert.equal(
     AppView._showExplorePill({ id: 1, user_id: ME_ID, source: 'maintenance' }), false,
     'a native provenance marker is not an import'
@@ -299,7 +132,8 @@ test('_showExplorePill: your own IMPORTED proposal DOES get one (#1045)', () => 
 
 test('_showExplorePill: governance and close-issue rows never get one (#827)', () => {
   const { AppView } = makeHarness();
-  // A dev chat cannot act on a rename / secret change / close-issue vote.
+  // There is no code to talk through on a rename / secret change /
+  // close-issue vote.
   assert.equal(
     AppView._showExplorePill({ id: 5, kind: 'secret_change', created_by: OTHER_ID }), false,
     'governance rows carry `kind`; PR-proposal rows do not'
@@ -309,16 +143,6 @@ test('_showExplorePill: governance and close-issue rows never get one (#827)', (
     'an applied close-issue row in the Completed stream'
   );
   assert.equal(AppView._showExplorePill(null), false, 'a missing row is a quiet false');
-});
-
-test('_showExplorePill does NOT own the read-only rule — _exploreChatBtnHtml does', () => {
-  const { AppView } = makeHarness();
-  AppView.appData = { slug: 'test-app', can_collaborate: false };
-  // Deliberate: the collab gate stays in exactly one place (#621), so the
-  // predicate answers "does this ROW deserve a pill" and nothing else.
-  assert.equal(AppView._showExplorePill({ id: 1, user_id: OTHER_ID }), true);
-  assert.equal(AppView._exploreChatBtnHtml({ id: 1, user_id: OTHER_ID }), '',
-    'the rendered pill is still empty for a read-only viewer');
 });
 
 // ── The rule as the cards actually render it (#1045) ───────────────────────
@@ -353,7 +177,7 @@ const MY_IMPORT = {
   created_at: '2026-06-01T00:00:00Z',
 };
 
-test('proposal card: my own IMPORTED proposal offers Explore from ⋯, and no Open session', () => {
+test('proposal card: my own IMPORTED proposal offers Explore from ⋯', () => {
   const AppView = cardHarness();
   const html = proposalCardHtml(AppView, MY_IMPORT);
   // #1787 round four put Explore back in ⋯ on cards; _showExplorePill's rule
@@ -361,17 +185,27 @@ test('proposal card: my own IMPORTED proposal offers Explore from ⋯, and no Op
   assert.ok(menuHas(AppView, html, /Explore in a coding agent/),
     'the ⋯ row is the owner\'s only AI affordance here');
   assert.ok(!html.includes('gc-explore-chat-btn'), 'and not also a face pill');
-  assert.ok(!menuHas(AppView, html, /Open session/),
-    'an imported PR has no dev session to open (#687) — that rule is untouched');
   assert.ok(menuHas(AppView, html, /^Withdraw$/), 'Withdraw is untouched too — now a ⋯ row');
 });
 
-test('proposal card: my own NATIVE proposal is unchanged — Open session, no pill', () => {
+test('proposal card: my own NATIVE proposal offers no Explore', () => {
   const AppView = cardHarness();
   const html = proposalCardHtml(AppView, { ...MY_IMPORT, source: undefined, imported_pr_author: undefined });
   assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no pill on the face');
   assert.ok(!menuHas(AppView, html, /Explore in a coding agent/), 'and no ⋯ row either');
-  assert.ok(menuHas(AppView, html, /Open session/), 'Open session is the ⋯ door to the same chat');
+});
+
+test('the gate does NOT own the read-only rule: each render site does', () => {
+  // Deliberate: the predicate answers "does this ROW deserve Explore" and
+  // nothing else, and the collab gate (#621) is applied where it renders.
+  const AppView = cardHarness();
+  AppView.appData = { slug: 'test-app', can_collaborate: false };
+  const theirs = { ...MY_IMPORT, user_id: OTHER_ID, username: 'alice', source: undefined, imported_pr_author: undefined };
+  assert.equal(AppView._showExplorePill(theirs), true);
+  assert.ok(!menuHas(AppView, proposalCardHtml(AppView, theirs), /Explore in a coding agent/),
+    'a read-only viewer\'s card offers no Explore row');
+  const pills = (AppView._detailActionsView('proposal', theirs) || { pills: [] }).pills;
+  assert.ok(!pills.some((p) => p.key === 'explore'), 'nor does the change\'s own page');
 });
 
 test('merged card: my own IMPORTED completed proposal renders the pill', () => {

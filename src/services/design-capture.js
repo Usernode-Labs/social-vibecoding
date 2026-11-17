@@ -63,7 +63,6 @@ const COPY_LOCK = 0x6c61796f; // 'layo'
  */
 const PAGES = Object.freeze([
   Object.freeze({ key: 'homeroom-bot', name: 'Homeroom bot page', route: () => '/?demo=1#homeroom-bot' }),
-  Object.freeze({ key: 'main-chat', name: 'Main Chat', route: () => '/?demo=1#homeroom-bot/main' }),
   Object.freeze({ key: 'messages', name: 'Messages', route: () => '/?demo=1#messages' }),
   Object.freeze({ key: 'communities', name: 'Communities', route: () => '/?demo=1#communities' }),
   Object.freeze({ key: 'project', name: 'project page', route: (self) => `/?demo=1#app/${self}/dev` }),
@@ -89,7 +88,7 @@ function findPage(text) {
     if (want === page.key.toLowerCase() || want === page.name.toLowerCase()) return page;
     const route = page.route('*');
     if (want === genericRoute(route) || genericRoute(want) === genericRoute(route)) return page;
-    // "#homeroom-bot", "homeroom-bot/main" and the like: the route's hash.
+    // "#homeroom-bot", "messages" and the like: the route's hash.
     const hash = String(route).split('#')[1];
     if (hash && (bare === hash.toLowerCase() || want === hash.toLowerCase())) return page;
   }
@@ -146,6 +145,96 @@ function readPageFailure(stdout) {
   const found = String(stdout || '').match(/__USERNODE_PAGE_FAIL__ reason=([^\s]+)/);
   if (!found) return null;
   try { return decodeURIComponent(found[1]); } catch { return found[1]; }
+}
+
+// ── #6681: a version rendered as the preview shows it ───────────────────
+//
+// A design version is rendered by the same capture image (capture/capture.js
+// DESIGN_RENDER mode): JavaScript off and every request aborted, so the
+// picture is what the preview and the plan show. The sheets the drawing
+// links are inlined here from this server's public/, so the job needs no
+// network.
+
+// A document over this is not sent to the job (the version's own cap is
+// 120,000; a base64 of twice that is still well within the job's buffer).
+const RENDER_MAX_CHARS = 500_000;
+const RENDER_TIMEOUT_MS = 30_000;
+
+/** The stylesheets a drawing links by this site's path, inlined, its scripts dropped. */
+function inlineSheets(html, deps = {}) {
+  const fs = deps.fs || require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..', '..');
+  const files = {
+    '/usernode-native/v1/native.css': 'public/usernode-native/v1/native.css',
+    '/css/app.css': 'public/css/app.css',
+    '/css/tailwind.css': 'public/css/tailwind.css',
+  };
+  const doc = String(html || '').replace(/<script\b[\s\S]*?<\/script\s*>/gi, '');
+  return doc.replace(/<link\b[^>]*>/gi, (tag) => {
+    if (!/\brel\s*=\s*["']?[^"'>]*stylesheet/i.test(tag)) return tag;
+    const href = /\bhref\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1] || '';
+    const file = files[href.split(/[?#]/)[0]];
+    if (!file) return '';
+    let css = '';
+    try { css = fs.readFileSync(path.join(root, file), 'utf8'); } catch { return ''; }
+    return `<style>${css.replace(/<\/style/gi, '<\\/style')}</style>`;
+  });
+}
+
+/** Pure: the PNG images a render job emitted, in order (the version, then its comparison). */
+function readRenderFrames(stdout) {
+  const out = [];
+  const text = String(stdout || '');
+  for (const m of text.matchAll(/__USERNODE_RENDER__ bytes=\d+\r?\n([\s\S]*?)__USERNODE_RENDER_END__/g)) {
+    const encoded = m[1].replace(/\s+/g, '');
+    if (!encoded) continue;
+    try {
+      const image = Buffer.from(encoded, 'base64');
+      if (image.length) out.push(image);
+    } catch { /* not an image */ }
+  }
+  return out;
+}
+
+/** Pure: why a render job gave up, or null when it did not say. */
+function readRenderFailure(stdout) {
+  const found = String(stdout || '').match(/__USERNODE_RENDER_FAIL__ reason=([^\s]+)/);
+  if (!found) return null;
+  try { return decodeURIComponent(found[1]); } catch { return found[1]; }
+}
+
+/**
+ * #6681: a version rendered the way the preview and the plan will show it,
+ * as { ok, png, comparePng } or { ok: false, reason }. `compare` is another
+ * document (the thread's "As it is now" version) rendered in the same job.
+ * Never throws.
+ */
+async function renderDesign(config, { html, width, height, compare = null, deps = {} } = {}) {
+  const doc = inlineSheets(html, deps);
+  if (!doc.trim()) return { ok: false, reason: 'no_html' };
+  if (doc.length > RENDER_MAX_CHARS) return { ok: false, reason: 'too_big' };
+  const w = Number(width) > 0 ? Math.round(Number(width)) : 390;
+  const tall = Number(height) > 0 ? Math.round(Number(height)) : 844;
+  const spec = {
+    html: Buffer.from(doc, 'utf8').toString('base64'),
+    viewport: { width: w, height: Math.min(tall, 1600) },
+  };
+  if (typeof compare === 'string' && compare.trim()) {
+    const cmp = inlineSheets(compare, deps);
+    if (cmp.length > RENDER_MAX_CHARS) return { ok: false, reason: 'too_big' };
+    spec.compare = Buffer.from(cmp, 'utf8').toString('base64');
+  }
+  try {
+    const out = await runCaptureJob(config, spec, { deps, kind: 'DESIGN_RENDER', timeoutMs: RENDER_TIMEOUT_MS });
+    const stdout = typeof out === 'string' ? out : out?.stdout;
+    const frames = readRenderFrames(stdout);
+    if (!frames.length) return { ok: false, reason: readRenderFailure(stdout) || 'no_render' };
+    return { ok: true, png: frames[0], comparePng: frames[1] || null };
+  } catch (err) {
+    log.warn('design-capture', 'A design render did not happen', { err: err?.message });
+    return { ok: false, reason: 'render_failed' };
+  }
 }
 
 // ── The one demo copy ────────────────────────────────────────────────────
@@ -353,10 +442,10 @@ async function fixtureToken(pool, config, { deps = {} } = {}) {
   return mint(user, app.id, { previewOnly: true });
 }
 
-/** Run the capture job and resolve its stdout. */
-async function runCaptureJob(config, spec, { deps = {} } = {}) {
-  const env = { PAGE_CAPTURE: JSON.stringify(spec) };
-  const payload = { env, memory: '2g', cpus: '2', timeoutMs: JOB_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024 };
+/** Run the capture job and resolve its stdout. `kind` is the env var the job reads. */
+async function runCaptureJob(config, spec, { deps = {}, kind = 'PAGE_CAPTURE', timeoutMs = JOB_TIMEOUT_MS } = {}) {
+  const env = { [kind]: JSON.stringify(spec) };
+  const payload = { env, memory: '2g', cpus: '2', timeoutMs, maxBuffer: 32 * 1024 * 1024 };
   if (deps.runJob) return deps.runJob(payload);
   if (config.captureRuntime === 'kubernetes') {
     return kubernetes.runCaptureJob(config, { ...payload, sessionId: spec.sessionId || 1 });
@@ -411,7 +500,8 @@ function _reset() {
 }
 
 module.exports = {
-  PAGES, VIEWPORTS, MAX_DESIGN_CHARS, IDLE_MS,
+  PAGES, VIEWPORTS, MAX_DESIGN_CHARS, IDLE_MS, RENDER_MAX_CHARS,
   findPage, routeOf, jobSpec, rewriteSheets, readPageFrame, readPageFailure,
+  inlineSheets, readRenderFrames, readRenderFailure, renderDesign,
   ensureCopy, stopCopy, capturePage, selfApp, _reset,
 };

@@ -166,20 +166,51 @@ export async function planAsk(moment: NotifyMoment): Promise<AskContext> {
   return { plan, native, os, links };
 }
 
+/** What the phone said: allowed, refused, not the Homeroom app, or unreadable. */
+export type AskOutcome = 'granted' | 'denied' | 'no-app' | 'unknown';
+
+/** One read of the phone's notification permission, swallowed if it fails. */
+async function rereadPermission(chrome: NonNullable<NotifyAskHost['NativeChrome']>): Promise<OsPermission> {
+  try {
+    if (typeof chrome.notifyAskPermission !== 'function') return null;
+    const reading = await chrome.notifyAskPermission();
+    return reading?.permission ?? null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The OS prompt, in the Homeroom app (NativeChrome.notifyWhenReady: the
  * platform's own prompt, then push registration and this phone's Activity
- * notifications on). Resolves granted, and whether a refusal can be undone
- * from the OS settings page.
+ * notifications on). Resolves the phone's outcome, and whether a refusal can
+ * be undone from the OS settings page.
+ *
+ * The outcome is kept apart on purpose: only a real refusal may be drawn as
+ * notifications being off. A missing bridge is 'no-app'; a throw or an
+ * answer that cannot be read is 'unknown'.
+ *
+ * A refusal is read once more before it is trusted, since a grant can land
+ * just after Android's watch ended: granted becomes 'granted', denied stays
+ * 'denied' (keeping `settings`), and anything else is 'unknown'. Never
+ * throws.
  */
-export async function askOs(): Promise<{ granted: boolean; settings: boolean }> {
+export async function askOs(): Promise<{ outcome: AskOutcome; settings: boolean }> {
   const chrome = host().NativeChrome;
-  if (!chrome || typeof chrome.notifyWhenReady !== 'function') return { granted: false, settings: false };
+  if (!chrome || typeof chrome.notifyWhenReady !== 'function') return { outcome: 'no-app', settings: false };
   try {
     const answer = await chrome.notifyWhenReady();
-    return { granted: answer?.outcome === 'granted', settings: answer?.outcome === 'denied' && answer?.settings === true };
+    const outcome = answer?.outcome;
+    if (outcome === 'granted') return { outcome: 'granted', settings: false };
+    if (outcome === 'no-app') return { outcome: 'no-app', settings: false };
+    if (outcome !== 'denied') return { outcome: 'unknown', settings: false };
+    const settings = answer?.settings === true;
+    const again = await rereadPermission(chrome);
+    if (again === 'granted') return { outcome: 'granted', settings: false };
+    if (again === 'denied') return { outcome: 'denied', settings };
+    return { outcome: 'unknown', settings: false };
   } catch {
-    return { granted: false, settings: false };
+    return { outcome: 'unknown', settings: false };
   }
 }
 

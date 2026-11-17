@@ -242,7 +242,7 @@ test('a tab root shows nothing; a sub-page shows an arrow to its tab', () => {
   // One Home (#6361): Needs you, the page left of the Communities screen,
   // is a level under Home.
   for (const [screen, href] of [['settings-screen', '#profile'], ['admin-screen', '#profile'],
-    ['leaderboard-screen', '#profile'], ['agent-session-screen', '#messages'], ['workshop-screen', '/']]) {
+    ['leaderboard-screen', '#profile'], ['workshop-screen', '/']]) {
     h.App._showOnlyScreen('home-screen');
     h.App._showOnlyScreen(screen);
     assert.equal(ui.backButtonStore.get().mode, 'arrow', `${screen} has a level above`);

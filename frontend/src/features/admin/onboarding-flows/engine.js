@@ -21,7 +21,7 @@ export function mountFlows(root, DATA) {
 var dead=false, cleanups=[];
 function byId(id){return root.querySelector('[data-of="'+id+'"]');}
 function listen(target,type,fn,opts){target.addEventListener(type,fn,opts);cleanups.push(function(){target.removeEventListener(type,fn,opts);});}
-var ALL=DATA.people, P=ALL, BY={}, NO_S1=false;
+var ALL=DATA.people, P=ALL, BY={}, WHO='all';   // WHO: who is drawn, one of the Who menu's choices (whoChoices)
 ALL.forEach(function(p){BY[p.k]=p;});
 var NS='http://www.w3.org/2000/svg';
 // the people who were here before the waitlist, by the name of the first season
@@ -60,14 +60,21 @@ function tally(arr,fn){var m={},o=[];arr.forEach(function(x){var k=fn(x);if(k==n
 var N={
  'src:season1':{l:EARLY}, 'src:unrecorded':{l:'Not recorded',kind:'ghost'}, 'src:x':{l:'Said: X'}, 'src:friend':{l:'Said: a friend'}, 'src:event':{l:'Said: an event'}, 'src:other':{l:'Said: somewhere else'}, 'src:invite':{l:"A member's invite link",w:"Member's invite link"},
  'door:direct':{l:'Let in directly',s:'Directly'}, 'door:waitlist':{l:'Joined the waitlist',s:'Waitlist'}, 'door:invite':{l:'Opened an invite link',w:'By invite link'},
- 'got:in':{l:'Made an account'}, 'got:new':{l:'Let off this week, too early to say',w:'Too early to say',kind:'ghost',neutral:true}, 'got:waiting':{l:'Has an account, waiting for access',w:'Waiting for access'}, 'got:mail':{l:'Ignored the admit mail',w:'Ignored admit mail'}, 'got:nomail':{l:'No admit mail sent'},
+ 'got:in':{l:'Made an account'}, 'got:new':{l:'Let off this week, too early to say',w:'Too early to say',kind:'ghost',neutral:true}, 'got:away':{l:'Had an account, has not come back',w:'Had an account, not back'}, 'got:waiting':{l:'Has an account, waiting for access',w:'Waiting for access'}, 'got:mail':{l:'Ignored the admit mail',w:'Ignored admit mail'}, 'got:nomail':{l:'No admit mail sent'},
  'first:app':{l:'Tried an app'}, 'first:spoke':{l:'Spoke, voted or asked',w:'Spoke or voted'}, 'first:joined':{l:'Joined a community'}, 'first:none':{l:'Opened, did nothing'}, 'first:never':{l:'Never opened it'},
  'made:yes':{l:'Made an app'}, 'made:no':{l:"Used others' apps"},
  'dw:c':{l:'Waited 6 weeks or more',w:'6+ weeks'}, 'dw:na':{l:'Wait not recorded',kind:'ghost'},
  'dwp:direct':{l:'',pass:true,full:'Let in directly'}, 'dwp:invite':{l:'',pass:true,full:'Opened an invite link'},
  'dw:waiting':{l:'Not let off yet',kind:'ghost',phantom:(WAIT?WAIT.n+' \u00b7 not to scale':'not in this data'),full:'Still on the waitlist, not let off yet'}, 'dw:b':{l:'Waited 2 to 5 weeks',w:'2 to 5 weeks'}, 'dw:a':{l:'Waited under 2 weeks',w:'Under 2 weeks'},
  'gm:unopened':{l:'Never opened the mail',w:'Never opened it'}, 'gm:opened':{l:"Opened the mail, didn't sign in",w:'Opened, no sign-in'}, 'gm:untracked':{l:'Mail opens not tracked',w:'Opens not tracked',kind:'ghost'},
+ 'gn:unopened':{l:'Too early: has not opened the mail yet',w:'Not opened yet',neutral:true}, 'gn:opened':{l:"Too early: opened the mail, didn't click",w:"Opened, didn't click",neutral:true},
+ 'gn:clicked':{l:'Too early: clicked the mail, not in yet',w:'Clicked, not in yet',neutral:true}, 'gn:untracked':{l:'Too early: mail opens not tracked',w:'Opens not tracked',kind:'ghost',neutral:true},
+ 'gn:nomail':{l:'Too early: no admit mail on record',w:'No admit mail',neutral:true},
  'gmp:in':{l:'',pass:true,full:'Made an account'},
+ 'gi:admit':{l:'Signed in from the admit mail',w:'From the admit mail'}, 'gi:nudge1':{l:'Signed in after the first nudge',w:'After the first nudge'}, 'gi:nudge2':{l:'Signed in after the last nudge',w:'After the last nudge'},
+ 'gi:had':{l:'Already had an account',w:'Had an account'}, 'gi:unk':{l:'Sign-in not dated',kind:'ghost'},
+ 'ask:template':{l:'Made an app from a template',w:'From a template'}, 'ask:custom':{l:'Made an app of their own idea',w:'Their own idea'}, 'ask:look':{l:'Looked around first',w:'Looked around'},
+ 'ask:none':{l:'No answer on record',w:'No answer',kind:'ghost'}, 'askp:never':{l:'',pass:true,full:'Never opened it'},
  'mk:shared':{l:'Private app, someone joined',w:'Private app, joined'}, 'mk:solo':{l:'Private app, no one joined',w:'Private app, solo'}, 'mk:pub':{l:'Made a public app'}, 'mk:joined':{l:"Joined a friend's private app",w:"Joined a friend's"},
  'out:pub_contrib':{l:'Contributes to public apps',w:'Public: contributes'}, 'out:pub_user':{l:'Uses public apps',w:'Public: uses'}, 'out:quiet':{l:'Went quiet'}, 'out:lapsed':{l:'Was taking part, nothing in four weeks',w:'Lapsed'}, 'out:both':{l:'Private and public',w:'Private + public'}, 'out:priv':{l:'Private apps only',w:'Private only'}, 'out:member':{l:"In a friend's private app",w:"In a friend's app"}, 'out:shared':{l:'Shared a private app',w:'Shared private app'},
  'pa:made':{l:'Made a private app'}, 'pa:joined':{l:"Joined a friend's"},
@@ -83,15 +90,17 @@ var N={
  'deep:live':{l:'Their change went live'}, 'deep:voice':{l:'Votes or gives feedback'}, 'deep:use':{l:'Uses it'},
  'rh:stay':{l:'Active two weeks running'}, 'rh:not':{l:'Not yet'},
  'wait:none':{l:'No waitlist'}, 'wait:a':{l:'Under 2 weeks'}, 'wait:b':{l:'2 to 5 weeks'}, 'wait:c':{l:'6 weeks or more'},
- 'far:admit':{l:'Admitted, never signed in'}, 'far:new':{l:'Let off this week'}, 'far:queued':{l:'Signed up, not let in'}, 'far:account':{l:'Made an account'}, 'far:opened':{l:'Opened Homeroom'}, 'far:acted':{l:'Did one thing'},
+ 'far:admit':{l:'Admitted, never signed in'}, 'far:new':{l:'Let off this week'}, 'far:away':{l:'Let in, already had an account'}, 'far:queued':{l:'Signed up, not let in'}, 'far:account':{l:'Made an account'}, 'far:opened':{l:'Opened Homeroom'}, 'far:acted':{l:'Did one thing'},
  'why:openmail':{l:"Opened the mail, didn't sign in"}, 'why:unopened':{l:'Never opened the mail'}, 'why:untracked':{l:'Mail opens not tracked',kind:'ghost'}, 'why:nomail':{l:'No admit mail on record'},
- 'why:queued':{l:'Invited, waiting to be let in'}, 'why:new':{l:'Too early to say',kind:'ghost'}, 'why:lapsed':{l:'Was taking part, nothing in four weeks'}, 'why:neveropen':{l:'Has access, never opened it'}, 'why:noact':{l:'Looked, did nothing'},
+ 'why:queued':{l:'Invited, waiting to be let in'}, 'why:new':{l:'Too early to say',kind:'ghost'}, 'why:away':{l:'Has not come back since'}, 'why:lapsed':{l:'Was taking part, nothing in four weeks'}, 'why:neveropen':{l:'Has access, never opened it'}, 'why:noact':{l:'Looked, did nothing'},
  'why:solo':{l:'Made an app, never shared'}, 'why:joined':{l:'Joined a community only'}, 'why:explored':{l:'Explored apps, then stopped'}, 'why:tried':{l:'Opened an app briefly'}
 };
 
 /* ---------- per-person node functions ---------- */
-function gotNode(p){ if(p.got==='new')return 'got:new'; if(p.got==='mail_ignored')return 'got:mail'; if(p.got==='mail_none')return 'got:nomail'; if(p.got==='waiting')return 'got:waiting'; return 'got:in'; }
+function gotNode(p){ if(p.got==='new')return 'got:new'; if(p.got==='away')return 'got:away'; if(p.got==='mail_ignored')return 'got:mail'; if(p.got==='mail_none')return 'got:nomail'; if(p.got==='waiting')return 'got:waiting'; return 'got:in'; }
 function isIn(p){return p.got==='in'||p.got==='acct';}
+/* Too early to say, by what the admit mail shows so far: a batch let off this week is read by its opens before it is judged */
+function newMail(p){ if(p.noAccount&&p.stuck==='mail_sent')return 'gn:nomail'; if(!p.mail||p.mail[0]==null)return 'gn:untracked'; return p.mail[1]?'gn:clicked':(p.mail[0]?'gn:opened':'gn:unopened'); }
 function firstNode(p){ if(!isIn(p))return null; if(p.got==='acct'||p.stuck==='opened')return 'first:never'; return 'first:'+p.first; }
 function acted(p){var f=firstNode(p);return !!f&&f!=='first:never'&&f!=='first:none';}
 function outNode(p){ if(!acted(p))return null; if(p.lane==='both')return 'out:both'; if(p.lane==='share')return 'out:priv'; if(p.lane==='pub')return p.pub==='contrib'?'out:pub_contrib':'out:pub_user'; return p.out==='lapsed'?'out:lapsed':'out:quiet'; }
@@ -110,9 +119,10 @@ function lastNode(p){var d=p.lastC;return d==null?'lc:3':(d<14?'lc:0':(d<35?'lc:
 function appNode(p){ if(!p.pubApp)return 'app:none'; return TOPAPPS.indexOf(p.pubApp)>=0?'app:'+p.pubApp:'app:other'; }
 function deepNode(p){ return has(p,'U')?'deep:live':(p.contribFlag?'deep:voice':'deep:use'); }
 function waitNode(p){ if(p.door!=='waitlist'||p.wait==null)return 'wait:none'; return p.wait<14?'wait:a':(p.wait<42?'wait:b':'wait:c'); }
-function farNode(p){ if(p.got==='new')return 'far:new'; if(p.got==='mail_ignored'||p.got==='mail_none')return 'far:admit'; if(p.got==='waiting')return 'far:queued'; var f=firstNode(p); if(f==='first:never')return 'far:account'; if(f==='first:none')return 'far:opened'; return 'far:acted'; }
+function farNode(p){ if(p.got==='new')return 'far:new'; if(p.got==='away')return 'far:away'; if(p.got==='mail_ignored'||p.got==='mail_none')return 'far:admit'; if(p.got==='waiting')return 'far:queued'; var f=firstNode(p); if(f==='first:never')return 'far:account'; if(f==='first:none')return 'far:opened'; return 'far:acted'; }
 function whyNode(p){
   if(p.got==='new')return 'why:new';
+  if(p.got==='away')return 'why:away';
   if(p.got==='mail_none')return 'why:nomail';
   if(p.got==='mail_ignored'){ if(!p.mail||p.mail[0]==null)return 'why:untracked'; return p.mail[0]?'why:openmail':'why:unopened'; }
   if(p.got==='waiting')return 'why:queued';
@@ -141,7 +151,7 @@ function gridDecor(L,g){
   L.people.forEach(function(p){ if(!L.T[p.k]||!engaged(p))return; var k=conTier(p); n[k]=(n[k]||0)+1; if(p.shared.length)inv[k]=(inv[k]||0)+1; });
   EROWS.forEach(function(r){ if(!(r.k in tops))return; g.appendChild(s('text',{'class':'caption',x:L.xs[at],y:(tops[r.k]-8).toFixed(1),text:r.l+' · '+n[r.k]+(inv[r.k]?' · '+inv[r.k]+' invite':'')})); });
 }
-function sharerN(sh){return NO_S1?count(P,function(p){return p.inv&&p.inv.by===sh.by&&p.inv.n===sh.app;}):sh.n;}
+function sharerN(sh){return WHO!=='all'?count(P,function(p){return p.inv&&p.inv.by===sh.by&&p.inv.n===sh.app;}):sh.n;}
 function inviteTarget(L){var b=null;L.nodes.forEach(function(n){if(n.id==='src:invite')b=n;});return b?{x:b.x+b.w/2,y:b.y+b.h+7}:null;}
 [2,3,4,5].forEach(function(c){N['sk:'+c]={l:'',pass:true,full:'Sharers themselves'};});
 /* arrival: a recorded channel where there is one, else what they said, else Season 1 or nothing */
@@ -179,18 +189,21 @@ var SHARERS=[];
 var LANES={share:{l:'Private only',d:'in a private app with someone else, not on public apps, and active in the last four weeks'},both:{l:'Private and public',d:'in a private app with someone else and on public apps too, and active in the last four weeks'},pub:{l:'Public only',d:'uses or contributes to a public app, and active in the last four weeks'},none:{l:'Dropped off',d:'neither, or nothing in the last four weeks'}};
 var LANEKEYS=['share','both','pub','none'];
 var VIEWS=[
- {id:'whole',tab:'Whole funnel',dot:'all',laneOrder:['pub','both','share','none'],filter:function(){return true;},loop:true,leaks:true,right:92,minW:1180,gridAt:8,
-  zones:[{l:'Off-platform',from:0,to:0},{l:'On Homeroom · trial',from:1,to:5},{l:'Engaged',from:6,to:7},{l:'How engaged · use \u2192',from:8,to:11}],
+ {id:'whole',tab:'Whole funnel',dot:'all',laneOrder:['pub','both','share','none'],filter:function(){return true;},loop:true,leaks:true,right:92,minW:1180,gridAt:9,
+  zones:[{l:'Off-platform',from:0,to:0},{l:'On Homeroom · trial',from:1,to:6},{l:'Engaged',from:7,to:8},{l:'How engaged · use \u2192',from:9,to:12}],
   cols:[
    {t:'Arrived from',short:'w',node:arrNode,order:['src:season1','src:unrecorded'].concat(ARR_ORDER,['src:x','src:friend','src:other','src:event','src:invite'])},
    {t:'Door',short:'w',cgap:26,gapsBefore:{'door:invite':56},node:function(p){return 'door:'+p.door;},order:['door:direct','door:waitlist','door:invite']},   // the gap lines the invite card up with its pass-through, under the wait cards
    {t:'Time on waitlist',short:'w',detail:true,node:function(p){ if(p.door!=='waitlist')return 'dwp:'+p.door; return p.wait==null?'dw:na':(p.wait<14?'dw:a':(p.wait<42?'dw:b':'dw:c')); },order:['dwp:direct','dw:c','dw:b','dw:a','dw:na','dw:waiting','dwp:invite'],phantoms:['dw:waiting']},
-   {t:'Getting in',short:'w',cgap:26,node:gotNode,order:['got:in','got:mail','got:waiting','got:nomail','got:new']},
-   {t:'Admit mail',short:'w',detail:true,node:function(p){ var g=gotNode(p); if(g==='got:in')return 'gmp:in'; if(g!=='got:mail')return null; if(!p.mail||p.mail[0]==null)return 'gm:untracked'; return p.mail[0]?'gm:opened':'gm:unopened'; },order:['gmp:in','gm:unopened','gm:opened','gm:untracked']},
+   {t:'Getting in',short:'w',cgap:26,node:gotNode,order:['got:in','got:mail','got:away','got:waiting','got:nomail','got:new']},
+   // off the waitlist and in: the mail they came in after, the admit mail or one of its two reminders (the nudges)
+   {t:'Admit mail',short:'w',detail:true,node:function(p){ var g=gotNode(p); if(g==='got:in')return p.door==='waitlist'?'gi:'+(p.mailIn||'unk'):'gmp:in'; if(g==='got:new')return newMail(p); if(g!=='got:mail')return null; if(!p.mail||p.mail[0]==null)return 'gm:untracked'; return p.mail[0]?'gm:opened':'gm:unopened'; },order:['gi:admit','gi:nudge1','gi:nudge2','gi:had','gi:unk','gmp:in','gm:unopened','gm:opened','gm:untracked','gn:unopened','gn:opened','gn:clicked','gn:untracked','gn:nomail']},
+   // the first session's own question, "What do you want to make?": a template, their own idea, or Look around first
+   {t:'What to make?',short:'w',detail:true,node:function(p){ var f=firstNode(p); if(!f)return null; if(f==='first:never')return 'askp:never'; return 'ask:'+(p.ask||'none'); },order:['ask:template','ask:custom','ask:look','ask:none','askp:never']},
    {t:'First session',short:'w',node:firstNode,order:['first:app','first:spoke','first:joined','first:none','first:never']},
    {t:'Made or joined',short:'w',node:function(p){ if(!acted(p))return null; if(sharedPriv(p))return 'mk:shared'; if(madePriv(p))return 'mk:solo'; if(p.made.length)return 'mk:pub'; if(joinedPriv(p))return 'mk:joined'; return 'made:no'; },order:['mk:pub','mk:solo','mk:shared','mk:joined','made:no']},
    {t:'Where they are now',short:'w',gap:.95,node:outNode,order:['out:pub_contrib','out:pub_user','out:both','out:priv','out:lapsed','out:quiet']},
-   gridCol(0,8),gridCol(1,8),gridCol(2,8),gridCol(3,8)
+   gridCol(0,9),gridCol(1,9),gridCol(2,9),gridCol(3,9)
   ],
   loopTo:function(L){var tg=inviteTarget(L);if(!tg)return null;var eng=L.people.filter(engaged);tg.text='The loop: '+count(eng,function(p){return p.shared.length>0;})+' of the '+eng.length+' engaged people brought someone in, and '+count(P,function(p){return p.door==='invite';})+' new people came in by an invite link';return tg;},
   decor:gridDecor},
@@ -241,15 +254,15 @@ var VIEWS=[
    {t:'Arrived from',gap:.6,node:arrNode,order:ARR_ORDER.concat(['src:x','src:friend','src:other','src:event','src:unrecorded','src:season1','src:invite'])},
    {t:'Door',gap:.8,node:function(p){return 'door:'+p.door;},order:['door:waitlist','door:direct','door:invite']},
    {t:'Time on the waitlist',node:waitNode,order:['wait:c','wait:b','wait:a','wait:none']},
-   {t:'Got as far as',node:farNode,order:['far:admit','far:new','far:queued','far:account','far:opened','far:acted']},
-   {t:'What the record shows',node:whyNode,order:['why:unopened','why:openmail','why:untracked','why:nomail','why:new','why:queued','why:neveropen','why:noact','why:tried','why:explored','why:joined','why:solo','why:lapsed']}
+   {t:'Got as far as',node:farNode,order:['far:admit','far:away','far:new','far:queued','far:account','far:opened','far:acted']},
+   {t:'What the record shows',node:whyNode,order:['why:unopened','why:openmail','why:untracked','why:nomail','why:away','why:new','why:queued','why:neveropen','why:noact','why:tried','why:explored','why:joined','why:solo','why:lapsed']}
   ]}
 ];
 VIEWS=['whole','priv','pub','share','drop'].map(function(id){return VIEWS.filter(function(v){return v.id===id;})[0];});
 var VBY={};VIEWS.forEach(function(v){VBY[v.id]=v;});
 
 /* ---------- layout ---------- */
-var NODEW=12, TOP=64, LEFT=12, RIGHT=236;
+var NODEW=12, TOP=80, LEFT=12, RIGHT=236;
 var LEAK_MIN=10,LEAK_TAG=0.2,LEAK_STRONG=0.5,LEAK_OK=0.1,LEAK_ROOM=12;
 function padBefore(cdef,list,i,pd){ var n=list[i]; if(!i)return cdef.topPad||(n.meta.caption?18:0); if(cdef.band&&cdef.band(list[i-1].id)===cdef.band(n.id))return 0; return pd+(n.meta.gapBefore||0)+((cdef.gapsBefore&&cdef.gapsBefore[n.id])||0); }
 var MODE='cards';
@@ -275,7 +288,7 @@ function layout(view,W,mode){
   paths.forEach(function(pa){ pa.ids.forEach(function(id,i){ var col=cols[pa.start+i]; if(!col.nodes[id]){col.nodes[id]={id:id,col:pa.start+i,th:[],meta:N[id]||{l:id}};} col.nodes[id].th.push(pa); }); });
   cols.forEach(function(col,ci){
     var cdef=view.cols[ci],order=cdef.order||[];
-    (cdef.phantoms||[]).forEach(function(id){ if(mode==='cards'&&!col.nodes[id])col.nodes[id]={id:id,col:ci,th:[],meta:N[id]}; });
+    (cdef.phantoms||[]).forEach(function(id){ if(mode==='cards'&&(WHO==='all'||WHO==='late')&&!col.nodes[id])col.nodes[id]={id:id,col:ci,th:[],meta:N[id]}; });
     col.list=Object.keys(col.nodes).map(function(id){return col.nodes[id];}).sort(function(a,b){var ia=order.indexOf(a.id),ib=order.indexOf(b.id);if(ia<0)ia=999;if(ib<0)ib=999;return ia-ib||b.th.length-a.th.length;});
     col.list.forEach(function(n,i){n.idx=i;});
     col.slots=0;col.list.forEach(function(n){col.slots+=n.th.length;});
@@ -485,9 +498,13 @@ function makeNode(n){
   g.addEventListener('blur',function(){setHover(null);});
   return g;
 }
+/* Where a card or a mark sits: an inline style, never the transform attribute. The native kit presses every
+   [role="button"] with a CSS transform (scale, from native.css), which replaced the attribute and threw a pressed
+   card to the drawing's top-left corner; an inline style outranks it, and the stylesheet keeps the press out. */
+function at(g,x,y){g.style.transform='translate('+x.toFixed(1)+'px,'+y.toFixed(1)+'px)';}
 function placeNode(g,n,x,y,hh,op,ww){
   var w=ww!=null?ww:(n.w||NODEW),card=!!n.card;
-  g.setAttribute('transform','translate('+x.toFixed(1)+','+y.toFixed(1)+')');
+  at(g,x,y);
   g.style.opacity=op;
   g.classList.toggle('card',card);
   var box=g.querySelector('.nbox'),hit=g.querySelector('.hit'),cap=g.querySelector('.caption');
@@ -536,6 +553,13 @@ function drawZones(L,op){
   });
   if(v.decor)v.decor(L,gZ);
   v.cols.forEach(function(c,i){gZ.appendChild(s('text',(c.right&&L.mode!=='cards')?{'class':'ctitle',x:L.xs[i]+NODEW,y:46,'text-anchor':'end',text:c.t}:{'class':'ctitle',x:L.xs[i],y:46,text:c.t}));});
+  // under each title, how many people reach that step: of everyone in the view, or of the selection
+  var all=Object.keys(L.T).length;
+  v.cols.forEach(function(c,i){
+    if(c.band)return;
+    var r=reach(L,i),txt=REL?(r.k+' of '+REL.n+' selected'):(r.n+' \u00b7 '+pct(r.n,all));
+    gZ.appendChild(s('text',(c.right&&L.mode!=='cards')?{'class':'ctot',x:L.xs[i]+NODEW,y:62,'text-anchor':'end',text:txt}:{'class':'ctot',x:L.xs[i],y:62,text:txt}));
+  });
 }
 function drawLoop(L,op){
   gL.textContent=''; gL.style.opacity=op;
@@ -546,6 +570,9 @@ function drawLoop(L,op){
   gL.appendChild(s('path',{d:d,'marker-end':'url(#of-arr)'}));
   gL.appendChild(s('text',{x:(x0+x1)/2,y:yb+4,'text-anchor':'middle',text:tg.text}));
 }
+/* The people who reach a column: everyone with a card in it (a pass-through is not a card, and the box of people
+   still waiting is not to scale). k is how many of the selection do. */
+function reach(L,ci){var n=0,k=0;L.nodes.forEach(function(nd){if(nd.col!==ci||nd.meta.pass||nd.meta.phantom)return;n+=nd.n;if(REL)k+=relCount(nd);});return {n:n,k:k};}
 function setSize(Hh,W){svg.setAttribute('viewBox','0 0 '+W+' '+Hh.toFixed(0));svg.style.height=Hh.toFixed(0)+'px';}
 
 function relNote(){
@@ -557,6 +584,7 @@ function relNote(){
 }
 function refreshLabels(){
   if(!cur)return;
+  drawZones(cur,1);
   cur.nodes.forEach(function(n){var g=nodeEls[n.id];if(g)placeNode(g,n,n.x,n.y,n.h,1);});
   fixInline();
 }
@@ -616,7 +644,7 @@ function leaksFor(L){
 var DOORWORD={waitlist:'off the waitlist',direct:'let in directly',invite:'by invite link'};
 function leakMore(st){
   var out=[];
-  if(st.via)out.push('This is the total of the '+st.via+' cards beside it, which carry the same people.');
+  if(st.via)out.push('The '+st.via+' cards beside it break this card down, so they carry its people again.');
   if(st.gone>st.k)out.push('Counting those who stop later, '+st.gone+' of the '+st.n+' ('+pct(st.gone,st.n)+') end up dropped off.');
   if(st.doors.length)out.push('Lost at this step, by door: '+st.doors.map(function(x){return x.l+' '+x.k+' of '+x.n+' ('+pct(x.k,x.n)+')';}).join(', ')+'.');
   return out;
@@ -631,18 +659,18 @@ function drawLeaks(L){
     var n=m.node,g,w,x,y=n.y-15,st=m.id?stepBy[m.id]:null;
     if(m.kind==='early'){
       // too early to judge: a grey mark, and nobody here is counted as lost
-      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':m.from+': too early to say.',transform:'translate('+(n.x+n.w-9).toFixed(1)+','+y.toFixed(1)+')'});
+      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':m.from+': too early to say.'});at(g,n.x+n.w-9,y);
       g.appendChild(s('circle',{cx:8.5,cy:8.5,r:8}));g.appendChild(s('path',{d:'M8.5 4.6V8.5L11.2 10.2'}));
       m.tip=['Too early to say','These '+m.n+' people were let off the waitlist in the last few days. They are not counted as lost.'];
     }else if(m.kind==='end'){
       // the card is itself an end: everyone in it stops here
-      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':'Everyone in '+m.from+' stops here.',transform:'translate('+(n.x+n.w-9).toFixed(1)+','+y.toFixed(1)+')'});
+      g=s('g',{'class':'leak end',tabindex:'0',role:'button','aria-label':'Everyone in '+m.from+' stops here.'});at(g,n.x+n.w-9,y);
       g.appendChild(s('circle',{cx:8.5,cy:8.5,r:8}));g.appendChild(s('path',{d:'M4.6 8.5H12.4'}));
       m.tip=['Everyone stops here','All '+m.n+' people in '+m.from+' end here. They are counted as lost on the card they came from.'];
     }else{
       var ok=m.kind==='ok',txt=ok?(m.k?'\u2212'+m.k+' \u00b7 '+pct(m.k,m.n):'0'):('\u2212'+m.k+' \u00b7 '+pct(m.k,m.n)+' lost'),lead=ok?13:0;
       w=Math.ceil(textW(txt,FS))+14+lead; x=n.x+n.w-w+8;
-      g=s('g',{'class':'leak '+(ok?'ok':(m.strong?'strong':'')),tabindex:'0',role:'button',transform:'translate('+x.toFixed(1)+','+y.toFixed(1)+')'});
+      g=s('g',{'class':'leak '+(ok?'ok':(m.strong?'strong':'')),tabindex:'0',role:'button'});at(g,x,y);
       g.appendChild(s('rect',{width:w,height:17,rx:8.5}));
       if(ok)g.appendChild(s('path',{d:'M6.2 8.9L9 11.6L13.6 5.9'}));
       g.appendChild(s('text',{x:lead+(w-lead)/2,y:12,'text-anchor':'middle',text:txt}));
@@ -664,7 +692,7 @@ function drawLeaks(L){
     var lost=inv.filter(function(p){return !engaged(p);}),k=lost.length,ok=!k;
     var waiting=count(lost,function(p){return p.inv.status!=='joined';}),quiet=k-waiting;
     var txt=ok?String(inv.length):('\u2212'+k+' of '+inv.length),lead=ok?13:0,w=Math.ceil(textW(txt,FS))+14+lead,x=n.x+n.w-w-4,y=n.y+(n.h-17)/2;
-    var g=s('g',{'class':'leak '+(ok?'ok':(k/inv.length>=LEAK_STRONG?'strong':'')),tabindex:'0',role:'button',transform:'translate('+x.toFixed(1)+','+y.toFixed(1)+')'});
+    var g=s('g',{'class':'leak '+(ok?'ok':(k/inv.length>=LEAK_STRONG?'strong':'')),tabindex:'0',role:'button'});at(g,x,y);
     g.appendChild(s('rect',{width:w,height:17,rx:8.5}));
     if(ok)g.appendChild(s('path',{d:'M6.2 8.9L9 11.6L13.6 5.9'}));
     g.appendChild(s('text',{x:lead+(w-lead)/2,y:12,'text-anchor':'middle',text:txt}));
@@ -813,13 +841,21 @@ function story(p){
   else if(p.door==='invite')a=p.inv.by+' invited them to '+p.inv.n+' (a '+(p.inv.aud==='private'?'private':'public')+' app).'+(p.inv.how==='was_signed_in'?' They were already signed in.':' They made a new account from the link.');
   else{ a=(p.s1?'Came from '+EARLY+': account made '+p.acct+(p.access?', given access '+p.access:'')+'.':SRC.unrecorded+'. Let in directly'+(p.access?' on '+p.access:'')+', with no waitlist admit.'); if(p.inv)a+=' Later joined '+p.inv.n+' through '+p.inv.by+'\u2019s invite link.'; }
   rows.push(['Came in',a]);
-  if(p.got==='new')rows.push(['Getting in','Let off the waitlist '+plural(p.days,'day','days')+' ago and has not made an account yet. Too early to say.']);
+  if(p.door==='waitlist'){
+    var mi={admit:'Signed in from the admit mail itself.',nudge1:'Signed in after the first nudge, the reminder that goes when the admit mail has not brought someone in.',nudge2:'Signed in after the last nudge.',had:'Already had an account. When they signed in after being let off is not on record.'}[p.mailIn];
+    if(mi)rows.push(['Admit mail',mi]);
+    else if(!isIn(p))rows.push(['Nudges',p.nudges===2?'Both nudges went, and neither has brought them in yet.':(p.nudges===1?'The first nudge went, and has not brought them in yet.':'No nudge has gone to them yet.')]);
+  }
+  var mailWords=p.mail&&p.mail[0]?'Opened the admit mail'+(p.mail[1]?' and clicked it':' but did not click it'):(p.mail&&p.mail[0]===false?'Never opened the admit mail':'No admit mail open is on record');
+  if(p.got==='new')rows.push(['Getting in',(p.noAccount?'Let off the waitlist '+plural(p.days,'day','days')+' ago and has not made an account yet. ':'Signed up while waiting (account made '+p.acct+'), was let off the waitlist '+plural(p.days,'day','days')+' ago and has not opened Homeroom since. ')+(newMail(p)==='gn:nomail'?'No admit mail is on record':mailWords)+'. Too early to say.']);
+  else if(p.got==='away')rows.push(['Getting in','Signed up while waiting (account made '+p.acct+') and was let off the waitlist later. Has not opened Homeroom since, '+plural(p.days,'day','days')+' on. '+mailWords+'.']);
   else if(p.got==='mail_ignored')rows.push(['Getting in',(p.mail&&p.mail[0]?'Opened the admit mail'+(p.mail[1]?' and clicked it':' but did not click it'):(p.mail&&p.mail[0]===false?'Never opened the admit mail':'Mail opens were not tracked for this batch'))+'. Has not signed in, '+plural(p.days,'day','days')+' on.']);
   else if(p.got==='mail_none')rows.push(['Getting in','Admitted, but no admit mail is on record. '+plural(p.days,'day','days')+' on.']);
   else if(p.got==='waiting')rows.push(['Getting in','Signed up from the invite and is still waiting for access, '+plural(p.days,'day','days')+' on.']);
   else if(p.got==='acct')rows.push(['Getting in','Started an account and did not finish it.']);
   else{
     var f=firstNode(p);
+    if(p.ask)rows.push(['What to make?',{template:'Made an app from a template.',custom:'Made an app of their own idea.',look:'Chose to look around first'+(p.made.length?', and has made an app since.':'.')}[p.ask]]);
     rows.push(['First session',f==='first:never'?'Has access and has never opened Homeroom.':(f==='first:none'?'Opened Homeroom and did nothing yet.':'First act: '+N[f].l.toLowerCase()+'.')]);
   }
   if(p.made.length)rows.push(['Made',plural(p.made.length,'app','apps')+(p.made.length>=5?' or more':'')+': '+p.made.map(function(m){return m.n;}).join(', ')+'.']);
@@ -882,15 +918,25 @@ function renderDetail(){
 function fig(txt,lane){return h('span',{'class':'fig'+(lane?' '+lane:''),text:txt});}
 function say(figure,lane,text,q){return h('li',null,fig(figure,lane),h('p',null,text,q?h('span',{'class':'q',text:q}):null));}
 function reached(p){return p.lane!=='none';}
+// what the admit mail shows for people let off this week
+function earlyMail(a){var k=function(id){return count(a,function(p){return newMail(p)===id;});};
+  return k('gn:unopened')+' have not opened the admit mail, '+k('gn:opened')+' opened it and did not click, and '+k('gn:clicked')+' clicked it'+(k('gn:untracked')+k('gn:nomail')?' ('+(k('gn:untracked')+k('gn:nomail'))+' with no open on record)':'');}
 function says(id){
   var out=[],wl=P.filter(function(p){return p.door==='waitlist';}),newInv=P.filter(function(p){return p.door==='invite';});
   var of=function(a,b){return a+' of '+b;};
   if(id==='whole'){
     var s1p=P.filter(function(p){return p.s1;}),rest=P.filter(function(p){return !p.s1;});
-    if(s1p.length)out.push(say(of(count(s1p,reached),s1p.length),'pub',of(count(s1p,reached),s1p.length)+' people from '+EARLY+' are taking part now, against '+of(count(rest,reached),rest.length)+' of everyone who came after.','Where they come from'));
+    if(s1p.length&&rest.length)out.push(say(of(count(s1p,reached),s1p.length),'pub',of(count(s1p,reached),s1p.length)+' people from '+EARLY+' are taking part now, against '+of(count(rest,reached),rest.length)+' of everyone who came after.','Where they come from'));
     if(newInv.length||wl.length)out.push(say(of(count(newInv,reached),newInv.length),'share',of(count(newInv,reached),newInv.length)+' people who first came through a member’s invite link are taking part now, against '+of(count(wl,reached),wl.length)+' from the waitlist.','Where to double down'));
     var tooNew=count(wl,function(p){return p.got==='new';}),settled=wl.length-tooNew,noAcct=count(wl,function(p){return p.got==='mail_ignored'||p.got==='mail_none';});
-    if(wl.length)out.push(say(of(noAcct,settled),'none',of(noAcct,settled)+' people let off the waitlist more than a week ago have not made an account: '+count(wl,function(p){return p.got==='mail_ignored';})+' have not followed the admit mail and '+count(wl,function(p){return p.got==='mail_none';})+' have no admit mail on record.'+(tooNew?' '+tooNew+' more were let off this week and are too early to say.':''),'Where people get lost'));
+    if(wl.length)out.push(say(of(noAcct,settled),'none',of(noAcct,settled)+' people let off the waitlist more than a week ago have not made an account: '+count(wl,function(p){return p.got==='mail_ignored';})+' have not followed the admit mail and '+count(wl,function(p){return p.got==='mail_none';})+' have no admit mail on record.'+(tooNew?' '+tooNew+' more were let off this week and are too early to say: '+earlyMail(wl.filter(function(p){return p.got==='new';}))+'.':''),'Where people get lost'));
+    var away=P.filter(function(p){return p.got==='away';});
+    if(away.length)out.push(say(String(away.length),'none',plural(away.length,'person','people')+' already had an account when they were let off the waitlist and '+(away.length===1?'has':'have')+' not opened Homeroom since. '+count(away,function(p){return p.mail&&p.mail[0];})+' opened the admit mail and '+count(away,function(p){return p.mail&&p.mail[1];})+' clicked it. They are the waitlist\u2019s loss, not a loss after signing up.','Where people get lost'));
+    var signed=wl.filter(function(p){return p.mailIn==='admit'||p.mailIn==='nudge1'||p.mailIn==='nudge2';}),mi=function(k){return count(signed,function(p){return p.mailIn===k;});};
+    var nudgedOut=count(wl,function(p){return !isIn(p)&&p.nudges>0;});
+    if(signed.length)out.push(say(of(mi('nudge1')+mi('nudge2'),signed.length),null,of(mi('admit'),signed.length)+' people off the waitlist who signed in came in from the admit mail itself, '+mi('nudge1')+' after the first nudge and '+mi('nudge2')+' after the last. '+plural(nudgedOut,'more person was','more people were')+' nudged and '+(nudgedOut===1?'has':'have')+' not signed in yet.','The admit mail or a nudge'));
+    var asked=P.filter(function(p){return isIn(p)&&p.ask;}),ak=function(k){return asked.filter(function(p){return p.ask===k;});},tk=function(k){return count(ak(k),reached)+' of '+ak(k).length;};
+    if(asked.length)out.push(say(String(asked.length),null,plural(asked.length,'person','people')+' answered \u201cWhat do you want to make?\u201d: '+ak('template').length+' made an app from a template, '+ak('custom').length+' made one of their own idea and '+ak('look').length+' looked around first. Taking part now: '+tk('template')+' who started from a template, '+tk('custom')+' with their own idea and '+tk('look')+' who looked around. '+count(ak('look'),function(p){return p.made.length>0;})+' who looked around have made an app since.','What they chose first'));
     var act=P.filter(acted);
     out.push(say(of(count(act,reached),act.length),'pub',of(count(act,reached),act.length)+' people who did anything in their first session are taking part now. '+count(act,function(p){return p.out==='lapsed';})+' were and have done nothing in four weeks, and '+count(act,function(p){return p.lane==='none'&&p.out!=='lapsed';})+' went quiet before they got that far.','Where they get deeper'));
     var pv=P.filter(function(p){return p.priv;});
@@ -936,7 +982,9 @@ function says(id){
     var d=P.filter(function(p){return p.lane==='none';}),adm=d.filter(function(p){return farNode(p)==='far:admit';});
     out.push(say(of(adm.length,d.length),'none',of(adm.length,d.length)+' people here were let off the waitlist and never made an account. '+count(adm,function(p){return whyNode(p)==='why:openmail';})+' opened the admit mail, '+count(adm,function(p){return whyNode(p)==='why:unopened';})+' never opened it, and '+count(adm,function(p){return whyNode(p)==='why:nomail';})+' have no admit mail on record.'));
     out.push(say(String(count(d,function(p){return p.out==='lapsed';})),'none',plural(count(d,function(p){return p.out==='lapsed';}),'person was','people were')+' taking part and have done nothing in the last four weeks.'));
-    if(count(d,function(p){return p.got==='new';}))out.push(say(String(count(d,function(p){return p.got==='new';})),null,plural(count(d,function(p){return p.got==='new';}),'person was','people were')+' let off the waitlist this week and have not made an account yet. They are here because nothing has happened, not because they left.'));
+    if(count(d,function(p){return p.got==='new';}))out.push(say(String(count(d,function(p){return p.got==='new';})),null,plural(count(d,function(p){return p.got==='new';}),'person was','people were')+' let off the waitlist this week and have not come in yet: '+earlyMail(d.filter(function(p){return p.got==='new';}))+'. They are here because nothing has happened yet, not because they left.'));
+    var awayD=d.filter(function(p){return p.got==='away';});
+    if(awayD.length)out.push(say(String(awayD.length),'none',plural(awayD.length,'person','people')+' already had an account when they were let off the waitlist and '+(awayD.length===1?'has':'have')+' not opened Homeroom since. '+count(awayD,function(p){return p.mail&&p.mail[0];})+' opened the admit mail and '+count(awayD,function(p){return p.mail&&p.mail[1];})+' clicked it.'));
     var wd=d.filter(function(p){return p.door==='waitlist'&&p.wait!=null;}).map(function(p){return p.wait;}),wi=P.filter(function(p){return p.door==='waitlist'&&p.lane!=='none'&&p.wait!=null;}).map(function(p){return p.wait;});
     if(wd.length)out.push(say(median(wd)+' days','none','People off the waitlist who are here waited a median of '+median(wd)+' days to be let in'+(wi.length?', against '+median(wi)+' for the '+wi.length+' who are taking part':'')+'.'));
     out.push(say(String(count(d,function(p){return farNode(p)==='far:account'||farNode(p)==='far:opened';})),'none',count(d,function(p){return farNode(p)==='far:account';})+' have access and never opened Homeroom, and '+count(d,function(p){return farNode(p)==='far:opened';})+' opened it and did nothing.'));
@@ -993,7 +1041,7 @@ function tables(id){
     rows.sort(function(a,b){return order.indexOf(a[0].split('|')[0])-order.indexOf(b[0].split('|')[0])||b[1]-a[1];});
     el=table([['Got as far as'],['What the record shows'],['People','num'],['From the waitlist','num'],['Median days since','num'],['What would test it']],rows.map(function(r){
       var ids=r[0].split('|'),a=d.filter(function(p){return farNode(p)===ids[0]&&whyNode(p)===ids[1];});
-      var test={'why:openmail':'A clearer button and a second mail','why:unopened':'Subject line, sender, a reminder','why:untracked':'Nothing to test: not tracked then','why:nomail':'Check why no admit mail went out','why:new':'Nothing yet: let off this week','why:lapsed':'What brought them back before','why:queued':'Let invitees of a private app straight in','why:neveropen':'A nudge after access is granted','why:noact':'What the first screen offers','why:tried':'A reason to return to the app they tried','why:explored':'What they came back for','why:joined':'A first thing to do after joining','why:solo':'The invite step on the made screen'}[ids[1]]||'';
+      var test={'why:openmail':'A clearer button and a second mail','why:unopened':'Subject line, sender, a reminder','why:untracked':'Nothing to test: not tracked then','why:nomail':'Check why no admit mail went out','why:new':'Nothing yet: let off this week','why:away':'An admit mail for people who already have an account','why:lapsed':'What brought them back before','why:queued':'Let invitees of a private app straight in','why:neveropen':'A nudge after access is granted','why:noact':'What the first screen offers','why:tried':'A reason to return to the app they tried','why:explored':'What they came back for','why:joined':'A first thing to do after joining','why:solo':'The invite step on the made screen'}[ids[1]]||'';
       return h('tr',null,h('th',{scope:'row',text:N[ids[0]].l}),td(N[ids[1]].l),td(a.length,'num'),td(count(a,function(p){return p.door==='waitlist';}),'num'),td(median(a.map(function(p){return p.days;}).filter(function(x){return x!=null;})),'num'),td(test));
     }));
     note='The last column is a suggestion for what to try, not a finding.';
@@ -1015,6 +1063,39 @@ function tables(id){
   byId('tableTitle').textContent=title;
   var w=byId('tablewrap');w.textContent='';w.appendChild(el);
   byId('tableNote').textContent=note;
+}
+
+function stepsTable(L){
+  var v=L.view,all=Object.keys(L.T).length,prev=null,rows=[];
+  v.cols.forEach(function(c,ci){
+    if(c.band)return;
+    var r=reach(L,ci).n;
+    rows.push(h('tr',null,h('th',{scope:'row'},c.t,c.detail?h('span',{'class':'sub',text:'Breaks the step before down'}):null),td(r,'num'),td(pct(r,all),'num'),td(c.detail||prev==null?'':pct(r,prev),'num')));
+    if(!c.detail)prev=r;
+  });
+  if(v.gridAt!=null){var e=count(L.people,function(p){return !!L.T[p.k]&&engaged(p);});rows.push(h('tr',null,h('th',{scope:'row'},'Engaged',h('span',{'class':'sub',text:'The grid on the right'})),td(e,'num'),td(pct(e,all),'num'),td(prev==null?'':pct(e,prev),'num')));}
+  var w=byId('stepswrap');w.textContent='';
+  var t=table([['Step'],['People','num'],['Of everyone here','num'],['Of the step before','num']],rows);t.setAttribute('class','compact');w.appendChild(t);
+  byId('stepsNote').textContent='A person reaches a step when their thread has a card in its column, and their thread stops at the last step they reached. A column that breaks the step before it down carries the same people again, in finer cards, so it is not a step of its own. The chart shows the same numbers under each column title, and while a box is selected, how many of its people reach each step.';
+}
+function onboardingTables(id){
+  var card=byId('onbCard'),wl=P.filter(function(p){return p.door==='waitlist';});
+  card.hidden=id!=='whole'||!P.length;
+  if(card.hidden)return;
+  // the admit mail or a nudge, by the day they were let off the waitlist
+  var days=tally(wl.filter(function(p){return p.cohort;}),function(p){return p.cohort;}).sort(function(a,b){return a[0]<b[0]?1:-1;});
+  var mrow=function(label,a){var inn=a.filter(isIn),out=a.filter(function(p){return !isIn(p);}),by=function(k){return count(inn,function(p){return p.mailIn===k;});};
+    return h('tr',null,h('th',{scope:'row',text:label}),td(a.length,'num'),td(count(a,function(p){return !!(p.mail&&p.mail[0]);}),'num'),td(count(a,function(p){return !!(p.mail&&p.mail[1]);}),'num'),td(inn.length,'num'),td(by('admit'),'num'),td(by('nudge1'),'num'),td(by('nudge2'),'num'),td(inn.length-by('admit')-by('nudge1')-by('nudge2'),'num'),td(count(out,function(p){return p.nudges>0;}),'num'),td(count(out,function(p){return !p.nudges;}),'num'));};
+  var mw=byId('mailwrap');mw.textContent='';
+  mw.appendChild(table([['Let off on'],['People','num'],['Opened the admit mail','num'],['Clicked it','num'],['Signed in','num'],['From the admit mail','num'],['After the first nudge','num'],['After the last nudge','num'],['Not dated','num'],['Nudged, not in yet','num'],['Not in, not nudged','num']],
+    days.map(function(d){return mrow(dayWords(d[0]),wl.filter(function(p){return p.cohort===d[0];}));}).concat(days.length>1?[mrow('All',wl)]:[])));
+  byId('mailNote').textContent='A nudge is a reminder of the admit mail: the first goes two days after it and the last six days after, only while somebody has not signed in. Each person who signed in is counted under the last mail that had gone to them by their first sign-in. People let off before the nudges began got theirs when they began. Not dated: they had an account already, and nothing dates their sign-in since. Opened and clicked are the admit mail itself, and an open is approximate: it is seen when the mail\u2019s images load, which some mail apps do for everyone and some never do.';
+  // the first session's question, and what came of each answer
+  var inn=P.filter(function(p){return isIn(p)&&firstNode(p)!=='first:never';});
+  var arow=function(k){var a=inn.filter(function(p){return (p.ask||'none')===k;});return a.length?h('tr',null,h('th',{scope:'row',text:N['ask:'+k].l}),td(a.length,'num'),td(count(a,acted),'num'),td(count(a,function(p){return p.made.length>0;}),'num'),td(count(a,reached),'num'),td(count(a,function(p){return p.lane==='none';}),'num')):null;};
+  var aw=byId('askwrap');aw.textContent='';
+  aw.appendChild(table([['Answer'],['People','num'],['Did something in their first session','num'],['Have made an app','num'],['Taking part now','num'],['Dropped off','num']],['template','custom','look','none'].map(arow).filter(Boolean)));
+  byId('askNote').textContent='The first session asks every newcomer what they want to make. Making an app from it answers it, from a template or from their own idea, and so does Look around first; the first of them counts. Everyone who opened Homeroom after getting in is here. No answer on record: they came in before the question was recorded, or have not answered it.';
 }
 
 /* ---------- chrome ---------- */
@@ -1056,6 +1137,39 @@ function fitStage(L){stage.style.width=L.W+'px';}
 var VIEWP=(function(){
   var sc=byId('scroller'),x=0,y=0,k=1,moved=false,ptrs=new Map(),gest=null,dragged=false,busy=false;
   sc.style.cursor='grab';
+  /* The chart moves by its transform alone. Focusing a card (a click in some browsers, the Tab key in all) makes the
+     browser scroll it into view inside any box that can scroll, hidden overflow included, which threw the drawing to a
+     corner. The stylesheet clips these boxes; where a browser still scrolls one, put it back. */
+  [sc,root].forEach(function(box){listen(box,'scroll',function(){if(box.scrollLeft||box.scrollTop){box.scrollLeft=0;box.scrollTop=0;}});});
+  /* The same scroll reaches every box around the section that can scroll, the admin page itself included: a card
+     low on the chart pulled the page up and took the tabs and the legend off screen with it. So a press on the
+     chart moves no focus (the click still selects, and a card focused from the keyboard before lets go of it),
+     and focus that arrives by keyboard puts each of those boxes back where its own last scroll left it, then moves
+     the chart to show the card. The scroll has already happened when focusin fires, so where each box belongs is
+     kept from its scroll events, which arrive a frame later. */
+  var held=new Map();
+  function around(){var out=[],e=root.parentElement;while(e){out.push(e);e=e.parentElement;}var d=document.scrollingElement;if(d&&out.indexOf(d)<0)out.push(d);return out;}
+  function hold(b){held.set(b,[b.scrollLeft,b.scrollTop]);}
+  around().forEach(hold);
+  listen(document,'scroll',function(e){var b=e.target===document?document.scrollingElement:e.target;if(b&&b!==root&&b.contains&&b.contains(root))hold(b);},true);
+  sc.addEventListener('mousedown',function(e){
+    var f=e.target.closest&&e.target.closest('[tabindex]');if(!f||!sc.contains(f))return;
+    e.preventDefault();
+    var was=document.activeElement;if(was&&was!==f&&sc.contains(was)&&was.blur)was.blur();
+  });
+  sc.addEventListener('focusin',function(e){
+    around().forEach(function(b){var at=held.get(b);if(at&&(b.scrollLeft!==at[0]||b.scrollTop!==at[1])){b.scrollLeft=at[0];b.scrollTop=at[1];}});
+    reveal(e.target);
+  });
+  /* keep a focused card in sight: move the chart, never the page */
+  function reveal(el){
+    if(!cur||!el||!el.getBoundingClientRect)return;
+    var r=sc.getBoundingClientRect(),b=el.getBoundingClientRect(),pad=16,top=byId('ctl').getBoundingClientRect().bottom-r.top+10,dx=0,dy=0;
+    var l=b.left-r.left,rt=b.right-r.left,t=b.top-r.top,bt=b.bottom-r.top;
+    if(rt>r.width-pad)dx=r.width-pad-rt; if(l+dx<pad)dx=pad-l;
+    if(bt>r.height-pad)dy=r.height-pad-bt; if(t+dy<top)dy=top-t;
+    if(dx||dy){x+=dx;y+=dy;moved=true;clamp();apply();}
+  }
   function apply(){stage.style.transform='translate('+x.toFixed(1)+'px,'+y.toFixed(1)+'px) scale('+k.toFixed(4)+')';}
   function clamp(){
     if(!cur)return; var vw=sc.clientWidth,vh=sc.clientHeight,w=cur.W*k,hh=cur.H*k,keep=90;
@@ -1109,7 +1223,13 @@ var VIEWP=(function(){
     if(kind==='wheel')zoomAt(p.x,p.y,Math.exp(-dy*0.0016));
     else panBy(-dx,-dy);
   },{passive:false});
-  sc.addEventListener('dblclick',function(e){var p=loc(e);zoomAt(p.x,p.y,1.8);});
+  /* Double-click zooms in on empty space only. On a box, a mark or a thread it is two clicks: the second clears
+     what the first selected, and zooming as well threw the drawing toward the pointer. */
+  sc.addEventListener('dblclick',function(e){
+    if(e.target.closest&&e.target.closest('[tabindex]'))return;
+    if(cur&&e.target.closest&&e.target.closest('svg')&&nearest(svgPoint(e)))return;
+    var p=loc(e);zoomAt(p.x,p.y,1.8);
+  });
   return {fit:fit,refit:function(){if(!moved)fit();else{clamp();apply();}},busy:function(){return busy;},moved:function(){return moved;},reset:function(){moved=false;fit();}};
 })();
 var NOTES=(function(){
@@ -1127,7 +1247,7 @@ function show(id,animate,force){
   VIEWS.forEach(function(v){tabsEl.querySelector('[data-tab="'+v.id+'"]').setAttribute('aria-selected',v.id===id?'true':'false');});
   viewLine(id,animate?prev:null); legend(L);
   var s=byId('says');s.textContent='';says(id).forEach(function(li){s.appendChild(li);});
-  tables(id);
+  tables(id); stepsTable(L); onboardingTables(id);
   byId('flowDesc').textContent=VBY[id].tab+' view of '+L.people.length+' people as a flow diagram with '+VBY[id].cols.length+' columns: '+VBY[id].cols.map(function(c){return c.t;}).join(', ')+'. The notes carry the same numbers.';
   if(animate&&cur&&(prev!==id||force)){var A=cur;hover=null;tip.hidden=true;transition(A,L);cur=L;}
   else{cur=L;renderStatic(L);}
@@ -1143,41 +1263,64 @@ function facts(){
   var f=byId('facts');f.textContent='';
   var early=count(ALL,function(p){return p.s1;});
   [[String(P.length),' people'],[String(count(P,function(p){return !p.noAccount;})),' with an account'],
-   early?(NO_S1?[String(early),' from '+EARLY+' left out']:[String(count(P,function(p){return p.s1;})),' from '+EARLY]):null,
+   WHO!=='all'?[WBY[WHO].l,' \u00b7 '+P.length+' of '+ALL.length+' people']:(early?[String(count(P,function(p){return p.s1;})),' from '+EARLY]:null),
    [String(count(P,function(p){return p.door==='waitlist';})),' off the waitlist'],[String(count(P,function(p){return p.door==='invite';})),' new by invite'],
    WAIT?[String(WAIT.n),' still on the waitlist']:null,['All time',' · read '+ASOF]
   ].forEach(function(x){if(x)f.appendChild(h('span',null,h('b',{text:x[0]}),x[1]));});
   var R=DATA.rules||{},recent=R.recentDays||28,fresh=R.tooNewDays||7;
   var m=byId('method');m.textContent='';
   ['Who is counted: everyone let off the waitlist, and every other real person who has access or followed an invite, over all time. That is '+count(P,function(p){return !p.noAccount;})+' people with an account and '+count(P,function(p){return p.noAccount;})+' let off the waitlist with none yet, shown by sign-up number. Staff, test accounts and the left-out list are excluded, as on the Journey page. People still on the waitlist are counted in their own box and are not drawn as threads.',
-   early?(EARLY+': a person is drawn under '+EARLY+' when their account was made by '+dayWords(DATA.early.until)+', the end of that season. The toggle beside the legend leaves them out.'):null,
+   early?(EARLY+': a person is drawn under '+EARLY+' when their account was made by '+dayWords(DATA.early.until)+', the end of that season. The Who menu beside the legend leaves them out, or draws them alone.'):null,
    'The door: an invite, when it came before the person was in; else the waitlist, when they were let off it; else they were let in directly. '+count(P,function(p){return p.linkJoin;})+' people followed an invite when they were already inside, so their door is not the invite and the invite shows only in the Sharing view.',
    'Arrived from: a recorded channel when there is one (the site that sent them, a campaign or tag, or how the invite was passed on), then what they said on the waitlist form, then '+EARLY+'.',
    'Private and public: each app’s audience as it is today. An app only its people can see is private; one anyone can see is public. An app that was opened up later reads as public for everything that happened in it.',
    'A contribution is a vote on a change or a request, feedback, a request filed, or a change of their own. It counts for the app it was on.',
    'Lanes: a person is in a private app when their invite brought someone into one, or when they joined one and did something. A person is on public apps when they contribute to one or come back to one (use it on two or more days). Either counts only while they are active: a contribution or a day in an app in the last '+recent+' days. After that they are lapsed and drawn as dropped off.',
-   'Too early to say: somebody let off the waitlist in the last '+fresh+' days who has no account yet. They are drawn in grey and are not counted as lost.',
+   'Too early to say: somebody let off the waitlist in the last '+fresh+' days who has no account yet, or who had one already and has not opened Homeroom since. They are drawn in grey and are not counted as lost. The Admit mail column splits them by what the admit mail shows so far: not opened yet, opened and not clicked, or clicked and not in yet.',
+   'Had an account, has not come back: somebody who signed up while they were still waiting, was let off the waitlist later and has not opened Homeroom since. They are counted with the waitlist\u2019s losses, not as people who made an account and then did nothing. A join the platform applied for a queued invite at the moment someone was let in is not counted as something they did.',
    'Engaged rows go by contribution: Builds often is six or more changes of their own live, Builds is one to five or a change that went live with someone else’s yes, Voices is votes, feedback or a proposal, Uses only is none of those. Columns go by app-days over all time: none, 1 to 9, 10 to 29, 30 or more.',
    'Marks on the cards: a step is from one card to the next card its people reach. A clay tag counts the people lost at that step, a green check means over 90% go on, and a grey minus means the card is itself an end.',
    'Small numbers: most counts here are small. Treat a difference of a few people as noise.'
   ].forEach(function(t){if(t)m.appendChild(h('li',{text:t}));});
-  if(NO_S1)m.appendChild(h('li',{text:EARLY+' is left out: every count, share and finding on this page is over the '+P.length+' people who came after it. The public-apps table still counts everyone.'}));
+  if(WHO!=='all')m.appendChild(h('li',{text:'Drawn: '+WBY[WHO].w+'. Every count, share and finding on this page is over these '+P.length+' people. The public-apps table still counts everyone.'}));
 }
 facts();
 
-/* leave Season 1 out: the same views over the people who came after it */
-var s1Btn=byId('s1Toggle');
-s1Btn.lastChild.textContent='Exclude '+EARLY;
-s1Btn.hidden=!count(ALL,function(p){return p.s1;});
-function setS1(off,animate){
-  NO_S1=!!off; P=NO_S1?ALL.filter(function(p){return !p.s1;}):ALL;
-  s1Btn.setAttribute('aria-pressed',NO_S1?'true':'false');
+/* Who is drawn: everyone, everyone but the early members or them alone, the people let off the waitlist on one
+   day (one batch of admit mails: a cohort), or the people a member's invite link brought in. The views stay the
+   same, over them. */
+function whoChoices(){
+  var out=[{id:'all',l:'Everyone',w:'everyone',f:function(){return true;}}];
+  if(count(ALL,function(p){return p.s1;})){
+    out.push({id:'late',l:'Without '+EARLY,w:'everyone who came after '+EARLY,f:function(p){return !p.s1;}});
+    out.push({id:'early',l:EARLY+' only',w:'the people from '+EARLY,f:function(p){return p.s1;}});
+  }
+  tally(ALL.filter(function(p){return p.door==='waitlist'&&p.cohort;}),function(p){return p.cohort;})
+    .sort(function(a,b){return a[0]<b[0]?1:-1;})
+    .forEach(function(c){out.push({id:'c:'+c[0],g:'Let off the waitlist on',l:dayWords(c[0]),w:'the people let off the waitlist on '+dayWords(c[0]),f:function(p){return p.door==='waitlist'&&p.cohort===c[0];}});});
+  if(count(ALL,function(p){return p.door==='invite';}))out.push({id:'invite',g:'Came in another way',l:'By invite link',w:'the people a member’s invite link brought in',f:function(p){return p.door==='invite';}});
+  return out;
+}
+var WHOS=whoChoices(),WBY={};WHOS.forEach(function(w){WBY[w.id]=w;});
+var whoSel=byId('who');
+byId('whoBox').hidden=WHOS.length<2;
+(function(){
+  var groups={};
+  WHOS.forEach(function(w){
+    var o=h('option',{value:w.id,text:w.l+' · '+count(ALL,w.f)});
+    if(!w.g){whoSel.appendChild(o);return;}
+    if(!groups[w.g]){groups[w.g]=h('optgroup',{label:w.g});whoSel.appendChild(groups[w.g]);}
+    groups[w.g].appendChild(o);
+  });
+})();
+function setWho(id,animate){
+  var w=WBY[id]||WBY.all; WHO=w.id; P=ALL.filter(w.f); whoSel.value=WHO;
   if(sel)select(null);
   tabCounts(); facts();
   if(cur)show(curId,animate,true);
-  try{localStorage.setItem('admin.onboardingFlows.noEarly',NO_S1?'1':'0');}catch(e){}
+  try{localStorage.setItem('admin.onboardingFlows.who',WHO);}catch(e){}
 }
-s1Btn.addEventListener('click',function(){setS1(!NO_S1,true);});
+whoSel.addEventListener('change',function(){setWho(whoSel.value,true);});
 
 function setMode(m,animate){
   MODE='cards';
@@ -1189,7 +1332,9 @@ function setMode(m,animate){
 setMode(MODE,false);
 var start='whole';
 try{var sv=localStorage.getItem('admin.onboardingFlows.view');if(sv&&VBY[sv])start=sv;}catch(e){}
-try{if(localStorage.getItem('admin.onboardingFlows.noEarly')==='1'){NO_S1=true;P=ALL.filter(function(p){return !p.s1;});s1Btn.setAttribute('aria-pressed','true');tabCounts();facts();}}catch(e){}
+// the last choice of the Who menu; the switch it replaced left only the early members out
+try{var sw=localStorage.getItem('admin.onboardingFlows.who');if(sw==null&&localStorage.getItem('admin.onboardingFlows.noEarly')==='1')sw='late';if(sw&&sw!=='all'&&WBY[sw]){WHO=sw;P=ALL.filter(WBY[sw].f);tabCounts();facts();}}catch(e){}
+whoSel.value=WHO;
 show(start,false);
 if(document.fonts&&document.fonts.ready)document.fonts.ready.then(function(){if(!dead&&!anim)setMode(MODE,false);});
 return { destroy: function(){

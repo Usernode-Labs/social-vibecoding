@@ -19,7 +19,7 @@
  * ── What is NOT in here, on purpose ───────────────────────────────────
  *
  * `bodyHtml` is sanitized markup, not text. `renderMessageBody` in
- * group-chat.js runs the content through DevChat.renderMarkdown and then a
+ * group-chat.js runs the content through PlatformMarkdown.render and then a
  * sanitizer; reproducing that in React would mean a second markdown pipeline
  * and a second sanitizer, which is exactly how the two drift apart. The
  * component renders it through `dangerouslySetInnerHTML` with a memoised
@@ -174,7 +174,7 @@ export interface BotSuggestView {
  * named says so.
  */
 export interface BotRequestState {
-  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
+  stage: 'waiting_first_version' | 'reading' | 'waiting' | 'waiting_plan' | 'building' | 'question' | 'checking' | 'proposed' | 'approved'
     | 'live' | 'closed' | 'person' | 'stopped' | 'fixing' | 'asked' | 'answered';
   sessionId?: number;
   youApprove?: boolean;
@@ -441,6 +441,8 @@ export interface TranscriptMessage {
   botSuggest?: BotSuggestView | null;
   /** #6533: the pictures under Homeroom bot's reply in a change's thread. */
   botGallery?: Record<string, unknown> | null;
+  /** #6684: the build note card under Homeroom bot's reply on a request. */
+  botBuildNote?: Record<string, unknown> | null;
   /**
    * #4455: a system row that announces the preview build, from its metadata:
    * `started` (a change's page leaves it out: its Testing card says so) or
@@ -519,10 +521,9 @@ export interface TranscriptMessage {
 /**
  * A shared spec, as its card draws it.
  *
- * `snippetHtml` is markdown the module rendered through `DevChat.renderMarkdown`
- * so the preview matches the dev-chat spec viewer exactly; `snippetText` is the
- * fallback for a page where dev-chat.js did not load, and arrives as a text
- * child. At most one of the two is ever set.
+ * `snippetHtml` is markdown the module rendered through
+ * `PlatformMarkdown.render`; `snippetText` is the fallback for a page where
+ * the renderer did not load, and arrives as a text child. At most one of the two is ever set.
  */
 export interface SpecShareView {
   title: string;
@@ -663,7 +664,7 @@ export const EMPTY_VIEW: TranscriptView = {
 
 /**
  * Renders nothing, which is exactly the empty `<div id="gc-messages">` that
- * `AppView.renderDevChatTab` creates. The host is built by a legacy template,
+ * `AppView.renderGroupChatTab` creates. The host is built by a legacy template,
  * so there is no prerender to match here — but an empty first render still
  * matters: the module mounts this portal and THEN loads, and a transcript that
  * flashed placeholder rows would be visible on every tab switch.

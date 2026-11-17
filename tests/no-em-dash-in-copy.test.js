@@ -156,9 +156,6 @@ const SKIP_FILES = new Map([
   ['src/services/visuals.js', 'prompt text, read by a model'],
   ['src/services/llm.js', 'prompt text, read by a model'],
   ['src/services/prompts.js', 'prompt text, read by a model'],
-  ['src/services/recovery-pills.js',
-    'the quick-reply rules prompt, plus the matcher that must keep recognising '
-    + 'the pre-#1389 wording of rows already in the database'],
 ]);
 
 // Individual lines, by the text that identifies them.
@@ -318,35 +315,24 @@ test('no em dashes in server-side messages that reach a person', () => {
     + 'rules as the client-side guard above.');
 });
 
-// The one string the sweep could not simply rewrite. Rows carrying the old
-// wording are already in the database, and the backfill uses this matcher to
-// recognise its own breadcrumb: drop the old alternative and every affected
-// session gets a second one posted under it.
-test('the code-landed breadcrumb reads without a dash, and still matches the old rows', () => {
-  const pills = require('../src/services/recovery-pills.js');
-
-  const fresh = pills.buildCodeLandedBreadcrumb({ prNumber: 41 });
-  assert.ok(!DASH.test(fresh), `breadcrumb still carries an em dash: ${fresh}`);
-  assert.match(fresh, /Rebuilding the preview now\.$/);
-  assert.ok(pills.isCodeLandedBreadcrumb(fresh));
-  assert.ok(pills.isCodeLandedBreadcrumb(
-    pills.buildCodeLandedBreadcrumb({ rebuildingPreview: false })));
-
-  assert.ok(pills.isCodeLandedBreadcrumb(
-    'Your changes are committed and pushed to PR #41 — rebuilding the preview now.'),
-  'the pre-#1389 wording must keep matching: those rows are already persisted');
-  assert.ok(pills.isCodeLandedBreadcrumb(
-    'Your changes are committed and pushed to your branch — rebuilding the preview now.'));
+// The breadcrumb a recovered turn posts once its code is safely pushed
+// (services/turn-recovery.js) reads without a dash.
+test('the code-landed breadcrumb reads without a dash', () => {
+  const source = fs.readFileSync(path.join(ROOT, 'src/services/turn-recovery.js'), 'utf8');
+  const fn = source.slice(source.indexOf('function buildCodeLandedBreadcrumb('));
+  const body = fn.slice(0, fn.indexOf('\n}\n'));
+  assert.match(body, /Rebuilding the preview now\./);
+  assert.ok(!DASH.test(body), 'the breadcrumb carries no em dash');
 });
 
 // The rules themselves, so a future edit cannot quietly drop them and let
-// every generated app and every Mayor reply grow the dash back.
+// every generated app and every Homeroom bot reply grow the dash back.
 test('the copy-style rule is stated for generated apps and for the assistant', () => {
   const conventions = fs.readFileSync(
     path.join(ROOT, 'src/prompts/app-conventions.md'), 'utf8');
   assert.match(conventions, /## Writing user-facing copy: no em dashes/);
 
-  // #2779: the Mayor's system prompt moved to services/mayor/prompt.js.
-  const mayorPrompt = fs.readFileSync(path.join(ROOT, 'src/services/mayor/prompt.js'), 'utf8');
-  assert.match(mayorPrompt, /Do not use em dashes/);
+  // Homeroom bot's own system prompt (services/homeroom-bot-mayor.js).
+  const botPrompt = fs.readFileSync(path.join(ROOT, 'src/services/homeroom-bot-mayor.js'), 'utf8');
+  assert.match(botPrompt, /Never write an em dash\./);
 });

@@ -1672,12 +1672,12 @@
     "description": "Red status line of the \"suggest an improvement\" dialog when the server's answer could not be read or the request could not be saved for later."
   },
   "feedback.fix.failedRequest": {
-    "text": "Could not open a fix just now. You can try again from the request on the board.",
-    "description": "Brief message at the bottom of the screen when \"Build it now with a coding agent\" could not start a change. A fix is a change that solves the request; the board is the app's list of requests."
+    "text": "Could not start the build just now. You can try again from the request on the board.",
+    "description": "Brief message at the bottom of the screen when the confirmation's \"Build it now\" link could not open the request to have it built. The board is the app's list of requests."
   },
   "feedback.fix.failedIssue": {
-    "text": "Could not open a fix just now. You can try again from the issue on the board.",
-    "description": "Brief message at the bottom of the screen when \"Try a fix yourself\" could not start a change. A fix is a change that solves the issue; the board is the app's list of issues."
+    "text": "Could not start the build just now. You can try again from the issue on the board.",
+    "description": "Brief message at the bottom of the screen when the first-request moment's \"Build it now\" button could not open the request to have it built. The board is the app's list of issues."
   },
   "feedback.notice.pair": {
     "text": "{{first}} {{second}}",
@@ -1716,20 +1716,20 @@
     "description": "Green line of the first-request moment when the request had been saved while offline and was sent in the background."
   },
   "feedback.first.fix": {
-    "text": "Try a fix yourself",
-    "description": "Button of the first-request moment: starts a change that solves the request, written with the coding agent."
+    "text": "Build it now",
+    "description": "Button of the first-request moment: opens the request's page and, where the assistant (Homeroom bot) builds requests for this project, asks it to build this one now. \"Build\" is a verb."
   },
   "feedback.first.fixNote.default": {
-    "text": "Start with a draft you can edit before sending it to the coding agent.",
-    "description": "Note under the \"Try a fix yourself\" button of the first-request moment. The coding agent is the AI that writes the code."
+    "text": "Homeroom bot builds it now where it builds for this project. Otherwise the request’s page shows how to build it with your own coding agent.",
+    "description": "Note under the \"Build it now\" button of the first-request moment. Homeroom bot is the assistant that writes the code; a coding agent is an AI tool such as Claude Code that the person runs themselves."
   },
   "feedback.first.fixNote.needAccess": {
-    "text": "You need collaborator access to try a fix. You can still explore the board.",
-    "description": "Note under the disabled \"Try a fix yourself\" button when the person may not build changes for this app. The board is the app's list of requests."
+    "text": "You need collaborator access to build it. You can still explore the board.",
+    "description": "Note under the disabled \"Build it now\" button when the person may not build changes for this app. The board is the app's list of requests."
   },
   "feedback.first.fixNote.noBoard": {
     "text": "This repository does not have an app board you can access here.",
-    "description": "Note under the disabled \"Try a fix yourself\" button when the request went somewhere that has no board to open."
+    "description": "Note under the disabled \"Build it now\" button when the request went somewhere that has no board to open."
   },
   "feedback.first.board": {
     "text": "See this app’s board",
@@ -1824,8 +1824,8 @@
     "description": "Small link under the buttons of the confirmation after a request was posted: opens the list of this person's own requests on their profile. It can sit beside an \"Edit\" link, with a dot between them."
   },
   "feedback.sent.fix": {
-    "text": "Build it now with a coding agent",
-    "description": "Small link at the foot of the confirmation when the assistant is building the request: lets the person write the change themselves with the AI coding agent instead. \"Build\" is a verb."
+    "text": "Build it now",
+    "description": "Small link at the foot of the confirmation when the assistant (Homeroom bot) will build the request in its own time: opens the request's page and asks it to build this one now, ahead of its queue, from the person's own building time. \"Build\" is a verb."
   },
   "members.title.full": {
     "text": "Members & approvals",
@@ -3194,6 +3194,34 @@
   "whoDecides.group.nobody": {
     "text": "Nobody yet",
     "description": "Line under a group that has no people in it yet, on the Make your own screen of the Who can see & change it sheet."
+  },
+  "whoDecides.group.keptByApp": {
+    "text": "Kept by the app",
+    "description": "Small badge beside a group the project's app keeps, on the Groups list of the Who can see & change it sheet, where built-in groups say Built in. The app, not a person, decides who is in it."
+  },
+  "whoDecides.group.keptByAppSub_one": {
+    "text": "{{count}} person, the app keeps this list",
+    "description": "Line under a group the project's app keeps, when it has one person. {{count}} is that number."
+  },
+  "whoDecides.group.keptByAppSub_other": {
+    "text": "{{count}} people, the app keeps this list",
+    "description": "Line under a group the project's app keeps. {{count}} is how many people the app last reported."
+  },
+  "whoDecides.group.keptSwitch": {
+    "text": "The app keeps this group",
+    "description": "Switch on the group screen of the Who can see & change it sheet: when on, the project's app decides who is in the group and nobody picks people by hand."
+  },
+  "whoDecides.group.keptSwitchSub": {
+    "text": "Your app tells Homeroom who is in it. Nobody picks people here.",
+    "description": "Line under the The app keeps this group switch, saying what turning it on means."
+  },
+  "whoDecides.group.keptReported": {
+    "text": "The app sent its list {{when}}.",
+    "description": "Line under a group the project's app keeps, saying when the app last sent its member list. {{when}} is a date and time."
+  },
+  "whoDecides.group.keptNever": {
+    "text": "The app has not sent its list yet. Until it does, this group has nobody in it.",
+    "description": "Line under a group the project's app keeps, before the app has ever reported its members."
   },
   "whoDecides.group.title": {
     "text": "Group",

@@ -591,13 +591,6 @@
       "description": "Emergency availability switch for the OpenRouter coding-agent backend. When true, OpenRouter is preferred for users with a usable key while Claude remains available and is the fallback for users without one. Set false to hide/refuse OpenRouter without affecting Claude."
     },
     {
-      "key": "OPENROUTER_SESSION_MAYOR_ENABLED",
-      "group": "AI & coding agents",
-      "required": false,
-      "default": "true",
-      "description": "When true, an OpenRouter session's chat runs through the Mayor on the session's own OpenRouter model and key: a short plan before the coding agent starts, a spec before a build, and a plain-English wrap-up after, as on a Claude session. Set false to send each message straight to the coding agent instead. Never uses an Anthropic key."
-    },
-    {
       "key": "OPENROUTER_MANAGEMENT_API_KEY",
       "group": "AI & coding agents",
       "required": false,
@@ -643,7 +636,7 @@
       "group": "AI & coding agents",
       "required": false,
       "default": "deepseek/deepseek-v4.1-flash-1017,z-ai/glm-5.3-flash",
-      "description": "Comma-separated exact OpenRouter model ids that receive a Recommended tag, begin starred in model pickers, and are the OpenRouter models the composer's flat picker starts with, in this order. Each user's explicit star or unstar wins. Set none to remove all platform recommendations."
+      "description": "Comma-separated exact OpenRouter model ids the platform's OpenRouter model catalog marks Recommended, in this order. Set none to remove all platform recommendations."
     },
     {
       "key": "GITHUB_LINK_CLIENT_ID",
@@ -967,17 +960,6 @@
       "expectText": "Whole-season standings"
     },
     {
-      "name": "A change row in Messages' agents shows its title, and an idle row wears no status dot (#971, #1946, #5289)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"]:not(:has(.h-3.w-3.rounded-full))",
-      "expectText": "[Mock] Your in-progress session"
-    },
-    {
-      "name": "A busy change row in Messages spins the standard arc, and nothing else (#1038, #1597, #1947, #5289)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990102\"] a[data-improve-row=\"session\"]:not(:has(.h-3.w-3.rounded-full)) .dc-status-spinner-arc"
-    },
-    {
       "name": "Send Feedback: no kudos bounty (#964, #5249), up to three images (#3027), video (#3940) behind one paperclip (#4127)",
       "path": "/?shot=feedback",
       "expectSelector": "#feedback-form:has(#feedback-screenshot-count:not(.hidden)):has(#feedback-attach-btn:not(.hidden,:disabled)+.hidden>#feedback-video-btn:not(.hidden)) #feedback-bounty-row.hidden #feedback-bounty-checkbox:not(:checked)",
@@ -990,10 +972,10 @@
       "expectText": "Congratulations on your first request!"
     },
     {
-      "name": "A first request offers an editable fix, this app's board and Your requests (#1583, #3186)",
+      "name": "A first request offers Build it now, this app's board and Your requests (#1583, #3186)",
       "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
       "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled) + #feedback-first-mine",
-      "expectText": "Try a fix yourself"
+      "expectText": "Build it now"
     },
     {
       "name": "With kudos parked, a spent allowance leaves Send Feedback's bounty row hidden and unpainted (#964, #5249)",
@@ -1144,7 +1126,7 @@
     {
       "name": "#4453: a request's page is one sheet, Messages' reply thread: the header names the request and its category, the request is the root post (its title, its words as a quote, where it stands, its spec), then \"N replies\" and the stream",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900003",
-      "expectSelector": ".dev-request > .dev-request-sheet.dc-lift-session:has(> #gc-thread-bar .messages-thread-name + [data-request-category]) > #gc-thread-scroll.messages-thread-scroll > #gc-thread-head + [data-language=\"request\"] > .messages-reply-count",
+      "expectSelector": ".dev-request > .dev-request-sheet.dc-lift-session:has(> #gc-thread-bar .messages-thread-name + [data-request-category]) > #gc-thread-scroll.messages-thread-scroll > #gc-thread-head + #gc-thread-rail + [data-language=\"request\"] > .messages-reply-count",
       "expectText": "Request #900003"
     },
     {
@@ -1167,7 +1149,6 @@
         "src/routes/votes.js",
         "src/services/pr-metadata.js",
         "frontend/src/features/dev-board/**",
-        "frontend/src/features/dev-chat/**",
         "public/js/app.js",
         "public/js/app-view.js"
       ]
@@ -1258,18 +1239,6 @@
       "expectSelector": "#dev-kanban-col-inprogress [data-issue-row=\"900017\"]"
     },
     {
-      "name": "Dev board: an auto-solve run that asked a question says so (#1112)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-issue-row=\"900015\"] .dev-badge[data-work-state=\"answer_needed\"]",
-      "expectText": "Needs an answer"
-    },
-    {
-      "name": "Dev board: a finished auto-solve draft says it is ready to review (#1112)",
-      "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "#dev-body [data-issue-row=\"900016\"] .dev-badge[data-work-state=\"draft_ready\"]",
-      "expectText": "Draft ready to review"
-    },
-    {
       "name": "#4453: where a request stands is one card under it: the stepper with the step it is at, one sentence for who is on it, and the date the claim lapses (#1112)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900014",
       "expectSelector": "#gc-thread-head .dev-request-root .dev-request-ask + .dev-request-status[data-request-stage=\"asked\"]:has(.dev-request-step[data-state=\"now\"][aria-current=\"step\"]) .dev-request-say + .dev-request-fine",
@@ -1337,7 +1306,7 @@
     {
       "name": "Dev board cards offer Explore in a coding agent — on the card face or in its ⋯ menu (#827, #1135)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open an agent session with a message about this change\"], .dev-card-menu [data-menu-idx][title^=\"Open an agent session with a message about this change\"]",
+      "expectSelector": "[data-proposal-id=\"9000043\"][title^=\"Open your thread with Homeroom bot about this change\"], .dev-card-menu [data-menu-idx][title^=\"Open your thread with Homeroom bot about this change\"]",
       "expectText": "Explore in a coding agent"
     },
     {
@@ -1663,34 +1632,6 @@
       "expectText": "Staging demo perf"
     },
     {
-      "name": "Restart-recovery pill fixtures are seeded (#786)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectText": "Staging demo: pills after a recovered build turn"
-    },
-    {
-      "name": "Interrupted-reply pill fixture is seeded (#786)",
-      "path": "/?demo=1#app/usernode-2d5619/board",
-      "expectText": "Staging demo: pills after an interrupted reply"
-    },
-    {
-      "name": "A group-shared spec renders in another viewer's spec panel",
-      "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900830",
-      "expectSelector": "#dc-spec-viewer .dc-spec-viewer-tabs",
-      "expectText": "Staging demo shared spec"
-    },
-    {
-      "name": "An HTML spec opens on its before and after screens in the spec panel",
-      "path": "/?shot=spec-viewer#app/usernode-2d5619/dev/sessions/900831",
-      "expectSelector": "#dc-spec-viewer .shots-viewer-spec .shots-stage",
-      "expectText": "Staging demo HTML spec"
-    },
-    {
-      "name": "Visible own session offers the \"Share chat\" opt-in in its ⋯ menu",
-      "path": "/?demo=1&shot=card-menu&card=session:990103&cards=open#app/usernode-2d5619/board",
-      "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Let everyone read this chat\"]",
-      "expectText": "Share chat"
-    },
-    {
       "name": "A draft PR is linked on its owner's Underway card (#2866)",
       "path": "/?demo=1&shot=card-menu&card=session:990103&cards=open#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][title=\"https://github.com/Usernode-Labs/social-vibecoding/pull/990103\"]",
@@ -1703,28 +1644,10 @@
       "expectText": "View PR on GitHub"
     },
     {
-      "name": "A chat-shared own session flips its ⋯ row to \"Chat shared — stop sharing\"",
-      "path": "/?demo=1&shot=card-menu&card=session:990104&cards=open#app/usernode-2d5619/board",
-      "expectSelector": ".dev-card-menu [data-menu-idx][title^=\"Stop others reading this chat\"]",
-      "expectText": "Chat shared. Stop sharing"
-    },
-    {
-      "name": "A shared session’s page carries no build surface; its ⋯ holds the door that leaves for it (#4455)",
-      "path": "/?demo=1&shot=card-menu&card=session:990002#app/usernode-2d5619/dev/shared/990002",
-      "expectSelector": "body:has(#dev-topic-thread [data-change-root=\"990002\"]):not(:has(#dev-topic-thread [data-change-build])):not(:has(#dev-topic-thread [data-transcript-body])) .dev-card-menu [data-menu-idx]",
-      "expectText": "Read the build"
-    },
-    {
-      "name": "A published chat opens read-only on the agent session’s own page, keeping its author attribution (B10e)",
+      "name": "A dev chat's old address, dev/sessions/<id>, opens that change's page (dev chats retired, 15 Nov 2026)",
       "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990002",
-      "expectSelector": "#dev-section .dev-session-read [data-transcript-section=\"990002\"] .st-readonly-tag",
-      "expectText": "Agent session by staging-demo-user"
-    },
-    {
-      "name": "The published chat renders its messages on the session page, and no composer with them",
-      "path": "/?demo=1#app/usernode-2d5619/dev/sessions/990002",
-      "expectSelector": ".dev-session-read [data-transcript-body=\"990002\"] .st-timeline .dc-msg.st-msg .dc-msg-content",
-      "expectText": "read-only"
+      "expectSelector": "body:has(#messages-screen.hidden) #app-view:not(.hidden) #dev-topic-thread [data-change-root=\"990002\"] [data-change-title=\"990002\"]",
+      "expectText": "[Mock] Paused shared session with a preview"
     },
     {
       "name": "Native-feel UI kit demo renders",
@@ -2220,10 +2143,10 @@
       "expectText": "by this time last week"
     },
     {
-      "name": "Workshop: Your work is one row under Overview, opening Homeroom bot narrowed to this project",
+      "name": "Workshop: Your work is a row under Overview, opening Homeroom bot narrowed to this project, and under it New chat about the project, which opens a new chat with the bot set to it",
       "path": "/?demo=1&ws=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"]",
-      "expectText": "Your work"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws-tabbody > [data-ws-dashboard] + [data-ws-desk] > a[data-ws-desk-open][href=\"#homeroom-bot?project=usernode-2d5619\"] ~ a[data-ws-desk-new][href=\"#homeroom-bot/new?project=usernode-2d5619\"]",
+      "expectText": "New chat about"
     },
     {
       "name": "Hub: For you's Workshop row opens the project's Workshop",
@@ -2642,9 +2565,9 @@
       "expectText": "Recently live"
     },
     {
-      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels and its topics under Topics, in the column beside the strip (#4417)",
+      "name": "A project page's places are Hub, Needs you and Workshop, a line, then #general under Channels, with no Topics group (#4417)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"] + [data-places-group=\"topics\"] > [data-place=\"c:onboarding\"]",
+      "expectSelector": "[data-places=\"usernode-2d5619\"] > nav > [data-place=\"status\"][aria-current=\"page\"] + [data-place=\"needs\"] + [data-place=\"workshop\"] + [role=\"separator\"] + [data-places-group=\"channels\"]:last-child > [data-place=\"discussion\"]",
       "expectText": "general"
     },
     {
@@ -3090,9 +3013,9 @@
     },
     {
       "id": "messages.inbox",
-      "name": "Messages has Agents and People, no Channels, and the oldest-chats shortcut at the list foot (#6501)",
+      "name": "Messages lists People alone: no Agents or Channels, nothing folds, and Oldest chats at the list foot (#6501)",
       "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden):has([data-inbox-to-end] button) .messages-list-scroll:not(:has([data-inbox-card=\"channels\"])) > h3.messages-section-head[data-inbox-section=\"people\"] + .messages-section-card[data-inbox-card=\"people\"]",
+      "expectSelector": "#messages-screen:not(.hidden):not(:has([data-inbox-fold])):has([data-inbox-to-end] button) .messages-list-scroll > h3.messages-section-head[data-inbox-section=\"people\"]:first-child + .messages-section-card[data-inbox-card=\"people\"]:last-child",
       "visual": true,
       "impact": [
         "frontend/src/features/messages/**",
@@ -3100,11 +3023,6 @@
         "src/routes/conversations.js",
         "src/services/conversations.js"
       ]
-    },
-    {
-      "name": "Agents' heading is the button that folds its section, open to start; People, the last section, does not fold; and there is no filter strip",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden):not(:has(#messages-filters)):not(:has([data-inbox-fold=\"people\"])) h3.messages-section-head[data-inbox-section=\"agents\"] > button.messages-section-toggle[data-inbox-fold=\"agents\"][aria-expanded=\"true\"]"
     },
     {
       "name": "#2778: new message is a plus beside the search, and it opens a menu rather than a dialog",
@@ -3242,7 +3160,7 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The mark opens the menu with no agent entries: Agent chats and its Build it now row moved to Messages' Agents list (#2718, #3362, #4729, first-session run-through)",
+      "name": "The mark opens the menu with no agent entries (#2718, #3362, #4729, first-session run-through)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-sessions, #improve-row-new-session)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about",
       "expectText": "About"
@@ -3554,10 +3472,10 @@
       "expectText": "Don’t have a password? Create one"
     },
     {
-      "name": "OpenRouter settings name GLM 5.3 Flash as the preferred coding model (#1592)",
+      "name": "OpenRouter settings say the key is what voice input uses",
       "path": "/#settings/openrouter",
-      "expectSelector": "[data-settings-section=\"openrouter\"]:not(.hidden) #settings-openrouter-models-wrap",
-      "expectText": "GLM 5.3 Flash"
+      "expectSelector": "[data-settings-section=\"openrouter\"]:not(.hidden) #settings-openrouter-personal-controls",
+      "expectText": "Voice input uses this key"
     },
     {
       "name": "Settings deep-links App AI permissions with the seeded demo grants",
@@ -3566,20 +3484,15 @@
       "expectText": "Staging demo app A"
     },
     {
-      "name": "Settings deep-links Agent instructions & skills with the seeded demo files",
-      "path": "/?demo=1#settings/agent-files",
-      "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
-    },
-    {
       "name": "Settings CLI access empty state explains how to start a local coding agent (#1609)",
       "path": "/?demo=cli-empty#settings/cli",
       "expectText": "Set up a local coding agent",
       "expectSelector": "[data-settings-section=\"cli\"]:not(.hidden) #cli-setup-guide ol"
     },
     {
-      "name": "Language settings offers Auto and English",
+      "name": "Language settings offers Auto and English, and a Time zone list with Auto (#6479)",
       "path": "/#settings/language",
-      "expectSelector": "#settings-section-content [data-settings-section=\"language\"]:not(.hidden) #settings-language-section:not(.hidden) #settings-locale:has(option[value=\"\"]):has(option[value=\"en\"])"
+      "expectSelector": "#settings-section-content:has(#settings-timezone-section #settings-timezone option[value=\"\"]) [data-settings-section=\"language\"]:not(.hidden) #settings-language-section:not(.hidden) #settings-locale:has(option[value=\"\"]):has(option[value=\"en\"])"
     },
     {
       "name": "Settings shows Admin preview to a real admin",
@@ -4369,21 +4282,6 @@
       "expectSelector": "body.bg-zinc-100"
     },
     {
-      "name": "A connector work order is listed with the agents on the Messages screen (#1417, #2815, #5289)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session] [data-improve-row=\"task\"]"
-    },
-    {
-      "name": "The work-order row points at its request, not a session page (#1417)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-improve-row=\"task\"][href$=\"/dev/issues/900002\"]"
-    },
-    {
-      "name": "Real sessions still render beside it in Messages (#1417, #5289)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden):has([data-improve-row=\"task\"]) [data-inbox-session] a[data-improve-row=\"session\"][href^=\"#messages/session/\"]"
-    },
-    {
       "name": "Dark mode pins by deep link and paints the launcher on the inverted ground",
       "path": "/?shot=dark",
       "expectSelector": "html.dark #home-screen:not(.hidden)"
@@ -4547,11 +4445,6 @@
       "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990209\"] time[title]"
     },
     {
-      "name": "#1808: a change row's age is its own element with the full instant in title",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session] [data-improve-row] time[title]"
-    },
-    {
       "name": "#1808: an admin log line keeps its seconds and gains the day once it is not today's",
       "path": "/?demo=1#admin/status",
       "expectSelector": "#admin-status-root #admin-status-events time[title]"
@@ -4583,8 +4476,8 @@
     {
       "name": "#2327: an author can also edit a proposal title in review; a full change page has its ⋯ and no build surface of its own (#4455)",
       "path": "/#app/usernode-2d5619/dev/proposals/900801",
-      "expectSelector": "body:has(#gc-thread-bar [data-card-menu]) #dev-topic-thread:not(:has([data-change-build])):not(:has(#dc-view)) .dev-change-root button[aria-label=\"Edit title\"]",
-      "expectText": "Staging demo: pills fall back after a build"
+      "expectSelector": "body:has(#gc-thread-bar [data-card-menu]) #dev-topic-thread:not(:has([data-change-build])) .dev-change-root button[aria-label=\"Edit title\"]",
+      "expectText": "Staging demo: sort the leaderboard by score"
     },
     {
       "name": "#4455: a change’s replies are Messages rows and its notices single lines, in one stream under \"N replies\", with the reply box at the foot of the sheet",
@@ -4682,25 +4575,10 @@
       "expectText": "Apps set differently"
     },
     {
-      "name": "#2241 → #2779: New change's old address opens an unsent agent session beside the inbox, with the empty state that invites the first message",
+      "name": "New change's old address, dev/sessions/new, opens a new chat with Homeroom bot already set to that project (agent chats retired, 15 Nov 2026)",
       "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "#messages-screen:not(.hidden) [data-agent-session-thread=\"new\"] [data-agent-session-empty]",
-      "expectText": "New agent session"
-    },
-    {
-      "name": "#2779: the unsent agent session has a live message box, and no session actions for a conversation that does not exist yet",
-      "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "[data-agent-session-thread=\"new\"]:has([data-agent-session-menu][disabled]) #agent-session-pane-composer:not([disabled])"
-    },
-    {
-      "name": "#2607 → #3078: where an unsent agent session is built is its composer's model pill, which opens Build with",
-      "path": "/#app/usernode-2d5619/dev/sessions/new",
-      "expectSelector": "[data-agent-session-thread=\"new\"] button[data-agent-session-model][aria-haspopup=\"dialog\"]"
-    },
-    {
-      "name": "#2772: a change in progress is listed in Messages as an agent conversation, and opens its session (beside the list since #2813)",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"][href^=\"#messages/session/\"][href$=\"/990101\"]"
+      "expectSelector": "body:has(#messages-screen.hidden) #ai-screen:not(.hidden) #ai-main-pane[data-ai-column=new] [data-bot-new-thread-pane]:has([data-bot-new-thread-project=\"usernode-2d5619\"]) [data-bot-new-thread-start]",
+      "expectText": "What do you want to do?"
     },
     {
       "name": "Waitlist connect callback shows a status page, not the home page, and says when a link has expired",
@@ -4821,38 +4699,10 @@
       "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
     },
     {
-      "id": "agent-session.card",
-      "name": "On a desktop an agent session opens in the Messages pane beside its row under Agents, and a write the Mayor proposes waits on a card with Confirm and Not now (#2779)",
-      "path": "/#messages/agent/990801",
-      "expectSelector": "#messages-screen:not(.hidden):has(a[data-inbox-agent-session=\"990801\"]) [data-agent-session-thread=\"990801\"] [data-agent-session-card=\"pending\"] dl + div [data-agent-session-confirm] + [data-agent-session-dismiss]",
-      "expectText": "Put the change up for the group vote",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/agent-session/**"
-      ]
-    },
-    {
-      "name": "#2779: an agent session's staging builds are cards: an older build is superseded, the newest offers Open preview and View change, and says in words why its checks were skipped (#3180)",
-      "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-preview=\"superseded\"] ~ [data-agent-session-preview=\"deployed\"]:has(> [data-agent-session-checks-reason]) [data-agent-session-preview-open] + [data-agent-session-preview-change]",
-      "expectText": "Superseded by a newer preview"
-    },
-    {
-      "name": "#2779: an agent session's saved drafts sit above the message box, a Mayor reply says what it cost, and its bar has Changes and ⋯ (where it is built moved to the composer's Build with, #3078)",
-      "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"]:has([data-agent-session-reply-cost]):has([data-agent-session-pills] > [data-agent-session-focus] ~ [data-agent-session-menu]) [data-agent-session-drafts=\"1\"] [data-agent-session-draft=\"dstagingfixture1\"]",
-      "expectText": "Also keep the choice when I switch devices."
-    },
-    {
-      "name": "#4312: a shared ?flow=claude-code link on an agent session opens its Build with sheet on the Claude Code tab, at the walkthrough's first step",
-      "path": "/#messages/agent/990801?flow=claude-code",
-      "expectSelector": "[data-agent-session-handoff=\"claude-code\"] [data-agent-session-handoff-steps] > [data-agent-session-handoff-step=\"github\"]:first-child [data-agent-session-handoff-action]",
-      "expectText": "Link GitHub"
-    },
-    {
-      "name": "#3976: an agent session draws a coding run as the dev chat's run card: its head with the chevron, the agent named under it, then its chips",
-      "path": "/#messages/agent/990801",
-      "expectSelector": "[data-agent-session-thread=\"990801\"] [data-agent-session-run] > details.dc-cc-attached > .dc-cc-attached-summary > .dc-cc-head:has(> .dc-cc-attached-chevron) + .dc-status-venue + .dc-cc-chips"
+      "name": "An agent chat's old address opens the Homeroom bot tab: the thread its history was moved under, or the tab's own page when it had none (agent chats retired, 15 Nov 2026)",
+      "path": "/#agent/990801",
+      "expectSelector": "body:has(#platform-tab-ai[aria-current=\"page\"]):has(#messages-screen.hidden) #ai-screen:not(.hidden) [data-ai-hero] button[data-ai-new-chat]",
+      "expectText": "New chat"
     },
     {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, ⋯), and a threaded one its reply count",
@@ -4907,60 +4757,17 @@
       "expectSelector": "body:has(#platform-tabs #platform-tab-workshop[aria-current=\"page\"]):has(#platform-header a#back-btn.hidden) #app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"][data-ws-slug=\"staging-demo-app\"]"
     },
     {
-      "name": "#2779 follow-up: \"Open app\" is offered on an ordinary app's chat and never on the platform's own",
-      "path": "/#messages/agent/990803",
-      "expectSelector": "#messages-screen:not(.hidden):has([data-agent-session-thread=\"990803\"] [data-agent-session-open-app][data-open-app=\"staging-demo-app\"]):not(:has([data-agent-session-thread=\"990801\"] [data-agent-session-open-app]))",
-      "expectText": "Open app",
-      "visual": true,
-      "id": "agent-session.open-app",
-      "impact": [
-        "frontend/src/features/agent-session/**",
-        "src/services/agent-sessions.js"
-      ]
-    },
-    {
-      "name": "#3755: an agent chat whose change failed its checks says which ones failed, and offers Fix it and See checks",
-      "path": "/#messages/agent/990804",
-      "expectSelector": "[data-agent-session-thread=\"990804\"] [data-agent-session-fix-checks=\"990805\"]:has([data-agent-session-fix-check] + [data-agent-session-fix-check]) [data-agent-session-fix-checks-go] + [data-agent-session-fix-checks-see]",
-      "expectText": "2 checks failed on this change",
-      "visual": true,
-      "id": "agent-session.fix-checks",
-      "impact": [
-        "frontend/src/features/agent-session/**",
-        "src/services/agent-sessions.js"
-      ]
-    },
-    {
-      "name": "QA 2026-09-24 Q29: a change waiting on you says \"Needs you\" in its Messages row, short enough to leave the title room",
-      "path": "/?demo=1#messages",
-      "expectSelector": "#messages-screen:not(.hidden) [data-inbox-session=\"s990101\"] a[data-improve-row=\"session\"] > span.inline-flex.rounded-full",
-      "expectText": "Needs you"
-    },
-    {
       "name": "QA 2026-09-24 Q14: a group invitation's header reads \"Invitation pending\", not a member count the invitee is not shown",
       "path": "/?demo=1#messages/910003",
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-thread-header .messages-thread-sub",
       "expectText": "Invitation pending"
     },
     {
-      "name": "Main Chat with Homeroom bot is the conversation (#6207, 3 Nov 2026): a request the bot offers to file stays a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page",
+      "name": "The old Main Chat address still lands (14 Nov 2026: every conversation with Homeroom bot is a thread): #homeroom-bot/main opens Earlier chat, the thread the old Main Chat messages were moved under (a new chat when there were none), alone in the column with the chat mounted threads only. A request the bot offered to file there is still a message with File it and Not now, and no Write my own (#3624), quoting the message it answers (#3707), and no request's news is drawn there: that is on the request's page (#6207)",
       "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane .messages-thread-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
-      "expectText": "Main Chat",
-      "id": "homeroom-bot-dm-question",
-      "visual": true,
-      "impact": [
-        "frontend/src/features/messages/**",
-        "src/services/homeroom-bot-dm.js",
-        "src/services/staging-messages.js"
-      ]
-    },
-    {
-      "name": "The Homeroom bot tab's list starts with Main Chat, the chat with the bot itself, drawn lit while it is the chat in the column beside the list, under its own name and that only you can see it (1 Nov 2026: the chat is the tab's alone; its Messages address lands here)",
-      "path": "/?demo=1#messages/910005",
-      "expectSelector": "#ai-screen:not(.hidden):has(#ai-main-pane[data-ai-column=main] > [data-ai-main-head] + .messages-layout[data-main-chat]) [data-ai-sheet=main] > [data-ai-main-row][data-ai-lit][aria-current=true]",
-      "expectText": "Main Chat",
-      "id": "homeroom-bot-main-chat-row",
+      "expectSelector": "#ai-screen:not(.hidden) #ai-main-pane[data-ai-column] > .messages-layout[data-bot-threads] > .messages-reply-pane:has([data-reply-head=alone]) .messages-reply-scroll:not(:has([data-request-tag])) .messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)",
+      "expectText": "Earlier chat",
+      "id": "homeroom-bot-old-main-address",
       "visual": true,
       "impact": [
         "frontend/src/features/ai/**",
@@ -4970,15 +4777,24 @@
       ]
     },
     {
-      "name": "#6207 (3 Nov 2026): Main Chat holds no request's news: no row about a request (a first version's news stays, having no request page yet), since a request's news is on its page, where its row on the Homeroom bot page goes",
-      "path": "/?demo=1#homeroom-bot/main",
-      "expectSelector": "#ai-main-pane[data-ai-column=main] .messages-thread-scroll:not(:has([data-request-tag]))",
-      "expectText": "Main Chat"
+      "name": "The Homeroom bot tab has no Main Chat row: its head has New chat, a labelled button beside search, and its lists are the threads you are in (14 Nov 2026; the chat is the tab's alone, and the demo chat's old Messages address lands here)",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#ai-screen:not(.hidden):not(:has([data-ai-main-row], [data-ai-main-head])) [data-ai-sheet=head] [data-ai-hero] > button[data-ai-search-toggle] + button[data-ai-new-chat]",
+      "expectText": "New chat",
+      "id": "homeroom-bot-new-chat",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/ai/**",
+        "frontend/src/features/messages/**",
+        "src/services/staging-messages.js",
+        "src/routes/conversations.js"
+      ]
     },
     {
-      "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
-      "path": "/#agent/990801/changes",
-      "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"
+      "name": "#homeroom-bot/new?project=<slug> is New chat about a project (the second row of its Workshop's Your work card): What do you want to do?, with that project already on its chip, in the column beside the lists",
+      "path": "/?demo=1#homeroom-bot/new?project=usernode-2d5619",
+      "expectSelector": "#ai-main-pane[data-ai-column=new] [data-bot-new-thread-pane]:has([data-bot-new-thread-project=\"usernode-2d5619\"]) [data-bot-new-thread-start]",
+      "expectText": "New chat"
     },
     {
       "name": "Homeroom bot: your own change whose checks failed is Needs you's, with Fix it, not Waiting for checks, and a search button beside the plus (#6398)",
@@ -4999,9 +4815,9 @@
       "expectText": "Open hands this to Claude Code"
     },
     {
-      "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026)",
+      "name": "A request Homeroom bot is building says where it is on its own page, as its thread in the chat does: its status word and try, where it is and why, and the five steps with the one it is on lit (16 Oct 2026); and How it got here lists Asked, then Building as where it stands (15 Nov 2026)",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900018",
-      "expectSelector": "#gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
+      "expectSelector": "#gc-thread-scroll:has(> #gc-thread-rail [data-thread-rail] [data-rail-step=asked] + [data-rail-step=\"now:building\"][data-rail-now]) #gc-thread-head .dev-request-root .dev-request-track[data-request-track=building] [data-bot-track=building]:has([data-bot-track-bar=building] [data-bot-track-step=build][data-state=now]) [data-bot-activity-eyebrow]",
       "expectText": "Try 2"
     },
     {
@@ -5077,9 +4893,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "#6019: a request's changes follow it under a rule, each with its own line; a change built for a request has no page of its own now, so its title names it and is no door (one page per thread, 1 Nov 2026; staging fixture: the changes built for #900001)",
+      "name": "#6503 (#6019): a request links its similar open request and its changes follow it under a rule, each with its own line; a change built for a request has no page of its own now, so its title names it and is no door (one page per thread, 1 Nov 2026; staging fixture: the changes built for #900001)",
       "path": "/#app/usernode-2d5619/dev/issues/900001",
-      "expectSelector": "#gc-thread-head .dev-request-root > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]",
+      "expectSelector": "#gc-thread-head .dev-request-root:has([data-request-twin=\"9006503\"] a) > .min-w-0 > [data-thread-changes] [data-thread-change-line] > h3[data-thread-change-title]",
       "expectText": "Also closes"
     },
     {

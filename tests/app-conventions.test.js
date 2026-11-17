@@ -1,18 +1,14 @@
-// Guard test for src/prompts/app-conventions.md (#218). The "Staging mock
-// data" section is load-bearing: the build prompt's DATA AVAILABILITY rule
-// (src/routes/sessions.js) references it by name, so the coding agent's
-// instruction to seed demo data would silently dangle if a future doc edit
-// dropped or renamed the section. Same for the platform-escalation section:
-// the build prompt's usernode-report-platform-issue paragraph references it
-// by name, and its feature-request framing is what keeps agents from being
-// overly conservative about drafting platform reports.
+// Guard test for src/prompts/app-conventions.md (#218), the conventions a
+// coding agent building an app here is given. Its sections are load-bearing:
+// the platform's own code cites them by name ("Staging mock data", "Time-
+// dependent features"), and the escalation section's feature-request framing
+// is what keeps agents from being overly conservative about raising a
+// platform gap. A doc edit that dropped or renamed one fails here.
 //
 // Run with: node --test tests/app-conventions.test.js
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const { getAppConventions } = require('../src/services/prompts.js');
 
 const ESCALATION_HEADING =
@@ -36,8 +32,8 @@ test('conventions doc carries the escalation section, covering feature requests'
     'escalation section heading missing or renamed'
   );
   // The broadened framing is load-bearing: agents must treat missing
-  // platform capabilities / feature requests as fair game for
-  // usernode-report-platform-issue, not just breakage.
+  // platform capabilities / feature requests as worth escalating, not just
+  // breakage.
   assert.match(doc, /Missing platform capabilities/);
   assert.match(doc, /Feature requests are as valid as bug reports/);
 });
@@ -61,35 +57,12 @@ test('conventions doc carries the issue-state snapshots section (#685)', () => {
   assert.match(doc, /PUBLIC GitHub issue bodies/);
 });
 
-test('build prompt cross-references the escalation heading by name', () => {
-  const sessions = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
-  );
-  assert.ok(
-    sessions.includes(`"${ESCALATION_HEADING}"`),
-    'sessions.js build prompt must reference the escalation section by its current heading'
-  );
-});
-
 test('conventions doc carries the screenshot-state deep-link section (#768)', () => {
   const doc = getAppConventions();
   assert.match(doc, /^### Make the changed screen URL-reachable — screenshot-state deep links$/m);
   // The @mobile annotation is documented alongside it — the capture
   // pipeline parses it (testing-notes.js), so the doc must keep teaching it.
   assert.match(doc, /@mobile/);
-  // The build prompt cross-references the section by name, so the
-  // heading's first half is load-bearing.
-  const sessions = fs.readFileSync(
-    path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
-  );
-  assert.ok(
-    sessions.includes('"Make the changed screen URL-reachable"'),
-    'sessions.js TESTING rules must reference the deep-link section by its current heading'
-  );
-  assert.ok(
-    sessions.includes('@mobile'),
-    'sessions.js TESTING rules must document the @mobile annotation'
-  );
 });
 
 test('conventions doc carries the user-directory section (#1195)', () => {
@@ -163,14 +136,6 @@ test('conventions doc has a "Time-dependent features" section with the preview c
   // The declaration the doc teaches is the one the platform parses.
   const clock = require('../src/services/preview-clock');
   assert.equal(clock.declaredMoment(body).label, 'Thursday 8 Oct, 7 pm');
-  // And the hosted build turn's TESTING block guidance points at it. (The
-  // local and Codex backends keep their reviewed inline block byte for byte,
-  // tests/prompt-file-transport.test.js; they read this section in the
-  // conventions they are given.)
-  const { buildCodingAgentBuildGuidance } = require('../src/routes/sessions');
-  const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true }).testingGuidance;
-  assert.match(hosted, /<!-- usernode:preview-at 2026-10-08T19:00 Europe\/London -->/);
-  assert.match(hosted, /"Time-dependent features" in the system instructions/);
 });
 
 test('the server-side directory section covers staging previews (#1213)', () => {

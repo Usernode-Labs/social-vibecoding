@@ -20,14 +20,11 @@ test('a notice owed hours ago is not said; one owed now, or before owedAt existe
   const pool = { query: async () => assert.fail('a late notice reads nothing') };
   const owedAt = new Date(now - 7 * 60 * 60 * 1000).toISOString();
   const { botDmServices } = await import('../src/workflow/bot-dm/services.ts');
-  const { turnServices } = await import('../src/workflow/turn/services.ts');
   const { botChangeServices } = await import('../src/workflow/bot-change/services.ts');
   const { WORK: DM } = await import('../src/workflow/bot-dm/machine.ts');
-  const { WORK: TURN } = await import('../src/workflow/turn/machine.ts');
   const { WORK: CHANGE } = await import('../src/workflow/bot-change/machine.ts');
   const run = (handlers, kind, input) => handlers[kind].run({ input, steps: () => ({}) });
   assert.deepEqual(await run(botDmServices({ config: {}, pool }), DM.mail, { userId: 1, messageId: 2, owedAt }), { skipped: 'late' });
-  assert.deepEqual(await run(turnServices({ config: {}, pool }), TURN.stalled, { sessionId: 1, agentSessionId: 2, owedAt }), { skipped: 'late' });
   // A yes's line in its request's thread is no longer said (5 Nov 2026,
   // decision 6): work owed before settles, late or not, reading nothing.
   assert.deepEqual(await run(botChangeServices({ pool }), CHANGE.approved, { sessionId: 1, voterId: 2, epoch: 0, owedAt }), { skipped: 'retired' });

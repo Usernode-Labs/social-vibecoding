@@ -33,7 +33,7 @@ export const markThreadDone = (rootId: number) => threadDoor(rootId, 'done');
 export const reopenThread = (rootId: number) => threadDoor(rootId, 'reopen');
 
 /**
- * The ⋯ of a private thread (its head in Main Chat's column, and its row on
+ * The ⋯ of a private thread (its head in the bot tab's column, and its row on
  * the Homeroom bot page): one item, Mark done, or Reopen when it is done.
  * Drawn as a conversation header's ⋯ in Messages.
  */

@@ -12,6 +12,7 @@ const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const appGroupsEnv = require('./app-groups-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const stagingEnv = require('./staging-env');
 const events = require('./events');
@@ -19,7 +20,7 @@ const { getPool } = require('../db/pool');
 const repoRef = require('./repo-ref');
 
 // Custom error thrown by both staging + prod build paths when the cloned
-// repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller, dev-chat
+// repo's `dapp.json` declares required secrets that have no stored value. Callers (votes.js merge path, drift poller,
 // retries) inspect `.missingSecrets` to render a tailored "fix this"
 // toast instead of a generic "build failed".
 class MissingSecretsError extends Error {
@@ -1112,6 +1113,9 @@ async function rebuildProductionInner(config, app, options = {}) {
     // Likewise the app-storage env pair (#752) — production only; the
     // staging path above deliberately injects neither storage var.
     const storageEnv = await appStorageEnv.productionStorageEnv(prodPool, app.id);
+    // Likewise the app-groups env pair (#6669) — production only; a staging
+    // container must not be able to change who decides.
+    const groupsEnv = await appGroupsEnv.productionGroupsEnv(prodPool, app.id);
     phase('deploy');
     watch?.start('deploy');
     const deployed = await applicationRuntime.deploy(config, {
@@ -1128,6 +1132,7 @@ async function rebuildProductionInner(config, app, options = {}) {
         USERNODE_ENV: 'production',
         ...llmEnv,
         ...storageEnv,
+        ...groupsEnv,
         ...merge.env,
       },
       // Applied: from here it is the container starting and answering
@@ -1148,7 +1153,7 @@ async function rebuildProductionInner(config, app, options = {}) {
 
     // Clear any stale last_failure (#416): every successful deploy
     // funnels through here, so this is the single reset chokepoint for
-    // the rebuild paths (dev-chat merge, drift poller, /redeploy).
+    // the rebuild paths (a merge, the drift poller, /redeploy).
     await prodPool.query(
       `UPDATE apps SET last_failure = NULL, container_id = $1, image_ref = $2,
          build_ref = $3, runtime_kind = $4, runtime_name = $5 WHERE id = $6`,

@@ -26,6 +26,10 @@ export interface BuildNoteData {
   note: string;
   change: number | null;
   posted: boolean | null;
+  /** #6684: queued for the change's next update with no tap (a comment on the request). */
+  auto: boolean;
+  /** #6684: its build ended with no change, so the request is read again with the note. */
+  reread: boolean;
 }
 
 /** Pure: the card as stored, read defensively. */
@@ -39,6 +43,8 @@ export function buildNoteOf(card: Record<string, unknown>): BuildNoteData {
     note: typeof card.note === 'string' ? card.note.slice(0, 2000) : '',
     change: Number.isInteger(change) && change > 0 ? change : null,
     posted: typeof card.posted === 'boolean' ? card.posted : null,
+    auto: card.auto === true,
+    reread: card.reread === true,
   };
 }
 
@@ -57,7 +63,11 @@ export function buildNoteLine(data: BuildNoteData): string | null {
   switch (data.state) {
     case 'waiting': return 'messages:botCards.buildNote.line.waiting';
     case 'missed': return data.change ? 'messages:botCards.buildNote.line.missedChange' : 'messages:botCards.buildNote.line.missed';
-    case 'forwarded': return 'messages:botCards.buildNote.line.forwarded';
+    case 'forwarded':
+      // #6684: a note from a request moved by itself.
+      if (data.reread) return 'messages:botCards.buildNote.line.reread';
+      if (data.auto) return 'messages:botCards.buildNote.title.forwardedAuto';
+      return 'messages:botCards.buildNote.line.forwarded';
     case 'offer_redo': return 'messages:botCards.buildNote.line.offerRedo';
     case 'redone': return data.posted === false ? 'messages:botCards.buildNote.line.redoneCarried' : 'messages:botCards.buildNote.line.redone';
     default: return null;
@@ -94,7 +104,7 @@ export function BuildNoteView({ data, busy = false, error = null, onAction }: Bu
         </blockquote>
       ) : null}
       {line ? <p className="messages-bot-answered" role="status">{t(line)}</p> : null}
-      {data.state === 'offer_redo' ? (
+      {data.state === 'offer_redo' && onAction ? (
         <div className="messages-bot-answers" role="group" aria-label={t('messages:botCards.buildNote.choices')}>
           <button type="button" className="messages-bot-primary" disabled={busy} onClick={() => onAction?.('redo')} data-bot-build-note-action="redo">
             <span>{t('messages:botCards.buildNote.redo')}</span>
@@ -104,7 +114,7 @@ export function BuildNoteView({ data, busy = false, error = null, onAction }: Bu
           </button>
         </div>
       ) : null}
-      {data.state === 'missed' && data.change ? (
+      {data.state === 'missed' && data.change && onAction ? (
         <div className="messages-bot-answers" role="group" aria-label={t('messages:botCards.buildNote.choices')}>
           <button type="button" className="messages-bot-primary" disabled={busy} onClick={() => onAction?.('forward')} data-bot-build-note-action="forward">
             <span>{t('messages:botCards.buildNote.forward')}</span>

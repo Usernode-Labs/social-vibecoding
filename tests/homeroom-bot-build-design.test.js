@@ -2,10 +2,9 @@
 // one build on the platform given neither the UI design guidance (#2817)
 // nor the in-loop browser's instructions. These pin what it reads now:
 //
-//   - the same design guidance the dev chat builds with, its self-check
-//     chosen by whether the build's model reads images (OpenRouter's
-//     catalog, read as the Mayor reads it);
-//   - the dev chat's in-loop browser block, and one rule of the bot's own:
+//   - the platform's design guidance, its self-check chosen by whether the
+//     build's model reads images (OpenRouter's catalog);
+//   - the shared in-loop browser block, and one rule of the bot's own:
 //     a change a person will see is looked at, in both looks, before the
 //     turn ends;
 //   - for a project's first version, a design brief of its own in the
@@ -49,11 +48,11 @@ test('the build carries the design guidance, its self-check by whether the model
   }
 });
 
-test('the build carries the dev chat\'s in-loop browser block and the bot\'s expected visual check', () => {
+test('the build carries the shared in-loop browser block and the bot\'s expected visual check', () => {
   const images = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages: true });
   const text = live.buildPrompt({ seed: 'ISSUE', buildNote: 'plan', readsImages: false });
   for (const p of [images, text]) {
-    assert.ok(p.includes(IN_LOOP_BROWSER_GUIDANCE), 'the block the dev chat gives an OpenRouter turn, as written');
+    assert.ok(p.includes(IN_LOOP_BROWSER_GUIDANCE), 'the shared block, as written');
     assert.match(p, /For you, "commit" in it means finishing your turn,\nsince your working tree is committed for you/,
       'its "commit" is the harness\'s here: the contract says not to commit');
     assert.match(p, /- For you, the Homeroom bot, that visual check is EXPECTED, not optional, when the change is one a person will\n  see\. Boot the app, then/);
@@ -93,9 +92,7 @@ test('the build is told it has a reviewer exactly when its configuration has one
   assert.match(src, /reviewed: Boolean\(review\?\.reviewer\),/);
 });
 
-test('the dev chat\'s browser guidance is left as it was', () => {
-  const sessions = read('src/routes/sessions.js');
-  assert.match(sessions, /browserGuidance: IN_LOOP_BROWSER_GUIDANCE,/);
+test('the shared in-loop browser guidance is left as it was', () => {
   assert.doesNotMatch(IN_LOOP_BROWSER_GUIDANCE, /Homeroom bot/);
   assert.doesNotMatch(IN_LOOP_BROWSER_GUIDANCE, /un-theme/);
 });
@@ -155,7 +152,7 @@ test('a first version\'s spec decides its colours, signature element, layout and
   assert.doesNotMatch(brief, BENCH_SUBJECTS);
   assert.doesNotMatch(brief, /an accent colour plus the neutrals/);
 
-  // The brief every other spec reads, the dev chat's scout included, as it was.
+  // The brief every other spec reads, as it was.
   assert.match(prompts.SPEC_DESIGN_BRIEF, /which existing screen of this app it should look and behave like/);
   assert.doesNotMatch(prompts.SPEC_DESIGN_BRIEF, /signature element|zinc/);
 

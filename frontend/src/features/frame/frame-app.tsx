@@ -48,7 +48,6 @@ import { communityScopeStore, goToCommunity } from '../workshop/community-scope'
 import { swatchFor } from '../messages/format';
 import { appContextStore } from '../app-context/app-context-store.js';
 import { useInAppShown } from '../header/in-app-actions';
-import { botDrawerStore } from '../nav-drawer/bot-drawer';
 import { Improve } from '../improve/improve-controller.js';
 import { improveStore } from '../improve/improve-store.js';
 import { framePageStore } from './frame-page-store';
@@ -173,28 +172,6 @@ export function FrameChrome() {
     if (!inCommunity) return;
     if (here && here !== 'status') openPlace(inCommunity, 'status'); else pressTab('home');
   };
-  // A PHONE'S BAR SAYS THE LINE UNDER THE TITLE TOO, where the standard
-  // header has one the page itself does not draw: Main Chat's "Only you can
-  // see this chat" (../nav-drawer/bot-drawer.ts publishes it for the
-  // standard header's two-line title; from 768px the chat's own head says
-  // it, so the kit shows this line on a phone only).
-  const botHead = useStoreState(botDrawerStore);
-  const crumbLine = botHead.on && botHead.level === 1 ? botHead.sub : '';
-  // WHERE THAT LINE DOES NOT FIT beside the bar's buttons (an admin has the
-  // look disc there too), it is not cut: it moves under the bar's first row,
-  // across the bar's whole width, where it may wrap. The line in the crumb
-  // stays in the document at no height, as the measure of whether it fits.
-  const lineRef = useRef<HTMLSpanElement | null>(null);
-  const [lineUnder, setLineUnder] = useState(false);
-  useLayoutEffect(() => {
-    const el = lineRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') { setLineUnder(false); return undefined; }
-    const read = () => setLineUnder(el.scrollWidth > el.clientWidth + 1);
-    read();
-    const ro = new ResizeObserver(read);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [crumbLine, title]);
   // The crumb a phone keeps: the last, or the one before it where the page's own title says the last (framePageStore's phoneUp).
   const kept = page.crumb && page.phoneUp && crumbs.length > 1 ? crumbs.length - 2 : crumbs.length - 1;
   // THE SIDEBAR FOLDS AS THE STANDARD ONE DOES: the same fact (navStore's
@@ -370,7 +347,6 @@ export function FrameChrome() {
                         cut with an ellipsis before the bar's buttons. */}
                     <span className={k('cw')}>
                       <span className={k('cn')}>{word}</span>
-                      {i === crumbs.length - 1 && crumbLine ? <span ref={lineRef} className={k('cs p', lineUnder && 'off')} data-frame-crumb-line="" aria-hidden={lineUnder ? 'true' : undefined}>{crumbLine}</span> : null}
                     </span>
                   </span>
                 </Fragment>
@@ -410,7 +386,6 @@ export function FrameChrome() {
               <Av size={28} name={me || '?'} src={user?.avatar_url} color={swatchFor(me || '?')} />
             </a>
           </header>
-          {lineUnder && crumbLine ? <div className={k('barline')} data-frame-crumb-line="under">{crumbLine}</div> : null}
           <main className={k('pagearea')} ref={areaRef} />
           <nav className={k('tabbar')} aria-label={t('core:frame.navigation')}>
             {tb('home', 'home', t('core:tabs.home'), 0, '#home')}

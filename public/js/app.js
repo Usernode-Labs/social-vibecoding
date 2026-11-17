@@ -50,13 +50,13 @@ const App = {
   user: null,
   currentApp: null,
   // Top-level mode: 'app' (the running iframe) or 'dev' (#194). The
-  // legacy tab names 'group-chat' / 'individual-chat' are normalized to
-  // dev sub-tabs by _normalizeTab so old links, notification hrefs, and
-  // call sites keep working.
+  // legacy tab name 'group-chat' is normalized to a dev sub-tab by
+  // _normalizeTab so old links, notification hrefs, and call sites keep
+  // working.
   currentTab: 'app',
   // Active Dev view: 'forum' (the card list, default), 'chat'
   // (full-screen general chat), 'topic' (an issue/proposal discussion
-  // open full-screen), or 'sessions' (a dev session open full-screen).
+  // open full-screen).
   // Only meaningful while currentTab === 'dev'.
   currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen (the Leaderboard
@@ -87,8 +87,6 @@ const App = {
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
   _inMessages: false,
-  // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
-  _inAgentSession: false,
   // The Homeroom bot tab (#6019): set by navigateToAi(), cleared by any other
   // screen's reveal in _showOnlyScreen. Without it Back from the tab to "/"
   // took the "already on home" branch and drew Home beside the bot page
@@ -346,7 +344,7 @@ const App = {
   // and the boot queued behind the copy it did not make. Settings.init()
   // mounts from a React layout effect at document load — on every screen,
   // not just #settings, because the byok dot it publishes rides the Profile
-  // screen and DevChat's budget indicator — and it read the same endpoint
+  // screen — and it read the same endpoint
   // for the same fields that are already on the `user` object App.init is
   // about to fetch. Whichever went first, the other waited behind it on the
   // connection: measured on a 150ms link, one read is ~250ms and the pair
@@ -3176,13 +3174,6 @@ const App = {
     if (typeof Home !== 'undefined' && App._isScreenVisible('home-screen')) {
       Home.load();
     }
-    // #405: the merge that triggered this rebuild also flips the
-    // session to 'merged' — advance the open session's header pill +
-    // change card to "✓ Merged" if it's the one being viewed.
-    if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus
-        && DevChat.currentSession && DevChat.currentSession.app_slug === slug) {
-      DevChat.refreshCurrentSessionStatus(DevChat.currentSession.id);
-    }
   },
 
   eventsWs: null,
@@ -3197,55 +3188,6 @@ const App = {
   // current view depends on; cheap, and it self-bounds to "exactly when
   // we know we might have missed something" rather than a periodic poll.
   _eventsWsHasConnected: false,
-
-  // #4318: a session's live events (`session_event`: the agent's progress,
-  // the Mayor's replies, status rows) reach only its owner's sockets and the
-  // sockets that WATCH it, so a screen showing a session's live transcript
-  // says so on this socket. `_watchedSessions` maps a session id to the set
-  // of reasons it is on screen; the socket watches every id with at least
-  // one, and is told them all again whenever it reconnects. Today the one
-  // reason is DevChat's open session (the session chat and the Mayor chat;
-  // DevChat.currentSession's setter calls setDevChatSession). Lists, boards,
-  // proposal pages and previews need nothing here: checks and preview
-  // events still reach everyone who may view the app.
-  _watchedSessions: new Map(),
-
-  watchSession(sessionId, reason = 'screen') {
-    const id = Number(sessionId);
-    if (!Number.isSafeInteger(id) || id <= 0) return;
-    let reasons = App._watchedSessions.get(id);
-    if (!reasons) {
-      reasons = new Set();
-      App._watchedSessions.set(id, reasons);
-      App._sendSessionWatch('watch_session', id);
-    }
-    reasons.add(reason);
-  },
-
-  unwatchSession(sessionId, reason = 'screen') {
-    const id = Number(sessionId);
-    const reasons = App._watchedSessions.get(id);
-    if (!reasons) return;
-    reasons.delete(reason);
-    if (reasons.size) return;
-    App._watchedSessions.delete(id);
-    App._sendSessionWatch('unwatch_session', id);
-  },
-
-  _devChatWatchedId: null,
-  setDevChatSession(sessionId) {
-    const id = Number(sessionId) > 0 ? Number(sessionId) : null;
-    if (id === App._devChatWatchedId) return;
-    if (App._devChatWatchedId != null) App.unwatchSession(App._devChatWatchedId, 'devchat');
-    App._devChatWatchedId = id;
-    if (id != null) App.watchSession(id, 'devchat');
-  },
-
-  _sendSessionWatch(type, sessionId) {
-    const socket = App.eventsWs;
-    if (!socket || socket.readyState !== 1) return; // re-sent on open
-    try { socket.send(JSON.stringify({ type, sessionId })); } catch { /* closed */ }
-  },
 
   // ── The events socket on a quiet network (2 Nov 2026) ─────────────────
   //
@@ -3449,9 +3391,6 @@ const App = {
       // A planned-restart notice goes too: the release is over.
       if (window.Offline) Offline.restartDone();
       if (window.Offline) Offline.nudge();
-      // #4318: a new socket watches nothing until told; tell it every
-      // session still on screen before anything else can be missed.
-      for (const id of App._watchedSessions.keys()) App._sendSessionWatch('watch_session', id);
       // Whether this server answers a ping: its pong holds the socket to
       // the silence check (_checkEvents).
       App._pingEvents(socket);
@@ -3539,33 +3478,18 @@ const App = {
             // _loadDevData) and repaints, so every open board converges.
             App._liveRefresh('board-order', null, { appSlug: data.appSlug || App.currentApp });
             break;
-          case 'session_drafts_changed':
-            // #940: another device of THIS user saved or trashed a draft.
-            // No-ops unless that session is the one on screen; a dropped
-            // socket costs nothing, since opening the session or returning
-            // to the tab reconciles anyway.
-            if (typeof DevChat !== 'undefined' && DevChat.applyDraftsUpdate) {
-              DevChat.applyDraftsUpdate(data.sessionId);
-            }
-            break;
           case 'app_allowance_changed':
             window.UsernodeReact?.appAllowance?.invalidate?.();
             break;
           case 'budget_updated':
             // #2598: a model call's cost just landed against this user's
-            // weekly pool (services/budget-live.js). Both meters repaint from
-            // the figures the event carries — the composer's and the Settings
+            // weekly pool (services/budget-live.js). The meters repaint from
+            // the figures the event carries — the header's and the Settings
             // AI-credit row — so "$x left this week" ticks while the agent
             // works instead of only once the turn ends. No refetch: the
             // payload IS the snapshot both surfaces read, which is why this
             // can fire every few seconds during a build.
-            //
-            // #6493: the shared allowance is adopted FIRST, then the dev chat
-            // repaints from the state that just moved.
             window.AiCredit?.Budget?.applyPush?.(data.budget);
-            if (typeof DevChat !== 'undefined' && DevChat.applyBudgetUpdate) {
-              DevChat.applyBudgetUpdate(data.budget);
-            }
             break;
           case 'bot_request_card':
             // B9: the card under a message of this person's that asked
@@ -3601,22 +3525,15 @@ const App = {
           case 'user_blocks_changed':
             window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
             break;
-          case 'agent_session_changed':
-            // #2779: an agent session changed (with its new `version`). The
-            // lists redraw their marks; the open one re-reads if behind.
-            window.UsernodeReact?.agentSession?.listChanged?.(data);
-            break;
-          case 'agent_session_drafts_changed':
-            // A draft saved, sent or deleted on another device: the open
-            // conversation re-reads its saved drafts.
-            window.UsernodeReact?.agentSession?.draftsChanged?.(data);
-            break;
           case 'conversation_message_created':
           case 'conversation_message_updated':
           case 'conversation_reaction_updated':
           case 'conversation_read':
           case 'conversation_membership_changed':
           case 'conversation_typing':
+          // The viewer's own saved drafts in the chat with Homeroom bot
+          // changed on another tab or device (features/messages/bot-drafts.ts).
+          case 'conversation_drafts_changed':
             // The global socket is transport only. The React-owned Messages
             // store applies member-scoped events without a legacy DOM write.
             window.UsernodeReact?.messages?.handleEvent?.(data);
@@ -3720,10 +3637,6 @@ const App = {
     // …and the Homeroom bot's activity tray, if its DM is open (#3692).
     // Guarded: unit tests run this sweep in bare vm sandboxes.
     if (typeof CustomEvent === 'function') window.dispatchEvent?.(new CustomEvent('homeroom-bot-work-changed'));
-    // An open agent session learns about its changes from this socket's
-    // notices: whatever it missed while the socket was down, it reads now.
-    window.UsernodeReact?.agentSession?.resync?.();
-    window.UsernodeReact?.agentSession?.refreshList?.();
     // #1038: `session_state` is fire-and-forget like every other broadcast,
     // so anything that transitioned during the disconnect window was lost.
     // The reconcile endpoint is the authority — it also clears overrides for
@@ -3919,20 +3832,13 @@ const App = {
   },
 
   handleSessionUpdate(data) {
-    // #8: behind_main updates patch the dev-chat banner in place
-    // without disturbing the surrounding chat view. We dispatch
-    // before the broader re-render branches because behind_main
-    // events are scoped per-session and don't need a session-list
-    // refetch.
+    // #8: behind_main updates patch the topic page's "Behind main" pill in
+    // place. We dispatch before the broader re-render branches because
+    // behind_main events are scoped per-session and don't need a
+    // session-list refetch.
     if (data.action === 'behind_main' && typeof data.behindMain === 'number') {
-      // The topic page's "Behind main" pill read this number from its last
-      // refetch and went stale while the dev-chat banner updated live; both
-      // surfaces now take the same patch.
       if (typeof AppView !== 'undefined' && AppView.applyBehindMainEvent) {
         AppView.applyBehindMainEvent(data.sessionId, data.behindMain);
-      }
-      if (typeof DevChat !== 'undefined' && DevChat.applyBehindMainUpdate) {
-        DevChat.applyBehindMainUpdate(data.sessionId, data.behindMain);
       }
       return;
     }
@@ -3943,29 +3849,14 @@ const App = {
     // failure the issue reported.
     if (data.action === 'freshness') {
       if (typeof AppView !== 'undefined' && AppView.applyFreshnessEvent) AppView.applyFreshnessEvent(data);
-      if (typeof DevChat !== 'undefined' && DevChat.applyFreshnessUpdate) {
-        DevChat.applyFreshnessUpdate(data);
-      }
       return;
     }
-    // #252: sync-with-main lifecycle events drive the dev-chat sync
-    // banner's spinner/phase text and terminal feedback. Scoped
+    // #252: sync-with-main lifecycle events drive the topic page's sync
+    // row: its spinner/phase text and terminal feedback. Scoped
     // per-session like behind_main — no list refetch needed.
     if (data.action === 'sync_status') {
       if (typeof AppView !== 'undefined' && AppView.applySyncStatusEvent) AppView.applySyncStatusEvent(data);
-      if (typeof DevChat !== 'undefined' && DevChat.applySyncStatusUpdate) {
-        DevChat.applySyncStatusUpdate(data);
-      }
       return;
-    }
-    // Refresh session list if we're on the Sessions sub-tab for this app
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
-        && App.currentSubTab === 'sessions') {
-      if (AppView.appData) {
-        DevChat.loadSessions(AppView.appData.slug).then(() => {
-          if (!DevChat.currentSession) DevChat.renderSessionList();
-        });
-      }
     }
     // #6490: a merge that arrives as a plain session update patches the same
     // caches the vote_update path does, so the card's pill flips whichever
@@ -3982,9 +3873,8 @@ const App = {
 
   handleSessionEvent(data) {
     console.log('[ws] session_event', data.event, data.sessionId, data._seq);
-    // #47: the checks badge can change on any open proposal, not just the
-    // dev session the viewer happens to have focused — refresh the vote
-    // panel + home strip globally before the currentSession early-return.
+    // #47: the checks badge can change on any open proposal — refresh the
+    // vote panel + home strip wherever the viewer is.
     if (data.event === 'checks_ready') {
       // Every page hears every run on the platform: the event names no app.
       // A run in flight reports once a second (`progress` on a 'pending'
@@ -3995,25 +3885,20 @@ const App = {
       const progressTick = data.checkState === 'pending' && data.progress && typeof data.progress === 'object';
       if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
       if (!progressTick) {
-        // The owner's own session page: its header advances Draft -> Checks
-        // running -> Checks passed/failed. A no-op for any other session.
-        if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
-          DevChat.refreshCurrentSessionStatus(data.sessionId);
-        }
         if (data.checkState !== 'pending') {
           App._liveRefresh('checks', data.sessionId, { home: App._sessionIsMine(data.sessionId) });
         } else if (App._sessionIsMine(data.sessionId)) {
-          // A run starting on your own work: the drawer's row says so. The
-          // row itself was patched above.
+          // A run starting on a change the open page shows: its row was
+          // patched above; Home and the mark follow.
           App._liveRefresh('checks', null, { home: true, dev: false });
         }
       }
     }
     // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
-    // can complete for a session that isn't the focused dev-chat one (e.g. a
-    // vote-panel preview), so drive the "spinning back up" overlay globally,
-    // before the currentSession gate below. onStagingRebuildResult is a
-    // no-op unless a matching pending marker is parked, so this is cheap.
+    // completes for whichever change asked for it (a vote-panel preview, a
+    // change page's, the bot's ready card), so drive the "spinning back up"
+    // overlay from here. onStagingRebuildResult is a no-op unless a matching
+    // pending marker is parked, so this is cheap.
     if (data.event === 'staging_ready') {
       AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
     } else if (data.event === 'staging_awake') {
@@ -4022,324 +3907,6 @@ const App = {
       AppView.onStagingRebuildResult(data.sessionId, { url: data.url });
     } else if (data.event === 'staging_failed') {
       AppView.onStagingRebuildResult(data.sessionId, { failed: true, error: data.error });
-    }
-    if (!DevChat.currentSession || DevChat.currentSession.id !== data.sessionId) return;
-    // Dedup by sequence number
-    if (data._seq && DevChat._seenSeqs?.has(data._seq)) return;
-    if (data._seq) {
-      if (!DevChat._seenSeqs) DevChat._seenSeqs = new Set();
-      DevChat._seenSeqs.add(data._seq);
-      // Deliberately do NOT advance DevChat._lastSeenSeq here. That cursor
-      // seeds the resumable GET /events `?since=` replay, and WS + SSE-only
-      // events interleave in ONE monotonic seq stream — advancing it from a
-      // WS delivery would make the replay skip SSE-only events (suggestions,
-      // quick_replies, tokens) that were never actually delivered. Replay
-      // overlap is harmless (_seenSeqs dedups it); cursor over-advancement
-      // loses events until refresh. Only the SSE channels move the cursor.
-    }
-
-    // #2599: live evidence outranks any snapshot that declared the turn over.
-    // A running-agent status, a progress line, a phase or a stop request on
-    // an idle transcript re-arms the turn (Stop button, live stream, poll)
-    // before the row paints — the report's spinning "OpenRouter is running…"
-    // row beside an enabled Send button was exactly this event landing after
-    // a stale not-busy /status answer. The helper is a no-op mid-turn.
-    if (typeof DevChat._noteLiveTurnEvent === 'function') {
-      DevChat._noteLiveTurnEvent({ ...data, type: data.event }, data.sessionId);
-    }
-
-    switch (data.event) {
-      case 'status': {
-        DevChat._deactivateLastStatus();
-        // A status line always closes the current streaming bubble (#99 /
-        // #394): when the WS is the only channel that delivered the Mayor's
-        // phase-1 preamble (POST SSE dropped), seal it here so the phase-2
-        // 'mayor_reasoning' summary opens a fresh bubble below the status row
-        // instead of overwriting the preamble. Mirrors the POST-SSE and
-        // resumable status handlers (dev-chat.js).
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          if (DevChat.messages[i].role === 'assistant') { DevChat.messages[i]._finalized = true; break; }
-        }
-        // Carry the scout spec-preview card fields (#394) so the inline card
-        // renders live when the scout's final status arrives via the WS after
-        // a POST-SSE drop — parity with the POST-SSE (sessions.js) and
-        // resumable (_handleResumedEvent) status handlers.
-        // #786: carry quickReplies so a restart-recovery breadcrumb
-        // delivered over the WS repaints the pill bar live — the recovery
-        // paths broadcast pills on the status event, not 'quick_replies'
-        // (that handler attaches to the last ASSISTANT row, which a
-        // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, agentBackend: data.agentBackend, agentModel: data.agentModel, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
-        // #990: keep a live cue where the next message will land, for the
-        // whole gap between this step line and whatever follows it. Parity
-        // with both dev-chat.js status handlers.
-        if (typeof DevChat._showActivity === 'function') DevChat._showActivity();
-        DevChat.renderMessages();
-        DevChat.scrollToBottom();
-        break;
-      }
-      case 'platform_issue_draft':
-        // Agent-suggested platform report (human gate) — see dev-chat.js.
-        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
-        DevChat._pushPlatformIssueDraft(data);
-        break;
-      case 'billing_switched':
-        // #664: the daily free allowance ran out mid-turn and the worker
-        // proxy switched the remaining calls onto the user's own key. The
-        // server already persisted the matching system row; render the
-        // notice live and refresh the meter so the "your key" split shows.
-        DevChat.messages.push({ role: 'system', content: data.text, billingSwitch: true, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
-        DevChat.renderMessages();
-        DevChat.scrollToBottom();
-        DevChat.refreshBudget();
-        break;
-      case 'staging_ready':
-        DevChat._deactivateLastStatus();
-        DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
-        DevChat.renderMessages();
-        DevChat.scrollToBottom();
-        if (data.url) {
-          DevChat.currentSession.staging_url = data.url;
-          // #127: testing guidance rides along with the rebuild broadcast.
-          if ('testingMd' in data) DevChat.currentSession.testing_md = data.testingMd;
-          if ('testingPath' in data) DevChat.currentSession.testing_path = data.testingPath;
-        }
-        break;
-      case 'staging_failed':
-        DevChat._deactivateLastStatus();
-        DevChat.messages.push({
-          role: 'system',
-          content: `Staging build failed: ${data.error || 'unknown error'}`,
-          stagingFailed: true,
-          stagingErrorName: data.errorName || 'Error',
-          stagingMissingKeys: data.missingKeys || [],
-          created_at: new Date().toISOString(),
-          _slug: Math.random().toString(36).slice(2,8),
-        });
-        DevChat.renderMessages();
-        DevChat.scrollToBottom();
-        break;
-      case 'pr_created':
-      case 'pr_updated':
-        if (DevChat.currentSession) {
-          if (data.prNumber) DevChat.currentSession.pr_number = data.prNumber;
-          if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) {
-            DevChat.currentSession.pr_title = data.prTitle;
-            // #249: server mirrors pr_title into session_title.
-            DevChat.currentSession.session_title = data.prTitle;
-          }
-          if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
-        }
-        break;
-      case 'session_titled':
-        // #249: pre-PR display name landed — refresh header/session UI.
-        if (DevChat.currentSession && data.sessionTitle) {
-          DevChat.currentSession.session_title = data.sessionTitle;
-          if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
-        }
-        break;
-      case 'visuals_ready':
-        // #195: before/after capture finished (it lands after
-        // staging_ready, often after the turn's POST SSE is gone) —
-        // stash the artifact ids and re-render so the staging card
-        // upgrades in place with the media tiles.
-        if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
-          DevChat.currentSession.visuals = data.visuals || null;
-          DevChat.renderMessages();
-        }
-        break;
-      case 'cc_progress':
-        // #990: the coding agent's own live log takes over as the cue.
-        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
-        DevChat._appendProgressLine(data.text, data);
-        DevChat.scrollToBottom();
-        // Also arm the /status polling fallback when cc_progress arrives via
-        // WS (e.g. the SSE POST itself died before getting here). Without
-        // this, a WS reconnect in the middle of the run could lose every
-        // subsequent event and leave the UI stuck with a spinning send
-        // button and stale progress.
-        if (!DevChat._progressPollTimer && DevChat.isStreaming) {
-          DevChat._startProgressPolling(data.sessionId, []);
-        }
-        break;
-      case 'mayor_reasoning': {
-        // #394: the Mayor's authoritative full-text reply (phase-1 preamble or
-        // phase-2 wrap-up summary). Broadcast on the WS now so the post-spec
-        // summary survives a dropped POST SSE — the global-WS 'done' used to
-        // tear down streaming before the resumable stream could replay it, so
-        // the summary only appeared after a manual refresh. Mirrors
-        // DevChat._handleResumedEvent's 'mayor_reasoning' branch. The _seq
-        // dedup above already skipped this if the POST SSE delivered it first.
-        if (!data.text) break;
-        let am = null;
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          if (DevChat.messages[i].role === 'assistant') { am = DevChat.messages[i]; break; }
-        }
-        // No live bubble yet (or the last one is sealed — phase-2 after a
-        // status row) → push a fresh bubble. Otherwise reconcile the existing
-        // live bubble to the server's authoritative text whenever it differs
-        // (the server may have shortened it by scrubbing a fake completion
-        // marker), patching the content node in place when present.
-        // #990: the reply is here — drop the dots, and freeze the step line
-        // that is still painted as live (guarded so a running coding agent
-        // keeps its progress estimate).
-        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
-        if (!am || am._finalized) {
-          if (typeof DevChat._deactivateStatusForFreshBubble === 'function') DevChat._deactivateStatusForFreshBubble();
-          DevChat.messages.push({ role: 'assistant', content: data.text, created_at: new Date().toISOString() });
-          DevChat.renderMessages();
-        } else if (am.content !== data.text) {
-          am.content = data.text;
-          const displayContent = am.content.replace(/^\[CHAT_ONLY\]\s*/i, '');
-          // #1078: the transcript is a React island, so the streaming writer
-          // takes the MESSAGE and publishes a frame keyed to its row. It no
-          // longer resolves a content node as "the last `.dc-msg-content` on
-          // the page" — which was the PREVIOUS turn's bubble whenever this
-          // one had not been rendered yet.
-          if (typeof DevChat._renderStreamingMarkdown === 'function') {
-            DevChat._renderStreamingMarkdown(am, displayContent);
-          } else {
-            DevChat.renderMessages();
-          }
-        }
-        DevChat.scrollToBottom();
-        break;
-      }
-      case 'suggestions': {
-        // Q/A suggested-answer chips, no longer SSE-only: they must survive a
-        // dropped POST SSE just like mayor_reasoning (#394). Attach to the
-        // live assistant bubble — the emit order guarantees mayor_reasoning
-        // (WS-handled above) pushed it first. A sealed bubble means a
-        // dispatch turn, where suggestions were already dropped server-side —
-        // skip rather than mis-attach (same guard as the resumable handler).
-        if (!Array.isArray(data.suggestions) || !data.suggestions.length) break;
-        let am = null;
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          if (DevChat.messages[i].role === 'assistant') { am = DevChat.messages[i]; break; }
-        }
-        if (am && !am._finalized) {
-          am.suggestions = data.suggestions;
-          DevChat.renderMessages();
-          DevChat.scrollToBottom();
-        }
-        break;
-      }
-      case 'quick_replies': {
-        // Quick-reply pills ("Build it", …), no longer SSE-only: the phase-2
-        // emit rides right behind the wrap-up mayor_reasoning, which a long
-        // scout/build turn frequently delivers only via this WS after the
-        // POST SSE died. Attach to the latest assistant bubble; the pill bar
-        // reads from it, so _renderQuickReplies redraws (hidden while
-        // streaming, surfaces when _finishStreaming re-renders).
-        if (!Array.isArray(data.replies) || !data.replies.length) break;
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          if (DevChat.messages[i].role === 'assistant') {
-            DevChat.messages[i].quickReplies = data.replies;
-            DevChat._renderQuickReplies();
-            break;
-          }
-        }
-        break;
-      }
-      case 'assistant_message_end': {
-        // #394: seal the current assistant bubble so a subsequent
-        // 'mayor_reasoning' / token starts a fresh one. Already broadcast on
-        // the WS but previously ignored here; mirrors the POST-SSE and
-        // resumable handlers (dev-chat.js).
-        if (typeof DevChat._flushStreamingFinal === 'function') DevChat._flushStreamingFinal();
-        for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-          if (DevChat.messages[i].role === 'assistant') { DevChat.messages[i]._finalized = true; break; }
-        }
-        break;
-      }
-      case 'done':
-        // A 'done' arriving on the WS means the primary POST SSE never
-        // finished this turn (its own 'done' would have been seq-deduped
-        // first) — reconcile the timeline from the DB so anything that rode
-        // only the dead stream (chips, pills, a late wrap-up) shows without
-        // a manual refresh. See issue #446.
-        // #2599: the WS carries every request's events for this session —
-        // a second send refused with "already running" ends in a `done`
-        // too — so the teardown asks /status first and stays up while the
-        // session is still busy.
-        if (typeof DevChat._endTurnFromSharedChannel === 'function') {
-          DevChat._endTurnFromSharedChannel(data.sessionId).then((idle) => {
-            if (idle) DevChat._reconcileAfterFallbackDone(data.sessionId);
-          });
-        } else {
-          DevChat._deactivateLastStatus();
-          DevChat._finishStreaming();
-          DevChat.renderMessages();
-          DevChat._reconcileAfterFallbackDone(data.sessionId);
-        }
-        break;
-      case 'spec_updated':
-        // Mayor's dispatch_scout updated the live draft.
-        // The accompanying status event already pushed an inline preview
-        // card into the chat timeline; we just keep an open spec viewer
-        // in sync if the user happens to be looking at the live draft.
-        if (typeof DevChat._handleSpecUpdated === 'function') {
-          DevChat._handleSpecUpdated(data);
-        }
-        break;
-      // #437: these four are broadcast on the WS (not in SSE_ONLY), so once
-      // the WS path is live they MUST be handled here — handleSessionEvent
-      // records `data._seq` into _seenSeqs BEFORE this switch, so an
-      // unhandled type arriving first on the WS would mark the seq seen and
-      // then get the matching POST-SSE / resumable copy deduped-and-swallowed.
-      // Mirrors the resumable handlers in dev-chat.js (_handleResumedEvent).
-      case 'phase':
-        // Toggle the live-status UI between stop-button (interruptible) and
-        // spinner (wrap-up). Cheap + idempotent — just swaps the button glyph.
-        DevChat._setStreamingUI(true, data.phase);
-        break;
-      case 'stopping':
-        // #889: someone hit Stop on this session (possibly in another tab or
-        // on another device). Paint the interim "stopping…" state here too —
-        // and note this case is REQUIRED, not decorative: an unhandled type
-        // arriving first on the WS marks its _seq seen and gets the matching
-        // SSE/resumable copy deduped-and-swallowed (see the comment above).
-        DevChat._enterStoppingState({ by: data.by });
-        break;
-      case 'stopped':
-        // The "Stopped by @user." status row was already persisted + emitted
-        // server-side via sendStatus, so just tear down the streaming UI —
-        // once /status confirms the session is idle (#2599, as for 'done').
-        if (typeof DevChat._endTurnFromSharedChannel === 'function') {
-          DevChat._endTurnFromSharedChannel(data.sessionId);
-        } else {
-          DevChat._removeSpinner();
-          DevChat._deactivateLastStatus();
-          DevChat._finishStreaming();
-        }
-        break;
-      case 'cc_estimate':
-        // Experimental AI progress estimate (opt-in, server-gated).
-        // `cleared: true` (#891) blanks the guess at the coding run's end.
-        DevChat._applyEstimate(data.text, data.remainingSeconds, {
-          estimatedAt: data.estimatedAt, cleared: data.cleared,
-        });
-        break;
-      case 'cc_log':
-        DevChat.messages.push({
-          role: 'system',
-          ccLog: data.log,
-          // #3296: an OpenRouter model can run in Claude Code as well.
-          content: data.agentBackend === 'codex_openrouter' && data.agentHarness !== 'claude'
-            ? 'Codex log'
-            : 'Claude Code log',
-          agentBackend: data.agentBackend,
-          agentHarness: data.agentHarness,
-          agentModel: data.agentModel,
-          created_at: new Date().toISOString(),
-        });
-        // #990: real content arrived — the trailing dots stand down. Guarded
-        // with typeof because app.js may run before dev-chat.js is defined.
-        if (typeof DevChat._hideActivity === 'function') DevChat._hideActivity();
-        DevChat.renderMessages();
-        DevChat.scrollToBottom();
-        break;
     }
   },
 
@@ -4646,14 +4213,14 @@ const App = {
     if (wait <= 0) run();
     else App._homeLiveTimer = setTimeout(run, wait);
   },
-  // Is this one of the viewer's own sessions, or a row on the page they are
-  // looking at? A checks event is broadcast to everyone on the platform, and
-  // only these are worth re-reading anything for.
+  // Is this a row on the page the viewer is looking at? A checks event is
+  // broadcast to everyone on the platform, and only these are worth
+  // re-reading anything for. It also asked the Improve controller's list of
+  // the viewer's own changes until that list went with its last surface,
+  // Messages' Agents section (16 Nov 2026).
   _sessionIsMine(sessionId) {
     const id = Number(sessionId);
     if (!Number.isFinite(id)) return false;
-    if (typeof DevChat !== 'undefined' && DevChat.currentSession && Number(DevChat.currentSession.id) === id) return true;
-    if (window.Improve && Array.isArray(Improve._all) && Improve._all.some((s) => s && Number(s.id) === id)) return true;
     return typeof AppView !== 'undefined' && !!AppView.holdsSession && AppView.holdsSession(id);
   },
 
@@ -4684,12 +4251,6 @@ const App = {
     // once for the burst this event arrives in, which usually also carries
     // the voter's own POST (see _liveRefresh).
     App._liveRefresh('vote', data.sessionId, { appSlug: data.appSlug, merged: !!data.merged, home: true });
-    // #405: advance the OPEN dev session's header pill + change card live
-    // (e.g. promoted → merging → merged) when this update is for the session
-    // the user is currently looking at. No-op otherwise.
-    if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
-      DevChat.refreshCurrentSessionStatus(data.sessionId);
-    }
     // If merged, refresh the app view. Home re-reads its grid only while it
     // is showing (the burst's home refresh): an unconditional Home.load()
     // here pulled the whole app list, 670 KB, onto a Workshop nobody had
@@ -4821,9 +4382,6 @@ const App = {
       if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
       // A running app's ✕: back to the page it was opened from (closeApp).
       if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;
-      // A dev SESSION claims it as "back to the Board" (Streamlined
-      // Concept); declines when no session is open.
-      if (App.currentApp && window.DevChat?.handleBack?.()) return;
       // FOLLOW THE ARROW'S OWN HREF. Every screen that shows the arrow tells
       // setBackIcon where it points, and until now that href was decorative
       // on a plain click: the chain preventDefault()s and then always went
@@ -4972,9 +4530,7 @@ const App = {
     if (opts.chromeless) {
       suffix = '/full';
     } else if (norm.tab === 'dev') {
-      if (norm.subTab === 'sessions' && norm.ref) {
-        suffix = `/dev/sessions/${norm.ref}`;
-      } else if (norm.subTab === 'chat') {
+      if (norm.subTab === 'chat') {
         suffix = '/dev/chat';
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.kind === 'proposal'
           && norm.ref.pr) {
@@ -5569,8 +5125,17 @@ const App = {
         }
       }
 
+      // An agent chat's or a dev chat's address: swapped in place for where
+      // it goes now (App._oldChatAddress) and routed as that, in this pass.
+      const movedTo = hash ? App._oldChatAddress(hash.split('/')) : null;
+      if (movedTo) {
+        try { history.replaceState(null, '', App._rootUrl(movedTo)); } catch (_) { return; }
+        App.restoreFromHash();
+        return;
+      }
+
       // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — a
-      // proposal, an issue, a change, a conversation, an agent chat, and the
+      // proposal, an issue, a change, a conversation, and the
       // inbox a thread climbs back to. Anything else a link inside it names
       // belongs to the TOP window: an app's App tab goes to the running app
       // beside the panel, and a tab, a profile, Settings or a community's
@@ -5598,7 +5163,6 @@ const App = {
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
-        else if (App._inAgentSession) App.navigateHome();
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
         else if (App._inAi) App.navigateHome();
@@ -5629,7 +5193,6 @@ const App = {
         // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings
-          || App._inAgentSession
           || App._inMessages || App._inWorkshop || App._inAi) {
           App.navigateHome();
         } else {
@@ -5875,42 +5438,12 @@ const App = {
           // whether it names anything. #2387: `/thread/<id>` opens a reply
           // thread beside the channel, `/m/<id>` a message link into it.
           if (App._appChatToHub(parts[2], parts.slice(3), hash)) return;
-          App.navigateToMessages(null, parts[2], null, App._messagesExtras(parts.slice(3)));
-          return;
-        }
-        // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
-        // an agent session at `#messages/agent/<id>`, an app's dev session
-        // at `#messages/session/<slug>/<id>`. On a PHONE an agent session
-        // opens here as well, as the second level of the inbox's drawer
-        // (features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026), so a
-        // swipe goes back to the list. A dev session
-        // is still a screen of its own there, so its address is swapped in
-        // place for that screen's (`#app/<slug>/dev/sessions/<id>`): no
-        // history entry of its own, so Back from it still lands on the inbox
-        // it was opened from.
-        const agent = App._messagesAgentThread(parts);
-        if (agent && agent.kind === 'agent') App._takeAgentFlow(hash, fragQuery);
-        if (agent) {
-          if (agent.kind === 'session' && !window.matchMedia('(min-width: 768px)').matches) {
-            if (typeof Improve !== 'undefined') Improve.enterSessionFrom?.('#messages');
-            // replaceState and route the new address in this same pass, the
-            // way the #topochain aliases heal: a `location.replace` from
-            // inside the router lost the app route to the pass it raced.
-            try {
-              history.replaceState(null, '', App._rootUrl(
-                `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
-            } catch (_) { return; }
-            App.restoreFromHash();
-            return;
-          }
-          App.navigateToMessages(null, null, agent);
-          // The pane does not open the conversation it is already showing
-          // again, so a `?flow=` link to that one is handed to it here.
-          if (agent.kind === 'agent') window.UsernodeReact?.agentSession?.applyHandoff?.(agent.id);
+          App.navigateToMessages(null, parts[2], App._messagesExtras(parts.slice(3)));
           return;
         }
         // A Global Chat thread's address (a UUID, never all digits) names
-        // nothing since Global Chat was removed: the inbox opens instead.
+        // nothing since Global Chat was removed: the inbox opens instead. An
+        // agent chat's, all digits, never gets here (_oldChatAddress).
         if (parts[1] === 'agent' && parts[2]) {
           App._retiredChatToInbox();
           return;
@@ -5957,7 +5490,6 @@ const App = {
         App.navigateToMessages(
           validConversation ? conversationId : null,
           null,
-          null,
           validConversation ? App._messagesExtras(parts.slice(2)) : {},
         );
         return;
@@ -5974,16 +5506,16 @@ const App = {
       }
       if (parts[0] === 'homeroom-bot') {
         // #6019: the Homeroom bot tab. `#homeroom-bot` is its own page
-        // (features/ai/): what needs you, your private threads, In progress,
-        // with Main Chat, the chat with the bot, the list's first row.
+        // (features/ai/): what needs you, your private threads, In progress.
         // 1 Nov 2026: the chat is this page's alone, in the column beside the
-        // list (or a phone's drawer), never the Messages screen's. Its
-        // addresses say where in it: `main`, `thread/<id>`, either with
-        // `m/<id>` (features/ai/door.ts), handed to the page, which takes
-        // each once. A request, a change or a decision opened in that column
-        // has an address of its own too (`request|change|decision/<slug>/<n>`):
-        // the page opens it there, or on its own page where the column does
-        // not fit.
+        // list (or a phone's drawer), never the Messages screen's. 14 Nov
+        // 2026: every conversation in it is a thread. Its addresses say
+        // where: `thread/<id>`, with `m/<id>` for a message of it
+        // (features/ai/door.ts), handed to the page, which takes each once.
+        // A request, a change or a decision opened in that column has an
+        // address of its own too (`request|change|decision/<slug>/<n>`): the
+        // page opens it there, or on its own page where the column does not
+        // fit.
         App.setChromeless(false);
         App.navigateToAi();
         // 6 Nov 2026 (#6425): on a desktop the tab's own page is its lists
@@ -5996,55 +5528,40 @@ const App = {
         if (parts[1] === 'request' || parts[1] === 'change' || parts[1] === 'decision') {
           window.UsernodeReact?.ai?.openItem?.('#' + parts.join('/'));
         }
-        if (parts[1] === 'main' || parts[1] === 'thread' || parts[1] === 'm') {
-          const at = App._messagesExtras(parts[1] === 'main' ? parts.slice(2) : parts.slice(1));
-          window.UsernodeReact?.ai?.openAt?.({
-            threadRootId: at.threadRootId || null,
-            focusMessageId: at.focusMessageId || null,
-          });
+        if (parts[1] === 'main' || parts[1] === 'old' || parts[1] === 'thread' || parts[1] === 'm') {
+          const at = parts[1] === 'old' ? {}
+            : App._messagesExtras(parts[1] === 'main' ? parts.slice(2) : parts.slice(1));
+          if (at.threadRootId) {
+            window.UsernodeReact?.ai?.openAt?.({
+              threadRootId: at.threadRootId,
+              focusMessageId: at.focusMessageId || null,
+            });
+          } else {
+            // AN ADDRESS FROM BEFORE (14 Nov 2026). `main` was Main Chat,
+            // which is gone: it opens the thread the person's old Main Chat
+            // messages were moved under, or a new chat when they had none.
+            // `main/m/<id>` and `m/<id>` name a message without its thread:
+            // the server says which thread it is in now. `old/agent/<id>` is
+            // an agent chat (_oldChatAddress): it opens the thread that
+            // chat's history was moved under, or the tab's own page. Either
+            // way the address is rewritten in place (features/ai/where.ts),
+            // with no step for Back and no second pass through here.
+            window.UsernodeReact?.ai?.openOld?.('#' + parts.join('/'));
+          }
         }
-        // 10 Nov 2026: `new` is the bot's "+" pressed for you, a blank thread
-        // that may come already set (`?project=<slug>&with=<builder>`,
-        // features/ai/door.ts botNewAt): a project's Workshop asking a
-        // newcomer who should build.
+        // 10 Nov 2026: `new` is New chat pressed for you, a new chat that
+        // may come already set (`?project=<slug>&with=<builder>`,
+        // features/ai/door.ts botNewAt): a project's Workshop row, or its
+        // card asking a newcomer who should build.
         if (parts[1] === 'new') {
           window.UsernodeReact?.ai?.openNew?.('#' + parts.join('/') + (fragQuery ? '?' + fragQuery : ''));
         }
         return;
       }
-      // On a phone an agent session opens in Messages, as the second level
-      // of its drawer, and its screen's address comes with it
-      // (_agentToInbox): an agent session or a new one, a ?flow= kept for
-      // that route to hand over. #agent/<id>/changes keeps its screen.
-      if (parts.length === 2 && parts[0] === 'agent'
-        && (parts[1] === 'new' || App._numericSegment(parts[1]) != null)
-        && App._agentToInbox(`#messages/agent/${parts[1]}`, fragQuery)) return;
       if (parts[0] === 'chat') {
         // Global Chat (#2543) was removed. Its addresses, a bare #chat and
         // #chat/<id>, open the inbox.
         App._retiredChatToInbox();
-        return;
-      }
-      if (parts[0] === 'agent') {
-        // #2779: an agent session, one conversation with the Mayor that works
-        // on any app. Its own screen at #agent/<id> on a wide window (a
-        // desktop can also draw it beside the inbox at #messages/agent/<id>,
-        // and a phone opens it there, _agentToInbox).
-        // A serial id, so the same signed-int32 bound as a conversation's;
-        // `#agent/new` is one not sent yet, created by its first message.
-        App.setChromeless(false);
-        App._takeAgentFlow(hash, fragQuery);
-        if (parts[1] === 'new') {
-          App.navigateToAgentSession('new');
-          return;
-        }
-        const agentSessionId = App._numericSegment(parts[1]);
-        if (agentSessionId == null || agentSessionId > 2147483647) {
-          App.navigateToMessages(null);
-          return;
-        }
-        // `#agent/<id>/changes` opens it with the changes drawer up.
-        App.navigateToAgentSession(agentSessionId, { drawer: parts[2] === 'changes' });
         return;
       }
       if (parts[0] === 'topochain') {
@@ -6080,12 +5597,12 @@ const App = {
         // Card-list hashes (#194 revision): app/{slug}/app,
         // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
         // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
-        // dev/governance/{id} (full-screen topic views), and
-        // app/{slug}/dev/sessions/{id} (session view). The retired
+        // dev/governance/{id} (full-screen topic views). The retired
         // dev/settings form (#645) falls through to the card list.
-        // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
-        // the old dev/chat|issues|proposals sub-tab forms — all map onto
-        // the forum so old links and notification hrefs keep working.
+        // Legacy hashes — group-chat and the old dev/chat|issues|proposals
+        // sub-tab forms — all map onto the forum so old links and
+        // notification hrefs keep working. A dev chat's addresses were
+        // rewritten before this branch (_oldChatAddress).
         let tab = parts[2] || 'app';
         let subTab = null;
         let ref = null;
@@ -6154,15 +5671,7 @@ const App = {
         }
         if (tab === 'dev') {
           const sec = parts[3] || null;
-          if (sec === 'sessions' && parts[4] === 'new') {
-            // #2779: the retired classic unsent change (#2241).
-            App.openNewChangeAsAgentSession(slug);
-            return;
-          }
-          if (sec === 'sessions' && parts[4]) {
-            subTab = 'sessions';
-            ref = parseInt(parts[4]) || null;
-          } else if (sec === 'chat') {
+          if (sec === 'chat') {
             // Full-screen general chat (also where legacy group-chat
             // links land — the old Chat sub-tab's original meaning).
             subTab = 'chat';
@@ -6182,13 +5691,12 @@ const App = {
             subTab = 'topic';
             ref = { kind: 'gov', id: parseInt(parts[4]) || null };
           } else if (sec === 'shared' && parts[4]) {
-            // A shared dev session's public discussion page (distinct
-            // from dev/sessions/{id}, which is the OWNER's dev chat).
+            // A shared dev session's public discussion page.
             subTab = 'topic';
             ref = { kind: 'session', id: parseInt(parts[4]) || null };
           } else {
-            // dev, dev/issues, dev/proposals, dev/sessions (no id) —
-            // all land on the plain card list.
+            // dev, dev/issues, dev/proposals — all land on the plain
+            // card list.
             subTab = 'forum';
             // A link to the LIST of requests or changes opens All items by
             // stage, as `board` does above, not the Hub (audit N03).
@@ -6200,10 +5708,6 @@ const App = {
           }
         } else if (tab === 'group-chat') {
           tab = 'dev'; subTab = 'chat';
-        } else if (tab === 'individual-chat') {
-          tab = 'dev';
-          subTab = parts[3] ? 'sessions' : 'forum';
-          ref = parts[3] ? parseInt(parts[3]) : null;
         } else {
           tab = 'app';
         }
@@ -6250,7 +5754,7 @@ const App = {
         } else if (App.currentTab !== tab
             || (tab === 'dev' && App.currentSubTab !== subTab)
             // Same tab + sub-tab but a (possibly different) deep-link
-            // target — re-dispatch so the accordion / session moves.
+            // target — re-dispatch so the accordion / topic moves.
             // switchTab is idempotent, so a same-target re-render is fine.
             || (tab === 'dev' && ref != null)
             // A chromeless hash carrying a DIFFERENT inner path than the
@@ -6522,8 +6026,7 @@ const App = {
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen',
     'workshop-screen', 'weekly-digest-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen',
-    'agent-session-screen', 'ai-screen'],
+    'settings-screen', 'messages-screen', 'ai-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -6566,9 +6069,6 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
-    if (revealId !== 'agent-session-screen' && App._inAgentSession) {
-      App._exitAgentSession();
-    }
     // The ✕'s remembered origin (App._appReturn) ends with the app visit it
     // was about: every reveal of a screen that is not the app view. `app-view`
     // is excluded because navigateToApp does not come through here to reveal
@@ -6805,8 +6305,8 @@ const App = {
   // serialised, because that is the one spelling of "where in the Workshop"
   // the router already restores exactly, for Back/Forward and cold links
   // alike. Only the app's Workshop routes count: the running app is the
-  // parked strip's business (#2762), and the discussion and a change are
-  // Messages threads (_isMessagesThread) that light the other tab.
+  // parked strip's business (#2762), and the discussion is the project
+  // page's own tab.
   //
   // PERSISTED LIKE THE PARKED APP: localStorage, one small entry, forgotten by
   // the same session sweep (_dropCachedSession) so the next account on this
@@ -6819,7 +6319,7 @@ const App = {
     let path;
     try { path = new URL(String(url || ''), location.origin).pathname; } catch (_) { return null; }
     const m = /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/(workshop|board|dev(?:\/.*)?)$/.exec(path);
-    if (!m || /^dev\/(chat|sessions)(\/|$)/.test(m[1])) return null;
+    if (!m || /^dev\/chat(\/|$)/.test(m[1])) return null;
     return path;
   },
 
@@ -6837,7 +6337,6 @@ const App = {
       App._resumingWorkshop = null;
     }
     if (!App.currentApp || App.currentTab !== 'dev' || App.chromeless) return;
-    if (App._isMessagesThread()) return;
     const path = App._workshopViewPath(url);
     if (!path || !path.startsWith(`/app/${encodeURIComponent(App.currentApp)}/`)) return;
     try {
@@ -6922,7 +6421,7 @@ const App = {
   // caught where the topic view resolves it (_abandonWorkshopResume).
   resumeWorkshopView() {
     if (App._revealedScreen === 'app-view' && App.currentApp
-        && App.currentTab === 'dev' && !App._isMessagesThread()) return false;
+        && App.currentTab === 'dev') return false;
     const view = App._readWorkshopView();
     if (!view) return false;
     try {
@@ -7072,24 +6571,12 @@ const App = {
     // Passed explicitly rather than mapped, for the reason the bridge's own
     // note gives.
     //
-    // …EXCEPT THE DISCUSSION, WHICH IS A MESSAGE THREAD (#2718 review).
-    // `dev/chat` is the app's general chat, and it is a ROW IN THE MESSAGES
-    // INBOX — that is the whole reason it stopped being offered from the
-    // Workshop's Current status pane. Lighting Workshop there put the reader
-    // in a section they had not been in, and the way back it offered led to
-    // the Workshop rather than to the list they opened the thread from.
-    //
-    // …AND A CHANGE, WHICH IS AN AGENT CONVERSATION (#2770). A dev session is
-    // listed under Messages → Agents beside the agent chats, and New change
-    // lands on one — so its screen lights Messages, not the Workshop it used
-    // to be reached through.
-    //
-    // …AND A THREAD OPENED FROM THE HOMEROOM BOT TAB'S PAGE (_isBotTopic),
+    // …EXCEPT A THREAD OPENED FROM THE HOMEROOM BOT TAB'S PAGE (_isBotTopic),
     // which is that tab's.
     window.UsernodeReact?.nav?.setScreen?.(
       screen,
       screen === 'app-view' && !inApp
-        ? (App._isMessagesThread() ? 'messages' : App._isBotTopic() ? 'ai' : 'workshop')
+        ? (App._isBotTopic() ? 'ai' : 'workshop')
         : null,
     );
     // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
@@ -7128,7 +6615,6 @@ const App = {
     'profile-screen': 'profile',
     'settings-screen': 'settings',
     'messages-screen': 'messages',
-    'agent-session-screen': 'agent_session',
     'ai-screen': 'ai',
     // This week (#6371): the page the weekly digest's bell row opens.
     'weekly-digest-screen': 'weekly_digest',
@@ -7255,14 +6741,6 @@ const App = {
         if (App._railPinned()) App._resyncRailBesideApp();
       });
     } catch (_) { /* no matchMedia: nothing to watch */ }
-  },
-
-  // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
-  // app's Workshop: its discussion (#2718 review) and a dev session (#2770).
-  // One predicate, because the tab that lights and the back slot's glyph are
-  // two answers to the same question and have to agree.
-  _isMessagesThread() {
-    return App.currentTab === 'dev' && App.currentSubTab === 'sessions';
   },
 
   // A request, a change or a decision opened from the Homeroom bot tab's
@@ -7600,9 +7078,6 @@ const App = {
     // one owner. tests/react-screen-ids-consistency.test.js pins the rule
     // for every screen root at once.
     'messages-screen',
-    // Agent sessions (#2779): features/agent-session/index.tsx takes
-    // useVisibilityHiddenClass from its first commit, same seam.
-    'agent-session-screen',
     // Workshop (#workshop). React-owned end to end from the day it shipped —
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
@@ -7776,7 +7251,7 @@ const App = {
     // live App-tab iframe.
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     // The app teardown is a VISIBLE mutation (it blanks the drawer's
-    // build/fork slots and resets the dev-chat panes), so it rides in the
+    // build/fork slots and resets the Dev surfaces), so it rides in the
     // transition callback below; only the flag flips synchronously, since
     // navigateToApp's async tail reads it as "what is on screen now".
     const leavingApp = !!App.currentApp;
@@ -8086,8 +7561,8 @@ const App = {
   },
 
   // #6019 follow-up: the Homeroom bot tab's own page (features/ai/), a tab
-  // root like the Workshop. Main, the chat with the bot, is in its column
-  // (1 Nov 2026: no longer a level under it on the Messages screen). The
+  // root like the Workshop. A thread of the chat with the bot is in its
+  // column (1 Nov 2026: no longer a level on the Messages screen). The
   // page keeps no state of its own to leave, so nothing has to exit it: the
   // next screen's reveal hides it.
   navigateToAi() {
@@ -8480,7 +7955,7 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId, appSlug, agent, extras) {
+  navigateToMessages(conversationId, appSlug, extras) {
     const messages = window.UsernodeReact?.messages;
     const more = extras || {};
     // ALREADY HERE: route the island in place rather than replaying a screen
@@ -8490,7 +7965,7 @@ const App = {
     // in _showOnlyScreen is what keeps the flag honest; this is the belt to
     // its braces, and costs one condition.
     if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null, appSlug || null, agent || null, more);
+      messages.route?.(conversationId || null, appSlug || null, more);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -8505,7 +7980,7 @@ const App = {
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null, appSlug || null, agent || null, more);
+    messages?.route?.(conversationId || null, appSlug || null, more);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
@@ -8531,78 +8006,52 @@ const App = {
     return out;
   },
 
-  // #2813: the agent thread a `#messages/agent/…` or `#messages/session/…`
-  // address names, or null. Raw segments, like the discussion's slug: the
-  // store validates the shape and the server decides whether it exists.
-  _messagesAgentThread(parts) {
-    if (parts[1] === 'agent' && parts[2]) {
-      let id = null;
-      try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
-      // #2779: an agent session's id is a serial, so a number names one, and
-      // so does `new`: the one New change opens, unsent until its first
-      // message. Anything else (a removed Global Chat thread's UUID) is null.
-      if (id === 'new') return { kind: 'agent', id: 'new' };
-      const agentSessionId = App._numericSegment(id);
-      if (agentSessionId != null && agentSessionId <= 2147483647) {
-        return { kind: 'agent', id: agentSessionId };
-      }
-      return null;
-    }
-    if (parts[1] === 'session' && parts[2] && parts[3]) {
-      let slug = null;
-      try { slug = decodeURIComponent(parts[2]); } catch (_) { return null; }
-      const id = App._numericSegment(parts[3]);
-      return id != null && id <= 2147483647 ? { kind: 'session', slug, id } : null;
-    }
-    return null;
-  },
-
-  // #4312: a shared link's `?flow=claude-code|codex` on an agent session
-  // address, in the fragment's own query (#messages/agent/new?flow=codex) or
-  // the page's (/?flow=codex#messages/agent/new). The conversation opens with
-  // its "Build with" sheet on that agent's tab, as the model pill and the
-  // credits card open it (features/agent-session/store.ts prepareHandoff).
-  // The value is taken out of the address once handed over, so a reload,
-  // Back, or the first message giving an unsent conversation its own address
-  // does not open the sheet again. Any other value is ignored.
-  // ON A PHONE AN AGENT SESSION IS MESSAGES' (the inbox's drawer,
-  // features/nav-drawer/messages-drawer.ts; Evan, 18 Oct 2026): the list sits
-  // beside it and a swipe goes back to it. So its own screen's addresses,
-  // `#agent/<id>` and `#agent/new`, are swapped in place for the inbox's
-  // (`#messages/agent/…`), the fragment's query (a `?flow=`) kept, and routed
-  // in this same pass, as the inbox's own addresses were swapped the other
-  // way before. `#agent/<id>/changes` (the changes drawer, which the inbox
-  // does not carry), a wide window and the side panel's own document keep
-  // the screen. Returns whether it took the address.
-  _agentToInbox(address, fragQuery) {
-    if (App.embeddedPanel || window.matchMedia('(min-width: 768px)').matches) return false;
-    try {
-      history.replaceState(null, '', App._rootUrl(`${address}${fragQuery ? `?${fragQuery}` : ''}`));
-    } catch (_) { return false; }
-    App.restoreFromHash();
-    return true;
-  },
-
-  _takeAgentFlow(hash, fragQuery) {
-    const read = (query) => {
-      try { return new URLSearchParams(query || '').get('flow'); } catch (_) { return null; }
+  // Agent chats and dev chats are gone. Their addresses still arrive, from a
+  // bookmark, an email or an old bell row, and each has somewhere to go:
+  //
+  //   #agent/new, #messages/agent/new         -> #homeroom-bot/new
+  //   #agent/<id>[/…], #messages/agent/<id>   -> #homeroom-bot/old/agent/<id>
+  //   #messages/session/<slug>/<id>           -> #app/<slug>/dev/proposals/<id>
+  //   #app/<slug>/dev/sessions/<id>           -> #app/<slug>/dev/proposals/<id>
+  //   #app/<slug>/dev/sessions/new            -> #homeroom-bot/new?project=<slug>
+  //   #app/<slug>/dev/sessions                -> #app/<slug>/dev
+  //
+  // `#app/<slug>/individual-chat[/<id>]`, the dev chat's address before
+  // that, goes where `dev/sessions[/<id>]` does. `parts` is the address
+  // split on `/`, a fragment or a clean /app/<slug>/… path alike. Returns
+  // the new address, or null for an address that is none of these: an id is
+  // a serial, so a Global Chat thread's UUID in the same place stays
+  // with _retiredChatToInbox. restoreFromHash swaps the address in place
+  // and routes the new one in the same pass, so Back never lands on the old
+  // one.
+  _oldChatAddress(parts) {
+    const serial = (raw) => {
+      const id = App._numericSegment(raw);
+      return id != null && id <= 2147483647 ? id : null;
     };
-    const known = (value) => value === 'claude-code' || value === 'codex';
-    const flow = [read(fragQuery), read(location.search)].find(known);
-    if (!flow) return;
-    window.UsernodeReact?.agentSession?.prepareHandoff?.(flow);
-    const without = (query) => {
-      try {
-        const params = new URLSearchParams(query || '');
-        if (known(params.get('flow'))) params.delete('flow');
-        const rest = params.toString();
-        return rest ? `?${rest}` : '';
-      } catch (_) { return ''; }
-    };
-    try {
-      history.replaceState(history.state, '',
-        `${location.pathname}${without(location.search)}#${hash}${without(fragQuery)}`);
-    } catch (_) {}
+    if (parts[0] === 'agent' || (parts[0] === 'messages' && parts[1] === 'agent')) {
+      const named = parts[0] === 'agent' ? parts[1] : parts[2];
+      if (named === 'new') return '#homeroom-bot/new';
+      const id = serial(named);
+      if (id != null) return `#homeroom-bot/old/agent/${id}`;
+      return parts[0] === 'agent' ? '#homeroom-bot' : null;
+    }
+    if (parts[0] === 'messages' && parts[1] === 'session' && parts[2]) {
+      const id = serial(parts[3]);
+      return id != null ? `#app/${parts[2]}/dev/proposals/${id}` : null;
+    }
+    if (parts[0] !== 'app' || !parts[1]) return null;
+    const named = parts[2] === 'individual-chat' ? (parts[3] || '')
+      : (parts[2] === 'dev' && parts[3] === 'sessions') ? (parts[4] || '')
+        : null;
+    if (named == null) return null;
+    if (named === 'new') {
+      let slug = parts[1];
+      try { slug = decodeURIComponent(slug); } catch (_) { /* the raw segment */ }
+      return `#homeroom-bot/new?project=${encodeURIComponent(slug)}`;
+    }
+    const id = serial(named);
+    return id != null ? `#app/${parts[1]}/dev/proposals/${id}` : `#app/${parts[1]}/dev`;
   },
 
   // State-only teardown; the incoming transition hides the root.
@@ -8612,7 +8061,7 @@ const App = {
   },
 
   // Global Chat (#2543) was removed. Its addresses (`#chat`, `#chat/<id>`,
-  // `#messages/agent/<uuid>`) open the inbox: the address is replaced with
+  // and a thread's UUID under `#messages`) open the inbox: the address is replaced with
   // `#messages`, so a reload or Back does not route the old one again.
   _retiredChatToInbox() {
     try {
@@ -8620,75 +8069,6 @@ const App = {
     } catch (_) {}
     App.setChromeless(false);
     App.navigateToMessages(null);
-  },
-
-  // #2779: /app/<slug>/dev/sessions/new was the classic unsent-change
-  // screen (#2241). Classic sessions are no longer created, so that address
-  // — a bookmark, Back, a link an older page wrote — opens an unsent agent
-  // session focused on the app instead, at the address New change uses. The
-  // history entry is REPLACED, so Back does not land on the old address and
-  // bounce straight forward again. The side panel's own document keeps its
-  // `agent/new`, the one form of that address its route table knows.
-  //
-  // An unsent conversation already on screen at that address would not be
-  // routed again, and the hint would wait for the next one; the controller's
-  // own start applies it in place instead (it re-routes the same address).
-  openNewChangeAsAgentSession(slug) {
-    const agentSession = window.UsernodeReact?.agentSession;
-    const hint = slug ? { slug, entry: 'app' } : null;
-    const next = App.embeddedPanel ? '#agent/new' : '#messages/agent/new';
-    const showingDraft = !App.embeddedPanel && !!agentSession?.isOpen?.()
-      && agentSession?.currentId?.() === 'new';
-    try {
-      // From the root, not beside the clean /app/<slug>/… path it came in on.
-      history.replaceState(history.state, '', App._rootUrl(next));
-    } catch (_) {
-      agentSession?.prepareDraft?.(hint);
-      window.location.hash = next;
-      return;
-    }
-    if (showingDraft && typeof agentSession.start === 'function') {
-      agentSession.start(hint);
-      return;
-    }
-    agentSession?.prepareDraft?.(hint);
-    App.restoreFromHash();
-  },
-
-  // #2779: an agent session's own screen. A pair, as every React screen is:
-  // the React store (features/agent-session) loads the conversation, and
-  // this router owns the screen swap and chrome. The store retitles the bar
-  // with the conversation's title once it has it.
-  navigateToAgentSession(id, options = {}) {
-    const agentSession = window.UsernodeReact?.agentSession;
-    if (App._inAgentSession && agentSession?.isOpen?.() && agentSession?.currentId?.() === id) {
-      agentSession?.route?.(id, options);
-      return;
-    }
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    const leavingApp = !!App.currentApp;
-    App.currentApp = null;
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inWorkshop) App._exitWorkshop();
-    if (App._inMessages) App._exitMessages();
-    const screen = document.getElementById('agent-session-screen');
-    App._inAgentSession = true;
-    agentSession?.route?.(id, options);
-    PlatformUI.transition(() => {
-      if (leavingApp) AppView.close();
-      App._showOnlyScreen('agent-session-screen');
-      App._enterScreenChrome();
-      if (typeof Home !== 'undefined') Home.publishImproveTarget();
-      App.setHeaderTitle(PlatformI18n.t('shell:title.agentSession'));
-    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
-  },
-
-  _exitAgentSession() {
-    App._inAgentSession = false;
-    window.UsernodeReact?.agentSession?.deactivate?.();
   },
 
   // The Notifications SHEET's deep-link resolver (Streamlined Concept).
@@ -8781,9 +8161,9 @@ const App = {
   // Push a new history entry on real screen transitions (entering an
   // app, switching tabs, going home) so the WebView builds a real
   // back stack; replace in-place when only secondary state changes
-  // within the same screen (e.g. selecting a different dev-chat
-  // session inside the individual-chat tab) — otherwise every session
-  // click would add an entry the user has to back through.
+  // within the same screen (e.g. moving between two topics of the same
+  // kind) — otherwise every such click would add an entry the user has
+  // to back through.
   //
   // "Screen" here = the `/app/<slug>/<view>` prefix; the optional final
   // record id is intentionally NOT part of the screen id.
@@ -8796,10 +8176,7 @@ const App = {
       let ref = opts.ref;
       let boardView = opts.boardView;
       if (App.currentTab === 'dev') {
-        if (ref == null && App.currentSubTab === 'sessions'
-            && typeof DevChat !== 'undefined' && DevChat.currentSession) {
-          ref = DevChat.currentSession.id || null;
-        } else if (ref == null && App.currentSubTab === 'topic'
+        if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
         } else if (ref && ref.kind === 'proposal' && !ref.pr && App.currentSubTab === 'topic'
@@ -8834,12 +8211,12 @@ const App = {
     const currentFull = `${location.pathname}${location.search}${location.hash}`;
     if (currentFull === newUrl) return;
 
-    // Screen ids: every full-screen sub-view (chat, topics, sessions)
-    // is its own screen — list ↔ sub-view pushes a history entry, so
-    // device/browser back mirrors the in-page back buttons — but which
-    // session/topic isn't part of the id (moving between two topics of
-    // the same kind replaces in place).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared']);
+    // Screen ids: every full-screen sub-view (chat, topics) is its own
+    // screen — list ↔ sub-view pushes a history entry, so device/browser
+    // back mirrors the in-page back buttons — but which topic isn't part
+    // of the id (moving between two topics of the same kind replaces in
+    // place).
+    const SUB_SCREENS = new Set(['chat', 'issues', 'proposals', 'governance', 'shared']);
     const screenIdOf = (value) => {
       let parsed;
       try { parsed = new URL(String(value || ''), location.origin); } catch (_) { return ''; }
@@ -9052,8 +8429,8 @@ const App = {
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
-    // jump (e.g. via hash) would carry the previous app's dev-chat
-    // session state into the new view.
+    // jump (e.g. via hash) would carry the previous app's Dev state
+    // into the new view.
     //
     // Deliberately NOT deferred into the reveal callback the way the
     // screen navigations defer theirs (#979): restoreFromHash re-stashes
@@ -9476,7 +8853,6 @@ const App = {
     'ai-screen': ['none'],
     'profile-screen': ['none'],
     'app-view': ['close'],
-    'agent-session-screen': ['arrow', '#messages'],
     'leaderboard-screen': ['arrow', '#profile'],
     'settings-screen': ['arrow', '#profile'],
     'admin-screen': ['arrow', '#profile'],
@@ -9586,12 +8962,6 @@ const App = {
       // the reveal, not about `after`.) The fix is the one this file
       // already states for setBackIcon's two writers: THE TWO HAVE TO AGREE. Both now say
       // the same thing, so the order stopped mattering.
-      //
-      // A DEV SESSION IS ONE TOO (#2770): a change is an agent conversation,
-      // a row under Messages → Agents, so it gets the same chevron. The
-      // header resolves its destination from the session's captured origin
-      // first (features/header/platform-header.tsx), and Messages otherwise.
-      if (App._isMessagesThread()) return ['arrow', '#messages'];
       // THE CHANNEL hangs off its project's hub (see _isChannelThread).
       if (App._isChannelThread()) return ['arrow', App._hubHref(App.currentApp)];
       // AN APP'S WORKSHOP IS NOT AN APP TO STEP OUT OF — any app's (#2740
@@ -9745,12 +9115,8 @@ const App = {
     // would reconcile away.
     window.UsernodeReact?.headerTitle?.set?.(text, subtitle);
     document.title = subtitle ? `${text} · ${subtitle}` : text;
-    // Re-apply the dev-chat status marker ("⏳ thinking / ✅ done",
-    // #108) that the plain title assignment above just wiped, then let
-    // Notifications re-apply its "(N) " unread prefix outermost.
-    if (window.DevChat && typeof DevChat.applyTitleStatus === 'function') {
-      DevChat.applyTitleStatus();
-    }
+    // The plain title assignment above wiped Notifications' "(N) " unread
+    // prefix: let it re-apply.
     if (window.Notifications && typeof Notifications._updateTitle === 'function') {
       Notifications._updateTitle();
     }
@@ -9773,31 +9139,13 @@ const App = {
 
   // Normalize every tab vocabulary onto the forum-era model (#194
   // revision). Returns { tab, subTab, ref } where tab ∈ 'app'|'dev' and
-  // subTab ∈ 'forum'|'sessions'. Legacy names (group-chat,
-  // individual-chat, and the old dev sub-tabs chat/issues/proposals)
-  // keep working at every entry point — old sub-tab refs are converted
-  // into typed forum deep links ({ kind: 'issue'|'proposal', id }).
+  // subTab ∈ 'forum'|'chat'|'topic'. Legacy names (group-chat, and the
+  // old dev sub-tabs chat/issues/proposals) keep working at every entry
+  // point — old sub-tab refs are converted into typed forum deep links
+  // ({ kind: 'issue'|'proposal', id }).
   _normalizeTab(tab, ref, subTab) {
     if (tab === 'group-chat') { tab = 'dev'; subTab = 'chat'; }
-    else if (tab === 'individual-chat') { tab = 'dev'; subTab = subTab || 'sessions'; }
     if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
-
-    if (subTab === 'sessions') {
-      // #2241: `new` is the one session ref that is a WORD rather than an
-      // id — /app/<slug>/dev/sessions/new was the classic change you had
-      // not sent yet. That screen is gone (#2779, #4268), but the address
-      // still resolves to an unsent agent session
-      // (App.openNewChangeAsAgentSession). It needs a route of its own
-      // because of the line below: a session sub-tab with no ref
-      // normalizes to the card list.
-      // DevChat.NEW_SESSION_REF holds the only other copy of this literal.
-      if (ref === 'new') return { tab: 'dev', subTab: 'sessions', ref: 'new' };
-      const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
-      // No session id → the card list (there is no session-list screen).
-      return Number.isInteger(id) && id > 0
-        ? { tab: 'dev', subTab: 'sessions', ref: id }
-        : { tab: 'dev', subTab: 'forum', ref: null };
-    }
 
     // Full-screen sub-views with no deep-link payload. (The 'settings'
     // sub-page is gone — #645 — so old dev/settings requests fall
@@ -9827,9 +9175,8 @@ const App = {
       : { tab: 'dev', subTab: 'forum', ref: null };
   },
 
-  // `ref` is the view's deep-link target: a dev-session id for the
-  // session view, or { kind: 'issue'|'proposal', id } for a forum card
-  // to expand. Ignored on the App tab.
+  // `ref` is the view's deep-link target: { kind: 'issue'|'proposal', id }
+  // for a forum card to expand. Ignored on the App tab.
   async switchTab(tab, ref, subTab, options) {
     const norm = App._normalizeTab(tab, ref, subTab);
     tab = norm.tab;
@@ -9870,16 +9217,6 @@ const App = {
         ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
         : null))
       : null;
-    // #771: a docked staging preview is pinned to the dev-chat session
-    // layout, which every tab switch re-renders or unmounts — close it.
-    // (A fullscreen preview keeps floating above the tabs, as before.)
-    // open=false first so closeStagingOverlay skips its own chat
-    // re-render; the switch repaints the destination view anyway.
-    if (typeof AppView !== 'undefined' && AppView._stagingMode === 'docked'
-        && AppView.closeStagingOverlay) {
-      if (typeof DevChat !== 'undefined' && DevChat.stagingPanel) DevChat.stagingPanel.open = false;
-      AppView.closeStagingOverlay();
-    }
     // THE APP'S WORKSHOP HANDING OVER TO THE RUNNING APP — the parked strip's
     // Resume, a Recents row, About's Open. The Workshop page on screen (the
     // board, a card, a thread) is what the ✕ returns to, so it is noted before
@@ -9911,26 +9248,9 @@ const App = {
     // anywhere else would light no tab and lose the one that is lit.
     if (App._isScreenVisible?.('app-view')) App._syncPlatformTabs('app-view');
 
-    // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
-    // to be torn down here; it and the panel it drove are retired (#1367),
-    // so what is left is the two pieces of per-session state that are scoped
-    // to "the user is on the dev-chat tab".
-    const onSessions = tab === 'dev' && App.currentSubTab === 'sessions';
-    if (!onSessions && typeof DevChat !== 'undefined') {
-      // The title status indicator (#108) is scoped to "user is on the
-      // dev-chat tab" — leaving the tab clears it. Re-entering while a
-      // run is live re-applies it via openSession's busy check.
-      if (DevChat.setTitleStatus) DevChat.setTitleStatus(null);
-      // #161: switching away from a still-streaming dev session counts
-      // as leaving it — arm its completion notification.
-      if (DevChat.isStreaming && DevChat.currentSession && DevChat._setNotifyOnDone) {
-        DevChat._setNotifyOnDone(DevChat.currentSession.id, true);
-      }
-    }
-
     if (tab === 'app') {
-      // The session screen's ← is renderDevView's; leaving Dev for the app
-      // itself must take it back down (sub-view hops never pass
+      // A Dev sub-view's back slot is renderDevView's; leaving Dev for the
+      // app itself must take it back down (sub-view hops never pass
       // _showOnlyScreen, the usual owner of this reset).
       //
       // THE ✕, not the house: this is still inside the app, and the slot an
@@ -9973,7 +9293,7 @@ const App = {
   // The side-panel route for an app-tab request, or null for the App tab
   // itself: the same serializer the address bar uses (_appUrl), less the
   // query and the leading slash — `app/<slug>/dev/proposals/12`,
-  // `app/<slug>/workshop`, `app/<slug>/dev/sessions/new`.
+  // `app/<slug>/workshop`.
   _panelRouteFor(slug, tab, ref, subTab) {
     const norm = App._normalizeTab(tab, ref, subTab);
     if (norm.tab !== 'dev') return null;
@@ -10239,10 +9559,10 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
-    case 'homeroom-bot':                     // the Homeroom bot tab's own page, Main Chat and its threads
+    case 'homeroom-bot':                     // the Homeroom bot tab's own page, and a thread of its chat
     case 'ai': return 'ai-screen';           // in its column included (1 Nov 2026; #ai: its old address)
     case 'chat': return 'messages-screen';   // Global Chat's, removed: the inbox
-    case 'agent': return 'agent-session-screen';
+    case 'agent': return 'ai-screen';        // an agent chat's old address (App._oldChatAddress)
     case 'leaderboard': return 'leaderboard-screen';
     default: return null;                    // #notifications is a sheet over home
   }

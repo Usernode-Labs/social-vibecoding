@@ -106,7 +106,7 @@ test('localizeResetText rewrites the server spellings and nothing else', () => {
   });
 });
 
-test('the shared credit sentence goes through it, with the UTC instant for title', () => {
+test('the shared credit sentence goes through it', () => {
   const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
   const prev = globalThis.window;
   globalThis.window = { ResetTime: RT };
@@ -117,10 +117,6 @@ test('the shared credit sentence goes through it, with the UTC instant for title
       const weekly = { capWindow: 'weekly', resetsAt: at };
       assert.equal(norm(CO.resetSentence(weekly, now)),
         'Free credits reset Sunday at 8:00 PM, about 3h from now.');
-      assert.equal(norm(CO.resetTitle(weekly, now)), 'Mon, Oct 5, 00:00 UTC');
-      assert.equal(CO.resetTitle({ level: 'locked' }), null, 'no reset to name when locked');
-      const card = norm(CO.cardHtml({ error: 'Weekly limit reached ($50.00). Resets Monday 00:00 UTC.' }));
-      assert.doesNotMatch(card, /00:00 UTC/, 'the card rewords the server sentence too');
     });
   } finally {
     if (had) globalThis.window = prev; else delete globalThis.window;
@@ -136,10 +132,8 @@ test('no user-visible copy still spells the reset in UTC alone', () => {
     'frontend/src/features/leaderboard/leaderboard.js',
     'frontend/src/features/dialogs/feedback-controller.js',
     'frontend/src/features/header/ai-credit.js',
-    'frontend/src/features/dev-chat/dev-chat.js',
     'frontend/src/features/settings/settings.js',
     'public/js/credit-options.js',
-    'public/js/build-venues.js',
     'public/js/merge-status.js',
     'public/js/app-view.js',
   ]) {
@@ -149,4 +143,24 @@ test('no user-visible copy still spells the reset in UTC alone', () => {
     'the bundle publishes window.ResetTime for the classic scripts');
   assert.match(read('frontend/src/features/settings/sections/usage.tsx'), /id="settings-spend-reset"/,
     'the spend card names its reset line so Settings can localize it');
+});
+
+test('#6479: the reset moment is read in the zone picked in Settings › Language', () => {
+  const zone = loadTsx('frontend/src/lib/time-zone.ts', { cache: false });
+  const rt = loadTsx('frontend/src/lib/reset-time.ts', { cache: false, stubs: { './time-zone': zone } });
+  // Monday 00:00 UTC is Monday 9:00 AM in Tokyo, whatever the device's zone.
+  const at = '2026-10-05T00:00:00Z';
+  try {
+    zone.setTimeZone('Asia/Tokyo');
+    const tokyo = rt.resetMoment('weekly', { at, locale: 'en-US' });
+    assert.equal(tokyo.day, 'Monday');
+    assert.equal(tokyo.time, '9:00 AM');
+    zone.setTimeZone('America/New_York');
+    assert.deepEqual({ ...rt.resetMoment('weekly', { at, locale: 'en-US' }) }, { day: 'Sunday', time: '8:00 PM' });
+    zone.setTimeZone(null);
+    assert.deepEqual({ ...rt.resetMoment('weekly', { at, locale: 'en-US' }) }, { ...RT.resetMoment('weekly', { at, locale: 'en-US' }) },
+      'Auto is the device, as before');
+  } finally {
+    zone.setTimeZone(null);
+  }
 });

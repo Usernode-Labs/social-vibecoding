@@ -211,9 +211,17 @@ test('Try again finishes a first version that was built, through a real tap', { 
     assert.ok(said?.messageId, 'said in her chat');
     return { sessionId: session.id, runId: run.id, branch, sha, said };
   }
+  // Her tap, as the route sends it: quoting the message it is under, in
+  // that message's thread (14 Nov 2026: every message is in one;
+  // private-threads.js threadForPost).
   const tap = async (built, content = 'Try again') => {
-    const sent = await conversations.sendMessage(pool, { id: ada.id, username: ada.username }, conversationId, {
-      content, reply_to_id: built.said.messageId,
+    const who = { id: ada.id, username: ada.username };
+    const rootId = await require('../src/services/private-threads').threadForPost(pool, {
+      user: who, conversationId, replyToId: built.said.messageId, deps: { bot },
+    });
+    assert.ok(rootId, 'the message it quotes is in a thread');
+    const sent = await conversations.sendMessage(pool, who, conversationId, {
+      content, reply_to_id: built.said.messageId, thread_root_id: rootId,
     });
     assert.ok(sent?.message, 'her reply was sent');
     return dm.noteUserMessage(pool, {}, { user: ada, conversationId, message: sent.message, deps });
@@ -251,13 +259,18 @@ test('Try again finishes a first version that was built, through a real tap', { 
     assert.equal(run.build_finish.by, ada.id);
     assert.equal(run.build_error, `proposed on its maker's Try again after: ${UNPROPOSED}`);
     // Said under the tap, then as every first version says it: built and
-    // being tested, in Main (#6019: one conversation, no thread per request).
+    // being tested, in the project's first-version thread (14 Nov 2026: Main
+    // Chat is gone, and a first version has one thread).
     const lines = await botSaid(built.said.messageId);
     assert.deepEqual(lines.map((l) => l.content), [
       'Finishing it now. I\'ll tell you here when it\'s ready to try.',
       'Built. Testing it: its checks, and its before and after screens.',
     ]);
-    assert.ok(lines.every((l) => l.thread_root_id === null), 'in Main');
+    const { rows: [firstThread] } = await pool.query(
+      `SELECT p.root_message_id FROM private_threads p WHERE p.user_id = $1 AND p.app_id = $2 AND p.kind = 'first_version'`,
+      [ada.id, app.id]);
+    assert.ok(firstThread, 'the first version has its thread');
+    assert.ok(lines.every((l) => l.thread_root_id === firstThread.root_message_id), 'in the first version\'s thread');
     const { rows: posts } = await pool.query(
       'SELECT kind, pending FROM homeroom_bot_posts WHERE run_id = $1 ORDER BY id', [built.runId],
     );

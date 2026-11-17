@@ -9,7 +9,7 @@
 // What is pinned, each a way it could quietly go back:
 //
 //   1. WHICH ROWS: a visited community gets a row; which five conversations,
-//      the open one kept; topics fold after two, the one you are on kept.
+//      the open one kept; no topic is a row of the places list (#6709).
 //   2. THE MARKUP: the conversations' element is always there, right after
 //      Messages, empty in the prerender; the places are the column's own list.
 //   3. THE MOTION: one clock and the content's own height, so the rows under
@@ -23,7 +23,6 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
-const { message } = require('./lib/platform-i18n');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -36,8 +35,7 @@ const block1024 = () => {
 };
 
 test('which rows: a community you are visiting has one for as long as you are on its page', () => {
-  const { railRows, RAIL_TOPICS } = loadTsx('frontend/src/features/nav/rail-communities.tsx');
-  assert.equal(RAIL_TOPICS, 2);
+  const { railRows } = loadTsx('frontend/src/features/nav/rail-communities.tsx');
   assert.deepEqual(railRows(['a', 'b'], null), ['a', 'b']);
   assert.deepEqual(railRows(['a', 'b'], 'b'), ['a', 'b'], 'one of the five keeps its row');
   // #21 (19 Oct polish board): after the five, so a visit never moves them.
@@ -46,33 +44,29 @@ test('which rows: a community you are visiting has one for as long as you are on
   assert.deepEqual(railRows(['a', 'b'], 'x', ['x', 'b', 'y']), ['a', 'b', 'x', 'y'], 'once each, the five first');
 });
 
-test('the places: the column\'s own list, topics after two behind "Show N more", the one you are on kept', () => {
+test('the places: the column\'s own list, with no topic rows and no fold', () => {
   const places = {
     channels: [
       { kind: 'general', handle: 'general', state: 'live', unread: 0 },
       ...['onboarding', 'homeroom-bot', 'design', 'bugs'].map((handle, i) => ({ kind: 'topic', handle, name: handle, icon: '', state: 'live', unread: 0, id: i + 1 })),
     ],
   };
-  const props = (place) => ({ slug: 'notes', name: 'Notes', place, owed: 2, places, fold: 2, onPlace: () => {} });
-  const folded = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', props('status'));
-  assert.match(folded, /data-place="c:onboarding"[\s\S]*data-place="c:homeroom-bot"/);
-  assert.doesNotMatch(folded, /data-place="c:design"|data-place="c:bugs"/);
-  assert.match(folded, /<button type="button" class="dev-ws-place dev-ws-places-more" data-places-more="">/);
-  assert.equal(message('project:places.list.showMore', { count: 2 }), 'Show 2 more');
-  assert.ok(folded.includes('Show 2 more'));
-  const onBugs = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', props('c:bugs'));
-  assert.match(onBugs, /data-place="c:bugs" aria-current="page"/, 'the topic you are on is drawn');
-  assert.ok(onBugs.includes('Show 1 more'));
+  const props = (place) => ({ slug: 'notes', name: 'Notes', place, owed: 2, places, onPlace: () => {} });
+  // #6709: a project's topics are not rows of its places list, whatever the
+  // place — there is no fold left to open them from.
+  for (const place of ['status', 'c:bugs', null]) {
+    const html = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', props(place));
+    assert.doesNotMatch(html, /data-place="c:/, 'no topic channel row');
+    assert.doesNotMatch(html, /data-places-group="topics"/, 'no Topics group');
+    assert.doesNotMatch(html, /data-places-more/, 'and no "Show N more"');
+    assert.match(html, /data-place="discussion"/, 'the list ends after #general');
+  }
   // Before the page has said where it is, nothing is lit.
   const unknown = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', props(null));
   assert.doesNotMatch(unknown, /aria-current/);
-  // Without `fold`, every topic, as the column and the tray draw them.
-  const all = renderComponent('frontend/src/features/dev-board/workshop/project-places.tsx', 'ProjectPlaces', { ...props('status'), fold: undefined });
-  assert.match(all, /data-place="c:bugs"/);
-  assert.doesNotMatch(all, /data-places-more/);
   // The sidebar's part is that list, under the community's own row.
   const rail = read('frontend/src/features/nav/rail-communities.tsx');
-  assert.match(rail, /<ProjectPlaces[\s\S]*?fold=\{RAIL_TOPICS\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
+  assert.match(rail, /<ProjectPlaces[\s\S]*?filtered=\{[^}]+\}\s*onPlace=\{\(key\) => \{ openPlace\(slug, key\); \}\}/);
   assert.match(rail, /const open = sidebarRows && \(onPage === slug \|\| \(onApp === slug && yours\)\);/, 'it opens with the page, or the app of one of yours');
   assert.match(rail, /<NestSlot open=\{open\} className="platform-rail-nest platform-rail-places" rows="\.dev-ws-place, \.dev-ws-places-head">\s*<RailPlaces slug=\{slug\} onPage=\{onPage === slug\} needs=\{needs\} \/>/);
   // Open, its votes are Needs you's count, in its app too (audit N04).
@@ -112,7 +106,7 @@ test('the pages: the inbox\'s list beside a conversation, the list as the page w
   // 7 Nov 2026: with the sidebar's nest under Messages gone, an open
   // conversation has the list beside it again; with none open the list is
   // the page (All messages).
-  assert.match(inbox, /const railClass = sidebarRows && !drawer\.on && !discussionOpen \? ' messages-list-page' : '';/);
+  assert.match(inbox, /const railClass = sidebarRows && !drawer\.on && !chatOpen \? ' messages-list-page' : '';/);
   assert.doesNotMatch(inbox, /messages-list-in-rail/);
   const store = read('frontend/src/features/messages/store.ts');
   // One pane at a time is a phone's alone: from 768px the list sits beside
@@ -132,8 +126,9 @@ test('the pages: the inbox\'s list beside a conversation, the list as the page w
   assert.doesNotMatch(all, /data-workshop-results/, 'no second list for a search');
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /if \(key === 'workshop' && sidebarRows\) \{\s*event\.preventDefault\(\);\s*if \(screen === 'workshop-screen'\) pressLitTab\(screen\);\s*else goToCommunity\(null\);/);
-  // The places button has nothing to open beside the docked sidebar.
-  assert.match(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;\n  \}/);
+  // The bar draws no places button of its own (#6671), so there is none to
+  // hide beside the docked sidebar.
+  assert.doesNotMatch(css, /body:has\(#platform-tabs:not\(\.hidden\):not\(\.platform-tabs-peek\):not\(\.platform-tabs-folded\)\) \.dev-ws-places-btn \{\n    display: none;\n  \}/);
 });
 
 test('the look: one indent a level, one unbroken line, the parent unfilled; AI a sparkle', () => {

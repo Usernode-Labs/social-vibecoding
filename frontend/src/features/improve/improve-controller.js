@@ -14,19 +14,29 @@
  *     (and therefore whether its controls have a subject at all);
  *   * the drawer's `#drawer-row-github` / `#drawer-row-share` / version rows
  *     become fields on the store;
- *   * `WorkDrawer`'s cross-app session list becomes the two session sections,
- *     this app's and everything else.
+ *   * `WorkDrawer`'s cross-app session list became the panel's two session
+ *     sections, this app's and everything else.
  *
  * ── And then the panel itself went (#2718 review) ──────────────────────
  *
  * Each of those three found a surface of its own, which is what left the
- * panel holding two buttons: the sessions are the Workshop's and the
- * notifications sheet's Agents tab, the reference rows are the app menu's
+ * panel holding two buttons: the sessions are the Workshop's, the reference
+ * rows are the app menu's
  * About pane, and the two actions plus the build notice are rows of that same
  * menu (../app-context/, ./actions.tsx). A drawer you open to press a button
  * is a tap to reach a tap, so it retired and this file stopped owning a
  * presentation: `open`, `close`, `toggle` and `dismissForNav` are names every
  * caller already says, forwarded to the controller that owns the surface.
+ *
+ * ── And the session list went last (16 Nov 2026) ───────────────────────
+ *
+ * The cross-app list of the viewer's changes in flight (GET
+ * /api/me/active-sessions, re-read while the bell or Messages was open)
+ * lost its last surface when Messages stopped listing changes. The changes
+ * are listed on the Homeroom bot tab, the Homeroom menu and each project's
+ * Workshop, which read them their own way, so this file no longer loads,
+ * buckets or polls them. What it keeps of sessions is `working`, the
+ * mark's cue, read from the live session store.
  *
  * ── Why the store and not the DOM ──────────────────────────────────────
  *
@@ -37,216 +47,12 @@
  * why the kit-surface call its header used to describe is no longer here.
  */
 
-import { iconViewFor } from '../apps/app-card.js';
-// Presentation state for the ONE surface that still lists these sessions —
-// the notifications sheet's Agents tab. A leaf module holding a single
-// boolean, so reading it here adds no cycle; ../notifications/ already
-// imports improveStore the other way for the rows themselves.
-import { notificationsSheetStore } from '../notifications/notifications-sheet-store.js';
-import { boardHref, improveStore } from './improve-store.js';
+import { improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
-import { t } from '../../lib/i18n/runtime';
-
-/** Sessions whose state means "an AI turn is in flight right now". */
-const BUSY_STATES = new Set(['running', 'starting', 'queued']);
-
-function isBusy(session) {
-  if (!session) return false;
-  if (session.busy === true) return true;
-  return BUSY_STATES.has(String(session.status || '').toLowerCase());
-}
-
-/**
- * Whether an AI turn is in flight for this session RIGHT NOW (#1958).
- *
- * `isBusy` above reads the flag the server wrote into the last
- * /api/me/active-sessions answer, which is true for exactly as long as that
- * answer is. `SessionState` (public/js/session-state.js) is what the server
- * has said SINCE: it pushes a `session_state` event on every real turn
- * boundary, so a turn that ended after the payload was issued is already
- * idle there — and every other surface that draws this fact (the dev
- * screen's session list, the board's cards) reads it through the store.
- * This row was the one that did not, so its pill went Working → Ready one
- * refetch round trip after the turn ended, and a panel opened later painted
- * the flag a fetch during the turn had left behind until the open-time
- * refetch landed. A live entry wins; the payload's flag is the fallback for
- * a session the store has never heard of.
- */
-function liveBusy(session) {
-  const fallback = isBusy(session);
-  const live = typeof window !== 'undefined' ? window.SessionState : null;
-  if (!live || typeof live.isBusy !== 'function') return fallback;
-  return !!live.isBusy(session.id, fallback);
-}
-
-/**
- * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
- * both the caption's "Needs you" and the pill's "Needs you" (QA 2026-09-24
- * Q29; it read "Ready for your input" until then), so the two cannot say
- * different things.
- *
- * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
- * the transcript (sessionAwaitsInput in routes/sessions.js): the last
- * conversational row is the assistant's, and it either asked with answer
- * chips or closed a spec whose Questions section is still open. A finished
- * spec with nothing to answer, or a finished build, is plain Ready — the
- * pill says "for your input" only when something in the session is asking.
- *
- * The two status values are the seam #1417 left for a connector agent's
- * notify_awaiting_input. Nothing publishes them into this payload yet; they
- * stay so a row that does arrive in that state reads right.
- *
- * A turn in flight is never waiting on anyone. The live store wins here for
- * the same reason it wins for `busy` (#1958): the payload is a snapshot, and
- * a push that starts a turn must take "Needs you" down in the same frame it
- * puts the spinner up.
- */
-function awaitsInput(session) {
-  if (!session || liveBusy(session)) return false;
-  if (session.awaiting_input === true) return true;
-  const state = String(session.status || '').toLowerCase();
-  return state === 'awaiting_input' || state === 'needs_input';
-}
-
-/**
- * A session row's display status.
- *
- * Deliberately the same three words the cog drawer used, so a viewer who knew
- * that surface reads this one without relearning it.
- */
-function statusLabel(session) {
-  if (isBusy(session)) return t('agent:menu.row.status.working');
-  // No 'Paused' (#2779 follow-up): a paused session is the platform's
-  // bookkeeping, not a state of the work. It pauses by itself when idle and
-  // resumes by itself when opened or messaged, so it reads like any other
-  // session that is waiting for its owner.
-  if (awaitsInput(session)) return t('agent:menu.row.status.needsYou');
-  return null;
-}
-
-/** ms since epoch, or 0 for anything unparseable — never NaN into a sort. */
-function timeOf(value) {
-  const t = Date.parse(value || '');
-  return Number.isFinite(t) ? t : 0;
-}
-
-/**
- * The app's artwork for a row's leading tile, in the shape AppCard already
- * publishes (image / emoji / letter). Built HERE rather than in the component
- * so the row renders facts: the two `app_icon_*` columns both list endpoints
- * now carry are a detail of the payload, and a letter derived from the app's
- * name is the fallback whichever of them is missing.
- */
-function iconOf(row, appNameFallback) {
-  return iconViewFor({
-    icon_url: row.app_icon_url || null,
-    icon_emoji: row.app_icon_emoji || null,
-    name: row.app_name || appNameFallback || row.app_slug || '',
-  });
-}
-
-function toRow(session, appNameFallback) {
-  return {
-    key: `s${session.id}`,
-    kind: 'session',
-    id: session.id,
-    appSlug: session.app_slug || null,
-    appName: session.app_name || appNameFallback || session.app_slug || '',
-    icon: iconOf(session, appNameFallback),
-    // THE SAME PRECEDENCE THE RETIRED WORK DRAWER USED (#971): the human
-    // title a session was given, then the PR it opened, then the branch it
-    // works on — a dev name is the last thing worth showing, and `id` is the
-    // floor. `session.title` alone was wrong: GET /api/me/active-sessions
-    // sends `session_title` / `pr_title` / `branch_name` and no `title` at
-    // all, so every row in the panel read "Untitled session".
-    title: session.session_title || session.pr_title || session.branch_name
-      || t('agent:menu.row.sessionFallback', { number: session.id }),
-    // A row represents the change, not just its chat. The lifecycle-aware
-    // page keeps the context around the workspace and still embeds it. A
-    // change an agent session started is worked on in that conversation
-    // (#2779), so its row opens the conversation.
-    href: session.agent_session_id
-      ? `#messages/agent/${session.agent_session_id}`
-      : `#app/${session.app_slug}/dev/proposals/${session.id}`,
-    status: statusLabel(session),
-    busy: liveBusy(session),
-    awaitingInput: awaitsInput(session),
-    // #6042: the change's lifecycle, for the row's status pill — 'promoted'
-    // is up for vote, 'merging'/'merged' the merge's flight, check_state the
-    // automated checks' last verdict. A work order has no proposal behind it
-    // (taskToRow carries none of these), and an older payload that sends no
-    // status simply leaves the pill on Ready, as before.
-    sessionStatus: session.status || null,
-    checkState: session.check_state || null,
-    checkPhase: session.check_phase || null,
-    failingChecks: session.failing_checks?.total || null,
-    sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
-    // Streamlined Concept: the app-context sheet's change rows show a
-    // relative time, the way the Figma board draws them.
-    lastActivityAt: session.last_activity_at || session.created_at || null,
-    // #2779: the agent session this change was started from, if any.
-    agentSessionId: session.agent_session_id || null,
-  };
-}
-
-/**
- * A row for an OPEN connector work order (#1417) — work handed to a coding
- * agent on the user's own machine, which has no chat_sessions row of its own
- * until it is shared or submitted.
- *
- * `busy` is FALSE, always, and that is a statement rather than a default: the
- * agent is running somewhere the platform cannot see, so a pulsing dot here
- * would be an invention. The status carries which agent holds it instead,
- * which is the honest thing this row does know.
- *
- * The destination is the REQUEST, not a session page. There is no transcript
- * to open, and a row that navigates to a dead end is worse than one that
- * admits what it is. A task with no request behind it (prepare_work accepts a
- * bare brief) falls back to the app's Dev board.
- */
-function taskToRow(task, appNameFallback) {
-  return {
-    key: `t${task.id}`,
-    kind: 'task',
-    id: task.id,
-    appSlug: task.app_slug || null,
-    appName: task.app_name || appNameFallback || task.app_slug || '',
-    icon: iconOf(task, appNameFallback),
-    title: task.title || t('agent:menu.row.workOrderFallback', { number: task.id }),
-    href: task.issue_number
-      ? `#app/${task.app_slug}/dev/issues/${task.issue_number}`
-      : `#app/${task.app_slug}/dev`,
-    status: agentLabel(task.agent),
-    busy: false,
-    // Same reasoning as `busy`: whether the agent on the user's machine is
-    // waiting on them is not something this side can see per work order.
-    awaitingInput: false,
-    sortAt: timeOf(task.created_at),
-    // #5289: the clock Messages' agents list sorts and ages its rows on (and
-    // the row's own <time> prints). Without it a work order had no time at
-    // all, sorted last and always fell behind "N older chats", so with the
-    // bell's Messages filter gone it was on screen nowhere. Handed off is
-    // the last thing this side knows happened to it.
-    lastActivityAt: task.created_at || null,
-  };
-}
-
-/**
- * How the row names the agent holding the work. Deliberately the product
- * names a person would recognise, mapped from the three values the server
- * normalizes to — never whatever string a connector client claimed.
- */
-function agentLabel(agent) {
-  if (agent === 'claude-code') return 'Claude Code';
-  if (agent === 'codex') return 'Codex';
-  return t('agent:menu.row.status.handedOff');
-}
 
 const Improve = {
   /** The live kit adoption on touch, or null on desktop / before presenting. */
   _sheet: null,
-  /** Guards against two overlapping session loads racing their writes. */
-  _loadToken: 0,
 
   // ── What the panel is about ──────────────────────────────────────
   //
@@ -294,9 +100,6 @@ const Improve = {
       return;
     }
     const prev = improveStore.get();
-    // Changing which app the panel is about invalidates the session split, so
-    // the rows are re-bucketed from whatever the last load returned rather
-    // than left describing the previous app.
     const slugChanged = prev.slug !== target.slug;
     improveStore.set({
       target: target.kind === 'platform' ? 'platform' : 'app',
@@ -322,48 +125,7 @@ const Improve = {
       showTerminal: slugChanged ? false : prev.showTerminal,
     });
     saveShellSnapshot({ improveTarget: target.kind === 'platform' ? 'platform' : 'app' });
-    if (slugChanged) Improve._rebucket();
-    Improve.prefetchSessions();
   },
-
-  /**
-   * Fill the session lists BEFORE the surface that shows them is opened.
-   *
-   * That surface was the Improve panel and is the notifications sheet's
-   * Agents tab now (#2718 review); the reasoning is the same either way.
-   * `loadSessions()` used to run only from `open()`, so the panel presented
-   * with `sessionsLoaded` false — its placeholder — and the real rows arrived
-   * a round trip later, on top of a sheet that had already finished animating
-   * in. The list visibly snapped in under the viewer's thumb.
-   *
-   * The request does not depend on the surface at all: GET
-   * /api/me/active-sessions is per-USER, not per-app, and `_rebucket()` is
-   * what splits its answer into "this app" and "everything else". So it can
-   * be made as soon as there is a target, and the sheet then opens on a list
-   * that is already there instead of drawing one.
-   *
-   * ONCE, not per target change. A viewer moving between apps re-buckets the
-   * same payload (setTarget does that above), and re-fetching per hop would
-   * turn a navigation into a request for a surface nobody has opened. Later
-   * freshness is `onSessionStateChanged`'s, which already reloads while that
-   * sheet is open and is driven by SessionState's own tick.
-   *
-   * Fire-and-forget, and silent: `loadSessions` swallows its own failures and
-   * only raises `loadingSessions` when nothing has ever loaded, so a preload
-   * that fails leaves the list exactly as it was before this existed.
-   */
-  prefetchSessions() {
-    if (Improve._prefetched) return;
-    const state = improveStore.get();
-    if (!state.slug || state.sessionsLoaded || state.loadingSessions) return;
-    Improve._prefetched = true;
-    try {
-      Promise.resolve(Improve.loadSessions()).catch(() => {});
-    } catch (err) { /* never let a preload break a target publish */ }
-  },
-
-  /** Whether the preload above has already been started this page visit. */
-  _prefetched: false,
 
   /**
    * Publish which half of the app is on screen — the App tab or the Dev area.
@@ -382,8 +144,7 @@ const Improve = {
     const nextSubTab = next === 'dev' ? (subTab || 'forum') : null;
     improveStore.set({
       tab: next,
-      // Which dev sub-view: the header's eye is a PREVIEW control on a
-      // session and a back-to-the-app control everywhere else.
+      // Which dev sub-view is on screen.
       subTab: nextSubTab,
       // And which LAYOUT the Dev screen is in, for the header's back arrow on
       // the sub-views that are reached from it. Captured on every route change
@@ -391,7 +152,6 @@ const Improve = {
       // already left the board: by the time a topic publishes, the layout can
       // no longer change under it.
       boardView: Improve._boardView(),
-      sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
       topicOrigin: Improve._topicOriginFor(prev, next, nextSubTab),
     });
   },
@@ -415,88 +175,14 @@ const Improve = {
   },
 
   /**
-   * Where a session's back arrow should point, given the route being left.
-   *
-   * THIS IS THE ONE PLACE WITH BOTH HALVES IN HAND. `setTab` runs before the
-   * store has been updated, so `prev` is the route being left and the
-   * arguments are the route being entered — and the answer is only ever
-   * computed on the transition INTO a session, never re-derived afterwards.
-   * Anywhere later the outgoing route is already gone.
-   *
-   * Three cases, in order:
-   *
-   *   entering a session from elsewhere  →  serialise the route being left
-   *   already on a session (a hop inside it, a re-publish, a preview open)
-   *                                      →  keep what we captured
-   *   anywhere else                      →  null, so a stale origin cannot
-   *                                         outlive the session it belonged to
-   *
-   * A cold deep link straight to a session yields null twice over: `setTab`
-   * returns early before the slug is published, and there is no previous app
-   * route to serialise. The header falls back to the Board, which is where
-   * the session's own card lives.
-   */
-  /**
-   * The captured origin, for the click path that mirrors the header's arrow.
-   *
-   * DevChat reads it through `window.Improve` rather than importing the
-   * store: a dozen test files run dev-chat.js as a script in a `vm` context,
-   * where a top-level import is a syntax error.
-   */
-  sessionOrigin() {
-    return improveStore.get().sessionOrigin;
-  },
-
-  _sessionOriginFor(prev, next, nextSubTab) {
-    const entering = next === 'dev' && nextSubTab === 'sessions';
-    const first = !Improve._routed;
-    Improve._routed = true;
-    if (!entering) return null;
-    // A DOOR THAT NAMED ITS OWN ORIGIN (#2770). A change is an agent
-    // conversation, and Messages is where those live: New change and the
-    // inbox's own session rows say so before they navigate, because the
-    // store's `prev` cannot — it describes the last APP route, and Messages
-    // is not one. Taken once, on the way in, so it cannot outlive the entry
-    // it was set for.
-    const named = Improve._nextSessionOrigin;
-    Improve._nextSessionOrigin = null;
-    if (named) return named;
-    const wasSession = prev.tab === 'dev' && prev.subTab === 'sessions';
-    if (wasSession) return prev.sessionOrigin;
-    // A COLD DEEP LINK HAS NO PREVIOUS SCREEN, and the store cannot say so by
-    // itself: its INITIAL is `tab: 'app'`, which is indistinguishable from
-    // having actually been on the app tab. Reading it as one sent a shared
-    // session link's back arrow to `#app/<slug>/app` — a screen this tab had
-    // never shown, and on the platform's own self-hosted app one that does
-    // not exist. "The last screen you were on" requires there to have been
-    // one, so the first routing pass of a page load captures nothing.
-    if (first) return null;
-    return Improve._routeHref(prev);
-  },
-
-  /** Whether setTab has run at all in this page load. See above. */
-  _routed: false,
-
-  /**
-   * The origin the NEXT session entry should record, set by a door that
-   * knows it (see `_sessionOriginFor`). Null when the door said nothing.
-   */
-  _nextSessionOrigin: null,
-
-  /** Called by a session row in Messages just before its anchor navigates. */
-  enterSessionFrom(href) {
-    Improve._nextSessionOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
-  },
-
-  /**
    * Where a TOPIC's back chip should point, when not its board (#3103).
    *
-   * The session rule's shape, narrower: only a door that names its origin
-   * yields one. A card shared into a Messages conversation opens the topic
-   * route, and the Improve store's `prev` cannot say it came from Messages —
-   * it describes the last APP route. Taken once on the way in; kept while
-   * the route stays a topic (navigateToApp re-publishes it once the app's
-   * record loads); dropped by every other route.
+   * Only a door that names its origin yields one. A card shared into a
+   * Messages conversation opens the topic route, and the Improve store's
+   * `prev` cannot say it came from Messages — it describes the last APP
+   * route. Taken once on the way in; kept while the route stays a topic
+   * (navigateToApp re-publishes it once the app's record loads); dropped by
+   * every other route.
    */
   _topicOriginFor(prev, next, nextSubTab) {
     if (!(next === 'dev' && nextSubTab === 'topic')) return null;
@@ -512,7 +198,8 @@ const Improve = {
   /**
    * The captured topic origin, for the router (App._isBotTopic: a topic
    * opened from the Homeroom bot tab's page lights that tab). Read through
-   * `window.Improve` for the reason `sessionOrigin` is.
+   * `window.Improve`: the router is a classic script and cannot import the
+   * store.
    */
   topicOrigin() {
     return improveStore.get().topicOrigin;
@@ -534,58 +221,6 @@ const Improve = {
    */
   clearTopicOrigin() {
     if (improveStore.get().topicOrigin) improveStore.set({ topicOrigin: null });
-  },
-
-  /**
-   * An app route as an href, or null when it does not name one.
-   *
-   * Deliberately NOT App._appUrl: that serialises PATHS (`/app/<slug>/board`)
-   * for the address bar, and this feeds an anchor in the header, where every
-   * other destination is a hash. Both forms route — `_deepLinkTarget` reads
-   * either — but mixing them inside one control means a copied link differs
-   * by which screen you copied it from.
-   */
-  _routeHref(route) {
-    const slug = route.slug;
-    if (!slug) return null;
-    // The platform's own app has no App tab — App.switchTab coerces a request
-    // for one back to the dev forum — so it can never be an origin.
-    if (route.tab !== 'dev') return route.selfHosted ? null : `#app/${slug}/app`;
-    if (route.subTab === 'forum' || route.subTab === 'topic') {
-      // Workshop and Board are one screen in two layouts, and the layout IS
-      // the route (see the alias block in app.js's restoreFromHash), so the
-      // origin has to name the one that was on screen.
-      return boardHref(slug, Improve._boardView());
-    }
-    if (route.subTab === 'chat') return `#app/${slug}/dev/chat`;
-    return null;
-  },
-
-  /**
-   * The open session's staging preview, or null.
-   *
-   * Called by DevChat._publishPreview() whenever the open session or its
-   * `staging_url` changes. Gated the header's eye, back when the header had
-   * a contextual slot; ../dev-chat/session-header.tsx carries that loop now.
-   */
-  setSessionPreview(preview) {
-    improveStore.set({
-      previewSessionId: (preview && preview.sessionId) || null,
-      previewUrl: (preview && preview.url) || null,
-      previewBuildable: !!(preview && preview.buildable),
-    });
-  },
-
-  /**
-   * Whether a staging preview is on screen right now — the "seeing" half of
-   * the doing↔seeing loop. AppView.ensureStaging publishes true (every
-   * preview open funnels through it, #439); AppView.closeStagingOverlay
-   * publishes false. Drives the eye/pencil pair and the Preview chip.
-   */
-  setPreviewActive(on) {
-    if (improveStore.get().previewActive !== !!on) {
-      improveStore.set({ previewActive: !!on });
-    }
   },
 
   /**
@@ -736,191 +371,20 @@ const Improve = {
   // ── Sessions ─────────────────────────────────────────────────────
 
   /**
-   * Split the last-loaded session list into "this app" and "everything else".
-   *
-   * Kept separate from the fetch so a target change re-buckets without another
-   * round trip — opening Improve on app A and then on app B is one request.
-   */
-  _all: [],
-
-  /**
-   * The same, for OPEN connector work orders (#1417) — kept beside `_all`
-   * rather than merged into it so a reload replaces each list from the field
-   * that produced it, and a server that has not shipped `externalTasks` yet
-   * simply contributes none.
-   */
-  _tasks: [],
-
-  _rebucket() {
-    const { slug, name } = improveStore.get();
-    const mine = [];
-    const others = [];
-    const place = (row, rowSlug) => {
-      if (slug && rowSlug === slug) mine.push(row);
-      else others.push(row);
-    };
-    for (const session of Improve._all) {
-      // Paused sessions included (#2779 follow-up): the platform pauses a
-      // session five idle minutes after it was last used and resumes it when
-      // it is opened, so "paused" is not "set down". Leaving them out made
-      // work vanish from Messages and the bell minutes after it was touched.
-      place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
-    }
-    // #1417: open connector work orders go in the SAME two buckets, by the
-    // same app rule. A row is a row — the panel's question is "what of mine
-    // is in flight on this app", and where the agent happens to be running
-    // is not a reason to make the reader look in a second place for it.
-    for (const task of Improve._tasks) {
-      place(taskToRow(task, task.app_slug === slug ? name : null), task.app_slug);
-    }
-    // Busy first, then most recently touched — the two things a viewer scanning
-    // for "what is running right now" is actually looking for.
-    //
-    // Recency is a TIMESTAMP rather than the descending id it used to be.
-    // That proxy only held while every row came from one table: a work order
-    // and a session have unrelated id sequences, so comparing them would sort
-    // by which table the row came from and call it time. `sortAt` is the
-    // server's own last_activity_at, which is already what it orders by.
-    const order = (a, b) => Number(b.busy) - Number(a.busy) || b.sortAt - a.sortAt;
-    improveStore.set({
-      sessions: mine.sort(order),
-      otherSessions: others.sort(order),
-    });
-  },
-
-  async loadSessions() {
-    const token = ++Improve._loadToken;
-    // #6042: merged and merging changes ride along, so a row can say Live
-    // instead of vanishing the moment its change merges. The server bounds
-    // them to its recent window; the dev tab's own fetch sends no flag and
-    // sees none of them.
-    const demo = Improve._demoQS();
-    // #1958: stamped BEFORE the request goes out — see SessionState.seed.
-    // This used to hand the seed `data.issuedAt`, a field the endpoint has
-    // never sent, so every payload was stamped at ARRIVAL and an answer that
-    // was in flight while a turn ended put the spinner straight back — the
-    // inversion the store's own comment warns about. DevChat.loadActiveSessions
-    // stamps the same call the same way.
-    const issuedAt = Date.now();
-    if (!improveStore.get().sessionsLoaded) improveStore.set({ loadingSessions: true });
-    let sessions = [];
-    let tasks = [];
-    try {
-      const res = await fetch(`/api/me/active-sessions?include_merged=1${demo ? `&${demo.slice(1)}` : ''}`);
-      if (res.ok) {
-        const data = await res.json();
-        sessions = Array.isArray(data.sessions) ? data.sessions : [];
-        tasks = Array.isArray(data.externalTasks) ? data.externalTasks : [];
-        // Seed the shared live-state store exactly as the cog drawer did, so a
-        // session that finishes while the sheet is open updates in place
-        // instead of going stale until the next open.
-        if (window.SessionState) {
-          window.SessionState.seed(sessions, issuedAt);
-        }
-      }
-    } catch {
-      // Offline or a transient failure: keep whatever the last load produced
-      // rather than blanking a list the viewer is looking at.
-    }
-    // A newer load started while this one was in flight — its answer wins.
-    if (token !== Improve._loadToken) return;
-    Improve._all = sessions;
-    Improve._tasks = tasks;
-    improveStore.set({ loadingSessions: false, sessionsLoaded: true });
-    Improve._rebucket();
-  },
-
-  /**
-   * `?demo=1` passthrough for the staging fixture, matching WorkDrawer._demoQS.
-   *
-   * Staging starts from a copy of production with the private session tables
-   * empty, so without this a reviewer opening the preview sees an empty panel
-   * and cannot tell the layout from a bug.
-   */
-  _demoQS() {
-    try {
-      return new URLSearchParams(window.location.search).get('demo') === '1'
-        ? '?demo=1'
-        : '';
-    } catch {
-      return '';
-    }
-  },
-
-  /**
-   * Session state changed underneath us.
-   *
-   * Three jobs. The rows re-derive from the last payload, so their pills
-   * follow the push (#1958); an open panel then reloads its list; and the
-   * button's glyph tracks whether anything is running at all — the one that
-   * matters with the panel SHUT. `SessionState` is synced from app.js's boot
-   * path and re-ticks on its own (faster while something is in flight), so
-   * this is live without the panel ever being opened — which is the whole
-   * point of putting the cue on the button.
+   * Session state changed underneath us: the mark's `working` cue follows
+   * it. Called from app.js's live sweeps and from the island's SessionState
+   * subscription (./index.tsx). It reloaded the cross-app session list too,
+   * while the bell or Messages showed it; nothing shows that list now
+   * (16 Nov 2026), so this is the cue alone.
    */
   onSessionStateChanged() {
     Improve.refreshWorking();
-    // #1958: the rows are re-derived from the last payload FIRST, so the
-    // Working → Ready flip IS the push — one frame, no round trip — and it
-    // happens with the sheet shut too, so opening it after a turn ended
-    // paints Ready rather than the flag a fetch during the turn left behind.
-    // The reload below (while it is open only) still refreshes what the store
-    // cannot know: a title that landed at turn end, the status line, the
-    // activity stamp.
-    if (improveStore.get().sessionsLoaded) Improve._rebucket();
-    // Only while a surface is showing them. That used to be the Improve
-    // panel's own flag; the panel retired (#2718 review) and the list it held
-    // is the notifications sheet's Agents tab, so this asks that sheet.
-    // Without the change the gate read a field nobody writes, and the
-    // reload below simply stopped happening.
-    //
-    // …AND WHILE MESSAGES IS (#2770). A change is an agent conversation now,
-    // and Messages → Agents lists these same rows; without this their titles
-    // and status lines would freeze at whatever the last load said for as
-    // long as the inbox stayed open. Asked through the island's window seam
-    // rather than an import, so this module keeps its three dependencies.
-    if (notificationsSheetStore.get().open || Improve._messagesOnScreen()) {
-      Improve._reloadSoon();
-    }
-  },
-
-  // The reload above, at most once every RELOAD_MIN_GAP_MS with the last
-  // one kept (#6591). A turn in flight pushes a state change about once a
-  // second, and each one re-read the whole list: with Messages open that was
-  // a request a second for as long as anything of the viewer's was running.
-  // The pills never waited on the reload (the rebucket above is the push),
-  // so only the title, the status line and the activity stamp arrive up to
-  // this much later. The first change after a quiet spell still reloads at
-  // once.
-  RELOAD_MIN_GAP_MS: 4000,
-  _reloadAt: 0,
-  _reloadTimer: null,
-  _reloadSoon() {
-    if (Improve._reloadTimer) return;
-    const run = () => {
-      Improve._reloadTimer = null;
-      Improve._reloadAt = Date.now();
-      // The surface may have closed while this waited.
-      if (notificationsSheetStore.get().open || Improve._messagesOnScreen()) Improve.loadSessions();
-    };
-    const wait = Improve._reloadAt + Improve.RELOAD_MIN_GAP_MS - Date.now();
-    if (wait <= 0) run();
-    else Improve._reloadTimer = setTimeout(run, wait);
-  },
-
-  /** Whether the Messages screen is the one on screen. Safe before it exists. */
-  _messagesOnScreen() {
-    try {
-      return !!window.UsernodeReact?.messages?.isOpen?.();
-    } catch {
-      return false;
-    }
   },
 
   /**
    * `SessionState.anyActiveFor(<viewer>)`, as store state: one of the
    * viewer's OWN sessions is mid-turn. Not anyActive(), which also counts
-   * every shared session and auto-run on the apps the viewer can see, so the
+   * every shared session on the apps the viewer can see, so the
    * mark lit up for other people's builds (#2779 follow-up). Safe before
    * either exists.
    */
@@ -1035,37 +499,16 @@ const Improve = {
    * Improve's "New change" and the Workshop's "Start here" both come through
    * here.
    *
-   * ── A NEW CHANGE IS AN AGENT SESSION (#2779) ─────────────────────────
-   *
-   * New work starts in a conversation with the Mayor, focused on the app
-   * Improve is pointed at. It used to open that app's classic new-session
-   * screen (/dev/sessions/new, #2241); classic sessions are no longer
-   * created, and the server takes POST /api/apps/:slug/sessions only from
-   * the Mayor's start_change. Nothing is created by the click: the unsent
-   * conversation becomes a session on its first message.
+   * New work starts on the Homeroom bot tab's new-thread screen, on the
+   * project Improve is pointed at. That screen offers Homeroom bot, Claude
+   * Code or ChatGPT as the builder. Nothing is created by the click.
    */
   startSession() {
     Improve.close();
-    Improve._startAgentSession({ slug: improveStore.get().slug, entry: 'improve' });
-  },
-
-  /**
-   * #2779: open an unsent agent session with whatever the entry point knows.
-   * The server drops an app the viewer cannot see rather than refusing.
-   *
-   * The controller is published by the shell bundle at module scope, before
-   * anything can be clicked; without it (a shell that failed to boot) the
-   * address still opens an unsent conversation, only without the hint.
-   */
-  _startAgentSession(hint) {
-    const clean = {};
-    if (hint && typeof hint.slug === 'string' && hint.slug) clean.slug = hint.slug;
-    if (hint && Number.isInteger(hint.issueNumber)) clean.issueNumber = hint.issueNumber;
-    if (hint && Number.isInteger(hint.proposalId)) clean.proposalId = hint.proposalId;
-    if (hint && typeof hint.entry === 'string') clean.entry = hint.entry;
-    const agent = window.UsernodeReact?.agentSession;
-    if (agent) void agent.start(clean);
-    else window.location.hash = '#agent/new';
+    const { slug } = improveStore.get();
+    window.location.hash = slug
+      ? `#homeroom-bot/new?project=${encodeURIComponent(slug)}`
+      : '#homeroom-bot/new';
   },
 
   /**
@@ -1151,13 +594,6 @@ const Improve = {
 
 if (typeof window !== 'undefined') {
   window.Improve = Improve;
-}
-
-// The language changed, or this namespace's text arrived: the rows carry
-// their status and fallback titles in words, so build them again from the
-// lists this module already holds.
-if (typeof document !== 'undefined' && typeof document.addEventListener === 'function') {
-  document.addEventListener('homeroom:language-changed', () => Improve._rebucket());
 }
 
 export { Improve };

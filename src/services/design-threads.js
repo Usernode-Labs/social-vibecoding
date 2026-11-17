@@ -139,6 +139,33 @@ async function designFor(pool, { userId, rootId }) {
   };
 }
 
+/**
+ * #6680 (15 Nov 2026): the viewer's own private thread that filed a request,
+ * or posted its plan there, by its root message: { rootId } or null. Read for
+ * the viewer alone, so nobody else's read can learn a private thread exists
+ * (the request page offers the link only to its owner). The newest such
+ * thread when more than one is tied to the request. Never throws.
+ */
+async function threadForRequest(pool, { userId, appId, number }) {
+  const user = id(userId);
+  const app = id(appId);
+  const request = id(number);
+  if (!user || !app || !request) return null;
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT root_message_id FROM private_threads
+        WHERE user_id = $1 AND app_id = $2 AND result_ref = $3 AND state IN ('filed', 'posted')
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      [user, app, request],
+    );
+    return row ? { rootId: Number(row.root_message_id) } : null;
+  } catch (err) {
+    log.warn('design-threads', 'Could not read the thread a request came from', { err: err.message });
+    return null;
+  }
+}
+
 /** Pure: what a design for `app` is of: Homeroom's own pages, a project's app, or a project not made yet. */
 function surfaceFor(config, app) {
   if (!app?.slug) return 'new';
@@ -326,7 +353,9 @@ async function startDesign(pool, config, {
     userId: user.id,
     content: `I opened a design thread for ${named}, in a thread only you can see. Tell me what to change there, `
       + 'or pin a comment on the preview, and I\'ll make the next version. Nothing is public until you propose it.',
-    threadRootId: false,
+    // The thread's first message, its row written with it (sendDm `thread`);
+    // they captured the screen themselves, so its line is nothing new.
+    thread: { kind: 'design', appId: app.id, read: true },
     moment: null,
     metadata: { kind: 'opened_design', appSlug: app.slug, appName: name, designTitle: named },
   });
@@ -367,7 +396,7 @@ async function startDesign(pool, config, {
   };
 }
 
-/** Pure: the bot's line in Main that a thread it opened to draw a screen hangs off. */
+/** Pure: the bot's line a thread it opened to draw a screen starts with. */
 function drawLine({ title = null, appName = null } = {}) {
   const what = title ? `"${clip(title, 80)}"` : 'the screen';
   return appName
@@ -376,11 +405,12 @@ function drawLine({ title = null, appName = null } = {}) {
 }
 
 /**
- * Main Chat holds no design (1 Nov 2026): asked there to draw a screen, the
- * bot opens a private thread for it as the "+" does (private-threads.js
- * startThread: the bot's line in Main, metadata kind 'opened_thread' with
- * changeKind 'design', its row of kind 'ask'), quoting what they asked, and
- * draws there. Keyed by the message it answers, so a retry finds the same
+ * A private thread opened to draw a screen in, as the "+" opens one
+ * (private-threads.js startThread: the bot's line, metadata kind
+ * 'opened_thread' with changeKind 'design', its row of kind 'ask'). 14 Nov
+ * 2026: every message is in a thread, so a screen asked for is drawn in the
+ * thread it was asked in (design-bot.js draw); this is for a caller with no
+ * thread at all. Keyed by the message it answers, so a retry finds the same
  * thread. Resolves the thread (draftingThread's shape) or null.
  */
 async function openDrawThread(pool, { user, app = null, title = null, messageId = null, deps = {} }) {
@@ -394,8 +424,10 @@ async function openDrawThread(pool, { user, app = null, title = null, messageId 
     bot,
     userId: user.id,
     content: drawLine({ title: named, appName }),
-    threadRootId: false,
+    // The thread's first message, its row written with it (sendDm `thread`),
+    // quoting what asked for the screen.
     replyToId: id(messageId),
+    thread: { kind: 'ask', appId: app?.id ? Number(app.id) : null },
     moment: null,
     idempotencyKey: id(messageId) ? `design-draw-${id(messageId)}` : null,
     metadata: {
@@ -405,11 +437,6 @@ async function openDrawThread(pool, { user, app = null, title = null, messageId 
     },
   });
   if (!said?.messageId) return null;
-  await pool.query(
-    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-     VALUES ($1, $2, $3, $4, 'ask', 'open') ON CONFLICT (root_message_id) DO NOTHING`,
-    [user.id, said.conversationId, said.messageId, app?.id ? Number(app.id) : null],
-  );
   return draftingThread(pool, { userId: user.id, botId: bot.id, rootId: said.messageId });
 }
 
@@ -916,6 +943,7 @@ module.exports = {
   validHtml,
   threadOf,
   designFor,
+  threadForRequest,
   surfaceFor,
   draftingThread,
   ensureDesign,

@@ -360,6 +360,41 @@
       "id": "release-hold-notices",
       "sha256": "787953b2ba2b54988c0ef53422acf44366e98d0ebd8d4be7daf148f36e84dbc4",
       "schemaSha256": "025a3702a827c62429e965fa3c9c9b820fa0fa7203d45f672073a7141e7126c1"
+    },
+    {
+      "id": "user-timezone",
+      "sha256": "22f84d61daba3c9e9987b4376fb64be9d83da8d8e1716c245601b868bd33d5a8",
+      "schemaSha256": "1f9e69bb624ad8113d3c51d5d5cf2b0ca9dc8690cd841506f5f1e5cb06ad0bef"
+    },
+    {
+      "id": "conversation-drafts",
+      "sha256": "bfb84fc6fbcb0d1b28422dc23384f236e7d6c79c317403953e038dc4daa00178",
+      "schemaSha256": "4d4d42c5bbff283662b84925b75e248f09099b7881985e25b3acaa79172c1a45"
+    },
+    {
+      "id": "bot-chat-threads-only",
+      "sha256": "229aab21e369f6bcaa24538bb7df2ffc9c901c35cda8e616acdda6b65408e9ec",
+      "schemaSha256": "b5893a86e58a422c5fd31e28e17279737fc7531c5f9a517921c56e3e51b96e6c"
+    },
+    {
+      "id": "homeroom-bot-build-notes-from-request",
+      "sha256": "7aa510b81e752bec19e350a568ff42880f3a56d907d067af8db770109f7025fb",
+      "schemaSha256": "db9042a114208849f917b88b72bdc3fcec361b3a45a2f40397dd01b7f7d6c90f"
+    },
+    {
+      "id": "app-groups",
+      "sha256": "7b459f85190080a0edc52fa7d047d879b9e96fbcf752d943feca525653e99e0f",
+      "schemaSha256": "e236854d0d060d4c66b2d503372217ddb09cc2646ee879add12f4a4df9ec5570"
+    },
+    {
+      "id": "moved-chats",
+      "sha256": "c8c6b9518cd824e77b7f819f1e910533c4b725e0228e1995f6fa379b1cdccf81",
+      "schemaSha256": "61b3ca527e4f285f860e86637b0ae0b4b6da4c6f6d1740a034010389ec81e64b"
+    },
+    {
+      "id": "chat-messages-client-key",
+      "sha256": "4d6a76708d16d32917100be4cd74422011fa39c348d1d55312a6af83e38567f4",
+      "schemaSha256": "bfefb0ba5730958609baaa51e29f0eeb2cc2bb1a13738152cbbb273cddf582f9"
     }
   ]
 }

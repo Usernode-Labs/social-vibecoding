@@ -47,7 +47,8 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
 // `my_proposals`, Me › Your work's screen, which the Homeroom bot tab's
 // History replaced on 5 Nov 2026, and so do `discover` and `communities`,
 // since One Home (#6361) retired Discover's screen and the Communities list;
-// `needs` is the page left of the latter.
+// `needs` is the page left of the latter. `agent_session` was the agent
+// chat's screen, and stays for the same reason.
 const NAV_SCREENS = Object.freeze(new Set([
   'home', 'discover', 'communities', 'needs', 'weekly_digest', 'challenges', 'profile', 'my_proposals',
   'settings', 'messages', 'assistant', 'agent_session', 'ai', 'app', 'project',

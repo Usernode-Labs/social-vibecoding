@@ -62,8 +62,8 @@ would run signed out, and no reviewer could sign in. That support shipped a
 release before the switch, so that changes opened after it carry the marker.
 Keep the file while the support holds.
 
-A change's recorded base (an imported pull request's, or a local agent's
-hand-off) never moves, even once the change is updated with main. When that
+A change's recorded base (an imported pull request's, or a CLI
+hand-off's) never moves, even once the change is updated with main. When that
 base lacks the marker, the shots' before side is where the change's head
 meets main instead (`shots-orchestrator.js` `recordedBaseCannotBoot`), as
 for a change with no recorded base. A shots eval replays a merged change's

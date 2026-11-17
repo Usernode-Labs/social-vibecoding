@@ -127,7 +127,7 @@ Use the matching skill whenever its description fits:
 - `usernode-api` — inspect or change Homeroom app/platform state.
 - `usernode-proposal` — run a locally authored native proposal through
   staging, checks, and optional promotion from an agent on the user's own
-  machine. This skill does not apply inside a Homeroom hosted dev-chat worker:
+  machine. This skill does not apply inside a Homeroom hosted worker:
   that worker commits on its assigned branch, declares its visible changes
   with its supplied tool, and leaves push, PR, and staging to the harness.
 - `react-shell-migration` — convert a legacy-owned shell region to React.
@@ -161,8 +161,9 @@ selects a skill.
   `// test:changed: always (…)` line; mark a new one only if it is fast.
   A suite that reaches a file only through a chain of modules declares it
   with a `// test:changed: when <path> (…)` line, and a change to that file
-  or anything under that directory selects it: the Mayor turn golden
-  declares `src/prompts/`, because the prompts it pins are built from there.
+  or anything under that directory selects it: the design-guidance suite
+  declares `src/prompts/design-guidance.md`, because it reads that guidance
+  through `services/prompts.js`.
   A new `tests/*.test.js` needs its entry in `tests/baselines/test-durations.json`
   (`npm run test:durations -- --add <file>`); test:changed reports one that is
   missing and the unit suite fails on it.
@@ -194,7 +195,7 @@ transaction boundaries, preview compatibility and PostgreSQL checks.
 ## Declare visible changes for before/after shots
 
 Every proposal that changes something people can see gets before/after shots.
-A hosted dev-chat worker declares its changes with its supplied tool. An
+A hosted worker declares its changes with its supplied tool. An
 external agent sends the same version-1 object as `visibleChanges` on
 `submit_work`. Homeroom's shots agent then follows each declared change on
 the exact before and after builds and saves what it sees: a still for each
@@ -252,43 +253,67 @@ is no replay plan to write and nothing to verify locally.
 - **The phone's bar is Home · AI · Messages · You; the desktop sidebar is
   Home, AI, Messages, then Recents and You** (#6019; One Home, #6361). AI is the Homeroom bot's chat, which is not a row of Messages
   and is never drawn on the Messages screen: its page
-  (`frontend/src/features/ai/`) is the list, Main Chat its first row, and
-  from 768px a column beside it holding Main Chat or one private thread,
-  alone under its own head; on a phone the two are one drawer, Messages'
-  own strip (`phone-drawer.tsx`): the list the whole screen, and Main
-  Chat's name and arrow in the platform header (`nav-drawer/bot-drawer.ts`).
-  Every way into the chat (an address, a
-  bell row, a door that asks Homeroom bot) lands there through
-  `features/ai/door.ts`; `#messages/<the bot's chat>` is swapped for
-  `#homeroom-bot/main` or `/thread/<id>`. A request, a change or a decision
-  opens in the column through the side panel, or on its own page, never in
-  the drawer. What the column shows is one state (`features/ai/column.ts`:
-  Main, a private thread, or a page), which the lit row, the address
-  (`#homeroom-bot/request/<slug>/<n>` and the like) and Main's attachment
-  read; every row opens its own place, a ▷ plan row its request's page.
-  Main Chat holds what you said there and the bot's replies: a request's
-  news is on the request's page, its thread (`conversations.js`
-  REQUEST_NEWS leaves it out of Main, old and new; a first version's stays),
-  where Homeroom bot's plan is drawn for everyone and any member may press
-  Build it, paid from their own week. A thread in Main is only a private
-  one, which the page lists, which says "Only you can see this thread", and
-  which can be done (Mark done, or asking the bot) and reopened. A private
-  thread's origin decides what Main Chat shows of it: one started from the
-  bot's "+" stays out of Main, its opener line and replies
-  (`conversations.js` PLUS_THREAD_OPENER and PLUS_THREAD_REPLY leave them
-  out, old and new), and lives only in the page's list; one the bot opened
-  from Main, answering what was said there, or from a request's page or a
-  captured screen keeps its line in Main, which is the way to its row in the
-  list. Main also holds what you said there, even when a thread grew from it.
-  The "+" also has an address, `#homeroom-bot/new`, which may name the
+  (`frontend/src/features/ai/`) is the lists, with **New chat**, a labelled
+  button beside search, in its head, and from 768px a column beside them
+  holding one private thread or a new chat, alone under its own head; on a
+  phone the two are one drawer, Messages' own strip (`phone-drawer.tsx`):
+  the list the whole screen, under the tab's plain header, and a thread or a
+  new chat slid in from its right, never an empty level.
+  **Every conversation with the bot is a thread (14 Nov 2026): there is no
+  Main Chat**, the one mixed stream the chat used to open on, and nothing is
+  sent outside a thread. The chat is mounted threads only
+  (`EmbeddedConversation threadsOnly`, `store.ts` `loadThreadsOnly`): the
+  conversation's own stream is never read, drawn or marked read; a thread
+  marks itself read when it is drawn, its row carries its own new mark, and
+  the tab's badge is the conversation's `unreadCount`, which the server
+  counts across threads. Every way into the chat (an address, a bell row, a
+  door that asks Homeroom bot) lands there through `features/ai/door.ts`,
+  and opens the thread it is about (`lib/thread-about.ts` for a change), a
+  project's first-version thread, or a new chat set to its project, with
+  the item it carried attached in the new chat's box
+  (`messages/new-chat-carry.ts`); `#messages/<the bot's chat>` is swapped
+  for `/thread/<id>`, or for the old `#homeroom-bot/main`. That address and
+  `#homeroom-bot/main/m/<id>` still land: `features/ai/where.ts` asks
+  `GET /api/ai/where` which thread, and rewrites the address in place to
+  the person's "Earlier chat" (their old Main Chat messages, one private
+  thread), the thread a message is in, or a new chat. A request, a change
+  or a decision opens in the column through the side panel, or on its own
+  page, never in the drawer. What the column shows is one state
+  (`features/ai/column.ts`: a private thread, a new chat, or a page), which
+  the lit row and the address (`#homeroom-bot/request/<slug>/<n>` and the
+  like) read; every row opens its own place, a ▷ plan row its request's
+  page. A request's news is on the request's page, its thread, where
+  Homeroom bot's plan is drawn for everyone and any member may press Build
+  it, paid from their own week. A thread of the chat is only a private one,
+  which the page lists, which says "Only you can see this thread", and
+  which can be done (Mark done, or asking the bot) and reopened: one from
+  New chat, one the bot opened (a hello, a project's first version, an
+  answer), one about a request or a change, or a captured screen's.
+  Earlier chat and a project's first version are named by what they are
+  (`private-threads.js` `kindTitle`: "Earlier chat", "Plant Pal, first
+  version"), on the row, in History and in the open thread's head
+  (`private-thread-bar.tsx` `serverThreadName`), never by their first
+  words. A first version's plan and activity cards are replies of its
+  thread, which reads them as the stream they were (`planLayout`).
+  A new chat has no address of its own (it is the bare tab's), and a link
+  runs the router twice, on popstate and then hashchange: `door.ts`
+  `askBotClose` drops the second pass of a link to `#homeroom-bot/new…`
+  (`isNewChatEcho`), which would otherwise close what the first opened.
+  New chat opens "What do you want to do?" (`messages/new-thread.tsx`) with
+  its project already set: the one chip picked on the page, else the
+  project page the person last left (`workshop/community-scope.ts`), else
+  Any project; nothing is saved until the first message, which makes the
+  thread. It also has an address, `#homeroom-bot/new`, which may name the
   project and who works on the thread (`?project=<slug>&with=claude-code` or
   `chatgpt`; `features/ai/door.ts` `botNewAddress`). Who works on it is a
   second chip beside the project's (`features/messages/thread-builder.tsx`):
   Homeroom bot, or the person's own Claude Code or ChatGPT, for which nothing
   is sent or made here. The send opens that product with the person's own
   words in the link, after the connector steps when it has no connection. A
-  project's Workshop offers the same three to somebody who has made nothing
-  there yet, in Your work's place (`dev-board/workshop/first-change.tsx`).
+  project's Workshop has the same door: the second row of its Your work
+  card, "New chat about <project>" (`dev-board/workshop/your-work.tsx`), and
+  for somebody who has made nothing there yet the three builders in Your
+  work's place (`dev-board/workshop/first-change.tsx`).
   **Home is the one page of apps and communities, signed in or out (One
   Home, #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile
   opens the app; hidden until the first pin), **Pinned communities**
@@ -338,8 +363,9 @@ is no replay plan to write and nothing to verify locally.
   (`features/dev-board/workshop/project-places.tsx`): **Hub** (who it is
   for and who was active this week, the actions, For you: votes owed, your
   work and the chat's last line, then Recently live; no charts),
-  **Needs you** and **Workshop**, a line, then **Channels** (**#general**) and **Topics**
-  (each topic's channel), each group under its heading. Place keys are
+  **Needs you** and **Workshop**, a line, then **Channels** (**#general**)
+  under its heading; a topic's channel is reached from the Hub's Topics card
+  and its own address. Place keys are
   `status`, `needs`, `workshop`, `discussion` (#general) and `c:<handle>`
   (`places.ts`); a channel has its own address, `#app/<slug>/dev/c/<handle>`.
   Above Hub, the list's first row is **App**, the project's own app
@@ -414,6 +440,16 @@ is no replay plan to write and nothing to verify locally.
   its changes' replies and what happened to them are read with it
   (`routes/chat.js` selectStream), each tagged with its change; a new reply
   there goes to the request. A change with no request keeps its own page.
+  **How it got here** (15 Nov 2026) is the thread's big events down a line:
+  asked, planned, built, tested, then where it stands, which is the standing
+  the server worded (`features/dev-board/topic/rail-model.ts`, drawn by
+  `thread-rail.tsx` into the shell's `#gc-thread-rail`). In the standard look
+  and the brand look a wide page stands it beside the root post and the
+  replies, each a card; a narrow page, a side panel, or a page with the
+  reader open keeps one column, the rail between the post and the replies
+  with its earlier steps folded into a pile. A step's link opens what the
+  page already has (the reader, a change's details, its section). The
+  frame's looks draw none: they have their own context column.
 - **Audience is derived, never stored.** `communities.audienceSql` reads it
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
@@ -458,9 +494,10 @@ is no replay plan to write and nothing to verify locally.
   answers with a `join_required` frame). Mount the matching gate on any new
   write route of that kind; the client's fetch wrapper
   (`frontend/src/lib/join-required.ts`) turns the 403 into a Join prompt and
-  a retry, so no caller handles it by hand. A Mayor or connector tool keeps
-  the code (`mcp-tools.platformError` answers `join_required` with the app),
-  and the Mayor's refused card offers Join itself. The collab guard in
+  a retry, so no caller handles it by hand. A connector tool keeps the code
+  (`mcp-tools.platformError` answers `join_required` with the app), and
+  Homeroom bot, refused the same way, tells the person to join the project
+  from its page. The collab guard in
   `app-access.js` still decides who may be there at all; admins pass.
   Collaborators and platform access join by trigger — write those rows,
   not `community_members`, unless the action is literally Join or Leave. A

@@ -104,20 +104,16 @@ foregrounded app may swallow the banner).
 | 6 | `collab_invite_accepted` | Recipient invites actor; actor: `POST /api/invites/:appId/accept` `{}` |
 | 7 | `approver_invite` | Recipient must already be a member of the actor's app, then actor: `POST /api/apps/:slug/approver-invites` `{"username":"<recipient>"}` |
 | 8 | `approver_invite_accepted` | Recipient invites actor as approver; actor: `POST /api/approver-invites/:appId/accept` `{}` |
-| 9 | `spec_shared` | Actor needs a session with a spec version. Cheapest: `proposal_start` (MCP/CLI handoff) writes spec v1 without any LLM turn → `POST /api/sessions/:sid/specs/1/share-user` `{"username":"<recipient>"}` |
-| 10 | `session_done` | Recipient: one trivial turn on a dev session they already own (`POST /api/sessions/:id/chat` `{"message":"Do not change any files. Answer in one sentence: what does this app do?"}`). Fires on **every** interactive turn completion. New sessions are no longer created directly (#2779: `POST /api/apps/:slug/sessions` answers 403 `agent_sessions_only` to anything but an agent session's Mayor); without an existing one, start an agent session in the browser and have the Mayor start a change and run a build on it, with the conversation closed so the completion is not being watched. |
-| 11 | `auto_solve_done` | Recipient: file an issue (`POST /api/apps/:slug/issues`), then `POST /api/apps/:slug/issues/:number/headless-session` `{}`. Fires at the runner's terminal state. The `question`/`failed` body variants are hard to force deliberately; the "finished" variant is the reliable one. |
-| 12 | `pr_proposed` | Actor promotes a proposal on a shared app (recipient receives as "other member"). Full path: `proposal_start` → local commit → `proposal push` (CLI) → `proposal_submit_build` → poll `GET /api/sessions/:id/proposal-handoff` until `"state":"ready"` → `proposal_promote`. ⚠️ Idle handoff sessions **auto-pause**; `POST /api/sessions/:id/resume` first or promote returns "not ready". |
-| 13 | `check_failed` | ⚠️ Fires **only on staging boot failure** (`src/services/staging-recovery.js`), *not* on failing dapp tests. Recipient-owned proposal whose `server.js` throws at import (`throw new Error(...)` as line 1) → submit build → container crashloops → push in ~4 min. **Archive the session immediately after** (`POST /api/sessions/:id/archive`). One notification per failure streak (`check_error_notified_at`). |
-| 14 | `stale_pr` | **Not force-testable.** Background sweeper, fires after days of a promoted proposal receiving no votes. Copy is pinned by `tests/mobile-push-policy.test.js`. |
-| 15 | `conversation_invite` | Actor creates the disposable group described below: `POST /api/conversations` `{"kind":"group","title":"Mobile push <run>","member_ids":[<recipientId>]}`. Wait for this push before accepting. |
-| 16 | `conversation_message` | After acceptance, actor: `POST /api/conversations/:id/messages` `{"content":"ordinary push test","idempotency_key":"push-message-<run>"}`. Do not include the recipient's handle or `reply_to_id`. |
-| 17 | `conversation_mention` | Actor: `POST /api/conversations/:id/messages` `{"content":"@<recipientUsername> mention push test","idempotency_key":"push-mention-<run>"}`. The handle must be the recipient's exact active-member username. |
-| 18 | `conversation_reply` | Recipient first creates the setup message below; actor replies with `POST /api/conversations/:id/messages` `{"content":"reply push test","reply_to_id":<recipientMessageId>,"idempotency_key":"push-reply-<run>"}`. Conversation replies are REST-capable (unlike legacy app-chat replies). |
-| 19 | `conversation_reaction` | Actor: `POST /api/conversations/:id/messages/:recipientMessageId/reactions` `{"emoji":"👍"}`. This endpoint toggles, so the first call for that actor/message/emoji must add the reaction; a second call removes it and its notification. |
-| 20 | `session_stalled` | **Not force-testable on demand.** Fires instead of `session_done` when a dev-session turn ends on a failure (a provider error, an agent error or timeout, a worker lost mid-run), when restart recovery or the stale-turn watchdog finds a turn that never finished, or when a pressure/LRU pause lands on an open turn. Never on a stop the user pressed or an owner pause. Copy is pinned by `tests/mobile-push-policy.test.js`. |
+| 9 | `pr_proposed` | Actor promotes a proposal on a shared app (recipient receives as "other member"). Full path: `proposal_start` → local commit → `proposal push` (CLI) → `proposal_submit_build` → poll `GET /api/sessions/:id/proposal-handoff` until `"state":"ready"` → `proposal_promote`. ⚠️ Idle handoff sessions **auto-pause**; `POST /api/sessions/:id/resume` first or promote returns "not ready". |
+| 10 | `check_failed` | ⚠️ Fires **only on staging boot failure** (`src/services/staging-recovery.js`), *not* on failing dapp tests. Recipient-owned proposal whose `server.js` throws at import (`throw new Error(...)` as line 1) → submit build → container crashloops → push in ~4 min. **Archive the session immediately after** (`POST /api/sessions/:id/archive`). One notification per failure streak (`check_error_notified_at`). |
+| 11 | `stale_pr` | **Not force-testable.** Background sweeper, fires after days of a promoted proposal receiving no votes. Copy is pinned by `tests/mobile-push-policy.test.js`. |
+| 12 | `conversation_invite` | Actor creates the disposable group described below: `POST /api/conversations` `{"kind":"group","title":"Mobile push <run>","member_ids":[<recipientId>]}`. Wait for this push before accepting. |
+| 13 | `conversation_message` | After acceptance, actor: `POST /api/conversations/:id/messages` `{"content":"ordinary push test","idempotency_key":"push-message-<run>"}`. Do not include the recipient's handle or `reply_to_id`. |
+| 14 | `conversation_mention` | Actor: `POST /api/conversations/:id/messages` `{"content":"@<recipientUsername> mention push test","idempotency_key":"push-mention-<run>"}`. The handle must be the recipient's exact active-member username. |
+| 15 | `conversation_reply` | Recipient first creates the setup message below; actor replies with `POST /api/conversations/:id/messages` `{"content":"reply push test","reply_to_id":<recipientMessageId>,"idempotency_key":"push-reply-<run>"}`. Conversation replies are REST-capable (unlike legacy app-chat replies). |
+| 16 | `conversation_reaction` | Actor: `POST /api/conversations/:id/messages/:recipientMessageId/reactions` `{"emoji":"👍"}`. This endpoint toggles, so the first call for that actor/message/emoji must add the reaction; a second call removes it and its notification. |
 
-### Messages sequence (kinds 15–19)
+### Messages sequence (kinds 12–16)
 
 Use a new group for each run so direct-message consent history and an old
 reaction toggle cannot affect the result. Substitute a short alphanumeric
@@ -126,7 +122,7 @@ contain only letters, digits, `.`, `_`, `:`, or `-`.
 
 1. Actor: `GET /api/users/search?q=<recipientUsername>&scope=messages`; take
    the `id` from the exact username match as `<recipientId>`. Create the group
-   with trigger 15 and retain `conversation.id` from the response.
+   with trigger 12 and retain `conversation.id` from the response.
 2. Lock the phone and wait for the nested diagnostic row for
    `conversation_invite` to show delivery `sent`, then confirm the phone says
    `@actor invited you to a conversation · Mobile push <run>` and
@@ -135,7 +131,7 @@ contain only letters, digits, `.`, `_`, `:`, or `-`.
 3. Recipient (logged-in browser):
    `POST /api/conversations/:id/respond` `{"action":"accept"}`. Keep the
    Messages screen closed after this call.
-4. Run triggers 16 and 17 separately, waiting for `sent` and on-device
+4. Run triggers 13 and 14 separately, waiting for `sent` and on-device
    confirmation after each. The body should be the sent content; the title
    should say the actor sent a message or mentioned the recipient and include
    the group title.
@@ -143,8 +139,8 @@ contain only letters, digits, `.`, `_`, `:`, or `-`.
    `{"content":"recipient setup message","idempotency_key":"push-source-<run>"}`;
    retain the returned `message.id` as `<recipientMessageId>`. This may notify
    the actor, but it is only setup for the recipient-facing kinds.
-6. Run trigger 18, wait for `sent`, and confirm the reply body is
-   `reply push test`. Then run trigger 19, wait for `sent`, and confirm the
+6. Run trigger 15, wait for `sent`, and confirm the reply body is
+   `reply push test`. Then run trigger 16, wait for `sent`, and confirm the
    title includes `reacted 👍` while the body says
    `You said: recipient setup message`.
 
@@ -153,17 +149,16 @@ inspect that row's nested `deliveries`, and only then ask the human to confirm
 the banner. A top-level empty `deliveries` array is still not evidence of
 failure. Server `sent` remains provider hand-off, not proof of rendering.
 
-Suggested order: Messages sequence 15–19 → 6 → 1 → 2 → 3 → 4 → 8 → 10 → 11 → 9 → 12 → 5 → 7 → 13.
+Suggested order: Messages sequence 12–16 → 6 → 1 → 2 → 3 → 4 → 8 → 9 → 5 → 7 → 10.
 Steps 6/8 make the actor a member+approver of the shared app first; 5/7 need
-the actor-owned app; 13 last because it involves the CLI credential swap back
+the actor-owned app; 10 last because it involves the CLI credential swap back
 to the recipient.
 
 ## Cleanup checklist
 
 - Archive the deliberately-broken `check_failed` session (immediately).
-- Decide the fate of the two real proposals created (the actor's promoted PR
-  and the auto-solve result): vote/merge or withdraw+archive.
-- Close or resolve the test issue.
+- Decide the fate of the real proposal created (the actor's promoted PR):
+  vote/merge or withdraw+archive.
 - Delete or keep the actor-owned throwaway app.
 - After capturing conversation diagnostics, actor removes the recipient with
   `DELETE /api/conversations/:id/members/:recipientId`, then actor archives

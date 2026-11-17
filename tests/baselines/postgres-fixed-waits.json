@@ -1,5 +1,4 @@
 {
-  "tests/agent-sessions-postgres.test.js": 2,
   "tests/app-data-retention-postgres.test.js": 1,
   "tests/app-templates-postgres.test.js": 5,
   "tests/bench-lane-postgres.test.js": 3,
@@ -25,10 +24,8 @@
   "tests/paid-generation-claims-postgres.test.js": 2,
   "tests/platform-preview-startup-postgres.test.js": 1,
   "tests/preview-projects-postgres.test.js": 1,
-  "tests/private-streams-postgres.test.js": 1,
   "tests/promoted-upload-checks-postgres.test.js": 2,
   "tests/proposal-lock-postgres.test.js": 2,
-  "tests/session-bus-postgres.test.js": 2,
   "tests/shots-db-retry-postgres.test.js": 2,
   "tests/shots-eval-postgres.test.js": 3,
   "tests/turn-spend-postgres.test.js": 1,

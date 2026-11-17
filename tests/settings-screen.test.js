@@ -91,7 +91,6 @@ const kitSurfaceTs = read('frontend/src/lib/kit-surface.ts');
  */
 const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 const settingsCode = code(settingsJs);
-const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
 const platformUiJs = read('public/js/platform-ui.js');
 const cliAuthJs = read('src/routes/cli-auth.js');
 const manifest = JSON.parse(read('dapp.json'));
@@ -261,8 +260,8 @@ test('the registry groups pages under six headings, Account first and Advanced l
   const byGroup = (key) => sections.find((s) => s.key === key).group;
   assert.deepEqual(['usage', 'openrouter', 'api-key'].map(byGroup),
     Array(3).fill('settings:nav.group.aiModels'), 'the allowance, OpenRouter and the Anthropic key are AI models & usage');
-  assert.deepEqual(['connectors', 'cli', 'agent-files'].map(byGroup),
-    Array(3).fill('settings:nav.group.integrations'), 'connectors, CLI and agent files are Integrations & automation');
+  assert.deepEqual(['connectors', 'cli'].map(byGroup),
+    Array(2).fill('settings:nav.group.integrations'), 'connectors and CLI are Integrations & automation');
   assert.deepEqual(['experimental'].map(byGroup),
     ['settings:nav.group.advanced'], 'Experimental is Advanced');
   assert.equal(sections.at(-1).group, 'settings:nav.group.advanced', 'and Advanced closes the menu');
@@ -280,7 +279,7 @@ test('the registry groups pages under six headings, Account first and Advanced l
   for (const key of [
     'theme', 'language', 'alerts', 'blocked-apps', 'tour', 'username', 'email',
     'password', 'delete-account', 'wallet', 'openrouter',
-    'api-key', 'connectors', 'app-ai', 'app-permissions', 'agent-files', 'cli',
+    'api-key', 'connectors', 'app-ai', 'app-permissions', 'cli',
     'dev-console', 'experimental', 'usernode', 'admin-preview', 'about',
   ]) assert.ok(byKey[key], `${key} is still a registered part`);
 
@@ -294,6 +293,9 @@ test('the registry groups pages under six headings, Account first and Advanced l
   assert.deepEqual(['connectors', 'cli'].map(pageOf), Array(2).fill('connectors'));
   // #4311: "Where changes get built" is gone; nothing acted on its value.
   assert.equal(byKey['build-venue'], undefined, 'the build-venue part is retired');
+  // Agent instructions & skills is gone: no build copies the files into the
+  // worker any more, so the pane had nothing to configure.
+  assert.equal(byKey['agent-files'], undefined, 'the agent-files part is retired');
   // A page key that is also the key of a LATER part on that page would make
   // the page's own nav row resolve as a deep link to that part, opening the
   // page scrolled past everything above it.
@@ -519,13 +521,11 @@ test('every pre-existing settings control id survived the move', () => {
     'cp-current', 'cp-new', 'cp-confirm', 'cp-save', 'cp-wallet-save',
     'llm-grants-list', 'llm-grants-status',
     'cli-tokens-list', 'cli-tokens-more', 'cli-tokens-status',
-    'agent-files-input', 'agent-files-save', 'agent-files-cancel',
-    'agent-files-instructions-list', 'agent-files-skills-list',
     'wallet-link-btn', 'wallet-link-cancel', 'wallet-qr-canvas',
     'view-as-non-admin', 'dev-console-always-show',
-    'devchat-alerts-toggle', 'devchat-alerts-test',
+    'devchat-alerts-test',
     'settings-locale', 'settings-locale-status',
-    'ai-progress-estimate', 'settings-usernode-section', 'settings-logout',
+    'settings-usernode-section', 'settings-logout',
   ];
   for (const id of ids) {
     const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
@@ -545,11 +545,10 @@ test('the four formerly-anonymous section roots got stable ids', () => {
 test('no section container is ever innerHTML-written', () => {
   // Section BODIES may still repaint their own dynamic list hosts
   // (#cli-tokens-list) exactly as they did in the modal — those are built by
-  // settings.js and carry no init()-bound listeners. #llm-grants-list and the
-  // two #agent-files-*-list hosts are NOT among them any more: all three are
-  // React-owned end to end (frontend/src/features/settings/grants-list.tsx,
-  // agent-files-list.tsx) and settings.js publishes a view model to each,
-  // which the assertions below pin.
+  // settings.js and carry no init()-bound listeners. #llm-grants-list is NOT
+  // among them any more: it is React-owned end to end
+  // (frontend/src/features/settings/grants-list.tsx) and settings.js
+  // publishes a view model to it, which the assertions below pin.
   //
   // What must never happen is a write that replaces a WRAPPER or the container
   // holding them, which would detach every id-bound control at once.
@@ -572,12 +571,6 @@ test('no section container is ever innerHTML-written', () => {
     '#llm-grants-list is React-owned — settings.js publishes to grants-store instead');
   assert.match(settingsJs, /UsernodeReact\.settingsGrants/,
     'settings.js reaches the grants store through the published bridge');
-  for (const host of ['agent-files-instructions-list', 'agent-files-skills-list']) {
-    assert.doesNotMatch(settingsJs, new RegExp(host),
-      `#${host} is React-owned — settings.js publishes to agent-files-store instead`);
-  }
-  assert.match(settingsJs, /UsernodeReact\.settingsAgentFiles/,
-    'settings.js reaches the agent-files store through the published bridge');
 
   // #1191 slice 6, conversion 8: the two nav hosts are React now
   // (frontend/src/features/settings/settings-nav.tsx), so _renderNav pushes
@@ -1007,39 +1000,6 @@ test('close() tears down the two lifecycle timers', () => {
 
 // ── Other callers ──────────────────────────────────────────────────────
 
-test('the credits banner deep-links all three ways to keep building', () => {
-  // The banner used to offer BYOK alone and navigate itself. It now
-  // delegates to CreditOptions, which owns the same three routes the
-  // in-chat card and the Generate-proposal modal render — so the wiring
-  // assertion moved with it.
-  // The banner is a component since the four strips converted, so the wiring
-  // moved from `_wireCreditsBanner` in dev-chat.js to a ref in
-  // features/dev-chat/banners.tsx — one delegated click per mounted element,
-  // which is what `CreditOptions.wire` has always bound.
-  const bannersTsx = fs.readFileSync(
-    path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'banners.tsx'), 'utf8'
-  );
-  const fn = bannersTsx.slice(bannersTsx.indexOf('const wireRef'));
-  // #1049 added a second argument: the two hand-off routes are handled in
-  // place (they start the walkthrough in this chat) rather than navigated.
-  // #1348 added a third: "Change session type" opens the venue sheet here
-  // too, in blocked mode — the bar is two buttons now, and that is the one
-  // standing in for every venue the bar used to list.
-  assert.match(fn.slice(0, 800), /CO\?\.wire\?\.\(el, \{\s*\n?\s*onFlow:/,
-    'the shared module wires the banner');
-  assert.match(fn.slice(0, 800), /openVenueSheet\?\.\(button, \{ blocked: true \}\)/,
-    'and the venue door opens the sheet blocked, on the refusal banner');
-  assert.doesNotMatch(fn.slice(0, 800), /Settings\.open\(/,
-    'no direct module call any more');
-
-  const creditOptions = read('public/js/credit-options.js');
-  assert.match(creditOptions, /window\.location\.hash = hash/,
-    'a real navigation, so back returns to the chat');
-  for (const hash of ['#settings/api-key', '#settings/cli', '#settings/connectors']) {
-    assert.ok(creditOptions.includes(`'${hash}'`), `offers ${hash}`);
-  }
-});
-
 test('the "Settings → Change password" prose is a real link', () => {
   assert.match(html, /href="#settings\/password"/,
     'the account-recovery help text links to the Password section');
@@ -1112,7 +1072,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   const paths = tests.map((t) => t.path);
   assert.ok(paths.includes('/#settings'),
     'the screen itself is checked at its bare route');
-  for (const key of ['password', 'language', 'app-ai', 'agent-files', 'cli', 'admin-preview']) {
+  for (const key of ['password', 'language', 'app-ai', 'cli', 'admin-preview']) {
     assert.ok(
       paths.some((p) => p.includes(`#settings/${key}`)),
       `a rendered check deep-links #settings/${key}`,
@@ -1125,7 +1085,7 @@ test('dapp.json covers the settings screen and its deep links', () => {
   );
   // Data-dependent sections must go through their staging demo injection.
   for (const t of tests) {
-    if (/#settings\/(app-ai|agent-files)/.test(t.path)) {
+    if (/#settings\/app-ai/.test(t.path)) {
       assert.match(t.path, /demo=1/,
         `${t.path} needs ?demo=1 — its table is staging:private / not cloned`);
     }
@@ -1500,130 +1460,6 @@ test('only the newest usernode read attempt paints', () => {
     'each attempt is tagged');
   assert.match(section, /if \(token !== this\._usernodeRenderToken\) return;/,
     'a stale 12s read cannot overwrite a fresher result');
-});
-
-// ── #907: the "Local coding agent" block ───────────────────────────────────
-
-test('the local-agent block lives in Experimental and ships hidden', () => {
-  // Experimental, not the CLI section: this is a preview of the same feature
-  // the dev chat's "Run on" selector exposes, and a lease is not a credential
-  // — revoking a token is a security action, detaching a machine is a
-  // routing one, and putting them side by side would blur that.
-  const experimental = html.slice(
-    html.indexOf('data-settings-section="experimental"'),
-    html.indexOf('data-settings-section="experimental"') + 12000
-  );
-  assert.match(experimental, /id="settings-local-agents-section"/);
-  assert.match(experimental, /id="settings-local-agents-list"/);
-  assert.match(experimental, /id="settings-local-agents-status"/);
-  // Hidden by default and only revealed when the user actually has one,
-  // so it costs nothing for the overwhelming majority who never run the CLI.
-  assert.match(experimental, /id="settings-local-agents-section" class="hidden/);
-  assert.match(experimental, /Local coding agent/);
-  // The copy has to answer "what still happens on Homeroom?", because
-  // "runs on your machine" otherwise reads as "Homeroom stops working".
-  assert.match(experimental, /Homeroom still opens the pull request/);
-});
-
-// The label is free text typed on someone's own laptop and arrives here
-// verbatim, so it must never reach an HTML string. It was hand-built with
-// `document.createElement` + `textContent` for that reason; #1191 made the
-// list React's, which gives the same guarantee by construction — a text child
-// is escaped, and there is no template to interpolate into.
-test('a machine label can never escape into markup', () => {
-  const hostile = '<img src=x onerror=alert(1)> "quoted" & \'apostrophe\'';
-  const html2 = renderComponent(
-    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
-    {
-      phase: 'ready',
-      agents: [{
-        leaseId: 'lease_1',
-        title: hostile,
-        where: hostile,
-        runtime: 'claude-code',
-        lastSeenAt: '2026-03-04T10:00:00Z',
-        detachable: true,
-      }],
-    },
-  );
-  assert.ok(!html2.includes('<img'), 'the tag never lands as markup');
-  assert.match(html2, /&lt;img src=x onerror=alert\(1\)&gt;/);
-  assert.match(html2, /&quot;quoted&quot;/);
-  assert.match(html2, /&#x27;apostrophe&#x27;/);
-  // …and the module has nothing left that builds DOM for this host.
-  const render = settingsJs.slice(
-    settingsJs.indexOf('_renderLocalAgentsSection()'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  // Comments first — the note beside the publish names the builder it replaced.
-  assert.ok(!/innerHTML/.test(code(render)), 'no innerHTML');
-  assert.ok(!/createElement\(/.test(code(render)), 'and no createElement either');
-  assert.match(render, /settingsLocalAgents/, 'it publishes instead');
-});
-
-test('the machine list hides itself when there is nothing to list', () => {
-  const render = settingsJs.slice(
-    settingsJs.indexOf('_renderLocalAgentsSection()'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  assert.match(render, /section\.classList\.toggle\('hidden', agents\.length === 0\)/);
-  // The status line starts hidden on every pass, so a stale error from a
-  // previous attempt cannot survive a successful one.
-  assert.match(render, /status\.classList\.add\('hidden'\);/);
-  assert.match(render, /status\.classList\.remove\('hidden'/);
-  // A read failure leaves `agents` empty, which hides the block rather than
-  // leaving a half-painted list up.
-  assert.match(render, /\} catch \{\}/);
-});
-
-test('the machine list reads the account route, not the CLI surface', () => {
-  assert.match(settingsJs, /\/api\/me\/local-agents/);
-  // Staging demo rows come from the same request-time ?demo=1 convention the
-  // token list uses, so a staging clone can review this block at all.
-  const render = settingsJs.slice(
-    settingsJs.indexOf('_renderLocalAgentsSection()'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  assert.match(render, /_cliTokensDemo\(\) \? '\?demo=1' : ''/);
-  assert.match(render, /status\.textContent = tr\('settings:localAgents\.demoData'\)/);
-  assert.match(message('settings:localAgents.demoData'), /Demo data/);
-});
-
-test('detaching is confirmed, and an already-gone lease is not an error', () => {
-  const detach = settingsJs.slice(
-    settingsJs.indexOf('_detachLocalAgent('),
-    settingsJs.indexOf('_detachLocalAgent(') + 1800
-  );
-  assert.match(detach, /method: 'DELETE'/);
-  assert.match(detach, /204|404/);
-  assert.match(detach, /confirm/i);
-  // Demo rows have no Detach button at all — there is nothing to detach.
-  // The rule is one field on the view model now, and the component draws the
-  // button only for a row that carries it.
-  const view = settingsJs.slice(
-    settingsJs.indexOf('_localAgentView(agent) {'),
-    settingsJs.indexOf('_detachLocalAgent(')
-  );
-  assert.match(view, /detachable: !agent\.demo && !!agent\.leaseId/);
-  const list = read('frontend/src/features/settings/local-agents-list.tsx');
-  assert.match(list, /agent\.detachable \? \(/);
-  const withoutLease = renderComponent(
-    'frontend/src/features/settings/local-agents-list.tsx', 'LocalAgentsListView',
-    {
-      phase: 'ready',
-      agents: [{
-        leaseId: null, title: 'staging demo', where: 'an app',
-        runtime: 'claude-code', lastSeenAt: '2026-03-04T10:00:00Z', detachable: false,
-      }],
-    },
-  );
-  assert.ok(!withoutLease.includes('Detach'), 'and a demo row draws none');
-});
-
-test('the Experimental toggle still gates the whole section', () => {
-  // The block is painted from _renderExperimentalSection, so it inherits the
-  // existing preview gate rather than inventing a second one.
-  assert.match(settingsJs, /_renderExperimentalSection\(\)[\s\S]{0,4000}_renderLocalAgentsSection\(\)/);
 });
 
 // ── "Homeroom app: connection" (the diagnostics panel) ─────────────────
@@ -2747,7 +2583,9 @@ const tr = englishPlatformI18n().t;
 const dotTextSrc = settingsJs.match(/\n  const dotText = \(parts\) => \{\n[\s\S]*?\n  \};\n/);
 assert.ok(dotTextSrc, 'settings.js defines dotText');
 const dotText = new Function('tr', `${dotTextSrc[0]}\nreturn dotText;`)(tr);
-const sliced = (...methods) => new Function('tr', 'dotText', `return ({${methods.join(',')}})`)(tr, dotText);
+// #6479: and the module's `inZone`, which adds the picked time zone; the
+// harness has none picked, so it hands the options back as they came.
+const sliced = (...methods) => new Function('tr', 'dotText', 'inZone', `return ({${methods.join(',')}})`)(tr, dotText, (options = {}) => options);
 const tierView = () => sliced(
   sliceMethod(settingsJs, '_socialIdentityMoney'),
   sliceMethod(settingsJs, '_socialIdentityTierView'),

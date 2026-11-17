@@ -187,6 +187,15 @@
   const OFFLINE_LOGOUT_TIMEOUT_MS = 2000;
   const WEB_LOGOUT_TIMEOUT_MS = 15000;
 
+  // #6479: formatter options in the zone picked in Settings › Language, or
+  // unchanged (the device's zone) under Auto or where the runtime predates it.
+  // A function rather than an import: this file also runs as a classic script.
+  const inZone = (options = {}) => {
+    const timeZone = typeof window !== 'undefined' && window.PlatformI18n?.timeZone
+      ? window.PlatformI18n.timeZone() : undefined;
+    return timeZone ? { ...options, timeZone } : options;
+  };
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -197,7 +206,7 @@
     // use below goes through `?.` for exactly that reason.
     _store: null,
     _footerHome: null,
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, locale: null, timeZone: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -206,18 +215,10 @@
     _cliTokenCursor: null,
     _cliTokensLoading: false,
     _cliTokenLoadId: 0,
-    // #907: machines currently attached to one of this account's sessions.
-    _localAgents: [],
     _connectors: [],
     _connectorLoadId: 0,
     _connectorSteps: null,
     _githubLink: null,
-    _openRouterModels: [],
-    _openRouterSelectedModelId: '',
-    _openRouterRecommendedModelId: '',
-    _openRouterCatalogRefreshedAt: null,
-    _openRouterCatalogTotal: 0,
-    _openRouterFavoritesOnly: false,
     _mobilePushPreferences: null,
     _mobilePushLoading: false,
     _mobilePushSaving: false,
@@ -348,29 +349,26 @@
       { key: 'wallet', label: 'settings:nav.part.wallet', group: 'settings:nav.group.account', gate: 'wallet-section' },
 
       // ── AI models & usage ───────────────────────────────────────────────
-      // #5994 split the old "AI & building" group, which mixed the allowance,
-      // the connectors and the agent instructions, into this group and the
-      // next: each row is faster to find under a heading that
-      // says what it is about.
+      // #5994 split the old "AI & building" group, which mixed the allowance
+      // and the connectors, into this group and the next: each row is faster
+      // to find under a heading that says what it is about.
       // The allowance leads: it is the figure most builders open Settings to
-      // find. OpenRouter follows it — the included key and the default
-      // session model — and the Anthropic key, the one you add when the
-      // allowance runs out, comes last.
+      // find. OpenRouter follows it — the included key voice input uses —
+      // and the Anthropic key, the one you add when the allowance runs out,
+      // comes last.
       { key: 'usage', label: 'settings:nav.part.usage', group: 'settings:nav.group.aiModels', page: 'ai' },
       { key: 'openrouter', label: 'settings:nav.part.openrouter', group: 'settings:nav.group.aiModels', page: 'ai' },
       { key: 'api-key', label: 'settings:nav.part.apiKey', group: 'settings:nav.group.aiModels', page: 'ai' },
 
       // ── Integrations & automation ───────────────────────────────────────
       // Everything about building from outside Homeroom: the chat connectors
-      // (Claude, ChatGPT, Codex), the CLI credentials and the instruction
-      // files and skills those agents read. The out-of-credits card
-      // deep-links #settings/connectors and #settings/cli; both land on the
-      // Connectors & CLI page (public/js/credit-options.js). Connectors leads
+      // (Claude, ChatGPT, Codex) and the CLI credentials. The out-of-credits
+      // card deep-links #settings/connectors and #settings/cli; both land on
+      // the Connectors & CLI page (public/js/credit-options.js). Connectors leads
       // because the page is keyed by it: a page key that named a LATER part
       // would open the page scrolled past everything above that part.
       { key: 'connectors', label: 'settings:nav.part.connectors', group: 'settings:nav.group.integrations', page: 'connectors' },
       { key: 'cli', label: 'settings:nav.part.cli', group: 'settings:nav.group.integrations', page: 'connectors' },
-      { key: 'agent-files', label: 'settings:nav.part.agentFiles', group: 'settings:nav.group.integrations' },
 
       // ── Preferences ─────────────────────────────────────────────────────
       // THE UI OVERHAUL moved Theme here out of the hamburger drawer.
@@ -450,7 +448,6 @@
       'linked-accounts': 'settings:nav.subtitle.linkedAccounts',
       phones: 'settings:nav.subtitle.phones',
       connectors: 'settings:nav.subtitle.connectors',
-      'agent-files': 'settings:nav.subtitle.agentFiles',
     },
 
     // #5995: a small grey "Beta" label on the rows of features still being
@@ -471,7 +468,6 @@
       wallet: 'wallet',
       ai: 'sparkles',
       connectors: 'terminal',
-      'agent-files': 'lines',
       theme: 'sun',
       accessibility: 'eye',
       language: 'globe',
@@ -487,8 +483,8 @@
 
     // #5997: where this device remembers the menu's pins and folds, each a
     // comma list of keys (page keys in pinned order; group keys, the catalog
-    // id's last segment). Per device, like Messages' folded sections
-    // (usernode:messages-folded): a convenience, not an account setting.
+    // id's last segment). Per device, like Messages' search
+    // (usernode:messages-query): a convenience, not an account setting.
     PINNED_KEY: 'usernode:settings-pinned',
     // #6136: the setup steps a person has ticked, on this device, by account:
     // { "<user id>": { "chatgpt": [1, 2] } }. A convenience, like the two keys
@@ -527,7 +523,6 @@
       openrouter: 'settings:nav.keywords.openrouter',
       connectors: 'settings:nav.keywords.connectors',
       cli: 'settings:nav.keywords.cli',
-      'agent-files': 'settings:nav.keywords.agentFiles',
       experimental: 'settings:nav.keywords.experimental',
       theme: 'settings:nav.keywords.theme',
       'dev-console': 'settings:nav.keywords.devConsole',
@@ -565,37 +560,15 @@
 
       // The static shell is still under the markup-parity migration guard,
       // so provider copy is normalized at runtime while this hidden section
-      // mounts. Users should only see the provider they configured; the
-      // worker implementation behind OpenRouter is not a product choice.
+      // mounts.
       this._normalizeOpenRouterCopy();
 
-      // OpenRouter & Codex (BYOK). Section bindings — all guarded on
-      // existence so the section degrades cleanly if the feature flag is
-      // off server-side (the section markup stays, the controls no-op).
+      // OpenRouter key (the one voice input uses). Section bindings, guarded
+      // on existence so the section degrades cleanly if its markup is absent.
       const orSave = document.getElementById('settings-openrouter-save');
       const orRemove = document.getElementById('settings-openrouter-remove');
-      const orSetDefault = document.getElementById('settings-openrouter-set-default');
-      const orModel = document.getElementById('settings-openrouter-model');
-      const orModelSearch = document.getElementById('settings-openrouter-model-search');
-      const orFavoritesOnly = document.getElementById('settings-openrouter-favorites-only');
-      const orRefreshModels = document.getElementById('settings-openrouter-refresh-models');
-      const orStarModel = document.getElementById('settings-openrouter-star-model');
-      const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
-      if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
-      if (orModel) orModel.addEventListener('change', () => {
-        this._openRouterSelectedModelId = orModel.value;
-        this._syncOpenRouterModelDetails();
-      });
-      if (orModelSearch) orModelSearch.addEventListener('input', () => this._renderOpenRouterModelOptions());
-      if (orFavoritesOnly) orFavoritesOnly.addEventListener('click', () => {
-        this._openRouterFavoritesOnly = !this._openRouterFavoritesOnly;
-        this._renderOpenRouterModelOptions();
-      });
-      if (orRefreshModels) orRefreshModels.addEventListener('click', () => this._refreshOpenRouterModelsNow());
-      if (orStarModel) orStarModel.addEventListener('click', () => this._toggleSelectedOpenRouterFavorite());
-      if (claudeSetDefault) claudeSetDefault.addEventListener('click', () => this._saveClaudeDefault());
 
       const linkBtn = document.getElementById('wallet-link-btn');
       if (linkBtn) linkBtn.addEventListener('click', () => this._startWalletLink());
@@ -769,52 +742,25 @@
         });
       }
 
-      // Experimental "AI progress estimate" toggle. Server-side per-user
-      // flag (default OFF) — fire the POST on change so it takes effect
-      // on the next coding run without closing the modal; revert the
-      // checkbox if the save fails.
-      const estimateToggle = document.getElementById('ai-progress-estimate');
-      if (estimateToggle) {
-        estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
-      }
-
-      // #1281: the session-bridge opt-in, same shape as the toggle above —
-      // POST on change so the venue appears (or stops appearing) on the next
-      // paint of any picker, without closing the modal.
-      const bridgeToggle = document.getElementById('session-bridge-enabled');
-      if (bridgeToggle) {
-        bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
-      }
-
-      // New look (an experiment) and the Look menu (the frame's five looks,
-      // an admin's preview), both kept on the device by the head's
-      // window.Skin: the change is the save, and the look applies at once.
-      // They are exclusive (one data-skin on <html>), so each change
-      // repaints both controls. The menu's options are the frame's looks;
-      // anything else stored (New look, nothing) reads as Standard there.
-      const lookToggle = document.getElementById('new-look-enabled');
+      // The Look menu (an admin's preview of the looks), kept on the device
+      // by the head's window.Skin: the change is the save, and the look
+      // applies at once. Its options are every look there is ('brand',
+      // which keeps the standard pages, and the frame's five); nothing
+      // stored reads as Standard. New look's switch, which set 'brand' on
+      // its own, is gone: that look is the menu's first option now.
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
-        if (lookToggle) lookToggle.checked = skin === 'brand';
         if (lookSelect) {
           lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
         }
       };
-      if (lookToggle) {
-        lookToggle.addEventListener('change', (e) => {
-          window.Skin?.set?.(e.target.checked ? 'brand' : 'standard');
-          paintLooks();
-        });
-      }
       if (lookSelect) {
         lookSelect.addEventListener('change', (e) => {
           window.Skin?.set?.(e.target.value || 'standard');
           paintLooks();
         });
-      }
-      if (lookToggle || lookSelect) {
-        // Another tab changing it repaints the controls here too.
+        // Another tab changing it repaints the menu here too.
         window.Skin?.onChange?.(paintLooks);
       }
 
@@ -827,30 +773,20 @@
       if (localeSelect) {
         localeSelect.addEventListener('change', (e) => this._saveLocale(e.target.value));
       }
-
-      // #138 "Dev-chat sound & alerts" toggle. Client-only preference
-      // (localStorage, default ON) owned by DevAlerts — we just mirror its
-      // checked state and flip the stored flag. Turning it ON is a user
-      // gesture, so unlock audio + request notification permission then.
-      const alertsToggle = document.getElementById('devchat-alerts-toggle');
-      if (alertsToggle) {
-        alertsToggle.checked = window.DevAlerts ? DevAlerts.enabled() : true;
-        alertsToggle.addEventListener('change', (e) => {
-          if (!window.DevAlerts) return;
-          DevAlerts.setEnabled(e.target.checked);
-          if (e.target.checked) {
-            DevAlerts._unlockAudio();
-            DevAlerts.requestNotifyPermission();
-          }
-        });
+      // #6479: the time zone times are shown in, beside the language and
+      // saved the same way, on change.
+      const zoneSelect = document.getElementById('settings-timezone');
+      if (zoneSelect) {
+        zoneSelect.addEventListener('change', (e) => this._saveTimeZone(e.target.value));
       }
 
-      // The server owns delayed push delivery; this countdown only explains
-      // when the optional live-page chime will run.
+      // "Send a test alert": the server queues a test push for the phone and
+      // delays its delivery (services/test-alert.js), so the person can
+      // switch away first. The countdown says when it is due.
       const alertsTest = document.getElementById('devchat-alerts-test');
       if (alertsTest) {
         alertsTest.addEventListener('click', async () => {
-          if (!window.DevAlerts || alertsTest.disabled) return;
+          if (alertsTest.disabled) return;
           const status = document.getElementById('devchat-alerts-test-status');
           this._clearAlertsTestCountdown();
           alertsTest.disabled = true;
@@ -859,27 +795,24 @@
             status.textContent = tr('settings:alerts.test.queueing');
           }
           try {
-            const result = await DevAlerts.testAlert();
+            const response = await fetch('/api/me/test-alert', {
+              method: 'POST',
+              credentials: 'same-origin',
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || tr('settings:alerts.test.failed'));
             if (!status) return;
-            // What happened to the phone push: each outcome has its own
-            // whole countdown sentence, and its own line once the countdown
-            // ends.
-            const outcome = result.queued
-              ? 'queued'
-              : result.reason === 'preference_disabled' ? 'preferenceDisabled' : 'unavailable';
-            const COUNTDOWN = {
-              queued: 'settings:alerts.test.countdown.queued',
-              preferenceDisabled: 'settings:alerts.test.countdown.preferenceDisabled',
-              unavailable: 'settings:alerts.test.countdown.unavailable',
-            };
-            const AFTER = {
-              queued: 'settings:alerts.test.after.queued',
-              preferenceDisabled: 'settings:alerts.test.after.preferenceDisabled',
-              unavailable: 'settings:alerts.test.after.unavailable',
-            };
+            // A push that was not queued has nothing to count down to: say
+            // why at once.
+            if (!result.queued) {
+              status.textContent = tr(result.reason === 'preference_disabled'
+                ? 'settings:alerts.test.after.preferenceDisabled'
+                : 'settings:alerts.test.after.unavailable');
+              return;
+            }
             let remaining = Math.ceil(result.delayMs / 1000);
             const render = () => {
-              status.textContent = tr(COUNTDOWN[outcome], { count: remaining });
+              status.textContent = tr('settings:alerts.test.countdown.queued', { count: remaining });
             };
             render();
             this._alertsTestTimer = setInterval(() => {
@@ -889,7 +822,7 @@
                 return;
               }
               this._clearAlertsTestCountdown();
-              status.textContent = tr(AFTER[outcome]);
+              status.textContent = tr('settings:alerts.test.after.queued');
             }, 1000);
           } catch (err) {
             if (status) status.textContent = err.message || tr('settings:alerts.test.failed');
@@ -953,17 +886,11 @@
         const j = await this._readMe(meDemoQ);
         if (!j) return;
         this.state.hasApiKey = !!j.user?.hasApiKey;
-        // Staging only, and only under ?demo=1: the key reported above is a
-        // fixture, not something anything can be billed to. Carried so the
-        // surfaces that branch on "a key is on file" can tell the two apart
-        // (DevChat._creditsExhausted is the one that has to).
-        this.state.demoKey = !!j.user?.demoKey;
         this.state.keyLast4 = j.user?.keyLast4 || null;
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
-        this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
-        this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
         this.state.locale = j.user?.locale || null;
+        this.state.timeZone = j.user?.timeZone || null;
         // Same payload the CLI-credentials gate needs, so prime its memo.
         // When the gate runs first it takes its answer from _readMe too
         // (_cliAuthAvailable), so neither order sends a second
@@ -987,15 +914,15 @@
      * it. Returns the parsed body, or null when there is no usable answer.
      *
      * This runs from init(), which a React layout effect fires at document
-     * load on EVERY screen — the byok dot rides the Profile screen and
-     * DevChat's budget indicator, so the state is genuinely needed before
+     * load on EVERY screen — the byok dot rides the Profile screen, so the
+     * state is genuinely needed before
      * #settings is ever opened. It just does not need its own request:
      * every field read above is on the same `user` object App.init is
      * fetching 16ms later, and the two were queueing behind each other for
      * ~130ms on the first paint of every screen. See App.bootSession.
      *
      * `?demo=1` still reads for itself, and must: staging answers that
-     * request differently (the fixture key behind `demoKey`), so the boot's
+     * request differently (with a fixture key), so the boot's
      * plain answer is the wrong one — not a stale copy of the right one.
      */
     async _readMe(meDemoQ) {
@@ -1037,11 +964,6 @@
       // screen's account group, which React renders only once profile data
       // lands. See App.renderAdminButton for the same move and why.
       window.App?.Visibility?.publish?.('switcher-byok-dot', !!this.state.hasApiKey);
-      // Let dev-chat swap its budget indicator for the BYOK badge
-      // without having to observe us directly.
-      if (window.DevChat && typeof DevChat.renderBudget === 'function') {
-        try { DevChat.renderBudget(); } catch {}
-      }
     },
 
     isOpen() { return Settings._open; },
@@ -1075,7 +997,6 @@
       this._loadCliTokens(true);
       this._loadConnectors();
       this._loadGithubLink();
-      this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderChangeUsernameSection();
       this._renderChangePasswordSection();
@@ -1942,128 +1863,10 @@
     },
 
     _renderExperimentalSection() {
-      const toggle = document.getElementById('ai-progress-estimate');
-      if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
-      const status = document.getElementById('ai-progress-estimate-status');
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      const bridge = document.getElementById('session-bridge-enabled');
-      if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
-      const bridgeStatus = document.getElementById('session-bridge-status');
-      if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
-      const look = document.getElementById('new-look-enabled');
-      if (look) look.checked = window.Skin?.get?.() === 'brand';
       const lookMenu = document.getElementById('settings-look');
       if (lookMenu) {
         const stored = window.Skin?.get?.();
         lookMenu.value = Array.from(lookMenu.options).some((o) => o.value === stored) ? stored : '';
-      }
-      this._renderLocalAgentsSection();
-    },
-
-    // #907: the machines currently attached to one of this account's dev
-    // sessions. GET /api/me/local-agents is deliberately NOT part of the CLI
-    // token surface — a lease is routing state, not a credential — so unlike
-    // the token list above it answers on staging too.
-    //
-    // The block hides itself outright when nothing is attached. An empty
-    // "Local coding agent — none" panel would be noise on every account that
-    // has never used the CLI, which is nearly all of them.
-    async _renderLocalAgentsSection() {
-      const section = document.getElementById('settings-local-agents-section');
-      const list = document.getElementById('settings-local-agents-list');
-      const status = document.getElementById('settings-local-agents-status');
-      if (!section || !list) return;
-      if (status) { status.classList.add('hidden'); status.textContent = ''; }
-
-      let agents = [];
-      try {
-        const query = this._cliTokensDemo() ? '?demo=1' : '';
-        const r = await fetch(`/api/me/local-agents${query}`, { credentials: 'same-origin' });
-        if (r.ok) {
-          const j = await r.json();
-          if (Array.isArray(j.agents)) agents = j.agents;
-        }
-      } catch {}
-
-      this._localAgents = agents;
-      // The SECTION's own `hidden` is a sibling concern and stays here: an
-      // empty "Local coding agent — none" panel would be noise on every
-      // account that has never used the CLI, which is nearly all of them.
-      section.classList.toggle('hidden', agents.length === 0);
-      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
-        ? window.UsernodeReact.settingsLocalAgents : null;
-      if (bridge) {
-        bridge.publish({
-          phase: 'ready',
-          agents: agents.map((agent) => this._localAgentView(agent)),
-        });
-      }
-      if (status && agents.some((a) => a.demo)) {
-        status.textContent = tr('settings:localAgents.demoData');
-        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
-      }
-    },
-
-    // One attached machine, as ./local-agents-list.tsx draws it.
-    //
-    // This was `_localAgentCard`, built with DOM calls rather than innerHTML
-    // for one reason: the label is free text the user typed on their own
-    // machine and arrives verbatim. React escapes it for the same reason, so
-    // the safety property survives the renderer swap — `leaseId` and `demo`
-    // collapse into the one fact the row needs, which is whether there is a
-    // lease to release at all.
-    _localAgentView(agent) {
-      const app = agent.appName || agent.appSlug || tr('settings:localAgents.unknownApp');
-      return {
-        leaseId: agent.leaseId || null,
-        label: agent.label || null,
-        title: agent.label || tr('settings:localAgents.unnamedMachine'),
-        where: agent.sessionTitle
-          ? tr('settings:localAgents.appAndSession', { app, session: agent.sessionTitle })
-          : String(app),
-        runtime: agent.runtime || 'claude-code',
-        // #1808: the raw instant, NOT a formatted time. This was
-        // `toLocaleTimeString()`, so a machine last seen in March read
-        // "last seen 10:00" — the same words as one seen this morning, on a
-        // row whose entire job is to say whether the machine is still there.
-        // ./local-agents-list.tsx stamps it with the shared helper, which
-        // this module cannot import: four test harnesses run its real source
-        // through `vm.runInContext` as a classic script, where a top-level
-        // `import` is a syntax error. Formatting in the renderer is the
-        // arrangement that needs no second copy of the helper.
-        lastSeenAt: Number.isFinite(Date.parse(agent.lastSeenAt)) ? agent.lastSeenAt : null,
-        // Demo rows (staging ?demo=1) are fabricated per request and own no
-        // lease, so there is nothing for a button to release.
-        detachable: !agent.demo && !!agent.leaseId,
-      };
-    },
-
-    // Releasing from here must not need the machine to cooperate: the common
-    // case is a laptop that was closed or lost its network, and the whole
-    // point is to get the session's turns back without waiting out the lease.
-    async _detachLocalAgent(agent, button) {
-      const question = agent.label
-        ? tr('settings:localAgents.detach.confirmNamed', { machine: agent.label })
-        : tr('settings:localAgents.detach.confirmUnnamed');
-      if (!window.confirm(question)) return;
-      const status = document.getElementById('settings-local-agents-status');
-      button.disabled = true;
-      try {
-        const r = await fetch(`/api/me/local-agents/${encodeURIComponent(agent.leaseId)}`, {
-          method: 'DELETE',
-          credentials: 'same-origin',
-        });
-        // 404 means it already went away (it detached itself, or the sweeper
-        // expired it) — the user's intent is satisfied either way.
-        if (r.status !== 204 && r.status !== 404) throw new Error(tr('settings:localAgents.detach.failed'));
-        await this._renderLocalAgentsSection();
-      } catch (err) {
-        button.disabled = false;
-        if (status) {
-          status.textContent = err.message || tr('settings:localAgents.detach.failed');
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
       }
     },
 
@@ -2089,6 +1892,67 @@
       select.value = value;
       const status = document.getElementById('settings-locale-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._renderTimeZoneSection();
+    },
+
+    // #6479: the Time zone list under the language. The pane renders only
+    // the Auto option; the world's zones are added here once, from the
+    // browser's own list, labelled "Region / City". A saved zone the list
+    // lacks (an older engine) is added too, so the select never reads "Auto"
+    // for a zone that is set.
+    _renderTimeZoneSection() {
+      const select = document.getElementById('settings-timezone');
+      if (!select) return;
+      const i18n = window.PlatformI18n;
+      const label = (zone) => (i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone);
+      this._labelTimeZoneAuto();
+      if (select.options.length <= 1) {
+        let zones = [];
+        try { zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : []; } catch { zones = []; }
+        // The browsers' list leaves UTC out (it is no region's zone), and
+        // somebody who keeps their clock in it must be able to pick it.
+        const all = [...new Set(['UTC', ...zones])].sort();
+        const frag = document.createDocumentFragment();
+        for (const zone of all) {
+          const opt = document.createElement('option');
+          opt.value = zone;
+          opt.textContent = label(zone);
+          frag.appendChild(opt);
+        }
+        select.appendChild(frag);
+      }
+      // A save in flight decides what the list shows when it lands.
+      if (this._timeZoneSaving) return;
+      const value = this.state.timeZone || '';
+      this._ensureTimeZoneOption(select, value);
+      select.value = value;
+      const status = document.getElementById('settings-timezone-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    // A zone the list does not offer still shows as itself, never as a blank
+    // or as "Auto": one saved from an engine that knew it, or the server's
+    // canonical spelling of a pick (its Intl may say Europe/Kiev where this
+    // browser listed Europe/Kyiv).
+    _ensureTimeZoneOption(select, value) {
+      if (!value || [...select.options].some((o) => o.value === value)) return;
+      const i18n = window.PlatformI18n;
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = i18n.timeZoneLabel ? i18n.timeZoneLabel(value) : value;
+      select.appendChild(opt);
+    },
+
+    // The Auto option's words, with the device's zone in them. The option is
+    // the pane's own (rendered empty, so the first render is the same on every
+    // device); this writes its text, again whenever the language changes,
+    // and touches nothing else, so a status line under the list stays.
+    _labelTimeZoneAuto() {
+      const auto = document.getElementById('settings-timezone')?.options[0];
+      if (!auto) return;
+      const i18n = window.PlatformI18n;
+      const device = i18n.deviceTimeZone ? i18n.deviceTimeZone() : '';
+      auto.textContent = i18n.t('settings:timezone.auto', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(device) : device });
     },
 
     // A language the server's translation cache offers that this build's
@@ -2253,7 +2117,7 @@
         // format it uses.
         params.product = connection.client_name || tr('settings:connectors.test.unknownProduct');
         if (connection.last_used_at) {
-          params.lastUsed = new Date(connection.last_used_at).toLocaleString();
+          params.lastUsed = new Date(connection.last_used_at).toLocaleString(undefined, inZone());
           id = 'settings:connectors.test.result.okUsed';
         } else {
           id = 'settings:connectors.test.result.ok';
@@ -2599,7 +2463,7 @@
     // known, in the date format this page uses everywhere.
     _connectorRowView(connector) {
       const stamp = (value) => (value && Number.isFinite(Date.parse(value))
-        ? new Date(value).toLocaleString() : null);
+        ? new Date(value).toLocaleString(undefined, inZone()) : null);
       const expired = !this._connectorIsLive(connector);
       const connected = stamp(connector.connected_at);
       const lastUsed = stamp(connector.last_used_at);
@@ -2705,7 +2569,7 @@
         // Two whole sentences: how often the tip was sent, then why it is not
         // showing now. Each is one message; hint.summaryAndAdvice orders them.
         const summary = Number.isFinite(Date.parse(hint.lastShownAt))
-          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString() })
+          ? tr('settings:connectors.hint.sent', { count: shown, days, when: new Date(hint.lastShownAt).toLocaleString(undefined, inZone()) })
           : tr('settings:connectors.hint.sentWhenUnknown', { count: shown, days });
         let advice;
         // Three different answers to "why am I not seeing it", and they are
@@ -2728,9 +2592,13 @@
           // concludes the window has already passed. A day word settles it,
           // and anything further out gets the whole stamp.
           const end = new Date(quietUntil);
-          advice = end.toDateString() === new Date().toDateString()
-            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString() })
-            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString() });
+          const dayOf = (d) => {
+            const z = window.PlatformI18n?.zonedDay ? window.PlatformI18n.zonedDay(d) : null;
+            return z ? `${z.year}-${z.month}-${z.day}` : d.toDateString();
+          };
+          advice = dayOf(end) === dayOf(new Date())
+            ? tr('settings:connectors.hint.quietUntilToday', { minutes: cooldown, time: end.toLocaleTimeString(undefined, inZone()) })
+            : tr('settings:connectors.hint.quietUntilDate', { minutes: cooldown, when: end.toLocaleString(undefined, inZone()) });
         } else {
           advice = tr('settings:connectors.hint.openNewConversation');
         }
@@ -3196,7 +3064,7 @@
           : (link.linked ? { text: tr('settings:socialIdentity.badge.connected'), tone: 'emerald' } : null),
         state,
         linkedAt: link.linkedAt && Number.isFinite(Date.parse(link.linkedAt))
-          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString() })
+          ? tr('settings:socialIdentity.row.linkedAt', { when: new Date(link.linkedAt).toLocaleString(undefined, inZone()) })
           : null,
         noToken: link.linked && link.access === 'identity'
           ? (provider === 'github'
@@ -3390,8 +3258,8 @@
       try {
         // The page's ?demo=1 is passed through so the (staging:private,
         // therefore always-empty in a staging clone) credential list has
-        // something to render — same pattern as _renderLlmGrants and
-        // _renderAgentFilesSection. Strictly a no-op in production.
+        // something to render — same pattern as _renderLlmGrants. Strictly a
+        // no-op in production.
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
@@ -3445,9 +3313,9 @@
           // One whole line per combination of what is known. `status` is the
           // server's own word for the credential's state.
           const created = Number.isFinite(Date.parse(token.created_at))
-            ? new Date(token.created_at).toLocaleString() : null;
+            ? new Date(token.created_at).toLocaleString(undefined, inZone()) : null;
           const lastUsed = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
-            ? new Date(token.last_used_at).toLocaleString() : null;
+            ? new Date(token.last_used_at).toLocaleString(undefined, inZone()) : null;
           const state = token.status || tr('settings:cliTokens.row.statusUnknown');
           let detail;
           if (created && lastUsed) detail = tr('settings:cliTokens.row.createdUsed', { status: state, created, lastUsed });
@@ -3533,70 +3401,39 @@
       }
     },
 
-    async _saveAiProgressEstimate(enabled) {
-      const toggle = document.getElementById('ai-progress-estimate');
-      const status = document.getElementById('ai-progress-estimate-status');
-      const fail = (msg) => {
-        if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
+    // One save at a time: the list is disabled until the server answers, so
+    // what it shows is always what was stored (a late answer to an earlier
+    // pick can no longer land after a later one).
+    async _saveTimeZone(value) {
+      const select = document.getElementById('settings-timezone');
+      const status = document.getElementById('settings-timezone-status');
+      const i18n = window.PlatformI18n;
+      const paint = (text, ok) => {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+        status.classList.add(...(ok ? ['text-emerald-700', 'dark:text-emerald-400'] : ['text-red-700', 'dark:text-red-400']));
       };
+      if (this._timeZoneSaving) return;
+      this._timeZoneSaving = true;
+      if (select) select.disabled = true;
+      let saved;
       try {
-        const r = await fetch('/api/me/ai-progress-estimate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return fail(j.error || tr('settings:experimental.progressEstimate.saveFailed'));
-        }
-        this.state.aiProgressEstimate = !!enabled;
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        fail(tr('settings:experimental.progressEstimate.networkError', { reason: err.message }));
+        saved = await i18n.saveAccountTimeZone(value || null);
+      } catch {
+        if (select) select.value = this.state.timeZone || '';
+        return paint(i18n.t('settings:timezone.saveFailed'), false);
+      } finally {
+        this._timeZoneSaving = false;
+        if (select) select.disabled = false;
       }
-    },
-
-    // #1281: opt in to the session-CLI bridge. A failed save reverts the
-    // checkbox to the stored value rather than leaving it showing a
-    // preference the server never took — the venue list is painted from
-    // App.user, so a lying checkbox would be a venue that never appears.
-    async _saveSessionBridge(enabled) {
-      const toggle = document.getElementById('session-bridge-enabled');
-      const status = document.getElementById('session-bridge-status');
-      const fail = (msg) => {
-        if (toggle) toggle.checked = !!this.state.sessionBridgeEnabled;
-        if (status) {
-          status.textContent = msg;
-          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
-          status.classList.add('text-red-700', 'dark:text-red-400');
-        }
-      };
-      try {
-        const r = await fetch('/api/me/session-bridge', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ enabled: !!enabled }),
-        });
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}));
-          return fail(j.error || tr('settings:experimental.sessionBridge.saveFailed'));
-        }
-        this.state.sessionBridgeEnabled = !!enabled;
-        // The venue pickers read App.user, not Settings.state, so the live
-        // object has to move with it or the next sheet opened in this same
-        // page load would still be missing the row that was just enabled.
-        if (typeof App !== 'undefined' && App.user) App.user.sessionBridgeEnabled = !!enabled;
-        if (status) { status.classList.add('hidden'); status.textContent = ''; }
-      } catch (err) {
-        fail(tr('settings:experimental.sessionBridge.networkError', { reason: err.message }));
+      this.state.timeZone = saved;
+      if (select) {
+        this._ensureTimeZoneOption(select, saved);
+        select.value = saved || '';
       }
+      const zone = saved || (i18n.deviceTimeZone ? i18n.deviceTimeZone() : '');
+      paint(i18n.t('settings:timezone.saved', { zone: i18n.timeZoneLabel ? i18n.timeZoneLabel(zone) : zone }), true);
     },
 
     // Show the admin-preview section only when the server reports the
@@ -3623,7 +3460,7 @@
       // app.js declares `App` with `const`, which does NOT write to
       // `window` in non-module browser scripts, so `window.App` is
       // undefined. Using the bare identifier matches the rest of the
-      // codebase (dev-chat.js etc.). Fallback to `App.user.isAdmin`
+      // codebase. Fallback to `App.user.isAdmin`
       // covers a stale-cached app.js from before `_realIsAdmin` was
       // introduced; safe because a stale app.js can't have applied
       // the mask either, so the live value still reflects the server
@@ -3633,8 +3470,9 @@
         ?? (typeof App !== 'undefined' && !!App.user?.isAdmin);
       // A device left in one of the menu's looks keeps the menu whoever is
       // signed in (an admin's device in other hands, an admin who lost the
-      // role): the look is stored on the device and the menu is what
-      // clears it. New look has its own switch and does not count.
+      // role, a device that had the old New look switch on, which stored
+      // 'brand'): the look is stored on the device and the menu is what
+      // clears it.
       const lookSection = document.getElementById('settings-look-section');
       if (lookSection) {
         const lookMenu = document.getElementById('settings-look');
@@ -3667,8 +3505,8 @@
       this._mobilePushLoadToken += 1;
     },
 
-    // Clear the "Send a test alert" countdown interval (#138). Idempotent —
-    // safe to call when none is running (rapid re-clicks, modal close).
+    // Clear the "Send a test alert" countdown interval. Idempotent: safe to
+    // call when none is running (rapid re-clicks, modal close).
     _clearAlertsTestCountdown() {
       if (this._alertsTestTimer) {
         clearInterval(this._alertsTestTimer);
@@ -3910,219 +3748,15 @@
       }
     },
 
-    // ── OpenRouter (BYOK) ──────────────────────────────────────
+    // ── OpenRouter key ─────────────────────────────────────────
     _normalizeOpenRouterCopy() {
       const section = document.querySelector('[data-settings-section="openrouter"]');
       if (!section) return;
       const heading = section.querySelector('h3');
       const intro = section.querySelector('p');
-      const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
-      if (intro) {
-        // #3296: the one worker detail worth naming. The platform runs some
-        // OpenRouter models in Claude Code, and the model list tags them; the
-        // default runner stays unnamed, like every other implementation
-        // detail. sections/openrouter.tsx renders this same text statically.
-        intro.textContent = tr('settings:openrouter.intro');
-      }
-      if (modelLabel) modelLabel.textContent = tr('settings:openrouter.model.label');
-    },
-
-    _formatOpenRouterPrice(value) {
-      if (value == null || value === '') return null;
-      const price = Number(value);
-      if (!Number.isFinite(price) || price < 0) return null;
-      if (price === 0) return '$0';
-      const decimals = price < 0.01 ? 4 : price < 10 ? 2 : price < 100 ? 1 : 0;
-      const fixed = price.toFixed(decimals);
-      const compact = fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
-      return `$${compact}`;
-    },
-
-    _openRouterModelCostSummary(model) {
-      const tier = tr({
-        free: 'settings:openrouter.cost.free',
-        low: 'settings:openrouter.cost.low',
-        medium: 'settings:openrouter.cost.medium',
-        high: 'settings:openrouter.cost.high',
-        unknown: 'settings:openrouter.cost.unknown',
-      }[model?.costTier] || 'settings:openrouter.cost.unknown');
-      const input = this._formatOpenRouterPrice(model?.inputPricePerMillion);
-      const output = this._formatOpenRouterPrice(model?.outputPricePerMillion);
-      if (!input && !output) return tier;
-      return dotText([
-        tier,
-        tr('settings:openrouter.cost.inputPrice', { price: input || '?' }),
-        tr('settings:openrouter.cost.outputPrice', { price: output || '?' }),
-      ]);
-    },
-
-    _openRouterModelOptionLabel(model) {
-      const badges = [];
-      if (model?.isFavorite) badges.push('★');
-      if (model?.isRecommended) badges.push(tr('settings:openrouter.model.badgeRecommended'));
-      // #3296: the platform runs some OpenRouter models in Claude Code rather
-      // than Codex. Only that exception is named; Codex is every other row.
-      if (model?.harness === 'claude') badges.push('Claude Code');
-      if (model?.createdAt) {
-        const age = Date.now() - Date.parse(model.createdAt);
-        if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push(tr('settings:openrouter.model.badgeNew'));
-      }
-      const compatibility = model?.compatibility === 'verified'
-        ? tr('settings:openrouter.model.compatVerified')
-        : (model?.compatibility === 'blocked'
-          ? tr('settings:openrouter.model.compatLimited')
-          : tr('settings:openrouter.model.compatUnverified'));
-      // "<name · badges>: <cost · compatibility>". Every piece is a whole
-      // message or a name; the two runs of facts are joined by dotText.
-      return tr('settings:openrouter.model.optionLabel', {
-        model: dotText([model?.name || model?.id || tr('settings:openrouter.model.unknown'), ...badges]),
-        details: dotText([this._openRouterModelCostSummary(model), compatibility]),
-      });
-    },
-
-    _openRouterModelsForPicker(models, { query = '', favoritesOnly = false } = {}) {
-      const needle = String(query || '').trim().toLocaleLowerCase();
-      return (Array.isArray(models) ? models : [])
-        .map((model, index) => ({ model, index }))
-        .filter(({ model }) => {
-          if (favoritesOnly && model?.isFavorite !== true) return false;
-          if (!needle) return true;
-          return [model?.name, model?.id, model?.provider, model?.canonicalSlug]
-            .some((value) => String(value || '').toLocaleLowerCase().includes(needle));
-        })
-        .sort((a, b) => {
-          if (!!a.model?.isFavorite !== !!b.model?.isFavorite) return a.model?.isFavorite ? -1 : 1;
-          if (!!a.model?.isRecommended !== !!b.model?.isRecommended) return a.model?.isRecommended ? -1 : 1;
-          return a.index - b.index;
-        })
-        .map(({ model }) => model);
-    },
-
-    _openRouterCatalogAgeText(refreshedAt) {
-      const refreshed = Date.parse(refreshedAt || '');
-      if (!Number.isFinite(refreshed)) return '';
-      const seconds = Math.max(0, Math.round((Date.now() - refreshed) / 1000));
-      if (seconds < 60) return tr('settings:openrouter.catalog.updatedJustNow');
-      const minutes = Math.round(seconds / 60);
-      if (minutes < 60) return tr('settings:openrouter.catalog.updatedMinutesAgo', { count: minutes });
-      return tr('settings:openrouter.catalog.updatedHoursAgo', { count: Math.round(minutes / 60) });
-    },
-
-    _renderOpenRouterModelOptions() {
-      const select = document.getElementById('settings-openrouter-model');
-      if (!select) return;
-      const search = document.getElementById('settings-openrouter-model-search');
-      const favoritesOnlyButton = document.getElementById('settings-openrouter-favorites-only');
-      const meta = document.getElementById('settings-openrouter-catalog-meta');
-      const visibleModels = this._openRouterModelsForPicker(this._openRouterModels, {
-        query: search?.value || '',
-        favoritesOnly: this._openRouterFavoritesOnly,
-      });
-      select.innerHTML = '';
-      for (const model of visibleModels) {
-        const option = document.createElement('option');
-        option.value = model.id;
-        option.textContent = this._openRouterModelOptionLabel(model);
-        select.appendChild(option);
-      }
-      if (!visibleModels.some((model) => model.id === this._openRouterSelectedModelId)) {
-        const fallback = visibleModels.find((model) => model.id === this._openRouterRecommendedModelId)
-          || visibleModels.find((model) => model.isRecommended)
-          || visibleModels[0]
-          || null;
-        if (fallback) this._openRouterSelectedModelId = fallback.id;
-      }
-      select.value = visibleModels.some((model) => model.id === this._openRouterSelectedModelId)
-        ? this._openRouterSelectedModelId
-        : '';
-      select.disabled = visibleModels.length === 0;
-      if (favoritesOnlyButton) {
-        favoritesOnlyButton.setAttribute('aria-pressed', String(this._openRouterFavoritesOnly));
-        favoritesOnlyButton.textContent = this._openRouterFavoritesOnly
-          ? tr('settings:openrouter.model.favoritesOn')
-          : tr('settings:openrouter.model.favoritesOff');
-      }
-      if (meta) {
-        const age = this._openRouterCatalogAgeText(this._openRouterCatalogRefreshedAt);
-        meta.textContent = dotText([
-          visibleModels.length
-            ? tr('settings:openrouter.catalog.shownOfTotal', {
-              shown: visibleModels.length,
-              count: this._openRouterCatalogTotal || this._openRouterModels.length,
-            })
-            : tr('settings:openrouter.catalog.noMatch'),
-          age,
-        ]);
-      }
-      this._syncOpenRouterModelDetails();
-    },
-
-    // #2600: the reasoning-effort picker's first choice is a real level, not
-    // an absence of one, so name the level the platform runs at when nobody
-    // has chosen. The server is the only thing that knows it; if the read
-    // fails the option keeps its plain wording rather than inventing a level.
-    _labelOpenRouterDefaultEffort(effort) {
-      const select = document.getElementById('settings-openrouter-reasoning');
-      const option = Array.from(select?.options || []).find((item) => item.value === '');
-      if (!option) return;
-      // One whole message per level: "Default (Medium)".
-      const labels = {
-        minimal: 'settings:openrouter.effort.defaultMinimal',
-        low: 'settings:openrouter.effort.defaultLow',
-        medium: 'settings:openrouter.effort.defaultMedium',
-        high: 'settings:openrouter.effort.defaultHigh',
-        xhigh: 'settings:openrouter.effort.defaultExtraHigh',
-      };
-      option.textContent = tr(labels[String(effort || '')] || 'settings:openrouter.reasoning.default');
-    },
-
-    _syncOpenRouterModelDetails() {
-      const select = document.getElementById('settings-openrouter-model');
-      const effort = document.getElementById('settings-openrouter-reasoning');
-      const model = this._openRouterModels.find((item) => item.id === select?.value) || null;
-      const star = document.getElementById('settings-openrouter-star-model');
-      const saveDefault = document.getElementById('settings-openrouter-set-default');
-      if (!model) {
-        if (select) select.title = tr('settings:openrouter.model.sortHint');
-        if (effort) effort.disabled = true;
-        if (star) {
-          star.disabled = true;
-          star.textContent = '☆';
-          star.setAttribute('aria-pressed', 'false');
-        }
-        if (saveDefault) saveDefault.disabled = true;
-        return;
-      }
-      if (saveDefault) saveDefault.disabled = false;
-      if (star) {
-        star.disabled = false;
-        star.textContent = model.isFavorite ? '★' : '☆';
-        star.setAttribute('aria-pressed', String(model.isFavorite === true));
-        const label = model.isFavorite
-          ? tr('settings:openrouter.model.removeFavorite')
-          : tr('settings:openrouter.model.addFavorite');
-        star.setAttribute('aria-label', label);
-        star.title = label;
-      }
-      let compatibility = tr('settings:openrouter.model.notYetVerified');
-      if (model.compatibility === 'verified') compatibility = tr('settings:openrouter.model.verified');
-      else if (!model.meetsCodexMinimums) {
-        compatibility = model.compatibilityNote
-          || tr('settings:openrouter.model.mayFail');
-      }
-      if (select) {
-        select.title = tr('settings:openrouter.model.tooltip', {
-          cost: this._openRouterModelCostSummary(model), compatibility,
-        });
-      }
-      if (effort) {
-        effort.disabled = model.supportsReasoning !== true;
-        if (effort.disabled) effort.value = '';
-        effort.title = effort.disabled
-          ? tr('settings:openrouter.effort.unsupported')
-          : tr('settings:openrouter.effort.hint');
-      }
+      // sections/openrouter.tsx renders this same text statically.
+      if (intro) intro.textContent = tr('settings:openrouter.intro');
     },
 
     _setOrStatus(text, kind) {
@@ -4138,26 +3772,12 @@
       const removeBtn = document.getElementById('settings-openrouter-remove');
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
-      const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
       const includedCard = document.getElementById('settings-openrouter-included');
       const includedStatus = document.getElementById('settings-openrouter-included-status');
       const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
-        // #2568: reading this is also what creates an included key for an
-        // account that somehow has none, so it stays ahead of the status
-        // line below. `codexAvailable` is a deployment switch now, not a
-        // per-account allowlist: off means the whole section has nothing
-        // to offer.
-        const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
-        const prefs = r.ok ? await r.json() : {};
-        if (!prefs.codexAvailable) {
-          if (includedCard) includedCard.classList.add('hidden');
-          if (modelsWrap) modelsWrap.classList.add('hidden');
-          return;
-        }
-        this._labelOpenRouterDefaultEffort(prefs.defaultReasoningEffort);
-      } catch {}
-      try {
+        // #2568: this read is also what creates an included key for an
+        // account that somehow has none (routes/credentials.js).
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
         const managed = j.managed || null;
@@ -4240,108 +3860,14 @@
               // The key's own label, which may be empty: the separator stays.
               : tr('settings:list.dot', { first: owner, second: j.keyInfo?.label || '' });
           }
-          await this._loadOpenRouterModels();
         } else {
           if (display) display.classList.add('hidden');
           if (removeBtn) removeBtn.classList.add('hidden');
           if (input) input.placeholder = 'sk-or-...';
           if (saveBtn) saveBtn.textContent = tr('settings:openrouter.personalKey.testAndSave');
           if (info) info.classList.add('hidden');
-          if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
-    },
-
-    async _loadOpenRouterModels({ forceRefresh = false } = {}) {
-      const sel = document.getElementById('settings-openrouter-model');
-      const wrap = document.getElementById('settings-openrouter-models-wrap');
-      if (!sel) return;
-      try {
-        const refresh = forceRefresh ? '&refresh=1' : '';
-        const r = await fetch(`/api/me/coding-agent/models?backend=codex_openrouter${refresh}`, {
-          credentials: 'same-origin', cache: 'no-store',
-        });
-        const errorBody = r.ok ? null : await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(errorBody?.error || tr('settings:openrouter.catalog.loadFailed'));
-        const cat = await r.json();
-        const models = Array.isArray(cat.models) ? cat.models : [];
-        this._openRouterModels = models;
-        this._openRouterRecommendedModelId = cat.recommendedModelId || '';
-        this._openRouterCatalogRefreshedAt = cat.refreshedAt || null;
-        this._openRouterCatalogTotal = Number.isInteger(cat.totalModels) ? cat.totalModels : models.length;
-        if (!models.length) {
-          this._openRouterSelectedModelId = '';
-          this._renderOpenRouterModelOptions();
-          if (wrap) wrap.classList.remove('hidden');
-          return;
-        }
-        const recommended = models.some((model) => model.id === cat.recommendedModelId)
-          ? cat.recommendedModelId
-          : (models.find((model) => model.isRecommended)?.id
-            || models.find((model) => model.compatibility === 'verified')?.id
-            || models[0].id);
-        if (!forceRefresh || !models.some((model) => model.id === this._openRouterSelectedModelId)) {
-          this._openRouterSelectedModelId = recommended;
-        }
-        if (!forceRefresh) {
-          // Restore the previously-saved model/effort on the initial load.
-          const prefs = await (await fetch('/api/me/coding-agent', {
-            credentials: 'same-origin', cache: 'no-store',
-          })).json();
-          const saved = prefs.backends?.codex_openrouter;
-          if (saved?.model && models.some((model) => model.id === saved.model)) {
-            this._openRouterSelectedModelId = saved.model;
-          }
-          const eff = document.getElementById('settings-openrouter-reasoning');
-          if (eff) eff.value = saved?.reasoningEffort || '';
-        }
-        this._renderOpenRouterModelOptions();
-        if (wrap) wrap.classList.remove('hidden');
-      } catch (err) {
-        if (!this._openRouterModels.length && wrap) wrap.classList.add('hidden');
-        throw err;
-      }
-    },
-
-    async _refreshOpenRouterModelsNow() {
-      const button = document.getElementById('settings-openrouter-refresh-models');
-      if (button) { button.disabled = true; button.textContent = tr('settings:openrouter.catalog.refreshing'); }
-      this._setOrStatus(tr('settings:openrouter.catalog.refreshingStatus'), 'info');
-      try {
-        await this._loadOpenRouterModels({ forceRefresh: true });
-        this._setOrStatus(tr('settings:openrouter.catalog.refreshed', { count: this._openRouterModels.length }), 'ok');
-      } catch (err) {
-        this._setOrStatus(err.message || tr('settings:openrouter.catalog.refreshFailed'), 'error');
-      } finally {
-        if (button) { button.disabled = false; button.textContent = tr('settings:openrouter.model.refresh'); }
-      }
-    },
-
-    async _toggleSelectedOpenRouterFavorite() {
-      const button = document.getElementById('settings-openrouter-star-model');
-      const model = this._openRouterModels.find(
-        (item) => item.id === this._openRouterSelectedModelId,
-      );
-      if (!model || button?.disabled) return;
-      const favorite = model.isFavorite !== true;
-      if (button) button.disabled = true;
-      try {
-        const r = await fetch('/api/me/coding-agent/models/favorite', {
-          method: 'PATCH', credentials: 'same-origin', cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ modelId: model.id, favorite }),
-        });
-        const body = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(body.error || tr('settings:openrouter.favorite.failed'));
-        model.isFavorite = favorite;
-        this._renderOpenRouterModelOptions();
-        this._setOrStatus(favorite
-          ? tr('settings:openrouter.favorite.added', { model: model.name || model.id })
-          : tr('settings:openrouter.favorite.removed', { model: model.name || model.id }), 'ok');
-      } catch (err) {
-        this._setOrStatus(err.message || tr('settings:openrouter.favorite.failed'), 'error');
-        if (button) button.disabled = false;
-      }
     },
 
     async _saveOpenRouterKey() {
@@ -4377,59 +3903,14 @@
         const r = await fetch('/api/me/credentials/openrouter', { method: 'DELETE', credentials: 'same-origin' });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) { this._setOrStatus(j.error || tr('settings:openrouter.key.removeFailed'), 'error'); return; }
-        this._setOrStatus(j.defaultReset
-          ? tr('settings:openrouter.key.removedDefaultReset')
-          : tr('settings:openrouter.key.removed'), 'ok');
+        this._setOrStatus(tr('settings:openrouter.key.removed'), 'ok');
         if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = false;
-        this._openRouterModels = [];
-        this._openRouterSelectedModelId = '';
-        this._openRouterRecommendedModelId = '';
-        this._openRouterCatalogRefreshedAt = null;
-        this._openRouterCatalogTotal = 0;
         await this._refreshOpenRouter();
       } catch {
         this._setOrStatus(tr('settings:openrouter.key.removeFailed'), 'error');
       } finally {
         if (removeBtn) removeBtn.disabled = false;
       }
-    },
-
-    async _saveOpenRouterDefault() {
-      const model = document.getElementById('settings-openrouter-model')?.value;
-      if (!model) { this._setOrStatus(tr('settings:openrouter.default.chooseModelFirst'), 'error'); return; }
-      const reasoningEffort = document.getElementById('settings-openrouter-reasoning')?.value || null;
-      // Preserve the user's existing cost cap across this save (review P3):
-      // include it explicitly so an omission can't drop the safety limit,
-      // and the server also COALESCEs when omitted.
-      let maxTurnCostUsd = null;
-      try {
-        const prefs = await (await fetch('/api/me/coding-agent', { credentials: 'same-origin' })).json();
-        maxTurnCostUsd = prefs.backends?.codex_openrouter?.maxTurnCostUsd ?? null;
-      } catch {}
-      try {
-        const r = await fetch('/api/me/coding-agent', {
-          method: 'PATCH', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultBackend: 'codex_openrouter', model, reasoningEffort, maxTurnCostUsd }),
-        });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || tr('settings:openrouter.default.saveFailed'), 'error'); return; }
-        this._setOrStatus(tr('settings:openrouter.default.saved'), 'ok');
-      } catch { this._setOrStatus(tr('settings:openrouter.default.networkError'), 'error'); }
-    },
-
-    async _saveClaudeDefault() {
-      // Reciprocal default control (review #8): set Claude Code (the
-      // legacy backend) as the user's default coding agent. Sends no model
-      // so it doesn't pin a Claude model either.
-      try {
-        const r = await fetch('/api/me/coding-agent', {
-          method: 'PATCH', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ defaultBackend: 'claude_code' }),
-        });
-        if (!r.ok) { const j = await r.json().catch(() => ({})); this._setOrStatus(j.error || tr('settings:openrouter.claudeDefault.saveFailed'), 'error'); return; }
-        this._setOrStatus(tr('settings:openrouter.claudeDefault.saved'), 'ok');
-      } catch { this._setOrStatus(tr('settings:openrouter.claudeDefault.networkError'), 'error'); }
     },
 
     // ── Change password (issue #282) ─────────────────────────────
@@ -5486,213 +4967,6 @@
       }
     },
 
-    // ── Agent instructions & skills (#460) ───────────────────────
-    // Per-user global files the coding agent loads on every build/scout
-    // run this user dispatches. List/upload/delete against
-    // /api/me/agent-files; in staging the (staging:private, always empty)
-    // table is stood in for by ?demo=1 fabricated rows, passed through
-    // from the page URL exactly like the AI-permissions section above.
-
-    _renderAgentFilesSection() {
-      this._wireAgentFiles();
-      this._hideAgentFilesForm();
-      this._loadAgentFiles();
-    },
-
-    _agentFilesDemo() {
-      return new URLSearchParams(window.location.search).get('demo') === '1';
-    },
-
-    // One-time event wiring (the section markup is static in index.html;
-    // open() re-runs this, so guard against double-binding).
-    _wireAgentFiles() {
-      if (this._agentFilesWired) return;
-      this._agentFilesWired = true;
-
-      const input = document.getElementById('agent-files-input');
-      document.querySelectorAll('[data-agent-files-upload]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          this._pendingAgentKind = btn.dataset.agentFilesUpload;
-          input.value = '';
-          input.click();
-        });
-      });
-
-      input.addEventListener('change', () => {
-        const file = input.files && input.files[0];
-        if (!file) return;
-        if (file.size > 48 * 1024) {
-          this._setAgentFilesStatus(tr('settings:agentFiles.status.tooLarge', { file: file.name }), 'error');
-          return;
-        }
-        const reader = new FileReader();
-        reader.onload = () => {
-          this._pendingAgentFile = {
-            kind: this._pendingAgentKind,
-            content: String(reader.result || ''),
-          };
-          this._showAgentFilesForm(file.name);
-        };
-        reader.onerror = () => this._setAgentFilesStatus(tr('settings:agentFiles.status.unreadable'), 'error');
-        reader.readAsText(file);
-      });
-
-      document.getElementById('agent-files-cancel').addEventListener('click', () => {
-        this._hideAgentFilesForm();
-      });
-      document.getElementById('agent-files-save').addEventListener('click', () => {
-        this._saveAgentFile();
-      });
-    },
-
-    // Client-side twin of the server's normalizeName — purely a
-    // convenience prefill; the server re-normalizes and is authoritative.
-    _slugifyAgentFileName(raw) {
-      return String(raw || '')
-        .trim()
-        .replace(/\.(md|txt)$/i, '')
-        .toLowerCase()
-        .replace(/[\s_.]+/g, '-')
-        .replace(/[^a-z0-9-]/g, '')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64);
-    },
-
-    _showAgentFilesForm(filename) {
-      const form = document.getElementById('agent-files-form');
-      const title = document.getElementById('agent-files-form-title');
-      const nameInput = document.getElementById('agent-files-name');
-      const descWrap = document.getElementById('agent-files-desc-wrap');
-      const descInput = document.getElementById('agent-files-desc');
-      const kind = this._pendingAgentFile?.kind || 'instruction';
-      title.textContent = kind === 'skill'
-        ? tr('settings:agentFiles.form.titleSkill', { file: filename })
-        : tr('settings:agentFiles.form.titleInstruction', { file: filename });
-      nameInput.value = this._slugifyAgentFileName(filename);
-      descWrap.classList.toggle('hidden', kind !== 'skill');
-      // Return in the name goes on to the description when there is one and
-      // saves when there is not (#3907); the key says which.
-      nameInput.enterKeyHint = kind === 'skill' ? 'next' : 'done';
-      descInput.value = '';
-      form.classList.remove('hidden');
-      this._setAgentFilesStatus('', 'clear');
-    },
-
-    _hideAgentFilesForm() {
-      this._pendingAgentFile = null;
-      const form = document.getElementById('agent-files-form');
-      if (form) form.classList.add('hidden');
-    },
-
-    async _saveAgentFile() {
-      const pending = this._pendingAgentFile;
-      if (!pending) return;
-      if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.demoData'), 'info');
-        this._hideAgentFilesForm();
-        return;
-      }
-      const name = document.getElementById('agent-files-name').value.trim();
-      if (!name) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.nameRequired'), 'error');
-        return;
-      }
-      const description = document.getElementById('agent-files-desc').value.trim();
-      try {
-        const r = await fetch('/api/me/agent-files', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ kind: pending.kind, name, description, content: pending.content }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this._setAgentFilesStatus(j.error || tr('settings:agentFiles.status.saveFailed'), 'error');
-          return;
-        }
-        this._hideAgentFilesForm();
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.saved', { name: j.file?.name || name }), 'ok');
-        this._loadAgentFiles();
-      } catch (err) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.networkError', { reason: err.message }), 'error');
-      }
-    },
-
-    async _loadAgentFiles() {
-      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
-        ? window.UsernodeReact.settingsAgentFiles : null;
-      if (!bridge) return;
-      const demo = this._agentFilesDemo();
-      bridge.publish({ phase: 'loading', files: [], demo });
-      let files = [];
-      try {
-        const r = await fetch('/api/me/agent-files' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
-        if (!r.ok) throw new Error('fetch failed');
-        const j = await r.json();
-        files = j.files || [];
-      } catch {
-        bridge.publish({ phase: 'error', files: [], demo });
-        return;
-      }
-      bridge.publish({ phase: 'ready', demo, files: files.map((f) => this._agentFileView(f)) });
-    },
-
-    // One file, as DATA. The KB rounding is this module's rule — the same
-    // reason the grant rows arrive with their dollars already formatted.
-    _agentFileView(f) {
-      return {
-        kind: String(f.kind ?? ''),
-        name: String(f.name ?? ''),
-        description: String(f.description ?? ''),
-        kb: Math.max(1, Math.round((f.size_bytes || 0) / 1024)),
-      };
-    },
-
-    // Delete was a closure inside the row builder, wired with
-    // addEventListener to a node it had just created. It is a method now,
-    // called by name from ./agent-files-list.tsx — the component owns the
-    // markup, this module owns the confirm dialog, the write and the reload.
-    async _onAgentFileDelete(kind, name) {
-      const ok = await ConfirmModal.show({
-        title: tr('settings:agentFiles.delete.confirmTitle', { name }),
-        message: tr('settings:agentFiles.delete.confirmMessage'),
-        confirmLabel: tr('settings:agentFiles.delete.confirmButton'),
-        danger: true,
-      });
-      if (!ok) return;
-      if (this._agentFilesDemo()) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.demoData'), 'info');
-        return;
-      }
-      try {
-        const r = await fetch('/api/me/agent-files', {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify({ kind, name }),
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) { this._setAgentFilesStatus(j.error || tr('settings:agentFiles.status.deleteFailed'), 'error'); return; }
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.deleted', { name }), 'ok');
-        this._loadAgentFiles();
-      } catch (err) {
-        this._setAgentFilesStatus(tr('settings:agentFiles.status.networkError', { reason: err.message }), 'error');
-      }
-    },
-
-    _setAgentFilesStatus(text, kind) {
-      const el = document.getElementById('agent-files-status');
-      if (!el) return;
-      if (kind === 'clear' || !text) {
-        el.classList.add('hidden');
-        el.textContent = '';
-        return;
-      }
-      paintStatus(el, text, kind);
-      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
-    },
-
     // ── Wallet linking ───────────────────────────────────────────
 
     _renderWalletSection() {
@@ -6159,9 +5433,11 @@
     // working out whether the widget's icon verdict is stale — and "02:41 PM"
     // with no day cannot answer that. It is a plain `toLocaleString()` rather
     // than the shared helper because a diagnostics line elides nothing and
-    // this module cannot import (see _localAgentView).
+    // this module cannot import: four test harnesses run its real source
+    // through `vm.runInContext` as a classic script, where a top-level
+    // `import` is a syntax error.
     _widgetIconTime(ms) {
-      try { return new Date(ms).toLocaleString(); } catch (_) { return String(ms); }
+      try { return new Date(ms).toLocaleString(undefined, inZone()); } catch (_) { return String(ms); }
     },
 
     // One line per pinned entry: what the widget says it holds, and
@@ -6811,7 +6087,7 @@
       if (payload.published_at) {
         try {
           meta.push(tr('settings:terms.published', {
-            date: new Date(payload.published_at).toLocaleDateString(),
+            date: new Date(payload.published_at).toLocaleDateString(undefined, inZone()),
           }));
         } catch (_) {}
       }
@@ -6838,7 +6114,7 @@
         : 'text-zinc-600 dark:text-zinc-400'),
       accepted
         ? (payload.consent.responded_at
-          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString() })
+          ? tr('settings:terms.acceptedOn', { date: new Date(payload.consent.responded_at).toLocaleDateString(undefined, inZone()) })
           : tr('settings:terms.accepted'))
         : tr('settings:terms.notAccepted'));
       panel.appendChild(statusEl);
@@ -7562,7 +6838,7 @@
   };
 
   // Published at module scope, not from the island's effect: app.js,
-  // app-view.js, dev-chat.js and credit-options.js call window.Settings
+  // app-view.js and credit-options.js call window.Settings
   // unguarded, and the bundle's entry runs before any of their init()s. The
   // typeof guard is for the SSG prerender pass, which evaluates this whole
   // module graph in Node (#1081 chunk D).
@@ -7586,19 +6862,12 @@
       repaint(() => Settings._syncChrome());
       repaint(() => Settings._normalizeOpenRouterCopy());
       repaint(() => Settings._renderBody());
+      // #6479: the Time zone list's Auto option is written here, not by React.
+      repaint(() => Settings._labelTimeZoneAuto());
       repaint(() => { if (Settings._connectors.length) Settings._renderConnectors(); });
       repaint(() => Settings._renderConnectorProgress());
       repaint(() => { if (Settings._githubLink) Settings._renderGithubLink(); });
       repaint(() => { if (Settings._cliTokens.length) Settings._renderCliTokens(); });
-      repaint(() => {
-        if (Settings._localAgents.length) {
-          window.UsernodeReact?.settingsLocalAgents?.publish({
-            phase: 'ready',
-            agents: Settings._localAgents.map((agent) => Settings._localAgentView(agent)),
-          });
-        }
-      });
-      repaint(() => { if (Settings._openRouterModels.length) Settings._renderOpenRouterModelOptions(); });
       repaint(() => Settings._publishUsernode());
     });
     // The languages the cache offers arrive after boot: the open pane lists them.

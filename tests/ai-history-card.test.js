@@ -101,6 +101,18 @@ test('History: by month, then by project, quiet rows that say how each thing end
   assert.equal(h.historyWords(rows[0], 'en-US').id, 'messages:ai.history.live');
   assert.match(String(h.historyWords(rows[0], 'en-US').values.date), /Oct/);
   assert.deepEqual(h.historyWords({ ...rows[4], outcome: 'filed_shipped', resultRef: 74 }), { id: 'messages:ai.history.filedShipped', values: { number: 74 } });
+  // 13 Nov 2026: a private thread about a change ends as its change did,
+  // still drawn as a private thread.
+  const aboutLive = { ...rows[4], app: garden, outcome: 'live' };
+  assert.equal(h.historyWords(aboutLive, 'en-US').id, 'messages:ai.history.live');
+  assert.deepEqual(h.historyWords({ ...aboutLive, outcome: 'closed' }), { id: 'messages:ai.history.closed' });
+  assert.equal(h.historyGlyph(aboutLive), 'private');
+  const { privatePastOf } = require('../src/services/ai-history');
+  const past = (extra) => privatePastOf({ root_id: 5, state: 'open', kind: 'ask', about_kind: 'change', about_number: 52, about_title: 'Frost alerts', at: '2026-10-24T12:00:00Z', ...extra });
+  assert.deepEqual([past({ about_outcome: 'live' }).outcome, past({ about_outcome: 'closed' }).outcome], ['live', 'closed']);
+  assert.deepEqual({ kind: past({ about_outcome: 'live' }).kind, title: past({ about_outcome: 'live' }).title, rootId: past({ about_outcome: 'live' }).rootId },
+    { kind: 'solo', title: 'Frost alerts', rootId: 5 }, 'named by its change, opening the thread');
+  assert.equal(past({ state: 'done', about_outcome: null }).outcome, 'done', 'one marked done says so');
   assert.deepEqual(h.historyTooltip(rows[1]), { id: 'messages:ai.row.where', values: { project: 'Garden club', number: 380 } });
   assert.deepEqual(h.historyTooltip({ ...rows[1], change: true, app: { ...garden, changesOnGithub: true } }),
     { id: 'messages:ai.history.wherePr', values: { project: 'Garden club', number: 380 } }, 'a change on GitHub is PR N');

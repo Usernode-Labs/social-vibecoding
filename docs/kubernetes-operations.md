@@ -846,8 +846,8 @@ its Stop forward, the turn-spend mark). A rollback to #5793 itself needs one ste
 first item below): its migration Job recreates what it names, all empty, and sets
 `apps.creating_owner`'s default again. What it does with the newer releases' state:
 
-- The `turn` instances this release wrote are at version 3 (a change's dev chat turn that
-  did not end its own way owes `turn.repair`), which that release leaves alone: a person's
+- The `turn` instances this release wrote are at version 3 (a person's turn on a change
+  that did not end its own way owes `turn.repair`), which that release leaves alone: a person's
   turn on them waits. Once no process of this release is live (`platform_processes`), lower
   them; their data is the same shape, and their `turn.repair` work waits unclaimed (on a
   roll forward, one owed more than six hours earlier is skipped). Lower them before any

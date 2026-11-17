@@ -71,18 +71,18 @@ test('Q16: Back onto a group left in this tab says so, without a fetch or a retr
   const { reads } = install();
   try {
     const store = loadTsx('frontend/src/features/messages/store.ts');
-    store.route(GROUP, null, null, {});
+    store.route(GROUP, null, {});
     await settle();
     assert.equal(snapshotOf(store).active?.id, GROUP, 'the group is open');
 
     await store.leave();
     assert.equal(window.location.hash, '#messages', 'leaving goes to the list');
-    store.route(null, null, null, {}); // …which the router then routes
+    store.route(null, null, {}); // …which the router then routes
     await settle();
 
     // Back: the router routes the conversation's address again.
     reads.length = 0;
-    store.route(GROUP, null, null, {});
+    store.route(GROUP, null, {});
     await settle();
     const snap = snapshotOf(store);
     assert.equal(snap.threadGone, 'left');
@@ -99,14 +99,14 @@ test('Q16: a group listed again (invited back) opens normally', async () => {
   const { rejoin } = install();
   try {
     const store = loadTsx('frontend/src/features/messages/store.ts');
-    store.route(GROUP, null, null, {});
+    store.route(GROUP, null, {});
     await settle();
     await store.leave();
-    store.route(null, null, null, {});
+    store.route(null, null, {});
     await settle();
     rejoin();
     await store.loadConversations(true);
-    store.route(GROUP, null, null, {});
+    store.route(GROUP, null, {});
     await settle();
     const snap = snapshotOf(store);
     assert.equal(snap.threadGone, null);

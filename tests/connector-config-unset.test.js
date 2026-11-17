@@ -13,11 +13,10 @@
 //      without them.
 //   2. An UNSET deployment must degrade, not half-work. The link routes 404
 //      (pinned in github-link.test.js), and the connector's fork tooling has
-//      to say the deployment cannot fork — pointing at the platform-build
-//      fallback — rather than sending the user to Settings to press a button
+//      to say the deployment cannot fork — pointing at Homeroom bot, inside
+//      Homeroom — rather than sending the user to Settings to press a button
 //      that isn't there. Everything that does NOT depend on the OAuth app
-//      keeps working: the OAuth connector itself, the read-only tools, and
-//      the out-of-credits card.
+//      keeps working: the OAuth connector itself and the read-only tools.
 //
 // Run with: node --test tests/connector-config-unset.test.js
 
@@ -225,7 +224,8 @@ test('prepare_work reports the DEPLOYMENT cannot fork, not that the user forgot 
       // end. Point at the route that still works instead.
       assert.notEqual(result.code, 'github_not_linked');
       assert.equal(result.settingsUrl, undefined);
-      assert.match(result.message, /start_platform_build/);
+      assert.match(result.message, /ask Homeroom bot for the change inside Homeroom, from the Homeroom bot tab/);
+      assert.match(result.message, /needs no GitHub link/);
       assert.match(result.message, /GITHUB_LINK_CLIENT_ID/);
       assert.equal(fetched, false, 'and no GitHub call is attempted');
     } finally {
@@ -258,8 +258,8 @@ test('the assistant is told the two refusals need different answers', () => {
   assert.match(CHARTER_FULL, /github_not_linked[\s\S]{0,200}settings/i);
   assert.match(
     CHARTER_FULL,
-    /github_link_unavailable[\s\S]{0,200}start_platform_build/,
-    'the unconfigured case must route to the fallback, not to Settings'
+    /github_link_unavailable, do not send them to Settings\.[\s\S]{0,200}ask Homeroom bot for the change inside Homeroom/,
+    'the unconfigured case must route to Homeroom bot, not to Settings'
   );
 });
 
@@ -289,18 +289,4 @@ test('no read-only tool is gated on the GitHub OAuth app', () => {
   const toolsSrc = fs.readFileSync(path.join(ROOT, 'src/services/mcp-tools.js'), 'utf8');
   assert.doesNotMatch(toolsSrc, /githubLink\.isEnabled/,
     'the tool layer must not add a second, drifting gate');
-});
-
-test('the out-of-credits card is unaffected by any of this', () => {
-  // The card renders from a 429 the client already receives; it has no
-  // server config of its own, and must not learn one. All three of its
-  // routes stay reachable on a deployment with no GitHub app: two are
-  // Settings screens, and the third is the connector section, which works
-  // precisely because the connector does not need the fork credentials.
-  const src = fs.readFileSync(path.join(ROOT, 'public/js/credit-options.js'), 'utf8');
-  assert.doesNotMatch(src, /GITHUB_LINK|MCP_CONNECTOR|process\.env/);
-  const opts = [...src.matchAll(/'(#settings\/[a-z-]+)'/g)].map((m) => m[1]);
-  // #4378: and Linked accounts, the verify sheet's fallback for an
-  // unverified account, which needs no GitHub app either (the phone comes first).
-  assert.deepEqual(opts, ['#settings/api-key', '#settings/cli', '#settings/connectors', '#settings/linked-accounts']);
 });

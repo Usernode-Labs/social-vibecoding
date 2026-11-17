@@ -69,8 +69,6 @@ test('underway and review share context, sections and check explanations', () =>
     assert.equal(row(v, 'checks').fails[0].reason, 'Expected app, received login');
     assert.ok(row(v, 'checks').actions.some((a) => /re-run/i.test(a.label)));
     assert.ok(v.body.testing);
-    assert.equal(v.body.workspace, failing.id);
-    assert.equal(v.body.build.kind, 'owner', 'the Build door is on the card');
   }
 });
 
@@ -243,13 +241,11 @@ test('a change built from a plan shows the plan card with its Read (#4479)', () 
   assert.doesNotMatch(promoted.body.summaryHtml, /built from/);
 });
 
-test('readers cannot promote, sync, or open the private workspace', () => {
+test('readers cannot promote or sync', () => {
   const av = context({ id: 99 });
   const v = av._topicViewFor('session', { ...failing, shared_at: '2026-09-11' });
-  assert.equal(v.body.workspace, null);
   assert.ok(!v.card.actions.some((a) => a.key === 'propose-change'));
   assert.ok(!v.body.details.ledger.some((r) => r.actions?.some((a) => a.key === 'sync-main')));
-  assert.equal(v.body.transcript, null);
 });
 
 test('owner can sync before review, with busy and fork capabilities respected', () => {
@@ -349,7 +345,7 @@ test('actual shared component renders the entire card and escapes the issue titl
   // #4455: the change as a thread's root post: the summary, the requests it
   // addresses, the Votes and Testing cards; the steps sheet (with the failing
   // check's reason behind its door) in Details. Its discussion is the
-  // thread's own stream. The Build is a ⋯ row that LEAVES this page (#2605).
+  // thread's own stream.
   for (const label of ['Built for', 'Waiting on you', 'Submitted for review', 'Expected app, received login', 'Checks']) assert.ok(html.includes(label), `${label} is on the page`);
   assert.ok(!html.includes('Where it stands'), 'a draft draws the same short steps as a proposal');
   assert.ok(html.includes('&lt;script&gt;issue&lt;/script&gt;'));
@@ -368,8 +364,8 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.match(chipRule[0], /text-overflow: ellipsis/);
   assert.match(chipRule[0], /white-space: nowrap/);
   // No tabs, no Build sheet and no Discussion sheet: the page IS the thread
-  // (#4455), and the Build door is a ⋯ row that navigates to the dev
-  // session's own page (#2605).
+  // (#4455). The dev chat it once opened is retired, so there is no Build
+  // door anywhere: not on the page and not in its ⋯.
   assert.doesNotMatch(html, /role="tablist"/);
   assert.match(html, /data-change-root="4073"/);
   assert.doesNotMatch(html, /data-change-conversation/);
@@ -377,7 +373,7 @@ test('actual shared component renders the entire card and escapes the issue titl
   assert.doesNotMatch(html, /aria-label="Build"/);
   assert.doesNotMatch(html, /id="dc-view"/, 'the dev session is not embedded in the card page');
   assert.equal((html.match(/>Continue building</g) || []).length, 0, 'the Build door is not on the page');
-  assert.equal(av._cardMenuItems(v.card.rail.menuKey).filter((a) => a.label === 'Continue building').length, 1, 'it is one ⋯ row');
+  assert.equal(av._cardMenuItems(v.card.rail.menuKey).filter((a) => a.label === 'Continue building').length, 0, 'nor a ⋯ row');
   assert.ok(!html.includes('Open discussion'));
   assert.doesNotMatch(html, />Activity</, 'Activity is gone: the meta line carries its stamp');
 });
@@ -453,17 +449,18 @@ test('server-side change link producers use the same detail route', () => {
   }
 });
 
-test('declared Improve checks expect real session rows on the full change route', () => {
+test('no declared check expects an Improve session row, or the workspace link', () => {
+  // #5289 checked the mixed work-order/session fixture on the Messages
+  // screen's Agents list. That list left Messages (16 Nov 2026), and the
+  // Improve controller's rows went with their last surface, so no check can
+  // open them.
   const manifest = JSON.parse(fs.readFileSync('dapp.json', 'utf8'));
-  const check = manifest.tests.find((item) =>
-    String(item.name || '').includes('Real sessions still render beside it'));
-  assert.ok(check, 'the mixed work-order/session fixture remains covered');
-  // #5289: checked on the Messages screen's agents list now, where a
-  // session row opens its conversation (#2813, `#messages/session/…`), the
-  // inbox's own address; still never the workspace link.
-  assert.match(check.path, /#messages$/);
-  assert.match(check.expectSelector, /\[href\^="#messages\/session\/"\]/);
-  assert.doesNotMatch(check.expectSelector, /\/dev\/sessions\//);
+  assert.deepEqual(manifest.tests.filter((item) => /data-improve-row/.test(item.expectSelector || '')).map((item) => item.name), [],
+    'no check selects a row nothing draws');
+  assert.deepEqual(manifest.tests.filter((item) => /\/dev\/sessions\//.test(item.expectSelector || '')).map((item) => item.name), [],
+    'and none expects the workspace link');
+  const controller = fs.readFileSync('frontend/src/features/improve/improve-controller.js', 'utf8');
+  assert.doesNotMatch(controller, /\/dev\/sessions\//, 'the controller links nothing to the workspace');
 });
 
 test('the same detail URL resolves native/imported underway work and changes lifecycle after promotion', () => {
@@ -506,27 +503,6 @@ test('every change route mounts its thread, and an unshared change reads no disc
   assert.equal(calls[0].readOnly, false);
 });
 
-test('the Build door distinguishes owners, published transcripts, private chats and imports', () => {
-  const av = context();
-  const door = (view, item) => ({ ...view._buildDoorView(item) });
-  assert.deepEqual(door(av, failing), { kind: 'owner', label: 'Continue building' });
-  assert.deepEqual(door(av, { ...failing, status: 'promoted' }), { kind: 'owner', label: 'Open build' });
-  assert.equal(av._buildDoorView({ ...failing, source: 'imported' }), null);
-  assert.equal(av._buildDoorView(null), null);
-  // Somebody else's change: only an explicitly published chat is a door.
-  const reader = context({ id: 99 });
-  assert.equal(reader._buildDoorView(failing), null);
-  assert.deepEqual(door(reader, { ...failing, transcript_shared: true }),
-    { kind: 'published', label: 'Read the build' });
-  assert.deepEqual(door(reader, { ...failing, transcript_shared_at: '2026-09-11' }),
-    { kind: 'published', label: 'Read the build' });
-  assert.equal(reader._buildDoorView({ ...failing, transcript_shared: true, source: 'imported' }), null);
-  // The card's pill is built from exactly that.
-  assert.equal(av._topicViewFor('session', failing).body.build.label, 'Continue building');
-  assert.equal(reader._topicViewFor('session', { ...failing, transcript_shared: true }).body.build.label,
-    'Read the build');
-});
-
 test('a change page draws no build surface, for a reader as for its author (#2605, #4455)', () => {
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const av = context();
@@ -541,139 +517,6 @@ test('a change page draws no build surface, for a reader as for its author (#260
     assert.doesNotMatch(html, /id="dc-view"/, 'no workspace is embedded under the discussion');
     assert.doesNotMatch(html, /data-transcript-body/, 'no published chat is embedded either');
   }
-});
-
-test('Continue building navigates to the dev session page from every surface', () => {
-  const av = context();
-  const source = fs.readFileSync('public/js/app-view.js', 'utf8');
-  const method = source.slice(source.indexOf('  openChangeWorkspace(id) {'), source.indexOf('\n  /**', source.indexOf('  openChangeWorkspace(id) {'))).trim().replace(/,$/, '');
-  const events = [], routes = [];
-  av.openProposalSession = (id) => routes.push(id);
-  // The card page used to be the one surface that kept the reader put, by
-  // dispatching `change-workspace-open` when its Build sheet was mounted.
-  // #2605: there is no sheet and no event — the route is the only answer.
-  const c = { AppView: av, document: { querySelector: () => ({}) },
-    window: { dispatchEvent: (event) => events.push(event) }, CustomEvent: class { constructor(type, opts) { this.type = type; this.detail = opts.detail; } } };
-  const open = vm.runInNewContext(`({ ${method} }).openChangeWorkspace`, c);
-  open(4073);
-  assert.deepEqual(events, [], 'nothing is dispatched at the page');
-  assert.deepEqual(routes, [4073]);
-  assert.ok(!/dispatchEvent\(new CustomEvent\('change-workspace-open'/.test(source),
-    'the event has no publisher left');
-});
-
-// #3712: a change up for a vote that its owner started from an agent session.
-// The page's own read (/api/apps/:slug/proposals/:id) names the conversation,
-// so the door says "Continue in agent session"; pressing it re-found the
-// change by id, reached the board's list row first, and that row did not name
-// it — so the door opened the dev session, whose strip said "Continue" again.
-test('Continue in agent session goes straight to the conversation (#3712)', () => {
-  const location = { search: '', hash: '' };
-  const sessions = [];
-  const av = context(undefined, { location, App: { switchTab: (...args) => sessions.push(args) } });
-  const promoted = { ...failing, status: 'promoted', pr_number: 12 };
-  // The board's copy as /promoted served it before: no agent_session_id.
-  av._proposals = [{ ...promoted }];
-  const page = av._topicViewFor('proposal', { ...promoted, agent_session_id: 7301 });
-  // #4455: the Build door is a row of the page's ⋯.
-  const door = av._cardMenuItems(page.card.rail.menuKey).find((a) => a.label === 'Continue in agent session');
-  assert.ok(door);
-  door.act();
-  // Assigned, not replaced: Back from the conversation is the change page.
-  assert.equal(location.hash, '#messages/agent/7301');
-  assert.deepEqual(sessions, [], 'never by way of the dev session page');
-
-  // The board's copy names it now, so the card's ⋯ "Open session" goes there
-  // too, with no change page drawn first.
-  av._changeItems.clear();
-  av._proposals = [{ ...promoted, agent_session_id: 7301 }];
-  location.hash = '';
-  const open = av._proposalMenuItems(av._proposals[0], { mine: true, imported: false })
-    .find((a) => a.label === 'Open session');
-  open.act();
-  assert.equal(location.hash, '#messages/agent/7301');
-  assert.deepEqual(sessions, []);
-});
-
-test('only the owner is sent to the agent session; everyone else keeps their door (#3712)', () => {
-  const change = { ...failing, status: 'promoted', agent_session_id: 7301 };
-  const setup = (user) => {
-    const location = { search: '', hash: '' };
-    const sessions = [];
-    const av = context(user, { location, App: { switchTab: (...args) => sessions.push(args) } });
-    return { av, location, sessions };
-  };
-  // Somebody else's private change: no door, and nothing resolves to the
-  // conversation, which answers to its owner alone.
-  const reader = setup({ id: 99 });
-  reader.av._proposals = [change];
-  assert.equal(reader.av._topicViewFor('proposal', change).body.build, null);
-  assert.equal(reader.av._agentSessionDoorId(change.id), null);
-  // A published chat is read where it was published, the dev session page.
-  const published = { ...change, transcript_shared: true };
-  reader.av._proposals = [published];
-  const readerPage = reader.av._topicViewFor('proposal', published);
-  const door = reader.av._cardMenuItems(readerPage.card.rail.menuKey).find((a) => a.label === 'Read the build');
-  assert.ok(door);
-  door.act();
-  assert.equal(reader.location.hash, '');
-  assert.deepEqual(reader.sessions, [['dev', change.id, 'sessions']]);
-  // The owner's change with no conversation behind it keeps its dev session,
-  // and an imported pull request has no door at all.
-  const owner = setup();
-  owner.av._proposals = [{ ...change, agent_session_id: null }];
-  owner.av.openChangeWorkspace(change.id);
-  assert.equal(owner.location.hash, '');
-  assert.deepEqual(owner.sessions, [['dev', change.id, 'sessions']]);
-  owner.av._proposals = [{ ...change, source: 'imported' }];
-  assert.equal(owner.av._agentSessionDoorId(change.id), null);
-});
-
-test("the board's copy of a change up for a vote names its agent session (#3712)", () => {
-  const source = fs.readFileSync('src/routes/votes.js', 'utf8');
-  const start = source.indexOf("router.get('/api/apps/:slug/promoted'");
-  assert.ok(start > 0);
-  const select = source.slice(start, source.indexOf('FROM chat_sessions cs', start));
-  assert.match(select, /\n\s+cs\.agent_session_id,\n/);
-});
-
-test('an old ?conversation=workspace link lands on the dev session page', () => {
-  const av = context();
-  const source = fs.readFileSync('public/js/app-view.js', 'utf8');
-  const method = source.slice(source.indexOf('  _redirectLegacyBuildLink(item) {'), source.indexOf('\n  _showExplorePill', source.indexOf('  _redirectLegacyBuildLink(item) {'))).trim().replace(/,$/, '');
-  const routes = [];
-  av.openChangeWorkspace = (id) => routes.push(id);
-  let search = '?conversation=workspace';
-  const c = { AppView: av, URLSearchParams,
-    window: { get location() { return { search }; } } };
-  const redirect = vm.runInNewContext(`({ ${method} })._redirectLegacyBuildLink`, c);
-  assert.equal(redirect(failing), true);
-  assert.deepEqual(routes, [4073]);
-  // The spelling that preceded it.
-  search = '?conversation=build';
-  routes.length = 0;
-  assert.equal(redirect(failing), true);
-  assert.deepEqual(routes, [4073]);
-  // Any other panel, or none, keeps the card page.
-  for (const other of ['?conversation=discussion', '?conversation=activity', '']) {
-    search = other;
-    routes.length = 0;
-    assert.equal(redirect(failing), false);
-    assert.deepEqual(routes, []);
-  }
-  // And a change with nothing to open stays put rather than bouncing a
-  // reader to a session page they cannot see.
-  search = '?conversation=workspace';
-  routes.length = 0;
-  assert.equal(redirect({ ...failing, source: 'imported' }), false);
-  const reader = context({ id: 99 });
-  reader.openChangeWorkspace = (id) => routes.push(id);
-  const readerRedirect = vm.runInNewContext(`({ ${method} })._redirectLegacyBuildLink`,
-    { AppView: reader, URLSearchParams, window: { get location() { return { search }; } } });
-  assert.equal(readerRedirect(failing), false, "somebody else's private change keeps its page");
-  assert.equal(readerRedirect({ ...failing, transcript_shared: true }), true,
-    'a published chat is a door, so the link follows it');
-  assert.deepEqual(routes, [4073]);
 });
 
 test('the owner\u2019s underway session resolves to a body carrying its change id', () => {
@@ -707,7 +550,7 @@ test('full card has one submission, one preview, contextual recovery and an inde
   const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
   const html = renderToHtml(createElement(ChangeDetail, { ...v, item }));
   assert.equal((html.match(/>Submit for review</g) || []).length, 1);
-  assert.equal(menu.filter((a) => a.label === 'Continue building').length, 1, 'one Build door, a ⋯ row');
+  assert.equal(menu.filter((a) => a.label === 'Continue building').length, 0, 'no Build door: the dev chat it opened is retired');
   assert.doesNotMatch(html, /dev-topic-gh/);
 });
 

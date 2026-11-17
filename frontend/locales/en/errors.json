@@ -39,10 +39,6 @@
     "text": "Session not found",
     "description": "Error shown when the working session the person opened or acted on does not exist or is no longer there."
   },
-  "project.agentSessionNotFound": {
-    "text": "Agent session not found",
-    "description": "Error shown when the AI agent's working session the person opened or acted on does not exist or is no longer there."
-  },
   "project.eventNotFound": {
     "text": "Event not found.",
     "description": "Error shown when the season event the person opened does not exist or is no longer there. Keeps its closing full stop."
