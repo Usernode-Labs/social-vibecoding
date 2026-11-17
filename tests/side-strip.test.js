@@ -662,7 +662,7 @@ test('Messages\' drawer runs under the strip the same way', () => {
   assert.equal(stripWidth(root(false, '84px')), 0, 'no strip, nothing taken off');
 });
 
-test('one pill down the strip: the four places, then the apps, then you', () => {
+test('the strip\'s bubbles: the four places, then the apps, then you', () => {
   // From a gap under the back button's slot to the home indicator, on every
   // screen: the slot is always free, so a back button appears without the
   // pill moving.
@@ -676,9 +676,21 @@ test('one pill down the strip: the four places, then the apps, then you', () => 
   assert.match(block, /html\[data-side-strip\] \.platform-side-apps:not\(\.hidden\) \{\s*order: 1;/);
   assert.match(block, /html\[data-side-strip\] #platform-tab-me \{\s*order: 2;/);
   assert.match(block, /html\[data-side-strip\] \.platform-side-apps-head \{[^}]*border-top: 1px solid var\(--app-sheet-line\);[^}]*text-transform: uppercase;/);
-  // Corners concentric with the lit marker's: its 16px radius plus the 4px
-  // it is inset by. The marker keeps to its cell there (markerBoxFor).
-  assert.match(block, /html\[data-side-strip\] #platform-tabs \{[^}]*border-radius: 20px;[^}]*clip-path: inset\(0 round 20px\);/);
+  // THE BUBBLES (#6788, 17 Nov 2026): each place is a rounded tile on the
+  // page's own ground, the lit one filled from the bar's own tokens, so the
+  // sliding pill is not drawn here (the desktop rail does the same) and the
+  // capsule the column used to stand in is gone with its fake glass.
+  assert.match(block, /html\[data-side-strip\] \.platform-tabs-marker \{\s*display: none;/,
+    'the lit state is drawn once, by the bubble');
+  assert.match(block, /html\[data-side-strip\] #platform-tabs::before \{\s*content: none;/,
+    'no fake glass behind the bubbles');
+  assert.doesNotMatch(block, /html\[data-side-strip\] #platform-tabs \{[^}]*border-radius: 20px;/);
+  assert.doesNotMatch(block, /html\[data-side-strip\] #platform-tabs \{[^}]*clip-path: inset\(0 round 20px\);/);
+  assert.match(block, /html\[data-side-strip\] \.platform-tab \.platform-tab-mark \{[^}]*width: 40px;\s*height: 30px;[^}]*border-radius: 10px;[^}]*background: color-mix\(in srgb, var\(--text-primary\) 8%, transparent\);[^}]*color: var\(--text-muted\);/);
+  assert.match(block, /html\[data-side-strip\] \.platform-tab\[aria-current="page"\] \.platform-tab-mark,[^{]*\{[^}]*background: var\(--lit-tint\);[^}]*color: var\(--lit-ink\);/,
+    'the place you are on is filled from the bar\'s lit tokens');
+  // The strip still measures the marker (tab-bar.tsx), and the phone's bar
+  // still draws it with its own 16px radius.
   assert.match(APP_CSS, /\.platform-tabs-marker \{[^}]*border-radius: 16px;/);
   assert.match(read('frontend/src/features/nav/tab-bar.tsx'), /markerBoxFor\(el, tabContentRect\(el\), inStrip\)/);
   // The phone's Resume strip stands aside: the section offers the app you left.
