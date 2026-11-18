@@ -165,13 +165,36 @@ test('object missing for an existing row degrades to 404', async () => {
     rows: [{ app_id: 7, filename: 'gone.png', content_type: 'image/png', visibility: 'public' }],
   });
   const server = await startServeServer(fakeStore({
-    async getFileStream() { throw new Error('NoSuchKey'); },
+    async getFileStream() { throw Object.assign(new Error('Not Found'), { code: 'NoSuchKey' }); },
   }));
   try {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`);
     assert.equal(res.status, 404);
   } finally {
     server.close();
+  }
+});
+
+test('a store that cannot answer is a 503 to retry, not a 404', async () => {
+  poolQueryHandler = async () => ({
+    rows: [{ app_id: 7, filename: 'slow.png', content_type: 'image/png', visibility: 'public', sha256: 'f'.repeat(64) }],
+  });
+  const failures = [
+    Object.assign(new Error('object store sent nothing for 10000 ms'), { code: 'StoreTimeout' }),
+    new Error('Request failed after 1 retries: Error: Retryable HTTP status: 504'),
+  ];
+  for (const failure of failures) {
+    const server = await startServeServer(fakeStore({ async getFileStream() { throw failure; } }));
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`);
+      assert.equal(res.status, 503, failure.message);
+      assert.equal(res.headers.get('retry-after'), '5');
+      // Nothing a cache could keep as the file.
+      assert.equal(res.headers.get('etag'), null);
+      assert.equal(res.headers.get('cache-control'), null);
+    } finally {
+      server.close();
+    }
   }
 });
 

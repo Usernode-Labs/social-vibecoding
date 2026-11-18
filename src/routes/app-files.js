@@ -54,7 +54,7 @@ function verifyUserToken(raw, appId, staging) {
 // object store reads only that range. `file` is its app_files row; access
 // is the caller's to check first. `onMissing` answers a row whose object is
 // gone (a bare 404 unless the caller speaks JSON).
-async function sendAppFile(req, res, store, file, cacheControl, { onMissing = null } = {}) {
+async function sendAppFile(req, res, store, file, cacheControl, { onMissing = null, onUnavailable = null } = {}) {
   const size = Number(file.size_bytes);
   const range = Number.isSafeInteger(size) && size > 0 ? parseRange(req.headers.range, size) : null;
   const safeName = String(file.filename || 'file').replace(/["\\\r\n]/g, '_');
@@ -81,13 +81,21 @@ async function sendAppFile(req, res, store, file, cacheControl, { onMissing = nu
   try {
     stream = await store.getFileStream(file.app_id, file.id, range);
   } catch (err) {
-    // Row-without-object (partial restore, failed delete retry):
-    // degrade to 404 for fresh fetchers, loudly in the log.
-    log.warn('app-files', 'Object missing for metadata row', { id: file.id, err: err.message });
     for (const header of ['Content-Type', 'Cache-Control', 'ETag', 'Content-Disposition', 'Accept-Ranges']) {
       res.removeHeader(header);
     }
-    return onMissing ? onMissing() : res.status(404).end();
+    if (appFiles.isMissingObject(err)) {
+      // Row-without-object (partial restore, failed delete retry):
+      // degrade to 404 for fresh fetchers, loudly in the log.
+      log.warn('app-files', 'Object missing for metadata row', { id: file.id, err: err.message });
+      return onMissing ? onMissing() : res.status(404).end();
+    }
+    // The store could not answer (a timeout, a 5xx after the client's own
+    // retry): the file is still there, so this is a 503 its reader can
+    // retry, never a 404 that says it is gone.
+    log.warn('app-files', 'Object store read failed', { id: file.id, code: err.code, err: err.message });
+    res.set('Retry-After', '5');
+    return onUnavailable ? onUnavailable() : res.status(503).end();
   }
   if (range) {
     res.status(206);

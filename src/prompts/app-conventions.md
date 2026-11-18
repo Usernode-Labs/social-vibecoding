@@ -2189,6 +2189,8 @@ const file = await res.json(); // { ok, id, url, sizeBytes, sha256, owner: 'app'
 //   → { ok, files: [...], next }   (next: the id to pass as `after`, or null)
 // Read one back (private ones too; a Range header reads part of it):
 //   GET `${base}/files/<id>`
+//   404 not_found: the file is gone. 503 storage_unavailable (Retry-After):
+//   the store could not answer in time; the file is there, read it again.
 // Delete and usage take the app token alone as well:
 //   DELETE `${base}/files/<id>`, GET `${base}/usage`
 //   (usage adds `appOwnedBytes`; `userBytes` is null without a user token)
