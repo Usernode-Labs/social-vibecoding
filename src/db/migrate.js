@@ -5691,9 +5691,11 @@ async function seedStagingAdminConsoleData(pool) {
     const first = userRows[0];
     const second = userRows[1] || null;
 
+    // Also the admin's invite link to Homeroom (/welcome/STAGING-DEMO-UNUSED,
+    // services/access-links.js), with the note an admin writes for who it is for.
     await pool.query(
-      `INSERT INTO activation_codes (code)
-       VALUES ('STAGING-DEMO-UNUSED')
+      `INSERT INTO activation_codes (code, note)
+       VALUES ('STAGING-DEMO-UNUSED', 'Sample: a creator trying Homeroom (staging fixture)')
        ON CONFLICT (code) DO NOTHING`
     );
     await pool.query(
