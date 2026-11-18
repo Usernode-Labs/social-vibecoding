@@ -114,7 +114,6 @@ export function MessagesFrameList({
         {/* Under the tab at every width: the pane is 520px, too narrow for a field at the tabs' end. */}
         <Search value={query} onChange={onQuery} placeholder={placeholder} label={label} />
         <div className={k('stack')}>
-          {state.offline ? <Note tone="wait">{t('messages:inbox.offline')}</Note> : null}
           {state.error ? (
             <Card pad>
               <div className={k('txt')} role="status" data-inbox-failed="">

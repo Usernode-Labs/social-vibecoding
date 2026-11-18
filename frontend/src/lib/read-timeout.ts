@@ -24,7 +24,8 @@
  *
  * Either kind of failure, the limit or a fetch that rejected outright, also
  * nudges the connectivity probe (./offline.ts), so a quiet network raises
- * the offline banner even though the browser never fired `offline`.
+ * the header's connection status even though the browser never fired
+ * `offline`; so does a read still unanswered after SLOW_READ_MS.
  *
  * Not bounded: writes (a send has its own handling), other origins, /health
  * (the probe's own read, which has its own limit), an event stream, the
@@ -43,6 +44,8 @@
  * ./api-cache-identity.ts and a native session renewal included, and so its
  * signal reaches the request that actually goes out.
  */
+
+import { noteFresh, noteSaved } from './freshness';
 
 export const READ_TIMEOUT_MS = 15_000;
 
@@ -144,6 +147,8 @@ interface Plan {
   api: boolean;
   /** The limit on its response headers, or null for none. */
   ms: number | null;
+  /** Its same-origin path and query, the key the screen's freshness notes it under. */
+  path?: string;
 }
 
 function planFor(win: any, input: RequestInfo | URL, init?: RequestInit): Plan {
@@ -155,17 +160,46 @@ function planFor(win: any, input: RequestInfo | URL, init?: RequestInit): Plan {
   }
   const api = url.origin === win.location.origin && url.pathname.startsWith('/api/');
   if (!api) return { api, ms: null };
+  const path = `${url.pathname}${url.search}`;
   const own = init ? init.readTimeout : undefined;
-  if (own === false) return { api, ms: null };
+  if (own === false) return { api, ms: null, path };
   const method = String((init && init.method) || (isRequest(input) ? input.method : '') || 'GET').toUpperCase();
   if (method !== 'GET' && method !== 'HEAD') return { api, ms: null };
-  if (READ_TIMEOUT_EXEMPT.some((prefix) => url.pathname.startsWith(prefix))) return { api, ms: null };
+  if (READ_TIMEOUT_EXEMPT.some((prefix) => url.pathname.startsWith(prefix))) return { api, ms: null, path };
   let accept = '';
   try {
     accept = new Headers((init && init.headers) || (isRequest(input) ? input.headers : undefined)).get('accept') || '';
   } catch { /* unreadable headers: an ordinary read */ }
   if (/text\/event-stream/i.test(accept)) return { api, ms: null };
-  return { api, ms: typeof own === 'number' && own > 0 ? own : READ_TIMEOUT_MS };
+  return { api, ms: typeof own === 'number' && own > 0 ? own : READ_TIMEOUT_MS, path };
+}
+
+/**
+ * A bounded read still unanswered after SLOW_READ_MS tells the probe now
+ * (./offline.ts `slowRead`): on a quiet network that is the first sign, long
+ * before READ_TIMEOUT_MS (the native-offline proposal, 18 Nov 2026: the strip
+ * took 20-26 s to come).
+ */
+export const SLOW_READ_MS = 5000;
+
+function slowRead(win: any): void {
+  try {
+    if (win.Offline && !win.Offline.isOffline() && typeof win.Offline.slowRead === 'function') win.Offline.slowRead();
+  } catch { /* no probe: the limit still bounds the read */ }
+}
+
+/**
+ * The service worker answers a read from its saved copy with `sw-cached-at`
+ * (public/sw.js CACHED_AT_HEADER): the screen's freshness hears when it was
+ * saved, and an answer from the network says the address is current again.
+ */
+function noteAnswer(path: string | undefined, res: Response): void {
+  if (!path || !res) return;
+  try {
+    const saved = Number(res.headers && res.headers.get('sw-cached-at'));
+    if (saved > 0) noteSaved(path, saved);
+    else if (res.ok) noteFresh(path);
+  } catch { /* a response without headers says nothing */ }
 }
 
 function nudge(win: any): void {
@@ -196,7 +230,13 @@ export function installReadTimeout(win: any = typeof window !== 'undefined' ? wi
     } catch (error) {
       sent = Promise.reject(error);
     }
-    return sent.catch((error: unknown) => {
+    const slow = plan.ms == null ? null : setTimeout(() => slowRead(win), Math.min(SLOW_READ_MS, plan.ms));
+    return sent.then((res: Response) => {
+      if (slow) clearTimeout(slow);
+      noteAnswer(plan.path, res);
+      return res;
+    }, (error: unknown) => {
+      if (slow) clearTimeout(slow);
       if (isNetworkFailure(error)) nudge(win);
       throw error;
     });

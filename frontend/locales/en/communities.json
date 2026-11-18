@@ -107,6 +107,10 @@
     "text": "You are not in a community yet. Join one from Home, or start your own.",
     "description": "Line on the Communities page for a person who has pinned no community and joined none. Home is the name of the Home screen, where the communities to join are listed."
   },
+  "page.notSaved": {
+    "text": "Not saved on this phone yet. Your communities will load when you’re back online.",
+    "description": "Communities screen, in place of the list, when Homeroom cannot be reached and the list was never saved on this device. Not an error: it says what will happen."
+  },
   "page.noMatch": {
     "text": "None of your communities match “{{query}}”.",
     "description": "Line on the Communities page when the search finds none of the person's communities. {{query}} is what they typed."

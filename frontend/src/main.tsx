@@ -67,6 +67,7 @@ import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { installActionOutbox } from './lib/action-outbox';
+import { installWarmSaved } from './features/shell/warm-saved';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyNavSnapshot, applyShellSnapshot } from './lib/shell-snapshot-apply';
 import { installFirstPaintReserve } from './lib/first-paint-reserve';
@@ -251,6 +252,10 @@ bootStep('installReadTimeout', () => installReadTimeout());
 // Votes and reactions with no answer wait on the device for the connection
 // (./lib/action-outbox.ts), and go once the shell says it is back.
 bootStep('installActionOutbox', () => installActionOutbox());
+
+// On a good connection in the phone app, read the first screens ahead so
+// they are on the phone when the signal goes (./features/shell/warm-saved.ts).
+bootStep('installWarmSaved', () => installWarmSaved());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on

@@ -2284,16 +2284,16 @@
     "description": "Error in place of the conversation list in Messages when it could not be fetched."
   },
   "store.error.unreachableList": {
-    "text": "Couldn’t reach Homeroom. Your conversations will load when you’re back online.",
-    "description": "Shown in place of the conversation list in Messages, above a Try again button, when the list could not be fetched because there was no connection and this device has no saved copy of it."
+    "text": "Not saved on this phone yet. Your conversations will load when you’re back online.",
+    "description": "Shown in the ordinary text colour, not as an error, where the conversation list would be when Homeroom cannot be reached and nothing was saved on this device yet. A Try again button follows."
   },
   "store.error.loadThread": {
     "text": "Couldn’t load this conversation.",
     "description": "Error in place of a conversation's messages when they could not be fetched."
   },
   "store.error.unreachableThread": {
-    "text": "Couldn’t reach Homeroom. This conversation will load when you’re back online.",
-    "description": "Shown in place of a conversation's messages, above a Try again button, when they could not be fetched because there was no connection and this device has no saved copy of them."
+    "text": "Not saved on this phone yet. This conversation will load when you’re back online.",
+    "description": "Shown in the ordinary text colour, not as an error, where a conversation's messages would be when Homeroom cannot be reached and nothing of it was saved on this device yet. A Try again button follows."
   },
   "store.error.loadNewer": {
     "text": "Couldn’t load newer messages.",
@@ -3194,10 +3194,6 @@
   "inbox.searchLabel": {
     "text": "Search messages",
     "description": "Accessible label of the search field above the conversation list."
-  },
-  "inbox.offline": {
-    "text": "Offline. Queued messages retry when you reconnect.",
-    "description": "Banner above the conversation list while the device has no connection: messages written now are kept and sent later."
   },
   "inbox.empty.title": {
     "text": "No messages yet",
@@ -4788,7 +4784,7 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Shown in the Needs you list when it is empty."
   },
   "ai.work.unreachable": {
-    "text": "Couldn’t reach Homeroom. Your lists will load when you’re back online.",
+    "text": "Not saved on this phone yet. Your lists will load when you’re back online.",
     "description": "The AI tab's main view: shown at the top of the Needs you list, above a Try again button, when the person's lists (what needs them, what is in progress, what is waiting) could not be fetched because there was no connection and this device has no saved copy of them."
   },
   "ai.work.failed": {

@@ -832,18 +832,6 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   white-space: nowrap;
 }
 
-.messages-network-banner {
-  flex: 0 0 auto;
-  margin: 0 16px 8px;
-  padding: 8px 12px;
-  border-radius: 12px;
-  color: #92400e;
-  background: #fef3c7;
-  font-size: 13px;
-  text-align: center;
-}
-.dark .messages-network-banner { color: #fde68a; background: #451a03; }
-
 /* The empty and loading states, at the language's type scale. The list's
    empty state is a white card on the strip with a filled pill; "Choose a
    conversation" (desktop only — below 768px the list IS the screen until you
@@ -13732,40 +13720,13 @@ html.dark #admin-onboarding-flows {
    needed to know they were offline (staring at a sign-in form that
    cannot possibly succeed) was the one moment the strip was invisible. */
 
-/* Height of the strip's text row; body reserves exactly this much so the
-   shell below is not covered. The strip's own safe-area padding then
-   lands on the header's safe-area extension — background over
-   background, no content hidden — instead of shifting the whole shell. */
+/* The strip itself is gone (the native-offline proposal, 18 Nov 2026): the
+   header's connection status says it (features/header/connection-status.tsx),
+   a pill over the top of the screen that reserves nothing. Its height token
+   stays, at zero, so every rule below that stacks the install strip with it
+   reduces to the install strip alone. */
 body.is-offline {
-  --offline-strip-h: 1.75rem;
-  padding-top: var(--offline-strip-h);
-}
-
-body.is-offline #offline-banner {
-  position: fixed;
-  top: 0;
-  inset-inline-start: 0;
-  inset-inline-end: 0;
-  /* Above the auth overlays (z-40) AND the drawer panel (z-50). */
-  z-index: 60;
-  padding-top: calc(var(--platform-safe-top) + 0.375rem);
-  padding-bottom: 0.375rem;
-  /* Opaque: it now floats over content instead of displacing it, and a
-     translucent amber wash over a scrolling form is unreadable. */
-  background-color: #fef3c7;
-  color: #92400e;
-}
-/* darkMode: 'class' — the flag lives on <html>, put there before first paint
-   by the inline window.Theme module in frontend/src/head.html. */
-.dark body.is-offline #offline-banner {
-  background-color: #451a03;
-  color: #fcd34d;
-}
-
-/* The auth screens' corner Back link is pinned with an inline `top`, so
-   clearing the strip needs the override. */
-body.is-offline [data-auth-back] {
-  top: calc(env(safe-area-inset-top, 0px) + 1rem + var(--offline-strip-h)) !important;
+  --offline-strip-h: 0px;
 }
 
 /* ── The mobile install strip (#1372) ─────────────────────────────────
@@ -13803,14 +13764,6 @@ body.is-offline [data-auth-back] {
 
 body.has-install-strip {
   padding-top: var(--install-strip-h);
-}
-
-/* Both strips up: this one sits below the offline banner, which has
-   already covered the safe area. */
-body.is-offline #mobile-install-banner:not(.hidden) {
-  top: calc(var(--platform-safe-top) + var(--offline-strip-h));
-  height: var(--install-strip-h);
-  padding-top: 0;
 }
 
 body.is-offline.has-install-strip {
@@ -25737,7 +25690,7 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
    is the ordinary platform). The frame is narrow, so every screen takes its
    phone layout, which is the point: the panel is a phone-width column. */
 html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
-    #platform-parked, #chromeless-pill, #offline-banner, #mobile-install-banner,
+    #platform-parked, #chromeless-pill, #mobile-install-banner,
     #view-as-non-admin-banner, #language-notice, #platform-side-panel) {
   display: none !important;
 }

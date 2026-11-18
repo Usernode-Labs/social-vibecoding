@@ -1140,7 +1140,9 @@ test('the layout: no app makes room for the panel; it is drawn beside the bot\'s
 test('the panel\'s document draws no chrome and reserves no room for it', () => {
   const block = CSS.slice(CSS.indexOf('html.in-side-panel :is('));
   for (const id of ['#platform-header', '#platform-tabs', '#platform-rail-peek', '#platform-parked',
-    '#chromeless-pill', '#offline-banner', '#mobile-install-banner', '#view-as-non-admin-banner',
+    // The header's connection status is inside #platform-header (the
+    // offline strip it replaced was a chrome element of its own).
+    '#chromeless-pill', '#mobile-install-banner', '#view-as-non-admin-banner',
     '#platform-side-panel']) {
     assert.ok(block.slice(0, block.indexOf('{')).includes(id), `${id} is hidden in the panel`);
   }

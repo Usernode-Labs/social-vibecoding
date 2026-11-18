@@ -46,6 +46,7 @@ import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
+import { ConnectionStatus } from './connection-status';
 import { PlatformMark } from './platform-mark';
 import { InAppActions } from './in-app-actions';
 import { SidebarToggle } from '../nav/sidebar-toggle';
@@ -401,6 +402,10 @@ export function PlatformHeader() {
             depth (../nav-drawer/header-drawer.tsx DrawerUntint): only while
             the phone's drawer applies, so never in the prerender. */}
         <DrawerUntint />
+        {/* The connection's word (./connection-status.tsx): a pill hanging
+            from this bar's lower edge while Homeroom cannot be reached, in
+            place of the full-width strip the shell used to draw. */}
+        <ConnectionStatus />
         {/*
             The LEFT group: the back chevron when there is somewhere to go
             back to, then the chip. Nothing else, and NO RESERVED SLOT.
