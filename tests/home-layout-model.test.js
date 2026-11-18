@@ -19,8 +19,9 @@
 //
 // The contracts this file guards now:
 //
-//   1. HOLES SURVIVE. Nothing re-packs a layout except the overflow region.
-//      A drop leaves every other tile exactly where it is.
+//   1. HOLES SURVIVE. Nothing re-packs a layout except the overflow region
+//      and a REMOVAL (#6836): a drop leaves every other tile exactly where
+//      it is, while an app going off Home closes the grid up.
 //   2. ONE COLUMN COUNT, and it agrees with the CSS. The JS lays out against
 //      the column count the grid actually renders, or every cell is wrong.
 //   3. deriveDefault is reading order — with nothing but apps on the canvas,
@@ -500,6 +501,52 @@ test('repair overflows rather than losing an app when the canvas is full', () =>
   const { layout } = HomeLayout.repair(stored, COLS, present);
   assert.equal(layout.length, 33, 'nothing is lost');
   assert.equal(HomeLayout.overflowItems(layout).length, 1);
+});
+
+// ── Removing an app closes the grid (#6836) ──────────────────────────
+//
+// HOLES ARE THE POINT for a drop, and for a dropped widget or duplicate. A
+// REMOVAL is the one thing that re-packs: taking an app off Home moves the
+// tiles after it up and left, the way a phone's home screen does.
+
+test('repair re-packs the remaining tiles when apps are removed', () => {
+  const stored = [A('a', 0, 0), A('b', 1, 0), A('c', 2, 0), A('d', 3, 0), A('e', 0, 1)];
+  const { layout, changed } = HomeLayout.repair(stored, COLS, ['app:a', 'app:c', 'app:e']);
+  assert.ok(changed, 'a removal is worth persisting');
+  assert.deepEqual(layout.map((it) => [it.slug, it.col, it.row]),
+    [['a', 0, 0], ['c', 1, 0], ['e', 2, 0]], 'the rest close up in reading order');
+  assertNoOverlap(layout, COLS);
+});
+
+test('a removal closes a hole an earlier DRAG made too', () => {
+  // The grid packs as one grid: closing only the removed tile's gap would
+  // leave a launcher that reads half-tidied.
+  const stored = [A('a', 0, 0), A('b', 2, 0), A('c', 0, 1)];
+  const { layout } = HomeLayout.repair(stored, COLS, ['app:a', 'app:c']);
+  assert.deepEqual(layout.map((it) => [it.slug, it.col, it.row]),
+    [['a', 0, 0], ['c', 1, 0]]);
+});
+
+test('a removal plus a new app packs first, then places the new one', () => {
+  const stored = [A('a', 0, 0), A('b', 1, 0), A('c', 2, 0)];
+  const { layout, changed } = HomeLayout.repair(stored, COLS, ['app:a', 'app:c', 'app:new']);
+  assert.ok(changed);
+  assert.deepEqual(layout.map((it) => [it.slug, it.col, it.row]),
+    [['a', 0, 0], ['c', 1, 0], ['new', 2, 0]], 'the new app takes the first free cell after the pack');
+});
+
+test('a removal pulls an overflow app back onto the canvas', () => {
+  const stored = Array.from({ length: 32 }, (_, i) => A(`a${i}`, i % 4, Math.floor(i / 4)));
+  stored.push(A('over', 0, HomeLayout.MAX_ROWS));
+  const present = stored.map(HomeLayout.idOf).filter((id) => id !== 'app:a5');
+  const { layout } = HomeLayout.repair(stored, COLS, present);
+  assert.equal(HomeLayout.overflowItems(layout).length, 0, 'the overflow app came back up');
+  assert.equal(layout.filter((it) => it.row < HomeLayout.MAX_ROWS).length, 32,
+    'and the canvas is full again');
+  const over = layout.find((it) => it.slug === 'over');
+  assert.deepEqual([over.col, over.row], [3, 7],
+    'it goes after the tiles that closed up, not into the hole');
+  assertNoOverlap(layout, COLS);
 });
 
 // ── place ─────────────────────────────────────────────────────────────
