@@ -430,6 +430,11 @@
       "id": "app-owned-files",
       "sha256": "8eb7b1a1db5a3ae080db15b1d34b94aab669d076845023a0d7c41b3d2b7caa44",
       "schemaSha256": "cf82a338d78ea866385758e2a6442c619c534d845c15cf81cfca572f039e3414"
+    },
+    {
+      "id": "bot-reply-html-status",
+      "sha256": "c6b8d2aca7b1269e1d7a48dced948dbc069b9442e4c78eb5b0305c7888beb533",
+      "schemaSha256": "b85d99e22b8d8c6c9edf572b445988a072e927b224584f293f1788effc5a631f"
     }
   ]
 }

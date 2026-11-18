@@ -771,6 +771,10 @@ async function planTargetOf(pool, design) {
  */
 async function postDesignPlan(pool, config, {
   user, rootId, version = null, issueNumber = null, title = null, notes = null, appId = null, allowEmptier = false, deps = {},
+  // 18 Nov 2026: false when the offer's card that was tapped says it in
+  // place (homeroom-bot-mayor.js settleOnCard): its line comes back as
+  // `said`, and no message says it again.
+  notice = true,
 }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
@@ -856,17 +860,21 @@ async function postDesignPlan(pool, config, {
         WHERE id = $1`,
       [design.threadId, n, app.id],
     );
-    await dm.sendDm(pool, {
-      bot, userId: user.id, threadRootId: design.rootId, moment: null,
-      idempotencyKey: `design-plan-${design.threadId}-${n}-s${posted.sessionId}v${posted.version}`,
-      content: `Posted version ${after.version} as a plan on request #${n} on ${name}, under your name`
-        + `${posted.version > 1 ? ` (the plan's version ${posted.version})` : ''}.`,
-      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
-    }).catch((err) => log.warn('design-threads', 'Could not say a design was posted as a plan', { err: err.message }));
+    const postedLine = `Posted version ${after.version} as a plan on request #${n} on ${name}, under your name`
+      + `${posted.version > 1 ? ` (the plan's version ${posted.version})` : ''}.`;
+    if (notice) {
+      await dm.sendDm(pool, {
+        bot, userId: user.id, threadRootId: design.rootId, moment: null,
+        idempotencyKey: `design-plan-${design.threadId}-${n}-s${posted.sessionId}v${posted.version}`,
+        content: postedLine,
+        objects: [{ type: 'issue', appId: Number(app.id), issueNumber: n }],
+      }).catch((err) => log.warn('design-threads', 'Could not say a design was posted as a plan', { err: err.message }));
+    }
     log.info('design-threads', 'Posted a design as a plan', { app: app.slug, issueNumber: n, userId: user.id, version: after.version });
     return {
       ok: true, state: 'posted', number: n, plan: true, version: after.version, planVersion: posted.version,
       app: { slug: app.slug, name }, href: `#app/${encodeURIComponent(app.slug)}/dev/issues/${n}`,
+      ...(notice ? {} : { said: postedLine }),
     };
   }
   const settings = await (deps.homeroomBot || require('./homeroom-bot')).readSettings(pool);
@@ -905,21 +913,25 @@ async function postDesignPlan(pool, config, {
     ? await (deps.track || require('./homeroom-bot-track')).tracksForRequests(pool, { appId: app.id, numbers: [number], deps })
     : null;
   const next = attached ? filedNext(tracks?.get(number) || null, { queued: !!filed.queueId, version: after.version }) : null;
-  await dm.sendDm(pool, {
-    bot, userId: user.id, threadRootId: design.rootId, moment: null,
-    idempotencyKey: `design-thread-filed-${design.rootId}${planVersion > 1 ? `-v${planVersion}` : ''}`,
-    content: !attached
-      ? `Filed it as request #${number} on ${name}, under your name. Its plan could not be attached just now.`
-      : captured
-        ? `Filed it as request #${number} on ${name}, under your name, with version 1 and version ${after.version} side by side as its plan.`
-        : `Filed it as request #${number} on ${name}, under your name, with version ${after.version} as its plan.`,
-    ...(next ? { metadata: { kind: 'design_filed', appSlug: app.slug, appName: name, filedNext: next } } : {}),
-    objects: [{ type: 'issue', appId: Number(app.id), issueNumber: number }],
-  }).catch((err) => log.warn('design-threads', 'Could not say a design was filed', { err: err.message }));
+  const filedLine = !attached
+    ? `Filed it as request #${number} on ${name}, under your name. Its plan could not be attached just now.`
+    : captured
+      ? `Filed it as request #${number} on ${name}, under your name, with version 1 and version ${after.version} side by side as its plan.`
+      : `Filed it as request #${number} on ${name}, under your name, with version ${after.version} as its plan.`;
+  if (notice) {
+    await dm.sendDm(pool, {
+      bot, userId: user.id, threadRootId: design.rootId, moment: null,
+      idempotencyKey: `design-thread-filed-${design.rootId}${planVersion > 1 ? `-v${planVersion}` : ''}`,
+      content: filedLine,
+      ...(next ? { metadata: { kind: 'design_filed', appSlug: app.slug, appName: name, filedNext: next } } : {}),
+      objects: [{ type: 'issue', appId: Number(app.id), issueNumber: number }],
+    }).catch((err) => log.warn('design-threads', 'Could not say a design was filed', { err: err.message }));
+  }
   log.info('design-threads', 'Proposed a design', { app: app.slug, issueNumber: number, userId: user.id, version: after.version });
   return {
     ok: true, state: 'filed', number, plan: attached, version: after.version, planVersion, app: { slug: app.slug, name },
     href: `#app/${encodeURIComponent(app.slug)}/dev/issues/${number}`,
+    ...(notice ? {} : { said: filedLine, ...(next ? { filedNext: next } : {}) }),
   };
 }
 

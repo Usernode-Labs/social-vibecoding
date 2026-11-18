@@ -792,9 +792,17 @@ async function yoursOn(pool, { user, appId }) {
  * (GET /api/ai/tracks). A project they can no longer view is left out,
  * whatever the records say. Never anybody else's: it takes only `user`.
  */
-async function tracksFor(pool, { user, limit = 100, deps = {} }) {
+async function tracksFor(pool, { user, limit = 100, also = [], deps = {} }) {
   const rows = (await workState.forRequester(pool, user.id, { limit }))
     .filter((r) => r.kind === 'request' && r.issueNumber > 0);
+  // 18 Nov 2026: requests a live card in their chat follows that are not
+  // their own (a request they asked the bot to start for somebody else),
+  // read the same way, for a project they may view.
+  // Kept apart (`watched`): they are not the viewer's requests, so nothing
+  // that lists theirs lists these.
+  const extra = await alsoRows(pool, also, rows);
+  const watchedKeys = new Set(extra.map((r) => `${r.appId}#${r.issueNumber}`));
+  rows.push(...extra);
   if (!rows.length) return { tracks: [] };
   const appIds = [...new Set(rows.map((r) => r.appId))];
   const { rows: apps } = await pool.query(
@@ -821,10 +829,42 @@ async function tracksFor(pool, { user, limit = 100, deps = {} }) {
   }
   tracks.sort((a, b) => (order.get(`${appIdOf(apps, a.appSlug)}#${a.issueNumber}`) ?? 0)
     - (order.get(`${appIdOf(apps, b.appSlug)}#${b.issueNumber}`) ?? 0));
-  return { tracks };
+  if (!watchedKeys.size) return { tracks };
+  const isWatched = (t) => watchedKeys.has(`${appIdOf(apps, t.appSlug)}#${t.issueNumber}`);
+  return { tracks: tracks.filter((t) => !isWatched(t)), watched: tracks.filter(isWatched) };
 }
 
 const appIdOf = (apps, slug) => Number(apps.find((a) => a.slug === slug)?.id) || 0;
+
+// The most requests one read follows beyond the viewer's own.
+const MAX_ALSO = 10;
+
+/**
+ * Pure (18 Nov 2026): the requests a tracks read was asked to follow too, as
+ * `slug:number` pairs, at most MAX_ALSO of them; anything else is left out.
+ */
+function parseAlso(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(',');
+  const out = [];
+  for (const raw of list) {
+    const m = /^([a-z0-9][a-z0-9-]{0,99}):([1-9][0-9]{0,8})$/.exec(String(raw || '').trim());
+    if (!m || out.some((o) => o.slug === m[1] && o.issueNumber === Number(m[2]))) continue;
+    out.push({ slug: m[1], issueNumber: Number(m[2]) });
+    if (out.length >= MAX_ALSO) break;
+  }
+  return out;
+}
+
+/** The rows a read follows beyond the viewer's own, as forRequester shapes them; access is checked with theirs. */
+async function alsoRows(pool, also, own) {
+  const wanted = parseAlso(also);
+  if (!wanted.length) return [];
+  const { rows: apps } = await pool.query('SELECT id, slug FROM apps WHERE slug = ANY($1::text[])', [[...new Set(wanted.map((w) => w.slug))]]);
+  const idOf = new Map(apps.map((a) => [a.slug, Number(a.id)]));
+  return wanted
+    .filter((w) => idOf.has(w.slug) && !own.some((r) => r.appId === idOf.get(w.slug) && r.issueNumber === w.issueNumber))
+    .map((w) => ({ kind: 'request', appId: idOf.get(w.slug), issueNumber: w.issueNumber }));
+}
 
 /**
  * The person's private threads with Homeroom bot, as the tab lists them,
@@ -1059,6 +1099,7 @@ async function pageLists(pool, { user, showSelfHosted = false, deps = {} }) {
 }
 
 module.exports = {
+  parseAlso,
   // Shared with services/ai-history.js, which reads the same threads once they are finished.
   appOf,
   hrefOf,

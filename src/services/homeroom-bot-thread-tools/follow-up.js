@@ -49,8 +49,9 @@ function promptLines(ctx) {
   if (!offered(ctx)) return [];
   return [
     '- When they ask to be told when something about a change happens, call tell_me_when with that one moment and say its',
-    '  promise in your reply. Never tell them you cannot message them later. When you say work is queued or running,',
-    '  offer to tell them here when it is ready to vote, and store it only once they say yes or when they asked for it.',
+    '  promise in your reply. Never tell them you cannot message them later. When you start, queue or plan work in this',
+    '  turn, a live card for it goes under your reply and follows it to the vote and live: never offer to tell them when',
+    '  it is ready. Store a promise only when they ask for one.',
     '- tell_me_when also works for a request still being built or queued, before any change is up for a vote: ask for vote',
     '  (update and checks mean the same moment), and the line comes here when it is ready to vote. Only promise it when',
     '  that request is in progress for them.',
