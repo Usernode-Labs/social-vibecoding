@@ -553,6 +553,12 @@
         const skin = get();
         if (skin === 'wip') root.setAttribute('data-skin-wip', '');
         else root.removeAttribute('data-skin-wip');
+        // Settings > Experimental > Advanced mode, on <html> for the looks
+        // that keep a detail for it (the same device key the switch writes,
+        // features/settings/interface-mode.ts). Advanced unless Basic is saved.
+        let basic = false;
+        try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
+        root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
         const tokens = skin === 'wip' ? getTokens() : 'current';
         if (tokens !== 'current') root.setAttribute('data-wip-tokens', tokens);
         else root.removeAttribute('data-wip-tokens');

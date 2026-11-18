@@ -18,6 +18,9 @@ export function saveInterfaceMode(mode: InterfaceMode, storage = deviceStorage()
   try {
     if (!storage) return false;
     storage.setItem(INTERFACE_MODE_KEY, mode);
+    // On <html> too, where the page's boot script put it (head.html), so a
+    // look that keeps a detail for Advanced follows the switch at once.
+    try { if (typeof document !== 'undefined') document.documentElement.setAttribute('data-interface-mode', mode); } catch { /* no document */ }
     return true;
   } catch { return false; }
 }

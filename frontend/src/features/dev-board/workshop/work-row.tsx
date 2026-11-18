@@ -62,6 +62,7 @@ import {
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
+import { useLiveSkin } from '../../../lib/skin';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
 import { callAppView, itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
 import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
@@ -127,6 +128,13 @@ function numberWords(b: RowBrief): string {
   return b.n ? translate(noun.numbered, { number: b.n }) : translate(noun.plain);
 }
 
+/** An item's number as a short code: "R#6465" for a request, "PR#5990" for a change; anything else in its usual words. */
+function codeWords(b: RowBrief): string {
+  if (b.n && b.noun === 'request') return translate('project:workRow.code.request', { number: b.n });
+  if (b.n && b.noun === 'change') return translate('project:workRow.code.change', { number: b.n });
+  return numberWords(b);
+}
+
 /**
  * The row's one line, in the board's words (#4486): the number, who made it,
  * the requests a change is for (or a live one closed), and when.
@@ -146,9 +154,27 @@ export function rowWords(b: RowBrief, opts: {
   replies?: boolean;
   /** Say how long ago it was made (the default). Your work leaves it out (#4716). */
   ago?: boolean;
+  /**
+   * Standard (WIP): who and when first, then the item's number as a short
+   * code, "snait · 29 Oct · PR#5990" (a request is "R#6465"), then what a
+   * change is for or closed. The other looks keep the number first.
+   */
+  whoFirst?: boolean;
 } = {}): string {
   const parts: string[] = [];
   for (const lead of typeof opts.lead === 'string' ? [opts.lead] : (opts.lead || [])) if (lead) parts.push(lead);
+  if (opts.whoFirst) {
+    if (b.by && opts.by !== false) parts.push(b.by);
+    if (b.ago && opts.ago !== false) parts.push(b.ago);
+    parts.push(codeWords(b));
+    if (b.linked.length && b.kind !== 'live') {
+      parts.push(translate('project:workRow.for', { count: b.linked.length, requests: numbers(b.linked) }));
+    }
+    if (b.closed.length && b.kind === 'live') {
+      parts.push(translate('project:workRow.closed', { count: b.closed.length, requests: numbers(b.closed) }));
+    }
+    return parts.reduce((first, second) => translate('project:workRow.facts.pair', { first, second }));
+  }
   parts.push(numberWords(b));
   if (b.by && opts.by !== false) parts.push(b.by);
   if (b.linked.length && b.kind !== 'live') {
@@ -219,6 +245,8 @@ export function WorkRow({
 }): ReactNode {
   // The line in words is read with `translate` (rowWords); subscribe the row.
   useMessages('project');
+  // Standard (WIP) says who and when first, then the item's number as a code.
+  const wipLook = useLiveSkin() === 'wip';
   // The line row's title link, which a click on its tags line opens (#4716).
   const b = row.brief;
   if (!b) return null;
@@ -254,6 +282,13 @@ export function WorkRow({
       data-ws-open={ref ? `${ref.kind}:${ref.id}` : undefined}
       data-on={on ? '1' : undefined}
       {...(board ? itemHooks(card) : {})}
+      // Standard (WIP), on the board: what the row is and what it is for, for
+      // the ties drawn while a card is rested on (./board-links.ts).
+      {...(board && wipLook && b.n ? {
+        'data-ws-noun': b.noun,
+        'data-ws-num': String(b.n),
+        'data-ws-for': (b.kind === 'live' ? b.closed : b.linked).join(',') || undefined,
+      } : {})}
     >
       {board ? null : <span className="dev-ws-wrow-tile" data-kind={b.kind} aria-hidden="true"><Tile aria-hidden="true" /></span>}
       <span className="dev-ws-wrow-main">
@@ -268,7 +303,7 @@ export function WorkRow({
             {card.title.text}
           </a>
         ) : <span className="dev-ws-wrow-link" title={card.title.text}>{card.title.text}</span>}
-        <span className="dev-ws-wrow-sub">{rowWords(b)}</span>
+        <span className="dev-ws-wrow-sub">{rowWords(b, { whoFirst: wipLook })}</span>
         {b.twin && slug ? (
           <span className="relative z-[1] text-[13px] leading-snug text-zinc-500 dark:text-zinc-400" data-ws-twin={b.twin.number}>
             <RichMessage id="project:workRow.twin" values={{ number: b.twin.number }} components={[
