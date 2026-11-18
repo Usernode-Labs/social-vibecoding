@@ -18424,6 +18424,8 @@ body:has(#ai-screen:not(.hidden)) #ai-screen[data-ai-preview="three"] #ai-main-d
 .ai-drawer-list {
   position: absolute; top: 0; bottom: 0; inset-inline-start: 0; width: 85%;
   overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y;
+  /* #6838: a guard only: the list scrolls up and down, never sideways. */
+  overflow-x: hidden;
 }
 .ai-drawer-thread {
   position: absolute; top: 0; bottom: 0; inset-inline-start: 85%; width: 100%;
