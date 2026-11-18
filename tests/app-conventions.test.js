@@ -14,6 +14,14 @@ const { getAppConventions, getConventionSection } = require('../src/services/pro
 const ESCALATION_HEADING =
   'Platform-level problems & missing capabilities: escalate, don\'t file workarounds';
 
+// #6815: nothing visible means no before/after shots, so the author's diagram
+// is the only picture voters get. The guidance says so, with an example.
+test('conventions doc asks for a diagram after a change with nothing visible', () => {
+  const doc = getAppConventions().replace(/\s+/g, ' ');
+  assert.match(doc, /record `impact: "none"` with a specific rationale\. Then call `declare_diagram` with the kind that fits \(`flow`, `changes`, `numbers` or `rename`; Mermaid only if none does\), in plain words, 1-60 characters a text/);
+  assert.match(doc, /\{"version":1,"kind":"flow","before":\["Won't mount","Retries 30 min","Fails silently"\],"after":\["Won't mount","Moves machine","Says why"\]\}/);
+});
+
 test('conventions doc loads non-empty', () => {
   const doc = getAppConventions();
   assert.equal(typeof doc, 'string');
@@ -328,7 +336,7 @@ test('conventions doc says to seed a new state in the same proposal, within the 
   // What no seed or step reaches, and what to declare then (18 Nov 2026).
   assert.match(section, /\*\*Some states cannot be staged at all\.\*\* A controlled failure covers one API GET, never a POST, PUT or DELETE; there is no native phone app/);
   assert.match(section, /two requests cannot be made to race/);
-  assert.match(section, /declare `impact: "none"` with a reason that names what the copies cannot do, rather than claim a state they cannot reach/);
+  assert.match(section, /declare `impact: "none"` with a reason that names what the copies cannot do, rather than claim a state they cannot reach, and then declare a diagram of it, as above/);
 
   // The seed rule points there, in the full text and in the offline excerpt.
   const visitor = doc.slice(doc.indexOf('**Never seed the visitor.**'), doc.indexOf('**Request-time seeding only'))

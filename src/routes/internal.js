@@ -25,6 +25,12 @@ const shotsState = require('../services/shots-state');
 const shotsIdentities = require('../services/shots-identities');
 const shotsReadyStates = require('../services/shots-ready-states');
 
+// #6815: what a build is told after it declares that nothing visible changes
+// and has sent no diagram: with no before/after shots, the diagram (#4490) is
+// the only picture voters get. Advisory — the declaration always stands.
+const IMPACT_NONE_DIAGRAM_NUDGE = 'Nothing visible changes, so the diagram is the only picture voters get. '
+  + 'Call declare_diagram with a flow, changes, numbers or rename (or mermaid if none fits).';
+
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
 // `on_demand_tls { ask ... }`). We approve a host iff it maps to a real
@@ -285,20 +291,28 @@ function internalRoutes(_config) {
     // declaration that was recorded.
     let warnings = [];
     let advice = null;
+    let missingDiagram = false;
     try {
       const { rows } = await pool.query(
-        'SELECT a.id, a.slug FROM chat_sessions s JOIN apps a ON a.id = s.app_id WHERE s.id = $1',
+        'SELECT a.id, a.slug, (s.pr_diagram IS NOT NULL) AS has_diagram '
+          + 'FROM chat_sessions s JOIN apps a ON a.id = s.app_id WHERE s.id = $1',
         [sessionId]
       );
       if (rows[0]) {
         const selfApp = rows[0].slug === _config.selfAppSlug;
         advice = shotsReadyStates.declarationAdvice(result.intent, { selfApp });
-        warnings = await shotsIdentities.personaWarnings(pool, rows[0], result.intent, { selfApp });
+        warnings = await shotsIdentities.personaWarnings(
+          pool, { id: rows[0].id, slug: rows[0].slug }, result.intent, { selfApp }
+        );
+        // #6815: nothing visible changes, so the diagram is the only picture
+        // voters get. A reminder, never a refusal.
+        missingDiagram = result.intent?.impact === 'none' && rows[0].has_diagram !== true;
       }
     } catch (err) {
       log.warn('internal-api', 'Could not check the declared personas', { sessionId, err: err.message });
     }
     if (advice) warnings = [...warnings, ...advice.warnings];
+    if (missingDiagram) warnings = [...warnings, IMPACT_NONE_DIAGRAM_NUDGE];
     return res.json({
       ok: true,
       shots: result,
@@ -859,4 +873,4 @@ function internalRoutes(_config) {
   return router;
 }
 
-module.exports = { internalRoutes, isKnownHost };
+module.exports = { internalRoutes, isKnownHost, IMPACT_NONE_DIAGRAM_NUDGE };

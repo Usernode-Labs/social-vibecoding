@@ -2941,6 +2941,7 @@ function buildVisibleChangesLines(locale = null) {
   'When the change is a rename, a changed flow, a data or settings change, or a measured improvement, also call',
   'declare_diagram once with that kind (rename, flow, changes or numbers), in plain words; Homeroom draws it on the',
   'change\'s card when it has no before and after shots. Mermaid is only for a change you declared with impact "none".',
+  'If you declared impact "none", always call declare_diagram: it is the only picture voters get.',
   'The before and after copies have no model key, so nothing on them answers with a model: Homeroom bot is switched',
   'off there, and an app\'s own AI features get no answer. Never make a step ask Homeroom bot (or any AI feature)',
   'for something and wait for its reply. Start from a state that already holds the reply: a ready-made state the',
