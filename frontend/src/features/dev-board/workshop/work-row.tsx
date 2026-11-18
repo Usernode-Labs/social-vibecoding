@@ -257,13 +257,13 @@ export function WorkRow({
   const Tile = TILE[b.kind] || PencilSquareIcon;
   const pill = card.pill?.state || null;
   // Live work leads its tags with the card's own bar at its words' width
-  // ("✓ Live"), in place of the small Live tag the brief carries. On a live
-  // row that tag is the brief's one `ok` tag (AppView._workshopBrief: a merged
-  // item carries only its settled state, and Live is the settled state that
-  // is done), so it is left out by what it is, never by its words, which are
-  // in the language on screen.
+  // ("✓ Live", "Going live…", "Blocked"), in place of the brief's small tag
+  // for the same state. On a live row the brief carries only its settled
+  // state (AppView._workshopBrief's merged branch), so the pill drawn first
+  // already says it, whatever that state is, and the brief's tags are left
+  // out entirely — never by their words, which are in the language on screen.
   const live = b.kind === 'live' && !!pill;
-  const tags = live ? b.tags.filter((t) => t.tone !== 'ok') : b.tags;
+  const tags = live ? [] : b.tags;
   const hasChip = category && (card.badges || []).some((x) => x && x.t === 'attr' && x.field === 'category');
   const hasChat = (card.chatCount || 0) > 0;
   const chip = hasChip ? <CategoryChip card={card} /> : null;
