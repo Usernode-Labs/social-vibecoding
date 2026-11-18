@@ -421,8 +421,14 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   }
   // 11 Nov 2026: the stored row is the one source (statesFor makes it first
   // when it is missing); a thread with none to read is not listed.
-  const state = work;
+  let state = work;
   if (!state) return null;
+  // #6819: an update on its way is read live, as the change's own page reads
+  // it, so a stored row the sweep has not caught up with (still up for a
+  // vote) cannot make this list ask for a vote its page says is cleared.
+  if (status === 'promoted' && row.update_coming != null) {
+    state = { ...work, ...workState.withUpdate(work, { coming: row.update_coming }), voteOpen: false };
+  }
   const at = iso(state.since) || iso(row.request_at || row.created_at);
   // Its words travel with it (work-state.js phrasesOf): the tab draws them.
   const stored = {
@@ -453,7 +459,10 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // #6600: a takeover the bot is running on the change is an update under
   // way, whether it is fixing its failing checks or revising it. #6807: and
   // a change waiting on the bot's fix for a check that is not its own.
-  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued' || code === 'fixing' || code === 'fixing_check');
+  // #6819: the live record counts too, not only the stored line, so a turn
+  // that has just started leaves Needs you at once.
+  const updating = status === 'promoted' && (row.update_coming != null
+    || code === 'revising' || code === 'update_queued' || code === 'fixing' || code === 'fixing_check');
   // #6600: its last takeover attempt failed, and nothing has checked it since.
   const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
   // Owed only while its change is open for votes (work_states.vote_open).
@@ -488,7 +497,9 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.
   const place = updating
-    ? ((own || wouldVote) ? ((code === 'revising' || code === 'fixing' || code === 'fixing_check') ? 'next' : 'waiting') : null)
+    ? ((own || wouldVote)
+      ? ((row.update_coming === 'running' || code === 'revising' || code === 'fixing' || code === 'fixing_check') ? 'next' : 'waiting')
+      : null)
     : workState.placeFor(state, { requester: decides, own, voteOwed }) || (!own && !inFlight(state) ? 'waiting' : null);
   if (!place) return null;
   const out = { group: place, work: stored, at };
