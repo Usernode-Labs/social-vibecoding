@@ -49,6 +49,7 @@ const CHOICES = ['standard', ...MENU_SKINS] as const;
 const TOKENS_NAME: Record<WipTokens, string> = {
   current: 'settings:experimental.wipTokens.current',
   brand: 'settings:experimental.wipTokens.brand',
+  brand2: 'settings:experimental.wipTokens.brand2',
 };
 
 // The platform header's own disc, as its bell wears it (#2798: no fill at rest).
