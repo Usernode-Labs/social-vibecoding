@@ -30049,6 +30049,9 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-on-solid: #ffffff;
   --bl-tint-sun: #fff6ac;
   --bl-tint-sky: #e3eefb;
+  /* The row open beside the board: a breath of warmth, and its edge. */
+  --bl-row-on: #f9f7ea;
+  --bl-row-on-edge: rgba(18, 26, 14, 0.28);
   /* The line round a message's bubble, and round your own on sky. */
   --bl-bubble-line: rgba(18, 26, 14, 0.14);
   --bl-bubble-line-own: rgba(26, 99, 196, 0.24);
@@ -30148,6 +30151,8 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-row-on: rgba(220, 230, 248, 0.04);
+  --bl-row-on-edge: rgba(220, 230, 248, 0.38);
   --bl-bubble-line: rgba(220, 230, 248, 0.2);
   --bl-bubble-line-own: rgba(127, 188, 247, 0.42);
   --bl-card-line: rgba(220, 230, 248, 0.26);
@@ -30543,6 +30548,14 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   color: var(--bl-sky);
   background: var(--bl-tint-sky);
 }
+/* The row open beside the board (`data-on`) was the lit tint, a block of
+   pale sun the row's own pills sat on. It is an outline: a thin edge in the
+   ink (a light one in dark) round a fill only a breath off the card, so the
+   row reads as the open one and its pills keep their own colours. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-wrow[data-on] {
+  background: var(--bl-row-on);
+  box-shadow: inset 0 0 0 1.5px var(--bl-row-on-edge);
+}
 /* NEEDS YOU'S CARD (features/review-flow/). From 768px a change waiting on
    you is a card in the middle of the page, and it was drawn in the page's
    own ground (--rf-page is --home-ground, the cream here): a cream card on
@@ -30915,7 +30928,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     padding-top: 11px;
     border-top: 1px solid var(--app-sheet-line);
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid :is(.home-community-people, .home-community-news) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
     display: flex;
     align-items: center;
     gap: 8px;
@@ -30943,6 +30956,10 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news {
     font-weight: 600;
     color: var(--bl-sky);
+  }
+  /* A quiet week: the same foot, in the muted ink. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-quiet {
+    color: var(--text-muted);
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news > .home-community-glyph {
     color: var(--bl-sky);

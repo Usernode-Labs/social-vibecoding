@@ -252,7 +252,7 @@ const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-t
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
   '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down',
-  '--bl-bubble-line', '--bl-bubble-line-own', '--bl-card-line'];
+  '--bl-bubble-line', '--bl-bubble-line-own', '--bl-card-line', '--bl-row-on', '--bl-row-on-edge'];
 
 test('each mode sets every one of the look\'s colours, and the shared rules read them', () => {
   const light = ruleAt(LIGHT);
@@ -768,10 +768,15 @@ test('a community\'s card says its members, what went live and who was there, re
   assert.match(page, /if \(cards && shown && state\.ready && listKey !== '\|'\) void loadHomePinsActivity\(\);/, 'only on the page, in the look, on a wide screen');
   assert.match(page, /detail=\{cards \? activity\.bySlug\[pin\.slug\] : undefined\}/, 'the pinned ones');
   assert.match(page, /detail=\{cards \? activity\.bySlug\[c\.slug\] : undefined\}/, 'and the joined ones');
-  assert.match(src, /<span className="hidden" data-home-community-detail="">/, 'hidden everywhere the look does not draw cards');
+  assert.match(src, /<span className="hidden" data-home-community-detail=""/, 'hidden everywhere the look does not draw cards');
   assert.match(src, /<span className="hidden home-community-line" data-home-community-meta="">/, 'and the members line under the name too');
-  assert.match(src, /if \(!members && !live && !active\) return null;/, 'a zero says nothing');
-  assert.match(src, /\{live \|\| active \? \(\s*<span className="hidden" data-home-community-detail="">/, 'a quiet week draws no foot');
+  assert.doesNotMatch(src, /if \(!members && !live && !active\) return null;/, 'every card with its week has a foot');
+  assert.match(src, /const quiet = !live && !active;/);
+  assert.match(src, /<span className="hidden" data-home-community-detail="" data-quiet=\{quiet \? '' : undefined\}>\s*\{quiet \? \(\s*<span className="home-community-quiet">/,
+    'a quiet week says so, so a quiet card is not a blank lower half beside a busy one');
+  assert.match(src, /\{t\('home:communities\.quietWeek'\)\}/);
+  assert.match(src, /\{active \? \(\s*<span className="home-community-people">/, 'a zero says nothing on either line');
+  assert.match(src, /\{live \? \(\s*<span className="home-community-news">/);
   assert.doesNotMatch(src, /home-community-news">\{t\(/, 'what went live is a line of words with its check, not a pill');
   const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
   assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
@@ -797,6 +802,8 @@ test('a community\'s card says its members, what went live and who was there, re
   assert.equal(home['communities.liveWeek_other'].text, '{{count}} changes went live');
   assert.equal(home['communities.activeWeek_other'].text, '{{formatted}} active this week');
   assert.equal(home['communities.members_other'].text, '{{formatted}} members');
+  assert.equal(home['communities.quietWeek'].text, 'Quiet this week');
+  assert.match(ruleAt(`${EITHER} .communities-grid .home-community-quiet`).body, /color:\s*var\(--text-muted\);/, 'in the muted ink');
 });
 
 test('the board is calm: Vote and what is running are the sky, and a vote under way is not purple', () => {
@@ -822,6 +829,16 @@ test('the board is calm: Vote and what is running are the sky, and a vote under 
   assert.ok(tokens, 'set once for both modes');
   assert.equal(valueOf(tokens.body, '--state-progress'), 'var(--bl-sky)');
   assert.equal(valueOf(tokens.body, '--state-progress-bg'), 'var(--bl-tint-sky)');
+  // The row open beside the board is outlined, not a block of pale sun.
+  const on = at('.dev-ws-wrow[data-on]');
+  assert.ok(on, 'one rule for both modes');
+  assert.match(on.body, /background:\s*var\(--bl-row-on\);/);
+  assert.match(on.body, /box-shadow:\s*inset 0 0 0 1\.5px var\(--bl-row-on-edge\);/);
+  assert.doesNotMatch(on.body, /--lit-tint|--bl-sun/);
+  for (const mode of [LIGHT, DARK]) {
+    assert.ok(valueOf(ruleAt(mode).body, '--bl-row-on'), `${mode} sets the open row's fill`);
+    assert.ok(valueOf(ruleAt(mode).body, '--bl-row-on-edge'), `${mode} sets its edge`);
+  }
 });
 
 test('Needs you\'s card is the look\'s white card from 768px, with the page\'s cream on it', () => {

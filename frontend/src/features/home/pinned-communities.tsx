@@ -165,11 +165,15 @@ const CARD_FACES = 3;
  *                    its faces or its check. No pill: the card is the link,
  *                    and the foot is news, not a button.
  *
- * A zero says nothing: each line is drawn only when it has something to say,
- * and a quiet week draws no foot at all. The cards are the brand look's, from
- * 1280px, on the Communities page (app.css, "COMMUNITIES AS PEOPLE PLACES");
- * everywhere else both parts stay hidden and the tile is the icon and name it
- * always was.
+ * A zero says nothing on either line: each is drawn only when it has
+ * something to say. But every card has a foot, so a row of cards reads as one
+ * set: a week with neither says "Quiet this week", in the muted ink, where a
+ * card with no foot was a blank lower half beside its busier neighbours. The
+ * activity read (GET /api/me/home-pins/activity) answers for every community
+ * you have pinned or joined, so a card with `detail` knows its week. The
+ * cards are the brand look's, from 1280px, on the Communities page (app.css,
+ * "COMMUNITIES AS PEOPLE PLACES"); everywhere else both parts stay hidden and
+ * the tile is the icon and name it always was.
  */
 function CommunityDetail({ detail }: { detail: PinActivity }) {
   const t = useMessages('home');
@@ -177,7 +181,7 @@ function CommunityDetail({ detail }: { detail: PinActivity }) {
   const live = Math.max(0, Number(detail.liveWeek) || 0);
   const active = Math.max(0, Number(detail.activeWeek) || 0);
   const people = (detail.people || []).filter((p) => p && p.username).slice(0, CARD_FACES);
-  if (!members && !live && !active) return null;
+  const quiet = !live && !active;
   return (
     <>
       {members ? (
@@ -185,30 +189,34 @@ function CommunityDetail({ detail }: { detail: PinActivity }) {
           {t('home:communities.members', { count: members, formatted: members.toLocaleString() })}
         </span>
       ) : null}
-      {live || active ? (
-        <span className="hidden" data-home-community-detail="">
-          {active ? (
-            <span className="home-community-people">
-              {people.length ? (
-                <span className="dev-ws-hero-faces" aria-hidden="true">
-                  {people.map((p) => (
-                    <span key={p.username} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
-                      {p.avatarUrl ? <img src={p.avatarUrl} alt="" loading="lazy" draggable={false} /> : (p.username.charAt(0) || '?').toUpperCase()}
-                    </span>
-                  ))}
-                </span>
-              ) : <UserGroupIcon className="home-community-glyph" aria-hidden="true" />}
-              <span className="home-community-words">{t('home:communities.activeWeek', { count: active, formatted: active.toLocaleString() })}</span>
-            </span>
-          ) : null}
-          {live ? (
-            <span className="home-community-news">
-              <CheckIcon className="home-community-glyph" aria-hidden="true" />
-              <span className="home-community-words">{t('home:communities.liveWeek', { count: live })}</span>
-            </span>
-          ) : null}
-        </span>
-      ) : null}
+      <span className="hidden" data-home-community-detail="" data-quiet={quiet ? '' : undefined}>
+        {quiet ? (
+          <span className="home-community-quiet">
+            <UserGroupIcon className="home-community-glyph" aria-hidden="true" />
+            <span className="home-community-words">{t('home:communities.quietWeek')}</span>
+          </span>
+        ) : null}
+        {active ? (
+          <span className="home-community-people">
+            {people.length ? (
+              <span className="dev-ws-hero-faces" aria-hidden="true">
+                {people.map((p) => (
+                  <span key={p.username} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
+                    {p.avatarUrl ? <img src={p.avatarUrl} alt="" loading="lazy" draggable={false} /> : (p.username.charAt(0) || '?').toUpperCase()}
+                  </span>
+                ))}
+              </span>
+            ) : <UserGroupIcon className="home-community-glyph" aria-hidden="true" />}
+            <span className="home-community-words">{t('home:communities.activeWeek', { count: active, formatted: active.toLocaleString() })}</span>
+          </span>
+        ) : null}
+        {live ? (
+          <span className="home-community-news">
+            <CheckIcon className="home-community-glyph" aria-hidden="true" />
+            <span className="home-community-words">{t('home:communities.liveWeek', { count: live })}</span>
+          </span>
+        ) : null}
+      </span>
     </>
   );
 }
