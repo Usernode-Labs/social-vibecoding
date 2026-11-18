@@ -118,7 +118,6 @@ async function migrate(config) {
   // answer when asked for the link. Staging has no model, so both replies
   // are stored messages.
   await seedStagingBotReportReply(pool);
-  await seedStagingLiveDraftThread(pool);
   // #6581's shots: a request whose build failed twice, with a reply under the
   // first failure note. The change keeps that note and posts the second note
   // below it. Staging runs no build, so the thread is seeded.
@@ -3369,87 +3368,6 @@ async function seedStagingBotReportReply(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging bot report reply seeding failed', { message: err.message });
-  }
-}
-
-// Live app drafts (services/live-drafts.js): a private thread of the shots'
-// member (usernode-capture) with Homeroom bot about a project, so the thread
-// shows its "Open app preview" bar. A staging copy has no such thread, and
-// the bot is off there, so its reply is the stored message. Obviously fake,
-// idempotent by its key, on a project that is not Homeroom itself (a draft
-// is of a project's app), and a no-op outside staging. Nothing here is a
-// signal anything decides on; no draft is opened.
-async function seedStagingLiveDraftThread(pool) {
-  if (process.env.USERNODE_ENV !== 'staging') return;
-  try {
-    await pool.query(
-      `INSERT INTO users (username, password, is_synthetic, display_name)
-       VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE, 'Homeroom bot')
-       ON CONFLICT (username) DO UPDATE SET is_synthetic = TRUE`,
-    );
-    const people = await pool.query(
-      `SELECT id, username FROM users WHERE username IN ('usernode-capture', 'homeroom_bot')`,
-    );
-    const member = people.rows.find((row) => row.username === 'usernode-capture');
-    const bot = people.rows.find((row) => row.username === 'homeroom_bot');
-    if (!member || !bot || member.id === bot.id) return;
-    const project = (await pool.query(
-      `SELECT id, name FROM apps
-        WHERE NOT self_hosted AND repo_url IS NOT NULL AND status <> 'error'
-        ORDER BY (lower(name) = 'gym tracker') DESC, id ASC LIMIT 1`,
-    )).rows[0];
-    if (!project) return;
-    const low = Math.min(member.id, bot.id);
-    const high = Math.max(member.id, bot.id);
-    const found = await pool.query(
-      'SELECT conversation_id FROM conversation_direct_pairs WHERE user_low_id = $1 AND user_high_id = $2',
-      [low, high],
-    );
-    let conversationId = found.rows[0]?.conversation_id;
-    if (!conversationId) {
-      const created = await pool.query(
-        'INSERT INTO conversations (kind, created_by) VALUES (\'direct\', $1) RETURNING id',
-        [member.id],
-      );
-      conversationId = created.rows[0].id;
-      await pool.query(
-        `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
-         VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
-        [conversationId, low, high],
-      );
-    }
-    await pool.query(
-      `INSERT INTO conversation_members (conversation_id, user_id, role, status)
-       VALUES ($1, $2, 'member', 'member'), ($1, $3, 'member', 'member')
-       ON CONFLICT (conversation_id, user_id) DO UPDATE SET status = 'member'`,
-      [conversationId, member.id, bot.id],
-    );
-    const key = 'staging-demo-live-draft-thread';
-    const had = await pool.query(
-      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
-      [conversationId, member.id, key],
-    );
-    if (had.rows[0]) return;
-    const root = await pool.query(
-      `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '2 hours')
-       RETURNING id`,
-      [conversationId, member.id, 'Staging demo: can we make the main button bigger?', key],
-    );
-    const rootId = root.rows[0].id;
-    await pool.query(
-      `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '2 hours' + INTERVAL '1 minute')`,
-      [conversationId, bot.id, `Staging demo: sure. Open the app preview above and I will change ${project.name} while you watch.`, rootId],
-    );
-    await pool.query(
-      `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
-       VALUES ($1, $2, $3, $4, 'ask', 'open')
-       ON CONFLICT (root_message_id) DO NOTHING`,
-      [member.id, conversationId, rootId, project.id],
-    );
-  } catch (err) {
-    log.warn('db', 'Staging live draft thread seeding failed', { message: err.message });
   }
 }
 

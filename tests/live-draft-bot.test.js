@@ -189,3 +189,68 @@ test('switched off, or asked too much this hour, it says so and does nothing', a
   await busy.run();
   assert.equal(busy.sent[0].content, draftBot.BUSY_TEXT);
 });
+
+test('a draft the chat\'s turn just opened answers that message, told it is starting, never counted twice', async () => {
+  const sent = [];
+  let prompt = '';
+  const out = await draftBot.opened({ async query() { return { rows: [] }; } }, {}, {
+    bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: {}, conversationId: 7,
+    message: { id: 61, content: 'I want to change it live', threadRootId: 50 }, draftId: 3,
+    deps: {
+      mayor: {
+        ...realMayor, answerKey: (id) => `key-${id}`, turnsLastHour: async () => 10_000, botKey: async () => 'sk', recordTurn: async () => {},
+        askModel: async (_t, options) => {
+          prompt = options.messages[0].content;
+          return { content: '', toolCalls: [{ id: 'r1', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'The preview is starting. Tell me what to change.' }) } }] };
+        },
+      },
+      liveDrafts: {
+        byId: async () => DRAFT, listFiles: async () => [{ path: 'server.js', size: 3 }], readFile: async () => 'x', editsOf: async () => [],
+      },
+      dm: { async sendDm(_p, msg) { sent.push(msg); return { messageId: 1 }; } },
+      apiKey: 'sk',
+    },
+  });
+  assert.match(prompt, /You just opened this live draft for their message/);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].content, 'The preview is starting. Tell me what to change.', 'not the busy line: the chat turn counted it');
+  assert.equal(sent[0].idempotencyKey, 'key-61', 'the answer to their message, as the chat turn left it unanswered');
+  assert.equal(out.messageId, 1);
+});
+
+test('open_app_preview opens the thread\'s draft and hands the turn over; it asks which project when there is none', async () => {
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  let appId = null;
+  const pool = {
+    async query(sql, params) {
+      if (/FROM private_threads WHERE root_message_id/.test(sql)) return { rows: [{ id: 4, app_id: appId }] };
+      if (/UPDATE private_threads SET app_id/.test(sql)) { appId = params[2]; return { rows: [] }; }
+      return { rows: [] };
+    },
+  };
+  const opened = [];
+  const ctx = (extra = {}) => ({
+    user: { id: 10, username: 'evan' }, config: {},
+    deps: { threadRootId: 50, liveDrafts: { open: async (_p, _c, args) => { opened.push(args.rootId); return { status: 200, body: { ok: true, draft: { id: 3 } } }; } }, ...extra },
+  });
+  const none = await mayor.openAppPreview(pool, ctx(), {});
+  assert.equal(none.ok, false);
+  assert.match(none.error, /ask which project/);
+  const unknown = await mayor.openAppPreview(pool, ctx(), { project: 'nowhere' });
+  assert.match(unknown.error, /no project called nowhere/);
+  appId = 21;
+  const c = ctx();
+  const out = await mayor.openAppPreview(pool, c, {});
+  assert.deepEqual([out.ok, c.openPreview, opened], [true, { draftId: 3 }, [50]]);
+  assert.match(out.note, /do not reply/);
+  const refused = await mayor.openAppPreview(pool, ctx({ liveDrafts: { open: async () => ({ status: 409, body: { error: 'too_many', message: 'You can have 2 app previews open at once.' } }) } }), {});
+  assert.deepEqual([refused.ok, refused.error], [false, 'You can have 2 app previews open at once.']);
+  const noThread = await mayor.openAppPreview(pool, { user: { id: 10 }, config: {}, deps: {} }, {});
+  assert.match(noThread.error, /New chat/);
+  const first = await mayor.openAppPreview(pool, ctx({ threadKind: 'first_version' }), {});
+  assert.match(first.error, /first version/);
+  // The turn ends with it, and the draft answers.
+  const src = require('fs').readFileSync(require('path').join(__dirname, '../src/services/homeroom-bot-mayor.js'), 'utf8');
+  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen \|\| !!ctx\.openPreview,/);
+  assert.match(src, /require\('\.\/live-draft-bot'\)\)\.opened\(pool, config, \{/);
+});

@@ -91,7 +91,7 @@ const DRAFT_LIMITS = Object.freeze({
 const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
-  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'close_thread',
+  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'open_app_preview', 'close_thread',
   'report_problem', 'offer_new_project', 'reply',
 ]);
 const DESIGN_TOOLS = Object.freeze([

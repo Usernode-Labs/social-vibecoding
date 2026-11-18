@@ -1,23 +1,24 @@
 /**
  * A live app draft, as its private thread with Homeroom bot shows it
- * (services/live-drafts.js). Under the head of a thread that is about a
- * project:
- *
- *   Change Gym Tracker here and watch it update as you talk.  [Open app preview]
- *
- * Open app preview makes the draft: a change of the person's own with a
- * preview of it, which opens beside the chat (the change preview's own
- * placement: features/staging/placement.ts). While it is open, what they
- * say in the thread is answered by the draft bot (services/live-draft-bot.js),
- * which edits the draft; each saved edit restarts the preview in place, and
- * the frame reloads here when the server says so (`live_draft_changed`, which
- * public/js/app.js hands on as the window event LIVE_DRAFT_EVENT).
+ * (services/live-drafts.js). There is no standing button: a draft is opened
+ * by asking Homeroom bot (homeroom-bot-mayor.js open_app_preview), or with
+ * New chat's "I want to change it live…" start (./new-thread.tsx). Once a
+ * draft of the thread is open, this bar is under the thread's head:
  *
  *   Live preview · 3 changes                 [Show preview] [Propose] [Close draft]
  *
+ * The draft is a change of the person's own with a preview of it, which
+ * opens beside the chat by itself the moment the draft is opened (the change
+ * preview's own placement: features/staging/placement.ts). While it is open,
+ * what they say in the thread is answered by the draft bot
+ * (services/live-draft-bot.js), which edits the draft; each saved edit
+ * restarts the preview in place, and the frame reloads here when the server
+ * says so (`live_draft_changed`, which public/js/app.js hands on as the
+ * window event LIVE_DRAFT_EVENT).
+ *
  * Propose puts it up for the project's vote, as the person's own change;
- * Close draft puts it away. Nothing is drawn while drafts are switched off,
- * and the first render is nothing: the draft is read in an effect.
+ * Close draft puts it away, and the bar goes with it. The first render is
+ * nothing: the draft is read in an effect.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -98,11 +99,10 @@ async function reloadPreview(sessionId: number | null, slug: string) {
   if (stagingBridge.frame() === frame && sessionId === shownSession) stagingBridge.setSrc(src);
 }
 
-export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: string; name: string } }): ReactNode {
+export function LiveDraftBar({ rootId }: { rootId: number }): ReactNode {
   const t = useMessages('messages');
-  const [enabled, setEnabled] = useState(false);
   const [draft, setDraft] = useState<LiveDraft | null>(null);
-  const [busy, setBusy] = useState<'open' | 'propose' | 'close' | null>(null);
+  const [busy, setBusy] = useState<'propose' | 'close' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [proposed, setProposed] = useState<{ number: number | null; slug: string } | null>(null);
   const alive = useRef(true);
@@ -112,13 +112,9 @@ export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: str
 
   const load = useCallback(async () => {
     try {
-      const out = await call<{ enabled: boolean; draft: LiveDraft | null }>(`/api/live-drafts?rootId=${encodeURIComponent(String(rootId))}`);
-      if (!alive.current) return;
-      setEnabled(!!out.enabled);
-      setDraft(out.draft);
-    } catch {
-      if (alive.current) setEnabled(false);
-    }
+      const out = await call<{ draft: LiveDraft | null }>(`/api/live-drafts?rootId=${encodeURIComponent(String(rootId))}`);
+      if (alive.current) setDraft(out.draft);
+    } catch { /* no bar: nothing is open that it could show */ }
   }, [rootId]);
 
   useEffect(() => {
@@ -137,7 +133,9 @@ export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: str
       const rebuilt = next.state === 'open' && lastLive.current === 'rebuilding' && next.live === 'live';
       lastLive.current = next.live;
       setDraft(next.state === 'open' ? next : null);
-      if (detail.reload || rebuilt) void reloadPreview(next.sessionId, next.app.slug);
+      // Opened just now (by asking Homeroom bot): its preview comes up beside the chat.
+      if (detail.opened && next.state === 'open') openPreview(next);
+      else if (detail.reload || rebuilt) void reloadPreview(next.sessionId, next.app.slug);
     };
     window.addEventListener(LIVE_DRAFT_EVENT, heard);
     return () => window.removeEventListener(LIVE_DRAFT_EVENT, heard);
@@ -145,17 +143,6 @@ export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: str
 
   const failed = (err: any) => {
     if (alive.current) setError(err?.said || t('messages:liveDraft.error'));
-  };
-
-  const start = async () => {
-    setBusy('open');
-    setError(null);
-    try {
-      const out = await call<{ draft: LiveDraft }>('/api/live-drafts', { method: 'POST', body: JSON.stringify({ rootId }) });
-      if (!alive.current) return;
-      setDraft(out.draft);
-      openPreview(out.draft);
-    } catch (err) { failed(err); } finally { if (alive.current) setBusy(null); }
   };
 
   const show = async () => {
@@ -189,7 +176,7 @@ export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: str
     } catch (err) { failed(err); } finally { if (alive.current) setBusy(null); }
   };
 
-  if (!enabled && !draft && !proposed) return null;
+  if (!draft && !proposed) return null;
   const line = draft ? draftLine(draft) : null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-zinc-200 px-4 py-2.5 text-[13px] text-zinc-600 dark:border-zinc-800 dark:text-zinc-300"
@@ -198,21 +185,12 @@ export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: str
         <span className="min-w-0 flex-1" data-live-draft-proposed="">
           {t('messages:liveDraft.proposed')}
           {proposed.number ? (
-            <a className="ml-1 font-semibold text-violet-700 dark:text-violet-300"
+            <a className="ms-1 font-semibold text-violet-700 dark:text-violet-300"
               href={`#app/${encodeURIComponent(proposed.slug)}/dev/changes/${proposed.number}`}>
               {t('messages:liveDraft.openChange', { number: proposed.number })}
             </a>
           ) : null}
         </span>
-      ) : null}
-      {!proposed && !draft ? (
-        <>
-          <span className="min-w-0 flex-1">{t('messages:liveDraft.intro', { project: app.name || app.slug })}</span>
-          <Button type="button" variant="pillAccent" size="sm" ink="solid" data-live-draft-open=""
-            disabled={busy === 'open'} onClick={() => void start()}>
-            {busy === 'open' ? t('messages:liveDraft.opening') : t('messages:liveDraft.open')}
-          </Button>
-        </>
       ) : null}
       {draft && line ? (
         <>

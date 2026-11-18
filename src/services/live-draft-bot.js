@@ -94,6 +94,9 @@ function appliedWords(result) {
   if (!result) return null;
   if (!result.ok) return { saved: false, error: result.error || 'Not saved.' };
   const p = result.preview || {};
+  if (p.rebuilding && p.why === 'starting') {
+    return { saved: true, preview: 'starting', note: 'Saved. The preview is still starting for the first time; it shows this change once it is up, in a minute or two.' };
+  }
   if (p.rebuilding) {
     return {
       saved: true, preview: 'rebuilding',
@@ -216,7 +219,14 @@ const TOOLS = Object.freeze([
   },
 ]);
 
-function draftPrompt({ username, draft, edits, files, notes }) {
+// The chat's turn opened this draft for the message being answered
+// (homeroom-bot-mayor.js open_app_preview): said once, before the rest.
+const OPENING_NOTE = 'You just opened this live draft for their message, and its preview is starting beside the chat '
+  + '(a minute or two the first time). If their message asks for a change, make it now: it is saved to the draft, and '
+  + 'the preview shows it once it is up. If it only asks for the preview, reply in a sentence that it is starting, and '
+  + 'to say what to change.';
+
+function draftPrompt({ username, draft, edits, files, notes, opening = false }) {
   const name = draft.app_name || draft.app_slug;
   const listed = files.slice(0, MAX_LISTED).map((f) => f.path).join('\n');
   const done = edits.length
@@ -248,6 +258,7 @@ function draftPrompt({ username, draft, edits, files, notes }) {
     ...(notes ? ['', `The app's own notes for whoever changes it:\n${notes}`] : []),
     '',
     `The draft's files${files.length > MAX_LISTED ? ` (first ${MAX_LISTED} of ${files.length})` : ''}:\n${listed}`,
+    ...(opening ? ['', OPENING_NOTE] : []),
   ].join('\n');
 }
 
@@ -268,7 +279,7 @@ async function threadHistory(pool, { conversationId, rootId, botId, upToId }) {
  * Answer one message in a thread whose draft is open (`draft`, a
  * live-drafts row). Resolves what was sent.
  */
-async function answer(pool, config, { bot, user, settings, conversationId, message, draft, deps = {} }) {
+async function answer(pool, config, { bot, user, settings, conversationId, message, draft, opening = false, deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const liveDrafts = deps.liveDrafts || require('./live-drafts');
@@ -279,7 +290,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     threadRootId: rootId, ...extra,
   });
   if (settings.mode === 'off') return say(OFF_TEXT);
-  if (await mayor.turnsLastHour(pool, user.id) >= mayor.MAX_TURNS_PER_HOUR) return say(BUSY_TEXT);
+  // A draft the chat's turn just opened is that turn's answer: it counted already.
+  if (!opening && await mayor.turnsLastHour(pool, user.id) >= mayor.MAX_TURNS_PER_HOUR) return say(BUSY_TEXT);
 
   const project = { slug: draft.app_slug, name: draft.app_name || draft.app_slug };
   const t = {
@@ -360,7 +372,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       history.push({ role: 'user', content: clip(message.content, 4000) || '(nothing)' });
     }
     const messages = [
-      { role: 'system', content: draftPrompt({ username: user.username, draft, edits, files, notes }) },
+      { role: 'system', content: draftPrompt({ username: user.username, draft, edits, files, notes, opening }) },
       ...history,
     ];
     const seenIds = new Set();
@@ -500,7 +512,26 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   });
 }
 
+/**
+ * The chat's turn opened draft `draftId` for `message` (open_app_preview,
+ * which ends that turn without a reply): this answers it, in the draft's
+ * own way, from the draft's first edit. Resolves what was sent.
+ */
+async function opened(pool, config, { draftId, deps = {}, ...args }) {
+  const liveDrafts = deps.liveDrafts || require('./live-drafts');
+  const draft = await liveDrafts.byId(pool, draftId, { userId: args.user?.id });
+  if (!draft) {
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    const mayor = deps.mayor || require('./homeroom-bot-mayor');
+    return dm.sendDm(pool, {
+      bot: args.bot, userId: args.user.id, content: BROKEN_TEXT, idempotencyKey: mayor.answerKey(args.message.id),
+      replyToId: args.message.id, moment: 'reply',
+    });
+  }
+  return answer(pool, config, { ...args, draft, opening: true, deps });
+}
+
 module.exports = {
-  answer, applyEdits, chunkOf, appliedWords, draftPrompt, filePath, TOOLS,
+  answer, opened, OPENING_NOTE, applyEdits, chunkOf, appliedWords, draftPrompt, filePath, TOOLS,
   OFF_TEXT, BUSY_TEXT, BROKEN_TEXT, NO_CODE_TEXT,
 };

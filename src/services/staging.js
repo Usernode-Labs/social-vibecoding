@@ -608,7 +608,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       attempt: attempt.n, servingAttempt: attempt.servingN ?? null, claim: attempt.claim || 0,
     });
     timings.healthMs = Date.now() - healthStartedAt;
-    if (live) await require('./live-drafts').noteDeployed(config, { sessionId: session.id });
+    if (live) {
+      await require('./live-drafts').noteDeployed(config, {
+        sessionId: session.id, runtime: { runtimeKind: deployed.runtimeKind, runtimeName: deployed.runtimeName },
+      });
+    }
     const { hostname, url: stagingUrl } = deployed;
 
     // NOTE: the edge verification intentionally does NOT happen here. The

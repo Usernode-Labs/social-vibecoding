@@ -147,10 +147,14 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
     assert.deepEqual([s.user_id, s.status, s.is_headless, s.branch_name], [person.id, 'paused', false, `dev/draft-${s.id}`]);
     assert.equal(calls.preview.length, 1);
     assert.deepEqual([calls.preview[0].reason, calls.preview[0].head], ['preview', SHA('1')]);
-    // Asked again, the same draft.
+    // Their thread's bar is told it was opened, so the preview comes up beside the chat.
+    assert.deepEqual(calls.ws.map((c) => [c.id, c.payload.type, c.payload.opened, c.payload.draft.id]),
+      [[person.id, 'live_draft_changed', true, draft.id]]);
+    // Asked again, the same draft, brought up again.
     const again = await liveDrafts.open(pool, CONFIG, { user: person, rootId: root, deps });
     assert.deepEqual([again.body.reused, again.body.draft.id], [true, draft.id]);
     assert.equal(calls.preview.length, 1);
+    assert.deepEqual([calls.ws.length, calls.ws[1].payload.opened], [2, true]);
     assert.equal((await liveDrafts.threadOf(pool, { userId: person.id, message: { id: 999, threadRootId: root } })).id, draft.id);
   });
 
@@ -195,10 +199,49 @@ test('live drafts against the full PostgreSQL schema', { timeout: 120000 }, asyn
         `INSERT INTO chat_sessions (app_id, user_id, status) VALUES ($1, $2, 'active') RETURNING id`, [project.id, person.id]);
       assert.equal(await liveDrafts.runtimeFor(CONFIG, { session: { id: other.id }, build: {}, head: SHA('1') }), null);
       assert.equal(await liveDrafts.runtimeFor(CONFIG, { session: { id: 'x' }, build: {}, head: SHA('1') }), null);
-      await liveDrafts.noteDeployed(CONFIG, { sessionId: draft.sessionId });
+      await liveDrafts.noteDeployed(CONFIG, { sessionId: draft.sessionId, deps });
       assert.equal((await liveDrafts.byId(pool, draft.id)).live_state, 'live');
+      assert.equal(calls.ws[calls.ws.length - 1].payload.reload, true, 'deployed: the frame shows it');
     } finally {
       poolModule.getPool = real;
+    }
+  });
+
+  await t.test('an edit saved while the first preview is still building lands once that preview is up', async () => {
+    const { body: { draft } } = await liveDrafts.open(pool, CONFIG, { user: person, rootId: await thread(person, project), deps });
+    const poolModule = require('../src/db/pool');
+    const real = poolModule.getPool;
+    poolModule.getPool = () => pool;
+    const realRequest = previewWorkflow.request;
+    try {
+      await pool.query("UPDATE live_drafts SET live_state = 'starting' WHERE id = $1", [draft.id]);
+      // No preview to reach yet, and the machine is building the first one.
+      preview = null;
+      calls.preview.length = 0;
+      previewWorkflow.request = async (args) => { calls.preview.push(args); return { status: 'rejected', reason: 'in_progress' }; };
+      const out = await liveDrafts.applyEdit(pool, CONFIG, {
+        draftId: draft.id, userId: person.id, files: [{ path: 'public/app.css', content: 'b{}' }], summary: 'Bold', deps,
+      });
+      assert.equal(out.ok, true, 'the edit is saved');
+      assert.deepEqual([out.preview.rebuilding, out.preview.why], [true, 'starting']);
+      assert.equal((await liveDrafts.byId(pool, draft.id)).live_state, 'starting', 'still the first build, not a second');
+      // It deploys at the commit it was asked for, which lacks the edit: the supervisor is sent it.
+      preview = { status: { head: SHA('1') }, apply: () => [200, { ok: true, bootMs: 200 }] };
+      calls.fetch.length = 0;
+      await liveDrafts.noteDeployed(CONFIG, {
+        sessionId: draft.sessionId, runtime: { runtimeKind: 'docker', runtimeName: `usernode-staging-s${draft.sessionId}` }, deps,
+      });
+      const sent = calls.fetch.find((c) => c.method === 'POST');
+      assert.ok(sent, 'brought up to the draft\'s head');
+      assert.equal(sent.body.head, out.head);
+      assert.ok(sent.body.files.some((f) => f.path === 'public/app.css' || f.path === 'public/index.html'));
+      assert.equal((await liveDrafts.byId(pool, draft.id)).live_state, 'live');
+      assert.equal(calls.ws[calls.ws.length - 1].payload.reload, true);
+      await liveDrafts.close(pool, { user: person, draftId: draft.id, deps });
+    } finally {
+      poolModule.getPool = real;
+      previewWorkflow.request = realRequest;
+      preview = null;
     }
   });
 

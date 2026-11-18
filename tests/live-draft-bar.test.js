@@ -23,8 +23,9 @@ const draft = (over = {}) => ({
   edits: 0, headSha: null, prNumber: null, error: null, ...over,
 });
 
-test('its first render is nothing; the draft is read in an effect', () => {
-  assert.equal(renderComponent(BAR, 'LiveDraftBar', { rootId: 9, app: { slug: 'gym', name: 'Gym Tracker' } }), '');
+test('its first render is nothing; the draft is read in an effect, and there is no standing button', () => {
+  assert.equal(renderComponent(BAR, 'LiveDraftBar', { rootId: 9 }), '');
+  assert.doesNotMatch(read(BAR), /data-live-draft-open/, 'a draft is opened by asking Homeroom bot, never by a bar on every thread');
   assert.match(read(BAR), /fetch\(path, \{ credentials: 'same-origin'/);
   assert.match(read(BAR), /\/api\/live-drafts\?rootId=/);
 });
@@ -37,17 +38,39 @@ test('the status line says where the preview stands', () => {
   assert.deepEqual(draftLine(draft()), { id: 'messages:liveDraft.liveNone' });
   assert.deepEqual(draftLine(draft({ edits: 3 })), { id: 'messages:liveDraft.live', values: { count: 3 } });
   assert.equal(message('messages:liveDraft.live_other').replace('{{count}}', '3'), 'Live preview · 3 changes');
-  assert.equal(message('messages:liveDraft.open'), 'Open app preview');
 });
 
-test('the messages pane mounts it on an open thread of theirs about a project', () => {
+test('the messages pane mounts it on an open thread of theirs; a newly opened draft brings its preview up', () => {
   const pane = read('frontend/src/features/messages/index.tsx');
   assert.match(pane, /import \{ LiveDraftBar \} from '\.\/live-draft-bar';/);
-  assert.match(pane, /privateMine && privateRoot && privateWhere\?\.app\?\.slug && privateWhere\.state === 'open' \? \(\s*<LiveDraftBar rootId=\{privateRoot\} app=\{privateWhere\.app\} \/>/);
+  assert.match(pane, /privateMine && privateRoot && privateWhere\?\.state === 'open' \? \(\s*<LiveDraftBar rootId=\{privateRoot\} \/>/);
+  assert.match(read(BAR), /if \(detail\.opened && next\.state === 'open'\) openPreview\(next\);/);
 });
 
 test('app.js hands the draft\'s socket frame on as the bar\'s window event', () => {
   const { LIVE_DRAFT_EVENT } = loadTsx(BAR);
   const app = read('public/js/app.js');
   assert.match(app, new RegExp(`case 'live_draft_changed':\\s*(//[^\\n]*\\n\\s*)*window\\.dispatchEvent\\(new CustomEvent\\('${LIVE_DRAFT_EVENT}', \\{ detail: data \\}\\)\\);`));
+});
+
+test('New chat offers "I want to change it live…" once a project of its own is picked', () => {
+  const NEW = 'frontend/src/features/messages/new-thread.tsx';
+  const { LIVE_START, offersLive, NEW_THREAD_STARTS, startOf } = loadTsx(NEW);
+  assert.equal(offersLive('', {}), false, 'not for Any project');
+  assert.equal(offersLive('gym', {}), true);
+  assert.equal(offersLive('gym', { gym: { selfHosted: false } }), true);
+  assert.equal(offersLive('homeroom', { homeroom: { selfHosted: true } }), false, 'never Homeroom itself');
+  const words = message(LIVE_START.text);
+  assert.equal(words, 'I want to change it live');
+  assert.equal(message(LIVE_START.label).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
+  assert.equal(LIVE_START.kind, 'any');
+  assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the sixth is drawn only with a project');
+  const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text) }));
+  assert.equal(startOf('I want to change it live: make the button bigger', starts).key, 'live');
+  assert.match(read(NEW), /offersLive\(project, scope\.info[^)]*\)\s*\?\s*\[\.\.\.NEW_THREAD_STARTS, LIVE_START\]/);
+  // Homeroom bot is what opens it: the chat's tool, named for that start.
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;
+  assert.match(tool.description, /I want to change it live/);
+  assert.match(tool.description, /Call it alone, and do not reply/);
 });

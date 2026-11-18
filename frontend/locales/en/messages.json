@@ -5923,18 +5923,6 @@
     "text": "That didn’t work just now. Try again in a moment.",
     "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when pressing one could not be sent or the server gave no reason of its own."
   },
-  "liveDraft.intro": {
-    "text": "Change {{project}} here and watch it update as you talk.",
-    "description": "Line on the bar under the head of a private thread with Homeroom bot that is about a project, beside the Open app preview button. {{project}} is the project's name."
-  },
-  "liveDraft.open": {
-    "text": "Open app preview",
-    "description": "A button on a private thread about a project: starts a live draft of the project, with a preview of it beside the chat that Homeroom bot changes as the person asks."
-  },
-  "liveDraft.opening": {
-    "text": "Opening…",
-    "description": "The Open app preview button's words while the draft is being made."
-  },
   "liveDraft.starting": {
     "text": "Starting the preview. The first one takes a minute or two.",
     "description": "Status line on a thread's live draft bar while its preview is first being built."
@@ -5986,5 +5974,13 @@
   "liveDraft.error": {
     "text": "That didn't work. Try again in a moment.",
     "description": "Line on a thread's live draft bar when opening, proposing or closing the draft failed for a reason the server did not say."
+  },
+  "newThread.starts.live.label": {
+    "text": "I want to change it live<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+  },
+  "newThread.starts.live.text": {
+    "text": "I want to change it live",
+    "description": "Written into the message box when the \"I want to change it live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change it live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project."
   }
 }

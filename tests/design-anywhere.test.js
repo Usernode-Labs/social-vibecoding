@@ -288,8 +288,9 @@ test('the chat draws a screen in place of the screen picker: draw_screen, in the
   assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
   assert.doesNotMatch(prompt, /offer_design|Pick the screen/);
   const src = read('src/services/homeroom-bot-mayor.js');
-  // The chat is a profile on the turn engine: its rounds end with a reply or a screen handed over.
-  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen,/, 'the turn ends with it');
+  // The chat is a profile on the turn engine: its rounds end with a reply, a
+  // screen handed over, or a live preview handed over (live-draft-bot.js).
+  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen \|\| !!ctx\.openPreview,/, 'the turn ends with it');
   // 14 Nov 2026: every message is in a thread, so it is drawn in the thread
   // the turn is in; nothing opens one from Main Chat first.
   assert.match(src, /if \(ctx\.drawScreen\) \{\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{\n\s+bot, user, settings, conversationId, message, ask: ctx\.drawScreen, deps,\n/);

@@ -255,7 +255,11 @@ async function open(pool, config, { user, rootId, deps = {} }) {
   if (!user?.id) return refuse(401, 'sign_in', 'Sign in first.');
   if (!(await enabled(pool))) return refuse(503, 'drafts_off', 'App previews in chats are switched off right now.');
   const existing = await forThread(pool, { userId: user.id, rootId });
-  if (existing) return { status: 200, body: { ok: true, draft: describe(existing), reused: true } };
+  if (existing) {
+    // Asked for again (Homeroom bot's open_app_preview): it comes up again too.
+    noteChanged(existing, { opened: true }, deps);
+    return { status: 200, body: { ok: true, draft: describe(existing), reused: true } };
+  }
 
   const access = deps.appAccess || require('./app-access');
   const { rows: [thread] } = await pool.query(
@@ -335,7 +339,8 @@ async function open(pool, config, { user, rootId, deps = {} }) {
     );
   }
   const row = await byId(pool, draft.id);
-  noteChanged(row, {}, deps);
+  // `opened`: their thread's bar brings the preview up beside the chat.
+  noteChanged(row, { opened: true }, deps);
   log.info('live-drafts', 'Draft opened', { draftId: draft.id, appId: app.id, userId: user.id, sessionId: session.id });
   return { status: 200, body: { ok: true, draft: describe(row), reused: false } };
 }
@@ -387,8 +392,13 @@ async function runtimeFor(config, { session, build, head }) {
   }
 }
 
-/** The preview machine deployed a draft's preview with its supervisor. Never throws. */
-async function noteDeployed(config, { sessionId }) {
+/**
+ * The preview machine deployed a draft's preview with its supervisor
+ * (`runtime`, the runtime it just deployed, not yet on the session's row).
+ * Edits saved while it was being built are sent to it now, so it shows the
+ * draft's head. Never throws.
+ */
+async function noteDeployed(config, { sessionId, runtime = null, deps = {} }) {
   try {
     const pool = require('../db/pool').getPool(config);
     const { rows: [draft] } = await pool.query(
@@ -396,7 +406,15 @@ async function noteDeployed(config, { sessionId }) {
         WHERE session_id = $1 AND state = 'open' RETURNING id`,
       [Number(sessionId)],
     );
-    if (draft) noteChanged(await byId(pool, draft.id));
+    if (!draft) return;
+    const row = await byId(pool, draft.id);
+    if (runtime?.runtimeName) {
+      await syncPreview(pool, config, {
+        draft: { ...row, staging_runtime_kind: runtime.runtimeKind || row.staging_runtime_kind, staging_runtime_name: runtime.runtimeName },
+        deps,
+      });
+    }
+    noteChanged(await byId(pool, draft.id), { reload: true }, deps);
   } catch (err) {
     log.warn('live-drafts', 'Could not note a draft\'s preview', { sessionId, err: err.message });
   }
@@ -465,6 +483,12 @@ async function rebuild(pool, config, draft, why, deps = {}) {
   const asked = await previews.request({
     pool, session, head: exact(draft.head_sha), reason: 'preview', actor: `user:${draft.user_id}`,
   }).catch((err) => ({ status: 'rejected', reason: err.message }));
+  // Its first preview is still being built: the edit is saved, and the
+  // preview gets it once it is up (noteDeployed).
+  if (asked?.status === 'rejected' && asked.reason === 'in_progress') {
+    log.info('live-drafts', 'Draft edit waits for its preview', { draftId: draft.id, why });
+    return { ok: true, rebuilding: true, why: 'starting' };
+  }
   await pool.query(
     `UPDATE live_drafts SET live_state = 'rebuilding', last_error = NULL, updated_at = NOW() WHERE id = $1`, [draft.id],
   );
