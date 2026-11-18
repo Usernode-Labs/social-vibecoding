@@ -995,13 +995,13 @@ function LimitsSection() {
 
       <SessionLimitCard canWrite={canWrite} />
 
-      <LiveDraftsCard canWrite={canWrite} />
-
       <GithubBudgetCard />
 
       <PreviewProjectsCard canWrite={canWrite} />
 
       <VersionsCard canWrite={canWrite} />
+
+      <LiveDraftsCard canWrite={canWrite} />
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
