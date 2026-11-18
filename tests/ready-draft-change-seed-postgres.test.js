@@ -107,6 +107,8 @@ test('the staging ready-draft fixture reaches the state the shots need', { timeo
   assert.ok(failingItem, 'the failing change is on its request\'s page');
   assert.equal(failingItem.state, 'underway');
   assert.equal(failingItem.ready, false, 'its checks do not pass');
+  assert.equal(failingItem.promotable, true, 'built and checked: its card offers Put it up for a vote');
+  assert.equal(item.promotable, true, 'the ready draft is promotable too');
   assert.equal(failingItem.mine, true);
   assert.equal(page.items.some((row) => Number(row.id) === 999_999_988), false, 'not on the ready draft\'s page');
 
