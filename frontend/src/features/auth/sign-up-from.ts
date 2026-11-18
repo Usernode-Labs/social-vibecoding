@@ -3,7 +3,8 @@
  * `user_signed_up` event (src/services/sign-up-from.js reads it).
  *
  * Each button notes itself as it opens a sign-in sheet: the story's
- * (./story.tsx: the hero's, Continue, its Sign in line) and the landing's own (./landing.tsx:
+ * (./story.tsx: Continue, its Sign in line; the hero's is the looks' frame's,
+ * ../guest/frame/landing-frame.tsx) and the landing's own (./landing.tsx:
  * the bar's Sign in and Sign up, what the visitor tried on a project's page,
  * and the sheet a shared link opens by itself). It travels
  * as a short-lived first-party cookie because one of the ways in leaves the

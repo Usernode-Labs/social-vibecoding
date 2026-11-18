@@ -62,7 +62,7 @@ const {
   waitlistUrl,
 } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { listPublicApps, publicMonthActivity, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadProjectOverview } = require('../services/public-project');
 const { publicStillBytes } = require('../services/shots-public');
 const mediaStore = require('../services/media-store');
@@ -139,7 +139,9 @@ function publicApiRoutes(config) {
   const pool = getPool(config);
 
   // GET /api/public/apps — every view-public, non-self-hosted app with its
-  // contributors embedded.
+  // contributors embedded, and beside the list `month`: the changes that
+  // went live across those apps in the last 30 days and the people who made
+  // them (publicMonthActivity), or null when that could not be read.
   //
   // Kept for a short while (#6591): the list is the same for everyone who
   // asks, its query aggregates every app's activity, members and changes
@@ -152,10 +154,19 @@ function publicApiRoutes(config) {
     const hit = directoryCache.get(key);
     if (hit && (hit.pending || hit.expiresAt > Date.now())) return hit.read;
     const entry = { pending: true, expiresAt: 0, read: null };
-    entry.read = listPublicApps(pool, { includeWallets }).then((apps) => {
+    entry.read = Promise.all([
+      listPublicApps(pool, { includeWallets }),
+      // The landing's "This month" figures, read with the list so they are
+      // kept as long as it is. They are an extra: a read of them that fails
+      // leaves them out and does not hold the directory back.
+      publicMonthActivity(pool).catch((err) => {
+        log.warn('public-api', 'month activity read failed', { message: err.message });
+        return null;
+      }),
+    ]).then(([apps, month]) => {
       entry.pending = false;
       entry.expiresAt = Date.now() + DIRECTORY_TTL_MS;
-      return apps;
+      return { apps, month };
     }, (err) => {
       if (directoryCache.get(key) === entry) directoryCache.delete(key);
       throw err;
@@ -167,7 +178,7 @@ function publicApiRoutes(config) {
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      res.json({ apps: await readDirectory(includeWallets) });
+      res.json(await readDirectory(includeWallets));
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

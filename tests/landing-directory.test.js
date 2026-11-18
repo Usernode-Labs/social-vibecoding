@@ -71,7 +71,11 @@ test('the landing\'s ways in: no anchor in the bar, and the guest bar\'s Sign in
   // (Apple, Google, email, a phone). The waitlist landing still defers it,
   // and nothing links to #signup.
   assert.equal((interior.match(/href="#signup"/g) || []).length, 0);
-  assert.match(header[0], /<button[^>]*data-landing-sign-up=""[^>]*>Sign up<\/button>/);
+  // It says what pressing it does: "Join the waitlist" while new accounts
+  // wait, which is what the cold document says until the options arrive
+  // (guest-data NEW_ACCOUNTS_WAIT), and "Sign up" once they no longer do
+  // (tests/guest-discover.test.js).
+  assert.match(header[0], /<button[^>]*data-landing-sign-up=""[^>]*>Join the waitlist<\/button>/);
   // The in-app survey is not one of them any more. #landing-status-link is
   // the exception and keeps its own href — see the check-my-status test.
   const pills = interior.slice(interior.indexOf('id="landing-waitlist-link"'));

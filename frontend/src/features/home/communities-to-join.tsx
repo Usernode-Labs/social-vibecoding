@@ -29,7 +29,7 @@
  * GET /api/public/apps, which answers every public project at once today,
  * so "more" pages through it here.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Chip, FadeRail } from '@/components/ui/chip';
@@ -49,13 +49,16 @@ export const JOIN_PAGE = 8;
 export const JOIN_SORTS = ['new', 'popular', 'trending'] as const;
 export type JoinSort = (typeof JOIN_SORTS)[number];
 
+/** How many featured communities a visitor's landing draws large, in the sideways row. */
+const LEAD_FEATURED = 4;
+
 export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending'): GuestApp[] {
   const featured = featuredApps(apps);
   const first = new Set(featured.map((a) => a.slug));
   return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -67,6 +70,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   query: string;
   /** Read the directory again, from the line that says it could not be. */
   onRetry?: () => void;
+  /** A control at the end of the heading's row: the visitor's search button (../guest/guest-discover.tsx). */
+  headingAction?: ReactNode;
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -81,6 +86,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   const pool = useMemo(() => (apps || []).filter((a) => !exclude.has(a.slug)), [apps, exclude]);
   const kinds = useMemo(() => presentCategories(pool), [pool]);
   const featured = useMemo(() => (query ? [] : featuredApps(pool).filter((a) => !kind || a.category === kind)), [pool, kind, query]);
+  // The visitor's landing leads Featured with its first few, drawn large.
+  const lead = useMemo(() => (signedIn ? [] : featured.slice(0, LEAD_FEATURED)), [signedIn, featured]);
   const list = useMemo(() => {
     // Searching keeps the join order (featured first); otherwise this is the
     // rest, in the chosen sort, the featured ones left out because Featured
@@ -145,7 +152,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     // it); the landing draws the same section signed out, in the same
     // document, so it goes without one there.
     <section id={signedIn ? 'home-join-section' : undefined} data-home-join-section="" className="px-3 pb-6" aria-busy={apps ? undefined : true}>
-      <SectionHeading>{heading}</SectionHeading>
+      <SectionHeading action={headingAction}>{heading}</SectionHeading>
       {!query && kinds.length ? (
         <div className={oneLine ? 'wip-filterbar' : undefined}>
         <FadeRail role="group" aria-label={ta('auth:guest.categories.label')} className={oneLine ? 'min-w-0 flex-1 gap-2 px-0 py-0' : '-mx-3 gap-2 px-3 pt-1 pb-3'}>
@@ -167,17 +174,42 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
             {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
               : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
           </h3>
-          <div
-            role="list"
-            aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
-            className={`${CARD_GRID} px-1`}
-          >
-            {featured.map((app, i) => (
-              <div key={app.slug} role="listitem" className="flex [&>article]:flex-1">
-                <Card app={app} eager={i < 3} featured />
-              </div>
-            ))}
-          </div>
+          {/* A visitor's first few featured communities are drawn large, in
+              a row that scrolls sideways, so Featured reads as a feature and
+              not as the first rows of the same grid (Drea, 17 Nov 2026). The
+              rest of Featured keeps the grid under it. */}
+          {lead.length ? (
+            <div
+              role="list"
+              aria-labelledby="guest-join-featured-label"
+              data-home-join-lead={lead.length}
+              className="flex snap-x snap-mandatory gap-3.5 overflow-x-auto overscroll-x-contain px-1 pb-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+            >
+              {lead.map((app, i) => (
+                <div key={app.slug} role="listitem" className="flex w-[min(80vw,340px)] shrink-0 snap-start [&>article]:flex-1">
+                  <Card app={app} eager={i < 3} featured lead />
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {featured.length > lead.length ? (
+            <div
+              role="list"
+              aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
+              data-home-join-featured-rest=""
+              // A visitor's second row of Featured scrolls sideways too, under
+              // the large one; signed in, Featured keeps its wrapping grid.
+              className={signedIn
+                ? `${CARD_GRID} px-1`
+                : 'flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
+            >
+              {featured.slice(lead.length).map((app, i) => (
+                <div key={app.slug} role="listitem" className={signedIn ? 'flex [&>article]:flex-1' : 'flex w-[min(44vw,208px)] shrink-0 snap-start [&>article]:flex-1'}>
+                  <Card app={app} eager={!lead.length && i < 3} featured />
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
       {failed ? (
