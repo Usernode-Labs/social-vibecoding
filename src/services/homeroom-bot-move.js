@@ -574,7 +574,7 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
     target = await appById(pool, action.target_app_id);
     if (!target) {
       await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'target_gone']);
-      return ack('I couldn\'t move it: the project it belongs on is no longer there.');
+      return ack('I couldn\'t move it: the project it belongs on is no longer there.', { failed: true });
     }
   }
   const moved = await moveRequest(pool, config, {
@@ -583,7 +583,7 @@ async function decideMove(pool, config, { bot = null, user, settings, action, ye
   });
   if (!moved.ok) {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(moved.code, 300)]);
-    return ack(moved.code === 'file_failed' ? 'I couldn\'t move it just now. Try again in a minute.' : `I couldn't move it: ${moved.error}`);
+    return ack(moved.code === 'file_failed' ? 'I couldn\'t move it just now. Try again in a minute.' : `I couldn't move it: ${moved.error}`, { failed: true });
   }
   await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, moved.issueNumber]);
   const line = dmModule(deps).requestLine({ appName: moved.target.name || moved.target.slug, issueNumber: moved.issueNumber, issueTitle: moved.title });
@@ -690,7 +690,7 @@ async function decideCopy(pool, config, { user, settings, action, yes, ack, deps
   if (!filed.ok) {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1',
       [action.id, clip(filed.error || filed.code, 300)]);
-    return ack(`I couldn't file it there: ${filed.error}`);
+    return ack(`I couldn't file it there: ${filed.error}`, { failed: true });
   }
   await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, filed.issueNumber]);
   const name = filed.target.name || filed.target.slug;

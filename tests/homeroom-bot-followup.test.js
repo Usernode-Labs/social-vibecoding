@@ -631,7 +631,7 @@ test('#6263: a revise that changes what the change does rewrites its description
   const h = harness({
     comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
     result: {
-      lastResultText: 'The dark background is #000.\n\n==== DESCRIPTION ====\nThe dark mode background is #000 now.\n==== END DESCRIPTION ====\n\n```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","plan":true}\n```',
+      lastResultText: 'The dark background is #000.\n\n==== DESCRIPTION ====\nThe dark mode background is #000 now.\n==== END DESCRIPTION ====\n\n```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","title_why":"purpose_changed","plan":true}\n```',
       pushOk: true, sha: NEW_HEAD,
     },
   });
@@ -663,7 +663,7 @@ test('#6347: a revise with no new description writes one itself, and says it was
   const h = harness({
     comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
     result: {
-      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","plan":true}\n```',
+      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","title_why":"purpose_changed","plan":true}\n```',
       pushOk: true, sha: NEW_HEAD,
     },
   });
@@ -696,7 +696,7 @@ test('#6347: a description that cannot be written is marked stale, and the reply
   const h = harness({
     comments: [{ author: 'evan', body: 'Make it #000 and call it Darker', createdAt: '2026-09-26T11:30:00Z' }],
     result: {
-      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","plan":true}\n```',
+      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"The dark background is now #000.","title":"Darker dark mode","title_why":"purpose_changed","plan":true}\n```',
       pushOk: true, sha: NEW_HEAD,
     },
   });
@@ -1121,19 +1121,27 @@ test('#3767: a revision that changed what the proposal does names it again, and 
     seed: 'SEED', replies: [{ author: 'ada', where: 'proposal', createdAt: '2026-10-03T10:00:00Z', body: 'drop the size options' }],
     canRevise: true, design: 'DESIGN BLOCK',
   });
-  assert.match(prompt, /give it a new `title` that says what it does now/);
-  assert.match(prompt, /"title": "for revise only, when what the proposal does changed: its new short title"/);
+  // 18 Nov 2026: a new title only when what the change is for changed, and
+  // then naming the whole change.
+  assert.match(prompt, /Give it a new `title` only when the revision changes what the change is for/);
+  assert.match(prompt, /name everything the change does as it now stands, never only what this revision changed/);
+  assert.match(prompt, /"title": "for revise only, when what the change is for changed: its new short title, naming the whole change", "title_why": "for revise only, with a new title: purpose_changed"/);
   assert.ok(prompt.indexOf('DESIGN BLOCK') > prompt.indexOf('"person"'), 'the guidance follows the choices');
   assert.ok(prompt.indexOf('DESIGN BLOCK') < prompt.indexOf('END YOUR REPLY'), 'and comes before the format');
   // No revision allowed: no design guidance to follow.
   assert.doesNotMatch(followup.followUpPrompt({ seed: 'SEED', replies: [], canRevise: false, design: 'DESIGN BLOCK' }), /DESIGN BLOCK/);
 
   const fence = (obj) => `done\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
-  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's', title: '  Each lesson   runs its full list ' })).title,
+  const why = { title_why: 'purpose_changed' };
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's', title: '  Each lesson   runs its full list ', ...why })).title,
     'Each lesson runs its full list');
   assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', summary: 's' })).title, undefined, 'the old name stays');
-  assert.equal(followup.parseFollowUp(fence({ action: 'answer', reply: 'ok', title: 'Not a revision' })).title, undefined);
-  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', title: 'x' })).title, undefined, 'too short to be a name');
+  assert.equal(followup.parseFollowUp(fence({ action: 'answer', reply: 'ok', title: 'Not a revision', ...why })).title, undefined);
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', title: 'x', ...why })).title, undefined, 'too short to be a name');
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', title: 'Want to go is a tier' })).title, undefined,
+    '18 Nov 2026: a title with no reason is not taken: the old one stays');
+  assert.equal(followup.parseFollowUp(fence({ action: 'revise', reply: 'ok', title: 'Want to go is a tier', title_why: 'clearer' })).title, undefined,
+    'only a change of purpose renames it');
 
   const live = require('../src/services/homeroom-bot-live');
   const design = live.revisionDesignText({ readsImages: true });
@@ -1141,9 +1149,108 @@ test('#3767: a revision that changed what the proposal does names it again, and 
   assert.match(design, /that visual check is EXPECTED, not optional/);
   assert.match(design, /take screenshots \(`browser_take_screenshot`\)/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
-  assert.match(src, /if \(moved && parsed\?\.title\) await look\.once\('rename', async \(\) => \{ await renameRevised\(/,
-    'renamed only when the revision landed, once across the look\'s attempts');
+  assert.match(src, /const newTitle = moved && parsed\?\.title \? keptRename\(\{ session, title: parsed\.title, replies, app \}\) : null;\n\s+if \(newTitle\) await look\.once\('rename', async \(\) => \{ await renameRevised\(/,
+    'renamed only when the revision landed, once across the look\'s attempts, and only to a name for the whole change');
   assert.match(src, /require\('\.\/proposal-update'\)\.applyProposedTitle\(\{/, 'through the seam a person\'s revision uses');
+});
+
+// 18 Nov 2026, Saved Places change #12 (session 13939): its requester asked
+// for Want to go to be a tier, not a separate button. The update renamed the
+// whole change from "Add a Google Maps link, your own tier and Want to go to
+// each place" to "Want to go is now a tier in one Your tier menu", and the
+// request's page showed the thread as retitled.
+const SAVED_PLACES_TITLE = 'Add a Google Maps link, your own tier and Want to go to each place';
+
+test('18 Nov 2026: the revise turn is shown the change\'s title and told to keep it', () => {
+  const prompt = followup.followUpPrompt({
+    seed: 'SEED', replies: [], canRevise: true, planFormat: 'PLAN FORMAT', title: SAVED_PLACES_TITLE,
+  });
+  assert.match(prompt, /Its title on the vote is "Add a Google Maps link, your own tier and Want to go to each place"\. It names the whole change/);
+  assert.match(prompt, /Keep the change's title: a revision changes one part of the change, and the title names all of it\./);
+  assert.match(prompt, /Without `title_why`, the title stays as it is\./);
+  // Saved Places #12's update moved Want to go into the tiers and kept plan
+  // v1, which the plan check then held it to: a change that no longer looks
+  // the way its plan draws writes the plan's next version.
+  assert.match(prompt, /The plan is out of date whenever the change no longer looks or works the way the spec draws or says: a control added, taken out, moved or merged into another one/);
+  assert.match(prompt, /even when somebody asked for exactly that\. Homeroom compares the change's screenshots with its newest plan before anybody is asked to approve it/);
+  assert.ok(!/\u2014/.test(prompt.split('\n').filter((l) => /plan is out of date/.test(l)).join('\n')));
+  assert.doesNotMatch(followup.followUpPrompt({ seed: 'SEED', replies: [], canRevise: true }), /Its title on the vote is/,
+    'no title, no line');
+  const told = prompt.split('\n').filter((l) => /title/.test(l)).join('\n');
+  assert.ok(!/\u2014/.test(told), 'no em dashes in what the model is told about the title');
+});
+
+test('18 Nov 2026: renameKeepsChange refuses a title that names only the revision, and keeps one for the whole change', () => {
+  const asked = ['Make Want to go one of the tier options instead of a separate button'];
+  const narrow = followup.renameKeepsChange({ from: SAVED_PLACES_TITLE, to: 'Want to go is now a tier in one Your tier menu', asked });
+  assert.equal(narrow.ok, false, 'Saved Places #12: the new name drops the link and the places nobody asked about');
+  assert.deepEqual([narrow.kept, narrow.touched, narrow.of], [2, 0, 6]);
+  assert.equal(followup.renameKeepsChange({
+    from: SAVED_PLACES_TITLE, to: 'Add a Google Maps link and a Your tier menu with Want to go to each place', asked,
+  }).ok, true, 'a name for the whole change as it now stands');
+  // #3767: Ear Trainer's size options were taken out because somebody asked;
+  // its new name may drop them, since that is what the people asked about.
+  const ear = followup.renameKeepsChange({
+    from: 'Lead size options with the number of sounds', to: 'Each lesson runs its full list of sounds', asked: ['drop the size options'],
+  });
+  assert.equal(ear.ok, true);
+  assert.deepEqual([ear.kept, ear.touched, ear.of], [1, 2, 5]);
+  assert.equal(followup.renameKeepsChange({ from: 'Lead size options with the number of sounds', to: 'Each lesson runs its full list of sounds' }).ok, false,
+    'with nobody having asked about the size options, it is the same refusal');
+  assert.equal(followup.renameKeepsChange({ from: 'Darker', to: 'Darker dark mode' }).ok, true, 'one word says too little to judge');
+  assert.equal(followup.renameKeepsChange({ from: SAVED_PLACES_TITLE, to: '' }).ok, false, 'no name is never a rename');
+  assert.deepEqual([...followup.titleWords('Add the Google Maps links to places')], ['google', 'map', 'link', 'place'],
+    'its own words: no "add" or "the", and a plural is the word');
+});
+
+function savedPlacesHarness(title) {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make Want to go one of the tier options instead of a separate button', createdAt: '2026-09-26T11:30:00Z' }],
+    result: {
+      lastResultText: `\`\`\`json\n${JSON.stringify({
+        action: 'revise', reply: 'Done.', summary: 'Want to go is one of the tiers now.', title, title_why: 'purpose_changed',
+      })}\n\`\`\``,
+      pushOk: true, sha: NEW_HEAD,
+    },
+  });
+  const query = h.pool.query.bind(h.pool);
+  h.pool.query = async (sql, params) => {
+    const out = await query(sql, params);
+    if (/SELECT cs\.\*, a\.slug AS app_slug/.test(String(sql))) {
+      return { rows: out.rows.map((r) => ({ ...r, pr_title: SAVED_PLACES_TITLE })) };
+    }
+    // renameRevised reads the change fresh before it renames it.
+    if (/^SELECT \* FROM chat_sessions WHERE id = \$1$/.test(String(sql))) return { rows: [{ id: 5001, pr_title: SAVED_PLACES_TITLE }] };
+    return out;
+  };
+  return h;
+}
+
+async function withTitles(t) {
+  const update = require('../src/services/proposal-update');
+  const real = update.applyProposedTitle;
+  t.after(() => { update.applyProposedTitle = real; });
+  const renamed = [];
+  update.applyProposedTitle = async (args) => { renamed.push(args.title); return { changed: true }; };
+  return renamed;
+}
+
+test('18 Nov 2026: an update whose new title names only itself keeps the change\'s title', async (t) => {
+  const renamed = await withTitles(t);
+  const h = savedPlacesHarness('Want to go is now a tier in one Your tier menu');
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise', 'the update itself lands');
+  assert.deepEqual(renamed, [], 'the change is not renamed');
+  assert.match(h.calls.exec[0].opts.prompt, /Its title on the vote is "Add a Google Maps link, your own tier and Want to go to each place"/,
+    'the turn was shown the title it has');
+});
+
+test('18 Nov 2026: an update that names the whole change as it now stands renames it', async (t) => {
+  const renamed = await withTitles(t);
+  const h = savedPlacesHarness('Add a Google Maps link and a Your tier menu with Want to go to each place');
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'revise');
+  assert.deepEqual(renamed, ['Add a Google Maps link and a Your tier menu with Want to go to each place']);
 });
 
 // Issue #4813, 15 Oct 2026: the bot's follow-up turn on its proposal failed,

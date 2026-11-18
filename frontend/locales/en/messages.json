@@ -1659,6 +1659,22 @@
     "text": "You chose {{choice}}",
     "description": "Shown under a message from Homeroom bot after the person pressed one of its buttons. {{choice}} is the label of the button they pressed."
   },
+  "bot.draft.show": {
+    "text": "Show the full draft",
+    "description": "Button under a request Homeroom bot drafted in a chat, below the one-line gist of the draft: shows the whole draft in place."
+  },
+  "bot.draft.hide": {
+    "text": "Show less",
+    "description": "Button under the whole of a request Homeroom bot drafted in a chat, once it is shown: folds it back to its one-line gist."
+  },
+  "bot.live.label": {
+    "text": "Where {{title}} stands",
+    "description": "Accessible name of the card under Homeroom bot's reply that follows a request it just started work on, live: where it is (queued, building, checks, up for a vote, live). {{title}} is the request's title."
+  },
+  "bot.live.vote": {
+    "text": "Vote",
+    "description": "Button on the card under Homeroom bot's reply that follows a request it started work on, once the change it built is up for the group's vote: opens the change, where the person votes."
+  },
   "bot.actions.closed": {
     "text": "No longer needed.",
     "description": "Line under a message from Homeroom bot whose buttons no longer apply."

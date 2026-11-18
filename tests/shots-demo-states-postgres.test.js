@@ -532,9 +532,12 @@ test('each demo state reads back the way its screen needs it', { timeout: 180000
     user: viewer, actionId: action.id, choice: 'yes', deps: { replies: tapsNow(pool, {}, { github: { isEnabled: () => false } }) },
   });
   assert.equal(tapped.ok, true);
+  // 18 Nov 2026: one card per action. The offer's card says it, in place
+  // (mayor.settleOnCard), and no message under it says it again.
   const after = await whole();
-  assert.equal(after.at(-1).content, 'I couldn\'t propose closing it just now. Try again in a minute.');
-  assert.equal(after.at(-1).threadRootId, ask.id, 'said in the thread of the offer it answers');
+  assert.equal(after.length, messages.length, 'no message under the card');
+  const settled = after.find((m) => m.id === offered.id).metadata.homeroomBot.outcome;
+  assert.deepEqual([settled.state, settled.text], ['failed', 'I couldn\'t propose closing it just now. Try again in a minute.']);
   assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM issues WHERE kind = \'close_issue\'')).rows[0].n, 0);
 
   // Last in the same chat, the bot's drafted request (#4605): quoting the

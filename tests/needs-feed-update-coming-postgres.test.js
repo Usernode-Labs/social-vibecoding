@@ -221,4 +221,50 @@ test('an update on its way leaves the Needs you feed, and comes back', { timeout
     await pool.query(`UPDATE chat_sessions SET imported_pr_head_sha = $2 WHERE id = $1`, [c.id, HEAD_TWO]);
     assert.ok((await feed()).includes(c.id), 'the PR head moved: owed again');
   });
+
+  // ── #6819: the live turn is read, not only the stored row ──────────────
+  await t.test('a change stored as open for votes is no vote to owe while its update is coming', async () => {
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, created_by) VALUES ($1, 13, 'Watering reminder', $2)`,
+      [app.id, ada.id]);
+    const c = await change(bob, 40, [13]);
+    await settle();
+    const owedTo = async () => {
+      const row = (await pool.query(overview.COUNTS_SQL, [ada.id, false, false])).rows.find((r) => r.slug === app.slug);
+      const listed = (await pool.query(overview.NEEDS_FEED_SQL, [ada.id, false, false, overview.NEEDS_FEED_MAX])).rows
+        .filter((r) => r.kind === 'proposal' && Number(r.app_id) === Number(app.id)).map((r) => Number(r.id));
+      const community = (await overview.owedByCommunity(pool, ada.id)).find((r) => r.slug === app.slug);
+      return {
+        inFeed: listed.includes(c.id), owed: (row?.owed || []).includes(`proposal:${c.id}@0`),
+        needs: row ? Number(row.needs) : 0, waiting: community ? Number(community.waiting) : 0,
+      };
+    };
+    const pick = (s) => [s.inFeed, s.owed, s.needs, s.waiting];
+    const base = await owedTo();
+    assert.deepEqual(pick(base), [true, true, base.needs, base.waiting], 'owed to begin with');
+    const voteOpen = async () => (await one(
+      `SELECT vote_open FROM work_states WHERE item_kind = 'change' AND item_ref = $1`, [c.id])).vote_open;
+    assert.equal(await voteOpen(), true);
+
+    // A follow-up turn starts: the stored row is left as the sweep found it.
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"mode":"build"}'::jsonb WHERE id = $1`, [c.id]);
+    assert.equal(await voteOpen(), true, 'the stored row still says up for a vote');
+    const running = await owedTo();
+    assert.deepEqual(pick(running), [false, false, base.needs - 1, base.waiting - 1], 'a running turn takes it out of every reader');
+
+    // A taken ask on its head is the same update.
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
+    const taken = await ask(c.id, 'taken', { issueNumber: 13 });
+    assert.deepEqual(pick(await owedTo()), pick(running), 'a taken ask holds it too');
+    assert.equal(await voteOpen(), true);
+
+    // Taking its before and after screenshots is no update.
+    await pool.query(`UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1`, [taken.id]);
+    await pool.query(`UPDATE chat_sessions SET active_turn = '{"mode":"shots"}'::jsonb WHERE id = $1`, [c.id]);
+    assert.deepEqual(pick(await owedTo()), pick(base), 'a shots turn is not an update');
+
+    // The update lands and its checks pass: owed again.
+    await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [c.id]);
+    assert.deepEqual(pick(await owedTo()), pick(base), 'back in Needs you with Vote');
+  });
 });

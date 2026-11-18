@@ -32,7 +32,10 @@ test('its prompt lines say the same as the voice\'s, and are absent in public', 
   const lines = tool.promptLines({ user: { id: 3 }, deps: {} }).join('\n');
   assert.match(lines, /call tell_me_when with that one moment and say its/);
   assert.match(lines, /Never tell them you cannot message them later/);
-  assert.match(lines, /offer to tell them here when it is ready to vote/);
+  // 18 Nov 2026: work started in the chat has a live card under the reply,
+  // so the chat no longer offers to say when it is ready.
+  assert.doesNotMatch(lines, /offer to tell them here when it is ready to vote/);
+  assert.match(lines.replace(/'\n\s*'/g, ' ').replace(/\n\s*/g, ' '), /a live card for it goes under your reply and follows it to the vote and live: never offer to tell them when it is ready\. Store a promise only when they ask for one\./);
   assert.match(lines, /request still being built or queued/);
   assert.deepEqual(tool.promptLines({ user: { id: 3 }, deps: {}, inPublic: true }), []);
 });

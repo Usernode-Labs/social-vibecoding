@@ -286,6 +286,13 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     assert.equal((await specs.listRequestSpecs(pool, { appId: app.id, issueNumber: 12, viewerId: ada.id })).length, before + 1, 'posted');
     const after = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0].metadata.homeroomBot;
     assert.deepEqual([after.status, after.answer, after.chosen], ['answered', 'Post as a plan on #12', 'yes']);
+    // 18 Nov 2026: one card per action. The card says what came of it, in
+    // place, and no message under it says it again.
+    assert.equal(after.outcome.state, 'done');
+    assert.equal(after.outcome.kind, 'plan');
+    assert.equal(after.outcome.issueNumber, 12);
+    assert.match(after.outcome.text, /^Posted version 2 as a plan on request #12 on Plant pal, under your name/);
+    assert.equal((await lastSaid(about.rootId)).id, sent.messageId, 'nothing said under the card');
     const { rows: [done] } = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [meta.actionId]);
     assert.deepEqual(done, { status: 'done', issue_number: 12 });
     const twice = await mayor.decideOfferTap(pool, config, { user: ada, actionId: meta.actionId, choice: 'yes', deps: { replies } });
@@ -353,9 +360,12 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     };
     const tapped = await mayor.decideOfferTap(pool, config, { user: ada, actionId: meta.actionId, choice: 'yes', deps: { replies } });
     assert.deepEqual(tapped, { ok: true, choice: 'yes', label: 'New request' });
-    const filedLine = await lastSaid(idea.rootId);
-    const number = Number(/request #(\d+)/.exec(filedLine.content)[1]);
-    assert.match(filedLine.content, new RegExp(`^Filed it as request #${number} on Plant pal, under your name, with version 1 as its plan\\.`));
+    // 18 Nov 2026: the card it was tapped on says what it became, in place.
+    const settled = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [sent.messageId])).rows[0].metadata.homeroomBot;
+    const number = Number(settled.outcome.issueNumber);
+    assert.equal(settled.outcome.kind, 'filed');
+    assert.match(settled.outcome.text, new RegExp(`^Filed it as request #${number} on Plant pal, under your name, with version 1 as its plan\\.`));
+    assert.equal((await lastSaid(idea.rootId)).id, sent.messageId, 'no message under the card says it again');
     const { rows: [spec] } = await pool.query(
       `SELECT spec_html FROM chat_sessions WHERE app_id = $1 AND created_from_issue_number = $2 AND source = 'request_spec'`,
       [app.id, number],

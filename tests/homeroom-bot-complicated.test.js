@@ -760,11 +760,16 @@ test('a complicated change, end to end, against the full PostgreSQL schema', { t
       deps: { replies: tapsNow(pool, {}, { bot: homeroomBot, ws }) }, user: maya, actionId, choice: 'yes',
     });
     assert.equal(tapped.ok, true);
+    // 18 Nov 2026: one card per action. The draft's card says what came of
+    // it, in place (mayor.settleOnCard), and no message under it says it again.
     const { rows: [said] } = await pool.query(
-      'SELECT content FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1',
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 ORDER BY id DESC LIMIT 1',
       [card.conversation_id, homeroomBot.id],
     );
-    assert.equal(said.content, "Posted on the public discussion of Chores request #12, as you. I'll plan it again with it and post the new plan on the request.");
+    assert.equal(Number(said.id), Number(out.messageId), 'nothing said under the draft');
+    const settled = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [out.messageId])).rows[0];
+    assert.deepEqual([settled.metadata.homeroomBot.outcome.state, settled.metadata.homeroomBot.outcome.text],
+      ['done', "Posted on the public discussion of Chores request #12, as you. I'll plan it again with it and post the new plan on the request."]);
     const { rows: posted } = await pool.query(
       `SELECT user_id, content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = 12`, [app.id],
     );

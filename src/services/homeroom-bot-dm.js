@@ -3325,6 +3325,35 @@ function offPlanWords(misses) {
 }
 
 /**
+ * Pure (18 Nov 2026): whether a plan is Homeroom bot's own, by its author's
+ * id or name. Its plan has nobody to tell it does not match: the bot wrote
+ * it, so the line goes to the person who asked for the change instead.
+ */
+function isBotsPlan(author, { authorId = null, bot = null } = {}) {
+  if (bot && authorId != null && Number(bot.id) === Number(authorId)) return true;
+  return typeof author === 'string' && author.toLowerCase() === BOT_USERNAME;
+}
+
+/**
+ * Pure (#6407, 18 Nov 2026): the line in the request's thread saying a
+ * change does not match its plan. A person's plan is theirs to hear about:
+ * "@ana, this change doesn't match your plan (version 3) yet: …". The bot's
+ * own plan (or one whose author is not known; `offPlan.author` null) is
+ * said to the person who asked for the change, with what they can do:
+ * Saved Places change #12 tagged @homeroom_bot instead, who could do
+ * nothing with it, and its requester was told nothing.
+ */
+function planMissText({ offPlan = null, requester = null } = {}) {
+  const misses = offPlanWords(offPlan?.misses);
+  if (!misses.length) return null;
+  const version = Number(offPlan?.version) > 0 ? ` (version ${Number(offPlan.version)})` : '';
+  if (offPlan?.author) return `@${offPlan.author}, this change doesn't match your plan${version} yet: ${misses.join(' ')}`;
+  const who = requester ? `@${requester}, this` : 'This';
+  return `${who} change is different from its plan${version}: ${misses.join(' ')} `
+    + `${requester ? 'You can' : 'Whoever asked for it can'} approve it as it is, or ask Homeroom bot here to make it match the plan.`;
+}
+
+/**
  * B4: one of the bot's changes is ready to try, for approval epoch `epoch`
  * (the bot's change machine decided it: src/workflow/bot-change/). Its
  * requester's card goes out once per epoch, saying what its shots show not
@@ -3363,31 +3392,34 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   // does not. The card says it in red, no approver is rung, and the person
   // who asked for it hears it on the request's own page.
   const misses = offPlanWords(offPlanMisses);
+  const bot = deps.bot || await botAccount(pool);
+  // B7: what its asker can do on the card, and who else must approve it.
+  const requester = await requesterOf(pool, run.id, Number(run.issue_number));
   let offPlan = null;
   if (misses.length) {
+    // 18 Nov 2026: the plan the check compared it with (plan-match.js
+    // comparedPlanOf: the one it was built from, or the newer version a
+    // revision of it wrote), so the line names the version it was held to.
     const { rows: [from] } = await pool.query(
-      `SELECT cs.built_from_version AS version, cs.reviewed_head_sha AS head, u.username AS author
-         FROM chat_sessions cs
-         LEFT JOIN chat_sessions ps ON ps.id = cs.built_from_session_id
-         LEFT JOIN users u ON u.id = ps.user_id
-        WHERE cs.id = $1`,
-      [id],
+      'SELECT cs.reviewed_head_sha AS head FROM chat_sessions cs WHERE cs.id = $1', [id],
     );
+    const compared = await require('./plan-match').comparedPlanOf(pool, id).catch(() => null);
+    // The bot's own plan is said to its requester, never to the bot.
+    const author = compared?.author && !isBotsPlan(compared.author, { authorId: compared.authorId, bot })
+      ? compared.author : null;
     offPlan = {
-      author: from?.author || null,
-      version: from?.version == null ? null : Number(from.version),
+      author,
+      version: compared?.version == null ? null : Number(compared.version),
       misses,
     };
     await notePlanMiss(pool, {
-      appId: run.id, issueNumber: Number(run.issue_number), head: from?.head || null, offPlan, deps,
+      appId: run.id, issueNumber: Number(run.issue_number), head: from?.head || null, offPlan,
+      requester: requester?.username || null, deps,
     });
   }
-  const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
   const domain = deps.domain || require('./caddy').USERNODE_DOMAIN;
   const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
-  // B7: what its asker can do on the card, and who else must approve it.
-  const requester = await requesterOf(pool, run.id, Number(run.issue_number));
   const approvalNow = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
   // #6407: a change built from a person's plan that misses it is not put
   // straight to the vote: its card says what the plan draws and it does
@@ -3458,11 +3490,12 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
 
 /**
  * #6407: one line in the request's own thread saying a change built from
- * its plan does not match that plan yet, tagging the person who posted the
- * plan. Written once per head, so a retry or a second look says nothing
- * twice. Never throws.
+ * its plan does not match that plan yet (planMissText): to the person who
+ * posted the plan, or, for the bot's own plan, to the person who asked for
+ * the change (`requester`, a username), never to the bot. Written once per
+ * head, so a retry or a second look says nothing twice. Never throws.
  */
-async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = null, deps = {} } = {}) {
+async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = null, requester = null, deps = {} } = {}) {
   const misses = offPlanWords(offPlan?.misses);
   if (!misses.length || !appId || !Number(issueNumber)) return null;
   try {
@@ -3473,9 +3506,9 @@ async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = n
       [Number(appId), Number(issueNumber), String(head || '')],
     );
     if (rows[0]) return null;
-    const who = offPlan.author ? `@${offPlan.author}` : 'The person who asked';
-    const version = Number(offPlan.version) > 0 ? ` (version ${Number(offPlan.version)})` : '';
-    const said = `${who}, this change doesn't match your plan${version} yet: ${misses.join(' ')}`;
+    // Never the bot itself, whatever the caller passed.
+    const author = offPlan.author && !isBotsPlan(offPlan.author) ? offPlan.author : null;
+    const said = planMissText({ offPlan: { ...offPlan, author }, requester: requester && !isBotsPlan(requester) ? requester : null });
     const ws = deps.ws || require('./ws');
     return await ws.sendSystemMessage(
       pool, Number(appId), said, 'system', { planMiss: { head: String(head || '') } }, { type: 'issue', ref: Number(issueNumber) },
@@ -7159,6 +7192,8 @@ module.exports = {
   changeReadiness,
   brokenWords,
   offPlanWords,
+  isBotsPlan,
+  planMissText,
   notePlanMiss,
   tellReady,
   noteChangeStopped,

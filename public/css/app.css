@@ -10141,13 +10141,22 @@ html.un-kb .un-modal {
     "tile titles tools exit"
     "switch switch gap vote";
 }
-.staging-exit { grid-area: exit; }
+/* The last column is as wide as Vote under it: its discs sit at its end. */
+.staging-exit { grid-area: exit; justify-self: end; }
 .staging-tile { grid-area: tile; }
 .staging-titles { grid-area: titles; min-width: 0; display: flex; flex-direction: column; }
 .staging-switch { grid-area: switch; justify-self: start; margin-top: 10px; }
 .staging-gap { grid-area: gap; }
 .staging-vote { grid-area: vote; justify-self: end; margin-top: 10px; }
-.staging-tools { grid-area: tools; display: flex; align-items: center; gap: 6px; }
+.staging-tools { grid-area: tools; justify-self: end; display: flex; align-items: center; gap: 6px; }
+/* The second row's switch and Vote also span the titles' column, so the
+   Vote's width does not size the first row's last column and squeeze the
+   change's name and its line (a grid item that spans a flexible column does
+   not size the fixed ones). They sit at its two ends. */
+#staging-overlay[data-placement="full"] .staging-switch { grid-column: 1 / 4; }
+#staging-overlay[data-placement="full"] .staging-vote { grid-column: 3 / 6; }
+#staging-overlay:not([data-placement="full"]) .staging-switch { grid-column: 1 / 3; }
+#staging-overlay:not([data-placement="full"]) .staging-vote { grid-column: 2 / 5; }
 @media (min-width: 768px) {
   /* The whole window on a wide screen: one row. */
   #staging-overlay[data-placement="full"] .staging-head {
@@ -10155,6 +10164,8 @@ html.un-kb .un-modal {
     grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
     grid-template-areas: "exit tile titles switch vote tools";
   }
+  #staging-overlay[data-placement="full"] .staging-switch { grid-column: switch; }
+  #staging-overlay[data-placement="full"] .staging-vote { grid-column: vote; }
   #staging-overlay[data-placement="full"] .staging-gap { display: none; }
   #staging-overlay[data-placement="full"] .staging-switch,
   #staging-overlay[data-placement="full"] .staging-vote { margin-top: 0; }
@@ -10210,20 +10221,43 @@ html.un-kb .un-modal {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The change's name is being looked up: a quiet bar where it will be, never
+   the project's name that it would replace a moment later. */
+.staging-title[data-pending] {
+  width: min(14em, 100%);
+  height: 1.25em;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+/* The line under it. Each fact stays whole: when they do not fit on one
+   line the next one moves to a second, so "Needs 1 more yes" is never cut
+   to "Needs 1 more y…". The dot before a fact that starts a line sits in
+   the gutter the titles clip. */
+.staging-titles { overflow: hidden; }
 .staging-facts {
+  display: flex;
+  flex-wrap: wrap;
+  margin-inline-start: -0.9em;
   font-size: 13px;
   line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: color-mix(in srgb, var(--text-primary) 58%, transparent);
 }
 .staging-facts:empty { display: none; }
-.staging-fact + .staging-fact::before { content: " · "; }
+.staging-fact {
+  position: relative;
+  padding-inline-start: 0.9em;
+  white-space: nowrap;
+}
+.staging-fact::before {
+  content: "·";
+  position: absolute;
+  inset-inline-start: 0.3em;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
 /* On a phone the project's name gives way to the vote's line. */
 @media (max-width: 767px) {
   .staging-fact[data-kind="app"] { display: none; }
-  .staging-fact[data-kind="app"] + .staging-fact::before { content: none; }
 }
 .staging-fact[data-kind="ask"] { color: var(--accent); font-weight: 600; }
 
@@ -10257,7 +10291,8 @@ html.dark .staging-switch button[data-on] {
   box-shadow: none;
 }
 
-/* The platform's Vote, as on a chat's vote card; "See the vote" once voted. */
+/* The platform's Vote, as on a chat's vote card; "See the vote" once the
+   vote is decided, with no fill: nothing is left to do there. */
 .staging-vote {
   height: 32px;
   padding: 0 16px;
@@ -10269,7 +10304,7 @@ html.dark .staging-switch button[data-on] {
   background: var(--accent);
   color: #fff;
 }
-.staging-vote[data-voted] {
+.staging-vote[data-settled] {
   background: transparent;
   border-color: var(--app-sheet-line);
   color: var(--text-primary);
@@ -10329,9 +10364,11 @@ html.dark .staging-switch button[data-on] {
   color: color-mix(in srgb, var(--text-primary) 62%, transparent);
 }
 
-/* The other side of the switch: the change's before and after viewer. */
+/* The other side of the switch: the change's before and after viewer, over
+   the loader too, so a preview that is not running can still be checked. */
 .staging-shots {
   position: absolute;
+  z-index: 1;
   inset: 0;
   overflow: auto;
   padding: 12px 16px;
@@ -10342,6 +10379,7 @@ html.dark .staging-switch button[data-on] {
 .staging-loader { background: var(--dc-sheet-solid); }
 .staging-loader-title { color: var(--text-primary); }
 .staging-loader-sub { color: color-mix(in srgb, var(--text-primary) 62%, transparent); }
+.staging-loader-shots { min-height: 44px; font-size: 14px; }
 .staging-spinner {
   border: 2.5px solid var(--app-sheet-line);
   border-top-color: var(--accent);
@@ -17031,9 +17069,6 @@ body:has(#ai-screen:is([data-ai-preview="three"], [data-ai-preview="halves"]):no
   inset-inline-end: calc(var(--ai-preview-w) + var(--ai-edge, 0px));
 }
 .side-panel-head > :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: none; }
-body:has(#ai-screen:not(.hidden)) .side-panel :is(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close) {
-  display: none;
-}
 body:has(#ai-screen:not(.hidden)) .side-panel :is(.side-panel-ai-close, .side-panel-place, .side-panel-more) { display: inline-flex; }
 /* And the page in it leaves out its own way back, "‹ Workshop": the column's
    × is the way back, and its project is beside it. The class is on the
@@ -24366,12 +24401,6 @@ html.side-panel-resizing * {
   padding-block: 0 0; padding-inline: 0.75rem 0.875rem;
   border-bottom: 1px solid var(--app-sheet-line);
 }
-/* Back's display, which its className cannot carry beside the `hidden` it
-   ships with (see side-panel.tsx). Keyed on NOT hidden, so the utility still
-   hides it whenever there is nowhere for it to go. */
-.side-panel-head > #side-panel-back:not(.hidden) {
-  display: inline-flex;
-}
 /* Beside the AI tab's page (its section above has the why): Main's header
    row, its padding, its hairline, its fill and its height, so the page below
    starts where Main's chat does. */
@@ -24506,18 +24535,9 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
   }
 }
 
-@media (min-width: 1024px) {
-  html[data-side-panel] #app-view {
-    margin-inline-end: var(--side-panel-w);
-    min-width: 480px;
-  }
-  html[data-side-panel] #app-frame-host {
-    border-start-end-radius: 0;
-  }
-}
-
 /* ── THE SIDE PANEL'S OWN DOCUMENT (`?panel=1`) ──────────────────────────
-   The platform, framed beside a running app, showing one page: no header,
+   The platform, framed beside the Homeroom bot tab's list, showing one
+   page: no header,
    no tab bar or rail, no parked strip, no banners — the top window has all
    of those — and none of the space they reserve. `in-side-panel` is put on
    <html> by head.html before the first paint, and only when the document is
@@ -25532,10 +25552,13 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
 
 /* A request's own page, and the general chat: between a phone and the
    1024px dock the page and the detail share the room in halves instead
-   of the detail covering the page. */
+   of the detail covering the page. Only while the detail is open (18 Nov
+   2026): the slot carries its layout closed too, so the page in the
+   column beside Homeroom bot's list (876px wide in its own document) wore
+   the halves' edge down its side with nothing beside it. */
 @media (max-width: 1023px) and (min-width: 768px) {
-  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #dev-topic-thread,
-  .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-chat-pane,
+  .gc-tab-body:has(> #gc-spec-side-panel.gc-spec-side-panel-open[data-detail="halves"]) > #dev-topic-thread,
+  .gc-tab-body:has(> #gc-spec-side-panel.gc-spec-side-panel-open[data-detail="halves"]) > #gc-chat-pane,
   .gc-tab-body:has(> #gc-spec-side-panel[data-detail="halves"]) > #gc-spec-side-panel.gc-spec-side-panel-open {
     position: static;
     inset: auto;
@@ -25573,9 +25596,15 @@ button.rf-claim-row:active .rf-claim { color: var(--rf-ink); }
   border-inline-start: 1px solid var(--app-sheet-line);
   z-index: auto;
 }
+/* Only while the plan is open in the panel's half (18 Nov 2026): this block
+   used to apply whenever the window was under 1760px, so the panel covered
+   the list on most laptops with no plan open at all. */
 @media (max-width: 1759px) {
-  #dev-workshop:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 0; max-width: none; }
-  .dev-ws-side { inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px); }
+  body:has(.dev-ws-side-body > #gc-spec-side-panel.gc-spec-side-panel-open) #dev-workshop:has(> .dev-ws[data-ws-side-open]) { margin-inline-start: 0; max-width: none; }
+  body:has(.dev-ws-side-body > #gc-spec-side-panel.gc-spec-side-panel-open) .dev-ws-side {
+    inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px);
+    background: var(--bl-page, var(--home-ground));
+  }
 }
 
 /* ── ONE HOME (#6361): THE SIDEBAR'S RECENTS ────────────────────────────
@@ -27975,6 +28004,273 @@ html[data-skin]:where(:not([data-skin="brand"])) #app-menu-row-workshop { paddin
 html[data-skin]:where(:not([data-skin="brand"])) #switcher-nav > [id^="app-menu-row-"] .truncate { white-space: normal; }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   ONE THREAD, ONE HEADER (18 Nov 2026). A request's or a change's page is
+   drawn on its own page, in the Workshop's panel beside the list and in the
+   column beside Homeroom bot's list. Each surface used to wrap it in chrome
+   of its own: a "‹ Workshop" chip over the page, a sheet with a bar of ×
+   and "Open as a page" around the Workshop's panel, a second header row and
+   a white column around the bot's. Now every surface draws the same thing:
+
+     - the sheet's bar is a PILL: the project's tile, "Change #N" or
+       "Request #N" with its status pill, the project and the topic under
+       it, ⋯, and in a panel ↗ and × (dev-board/topic/thread-exits.tsx). On
+       the page itself the page's way back sits at the pill's start.
+     - it FLOATS over the top of the thread and stays there: the scroller
+       starts under it, so the cards go up behind it as the reader scrolls.
+     - the cards below it lie on the page's own ground. No panel draws a
+       sheet, a border or a second header around them.
+
+   The card's kicker said the project, the number and the topic; the pill
+   says them now, so the card starts at its title.
+
+   Only the standard and the brand looks (the thread card's own pages); the
+   frame's looks keep their kit's head. `!important` is spent only where a
+   rule above names the page's whole ancestry to place the old bar.
+   ═══════════════════════════════════════════════════════════════════════ */
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) {
+  --pill-h: 56px;
+  --pill-top: 8px;
+  --pill-under: calc(var(--pill-top) + var(--pill-h) + 14px);
+  position: relative;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-sheet { position: relative; }
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar {
+  display: block !important;
+  position: absolute;
+  top: 0;
+  inset-inline: 0;
+  z-index: 6;
+  height: auto;
+  margin-inline-end: 0 !important;
+  padding-block: var(--pill-top) 0;
+  box-shadow: none;
+  animation: none;
+  pointer-events: none;
+}
+/* The pill itself. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--pill-h);
+  padding-block: 0;
+  padding-inline: 12px 10px;
+  border-radius: 999px;
+  background: var(--thread-card-solid, var(--dc-sheet-solid));
+  box-shadow: var(--thread-card-edge, inset 0 0 0 1px var(--app-sheet-line)), 0 8px 24px rgba(17, 24, 39, 0.08);
+}
+.dev-thread-bar-tile { flex: none; width: 32px; height: 32px; border-radius: 10px; font-size: 14px; overflow: hidden; }
+/* Line one: what it is, and where it stands. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-bar :is([data-change-status], [data-request-status]) { display: inline-flex; }
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-change:has(.dev-thread-card) #gc-thread-bar .messages-thread-name,
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:not(.dev-change):has(.dev-thread-card) #gc-thread-bar .messages-thread-kicker {
+  display: block;
+  font-size: 15px;
+  line-height: 20px;
+  font-weight: 650;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A request's bar also names it in full; the card says that. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:not(.dev-change):has(.dev-thread-card) #gc-thread-bar .messages-thread-name { display: none; }
+/* Line two: the project, then the topic. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-sub {
+  position: static;
+  width: auto;
+  height: auto;
+  overflow: hidden;
+  clip-path: none;
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* ⋯ and, in a panel, ↗ and ×: one row of discs at the pill's end. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-action {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--bl-raise, var(--state-neutral-bg));
+  box-shadow: var(--bl-raise-edge, none);
+}
+.dev-thread-exits { display: none; align-items: center; gap: 6px; flex: none; }
+.dev-thread-exit svg { width: 16px; height: 16px; }
+:is(.dev-ws-side, html.in-side-panel.side-panel-beside-ai) .dev-thread-exits { display: inline-flex; }
+/* The card starts at its title: the pill said the rest. */
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) .dev-thread-kicker { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) .dev-request-root.dev-thread-card { padding-top: 12px; }
+
+/* The scroller starts under the pill, and everything in it that stays put
+   (the timeline beside the card on a wide page) stays put under it too. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-scroll {
+  padding-top: var(--pill-under) !important;
+  scroll-padding-top: var(--pill-under);
+}
+/* The scroller's scroll-padding already holds the timeline under the pill
+   (a sticky box is placed inside it), so its own `top: 0` stays. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
+
+/* THE PAGE'S WAY BACK, AT THE PILL'S START. Its chip ("‹ Workshop", or
+   "‹ Homeroom bot") is the page's, in its own host above the sheet; it is
+   drawn as a disc inside the pill, its words kept for its accessible name.
+   Two chips (a card opened from Messages or the bot, then its Workshop) were
+   two parents: the pill keeps the first, and the project in its second line
+   is the way to the other. */
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back {
+  position: absolute;
+  z-index: 7;
+  top: calc(var(--pill-top) + (var(--pill-h) - 34px) / 2);
+  inset-inline-start: 22px;
+  padding: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-back {
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0;
+  gap: 0;
+  background: var(--bl-raise, var(--state-neutral-bg));
+  box-shadow: var(--bl-raise-edge, none);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-back > span {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-back .dev-topic-back-icon { width: 18px; height: 18px; margin: 0; }
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-request:has(.dev-thread-card) > .dev-request-back .dev-topic-backs > .dev-topic-back ~ .dev-topic-back { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]):not(.side-panel-beside-ai) #dev-topic-thread .dev-request:has(.dev-thread-card):has(> .dev-request-back:not(:empty)) .dev-request-bar .messages-thread-header {
+  padding-inline-start: 52px;
+}
+
+/* THE WORKSHOP'S PANEL DRAWS NO SHEET. The page lies on the Workshop's own
+   ground beside the list, its pill ending in ↗ and ×, so the panel's bar
+   is put away. While a plan is open over the list (the 1760px rule above)
+   the panel keeps the page's ground, since it covers the list then. */
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-ws-side {
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  overflow: visible;
+  /* The page keeps 12px inside the panel's box (room for the cards'
+     shadows), so the box reaches 12px further out on both sides: the cards
+     start one gap from the list and end the window's own margin from its
+     edge, as the sheet's own edges did. */
+  inset-inline-start: calc(var(--dev-ws-side-start) + var(--platform-gutter, 0px) + 24px + var(--dev-ws-side-list-w) + 32px - 12px);
+  inset-inline-end: 12px;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-ws-side:has(.dev-thread-card) > .dev-ws-side-bar { display: none; }
+html:is(:not([data-skin]), [data-skin="brand"]) .dev-ws-side :is(.dev-ws-side-body, .dev-ws-side-page, .dev-request-sheet) { background: transparent !important; }
+
+/* THE BOT'S COLUMN DRAWS NO SHEET OR HEADER for a request or a change: the
+   page in it draws its own pill, with ↗ and × (side-panel.tsx marks the
+   panel `data-thread-pill` for those). Its ground is the bot page's own. */
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-screen:not(.hidden)) .side-panel[data-thread-pill] {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-screen:not(.hidden)) .side-panel[data-thread-pill] > .side-panel-head { display: none; }
+/* …and the page in it paints no ground of its own, so the bot page's own
+   shows through the frame: one surface under the list and the column, not
+   a second cream a shade off it with an edge where they meet. (The ID in
+   :has outranks the brand look's own body rule.) */
+html.in-side-panel.side-panel-beside-ai:has(#dev-topic-thread .dev-thread-card),
+html.in-side-panel.side-panel-beside-ai body:has(#dev-topic-thread .dev-thread-card) { background: transparent !important; }
+/* The column's grip in the middle of the gap the reader sees: the list
+   card keeps 16px from the line, the page's cards 12px, so the grip sits
+   2px towards the list. */
+html:is(:not([data-skin]), [data-skin="brand"]) body:has(#ai-screen:not(.hidden)) .side-panel[data-thread-pill] > .side-panel-divider {
+  inset-inline-end: calc(var(--divider-at, var(--side-panel-w)) - var(--divider-w) / 2 + 2px);
+}
+
+/* THE LINE BETWEEN TWO COLUMNS IS A HANDLE YOU CAN SEE UNDER THE POINTER
+   (18 Nov 2026): the Workshop's list and its panel, the bot's list and its
+   column. With no sheet edges left to drag, the handle is a grip on the line
+   between them, shown under the pointer, on focus and while held. */
+.dev-ws-side-divider {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  inset-inline-start: -28px;
+  width: 24px;
+  z-index: 3;
+  cursor: col-resize;
+  touch-action: none;
+}
+:is(.split-handle, html:is(:not([data-skin]), [data-skin="brand"]) .side-panel-divider)::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  inset-inline-start: calc(50% - 3px);
+  width: 6px;
+  height: 48px;
+  margin-top: -24px;
+  border-radius: 999px;
+  background: var(--text-muted, #71717a);
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) .side-panel-divider::after { display: none; }
+@media (hover: hover) {
+  :is(.split-handle[data-armed], .side-panel-divider):hover::before { opacity: .5; }
+}
+/* A finger never hovers: on a touch screen the grip is drawn at rest, as
+   the side panel's own divider already drew it (its coarse-pointer rule
+   above, which this block's opacity would otherwise put out). */
+@media (pointer: coarse) {
+  :is(.split-handle, .side-panel-divider)::before { opacity: .5; }
+}
+:is(.split-handle, .side-panel-divider):focus-visible::before,
+html.side-panel-resizing :is(.split-handle, .side-panel-divider)::before { opacity: .9; background: var(--accent); }
+:is(.split-handle, .side-panel-divider):focus-visible { outline: none; }
+@media (prefers-reduced-motion: reduce) {
+  :is(.split-handle, .side-panel-divider)::before { transition: none; }
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) :is(.split-handle, .side-panel-divider)::before { transition: none; }
+/* The project's banners (merges paused, a stalled release, code paused) are
+   the list's while the panel is beside it: they end where the list does, so
+   none runs on under the panel's pill. */
+body:has(.dev-ws-side) :is(#dev-main-pause-notice, #dev-release-stall-notice, #dev-code-pause-notice) {
+  max-width: calc(var(--dev-ws-side-list-w) + 24px);
+}
+/* What scrolls up past the pill fades out above it instead of showing as a
+   cut line of text in the gap over the pill. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-scroll {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 4px, #000 calc(var(--pill-top) + 22px));
+  mask-image: linear-gradient(to bottom, transparent 0, transparent 4px, #000 calc(var(--pill-top) + 22px));
+}
+/* The handle between the card and the timeline: only on a wide page, where
+   the timeline stands beside the card (the 1180px block above). */
+.dev-request-rail-divider { display: none; }
+@media (min-width: 1180px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)):has(.dev-thread-card) .dev-request-rail-divider {
+    display: block;
+    position: absolute;
+    z-index: 4;
+    top: var(--pill-under);
+    bottom: 24px;
+    inset-inline-end: calc(var(--thread-rail-w) + var(--thread-rail-gap) / 2 - 12px);
+    width: 24px;
+    cursor: col-resize;
+    touch-action: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    THE THREAD'S RAIL: "How it got here" (dev-board/topic/thread-rail.tsx).
    A request's and a change's page say their big events down a line: asked,
    planned, built, tested, and last where the thread stands now. The shell
@@ -29726,6 +30022,12 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-wash-a: 255, 253, 240;
   --bl-wash-b: 247, 220, 200;
   --bl-wash-c: 251, 230, 175;
+  /* The splotches the light page wears in their place (THE SPLOTCHES,
+     below): the standard wallpaper's own lilac, pink and peach, as r, g, b,
+     scattered thin over the cream. Light only: dark keeps its washes. */
+  --bl-splotch-a: 229, 216, 239;
+  --bl-splotch-b: 245, 215, 230;
+  --bl-splotch-c: 252, 219, 212;
   /* Home's cards lift a little further off the washes. */
   --bl-lift-home: 0 1px 2px rgba(18, 26, 14, 0.05), 0 18px 40px -22px rgba(70, 50, 20, 0.38);
   --bl-sun: #ffee6f;
@@ -29820,6 +30122,12 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-wash-a: 30, 42, 68;
   --bl-wash-b: 24, 38, 84;
   --bl-wash-c: 22, 50, 82;
+  /* Dark keeps the washes (THE SPLOTCHES are light's), so its splotch
+     colours are the washes' own blues, set only so each mode has the
+     look's every colour. */
+  --bl-splotch-a: 30, 42, 68;
+  --bl-splotch-b: 24, 38, 84;
+  --bl-splotch-c: 22, 50, 82;
   --bl-lift-home: var(--bl-lift);
   --bl-sun: #ffee6f;
   --bl-sun-lit: #fff6ac;
@@ -29909,7 +30217,8 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]):not([data-contrast="mo
    star below the navy bar rather than under it; from 640px two more copies
    of the star, larger and quieter, sit lower on the page. The star and the
    grain are the route rule's variables, so each falls back to nothing on a
-   screen that rule does not name rather than voiding the whole background. */
+   screen that rule does not name rather than voiding the whole background.
+   In light the washes give way to THE SPLOTCHES (below); dark keeps them. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) {
   --home-ground: var(--bl-page);
   --un-zoom-bg: var(--bl-page);
@@ -29936,6 +30245,25 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
       var(--home-star, none) left 20% bottom 120px / 240px 193px no-repeat,
       var(--home-star, none) right 300px top 56% / 170px 137px no-repeat;
   }
+}
+/* THE SPLOTCHES (Evan's wallpaper review on the iPhone Duo, 18 Nov 2026:
+   option 5b, "scatter, lilac, softer"). In light the cream carries six small
+   round splotches scattered over the whole page instead of the corner
+   washes, in --bl-splotch-*, each fading to half by its middle stop and to
+   nothing at its edge, faint enough that the cream stays the ground. Their
+   radii are in vmin, set against the Duo's 466pt-wide cover where they were
+   chosen (30px there is 6.44vmin), so a splotch keeps its size against the
+   screen on every phone, tablet and desktop, and one set serves every width:
+   this rule comes after the 640px one above, which is dark's alone now. The
+   grain and the stars are unchanged. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
+  --look-washes:
+    radial-gradient(circle at 24% 14%, rgba(var(--bl-splotch-a), 0.39) 6.44vmin, rgba(var(--bl-splotch-a), 0.195) 17.17vmin, rgba(var(--bl-splotch-a), 0) 27.9vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 96% 30%, rgba(var(--bl-splotch-b), 0.42) 6.44vmin, rgba(var(--bl-splotch-b), 0.21) 19.31vmin, rgba(var(--bl-splotch-b), 0) 32.19vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 36% 58%, rgba(var(--bl-splotch-c), 0.42) 5.36vmin, rgba(var(--bl-splotch-c), 0.21) 16.09vmin, rgba(var(--bl-splotch-c), 0) 26.82vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 86% 86%, rgba(var(--bl-splotch-a), 0.39) 8.58vmin, rgba(var(--bl-splotch-a), 0.195) 21.46vmin, rgba(var(--bl-splotch-a), 0) 34.33vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 4% 84%, rgba(var(--bl-splotch-b), 0.39) 6.44vmin, rgba(var(--bl-splotch-b), 0.195) 17.17vmin, rgba(var(--bl-splotch-b), 0) 27.9vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 72% 4%, rgba(var(--bl-splotch-c), 0.39) 4.29vmin, rgba(var(--bl-splotch-c), 0.195) 12.88vmin, rgba(var(--bl-splotch-c), 0) 21.46vmin) 0 0 / 100% 100% no-repeat var(--bl-page);
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body::before {
   background: var(--look-wallpaper, var(--bl-page));
@@ -30451,14 +30779,17 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     min-width: 0;
   }
 
-  /* NEEDS YOU BESIDE PINNED APPS. From 1280px, while something waits on
-     you, the card is a column at Pinned apps' side rather than a row under
-     it: the two start and end on the same lines, the column lists the first
-     five and its heading opens the rest. Home's column is wider for it. The
-     launcher grid keeps its own box (the note on `#app-list` above): the
-     card it sat on is drawn by the box around it, which is what stretches,
-     and the grid rides its middle. Without a vote waiting, or with no apps
-     section, nothing here applies and Home is one column as it was. */
+  /* RECENT THREADS BESIDE PINNED APPS. From 1280px, while there are recent
+     threads to list, the card is a column at Pinned apps' side rather than a
+     row under it: the two start on the same line, the column lists as many
+     threads as fit beside Pinned apps with a last row saying how many more
+     there are, and a short list ends after its last row. Home's column is
+     wider for it. The launcher grid keeps its own box (the note on
+     `#app-list` above): the card it sat on is drawn by the box around it,
+     which is what stretches, and the grid rides its middle. With no recent
+     threads, or with no apps section, nothing here applies and Home is one
+     column as it was. (The card and its id are the Needs you card's,
+     #6816: the look's selectors keep that name.) */
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-column {
     max-width: 82.5rem;
   }
@@ -30507,6 +30838,12 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     background-color: transparent;
     box-shadow: none;
   }
+  /* The column stretches to the line Pinned apps ends on, and holds its
+     content to that height: with `contain: size` its own rows add nothing to
+     the grid row, so Pinned apps alone sets it and the card's row count can
+     never grow the box it was worked out from. The floor is a heading and
+     about two rows, for one decision and the "more" row beside a short
+     Pinned apps. */
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card) {
     grid-column: 2;
     grid-row: 1;
@@ -30514,22 +30851,36 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     flex-direction: column;
     padding: 0;
     padding-inline-end: 12px;
+    contain: size;
+    min-height: 200px;
+    overflow: hidden;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card {
     --wip-cols: 1;
-    flex: 1 1 auto;
+    /* It ends after its last row: a short list leaves no empty block under it. */
+    flex: none;
     display: flex;
     flex-direction: column;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel {
-    flex: 1 1 auto;
+    flex: none;
     box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows {
     margin-top: 0;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows > li:nth-child(n + 6) {
-    display: none;
+  /* How many more recent threads than the column could list: a row of its
+     own, the action's colour, opening the whole list. A button, so it takes
+     the row's width and reads its words from the start. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 3.25rem;
+    text-align: start;
+    cursor: pointer;
+    font-size: 15px;
+    font-weight: 650;
+    color: var(--wip-ink-action);
   }
 }
 /* ON A PHONE NEEDS YOU IS A ROW OF CARDS that scrolls sideways, as Next

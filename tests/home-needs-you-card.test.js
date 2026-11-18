@@ -1,15 +1,18 @@
 'use strict';
 
-// Home's Needs you card: the second card of Home's side column, under the
-// New project card, from 1280px.
+// Home's card in `#home-aside` (frontend/src/features/home/needs-you-card.tsx):
+// it was the Needs you card and, since #6816, lists the project's recent
+// threads, the same list the notifications sheet's Recent threads tab shows.
+// The file, the component and the id keep the names they had, because the
+// look's CSS knows the section by `#home-needs-card`.
 //
-//   1. It is drawn only while a vote waits on the viewer (the count Home's
-//      Needs you tile and the tab badge read), and it is one link to Needs
-//      you (`#needs`).
-//   2. Its numbers come from the Needs you feed, read only where the column
-//      is displayed: how many votes decide, how many are advisory, and the
-//      communities that wait.
-//   3. Zero says nothing: no advisory part when there is none.
+//   1. It is drawn where there is a thread to list, as a section: its label
+//      line on the page, then one card.
+//   2. Rows read like the sheet's own (ThreadRow): the project's 44px tile,
+//      what the thread is, its title and the project with how long ago. No
+//      pill: a row here is not something asked of the viewer.
+//   3. Beside Pinned apps the column lists as many as fit and its last row
+//      says how many more there are; everywhere else it lists NEEDS_ROWS.
 //
 // Run with: node --test tests/home-needs-you-card.test.js
 
@@ -24,13 +27,20 @@ const { message } = require('./lib/platform-i18n');
 const CARD = 'frontend/src/features/home/needs-you-card.tsx';
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-const item = (id, slug, extra = {}) => ({
-  kind: 'proposal', id, title: `Change ${id}`, app: { slug, name: slug.toUpperCase() }, ...extra,
+const thread = (threadId, extra = {}) => ({
+  threadId,
+  kind: 'change',
+  number: threadId + 100,
+  title: `Thread ${threadId}`,
+  appSlug: 'plant-pal',
+  appName: 'Plant Pal',
+  lastAt: '2026-11-18T09:00:00.000Z',
+  href: `#app/plant-pal/dev/changes/${threadId + 100}`,
+  ...extra,
 });
 
 test('the island mounts it under Standard (WIP) and the brand look, in a row of its own before Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  // The brand look takes the same row (Drea's review of #6699).
   // Standard (WIP) mounts it as soon as the look and the viewer are known, so its
   // place is held from the first paint; the brand look mounts it with the grid.
   assert.match(island, /const aside = wip \? viewer : brand && grid\.ready && !!grid\.create;/);
@@ -43,82 +53,128 @@ test('the island mounts it under Standard (WIP) and the brand look, in a row of 
   assert.match(css, /html\[data-skin-wip\] #home-screen \.home-row > \.home-aside \{ order: 1; \}/);
 });
 
-test('it is a section as Pinned projects is: its label line on the page, then one card, drawn from the waiting count', () => {
+test('it is a section as Pinned apps is: its label line on the page, then one card of recent threads', () => {
   const src = read(CARD);
-  assert.match(src, /const \{ badgeNeeds \} = useStoreState\(communityScopeStore\)/);
-  assert.match(src, /if \(!summary\) return null;/);
-  assert.match(src, /<section id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-needs=\{String\(summary\.total\)\}>/);
-  // The label, the count and a chevron are one link to all of Needs you, right after one another.
-  assert.match(src, /<SectionHeading>\s*<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+href="#needs"/);
-  assert.match(src, /<span id="home-needs-card-title" className="wip-head-words">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<span className="wip-count" aria-hidden="true">\{summary\.total\}<\/span>\s*<\/WipHeadMore>/);
-  assert.match(src, /label=\{more > 0 \? t\('home:needsCard\.seeAllCount', \{ count: summary\.total \}\) : t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
-  assert.equal(message('home:needsCard.eyebrow'), 'Needs you');
+  assert.match(src, /const count = feed \? \(serverTotal \?\? feed\.length\) : hint;/);
+  assert.match(src, /const drawn = feed \? feed\.length > 0 : hint > 0;/);
+  assert.match(src, /if \(!drawn\) return null;/);
+  assert.match(src, /<section ref=\{sectionRef\} id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-threads=\{String\(count\)\}>/);
+  // The label, the count and a chevron are one thing to press, opening the
+  // sheet's own list; it is a button, because the list is a sheet not a page.
+  assert.match(src, /<SectionHeading>\s*<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+onClick=\{openThreadsList\}/);
+  assert.match(src, /<span id="home-needs-card-title" className="wip-head-words">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<span className="wip-count" aria-hidden="true">\{count\}<\/span>\s*<\/WipHeadMore>/);
+  assert.match(src, /label=\{leftOut > 0 \? t\('home:needsCard\.seeAllCount', \{ count \}\) : t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
+  assert.equal(message('home:needsCard.eyebrow'), 'Recent threads');
   assert.equal(message('home:needsCard.seeAll'), 'See all');
   assert.equal(message('home:needsCard.seeAllCount_other'), 'See all {{count}}');
   // The number is a glyph beside the label; a screen reader gets the sentence.
-  assert.match(src, /<span className="sr-only">\{t\('home:needsCard\.waiting', \{ count: summary\.total \}\)\}<\/span>/);
-  assert.equal(message('home:needsCard.waiting_one'), '{{count}} decision waiting for your vote');
-  assert.equal(message('home:needsCard.waiting_other'), '{{count}} decisions waiting for your vote');
+  assert.match(src, /<span className="sr-only">\{t\('home:needsCard\.total', \{ count \}\)\}<\/span>/);
+  assert.equal(message('home:needsCard.total_one'), '{{count}} recent thread');
+  assert.equal(message('home:needsCard.total_other'), '{{count}} recent threads');
   // The card holds the list alone.
-  assert.match(src, /<WipCard className="wip-panel" data-tone="ask">\s*<ul className="wip-rows wip-rows-cols"/);
+  assert.match(src, /<WipCard className="wip-panel" data-tone="ask">\s*<ul ref=\{listRef\} className="wip-rows wip-rows-cols"/);
 });
 
-test('the feed is read at every width, and again when the count moves', () => {
+test('the list is the sheet\'s own recent threads, read once where the card is drawn', () => {
   const src = read(CARD);
+  const { THREADS_LIMIT } = loadTsx(CARD);
+  assert.equal(THREADS_LIMIT, 50, 'the page\'s own maximum: more than any column lists');
   assert.doesNotMatch(src, /matchMedia/, 'the card is drawn at every width, so nothing waits on one');
-  assert.match(src, /if \(!waiting\) \{ setFeed\(null\); return undefined; \}/, 'nothing waits: nothing is read');
-  assert.match(src, /sharedJson<\{ items\?: NeedsCardItem\[\] \}>\(`\/api\/workshop\/needs-feed\$\{demoQuery\(\)\}`, \{ fresh: true \}\)/);
-  assert.match(src, /\}, \[waiting, known\]\);/);
-  assert.match(src, /if \(!known\) return undefined;/, 'the list is read once the count is this load\'s own, not on the remembered one');
+  assert.doesNotMatch(src, /needs-feed/, 'what waits for a vote is not this card any more');
+  assert.match(src, /sharedJson<\{ threads\?: RecentThreadItem\[\]; total\?: number \}>\(/);
+  assert.match(src, /`\/api\/me\/recent-threads\?limit=\$\{THREADS_LIMIT\}\$\{demoQuery\(\)\}`/);
+  assert.match(src, /setServerTotal\(Number\.isFinite\(Number\(body\.total\)\) \? Number\(body\.total\) : body\.threads\.length\)/, 'the count is the whole list\'s, not one page\'s');
 });
 
 test('while the list is on its way the card holds its place, from what the last visit saw', () => {
   const src = read(CARD);
   const { NEEDS_HINT_KEY } = loadTsx(CARD);
-  assert.equal(NEEDS_HINT_KEY, 'homeroom:needs-waiting');
-  // The count of the last visit stands in until this load's is known, and is kept once it is.
+  assert.equal(NEEDS_HINT_KEY, 'homeroom:recent-threads');
+  // The count of the last visit stands in until this load's list arrives, and is kept once it does.
   assert.match(src, /const \[hint\] = useState\(readNeedsHint\);/);
-  assert.match(src, /const waiting = Math\.max\(0, known \? Number\(badgeNeeds\) \|\| 0 : hint\);/);
-  assert.match(src, /useEffect\(\(\) => \{ if \(known\) writeNeedsHint\(Number\(badgeNeeds\) \|\| 0\); \}, \[known, badgeNeeds\]\);/);
-  // Zero is removed, so somebody with nothing waiting gets no placeholder to flash and go.
+  assert.match(src, /useEffect\(\(\) => \{ if \(feed\) writeNeedsHint\(count\); \}, \[feed, count\]\);/);
+  // Zero is removed, so somebody with no threads gets no placeholder to flash and go.
   assert.match(src, /if \(count > 0\) window\.localStorage\.setItem\(NEEDS_HINT_KEY, String\(count\)\);\s*else window\.localStorage\.removeItem\(NEEDS_HINT_KEY\);/);
-  // As many placeholder rows as wait, in the list's own columns, said once in words.
+  // As many placeholder rows as the last visit saw, in the list's own columns, said once in words.
   assert.match(src, /\{!feed \? \(/);
   assert.match(src, /<WipCard className="wip-panel animate-pulse" data-tone="ask" data-loading="" role="status" aria-label=\{t\('home:grid\.loading'\)\}>/);
-  assert.match(src, /Array\.from\(\{ length: Math\.min\(summary\.total, NEEDS_ROWS\) \}, \(_, i\) => <li key=\{i\}><WipSkelRow \/><\/li>\)/);
+  assert.match(src, /Array\.from\(\{ length: Math\.min\(hint, NEEDS_ROWS\) \}, \(_, i\) => <li key=\{i\}><WipSkelRow \/><\/li>\)/);
 });
 
-test('the numbers: the count until the feed is read, then the feed\'s own split', () => {
-  const { needsSummary, decides } = loadTsx(CARD);
-  assert.equal(needsSummary(0, null), null, 'nothing waits: no card');
-  assert.deepEqual(needsSummary(3, null), { total: 3, decide: 0, advisory: 0 }, 'the count alone, before the feed');
-  assert.equal(needsSummary(3, []), null, 'a feed that came back empty: nothing to open');
-  const feed = [item(1, 'a'), item(2, 'a', { advisory: true }), item(3, 'b', { uncounted: true }), item(4, 'c')];
-  assert.deepEqual(needsSummary(9, feed), { total: 4, decide: 2, advisory: 2 }, 'the two parts add up to the total');
-  assert.equal(decides(feed[0]), true);
-  assert.equal(decides(feed[1]), false, 'outside the deciders');
-  assert.equal(decides(feed[2]), false, 'a vote recorded but not counted');
-});
-
-test('the icons are the communities that wait: once each, in order, four at most', () => {
-  const { waitingApps } = loadTsx(CARD);
-  const feed = [item(1, 'a'), item(2, 'a'), item(3, 'b'), { kind: 'question', id: 4, title: 'q', app: null },
-    item(5, 'c'), item(6, 'd'), item(7, 'e')];
-  assert.deepEqual(waitingApps(feed).map((app) => app.slug), ['a', 'b', 'c', 'd']);
-  assert.deepEqual(waitingApps(null), []);
-});
-
-test('what waits is a list in the look\'s columns, each row opening its project\'s Needs you', () => {
+test('beside Pinned apps it lists as many as fit, and its last row says how many more there are', () => {
+  const { needsLayout, NEEDS_ROWS } = loadTsx(CARD);
+  const feed = Array.from({ length: 16 }, (_, i) => thread(i + 1));
+  assert.equal(NEEDS_ROWS, 8, 'where the column cannot be measured it lists two lines of four');
+  assert.deepEqual(needsLayout(feed, null), { rows: feed.slice(0, NEEDS_ROWS), more: 0 }, 'no measurement: as it always listed');
+  const { rows, more } = needsLayout(feed, 7);
+  assert.equal(rows.length, 6, 'one row of the space goes to the "more" row');
+  assert.equal(more, 10);
+  assert.equal(rows.length + more, feed.length, 'the rows shown plus "N more" are the count in the heading');
+  const two = feed.slice(0, 2);
+  assert.deepEqual(needsLayout(two, 7), { rows: two, more: 0 }, 'a short list lists all of itself and ends there');
+  assert.deepEqual(needsLayout(feed, 16), { rows: feed, more: 0 }, 'everything fits: no "more" row');
+  // With only room for one row, that one and the "more" row are the column.
+  const tight = needsLayout(feed, 2);
+  assert.deepEqual(tight.rows, feed.slice(0, 1));
+  assert.equal(tight.more, 15);
+  // A list longer than the page the card asked for counts what it could not
+  // have asked for either: the heading's number stays the rows plus "more".
+  const long = needsLayout(feed, 7, 40);
+  assert.equal(long.rows.length + long.more, 40);
   const src = read(CARD);
-  const { NEEDS_ROWS } = loadTsx(CARD);
-  assert.equal(NEEDS_ROWS, 8, 'two lines of four on a wide screen; See all has the rest');
-  assert.match(src, /<ul className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">/);
-  assert.match(src, /href=\{slug \? placeHref\(slug, 'needs'\) : '#needs'\}/, 'a row is a link a new tab can open');
-  assert.match(src, /win\.AppView\?\._landOnTab\?\.\(slug, 'needs'\);[\s\S]*?win\.App\?\.navigateToApp\?\.\(slug, 'dev'\);/, 'and a plain tap lands on that place');
-  // One pill a row: filled when the viewer's vote decides, plain when it is advisory.
-  assert.match(src, /className=\{decides\(item\) \? 'wip-pill wip-pill-action' : 'wip-pill'\}/);
-  assert.equal(message('home:needsCard.vote'), 'Vote');
-  assert.equal(message('home:needsCard.advisoryPill'), 'Advisory');
+  // It measures the column beside Pinned apps only: the page's grid puts the aside in column 2.
+  assert.match(src, /getComputedStyle\(aside\)\.gridColumnStart !== '2'/);
+  assert.match(src, /new ResizeObserver\(measure\);/);
+  assert.match(src, /aside\.clientHeight - \(heading\?\.offsetHeight \|\| 0\) - padding/);
+  // The last row opens the whole list and carries the count.
+  assert.match(src, /<button type="button" className="wip-row wip-row-more" data-threads-more="" onClick=\{openThreadsList\}>\s*\{t\('home:needsCard\.more', \{ count: more \}\)\}/);
+  assert.equal(message('home:needsCard.more_other'), '{{count}} more');
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /#home-needs-card \.wip-rows > li:nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth');
+  assert.match(css, /#home-needs-card \.wip-row-more \{[^}]*width: 100%;[^}]*text-align: start;/, 'a button takes the row\'s width');
+});
+
+test('the heading and the last row open the sheet on its Recent threads list', () => {
+  const src = read(CARD);
+  assert.match(src, /import \{ notificationsSheetStore \} from '\.\.\/notifications\/notifications-sheet-store\.js';/);
+  assert.match(src, /try \{ notificationsSheetStore\.set\(\{ tab: 'threads' \}\); \}/);
+  assert.match(src, /if \(typeof win\.App\?\.openNotificationsSheet === 'function'\) \{ win\.App\.openNotificationsSheet\(\); return; \}/);
+  assert.match(src, /win\.NotificationsSheet\?\.open\?\.\(\);/);
+  // The sheet picks the tab up as it opens, and clears the request.
+  const sheet = read('frontend/src/features/notifications/notifications-sheet.tsx');
+  assert.match(sheet, /if \(!open \|\| !wantedTab\) return;\s*setTab\(wantedTab\);\s*notificationsSheetStore\.set\(\{ tab: null \}\);/);
+});
+
+test('a row reads like a Recent threads row: the project\'s tile, what it is, its title, the project and how long ago', () => {
+  const src = read(CARD);
+  const { kindId } = loadTsx(CARD);
+  assert.equal(kindId({ kind: 'change', number: 6800 }), 'home:needsCard.kind.change');
+  assert.equal(kindId({ kind: 'change', number: null }), 'home:needsCard.kind.changeBare');
+  assert.equal(kindId({ kind: 'decision', number: null }), 'home:needsCard.kind.decision');
+  assert.equal(kindId({ kind: 'request', number: 6790 }), 'home:needsCard.kind.request');
+  assert.equal(kindId({ kind: 'request', number: null }), 'home:needsCard.kind.requestBare');
+  assert.equal(message('home:needsCard.kind.change'), 'Change #{{number}}');
+  assert.equal(message('home:needsCard.kind.request'), 'Request #{{number}}');
+  assert.equal(message('home:needsCard.kind.decision'), 'Decision');
+  assert.equal(message('home:needsCard.meta'), '{{project}} · <0>{{when}}</0>');
+  // The same app tile the notifications sheet draws, from the same two pieces.
+  assert.match(src, /from '\.\.\/apps\/app-card-view'/);
+  assert.match(src, /data-icon=\{appIconKind\(app\)\}\s*className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"\s*>\s*<AppIconContent app=\{app\} \/>/);
+  // Three lines in the text column, the title on one line.
+  assert.match(src, /<span className="wip-item-kind block text-xs text-zinc-500 dark:text-zinc-400 truncate">\s*\{t\(kindId\(thread\)/);
+  assert.match(src, /<b className="wip-item-title block text-\[15px\] font-\[650\] truncate">\{thread\.title\}<\/b>/);
+  assert.match(src, /<RichMessage\s+id="home:needsCard\.meta"\s+values=\{\{ project: app\.name, when \}\}\s+components=\{\[<time title=\{whenTitle\} \/>\]\}\s*\/>/);
+  // No waiting time: the project's name alone.
+  assert.match(src, /\) : \(\s*<span className="wip-item-meta block text-\[13px\][^"]*">\{app\.name\}<\/span>/);
+  // No pill: these are not things asked of the viewer.
+  assert.doesNotMatch(src, /wip-pill/, 'conversation is not a vote');
+  assert.doesNotMatch(src, /home:needsCard\.(vote|advisoryPill)/);
+});
+
+test('a row is the thread\'s own page, and the card lists what is in the look\'s columns', () => {
+  const src = read(CARD);
+  assert.match(src, /<a className="wip-row" href=\{thread\.href\} data-recent-thread=\{thread\.threadId\}>/, 'a row is a link a new tab can open');
+  assert.match(src, /<ul ref=\{listRef\} className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">/);
   // As many columns as the look has room for, the number Challenges' cards read too.
   const css = read('public/css/app.css');
   assert.match(css, /\.wip-rows-cols \{ grid-template-columns: repeat\(var\(--wip-cols, 1\), minmax\(0, 1fr\)\);/);

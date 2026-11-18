@@ -20,4 +20,10 @@ export const notificationsSheetStore = createStore({
    * raises when this is false — see lib/sheet-controller.js.
    */
   adopted: false,
+  /**
+   * The tab a caller outside the sheet asks it to open on (`#6816`: Home's
+   * Recent threads card). The sheet reads it as it opens and clears it, so it
+   * is a request for this opening, not a setting; null is nothing asked.
+   */
+  tab: null,
 });

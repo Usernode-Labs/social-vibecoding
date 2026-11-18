@@ -678,15 +678,20 @@ function notificationsRoutes(config) {
       // Staging-only demo rows (?demo=1), see demoThreads: the first page
       // only, and a strict no-op outside staging.
       if (IS_STAGING && req.query.demo === '1' && !before) {
-        return res.json({ threads: recentThreads.demoThreads(), hasMore: false, nextBefore: null });
+        const demo = recentThreads.demoThreads();
+        return res.json({ threads: demo, total: demo.length, hasMore: false, nextBefore: null });
       }
-      const rows = await recentThreads.listRecentThreads(pool, req.user.id, {
+      const { threads: rows, total } = await recentThreads.recentThreadsPage(pool, req.user.id, {
         limit, before, beforeId, isAdmin: !!req.user.isAdmin,
       });
       const hasMore = rows.length === limit;
       const last = rows[rows.length - 1];
+      // `total` is how many threads there are in all, which outlasts one page:
+      // Home's card says how many more it has than the rows it could list
+      // (#6816).
       return res.json({
         threads: rows,
+        total,
         hasMore,
         nextBefore: hasMore && last ? { lastAt: last.lastAt, id: last.threadId } : null,
       });

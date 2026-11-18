@@ -1,5 +1,7 @@
 import { normalizeWorkState } from '../../lib/work-state';
 import type {
+  BotLiveWork,
+  BotOutcome,
   DesignPin,
   ConversationDetail,
   ConversationMember,
@@ -357,8 +359,42 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
       ...(normalizeFiledNext(pick(bot, 'filedNext')) ? { filedNext: normalizeFiledNext(pick(bot, 'filedNext'))! } : {}),
       // Task 2020: a chat answer laid out, drawn in place of its words (./bot-html.tsx).
       ...(replyHtmlOf(pick(bot, 'html')) ? { html: replyHtmlOf(pick(bot, 'html'))! } : {}),
+      // 18 Nov 2026: what came of an offer, on its card (./bot-question.tsx OfferOutcome).
+      ...(normalizeBotOutcome(pick(bot, 'outcome')) ? { outcome: normalizeBotOutcome(pick(bot, 'outcome'))! } : {}),
+      // 18 Nov 2026: the request a reply started work on (./bot-live-card.tsx).
+      ...(normalizeLiveWork(pick(bot, 'liveWork')) ? { liveWork: normalizeLiveWork(pick(bot, 'liveWork'))! } : {}),
     },
   };
+}
+
+const OUTCOME_STATES: ReadonlySet<string> = new Set(['done', 'declined', 'failed']);
+
+/** 18 Nov 2026: what came of an offer as the server stores it (homeroom-bot-mayor.js settleOnCard), or null. */
+export function normalizeBotOutcome(input: unknown): BotOutcome | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  const words = text(pick(row, 'text')).slice(0, 600);
+  const state = text(pick(row, 'state'));
+  if (!words || !OUTCOME_STATES.has(state)) return null;
+  const issueNumber = strictId(pick(row, 'issueNumber'));
+  const kind = text(pick(row, 'kind')).slice(0, 40);
+  const next = normalizeFiledNext(pick(row, 'filedNext'));
+  return {
+    text: words, state: state as BotOutcome['state'],
+    ...(kind ? { kind } : {}), ...(issueNumber ? { issueNumber } : {}), ...(next ? { filedNext: next } : {}),
+  };
+}
+
+/** 18 Nov 2026: the request a reply started work on, as the server stores it (homeroom-bot-mayor.js liveWorkOf), or null. */
+export function normalizeLiveWork(input: unknown): BotLiveWork | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  const appSlug = text(pick(row, 'appSlug')).slice(0, 120);
+  const issueNumber = strictId(pick(row, 'issueNumber'));
+  if (!appSlug || !issueNumber) return null;
+  const appName = text(pick(row, 'appName')).slice(0, 120);
+  const title = text(pick(row, 'title')).slice(0, 300);
+  return { appSlug, issueNumber, ...(appName ? { appName } : {}), ...(title ? { title } : {}) };
 }
 
 /** Task 2020: a reply's laid-out copy as stored (homeroom-bot-html.js bounds it to 30000), or null. */
@@ -1625,7 +1661,11 @@ function threadFieldsOf(row: JsonRecord): Pick<HomeroomBotJob, 'cardId' | 'ask' 
 
 export function normalizeBotWork(input: unknown): HomeroomBotWork {
   const tracks = pick(record(input), 'tracks');
-  return { tracks: Array.isArray(tracks) ? tracks.map(normalizeBotTrack).filter((track): track is BotTrack => !!track) : [] };
+  // 18 Nov 2026: the requests a live card follows that are not the viewer's own (services/ai-work.js tracksFor).
+  const watched = pick(record(input), 'watched');
+  const list = (value: unknown) => (Array.isArray(value) ? value.map(normalizeBotTrack).filter((track): track is BotTrack => !!track) : []);
+  const followed = list(watched);
+  return { tracks: list(tracks), ...(followed.length ? { watched: followed } : {}) };
 }
 
 const TRACK_STEPS = new Set<BotTrackStep>(['plan', 'build', 'checks', 'vote', 'live']);
@@ -1763,8 +1803,12 @@ export async function getBotSlots(slug: string): Promise<BotSlotsView | null> {
  * that never did, so a slow answer was the worker's offline copy, and the
  * header said "Working on…" for work long finished (see ReadOptions).
  */
-export async function getHomeroomBotWork(options?: ReadOptions): Promise<HomeroomBotWork> {
-  return normalizeBotWork(await request<unknown>('/api/ai/tracks', readInit(options)));
+export async function getHomeroomBotWork(options?: ReadOptions & { also?: readonly string[] }): Promise<HomeroomBotWork> {
+  // 18 Nov 2026: and the requests the live cards on screen follow that are
+  // not the viewer's own, as `slug:number` (services/ai-work.js parseAlso).
+  const also = (options?.also || []).filter((key) => /^[a-z0-9][a-z0-9-]*:[1-9][0-9]*$/.test(key)).slice(0, 10);
+  const path = also.length ? `/api/ai/tracks?also=${encodeURIComponent(also.join(','))}` : '/api/ai/tracks';
+  return normalizeBotWork(await request<unknown>(path, readInit(options)));
 }
 
 /**

@@ -141,6 +141,16 @@ test('the threads a person took part in, against the full schema', { timeout: 12
 
   const rows = await recentThreads.listRecentThreads(pool, ada.id, { limit: 30 });
   const ids = rows.map((row) => row.threadId);
+  // #6816: the page says how many there are in all, which the cursor's own
+  // cut does not shrink — Home's card counts what it could not list.
+  const page = await recentThreads.recentThreadsPage(pool, ada.id, { limit: 2 });
+  const later = await recentThreads.recentThreadsPage(pool, ada.id, {
+    limit: 2, before: page.threads[page.threads.length - 1].lastAt,
+    beforeId: page.threads[page.threads.length - 1].threadId,
+  });
+  assert.equal(page.threads.length, 2);
+  assert.equal(page.total, rows.length, 'the whole list, not the page');
+  assert.equal(later.total, rows.length, 'and the same on a later page');
   assert.ok(ids.includes(filed.id), 'a request she filed is listed');
   assert.ok(ids.includes(wrote.id), 'a thread she wrote in is listed');
   assert.ok(ids.includes(mentioned.id), 'a thread she was @mentioned in is listed');
@@ -259,6 +269,7 @@ test('the route clamps its limit and keeps its no-store cache header', async () 
       assert.equal(res.headers.get('cache-control'), 'private, no-store');
       const body = await res.json();
       assert.deepEqual(body.threads, []);
+      assert.equal(body.total, 0, 'how many threads in all (#6816)');
       assert.equal(body.hasMore, false);
       assert.equal(body.nextBefore, null);
       assert.equal(queries.length, 1);
@@ -303,6 +314,7 @@ test('a cursor is passed through, and a full page answers a next cursor', async 
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.hasMore, true);
+    assert.equal(body.total, 1, 'the row the stub answered stands for the whole list');
     assert.deepEqual(body.nextBefore, { lastAt: at, id: 8 });
     assert.deepEqual(queries[0].params.slice(3), [at, 9]);
     assert.deepEqual(body.threads[0], {
