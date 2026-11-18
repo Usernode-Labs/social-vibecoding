@@ -27,9 +27,11 @@ const CLEAN = "export const address = '/feature';\n/** This page's address: wher
 
 // A stand-in for the model: resolves the conflict by replacing the file.
 // STUB_MODE says what its turns leave behind:
-//   broken  always the dropped comment opener
-//   clean   always a parsing resolution
-//   fix     broken on the resolution turn, clean when asked to fix parsing
+//   broken     always the dropped comment opener
+//   clean      always a parsing resolution
+//   fix        broken on the resolution turn, clean when asked to fix parsing
+//   duplicate  always valid JSON that defines a key twice (#6829)
+const DUPLICATE_JSON = '{\n  "greeting": "hello",\n  "greeting": "hello again"\n}\n';
 const STUB_CLAUDE = `#!/usr/bin/env node
 const fs = require('fs');
 const args = process.argv.slice(2);
@@ -37,9 +39,13 @@ const prompt = args[args.indexOf('-p') + 1] || '';
 fs.appendFileSync(process.env.STUB_LOG, prompt + '\\n----\\n');
 const broken = ${JSON.stringify(BROKEN)};
 const clean = ${JSON.stringify(CLEAN)};
-const fixing = /do not parse|no longer parse/.test(prompt);
+const duplicate = ${JSON.stringify(DUPLICATE_JSON)};
+const fixing = /do not parse|no longer parse|defined more than once/.test(prompt);
 const mode = process.env.STUB_MODE || 'broken';
-fs.writeFileSync(${JSON.stringify(FILE)}, mode === 'clean' ? clean : mode === 'fix' && fixing ? clean : broken);
+const content = mode === 'clean' ? clean
+  : mode === 'duplicate' ? duplicate
+  : mode === 'fix' && fixing ? clean : broken;
+fs.writeFileSync(process.env.STUB_FILE || ${JSON.stringify(FILE)}, content);
 console.log(JSON.stringify({ type: 'result', is_error: false, result: 'done', session_id: 'cc-1',
   usage: { input_tokens: 1, output_tokens: 1 } }));
 `;
@@ -60,24 +66,29 @@ const STUB_ESBUILD = `module.exports = { transformSync(source) {
 } };
 `;
 
-// A branch and main that each changed the same .tsx file, so the merge
-// conflicts on it, and the stub's resolution decides what it becomes.
-function fixture(t) {
+// A branch and main that each changed the same file, so the merge conflicts
+// on it, and the stub's resolution decides what it becomes. `options` names
+// another file and its three contents for a conflict that is not the .tsx one.
+function fixture(t, options = {}) {
+  const file = options.file || FILE;
+  const seedContent = options.seed || CLEAN;
+  const branchContent = options.branch || "export const address = '/branch';\n/** Branch's doc. */\n";
+  const mainContent = options.main || "export const address = '/main';\n/** Main's doc. */\n";
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sync-parse-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const origin = path.join(dir, 'origin.git');
   const seed = path.join(dir, 'seed');
   git(dir, 'init', '-q', '--bare', '-b', 'main', origin);
   git(dir, 'clone', '-q', origin, seed);
-  fs.mkdirSync(path.dirname(path.join(seed, FILE)), { recursive: true });
-  fs.writeFileSync(path.join(seed, FILE), CLEAN);
+  fs.mkdirSync(path.dirname(path.join(seed, file)), { recursive: true });
+  fs.writeFileSync(path.join(seed, file), seedContent);
   fs.writeFileSync(path.join(seed, '.gitignore'), 'node_modules/\n');
   git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'baseline');
   git(seed, 'switch', '-qc', BRANCH);
-  fs.writeFileSync(path.join(seed, FILE), "export const address = '/branch';\n/** Branch's doc. */\n");
+  fs.writeFileSync(path.join(seed, file), branchContent);
   git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'branch');
   git(seed, 'switch', '-q', 'main');
-  fs.writeFileSync(path.join(seed, FILE), "export const address = '/main';\n/** Main's doc. */\n");
+  fs.writeFileSync(path.join(seed, file), mainContent);
   git(seed, 'add', '-A'); git(seed, 'commit', '-qm', 'main');
   git(seed, 'push', '-q', 'origin', 'main', BRANCH);
   const ws = path.join(dir, 'ws');
@@ -93,7 +104,7 @@ function fixture(t) {
   fs.chmodSync(path.join(bin, 'claude'), 0o755);
   const prompt = path.join(dir, 'prompt.txt');
   fs.writeFileSync(prompt, 'Sync with main');
-  return { dir, ws, bin, prompt, log: path.join(dir, 'claude.log'), branchHead: git(ws, 'rev-parse', 'HEAD') };
+  return { dir, ws, bin, prompt, file, log: path.join(dir, 'claude.log'), branchHead: git(ws, 'rev-parse', 'HEAD') };
 }
 
 function sync(fx, extra = {}) {
@@ -101,6 +112,7 @@ function sync(fx, extra = {}) {
     ...ENV, PATH: `${fx.bin}:${process.env.PATH}`, HOME: fx.dir,
     PROMPT_FILE: fx.prompt, WORKSPACE_DIR: fx.ws, MODE: 'sync', BRANCH, SESSION_ID: '6536',
     PLATFORM_URL: 'http://127.0.0.1:1', WORKER_JWT: 'test-worker-jwt', STUB_LOG: fx.log,
+    STUB_FILE: fx.file,
     AGENT_PROVIDER: 'anthropic',
     USERNODE_CGROUP_DIR: path.join(fx.dir, 'absent-cgroup'),
     ...extra,
@@ -135,7 +147,33 @@ test('a resolution that parses commits and pushes as it did before', (t) => {
   assert.match(ran.result, /sync_result=resolved/);
   assert.match(ran.result, /conflict_files=frontend\/src\/feature\.tsx/);
   assert.equal(git(fx.ws, 'log', '-1', '--format=%s'), 'Merge origin/main via Homeroom sync (Claude-resolved)');
+  assert.equal(git(fx.ws, 'log', '-1', '--format=%b').trim(), 'Resolved: frontend/src/feature.tsx',
+    'the body names the file whose conflict the merge resolved');
   assert.equal(fs.readFileSync(path.join(fx.ws, FILE), 'utf8'), CLEAN);
+});
+
+// A conflict on a language catalog file, which the model leaves with a key
+// defined twice on every turn (#6829). JSON.parse accepts that, so before
+// this gate the broken resolution was pushed and every preview build failed.
+const LOCALES_FILE = 'frontend/locales/en/home.json';
+const JSON_CONFLICT = {
+  file: LOCALES_FILE,
+  seed: '{\n  "greeting": "hello"\n}\n',
+  branch: '{\n  "greeting": "hello from the branch"\n}\n',
+  main: '{\n  "greeting": "hello from main"\n}\n',
+};
+
+test('a resolution that defines a JSON key twice gets one more turn, then aborts naming the file', (t) => {
+  const fx = fixture(t, JSON_CONFLICT);
+  const ran = sync(fx, { STUB_MODE: 'duplicate' });
+  assert.equal(ran.code, 0, ran.out);
+  assert.equal(ran.prompts.length, 2, 'the resolution turn, then the fix turn');
+  assert.match(ran.prompts[1], /defined more than once/);
+  assert.match(ran.prompts[1], /key "greeting" defined more than once/);
+  assert.match(ran.result, /sync_result=conflict/);
+  assert.match(ran.result, /conflict_files=.*frontend\/locales\/en\/home\.json/);
+  assert.equal(git(fx.ws, 'rev-parse', 'HEAD'), fx.branchHead, 'HEAD is unchanged: nothing was committed');
+  assert.equal(git(fx.ws, 'status', '--porcelain'), '', 'the merge was aborted');
 });
 
 test('a second turn that fixes the file lets the sync through', (t) => {

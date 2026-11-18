@@ -25451,9 +25451,14 @@ html.in-side-panel body {
    on a change up for a vote, its votes. The title is a link stretched over
    the row; the Vote button sits above it. */
 .dev-ws-wlist { display: flex; flex-direction: column; margin-top: 4px; }
+/* A row is square at rest and rounded only while it is lit (hovered, open
+   beside the board, focused): the hairline between rows is the row's top
+   border, and a 12px corner bent each end of that line down, so every row
+   read as the top of a card of its own. Lit, the row's own line goes
+   clear too, as the next row's does, since its fill says where it is. */
 .dev-ws-wrow {
   position: relative; display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px 2px; min-width: 0; border-radius: 12px;
+  padding: 12px 2px; min-width: 0; border-radius: 0;
 }
 .dev-ws-wrow + .dev-ws-wrow,
 .dev-ws-week + .dev-ws-week { border-top: 1px solid var(--app-sheet-line); }
@@ -25462,6 +25467,7 @@ html.in-side-panel body {
 .dev-ws-wrow[data-on] + .dev-ws-wrow,
 .dev-ws-wrow:hover + .dev-ws-wrow { border-top-color: transparent; }
 .dev-ws-wrow:hover, .dev-ws-wrow[data-on] { margin: 0 -8px; padding-inline-start: 10px; padding-inline-end: 10px; }
+.dev-ws-wrow:is(:hover, [data-on], :has(> .dev-ws-wrow-main > .dev-ws-wrow-link:focus-visible)) { border-radius: 12px; border-top-color: transparent; }
 .dev-ws-wrow-tile {
   flex: none; width: 34px; height: 34px; margin-top: 1px; border-radius: 10px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -25849,8 +25855,10 @@ body {
    Vote takes its own click. */
 .dev-ws-brow { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
 .dev-ws-brow > .dev-ws-wrow-main { flex: 1 1 0; gap: 1px; }
-.dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; }
-.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; }
+.dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; text-wrap: pretty; }
+/* `pretty`: a wrapped line in words ends on more than "ago" or "now"
+   (a browser without it wraps as it did). */
+.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; text-wrap: pretty; }
 .dev-ws-brow .dev-ws-wrow-status { margin-top: 6px; gap: 5px; }
 .dev-ws-brow > .dev-ws-row-band {
   position: relative; z-index: 1; flex: 1 0 100%; min-width: 0; margin-top: 8px; pointer-events: none;
@@ -29000,6 +29008,81 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    (a sticky box is placed inside it), so its own `top: 0` stays. */
 html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
 
+/* THE VOTE FOLDS INTO THE HEADER (18 Nov 2026, thread-card.tsx `FootFloat`).
+   While a change waits on the reader's vote and its foot has gone up behind
+   the header pill, the foot's headline, its short facts and its buttons fold
+   into the header as a second row: the pill becomes one card, the change on
+   top and what it needs from the reader under a hairline, the way the card
+   carries its own foot band. The row lies in the bar, over the scroller, so
+   nothing in the page moves when it comes or goes. It slides out from under
+   the header (which stands above it) while the header's lower corners ease
+   square, and they ease round again when the row goes. The header gives up
+   its drop shadow while the row is there, so no shadow falls across the
+   card; the row's shadow is the card's. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+  position: relative;
+  z-index: 1;
+  /* The pill's round ends, as a length its corners can ease from. */
+  border-radius: calc(var(--pill-h) / 2);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .dev-thread-float) .messages-thread-header {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-request-bar > .messages-thread-header { transition: border-radius 180ms ease; }
+.dev-thread-float {
+  pointer-events: auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 10px 10px 20px;
+  border-radius: 0 0 calc(var(--pill-h, 56px) / 2) calc(var(--pill-h, 56px) / 2);
+  background-color: var(--thread-card-solid, var(--dc-sheet-solid));
+  background-image: linear-gradient(var(--thread-foot, transparent), var(--thread-foot, transparent));
+  box-shadow: var(--thread-card-edge, inset 0 0 0 1px var(--app-sheet-line)), 0 8px 24px rgba(17, 24, 39, 0.08);
+  animation: dev-thread-float-in 180ms ease-out both;
+}
+.dev-thread-float-st { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.dev-thread-float-head,
+.dev-thread-float-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-thread-float-head { font-size: 15px; line-height: 20px; font-weight: 700; color: var(--text-primary); }
+.dev-thread-float[data-thread-float-tone="bad"] .dev-thread-float-head { color: var(--state-blocked); }
+.dev-thread-float-sub { font-size: 13px; line-height: 18px; color: var(--text-secondary); }
+.dev-thread-float-acts { flex: none; display: flex; align-items: center; gap: 8px; }
+.dev-thread-float-acts :is(button, a) {
+  height: 40px; min-height: 40px; padding-block: 0; padding-inline: 18px; border-radius: 999px;
+  font-size: 15px; font-weight: 650; line-height: 1;
+}
+.dev-thread-float-acts .dev-vote-caret { display: none; }
+@keyframes dev-thread-float-in { from { opacity: 0; transform: translateY(-12px); } }
+/* On a wide page "How it got here" stands beside the card under the header,
+   so while the row is folded in, the timeline steps down by the row's height
+   and eases back when it goes; the replies beside it do not move. */
+.dev-request-rail { transition: top 180ms ease, max-height 180ms ease; }
+@media (min-width: 1180px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)):has(.dev-thread-float) .dev-request-rail {
+    top: 64px;
+    max-height: calc(100% - var(--pill-under) - 64px) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dev-thread-float { animation: none; }
+  .dev-request-bar > .messages-thread-header { transition: none; }
+  .dev-request-rail { transition: none; }
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-thread-float { animation: none; }
+:where(html[data-motion="reduce"]) .dev-request-bar > .messages-thread-header { transition: none; }
+:where(html[data-motion="reduce"]) .dev-request-rail { transition: none; }
+@media (max-width: 520px) {
+  .dev-thread-float { gap: 8px; padding-inline-start: 16px; }
+  .dev-thread-float-acts { gap: 6px; }
+  .dev-thread-float-acts :is(button, a) { padding-inline: 14px; }
+}
+
 /* THE PAGE'S WAY BACK, AT THE PILL'S START. Its chip ("‹ Workshop", or
    "‹ Homeroom bot") is the page's, in its own host above the sheet; it is
    drawn as a disc inside the pill, its words kept for its accessible name.
@@ -29460,6 +29543,7 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   .dev-thread-foot-acts > :has(> .dev-vote-btn) { flex: 1 1 auto; }
   .dev-thread-foot-acts > :has(> .dev-vote-btn) > .dev-vote-btn { width: 100%; }
 }
+
 
 /* Where the picture will be, before there is one. */
 .dev-thread-wait,
@@ -30922,6 +31006,9 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-on-solid: #ffffff;
   --bl-tint-sun: #fff6ac;
   --bl-tint-sky: #e3eefb;
+  /* The row open beside the board: a breath of warmth, and its edge. */
+  --bl-row-on: #f9f7ea;
+  --bl-row-on-edge: rgba(18, 26, 14, 0.28);
   /* The line round a message's bubble, and round your own on sky. */
   --bl-bubble-line: rgba(18, 26, 14, 0.14);
   --bl-bubble-line-own: rgba(26, 99, 196, 0.24);
@@ -31021,6 +31108,8 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-row-on: rgba(220, 230, 248, 0.04);
+  --bl-row-on-edge: rgba(220, 230, 248, 0.38);
   --bl-bubble-line: rgba(220, 230, 248, 0.2);
   --bl-bubble-line-own: rgba(127, 188, 247, 0.42);
   --bl-card-line: rgba(220, 230, 248, 0.26);
@@ -31386,6 +31475,73 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   background-color: var(--bl-sun);
   color: var(--bl-on-sun);
 }
+/* THE BOARD, CALM. All items' columns (and the Workshop's rows) carry the
+   same marks as in the standard look, yet read as more crowded here, for
+   three repaints the look gave them by the way, each fixed in its own
+   colours:
+   - Vote was the ink (the shell's --accent here): the darkest thing on the
+     page, once a row. It is the sky, white words, as a count that asks for
+     you is. The one Vote at a change's own foot stays the sun pill (the
+     thread rules, below, are more specific), the page's one action.
+   - Something still running (checks, screenshots, a build) wore the lit
+     tint, a pale sun: on a column of them the sun stopped meaning "you are
+     here" and "do this". It is the sky's pale tint, with the sky's ink.
+   - The progress state (a vote under way: "Vote · 1/2", "0 of 1
+     approval") was the standard's purple, a third family beside the look's
+     two. It is the sky as well, so a vote's bar and its button are one
+     blue, as they are in the standard look. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) {
+  --state-progress: var(--bl-sky);
+  --state-progress-bg: var(--bl-tint-sky);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior) {
+  background: var(--bl-count);
+  color: var(--bl-on-count);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior):hover {
+  background: color-mix(in srgb, var(--bl-count) 86%, #000000);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-tag[data-tone="run"] {
+  color: var(--bl-sky);
+  background: var(--bl-tint-sky);
+}
+/* The row open beside the board (`data-on`) was the lit tint, a block of
+   pale sun the row's own pills sat on. It is an outline: a thin edge in the
+   ink (a light one in dark) round a fill only a breath off the card, so the
+   row reads as the open one and its pills keep their own colours. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-wrow[data-on] {
+  background: var(--bl-row-on);
+  box-shadow: inset 0 0 0 1.5px var(--bl-row-on-edge);
+}
+/* NEEDS YOU'S CARD (features/review-flow/). From 768px a change waiting on
+   you is a card in the middle of the page, and it was drawn in the page's
+   own ground (--rf-page is --home-ground, the cream here): a cream card on
+   the cream page, its edge a 7% hairline, with the picture's well and the
+   Yes, No and Skip buttons a warm grey on it. It is the look's card: white
+   (one step off the page in dark) with Home's lift, and what sits on it is
+   the page's cream, as a well and as the buttons' fill, so they read as
+   the page showing through. The filter chips on its bar (All, Votes that
+   decide, Advisory) were white, which is the card now: the ones not chosen
+   take the look's raised edge, as its other plain buttons do (a cream fill
+   would sit too near the chosen one's sun). A phone, where the run is the
+   whole screen and no card, keeps the page's ground. */
+@media (min-width: 768px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.rf-run, .rf-page-wrap) {
+    --rf-page: var(--bl-card);
+    --rf-sheet: var(--bl-card);
+    --rf-fill: var(--bl-page);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .rf-page {
+    box-shadow: 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .rf-bar [aria-pressed="false"] {
+    background-color: var(--bl-raise);
+    box-shadow: var(--bl-raise-edge);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .rf-bar [aria-pressed="false"]:hover {
+    background-color: var(--bl-page);
+  }
+}
 
 /* WARM GREYS. The zinc ramp is a cool grey; on the cream page its common
    fills, words and lines take a warm one. */
@@ -31627,37 +31783,159 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 @media (min-width: 1280px) {
   /* COMMUNITIES AS PEOPLE PLACES. From 1280px each community on the
-     Communities page is a small card on its group's card, with what
-     pinned-communities.tsx gives it under its name (data-home-community-detail,
-     hidden everywhere else): how many members, what went live this week,
-     and the faces of the people who were there this week. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid {
-    grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-    gap: 12px;
-    padding: 12px;
+     Communities page is a card of its own on the page, with what
+     pinned-communities.tsx gives it (CommunityDetail; hidden everywhere
+     else). Its head is the icon with the name beside it over how many
+     members (data-home-community-meta), a list row's 15 over 13. Its foot,
+     under a hairline and held to the card's bottom edge so the feet of a
+     row of cards line up, is this week (data-home-community-detail): the
+     faces and how many were active, then how many changes went live, one
+     line each in the same 13px words. A quiet week has no foot.
+     The group's card the tiles sat on is not drawn here: a card on a card
+     was two edges round every community. The cards are the look's own,
+     white on the cream with its lift, and four to a row in Home's column so
+     a foot's words fit on one line beside its faces. (The page's id: the
+     rule that paints the groups' card names one too.) */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #communities-screen .communities-grid {
+    grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+    gap: 14px;
+    padding: 6px 0 4px;
+    background-color: transparent;
+    box-shadow: none;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] {
-    align-items: flex-start;
-    gap: 6px;
-    padding: 14px 12px;
-    border-radius: 16px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+    column-gap: 14px;
+    row-gap: 2px;
+    align-items: start;
+    padding: 14px;
+    border-radius: 18px;
     text-align: start;
-    box-shadow: inset 0 0 0 1px var(--bl-edge);
+    background-color: var(--bl-card);
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+    transition: box-shadow 150ms ease;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community]:hover {
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  /* The icon, a size down, beside the two lines of the head. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > :first-child {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > :first-child > span:first-child {
+    border-radius: 17px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] .app-icon-tile {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+    font-size: 20px;
+  }
+  /* The votes waiting sit on the icon's corner, clear of the name beside it
+     (a wider count grows over the icon, not toward the words). */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-votes] {
+    top: -7px;
+    inset-inline-end: -5px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    font-size: 11px;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > .line-clamp-2 {
-    margin-top: 2px;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
     font-size: 15px;
     font-weight: 650;
     line-height: 19px;
     color: var(--text-primary);
   }
+  /* With no members line the name is the head's one line, centred on the icon. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-meta] {
+    display: block;
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-detail] {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    align-self: stretch;
+    gap: 6px;
+    grid-column: 1 / -1;
+    grid-row: 3;
+    align-self: end;
+    min-width: 0;
+    margin-top: 12px;
+    padding-top: 11px;
+    border-top: 1px solid var(--app-sheet-line);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
+    display: flex;
+    align-items: center;
     gap: 8px;
     min-width: 0;
+    min-height: 22px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-words {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* A glyph leads a line that has no faces, in a 22px box so the words of
+     both lines start on the same edge as the faces' line would. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-glyph {
+    flex: none;
+    width: 22px;
+    height: 15px;
+    color: var(--text-muted);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news {
+    font-weight: 600;
+    color: var(--bl-sky);
+  }
+  /* A quiet week: the same foot, in the muted ink. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-quiet {
+    color: var(--text-muted);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news > .home-community-glyph {
+    color: var(--bl-sky);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face {
+    width: 22px;
+    height: 22px;
+    margin-inline-end: -6px;
+    overflow: hidden;
+    font-size: 10px;
+    box-shadow: 0 0 0 2px var(--bl-card);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face:last-child {
+    margin-inline-end: 0;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face > img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   /* RECENT THREADS BESIDE PINNED APPS. From 1280px, while there are recent
@@ -31799,56 +32077,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     background: var(--bl-card);
     box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
   }
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-line {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-news {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 9999px;
-  background: var(--bl-tint-sky);
-  color: var(--bl-sky);
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* The words drop under the faces when a narrow card has no room beside them. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-  align-self: stretch;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face {
-  margin-inline-end: -8px;
-  overflow: hidden;
-  box-shadow: 0 0 0 2px var(--bl-card);
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face:last-child {
-  margin-inline-end: 0;
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face > img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 /* A REPLY BOX on its sheet. The standard interface draws it white on a
    half-clear sheet, so the tinted page shows round it; here the sheet is
@@ -32030,6 +32258,18 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary, .dev-change-gate-link) {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+/* The vote row folded into the header wears the foot's buttons. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary) {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary) {
   background: var(--bl-raise);
   color: var(--text-primary);
   box-shadow: var(--bl-raise-edge);

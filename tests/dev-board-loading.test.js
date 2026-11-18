@@ -174,13 +174,15 @@ test('the flag is cleared when the board stops being this app\'s', () => {
   const code = APP_VIEW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
   // Switching apps: the caches still hold the PREVIOUS app's cards, and
   // painting those under the new app's name is worse than a placeholder.
+  // #6826: both sites clear every flag a visit owns together
+  // (`_resetDevDataFlags`, which clears `_devDataReady` among them).
   assert.match(
     code,
-    /AppView\.appData\.slug !== appData\.slug\) \{[\s\S]{0,400}?AppView\._devDataReady = false;/,
+    /AppView\.appData\.slug !== appData\.slug\) \{[\s\S]{0,700}?AppView\._resetDevDataFlags\(\);/,
     'open() clears it when the slug changes'
   );
   const close = code.slice(code.indexOf('close() {'), code.indexOf('close() {') + 2000);
-  assert.match(close, /AppView\._devDataReady = false;/, 'close() clears it');
+  assert.match(close, /AppView\._resetDevDataFlags\(\);/, 'close() clears it');
 });
 
 // ── what the surfaces do with it ───────────────────────────────────────
@@ -276,7 +278,9 @@ test('EVERY feed view model carries `loading`, because the store merges', () => 
   const kanbanFn = kanban.slice(0, kanban.indexOf('_onKanbanTabSelect'));
   assert.match(
     kanbanFn,
-    /return \{\s*activeTab: AppView\._activeKanbanTab\(\), cols, loading: !AppView\._devDataReady,[\s\S]*?\};/,
+    // #6826: from `_devBoardDrawable()` — read this visit, or drawn from the
+    // project's remembered board — which is true whenever `_devDataReady` is.
+    /return \{\s*activeTab: AppView\._activeKanbanTab\(\), cols, loading: !AppView\._devBoardDrawable\(\),[\s\S]*?\};/,
     'the kanban model derives it from the flag, on its single return path'
   );
 });

@@ -424,6 +424,17 @@ async function readCommunity(slug: string): Promise<CommunityPayload | null> {
 const communities = new Map<string, CommunityPayload>();
 const inflight = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
+/**
+ * When each slug's record was last answered, ms since the epoch (#6826).
+ * The Workshop's parts mount one after another as the board's skeleton
+ * gives way (the page, its rows, the hero, the channel card, and the
+ * sidebar's row), and each mount used to send its own read — three of the
+ * same GET per open. A mount within this window of an answered read shares
+ * that answer instead. An explicit `reloadCommunity` (after a write, the
+ * first-version poll, a channel read) always reads.
+ */
+const answeredAt = new Map<string, number>();
+const COMMUNITY_FRESH_MS = 5000;
 
 /**
  * Invite people with a link (#3362): the Homeroom menu's invite pane, a link
@@ -447,6 +458,7 @@ export function reloadCommunity(slug: string): Promise<void> {
   if (!slug) return Promise.resolve();
   const pending = readCommunity(slug).then((next) => {
     inflight.delete(slug);
+    answeredAt.set(slug, Date.now());
     if (next && next.slug === slug) {
       communities.set(slug, next);
       for (const listener of [...listeners]) listener();
@@ -514,6 +526,11 @@ export function useCommunity(slug: string): CommunityPayload | null {
   // rather than a draft of itself (ONE DRAW, NOT TWO, communityPending).
   useLayoutEffect(() => {
     if (!slug || inflight.has(slug)) return;
+    // #6826: the page's later-mounted parts (its rows, the hero, the
+    // channel card, the sidebar's row) share the open's own read rather
+    // than each sending the same one again.
+    const at = answeredAt.get(slug) || 0;
+    if (communities.has(slug) && Date.now() - at < COMMUNITY_FRESH_MS) return;
     void reloadCommunity(slug);
     if (!communities.has(slug)) bump();
   }, [slug]);

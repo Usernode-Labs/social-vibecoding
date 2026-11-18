@@ -270,7 +270,10 @@ test('the hub puts the first version under the hero, and stands the start-here p
   assert.match(hubTab, /\{slug \? \(\s*<FirstVersionCard slug=\{slug\} data=\{community\} emoji=\{app\.iconEmoji \|\| null\} onSeePlan=\{\(\) => openTab\('plan'\)\} \/>\s*\) : null\}/);
   // Before its description is filed the board is empty too, and "The first
   // change is yours to start" told its maker to start the bot's change.
-  assert.match(LANDER, /const building = !!\(community && community\.first_version\);\s*const startHere = !!\(v\.dashboard && v\.dashboard\.open === 0 && !v\.dashboard\.everShipped\) && !building;/);
+  // #6826: `everShipped` is null while the Done list is still on its way, so
+  // the banner needs a stated false — a busy project is not offered its
+  // first change for the moment that read takes.
+  assert.match(LANDER, /const building = !!\(community && community\.first_version\);\s*const startHere = !!\(v\.dashboard && v\.dashboard\.open === 0 && v\.dashboard\.everShipped === false\) && !building;/);
   assert.match(hubTab, /\{v\.emptyNote && !building && !startHere \? \(/, 'nor the no-items note, which the banner says too');
   assert.match(LANDER, /const alone = hubAlone\(community\);/);
   assert.doesNotMatch(LANDER, /first_week|weekOne|hubWorkEmpty/, 'the same hub from the first day (15 Oct 2026)');

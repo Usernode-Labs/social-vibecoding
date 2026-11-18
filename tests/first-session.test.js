@@ -1187,7 +1187,9 @@ test('onboarding run two: the hub draws once, holding its skeleton while its com
   const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
   assert.match(card, /export function communityPending\(slug: string\): boolean \{\s+return !!slug && !communities\.has\(slug\) && inflight\.has\(slug\);\s+\}/);
   // Asked for before the first paint, so the draft never paints.
-  assert.match(card, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;\s+void reloadCommunity\(slug\);\s+if \(!communities\.has\(slug\)\) bump\(\);\s+\}, \[slug\]\);/);
+  // #6826: and a mount within COMMUNITY_FRESH_MS of an answered read joins
+  // that read rather than sending the same GET again.
+  assert.match(card, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;[\s\S]{0,400}?void reloadCommunity\(slug\);\s+if \(!communities\.has\(slug\)\) bump\(\);\s+\}, \[slug\]\);/);
   // A refused read lets the skeleton go too.
   assert.match(card, /\} else if \(!communities\.has\(slug\)\) \{\s+\/\/ [^\n]*\n\s+for \(const listener of \[\.\.\.listeners\]\) listener\(\);/);
   const workshop = read('frontend/src/features/dev-board/workshop/workshop.tsx');

@@ -148,6 +148,10 @@ const LASTING = Object.freeze({
     const project = name(result.project);
     return { did: project ? `sent a helper to look into ${project}` : 'sent a helper to look into the code', stays: 'it finishes on its own' };
   },
+  // A live draft of the project (services/live-drafts.js): it stays open
+  // in the thread until they Propose or Close it.
+  open_app_preview: (_args, result) => (result?.ok
+    ? { did: 'opened a live preview of the project', stays: 'it stays open in this thread' } : null),
   // Made and counted, and its gallery goes under a reply that is not sent.
   make_pictures: (_args, result) => (result?.ok
     ? { did: 'made the pictures you asked for', stays: 'they are not shown here' } : null),
