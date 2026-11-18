@@ -106,7 +106,11 @@ SELECT * FROM (
                       WHERE cm.thread_id = t.id AND cm.deleted_at IS NULL), t.created_at),
            COALESCE(req.updated_at, t.created_at),
            COALESCE(ch.last_activity_at, t.created_at)
-         ) AS last_at
+         ) AS last_at,
+         -- How many there are in all, counted before the cursor's own WHERE
+         -- trims the page (a window is worked out first). Home's card says
+         -- how many more it has than the rows it could list (#6816).
+         COUNT(*) OVER () AS total
     FROM mine
     JOIN threads t ON t.id = mine.thread_id
     JOIN apps a ON a.id = t.app_id
@@ -183,15 +187,22 @@ function serialize(row) {
 }
 
 /**
- * One page of the threads `viewer` took part in, newest activity first. The
- * keyset cursor is the last row's `(lastAt, threadId)`; a page exactly `limit`
- * long means there may be more.
+ * One page of the threads `viewer` took part in, newest activity first, and
+ * how many there are in all (the statement counts them before the cursor
+ * trims the page). The keyset cursor is the last row's `(lastAt, threadId)`;
+ * a page exactly `limit` long means there may be more.
  */
-async function listRecentThreads(db, viewer, { limit = 30, before = null, beforeId = null, isAdmin = false } = {}) {
+async function recentThreadsPage(db, viewer, { limit = 30, before = null, beforeId = null, isAdmin = false } = {}) {
   const { rows } = await db.query(LIST_SQL, [
     viewer, limit, !!isAdmin, before || null, beforeId || 0,
   ]);
-  return rows.map(serialize);
+  const total = rows.length ? Number(rows[0].total) : 0;
+  return { threads: rows.map(serialize), total: Number.isFinite(total) ? total : rows.length };
+}
+
+/** One page of the threads `viewer` took part in, newest activity first. */
+async function listRecentThreads(db, viewer, opts = {}) {
+  return (await recentThreadsPage(db, viewer, opts)).threads;
 }
 
 // ── Staging mock data ──────────────────────────────────────────────────
@@ -244,5 +255,5 @@ function demoThreads(now = Date.now()) {
 }
 
 module.exports = {
-  participatedSql, listRecentThreads, serialize, demoThreads, LIST_SQL,
+  participatedSql, listRecentThreads, recentThreadsPage, serialize, demoThreads, LIST_SQL,
 };
