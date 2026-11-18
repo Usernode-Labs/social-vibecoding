@@ -30177,15 +30177,17 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     min-width: 0;
   }
 
-  /* NEEDS YOU BESIDE PINNED APPS. From 1280px, while something waits on
-     you, the card is a column at Pinned apps' side rather than a row under
-     it: the two start on the same line, the column lists as many decisions
-     as fit beside Pinned apps with a last row saying how many more wait, and
-     a short list ends after its last row. Home's column is wider for it. The
-     launcher grid keeps its own box (the note on `#app-list` above): the
-     card it sat on is drawn by the box around it, which is what stretches,
-     and the grid rides its middle. Without a vote waiting, or with no apps
-     section, nothing here applies and Home is one column as it was. */
+  /* RECENT THREADS BESIDE PINNED APPS. From 1280px, while there are recent
+     threads to list, the card is a column at Pinned apps' side rather than a
+     row under it: the two start on the same line, the column lists as many
+     threads as fit beside Pinned apps with a last row saying how many more
+     there are, and a short list ends after its last row. Home's column is
+     wider for it. The launcher grid keeps its own box (the note on
+     `#app-list` above): the card it sat on is drawn by the box around it,
+     which is what stretches, and the grid rides its middle. With no recent
+     threads, or with no apps section, nothing here applies and Home is one
+     column as it was. (The card and its id are the Needs you card's,
+     #6816: the look's selectors keep that name.) */
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-column {
     max-width: 82.5rem;
   }
@@ -30265,10 +30267,15 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows {
     margin-top: 0;
   }
-  /* How many more wait than the column could list: a row of its own, the
-     action's colour, opening all of Needs you. */
+  /* How many more recent threads than the column could list: a row of its
+     own, the action's colour, opening the whole list. A button, so it takes
+     the row's width and reads its words from the start. */
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more {
+    box-sizing: border-box;
+    width: 100%;
     min-height: 3.25rem;
+    text-align: start;
+    cursor: pointer;
     font-size: 15px;
     font-weight: 650;
     color: var(--wip-ink-action);

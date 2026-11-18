@@ -1653,8 +1653,10 @@ function RunCount({ view }: { view: ScreenRowView }): ReactNode {
 }
 
 export function NotificationsSheetView() {
-  const { open, adopted } = useStoreState(notificationsSheetStore) as {
+  const { open, adopted, tab: wantedTab } = useStoreState(notificationsSheetStore) as {
     open: boolean; adopted: boolean;
+    /** The tab a caller outside the sheet asked for (`#6816`: Home's card). */
+    tab?: Tab | null;
   };
 
   // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
@@ -1678,6 +1680,15 @@ export function NotificationsSheetView() {
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  // A door straight to this tab: Home's Recent threads card asks for it by
+  // leaving the tab it wants on the sheet's store, then opens the sheet
+  // (#6816). Read once per opening and cleared, so the next opening starts on
+  // whatever tab was chosen instead.
+  useEffect(() => {
+    if (!open || !wantedTab) return;
+    setTab(wantedTab);
+    notificationsSheetStore.set({ tab: null });
+  }, [open, wantedTab]);
   // #6785: the Recent threads tab's own list. It is fetched from
   // /api/me/recent-threads the first time the tab is chosen while the sheet
   // is open, and again the next time it is chosen after the sheet reopens

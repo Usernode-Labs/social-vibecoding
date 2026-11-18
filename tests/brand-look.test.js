@@ -673,13 +673,13 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(at('#home-screen .home-main > #home-join-section').body, /order:\s*6;/);
 });
 
-test('Needs you stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
+test('Recent threads stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
   const block = lookBlock();
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   // Only while the card and the apps section are both drawn: otherwise Home is one column as it was.
   const BOTH = '#home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden]))';
-  const wide = block.slice(block.indexOf('NEEDS YOU BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
-  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('NEEDS YOU BESIDE PINNED APPS')) > 0, 'from 1280px');
+  const wide = block.slice(block.indexOf('RECENT THREADS BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
+  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT THREADS BESIDE PINNED APPS')) > 0, 'from 1280px');
   assert.match(at(`${BOTH} .home-body-fill`).body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 320px;/);
   assert.match(at(`${BOTH} .home-main`).body, /display:\s*contents;/);
   assert.match(at('#home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden])').body, /grid-column:\s*1;\s*grid-row:\s*1;/);
@@ -698,7 +698,7 @@ test('Needs you stands beside Pinned apps on a wide screen, and is a sideways ro
   assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
   assert.match(card, /flex:\s*none;/);
   assert.match(panel, /flex:\s*none;/);
-  // The last row says how many more wait, in the action's colour.
+  // The last row says how many more there are, in the action's colour.
   assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
   const more = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more').body;
   assert.match(more, /min-height:\s*3\.25rem;/);
