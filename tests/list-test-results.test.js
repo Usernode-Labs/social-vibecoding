@@ -185,9 +185,9 @@ test('#6793: the routes ask Postgres for the list form and unpack it', () => {
   const votes = read('src/routes/votes.js');
   const has = (text, why) => assert.ok(votes.includes(text), why || text);
   has("cs.check_state, ${listTestResults.resultsSelect(req, 'cs')}, cs.checks_checked_at", '/promoted');
-  has("mergedRowSelect({ results: listTestResults.resultsSelect(req, 'cs') })", '/merged');
+  has("mergedRowSelect({ results: listTestResults.pagedResultsSelect(req, 'cs') })", '/merged: a paged list');
+  has('await listTestResults.attachListed(pool, req, prRows);', '/merged reads the list form for its page alone');
   has('listTestResults.unpackListed(rows);');
-  has('listTestResults.unpackListed(prRows);');
   assert.ok(votes.includes('`${mergedRowSelect()}'), 'one proposal\'s own read keeps the stored column');
   has('...listTestResults.listedRowForServer(row),', 'the merge requirements still see the unit suite');
   const sessions = read('src/routes/sessions.js');
@@ -240,4 +240,38 @@ test('#6793: a slim list row keeps the one shots fact a card reads and drops the
   assert.equal(forListing(LISTING, [{ id: 2, shots_detail: { intent: {} } }], { slim: true })[0].shots_detail, null);
   assert.equal(forListing({ query: {} }, [row], { slim: true })[0], row, 'without the flag nothing is trimmed');
   assert.equal(forListing(LISTING, [row])[0].shots_detail, row.shots_detail, 'only the board\'s own lists are slimmed');
+});
+
+// ── A paged list reads the list form for its page alone ────────────────
+
+test('a paged list never asks Postgres for the list form of rows it will not send', async () => {
+  assert.equal(listResults.pagedResultsSelect({ query: {} }, 'cs'), 'cs.test_results', 'without the flag, the stored column');
+  assert.equal(listResults.pagedResultsSelect(LISTING, 'cs'), 'NULL::jsonb AS test_results');
+  assert.doesNotMatch(listResults.pagedResultsSelect(LISTING, 'cs'), /jsonb_array_elements/,
+    'in a query with ORDER BY and LIMIT, a select-list subquery runs for every matching row');
+
+  const asked = [];
+  const pool = { query: async (sql, params) => {
+    asked.push({ sql: String(sql), params });
+    return { rows: [
+      { id: 2, test_results: null, test_results_listed: { kept: [{ name: 'Feed renders', status: 'fail' }], omitted: 41, noted: null, unit: UNIT_PASS } },
+      { id: 1, test_results: null, test_results_listed: { kept: [], omitted: 0, noted: null, unit: null } },
+    ] };
+  } };
+  const page = [{ id: 1, test_results: null }, { id: 2, test_results: null }, { id: 3, test_results: null }];
+  const out = await listResults.attachListed(pool, LISTING, page);
+  assert.equal(asked.length, 1, 'one read for the whole page');
+  assert.match(asked[0].sql, /FROM chat_sessions cs WHERE cs\.id = ANY\(\$1::int\[\]\)$/);
+  assert.deepEqual(asked[0].params, [[1, 2, 3]], 'by id: only the rows that came back');
+  assert.deepEqual(out[0], { id: 1, test_results: [] });
+  assert.deepEqual(out[1].test_results, [{ name: 'Feed renders', status: 'fail' }]);
+  assert.equal(out[1].test_results_omitted, 41);
+  assert.equal(out[1].test_results_unit_row.status, 'pass', 'kept for the server, dropped when the list is sent');
+  assert.deepEqual(out[2], { id: 3, test_results: [] }, 'a row gone between the two reads has no results, not a null');
+
+  asked.length = 0;
+  const full = [{ id: 9, test_results: [pass(0)] }];
+  assert.equal(await listResults.attachListed(pool, { query: {} }, full), full);
+  assert.deepEqual(await listResults.attachListed(pool, LISTING, []), []);
+  assert.equal(asked.length, 0, 'no read without the flag, or for an empty page');
 });

@@ -957,13 +957,6 @@
     {
       "source": "src/routes/votes.js",
       "kind": "structural-template",
-      "fingerprint": "b2ed355d959f6c51a29c",
-      "count": 1,
-      "preview": "`${mergedRowSelect({ results: listTestResults.resultsSelect(req, 'cs') })} WHERE cs.app_id = $1 AND cs.status = 'merged' ${noNewerMergedTwin()} ${prCursorSql} O"
-    },
-    {
-      "source": "src/routes/votes.js",
-      "kind": "structural-template",
       "fingerprint": "b2f38492b29a6d836fab",
       "count": 1,
       "preview": "`SELECT i.id, i.kind, i.title, i.description, i.payload, i.status, i.github_issue_number, i.created_by, i.created_at, COALESCE((i.payload->>'appliedAt')::timest"
@@ -981,6 +974,13 @@
       "fingerprint": "d4cf0cf4e15e7f7d6ad5",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/votes.js",
+      "kind": "structural-template",
+      "fingerprint": "e1864a32683459f7b329",
+      "count": 1,
+      "preview": "`${mergedRowSelect({ results: listTestResults.pagedResultsSelect(req, 'cs') })} WHERE cs.app_id = $1 AND cs.status = 'merged' ${noNewerMergedTwin()} ${prCursorS"
     },
     {
       "source": "src/routes/votes.js",
@@ -1625,6 +1625,13 @@
       "fingerprint": "ff80b45cc83b1ab2f7af",
       "count": 1,
       "preview": "`INSERT INTO llm_usage (user_id, date, ${column}) VALUES ($1, CURRENT_DATE, $2) ON CONFLICT (user_id, date) DO UPDATE SET ${column} = llm_usage.${column} + EXCL"
+    },
+    {
+      "source": "src/services/list-test-results.js",
+      "kind": "structural-template",
+      "fingerprint": "d91cd4dde374c0e7a8d5",
+      "count": 1,
+      "preview": "`SELECT cs.id, ${listedResultsSql('cs')} FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`"
     },
     {
       "source": "src/services/llm-telemetry.js",
