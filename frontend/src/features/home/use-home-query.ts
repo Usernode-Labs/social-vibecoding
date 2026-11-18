@@ -2,8 +2,9 @@
  * The search on Home, for the sections React draws (One Home, #6361).
  *
  * The field itself is #home-search-input, wired by Home._wireSearch
- * (./home.js), which filters the apps grid. Pinned communities and
- * Communities to join read the same words from the field's own `input`
+ * (./home.js), which filters the apps grid. Your communities that match
+ * (./pinned-communities.tsx HomeCommunityMatches) and Communities to join
+ * read the same words from the field's own `input`
  * events, so one search covers apps and communities without a second owner
  * of the field.
  */

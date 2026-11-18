@@ -687,8 +687,12 @@ test('the strip\'s bubbles: the four places, then the apps, then you', () => {
   assert.doesNotMatch(block, /html\[data-side-strip\] #platform-tabs \{[^}]*border-radius: 20px;/);
   assert.doesNotMatch(block, /html\[data-side-strip\] #platform-tabs \{[^}]*clip-path: inset\(0 round 20px\);/);
   assert.match(block, /html\[data-side-strip\] \.platform-tab \.platform-tab-mark \{[^}]*width: 40px;\s*height: 30px;[^}]*border-radius: 10px;[^}]*background: color-mix\(in srgb, var\(--text-primary\) 8%, transparent\);[^}]*color: var\(--text-muted\);/);
-  assert.match(block, /html\[data-side-strip\] \.platform-tab\[aria-current="page"\] \.platform-tab-mark,[^{]*\{[^}]*background: var\(--lit-tint\);[^}]*color: var\(--lit-ink\);/,
+  assert.match(block, /html\[data-side-strip\] \.platform-tab\[aria-current="page"\] \.platform-tab-mark \{[^}]*background: var\(--lit-tint\);[^}]*color: var\(--lit-ink\);/,
     'the place you are on is filled from the bar\'s lit tokens');
+  // A community's page lights Communities, which is drawn on the strip
+  // again (18 Nov 2026), so Home no longer stands in for it.
+  assert.doesNotMatch(APP_CSS, /:has\(#platform-tab-workshop\[aria-current="page"\]\) #platform-tab-home/);
+  assert.doesNotMatch(APP_CSS, /#platform-tab-workshop \{ display: none/, 'nothing hides the tab');
   // The strip still measures the marker (tab-bar.tsx), and the phone's bar
   // still draws it with its own 16px radius.
   assert.match(APP_CSS, /\.platform-tabs-marker \{[^}]*border-radius: 16px;/);
