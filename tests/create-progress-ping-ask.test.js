@@ -150,10 +150,16 @@ function boot(opts = {}) {
     },
     async getSettingsState() {
       calls.settingsReads += 1;
+      if (opts.settingsAnswers && opts.settingsAnswers.length) {
+        return opts.settingsAnswers.shift();
+      }
       return permissions ? { permissions } : null;
     },
     async getSocialPushState() {
       calls.pushReads += 1;
+      if (opts.pushAnswers && opts.pushAnswers.length) {
+        return opts.pushAnswers.shift();
+      }
       return opts.pushState === undefined ? null : opts.pushState;
     },
     async requestPermissions() {
@@ -377,6 +383,42 @@ test('an unreadable permission shows nothing', async () => {
 
   const noPush = boot({ permissions: { ...IOS }, capabilities: ['getSettingsState', 'requestPermissions'] });
   assert.equal((await noPush.NativeChrome.askForPing({ reason: 'app-building' })).shown, false);
+});
+
+// #6789: a timed-out bridge read used to become "undetermined", which drew
+// the Notify me card for somebody who had already turned notifications on.
+test('a timed-out permission read is read once more, never guessed', async () => {
+  const slow = boot({
+    settingsAnswers: [null, { permissions: { ...IOS, notificationPermission: 'notDetermined' } }],
+  });
+  const answered = await slow.NativeChrome._readyPingState();
+  assert.equal(answered.permission, 'undetermined', 'the second read is the answer');
+  assert.equal(slow.calls.settingsReads, 2, 'the missing answer is read again');
+
+  const gone = boot({ settingsAnswers: [null, null], pushState: null });
+  const unknown = await gone.NativeChrome._readyPingState();
+  assert.equal(unknown.permission, null, 'two unreadable reads stay unknown');
+  assert.equal(gone.calls.settingsReads, 2, 'and only twice');
+});
+
+test('a timed-out iOS push state is read once more, and stays unknown', async () => {
+  const slow = boot({
+    permissions: { ...IOS }, // no notificationPermission: the push state decides
+    pushAnswers: [null, {
+      enabled: true,
+      permissionStatus: 'notDetermined',
+      registrationStatus: 'registered',
+      deliveryActive: true,
+    }],
+  });
+  const answered = await slow.NativeChrome._readyPingState();
+  assert.equal(answered.permission, 'undetermined', 'the second read is the answer');
+  assert.equal(slow.calls.pushReads, 2, 'the missing answer is read again');
+
+  const gone = boot({ permissions: { ...IOS }, pushAnswers: [null, null] });
+  const unknown = await gone.NativeChrome._readyPingState();
+  assert.equal(unknown.permission, null, 'two timeouts are unknown, never undetermined');
+  assert.equal(gone.calls.pushReads, 2, 'and only twice');
 });
 
 test('no kit, no question: never the browser\'s own confirm()', async () => {

@@ -58,6 +58,7 @@ function loadCoordinator({
   foregroundStorageImpl,
   includeBridgeReadyMethod = true,
   timeoutScale = 1,
+  timers = null,
 } = {}) {
   const windowListeners = new Map();
   const documentListeners = new Map();
@@ -78,8 +79,12 @@ function loadCoordinator({
       setItem(key, value) { foregroundStorage.set(key, String(value)); },
       removeItem(key) { foregroundStorage.delete(key); },
     },
-    setTimeout(fn, delay) { return setTimeout(fn, delay * timeoutScale); },
-    clearTimeout,
+    setTimeout: timers
+      ? (fn, delay) => timers.setTimeout(fn, delay)
+      : (fn, delay) => setTimeout(fn, delay * timeoutScale),
+    clearTimeout: timers
+      ? (id) => timers.clearTimeout(id)
+      : clearTimeout,
     CustomEvent: class CustomEvent {
       constructor(type, init) { this.type = type; this.detail = init && init.detail; }
     },
@@ -230,6 +235,34 @@ async function drainRetries(ticks = 24) {
   for (let i = 0; i < ticks; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 2));
   }
+}
+
+// A sandbox clock: nothing fires until a test says a delay has elapsed.
+function createFakeTimers() {
+  const pending = new Map();
+  let nextId = 1;
+  return {
+    pending,
+    setTimeout(fn, delay) {
+      const id = nextId++;
+      pending.set(id, { fn, delay });
+      return id;
+    },
+    clearTimeout(id) {
+      pending.delete(id);
+    },
+    fireNext() {
+      const first = pending.entries().next();
+      if (first.done) return false;
+      const [id, timer] = first.value;
+      pending.delete(id);
+      timer.fn();
+      return true;
+    },
+    delays() {
+      return [...pending.values()].map((timer) => timer.delay);
+    },
+  };
 }
 
 // The backoff table used to clamp its index, so a device whose privileged
@@ -1721,4 +1754,156 @@ test('a hidden transition and a non-native page leave the badge alone', async ()
   await settle();
   assert.equal(loaded.calls.some(([name]) => name === 'refresh'), false);
   assert.deepEqual(loaded.calls.filter(([name]) => name === 'badge'), [['badge', 2]]);
+});
+
+// ── #6789: a dropped badge update is retried ───────────────────────────
+//
+// A rejected setSocialBadgeCount (a bridge timeout), a session that is not
+// admitted yet, and an inconclusive support probe all used to end the
+// publish for good, leaving whatever an alert push had put on the icon.
+
+const badgeCalls = (loaded) => loaded.calls.filter(([name]) => name === 'badge');
+
+test('a badge the phone did not take is retried until it lands', async () => {
+  const timers = createFakeTimers();
+  let fail = true;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    timers,
+    badgeImpl: () => {
+      if (fail) throw new Error('bridge hiccup');
+      return true;
+    },
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(3), false);
+  assert.deepEqual(timers.delays(), [1000], 'a failed send schedules the first retry');
+
+  fail = false;
+  timers.fireNext();
+  await until(() => badgeCalls(loaded).length === 2, 'the remembered count is sent again');
+  assert.deepEqual(badgeCalls(loaded), [['badge', 3], ['badge', 3]]);
+  assert.deepEqual(timers.delays(), [], 'once confirmed there is nothing left to retry');
+  assert.equal(loaded.sandbox.SocialPush._badgeRetryAttempt, 0, 'and the budget is reset');
+});
+
+test('a publish while the session is not admitted retries and lands when it is', async () => {
+  const timers = createFakeTimers();
+  let admitted = false;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    timers,
+    isSessionAdmittedImpl: () => admitted,
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(6), false);
+  assert.deepEqual(badgeCalls(loaded), []);
+  assert.deepEqual(timers.delays(), [1000], 'a refused admission stays retryable');
+
+  admitted = true;
+  timers.fireNext();
+  await until(() => badgeCalls(loaded).length === 1, 'the count lands once admitted');
+  assert.deepEqual(badgeCalls(loaded), [['badge', 6]]);
+});
+
+test('a degraded probe retries, while a conclusively unsupported build never does',
+  async () => {
+    const timers = createFakeTimers();
+    let degraded = true;
+    const loaded = loadCoordinator({
+      caps: BADGE_CAPS,
+      timers,
+      getInfoImpl: () => (degraded
+        ? { version: 0, capabilities: [], degraded: true }
+        : { version: 4, capabilities: BADGE_CAPS }),
+    });
+
+    assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(2), false);
+    assert.deepEqual(timers.delays(), [1000], 'an inconclusive probe stays retryable');
+
+    degraded = false;
+    timers.fireNext();
+    await until(() => badgeCalls(loaded).length === 1, 'the count lands once the probe answers');
+    assert.deepEqual(badgeCalls(loaded), [['badge', 2]]);
+    assert.deepEqual(timers.delays(), []);
+
+    // An app build with no setSocialBadgeCount is final: no timer at all.
+    const olderTimers = createFakeTimers();
+    const older = loadCoordinator({
+      timers: olderTimers,
+      includeBadgeMethod: false,
+    });
+    assert.equal(await older.sandbox.SocialPush.publishBadgeCount(4), false);
+    assert.equal(olderTimers.pending.size, 0, 'a conclusive unsupported build is not retried');
+  });
+
+test('the retry table is the whole budget, and online arms it again', async () => {
+  const timers = createFakeTimers();
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    timers,
+    badgeImpl: () => { throw new Error('bridge hiccup'); },
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(4), false);
+  const delays = [];
+  for (let i = 0; i < 5; i += 1) {
+    await until(() => timers.pending.size > 0, `retry ${i + 1} scheduled`);
+    delays.push(timers.delays()[0]);
+    timers.fireNext();
+    await settle();
+  }
+  assert.deepEqual(delays, [1000, 3000, 10000, 30000, 60000]);
+  await until(() => loaded.sandbox.SocialPush._badgeRetryAttempt === 5,
+    'the table is spent');
+  assert.equal(timers.pending.size, 0, 'the app stops calling a phone that is not answering');
+
+  const sent = badgeCalls(loaded).length;
+  loaded.fire('online');
+  await until(() => badgeCalls(loaded).length === sent + 1,
+    'the connection returning sends the remembered count');
+  assert.deepEqual(timers.delays(), [1000], 'and a fresh budget starts over');
+});
+
+test('the bridge finishing its handshake sends a count it missed', async () => {
+  let attempts = 0;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    badgeImpl: () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error('bridge hiccup');
+      return true;
+    },
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(7), false);
+  loaded.fireDocument('DOMContentLoaded');
+  await until(() => badgeCalls(loaded).length === 2,
+    'a successful handshake republishes the unconfirmed count');
+  assert.deepEqual(badgeCalls(loaded), [['badge', 7], ['badge', 7]]);
+});
+
+test('a newer total replaces the one waiting to be retried', async () => {
+  const timers = createFakeTimers();
+  let healthy = false;
+  const loaded = loadCoordinator({
+    caps: BADGE_CAPS,
+    timers,
+    badgeImpl: () => {
+      if (!healthy) throw new Error('bridge hiccup');
+      return true;
+    },
+  });
+
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(3), false);
+  assert.equal(await loaded.sandbox.SocialPush.publishBadgeCount(0), false);
+  assert.deepEqual(badgeCalls(loaded), [['badge', 3], ['badge', 0]],
+    'the newer total goes out at once');
+  assert.equal(timers.pending.size, 1, 'the two failures share one pending retry');
+
+  healthy = true;
+  timers.fireNext();
+  await until(() => badgeCalls(loaded).length === 3,
+    'the timer sends the newest remembered value');
+  assert.deepEqual(badgeCalls(loaded)[2], ['badge', 0]);
 });
