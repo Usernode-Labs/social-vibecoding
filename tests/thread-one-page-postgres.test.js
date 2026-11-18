@@ -129,12 +129,12 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
         WHERE id = $1`,
       [draft.id, fields.state ?? 'passing', 'sha' in fields ? fields.sha : SHA, fields.source ?? 'native', fields.imported ?? null,
         fields.uploaded ?? null, fields.head ?? null, fields.uploadChecked ?? null, fields.turn ?? null]);
-    const ready = async () => {
+    const ready = async (flag = 'ready') => {
       const thread = await threads.threadForNumber(pool, { appId: app.id, number: 10 });
       const page = await threads.threadPage(pool, { thread, viewerId: maya.id });
       const item = page.items.find((i) => i.type === 'change' && i.id === Number(draft.id));
       assert.equal(item.state, 'underway');
-      return item.ready;
+      return item[flag];
     };
     await set({});
     assert.equal(await ready(), true, 'passing on its head, idle, its preview asleep');
@@ -155,6 +155,21 @@ test('a change built for a request lives on the request\'s page', { timeout: 180
     assert.equal(await ready(), true, 'an imported pull request checked on its head, whatever the case of the sha');
     await set({ source: 'cli_handoff', uploaded: SHA, head: SHA, uploadChecked: OTHER });
     assert.equal(await ready(), true, 'a submitted upload');
+    // Promotable is the same rule with either finished verdict: a change
+    // whose checks failed may go up for a vote, and merges once they pass.
+    await set({});
+    assert.equal(await ready('promotable'), true, 'passing: promotable too');
+    await set({ state: 'failing' });
+    assert.equal(await ready('promotable'), true, 'checks failed: it can still go up');
+    for (const [why, fields] of [
+      ['checks still running', { state: 'pending' }],
+      ['nothing was built', { state: 'skipped' }],
+      ['a turn is running', { state: 'failing', turn: JSON.stringify({ turnId: 't', phase: 'running' }) }],
+      ['a local upload is not submitted', { state: 'failing', source: 'cli_handoff', uploaded: OTHER, head: SHA, uploadChecked: SHA }],
+    ]) {
+      await set(fields);
+      assert.equal(await ready('promotable'), false, why);
+    }
     await pool.query(`UPDATE chat_sessions SET check_state = NULL, checks_commit_sha = NULL, source = NULL, imported_pr_head_sha = NULL,
                         handoff_uploaded_sha = NULL, handoff_head_sha = NULL, handoff_upload_checked_sha = NULL WHERE id = $1`, [draft.id]);
     const pinPage = await threads.threadPage(pool, { thread: await threads.threadForNumber(pool, { appId: app.id, number: 10 }), viewerId: ana.id });

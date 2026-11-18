@@ -476,8 +476,15 @@ const visibleChangeSql = (s, viewer) => `(${s}.status IN ('promoted', 'merging',
 // pending, before the turn ends. No staging_url: a preview that went to sleep
 // did not unbuild anything. 'skipped' is not enough either: it can mean there
 // is nothing built.
-const CHANGE_READY_SQL = `(cs.status IN ('active', 'paused')
-       AND cs.check_state = 'passing'
+//
+// A change whose checks finished and failed is just as built: it can be put
+// up for a vote (the promote routes take no verdict, #3043) and merges only
+// once they pass. That is CHANGE_PROMOTABLE_SQL, the same rule with either
+// verdict; `ready` keeps meaning passing, which Homeroom bot's at-work
+// reading of a change it built depends on.
+function changeBuiltSql(verdicts) {
+  return `(cs.status IN ('active', 'paused')
+       AND cs.check_state IN (${verdicts})
        AND cs.checks_commit_sha IS NOT NULL
        AND (cs.source IS DISTINCT FROM 'imported'
             OR LOWER(cs.imported_pr_head_sha) = LOWER(cs.checks_commit_sha))
@@ -487,6 +494,9 @@ const CHANGE_READY_SQL = `(cs.status IN ('active', 'paused')
                 AND cs.handoff_uploaded_sha IS DISTINCT FROM cs.handoff_head_sha
                 AND cs.checks_commit_sha IS NOT DISTINCT FROM cs.handoff_upload_checked_sha)
        AND NOT ${workedOnSql()})`;
+}
+const CHANGE_READY_SQL = changeBuiltSql(`'passing'`);
+const CHANGE_PROMOTABLE_SQL = changeBuiltSql(`'passing', 'failing'`);
 
 // Everything in a thread, oldest first, with how many people's replies are
 // anchored to each. A change is listed by the rule the request page's
@@ -510,7 +520,7 @@ SELECT 'request' AS type, r.id::bigint AS id, r.number, r.title, r.state AS stat
        COALESCE(ru.username, r.author_login) AS author, COALESCE(ru.is_synthetic, FALSE) AS author_bot,
        NULL::text AS reason, NULL::int AS target, NULL::int[] AS closes,
        NULL::int AS built_from_session_id, NULL::int AS built_from_version,
-       FALSE AS ready,
+       FALSE AS ready, FALSE AS promotable,
        NULL::timestamptz AS live_at,
        NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id,
        NULL::text AS applied_at, NULL::text AS applied_by,
@@ -531,7 +541,7 @@ SELECT 'change', cs.id::bigint, cs.pr_number,
        cu.username, COALESCE(cu.is_synthetic, FALSE), NULL::text, NULL::int,
        COALESCE(cs.linked_issues, '{}'::int[]),
        cs.built_from_session_id, cs.built_from_version,
-       ${CHANGE_READY_SQL},
+       ${CHANGE_READY_SQL}, ${CHANGE_PROMOTABLE_SQL},
        cs.live_at,
        -- #6225: every request it closes, resolved for the Votes card, and
        -- the person a yes would be for: its author, or, for a change
@@ -573,7 +583,7 @@ SELECT CASE WHEN i.kind = 'close_issue' THEN 'close' ELSE 'decision' END, i.id::
        NULLIF(i.payload->>'reason', ''),
        CASE WHEN i.kind = 'close_issue' AND (i.payload->>'issueNumber') ~ '^[0-9]{1,9}$'
             THEN (i.payload->>'issueNumber')::int END,
-       NULL::int[], NULL::int, NULL::int, FALSE,
+       NULL::int[], NULL::int, NULL::int, FALSE, FALSE,
        NULL::timestamptz AS live_at,
        NULL::jsonb AS closes_requests, NULL::int AS built_for_user_id,
        -- #6439: how an ended vote to close ended, off the governance
@@ -694,6 +704,8 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
       item.liveAt = row.live_at ? new Date(row.live_at).toISOString() : null;
       // #6139: still underway, but built: CHANGE_READY_SQL.
       item.ready = row.ready === true;
+      // Built, with its checks passing or failing: it can go up for a vote.
+      item.promotable = row.promotable === true;
       item.folded = foldOf.get(`change:${row.id}`) || [];
       // Stage 6: what the ballot casts with, and the viewer's own vote.
       item.epoch = row.epoch == null ? null : Number(row.epoch);
