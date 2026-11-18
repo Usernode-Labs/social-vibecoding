@@ -14,6 +14,21 @@ const { getAppConventions, getConventionSection } = require('../src/services/pro
 const ESCALATION_HEADING =
   'Platform-level problems & missing capabilities: escalate, don\'t file workarounds';
 
+// #6815: nothing visible means no before/after shots, so the author's diagram
+// is the only picture voters get. The guidance says so, with an example.
+test('conventions doc asks for a diagram after a change with nothing visible', () => {
+  const doc = getAppConventions().replace(/\s+/g, ' ');
+  // The offline excerpt is capped at 9 KB, so it carries the step and a valid
+  // example; the kinds and the size rule are spelled out below it.
+  assert.match(doc, /record `impact: "none"` with a specific rationale\. Then call `declare_diagram`: `\{"version":1,"kind":"flow","before":\["A"\],"after":\["B"\]\}`\./);
+  assert.match(doc, /declare a diagram of it: `flow`, `changes`, `numbers` or `rename`, plain words, 1-60 characters a text, e\.g\. `\{"version":1,"kind":"flow"/);
+  // Both examples are diagrams the platform accepts, not invented shapes.
+  const { parseDiagram } = require('../src/services/diagram.js');
+  for (const [, json] of doc.matchAll(/(\{"version":1,"kind":"flow",[^`]*\})/g)) {
+    assert.doesNotThrow(() => parseDiagram(JSON.parse(json), { impact: 'none' }), json);
+  }
+});
+
 test('conventions doc loads non-empty', () => {
   const doc = getAppConventions();
   assert.equal(typeof doc, 'string');

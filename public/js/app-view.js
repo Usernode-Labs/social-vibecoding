@@ -8051,6 +8051,10 @@ const AppView = {
       merge: AppView._changeMergeView(item),
       shots: AppView._changeShotsView(kind, item),
       shotsNone: AppView._shotsNotNeeded(item),
+      // #4490: "What it touches" for the change's current head, which the
+      // change page shows where the empty "nothing you can see changes" box
+      // would be. The proposal read (src/routes/votes.js) gates it on the head.
+      touches: item && item.touches && typeof item.touches === 'object' ? item.touches : null,
       // When it went live, for "Since …" in the card's foot and the
       // timeline's Live step (frontend topic/card-model.ts, rail-model.ts).
       liveAt: item.status === 'merged' ? (item.live_at || item.merged_at || null) : null,

@@ -140,6 +140,11 @@ function stagingDemoNeedsProposal(id, slug) {
     yes_count: card.yes || 0, no_count: card.no || 0, my_vote: null,
     chat_count: 0, last_message_at: null, votes_required: 1,
     priority: null, assignee: null, category: null,
+    // #6814: its own page draws the card's own picture, so a demo change that
+    // says nothing on screen changes shows "What it touches" there too.
+    ...(card.diagram ? { diagram: card.diagram, diagram_source: card.diagram_source || 'author' } : {}),
+    ...(card.touches ? { touches: card.touches } : {}),
+    ...(card.shots_detail ? { shots_detail: card.shots_detail } : {}),
   };
 }
 
@@ -5278,12 +5283,6 @@ function voteRoutes(config) {
         proposal.shots = config.shots?.present
           ? await shotsView.getForSession(pool, proposal, req.params.slug, { viewer: req.user })
           : null;
-        // #4490: the author's diagram, which leads the change's page.
-        const drawn = await pool.query(
-          'SELECT pr_diagram, pr_diagram_source FROM chat_sessions WHERE id = $1', [proposal.id]
-        ).catch(() => ({ rows: [] }));
-        proposal.diagram = diagramContract.storedDiagram(drawn.rows[0] && drawn.rows[0].pr_diagram);
-        proposal.diagram_source = proposal.diagram ? (drawn.rows[0].pr_diagram_source || 'author') : null;
         // #4452: how long testing usually takes here, for the change page's
         // one testing bar and its time left (services/checks-estimate.js).
         proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
@@ -5328,6 +5327,27 @@ function voteRoutes(config) {
         proposal.code_missing = await codeMissing.forSession(pool, {
           ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
         });
+        // #4490: the author's diagram, which leads the change's page, and
+        // "What it touches", the picture the page falls back to. Touches are
+        // shown only for the head they were read at, as the board rows do, and
+        // a moved head is read again in the background for the next view. Not
+        // for a head whose code is missing: there is nothing on the git host
+        // to read, and the read warned on every view.
+        {
+          const drawn = await pool.query(
+            'SELECT pr_diagram, pr_diagram_source, pr_touches, pr_touches_sha FROM chat_sessions WHERE id = $1', [proposal.id]
+          ).catch(() => ({ rows: [] }));
+          const row = drawn.rows[0] || null;
+          proposal.diagram = diagramContract.storedDiagram(row && row.pr_diagram);
+          proposal.diagram_source = proposal.diagram ? (row.pr_diagram_source || 'author') : null;
+          const head = proposal.code_missing ? null : visualHeadForSession(proposal);
+          proposal.touches = head && row && row.pr_touches_sha === head
+            ? proposalTouches.storedTouches(row.pr_touches) : null;
+          proposalTouches.scheduleRefresh(pool, [{
+            id: proposal.id, repo_url: gatedApp.repo_url,
+            pr_touches_sha: row && row.pr_touches_sha, head,
+          }]);
+        }
         // An update from this version's original (services/upstream-offers.js):
         // what it brings, what it does here, and where it stands, for the
         // change page's From <original> card. Null for any other change.

@@ -94,7 +94,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    `declare_visible_changes` with the change, real steps, focus,
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
    before/after shots of it on the exact builds. For a non-visual change,
-   record `impact: "none"` with a specific rationale.
+   record `impact: "none"` with a specific rationale. Then call `declare_diagram`:
+   `{"version":1,"kind":"flow","before":["A"],"after":["B"]}`.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
@@ -866,7 +867,10 @@ account for most changes that end up with no shots:
   made to race; and nothing answers with a model. Check each state against
   these before you declare it. When one stands in the way and no seed can
   hold the state, declare `impact: "none"` with a reason that names what the
-  copies cannot do, rather than claim a state they cannot reach.
+  copies cannot do, rather than claim a state they cannot reach, and then
+  declare a diagram of it: `flow`, `changes`, `numbers` or `rename`, plain
+  words, 1-60 characters a text, e.g.
+  `{"version":1,"kind":"flow","before":["Won't mount"],"after":["Moved machine"]}`.
 
 ### Testing `path:` for the hybrid-routed self-app
 
