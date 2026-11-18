@@ -2398,10 +2398,9 @@
       "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "A retired ?view=kanban link lands on the stage pane, and a tap on a row opens its page beside the board (#4486)",
+      "name": "A retired ?view=kanban link lands on the stage pane, and a tap on a row opens its page beside the board (#4486), its header pill ending in Open as a page and Close (18 Nov 2026)",
       "path": "/?demo=1&view=kanban&shot=board-open#app/usernode-2d5619/dev",
-      "expectSelector": "body:has(.dev-ws-side[data-ws-side] #dev-topic-thread) #dev-workshop [data-ws-stage] #dev-kanban .dev-ws-wrow[data-on] > .dev-ws-wrow-main > a.dev-ws-wrow-link[aria-current=\"true\"]",
-      "expectText": "Open as a page"
+      "expectSelector": "body:has(.dev-ws-side[data-ws-side] #dev-topic-thread [data-thread-exits] > [data-thread-exit=\"expand\"][aria-label=\"Open as a page\"] + [data-thread-exit=\"close\"]) #dev-workshop [data-ws-stage] #dev-kanban .dev-ws-wrow[data-on] > .dev-ws-wrow-main > a.dev-ws-wrow-link[aria-current=\"true\"]"
     },
     {
       "name": "The Workshop renders its themes in #dev-workshop; the deep link opens one, its items the board’s rows under stage lanes",
