@@ -62,6 +62,7 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   };
   const bundle = order('node frontend/scripts/build-shell.mjs --keep-prerender');
   const css = order('node scripts/build-tailwind.js');
+  const minify = order('node scripts/minify-legacy-assets.js');
   const commitArg = order('ARG GIT_SHA=dev');
   const commitEnv = order('ENV GIT_SHA=$GIT_SHA');
   const document = order('node frontend/scripts/build-shell.mjs --document');
@@ -69,6 +70,11 @@ test('Kubernetes platform image builds and contains the generated shell assets',
   const precompress = order('RUN node scripts/precompress-static-assets.js');
   assert.ok(bundle < css && css < commitArg,
     'the Vite passes and Tailwind run before GIT_SHA is declared, so a commit that left their inputs alone can reuse them');
+  // #6798: the legacy scripts and app.css are minified for the image alone.
+  // After Tailwind (which scans public/js as written), before the commit id
+  // (which it does not read), and so before the release file and the
+  // precompressed copies, which must describe the files actually served.
+  assert.ok(css < minify && minify < commitArg && minify < release && minify < precompress);
   assert.ok(commitArg < commitEnv && commitEnv < document,
     'the document this build serves is written with the commit id');
   assert.ok(document < release && release < precompress,
