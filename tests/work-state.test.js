@@ -546,3 +546,55 @@ test('#6807: a change waiting on a fix for the check it fails on reads Fixing', 
     checks_sha: 'a'.repeat(40), reviewed_head_sha: 'a'.repeat(40), flake_fixing: true }, { now: NOW });
   assert.deepEqual([request.stage, request.line], ['checking', { code: 'fixing_check' }]);
 });
+
+// #6821 (18 Nov 2026): a change whose votes are in is never asked to be voted
+// on again while it catches up with main. The merge queue stores
+// 'awaiting_approval' until it measures the change again, and that stale
+// reason used to keep the stored row on up_for_vote while the page, which
+// reads the live merge gate, said Approved and syncing with main.
+test('#6821: a change whose votes are in and waits to sync reads Syncing with main', () => {
+  const row = {
+    status: 'promoted', check_state: 'passing', reviewed_head_sha: 'h', checks_commit_sha: 'h',
+    integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'],
+  };
+  const change = (extra) => ws.deriveChange({ ...row, ...extra }, { now: NOW });
+  const before = change({});
+  assert.deepEqual([before.stage, before.line], ['up_for_vote', { code: 'conflict_on_yes' }],
+    'with no yes yet, only a yes can move it');
+  assert.equal(ws.voteOpenOf(before), true);
+
+  const voted = change({ votes_in: true });
+  assert.deepEqual([voted.stage, voted.line], ['checking', { code: 'syncing' }]);
+  assert.equal(ws.stageSays(voted), 'Syncing with main');
+  assert.equal(ws.lineSays(voted), null);
+  assert.equal(ws.voteOpenOf(voted), false, 'nothing asks for a vote it already had');
+  assert.deepEqual([change({ votes_in: true, check_state: 'pending' }).stage,
+    change({ votes_in: true, check_state: 'pending' }).line], ['checking', { code: 'syncing' }],
+  'its checks still running: it is syncing, not a vote');
+
+  // Its author's reasons are kept: a check failing after the yes is still
+  // the author's to fix.
+  const failing = change({ votes_in: true, check_state: 'failing', integration_block_reasons: ['awaiting_approval', 'checks_failing'] });
+  assert.deepEqual([failing.stage, failing.line], ['checking', { code: 'checks_failing' }]);
+  // A change with no other reason catches up as syncing too.
+  assert.deepEqual(change({ votes_in: true, integration_block_reasons: [] }).line, { code: 'syncing' });
+  // Without a vote owed it is unchanged: a conflict it does not wait to sync
+  // on reads as it always did.
+  assert.deepEqual([change({ votes_in: true, integration_merges_clean: true }).stage,
+    change({ votes_in: true, integration_merges_clean: true }).line], ['going_live', null]);
+
+  // A request whose lead change is the same reads the same, from its own step.
+  const facts = {
+    integration_merges_clean: false, integration_block_reasons: ['awaiting_approval'],
+    reviewed_head_sha: 'h', checks_sha: 'h', check_state: 'passing',
+  };
+  const step = (extra) => {
+    const out = ws.fromStage({ stage: 'checks', since: NOW.toISOString() }, { ...facts, ...extra }, NOW);
+    return [out.stage, out.line];
+  };
+  assert.deepEqual(step({}), ['up_for_vote', { code: 'conflict_on_yes' }]);
+  assert.deepEqual(step({ votes_in: true }), ['checking', { code: 'syncing' }]);
+  const asRequest = derive({ proposal_status: 'promoted', ...facts, votes_in: true });
+  assert.equal(ws.voteOpenOf(asRequest), false);
+  assert.notEqual(asRequest.stage, 'up_for_vote');
+});

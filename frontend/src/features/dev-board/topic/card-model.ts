@@ -9,7 +9,7 @@
  * press away, in the layer a step of the timeline opens.
  */
 
-import { lineWords, stageWords, type Phrase, type WorkState } from '../../../lib/work-state';
+import { lineWords, stageWords, type Phrase, type Standing, type WorkState } from '../../../lib/work-state';
 
 export type FootTone = 'bad' | 'ok' | 'muted' | null;
 
@@ -33,6 +33,15 @@ export interface ChangeFootInput {
   votes: GateLike;
   testing: GateLike;
   merge?: GateLike | null;
+  /**
+   * #6821: the change's stored work state (the server's `work`), the same row
+   * the Homeroom bot tab and Needs you read, with the viewer's own vote. When
+   * it is there and the change is not up for a vote, its words are the foot's
+   * headline and line, so the page and the lists can never disagree. The
+   * buttons stay on the live gates: what a press does never depends on a row
+   * a few seconds old.
+   */
+  work?: Standing | null;
 }
 
 /**
@@ -124,6 +133,34 @@ export function changeFoot(input: ChangeFootInput): ChangeFoot {
   const { status, votes, testing, merge } = input;
   const key = status?.key || '';
   const label = status?.label || '';
+  const foot = liveFoot(input, key, label);
+  return storedFoot(foot, input.work || null);
+}
+
+/**
+ * #6821: the foot worded from the change's stored work state instead of the
+ * live gates. An approved change catching up with main reads "Syncing with
+ * main", never "Up for a vote"; the viewer's own yes is the line under it at
+ * any stage. A change still up for a vote keeps its live foot, which carries
+ * the tally and the vote's own words.
+ */
+function storedFoot(foot: ChangeFoot, work: Standing | null): ChangeFoot {
+  if (!work || !work.stage || work.stage === 'up_for_vote') return foot;
+  const line = lineWords(work);
+  const mine = work.myVote === 'yes'
+    ? { id: 'changes:page.votes.note.youSaidYes' }
+    : work.myVote === 'no' ? { id: 'changes:page.votes.facts.youSaidNo' } : null;
+  return {
+    ...foot,
+    headline: '',
+    title: stageWords(work, { yours: true }),
+    facts: [...(line ? [line] : []), ...(mine ? [mine] : [])],
+    sub: [],
+  };
+}
+
+function liveFoot(input: ChangeFootInput, key: string, label: string): ChangeFoot {
+  const { status, votes, testing, merge } = input;
   switch (changePhase(input)) {
     case 'live':
       return { gate: 'votes', key: 'live', headline: label, title: LIVE_PLAIN.has(key) ? { id: 'core:work.stage.live' } : null, facts: [], sub: votes.note, tone: 'ok', progress: null };

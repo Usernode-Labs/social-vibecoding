@@ -213,6 +213,19 @@ export const JOBS: readonly Job[] = Object.freeze([
       const ws = legacy('services/work-state');
       const out = await ws.sweep(pool);
       await ws.publish(pool, out.pushes);
+      // #6821: how much the sweep has to get through, once a minute, so a
+      // backlog is visible in the log before the lists go stale. The oldest
+      // check age is how long a full cycle takes; the marks are what the 3 s
+      // drain has waiting.
+      legacy('services/logger').info('work-state', 'work states swept', {
+        openRows: out.openRows,
+        checked: out.checked,
+        seeded: out.seeded,
+        changed: out.changed.length,
+        oldestCheckAgeSecs: out.oldestCheckAgeSecs,
+        dirtyBacklog: out.dirtyBacklog,
+        oldestMarkAgeSecs: out.oldestMarkAgeSecs,
+      });
       return { checked: out.checked, seeded: out.seeded, changed: out.changed.length };
     },
   },
