@@ -147,6 +147,13 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   // Nothing drawn on a card depends on being signed in (#6609): a member and
   // a visitor get the same card, and Join is the project page's.
   const heading = signedIn ? t('home:join.heading') : t('home:join.headingSignedOut');
+  // The rest of Featured, drawn once in whichever container the reader gets:
+  // the visitor's smaller sideways row, or the member's wrapping grid.
+  const restCards = featured.slice(lead.length).map((app, i) => (
+    <div key={app.slug} role="listitem" className={signedIn ? 'flex [&>article]:flex-1' : 'flex w-[min(44vw,208px)] shrink-0 snap-start [&>article]:flex-1'}>
+      <Card app={app} eager={!lead.length && i < 3} featured />
+    </div>
+  ));
   return (
     // The id is the signed-in Home's (the tours and the declared checks find
     // it); the landing draws the same section signed out, in the same
@@ -177,38 +184,48 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           {/* A visitor's first few featured communities are drawn large, in
               a row that scrolls sideways, so Featured reads as a feature and
               not as the first rows of the same grid (Drea, 17 Nov 2026). The
-              rest of Featured keeps the grid under it. */}
+              rest of Featured keeps the grid under it. Each sideways row is
+              a FadeRail (#6804), which fades an edge only where more cards
+              are hidden, so the row is not cut off against the edge.
+              scroll-px-1 keeps the snap from landing the row 4px in, which
+              would fade its left edge before anyone scrolled it. */}
           {lead.length ? (
-            <div
+            <FadeRail
               role="list"
               aria-labelledby="guest-join-featured-label"
               data-home-join-lead={lead.length}
-              className="flex snap-x snap-mandatory gap-3.5 overflow-x-auto overscroll-x-contain px-1 pb-3.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              className="snap-x snap-mandatory scroll-px-1 gap-3.5 overscroll-x-contain px-1 pt-0 pb-3.5"
             >
               {lead.map((app, i) => (
                 <div key={app.slug} role="listitem" className="flex w-[min(80vw,340px)] shrink-0 snap-start [&>article]:flex-1">
                   <Card app={app} eager={i < 3} featured lead />
                 </div>
               ))}
-            </div>
+            </FadeRail>
           ) : null}
           {featured.length > lead.length ? (
-            <div
-              role="list"
-              aria-labelledby={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'}
-              data-home-join-featured-rest=""
+            signedIn ? (
+              <div
+                role="list"
+                aria-labelledby="home-join-featured-label"
+                data-home-join-featured-rest=""
+                className={`${CARD_GRID} px-1`}
+              >
+                {restCards}
+              </div>
+            ) : (
               // A visitor's second row of Featured scrolls sideways too, under
-              // the large one; signed in, Featured keeps its wrapping grid.
-              className={signedIn
-                ? `${CARD_GRID} px-1`
-                : 'flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden'}
-            >
-              {featured.slice(lead.length).map((app, i) => (
-                <div key={app.slug} role="listitem" className={signedIn ? 'flex [&>article]:flex-1' : 'flex w-[min(44vw,208px)] shrink-0 snap-start [&>article]:flex-1'}>
-                  <Card app={app} eager={!lead.length && i < 3} featured />
-                </div>
-              ))}
-            </div>
+              // the large one, on the same fading rail; signed in, Featured
+              // keeps its wrapping grid.
+              <FadeRail
+                role="list"
+                aria-labelledby="guest-join-featured-label"
+                data-home-join-featured-rest=""
+                className="snap-x snap-mandatory scroll-px-1 gap-3 overscroll-x-contain px-1 pt-0 pb-1"
+              >
+                {restCards}
+              </FadeRail>
+            )
           ) : null}
         </div>
       ) : null}
