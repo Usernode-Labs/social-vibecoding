@@ -11,6 +11,7 @@ const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
 const previewClock = require('../services/preview-clock');
 const previewStart = require('../services/preview-start');
+const stagingDemoPreview = require('../services/staging-demo-preview');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
@@ -716,15 +717,22 @@ function captureSpecOutput(raw) {
 // it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
 // publication passes required:true so the version and its receipt/card roll
 // back together instead of committing a partially replayable outcome.
-async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null } = {}) {
+//
+// `atLeastVersion` (18 Nov 2026): the lowest number this version may take.
+// Homeroom bot numbers its plans for a request across every session it
+// planned that request in (homeroom-bot-live.js publishSpec), so a request
+// planned again shows "Plan v2", not a second "Plan v1". Unset, it is the
+// session's own next number, as it always was.
+async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null, atLeastVersion = 1 } = {}) {
   try {
     // #3699: content_html is the version's HTML document when it was written
     // as one; content is then its markdown copy.
+    const floor = Number.isSafeInteger(Number(atLeastVersion)) && Number(atLeastVersion) > 1 ? Number(atLeastVersion) : 1;
     const { rows } = await pool.query(
       `INSERT INTO chat_session_specs (session_id, version, content, content_html)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3)
+       VALUES ($1, GREATEST(COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $4::int), $2, $3)
        RETURNING version`,
-      [sessionId, content, html || null]
+      [sessionId, content, html || null, floor]
     );
     return rows[0].version;
   } catch (err) {
@@ -751,6 +759,8 @@ async function persistScoutPublication({
   recovered = false,
   agentBackend = null,
   agentModel = null,
+  // The lowest number the version may take (snapshotSessionSpec).
+  atLeastVersion = 1,
 }) {
   const ccText = String(content || '').trim();
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
@@ -784,7 +794,7 @@ async function persistScoutPublication({
       client,
       sessionId,
       ccText,
-      { required: requiredSnapshot, html },
+      { required: requiredSnapshot, html, atLeastVersion },
     );
     const metadata = {
       specPreview: buildSpecPreview(ccText),
@@ -3180,6 +3190,23 @@ function sessionRoutes(config) {
       });
   }
 
+  // The page a staging demo change's Try it opens, inside the same
+  // sandboxed frame as any preview (services/staging-demo-preview.js): a
+  // fixed sample, served only on staging. Its address carries the frame's
+  // token, so no referrer leaves it. Anywhere else this address is not found.
+  router.get(stagingDemoPreview.SAMPLE_PATH, (req, res) => {
+    if (process.env.USERNODE_ENV !== 'staging') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    });
+    return res.send(stagingDemoPreview.sampleAppHtml());
+  });
+
   // Read-only twin of ensure-staging. A reviewer who cannot trigger a build
   // still gets the same health/revision/edge gate instead of opening the
   // last stored URL directly. It never repairs or rebuilds. It does wake a
@@ -3188,6 +3215,16 @@ function sessionRoutes(config) {
   router.get('/api/sessions/:id/preview-status', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      // A staging demo change opens a sample app as its preview
+      // (services/staging-demo-preview.js). Before the row lookup: a demo
+      // id has no chat_sessions row and would 404 on its way to the
+      // staging answer below.
+      if (stagingDemoPreview.isDemoEnv(req)) {
+        const demo = stagingDemoPreview.previewAnswer(
+          require('./votes').stagingMockProposalFor(sessionId, req.user)
+        );
+        if (demo) return res.set('Cache-Control', 'no-store').json(demo);
+      }
       const session = await loadPreviewSession(sessionId);
       if (!session || !mayOpenPreview(session, req.user.id)) {
         return res.status(404).json({ error: 'Session not found' });
@@ -3225,6 +3262,14 @@ function sessionRoutes(config) {
   router.post('/api/sessions/:id/ensure-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      // As in preview-status: a staging demo change's Try it opens the
+      // sample app, and never a rebuild (nothing here can build one).
+      if (stagingDemoPreview.isDemoEnv(req)) {
+        const demo = stagingDemoPreview.previewAnswer(
+          require('./votes').stagingMockProposalFor(sessionId, req.user)
+        );
+        if (demo) return res.set('Cache-Control', 'no-store').json(demo);
+      }
       const session = await loadPreviewSession(sessionId);
       if (!session) return res.status(404).json({ error: 'Session not found' });
 

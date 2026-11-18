@@ -207,7 +207,8 @@ export function tracksByKey(work: HomeroomBotWork | null): Map<string, BotTrack>
   const cached = BY_KEY.get(work);
   if (cached) return cached;
   const map = new Map<string, BotTrack>();
-  for (const track of work.tracks) {
+  // The viewer's own first, then what a live card follows (./bot-live-card.tsx).
+  for (const track of [...work.tracks, ...(work.watched || [])]) {
     const key = requestKey(track);
     if (key && !map.has(key)) map.set(key, track);
   }
@@ -545,7 +546,8 @@ export function TrackCard({ track, title, project = null, links = [], pictures =
   const ended = ENDED_STAGES.has(track.work.stage);
   return (
     <div
-      className="mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-2.5"
+      // 18 Nov 2026: a settled card has no fill, only its hairline.
+      className={`mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl px-3 py-2.5 ${ended ? 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]' : 'bg-[color:var(--messages-surface)]'}`}
       role="group"
       aria-label={t('messages:bot.track.name', { title })}
       data-bot-track={track.work.stage}

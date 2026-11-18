@@ -4669,17 +4669,57 @@ function buildTurnRunner({
   };
 }
 
+// 18 Nov 2026 (Saved Places request #8): the highest version of any plan
+// the same author wrote in another session for the same request. Homeroom
+// bot plans a request in a session of its own each time it plans it (a
+// plan-only look, then the build that went ahead), and each used to start
+// at version 1, so a reworked plan was posted as a second "Plan v1".
+const REQUEST_PLAN_TOP_SQL = `
+  SELECT COALESCE(MAX(s.version), 0)::int AS top
+    FROM chat_sessions me
+    JOIN chat_sessions cs
+      ON cs.app_id = me.app_id AND cs.user_id = me.user_id AND cs.id <> me.id
+     AND (cs.created_from_issue_number = me.created_from_issue_number
+          OR me.created_from_issue_number = ANY(cs.linked_issues))
+    JOIN chat_session_specs s ON s.session_id = cs.id
+   WHERE me.id = $1 AND me.created_from_issue_number IS NOT NULL`;
+
+/**
+ * The lowest version number a plan stored on `sessionId` may take: one past
+ * the newest plan the same author wrote for the same request in another
+ * session, so the request's plans read v1, v2, v3 wherever each was
+ * written. 1 when there is none, or when it cannot be read. Never throws.
+ */
+async function requestPlanFloor(pool, sessionId) {
+  try {
+    const { rows: [row] = [] } = await pool.query(REQUEST_PLAN_TOP_SQL, [Number(sessionId)]);
+    const top = Number(row && row.top);
+    return Number.isSafeInteger(top) && top > 0 ? top + 1 : 1;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the request\'s plan versions; numbering this session\'s own', { sessionId, err: err.message });
+    return 1;
+  }
+}
+
 /**
  * Store a spec on its build's session with the same three effects a
  * person's scout has: spec_md, a numbered version, and the spec card in the
  * session's own transcript. Resolves the version, or null when it could not
  * be stored (the build goes on from the spec either way).
+ *
+ * Numbered across the request (requestPlanFloor): a new plan is the
+ * request's next version. `keepVersion` is for a copy of a plan already
+ * numbered (the plan a build was told to build from, presetSpec), which
+ * keeps that plan's number: it is the same plan, not a newer one.
  */
-async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model, revised = false }) {
+async function publishSpec({ pool, sessions, session, specMd, specHtml: html = null, model, revised = false, keepVersion = null }) {
   try {
+    const kept = Number(keepVersion);
+    const floor = Number.isSafeInteger(kept) && kept > 0 ? kept : await requestPlanFloor(pool, session.id);
     const published = await sessions.persistScoutPublication({
       pool, sessionId: session.id, content: specMd, ...(html ? { contentHtml: html } : {}), hadSpec: !!revised,
       agentBackend: 'codex_openrouter', agentModel: model,
+      ...(floor > 1 ? { atLeastVersion: floor } : {}),
     });
     return published?.specVersion ?? null;
   } catch (err) {
@@ -4853,6 +4893,10 @@ async function buildAndPropose({
   // #4488: the screens of the spec its requester approved (presetSpec), so
   // the build's spec version draws them and its shots read its changes.
   presetSpecHtml = null,
+  // 18 Nov 2026: that plan's own version number, which its copy on this
+  // build's session keeps (publishSpec keepVersion). Null for a kept plan
+  // with no number of its own: it is then the request's next version.
+  presetVersion = null,
   // #4488: the plan was checked with its requester first, which its
   // description says (prepareProposal).
   checkedFirst = false,
@@ -5158,6 +5202,8 @@ async function buildAndPropose({
       ...(presetScreens.length ? { screens: presetScreens } : {}),
       version: propose ? await publishSpec({
         pool, sessions, session, specMd: String(presetSpec), specHtml: presetSpecHtml ? String(presetSpecHtml) : null, model: specModel || model,
+        // The plan it was told to build keeps its number on this session.
+        keepVersion: presetVersion,
       }) : null,
     }
     : draftSpec({

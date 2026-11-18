@@ -136,6 +136,8 @@ test('an offer’s line is the change it would withdraw, or the request it would
   assert.deepEqual(shape(withdraw), {
     kind: 'change', link: null, appSlug: 'plant-pal', appName: 'Plant pal', issueNumber: null, title: 'Plant photos',
     before: 'Want me to withdraw it? Tap Withdraw it below.', rest: 'Why: She wants to rethink it', hidden: false,
+    // 18 Nov 2026: an offer's line, whose words after it fold away when long (tests/bot-one-card.test.js).
+    offer: true,
   });
   const file = botHead('Want me to file this on Plant pal?\n\nOne more line.\n\n**Plant pal** · new request: Add a search box\n\nSearch notes by their text.', offer);
   assert.equal(file.kind, 'draft');
@@ -382,7 +384,8 @@ test('the row draws the card in place of the line, and not again under the words
   assert.match(row, /import \{ BotHeadWords, botHead, draftPreviewOf, isHeadCard \} from '\.\/bot-head-card';/);
   assert.match(row, /const head = botHead\(message\.content, botMeta\(message\)\);/,
     'only the bot’s own messages (botMeta reads it off a bot sender only)');
-  assert.match(row, /const objects = head \? message\.objects\.filter\(\(object\) => !isHeadCard\(head, object\)\) : message\.objects;/);
+  // 18 Nov 2026: and a reply's live card's request is not drawn again either (tests/bot-one-card.test.js).
+  assert.match(row, /const objects = message\.objects\.filter\(\(object\) => !\(head && isHeadCard\(head, object\)\) && !isLiveCardObject\(liveWork, object\)\);/);
   // #6248: only in the bot's DM, and only for a draft.
   assert.match(row, /const draft = botChat && kind === 'direct'\n\s+\? draftPreviewOf\(head, botMeta\(message\), message\.threadRootId, message\.conversationId \|\| conversationId\)\n\s+: null;/);
   assert.match(row, /<BotHeadWords head=\{head\} objects=\{message\.objects\} channels=\{channels\} draft=\{draft\} marks=\{marks\} \/>/);

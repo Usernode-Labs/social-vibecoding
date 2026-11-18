@@ -6017,6 +6017,8 @@ async function runFollowUp(pool, config, {
     requester: requester?.username || null,
     // #6406: the newer plan this update should follow, when there is one.
     newerPlan: basis.newerPlan || null,
+    // 18 Nov 2026: its name now, which a revision keeps (renameKeepsChange).
+    title: changeTitleOf(session),
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
@@ -6193,7 +6195,12 @@ async function runFollowUp(pool, config, {
   // #3767: and its name, when the revision changed what it does. Ear Trainer's
   // size options were taken out and its proposal was still called "Lead size
   // options with the number of sounds" when it merged.
-  if (moved && parsed?.title) await look.once('rename', async () => { await renameRevised({ pool, github, repo, session, title: parsed.title, app }); return true; });
+  // 18 Nov 2026: and only to a name for the whole change. A new title that
+  // drops most of what the old one named, and that nobody asking for this
+  // revision talked about, names the revision alone (Saved Places change
+  // #12): it is refused and the old title stays (renameKeepsChange).
+  const newTitle = moved && parsed?.title ? keptRename({ session, title: parsed.title, replies, app }) : null;
+  if (newTitle) await look.once('rename', async () => { await renameRevised({ pool, github, repo, session, title: newTitle, app }); return true; });
 
   // #4612: when the revision changed what the plan says, the turn wrote the
   // whole updated plan before its JSON block. Store it as the change's next
@@ -6233,7 +6240,7 @@ async function runFollowUp(pool, config, {
             try {
               const generated = await (deps.llm || require('./llm')).generateRevisedDescription({
                 previous: editable.pr_summary_md || null,
-                title: parsed.title || session.pr_title || null,
+                title: newTitle || changeTitleOf(session),
                 summary: parsed.summary || null,
                 reply: parsed.reply || null,
                 plan: planRead?.ok ? planRead.specMd : null,
@@ -6367,6 +6374,33 @@ async function runFollowUp(pool, config, {
   if (!moved) await requeueChecks();
   await requeueAsks();
   return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
+}
+
+/** The change's name now, as its vote shows it, or null. Pure. */
+function changeTitleOf(session) {
+  for (const t of [session?.pr_title, session?.proposed_pr_title, session?.session_title]) {
+    const s = typeof t === 'string' ? t.replace(/\s+/g, ' ').trim() : '';
+    if (s) return s;
+  }
+  return null;
+}
+
+/**
+ * 18 Nov 2026: the title a revision may give its change, or null to keep
+ * the one it has (followup.renameKeepsChange, against what the people who
+ * asked for the revision wrote). Pure, but for its log line.
+ */
+function keptRename({ session, title, replies = [], app = null }) {
+  const from = changeTitleOf(session);
+  if (!from) return title;
+  if (from === title) return null;
+  const asked = (Array.isArray(replies) ? replies : []).map((r) => String(r?.body || ''));
+  const verdict = followup.renameKeepsChange({ from, to: title, asked });
+  if (verdict.ok) return title;
+  log.info('homeroom-bot', 'Kept the change\'s title: the revision\'s new one names only part of it', {
+    app: app?.slug || null, sessionId: session?.id || null, kept: verdict.kept, touched: verdict.touched, of: verdict.of,
+  });
+  return null;
 }
 
 /**
@@ -9412,6 +9446,10 @@ async function buildLive({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
       ...recipeBudgets(app, config, turnBudgetMs, { firstVersion, recipe }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
+      // 18 Nov 2026: the version of the plan it builds from, which its copy
+      // on the build's session keeps (live.publishSpec keepVersion), so the
+      // change says it is built from that version and not a newer one.
+      ...(presetSpec && Number(builtFrom?.version) > 0 ? { presetVersion: Number(builtFrom.version) } : {}),
       // #6407: the person's plan this change is built from, with the version
       // of its after screen the triage named: the build's prompt and the
       // change's summary say which plan, which version, and where they left it.
@@ -9549,6 +9587,8 @@ async function buildLive({
       const tryKey = first ? 'retry' : 'try';
       const tryArgs = first ? {
         ...buildArgs, presetSpec: first.specMd, onSpec: null,
+        // The same plan as the first try's, under its number.
+        presetVersion: Number(first.specVersion) > 0 ? Number(first.specVersion) : (buildArgs.presetVersion ?? null),
         // Its first look was drawn by the first try.
         onFirstLook: null, onScreen: null,
       } : buildArgs;

@@ -456,6 +456,62 @@ test('the AI tab\'s work against the full schema', { timeout: 120000 }, async (t
   // rather than waiting; either way it is one row for the thread.
   assert.equal([...withGathered.next, ...withGathered.waiting].filter((r) => Number(r.threadId) === Number(held.thread_id)).length, 1, 'not one row per request');
 
+  // #6819: a change whose update is coming is under way, not a vote to owe,
+  // even while its stored work state still says it is up for a vote (only a
+  // route's own writes refreshed that row, not the follow-up turn's start).
+  await request(app, 70, ada, 'Watering reminder');
+  const watering = await change(app, 71, bob, 70, 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+  await settleWorkStates(pool);
+  // Its own row, for certain: earlier fixtures may still be waiting their
+  // turn in the drain.
+  await require('../src/services/work-state').refresh(pool, [{ sessionId: watering.id }]);
+  await pool.query("UPDATE chat_sessions SET pr_title = 'Watering reminder' WHERE id = $1", [watering.id]);
+  const storedVoteOpen = async () => (await one(
+    "SELECT vote_open FROM work_states WHERE item_kind = 'change' AND item_ref = $1", [watering.id])).vote_open;
+  const turn = (mode) => JSON.stringify({ turnId: `${mode}-turn-6819`, mode, startedAt: new Date().toISOString() });
+  const ask6819 = (status) => one(
+    `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, instruction, status, created_at, taken_at)
+     VALUES ($1, $2, 70, 'drop the second line', $3, NOW(), CASE WHEN $3 = 'taken' THEN NOW() ELSE NULL END)
+     RETURNING id`, [app.id, watering.id, status]);
+  const page6819 = () => aiWork.pageLists(pool, { user: { id: ada.id }, deps: { bot } });
+  const titled = (list) => list.filter((r) => r.title === 'Watering reminder');
+
+  let page6819Now = await page6819();
+  assert.equal(titled(page6819Now.needsYou).length, 1, 'up for a vote to begin with');
+  assert.equal(await storedVoteOpen(), true);
+  // A follow-up turn starts, and the stored row is left as the sweep found it.
+  await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [watering.id, turn('build')]);
+  assert.equal(await storedVoteOpen(), true, 'the stored row still says up for a vote');
+  page6819Now = await page6819();
+  assert.equal(titled(page6819Now.needsYou).length, 0, 'no Vote while its update runs');
+  const running = titled(page6819Now.inProgress);
+  assert.equal(running.length, 1, 'it waits with the work under way');
+  assert.deepEqual(running.map((r) => r.says), ['Building · Updating the change'], 'listed as Updating');
+  // A taken ask on its head is the same update, before the next turn's record.
+  await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [watering.id]);
+  const taken = await ask6819('taken');
+  page6819Now = await page6819();
+  assert.equal(titled(page6819Now.needsYou).length, 0);
+  assert.deepEqual(titled(page6819Now.inProgress).map((r) => r.says), ['Building · Updating the change'],
+    'a taken ask is an update under way');
+  // Taking its before and after screenshots is no update: the vote is owed.
+  await pool.query("UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1", [taken.id]);
+  await pool.query('UPDATE chat_sessions SET active_turn = $2::jsonb WHERE id = $1', [watering.id, turn('shots')]);
+  page6819Now = await page6819();
+  assert.equal(titled(page6819Now.needsYou).length, 1, 'a shots turn holds the vote its own way, and still asks for it');
+  // A queued ask is an update waiting its turn.
+  await pool.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [watering.id]);
+  const queued = await ask6819('queued');
+  page6819Now = await page6819();
+  assert.equal(titled(page6819Now.needsYou).length, 0);
+  const waiting = titled(page6819Now.waiting);
+  assert.equal(waiting.length, 1);
+  assert.deepEqual(waiting.map((r) => r.says), ['Building · An update is on its way'], 'Update queued');
+  // It lands: back in Needs you with Vote.
+  await pool.query("UPDATE homeroom_bot_change_asks SET status = 'done', done_at = NOW() WHERE id = $1", [queued.id]);
+  page6819Now = await page6819();
+  assert.equal(titled(page6819Now.needsYou).length, 1, 'back in Needs you with Vote');
+
   // The route: signed in only.
   const httpApp = express();
   httpApp.use((req, _res, next) => { req.user = req.get('x-test-user') ? { id: Number(req.get('x-test-user')) } : null; next(); });

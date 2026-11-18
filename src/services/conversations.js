@@ -1297,13 +1297,21 @@ async function listConversations(pool, user) {
       LIMIT 200`,
     [user.id]
   );
+  // Each conversation is several reads of its own, and they used to run one
+  // conversation after another: about a hundred round trips in a row for a
+  // list every page load asks for (#6796). A few at a time now, in the
+  // list's order, and never more than LIST_READS_AT_ONCE: the web's pool is
+  // small, and one list must not take it.
   const out = [];
-  for (const row of rows) {
-    const conversation = await getConversation(pool, user, row.id);
-    if (conversation) out.push(conversation);
+  for (let at = 0; at < rows.length; at += LIST_READS_AT_ONCE) {
+    const group = await Promise.all(
+      rows.slice(at, at + LIST_READS_AT_ONCE).map((row) => getConversation(pool, user, row.id))
+    );
+    for (const conversation of group) if (conversation) out.push(conversation);
   }
   return out;
 }
+const LIST_READS_AT_ONCE = 4;
 
 // `appId` is set only on the Homeroom bot's news about a project (#5580,
 // sendMessage's `notificationAppId`): the bell files it under that project.

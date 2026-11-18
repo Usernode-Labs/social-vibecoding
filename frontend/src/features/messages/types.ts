@@ -200,6 +200,34 @@ export interface HomeroomBotMeta {
    * the line (./bot-track.tsx filedNextLine).
    */
   filedNext?: BotFiledNext;
+  /**
+   * 18 Nov 2026: what came of an offer, said on its card in place of the
+   * buttons (services/homeroom-bot-mayor.js settleOnCard): one card per
+   * action, and no message under it says it again.
+   */
+  outcome?: BotOutcome;
+  /**
+   * 18 Nov 2026: the request a reply queued or started work on, drawn under
+   * it as a card that follows it live (./bot-live-card.tsx).
+   */
+  liveWork?: BotLiveWork;
+}
+
+/** 18 Nov 2026: what came of an offer (services/homeroom-bot-mayor.js settleOnCard). */
+export interface BotOutcome {
+  text: string;
+  state: 'done' | 'declined' | 'failed';
+  kind?: string;
+  issueNumber?: number;
+  filedNext?: BotFiledNext;
+}
+
+/** 18 Nov 2026: the request a reply started work on (services/homeroom-bot-mayor.js liveWorkOf). */
+export interface BotLiveWork {
+  appSlug: string;
+  appName?: string;
+  issueNumber: number;
+  title?: string;
 }
 
 /**
@@ -425,6 +453,12 @@ export interface HomeroomBotPastJob extends HomeroomBotJob {
  */
 export interface HomeroomBotWork {
   tracks: BotTrack[];
+  /**
+   * 18 Nov 2026: requests a live card on screen follows that are not the
+   * viewer's own (./bot-live-card.tsx). Only a card reads them: nothing
+   * that lists the viewer's requests does.
+   */
+  watched?: BotTrack[];
 }
 
 /** The five steps a request's track bar draws (services/homeroom-bot-track.js). */

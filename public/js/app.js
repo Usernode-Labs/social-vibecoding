@@ -5857,6 +5857,12 @@ const App = {
       }
     } finally {
       App._isRestoring = false;
+      // A preview the address names (`?preview=<slug>/<id>`) reopens over the
+      // page it was opened on: a reload, a pasted link, Back onto its entry.
+      // After the route, so the page is the one it stands over.
+      if (typeof AppView !== 'undefined' && typeof AppView.restorePreviewFromAddress === 'function') {
+        setTimeout(() => AppView.restorePreviewFromAddress(), 0);
+      }
     }
   },
 

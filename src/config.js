@@ -1278,4 +1278,8 @@ module.exports = {
   isLoopbackOrigin,
   phoneTestCodeFrom,
   shotsPhoneTestCodeFrom,
+  // The platform's own app's slug. The staging demo preview's placeholder
+  // shots name it when a reader outside that app asks
+  // (services/staging-demo-preview.js).
+  SELF_APP_SLUG,
 };

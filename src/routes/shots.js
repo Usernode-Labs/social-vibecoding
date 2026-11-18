@@ -10,6 +10,7 @@ const shots = require('../services/shots-files');
 const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
 const view = require('../services/shots-view');
+const stagingDemoPreview = require('../services/staging-demo-preview');
 const { fromRun: shotDiagnosisFromRun } = require('../services/shots-diagnosis');
 const mediaStore = require('../services/media-store');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
@@ -263,6 +264,23 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
 
   router.get('/api/apps/:slug/proposals/:sessionId/shots/:artifactId', async (req, res) => {
     const id = sessionId(req.params.sessionId);
+    // The staging demo change's before & after are two pictures this
+    // process draws (services/staging-demo-preview.js): fixed ids, no stored
+    // artifact, and no shots store on a staging copy.
+    if (process.env.USERNODE_ENV === 'staging'
+      && stagingDemoPreview.isDemoPreviewSession(id)
+      && stagingDemoPreview.isDemoArtifact(req.params.artifactId)) {
+      const png = stagingDemoPreview.shotPng(
+        String(req.params.artifactId) === stagingDemoPreview.ARTIFACT_IDS.base ? 'base' : 'head'
+      );
+      res.set({
+        'Content-Type': 'image/png',
+        'Cache-Control': 'no-store',
+        'Content-Length': String(png.length),
+        'X-Content-Type-Options': 'nosniff',
+      });
+      return res.end(png);
+    }
     if (!config.shots?.present || !id || !ARTIFACT_ID_RE.test(String(req.params.artifactId || ''))) {
       return res.status(404).json({ error: 'Shots artifact not found' });
     }

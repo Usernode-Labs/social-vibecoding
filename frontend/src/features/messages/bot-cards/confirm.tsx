@@ -102,7 +102,8 @@ export function ConfirmCard({ message, card }: BotCardProps) {
 
   return (
     <div
-      className="mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl bg-[color:var(--messages-surface)] px-3 py-2.5"
+      // 18 Nov 2026: a settled card has no fill, only its hairline.
+      className={`mt-1 flex max-w-[480px] flex-col gap-2.5 rounded-2xl px-3 py-2.5 ${state === 'pending' ? 'bg-[color:var(--messages-surface)]' : 'shadow-[inset_0_0_0_1px_var(--app-sheet-line)]'}`}
       role="group"
       aria-label={t('messages:botCards.confirm.label', { title })}
       data-confirm-card={state}
