@@ -786,14 +786,6 @@
   "bootParams": ["shot", "details", "side-strip"],
   "routingBoundaries": [
     {
-      "route": "#app/*",
-      "reason": "A running app's App tab: on a desktop the side panel opens the pages about it beside the app (frontend/src/features/side-panel/controller.ts onNavigate), so the next address change is not drawn in the page."
-    },
-    {
-      "route": "#app/*/app",
-      "reason": "The App tab's long form, the same running app: the side panel takes the next address change the same way."
-    },
-    {
       "route": "#homeroom-bot",
       "reason": "The Homeroom bot tab's page (#ai, its old address, lands here): on a desktop the side panel opens a request, a change or a conversation beside it, in the place of the docked chat (frontend/src/features/side-panel/controller.ts canTake), so the next address change is not drawn in the page."
     },
@@ -1100,9 +1092,9 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "#4455: a change’s page is a Messages thread: the Workshop chip above the sheet (the header draws no arrow), \"Change #N\" and its category over the ⋯ disc, the change as the root post (who, when, the title, its summary as a quote), the Votes card above the Testing card; the steps are in Details",
+      "name": "#4455: a change’s page is a Messages thread: the Workshop chip and one header pill (18 Nov 2026: the project's tile first, \"Change #N\", the project and its category, the ⋯ disc, then the panel-only open-as-page and close discs; the header draws no arrow), the change as the root post (who, when, the title, its summary as a quote), the Votes card above the Testing card; the steps are in Details",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "body:has(#back-btn.hidden) .dev-change:has(#gc-thread-back .dev-topic-back):has(#gc-thread-bar .messages-thread-sub):has(#gc-thread-bar [data-card-menu]) [data-change-root=\"9000043\"][data-thread-card=\"change\"]:has(.dev-thread-kicker[data-thread-kicker=\"change\"]):has(.dev-thread-foot[data-thread-foot] .dev-thread-foot-head) [data-step-layer=\"gates\"] [data-change-gate=\"votes\"] + [data-change-gate=\"testing\"]",
+      "expectSelector": "body:has(#back-btn.hidden) .dev-change:has(#gc-thread-back .dev-topic-back):has(#gc-thread-bar .dev-thread-bar-tile + * .messages-thread-sub):has(#gc-thread-bar [data-card-menu] + [data-thread-exits] [data-thread-exit=\"close\"]) [data-change-root=\"9000043\"][data-thread-card=\"change\"]:has(.dev-thread-kicker[data-thread-kicker=\"change\"]):has(.dev-thread-foot[data-thread-foot] .dev-thread-foot-head) [data-step-layer=\"gates\"] [data-change-gate=\"votes\"] + [data-change-gate=\"testing\"]",
       "expectText": "Change #900143"
     },
     {
@@ -4641,12 +4633,12 @@
       "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
     },
     {
-      "name": "Side panel beside a running app: hidden and frameless after the app view, Expand and Close, no page pill (#6431)",
+      "name": "Side panel (the Homeroom bot page's column): hidden and frameless after the app view, with only the column's close and none of the old controls from beside a running app (#6431)",
       "path": "/?demo=1",
-      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe,[data-side-panel-status])) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
+      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden[aria-label=\"Side panel\"]:not([data-thread-pill]):not(:has(iframe,[data-side-panel-status],#side-panel-expand,#side-panel-back)) > .side-panel-head > .side-panel-ai-close[aria-label=\"Close panel\"]"
     },
     {
-      "name": "#2886: the divider between a running app and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
+      "name": "#2886: the divider between the Homeroom bot page's list and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
       "path": "/?demo=1",
       "expectSelector": "#platform-side-panel.hidden > #side-panel-divider.side-panel-divider:first-child[role=\"separator\"][aria-orientation=\"vertical\"][aria-controls=\"platform-side-panel\"][aria-label=\"Resize panel\"][tabindex=\"0\"]:not([aria-valuenow]) + .side-panel-head"
     },
