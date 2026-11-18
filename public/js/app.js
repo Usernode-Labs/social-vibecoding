@@ -1736,15 +1736,34 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'settings-back') return;
-    setTimeout(() => {
+    // #6805: this boot runs as soon as the session is known, usually well
+    // before the document's `load` (which waits for every subresource). A
+    // fragment navigation a script starts before the document is completely
+    // loaded REPLACES the current history entry instead of pushing one, so on
+    // a slow pod the drill-in below replaced `#settings` — and the `back()`
+    // then traversed out of the document, abandoning its boot fetches and
+    // lazy chunks and leaving the checks runner's network-idle wait with
+    // nothing that ever drains. Start only once the document has loaded, so
+    // the drill-in really pushes.
+    const start = () => setTimeout(() => {
       // A drill-in: one dispatch (a hash assignment fires hashchange only).
+      let entries = 0;
+      try { entries = history.length; } catch (err) { /* ignore */ }
       try { location.hash = '#settings/password'; } catch (err) { /* ignore */ }
       // Then back out of it once that push has settled — the traversal, and
-      // with it the duplicate popstate + hashchange pair.
+      // with it the duplicate popstate + hashchange pair. Only over the entry
+      // the drill-in actually pushed: if it was a replace, `back()` would
+      // leave the document entirely, so never traverse in that case (the
+      // check then fails on its own assertion, not a 30s load timeout).
       setTimeout(() => {
+        let pushed = false;
+        try { pushed = history.length > entries; } catch (err) { /* ignore */ }
+        if (!pushed) return;
         try { history.back(); } catch (err) { /* ignore */ }
       }, 200);
     }, 50);
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
   },
 
   // Screenshot-state deep link `?shot=notif-permissions`: present the real
