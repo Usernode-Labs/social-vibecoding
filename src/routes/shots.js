@@ -287,17 +287,25 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
            JOIN shot_runs r ON r.id = a.run_id
            JOIN chat_sessions s ON s.id = r.session_id
           WHERE a.id = $1 AND s.id = $2 AND s.app_id = $3
-            AND s.shots_run_id = r.id
-            AND s.shots_state = 'verified' AND r.state = 'verified'
-            AND r.head_sha = COALESCE(
-                  s.shots_detail->>'headSha',
-                  CASE WHEN s.source = 'imported'
-                    THEN s.imported_pr_head_sha
-                    ELSE s.reviewed_head_sha
-                  END,
-                  s.checks_commit_sha,
-                  s.handoff_head_sha
-                )`,
+            AND ((s.shots_run_id = r.id
+              AND s.shots_state = 'verified' AND r.state = 'verified'
+              AND (r.head_sha = COALESCE(
+                    s.shots_detail->>'headSha',
+                    CASE WHEN s.source = 'imported'
+                      THEN s.imported_pr_head_sha
+                      ELSE s.reviewed_head_sha
+                    END,
+                    s.checks_commit_sha,
+                    s.handoff_head_sha
+                  )
+                -- Shots carried across a clean merge of main were taken on
+                -- the head it left (the shots machine's carry).
+                OR r.head_sha = s.shots_detail->>'carriedFrom'))
+              -- The previous version's shots, which the card keeps while this
+              -- version's are taken (shots_detail.previous).
+              OR (r.id = s.shots_detail->'previous'->>'runId'
+                AND s.shots_state IS DISTINCT FROM 'verified'
+                AND r.state IN ('verified', 'stale')))`,
         [req.params.artifactId, id, ctx.app.id, dense === true]
       );
       const artifact = rows[0];
