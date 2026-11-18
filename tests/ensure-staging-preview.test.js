@@ -729,8 +729,15 @@ test('the preview bar says Back, not Back to session, and its title is not set i
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'staging', 'staging-overlay.tsx'), 'utf8');
   const back = overlay.match(/<button\s+id="staging-back"[\s\S]*?<\/button>/);
   assert.ok(back, '#staging-back keeps its id');
-  assert.match(back[0], /<ChevronLeftIcon className="w-4 h-4" \/>\s*\{t\('core:common\.back'\)\}\s*<\/button>/);
+  // Nov 2026: one round control. In the whole window it is Back (a chevron,
+  // named Back); docked in a column or the side panel it is the × that
+  // closes the preview. app.css shows the glyph for the placement.
+  assert.match(back[0], /aria-label=\{exitLabel\}/);
+  assert.match(back[0], /<ChevronLeftIcon className="staging-exit-back /);
+  assert.match(back[0], /<XIcon className="staging-exit-close /);
+  assert.match(overlay, /const exitLabel = docked \? t\('devchat:staging\.close'\) : t\('core:common\.back'\);/);
   assert.equal(message('core:common.back'), 'Back');
+  assert.equal(message('devchat:staging.close'), 'Close preview');
   assert.doesNotMatch(back[0], /Back to session/);
   const label = overlay.match(/<span id="staging-url-label" className="([^"]*)"/);
   assert.ok(label, '#staging-url-label keeps its id');

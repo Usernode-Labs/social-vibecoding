@@ -2066,12 +2066,11 @@
     // `setStatusBarTone`), and capability-gated like setAppearance, so an
     // older build never sees the call.
     //
-    // Until a build takes the tone, app.css paints the fullscreen preview
-    // bar's safe-area band in the shell's ground colour, so the glyphs the
-    // theme picked sit on the ground they were picked for. The first tone
-    // the app accepts puts _STATUS_TONE_CLASS on <html>, which retires that
-    // stopgap: from then on the band is the bar's own dark and the glyphs
-    // follow it.
+    // The first tone the app accepts puts _STATUS_TONE_CLASS on <html>. The
+    // fullscreen preview's header used to need it (its band under the clock
+    // was painted in the shell's ground until then); it is drawn in the
+    // theme's colours now, so nothing keys off the class but this record of
+    // a build that takes tones.
     _STATUS_TONE_CLASS: 'native-status-bar-tone',
     // `undefined` until the first publish, so the boot publish always goes
     // out: null at boot also clears an override a previous document left
@@ -2083,7 +2082,11 @@
     // Pure: 'dark' | 'light' | null for the ground under the status bar.
     statusBarToneFor(state) {
       const s = state || {};
-      if (s.previewFullscreen === true || s.compareOpen === true) return 'dark';
+      if (s.compareOpen === true) return 'dark';
+      // The change preview, filling the screen, is drawn in the theme's own
+      // colours (Nov 2026; it used to be a near-black bar), so the bar is
+      // the theme's: the override is cleared.
+      if (s.previewFullscreen === true) return null;
       // iPhone Duo: the clock is in the column of chrome down the screen's
       // edge, over the wallpaper, not over the header or the app, which both
       // stop at it (app.css, THE SIDE STRIP). So neither's colour is the
@@ -2104,7 +2107,10 @@
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
-        state.previewFullscreen = shown(preview);
+        // Only filling the screen puts it under the status bar: docked in a
+        // column or the side panel it starts below the shell's header.
+        state.previewFullscreen = shown(preview)
+          && (preview.getAttribute('data-placement') || 'full') === 'full';
         state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
         state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');
@@ -2205,7 +2211,7 @@
         // the preview iframe, whose identity is pinned).
         ['staging-overlay', 'visual-compare-overlay'].forEach((id) => {
           const el = document.getElementById(id);
-          if (el) observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+          if (el) observer.observe(el, { attributes: true, attributeFilter: ['class', 'data-placement'] });
         });
       } catch (err) {
         console.warn('[native-chrome] status-bar tone observer failed:',

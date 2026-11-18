@@ -7,6 +7,8 @@
  *            unchanged (its two tabs, Copy markdown, its ×)
  *   shots    a change's before and after viewer, rendered inline instead of
  *            in the popover it used to open
+ *   preview  a change's running preview, which the staging overlay draws
+ *            over this column's placeholder
  *
  * The store is ../ai/detail.ts; this module only draws it.
  */
@@ -52,6 +54,10 @@ export function DetailPane({ layout }: { layout: DetailLayout }): ReactNode {
     );
   }
   if (entry.kind === 'shots') return <DetailPaneShots entry={entry} layout={layout} />;
+  // A change's running preview: the column makes room and draws nothing of
+  // its own. The staging overlay stands over this placeholder, because the
+  // preview's frame must never move (../staging/placement.ts).
+  if (entry.kind === 'preview') return <div className="detail-preview-slot" data-preview-slot="" aria-hidden="true" />;
   return (
     <SpecPanelView
       open

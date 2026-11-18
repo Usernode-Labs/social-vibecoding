@@ -9890,30 +9890,304 @@ html.un-kb .un-modal {
   translate: 0 var(--platform-vv-top, 0px);
 }
 
+/* ── THE CHANGE PREVIEW (Nov 2026) ──────────────────────────────────────
+   frontend/src/features/staging/staging-overlay.tsx draws it; where it
+   stands is ./placement.ts, carried here as `data-placement`:
+
+     full     the whole window (a phone, a page with no column, a change
+              for large screens, or the person's Full window);
+     column   over the detail column's placeholder beside a thread;
+     panel    over the side panel, beside a running app or the bot list.
+
+   Docked, its position is the overlay's inline left/top/width/height; the
+   frame inside never moves. Its colours are the theme's: it used to be a
+   near-black bar and a navy banner in both themes, and a black loader.
+
+   STACKING. Above the anonymous screens (z-40) and the Get-the-app strip
+   (#mobile-install-banner, z-45), which on a phone browser covered the
+   preview's Back and title; below the drawer, the dialogs (z-50) and the
+   offline banner (z-60). Toggled elements are styled by CLASS only, never
+   with the id in front, so the compiled `.hidden` (tailwind.css loads after
+   this file) still wins. */
+#staging-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 46;
+  background: var(--dc-sheet-solid);
+  color: var(--text-primary);
+}
+#staging-overlay:not([data-placement="full"]) {
+  inset: auto;
+  overflow: hidden;
+  border-start-start-radius: 20px;
+  border-inline-start: 1px solid var(--app-sheet-line);
+  border-top: 1px solid var(--app-sheet-line);
+}
+
 /* The overlay is `inset: 0` — it covers the status bar, so its own chrome
    bar has to clear the notch. */
 #staging-overlay .staging-chrome-bar {
   padding-top: calc(0.5rem + var(--platform-safe-top));
 }
+/* Docked below the shell's header it touches no edge of the screen. */
+#staging-overlay:not([data-placement="full"]) .staging-chrome-bar {
+  padding-top: 12px;
+}
 
-/* THE STATUS-BAR BAND, UNTIL THE APP TAKES A TONE (#26). Inside the Homeroom
-   app the status bar's clock and battery are drawn from the app's theme,
-   which is the shell's appearance: dark glyphs on the light shell, which
-   nobody could read on this bar's near-black. An app build that takes
-   `setStatusBarTone` is told the ground here is dark and draws light glyphs
-   (public/js/native-chrome.js); the first tone it accepts puts
-   .native-status-bar-tone on <html>, and this rule stands down. Until then
-   the band under the status bar is painted in the shell's own ground, the
-   colour those glyphs were picked for. The two grounds are the head's
-   critical <style> values (frontend/src/head.html): keep them in step.
-   Only in the app (.in-native-webview): a browser's or an installed web
-   app's status bar is not drawn from this theme. */
-html.in-native-webview:not(.native-status-bar-tone) #staging-overlay .staging-chrome-bar {
-  background-image: linear-gradient(#f4f2e4 var(--platform-safe-top), transparent var(--platform-safe-top));
+.staging-head {
+  display: grid;
+  align-items: center;
+  column-gap: 10px;
+  padding: 12px 14px 10px 16px;
+  background: var(--dc-sheet-solid);
+  border-bottom: 1px solid var(--app-sheet-line);
+  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "exit tile titles tools tools"
+    "switch switch switch gap vote";
 }
-html.dark.in-native-webview:not(.native-status-bar-tone) #staging-overlay .staging-chrome-bar {
-  background-image: linear-gradient(#0b0d1b var(--platform-safe-top), transparent var(--platform-safe-top));
+#staging-overlay:not([data-placement="full"]) .staging-head {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "tile titles tools exit"
+    "switch switch gap vote";
 }
+.staging-exit { grid-area: exit; }
+.staging-tile { grid-area: tile; }
+.staging-titles { grid-area: titles; min-width: 0; display: flex; flex-direction: column; }
+.staging-switch { grid-area: switch; justify-self: start; margin-top: 10px; }
+.staging-gap { grid-area: gap; }
+.staging-vote { grid-area: vote; justify-self: end; margin-top: 10px; }
+.staging-tools { grid-area: tools; display: flex; align-items: center; gap: 6px; }
+@media (min-width: 768px) {
+  /* The whole window on a wide screen: one row. */
+  #staging-overlay[data-placement="full"] .staging-head {
+    column-gap: 12px;
+    grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
+    grid-template-areas: "exit tile titles switch vote tools";
+  }
+  #staging-overlay[data-placement="full"] .staging-gap { display: none; }
+  #staging-overlay[data-placement="full"] .staging-switch,
+  #staging-overlay[data-placement="full"] .staging-vote { margin-top: 0; }
+}
+
+/* One way out: Back at the start in the whole window, × at the end docked. */
+#staging-overlay[data-placement="full"] .staging-exit-close,
+#staging-overlay:not([data-placement="full"]) .staging-exit-back { display: none; }
+
+.staging-disc {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  border: 1px solid var(--brand-line);
+  background: var(--brand-tint);
+  color: var(--brand-ink);
+}
+/* Full window and back: both glyphs are drawn, the state picks one. */
+.staging-disc[aria-pressed="true"] .staging-size-expand,
+.staging-disc:not([aria-pressed="true"]) .staging-size-dock { display: none; }
+/* How to test's chevron, by whether its steps are open. */
+.staging-link[aria-expanded="true"] .staging-steps-closed,
+.staging-link:not([aria-expanded="true"]) .staging-steps-open { display: none; }
+.staging-disc[aria-pressed="true"] {
+  border-color: var(--lit-line);
+  background: var(--lit-tint);
+  color: var(--lit-ink);
+}
+.staging-tile {
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 19px;
+  line-height: 1;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.staging-tile:empty:not([data-image]) { display: none; }
+.staging-tile[data-image] { background-size: cover; background-position: center; }
+.staging-title {
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.staging-facts {
+  font-size: 13px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+}
+.staging-facts:empty { display: none; }
+.staging-fact + .staging-fact::before { content: " · "; }
+/* On a phone the project's name gives way to the vote's line. */
+@media (max-width: 767px) {
+  .staging-fact[data-kind="app"] { display: none; }
+  .staging-fact[data-kind="app"] + .staging-fact::before { content: none; }
+}
+.staging-fact[data-kind="ask"] { color: var(--accent); font-weight: 600; }
+
+/* Preview | Before & after: the segmented style of the Light / Dark /
+   System control, a track with the chosen side raised. */
+.staging-switch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+.staging-switch button {
+  height: 28px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+.staging-switch button[data-on] {
+  background: var(--dc-sheet-solid);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14), 0 0 0 0.5px rgba(0, 0, 0, 0.06);
+}
+html.dark .staging-switch button[data-on] {
+  background: color-mix(in srgb, var(--text-primary) 18%, var(--dc-sheet-solid));
+  box-shadow: none;
+}
+
+/* The platform's Vote, as on a chat's vote card; "See the vote" once voted. */
+.staging-vote {
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  background: var(--accent);
+  color: #fff;
+}
+.staging-vote[data-voted] {
+  background: transparent;
+  border-color: var(--app-sheet-line);
+  color: var(--text-primary);
+}
+
+/* The one optional line under the header. */
+.staging-context {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  padding: 7px 16px;
+  font-size: 13px;
+  line-height: 1.35;
+  background: var(--dc-sheet-solid);
+  border-bottom: 1px solid var(--app-sheet-line);
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+.staging-context-item { display: inline-flex; align-items: center; gap: 6px; }
+.staging-link {
+  display: inline-flex;
+  flex: none;
+  white-space: nowrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-weight: 600;
+  color: var(--accent);
+}
+/* How to test, in place: it pushes the preview down instead of covering it. */
+.staging-steps {
+  position: relative;
+  max-height: 40vh;
+  overflow: auto;
+  padding: 4px 44px 10px 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  background: var(--dc-sheet-solid);
+  border-bottom: 1px solid var(--app-sheet-line);
+}
+.staging-steps-content ol { list-style: decimal; padding-inline-start: 22px; margin: 0; }
+.staging-steps-content ul { list-style: disc; padding-inline-start: 22px; margin: 0; }
+.staging-steps-close {
+  position: absolute;
+  top: 6px;
+  inset-inline-end: 12px;
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
+}
+
+/* The other side of the switch: the change's before and after viewer. */
+.staging-shots {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 12px 16px;
+  background: var(--dc-sheet-solid);
+}
+
+/* Opening, and not running: the theme's ground, never a black screen. */
+.staging-loader { background: var(--dc-sheet-solid); }
+.staging-loader-title { color: var(--text-primary); }
+.staging-loader-sub { color: color-mix(in srgb, var(--text-primary) 62%, transparent); }
+.staging-spinner {
+  border: 2.5px solid var(--app-sheet-line);
+  border-top-color: var(--accent);
+}
+
+/* Homeroom's own change: the previewed platform sits on a tinted mat with a
+   rounded edge, so it is never mistaken for the real one around it. */
+#staging-overlay[data-mat] .staging-body { background: var(--lit-tint); }
+#staging-overlay[data-mat] #staging-iframe {
+  inset: 10px;
+  width: calc(100% - 20px);
+  height: calc(100% - 20px);
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--lit-line), 0 6px 24px rgba(0, 0, 0, 0.08);
+}
+
+/* Beside a running app: the app on the left is the live one. */
+.staging-live {
+  position: fixed;
+  height: 22px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 650;
+  background: var(--dc-sheet-solid);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--app-sheet-line);
+}
+.staging-live-dot { width: 7px; height: 7px; border-radius: 9999px; background: var(--state-ok); }
+
+/* The detail column's placeholder the preview stands over. */
+.detail-preview-slot { flex: 1 1 auto; align-self: stretch; width: 100%; height: 100%; min-height: 240px; }
 
 /* #196: two-half spec tabs (User-facing / Technical). Rendered only
    when the doc contains both marker headings — legacy specs keep the

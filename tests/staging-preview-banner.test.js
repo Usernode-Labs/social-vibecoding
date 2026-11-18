@@ -1,6 +1,8 @@
 'use strict';
 
-// #16: the line under a preview's bar.
+// #16: the line under a preview's bar. Since the preview's redesign (Nov
+// 2026) it is the first-visit line under its header, put away for good on
+// the device with Got it; the wording below is what it says until then.
 //
 // It used to read "Private preview. Only you can see this until the app's
 // users vote your change in." Two things in it were wrong. Other members DO
@@ -36,8 +38,8 @@ const bridgeMod = loadTsx('frontend/src/features/staging/staging-bridge.js', {
   stubs: { './staging-store.js': storeMod },
 });
 
-const SOLO = "Preview of your change. It goes live when you vote it in. Anything you add here stays in the preview and won't carry over.";
-const GROUP = "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.";
+const SOLO = "This is your change, not live yet: it goes live when you vote it in. Anything you add here stays in the preview.";
+const GROUP = "Members try a change here before they vote. Anything you add here stays in the preview.";
 
 // What renderToStaticMarkup writes for the text: the apostrophe as an entity.
 const html = (s) => s.replace(/'/g, '&#x27;');
@@ -72,7 +74,7 @@ test('neither wording claims only you can see it, and both say the data stays be
     const out = render();
     assert.ok(!/Only you can see this/.test(out), `${audience}: other members open previews too`);
     assert.ok(!/Private preview/.test(out), `${audience}: nor is it private to you`);
-    assert.ok(out.includes(html("Anything you add here stays in the preview and won't carry over.")),
+    assert.ok(out.includes(html('Anything you add here stays in the preview.')),
       `${audience}: what you add in the preview is the preview's`);
   }
   assert.equal(overlay.previewBannerText(true), SOLO);

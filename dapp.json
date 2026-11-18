@@ -4024,9 +4024,9 @@
       "expectSelector": "#admin-root.w-full:not([class*=\"max-w-\"]):not(.mx-auto)"
     },
     {
-      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
+      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816), under one header in the theme's colours that fills the window (Nov 2026)",
       "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
-      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",
+      "expectSelector": "#staging-overlay[data-placement=\"full\"]:not(.hidden):has(.staging-head #staging-back + .staging-tile) #staging-loader:not(.hidden) #staging-loader-title",
       "expectText": "Loading the preview…"
     },
     {

@@ -313,7 +313,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4.5 12.75l6 6 9-13.5',
     'M12 4v16m8-8H4',
     'M12 5.5v13',
-    'M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z',
+    // ClockIcon left this list with the change preview's redesign (Nov
+    // 2026): the line under its header draws the clock for a change shown
+    // at a set moment, rendered (hidden) in the static document.
     // WarningTriangleIcon left this list with #2716: Settings → Delete
     // account draws it on the initial confirmation-entry button, including
     // when the lazily mounted Settings interior first renders.
@@ -357,7 +359,8 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 6h16M4 12h16M4 18h16',
     // CheckIcon ('M5 13l4 4L19 7') left this list with #6136: every setup step's
     // tick in Settings > Connectors carries one, hidden until it is pressed.
-    'M5 15l7-7 7 7',
+    // ChevronUpIcon ('M5 15l7-7 7 7') left it with the change preview's
+    // redesign (Nov 2026): How to test draws both chevrons, one hidden.
     'M6 3l.75 1.75L8.5 5.5l-1.75.75L6 8l-.75-1.75L3.5 5.5l1.75-.75z',
     'M6.32 2.577a49.255 49.255 0 0 1 11.36 0c1.497.174 2.57 1.46 2.57 2.93V21a.75.75 0 0 1-1.085.67L12 18.089l-7.165 3.583A.75.75 0 0 1 3.75 21V5.507c0-1.47 1.073-2.756 2.57-2.93Z',
     // HashIcon (#2802): a channel's glyph in the desktop rail's Recents,
@@ -370,8 +373,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // Improve panel again — and that panel renders behind state, so its
     // buttons carry no glyph into a cold document. The bell's own
     // "All messages" row still draws this bubble, but only on the Messages
-    // tab, which is likewise a press away.
-    'M8 10h.01M12 10h.01M16 10h.01M21 12a8 8 0 01-8 8H7l-4 2 1.3-4A9 9 0 1121 12z',
+    // tab, which is likewise a press away. It LEFT this list with the
+    // change preview's redesign (Nov 2026): the preview header's Comment
+    // button draws it unconditionally, in the static document.
     'M8.25 15L12 18.75 15.75 15',
     'M8.25 9L12 5.25 15.75 9',
     'M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z',
@@ -437,9 +441,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M7 2v2M11 2v2M15 2v2',
     // THE FULL-WIDTH TOGGLE (#2387 follow-up): arrows out, and arrows in once
     // the list is hidden. Drawn in an open conversation's header, which only
-    // renders once one is open.
+    // renders once one is open. The arrows in left this list with the change
+    // preview's redesign (Nov 2026): its Full window button draws both of its
+    // glyphs, the one its state does not show hidden by app.css.
     'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7',
-    'M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7',
     // CONTINUE WITH APPLE / GOOGLE: the Apple mark and the four parts of
     // Google's G, on the sign-in sheet's first step, which renders only once
     // the sheet is opened and an admin has set the provider up.

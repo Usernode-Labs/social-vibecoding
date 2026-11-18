@@ -293,6 +293,20 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
   } finally { await srv.close(); loaded.restore(); }
 });
 
+test('the ready answer names the change for the preview\'s header, when it has a number or a title', async () => {
+  // Nov 2026: the preview's header leads with the change's own name and
+  // number. A dev session's preview (neither) is answered as before.
+  const row = { ...OWNED_ACTIVE, status: 'promoted', pr_number: 34, pr_title: '  Remind whoever is on watering duty ' };
+  const loaded = loadSessions({ pool: makePool(row), needsRebuild: false, rebuild: async () => 'built' });
+  const srv = await startServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.change, { number: 34, title: 'Remind whoever is on watering duty', status: 'promoted' });
+  } finally { await srv.close(); loaded.restore(); }
+});
+
 test('a change that declares a preview moment is answered with it, on both routes', async () => {
   // services/preview-clock.js: a time-dependent change (a Thursday-evening
   // reminder) names the moment its preview should open at, and Try it opens
