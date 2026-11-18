@@ -37,7 +37,7 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { PlusIcon, SpeechCheckIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CheckIcon, PlusIcon, SpeechCheckIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
@@ -153,14 +153,23 @@ export function PinTile({ pin, votes, editing, faded = false, detail, onUnpin, o
 const CARD_FACES = 3;
 
 /**
- * WHAT IS GOING ON THERE (Drea's review of #6699): under a community's
- * name on its card, how many members, what went live this week
- * (one pill, the only one on the card) and the faces of a few of the people
- * who were there this week, beside how many there were. A zero says nothing:
- * each line is drawn only when it has something to say. The cards are the
- * brand look's, from 1280px, on the Communities page (app.css, "COMMUNITIES
- * AS PEOPLE PLACES"); everywhere else this stays hidden and the tile is the
- * icon and name it always was.
+ * WHAT IS GOING ON THERE (Drea's review of #6699): what a community's card
+ * says beside its icon and name, in two parts drawn in one order on every
+ * card, so the cards of a row line up:
+ *
+ *   under the name   how many members, the subtitle the name sits over
+ *                    (15 over 13, as a list row's title and words are).
+ *   at the foot      this week: the faces of a few of the people who were
+ *                    there with how many there were, then how many changes
+ *                    went live, each one line of the same 13px words, led by
+ *                    its faces or its check. No pill: the card is the link,
+ *                    and the foot is news, not a button.
+ *
+ * A zero says nothing: each line is drawn only when it has something to say,
+ * and a quiet week draws no foot at all. The cards are the brand look's, from
+ * 1280px, on the Communities page (app.css, "COMMUNITIES AS PEOPLE PLACES");
+ * everywhere else both parts stay hidden and the tile is the icon and name it
+ * always was.
  */
 function CommunityDetail({ detail }: { detail: PinActivity }) {
   const t = useMessages('home');
@@ -170,29 +179,37 @@ function CommunityDetail({ detail }: { detail: PinActivity }) {
   const people = (detail.people || []).filter((p) => p && p.username).slice(0, CARD_FACES);
   if (!members && !live && !active) return null;
   return (
-    <span className="hidden" data-home-community-detail="">
+    <>
       {members ? (
-        <span className="home-community-line">
-          <UserGroupIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
-          <span>{t('home:communities.members', { count: members, formatted: members.toLocaleString() })}</span>
+        <span className="hidden home-community-line" data-home-community-meta="">
+          {t('home:communities.members', { count: members, formatted: members.toLocaleString() })}
         </span>
       ) : null}
-      {live ? <span className="home-community-news">{t('home:communities.liveWeek', { count: live })}</span> : null}
-      {active ? (
-        <span className="home-community-people">
-          {people.length ? (
-            <span className="dev-ws-hero-faces" aria-hidden="true">
-              {people.map((p) => (
-                <span key={p.username} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
-                  {p.avatarUrl ? <img src={p.avatarUrl} alt="" loading="lazy" draggable={false} /> : (p.username.charAt(0) || '?').toUpperCase()}
+      {live || active ? (
+        <span className="hidden" data-home-community-detail="">
+          {active ? (
+            <span className="home-community-people">
+              {people.length ? (
+                <span className="dev-ws-hero-faces" aria-hidden="true">
+                  {people.map((p) => (
+                    <span key={p.username} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
+                      {p.avatarUrl ? <img src={p.avatarUrl} alt="" loading="lazy" draggable={false} /> : (p.username.charAt(0) || '?').toUpperCase()}
+                    </span>
+                  ))}
                 </span>
-              ))}
+              ) : <UserGroupIcon className="home-community-glyph" aria-hidden="true" />}
+              <span className="home-community-words">{t('home:communities.activeWeek', { count: active, formatted: active.toLocaleString() })}</span>
             </span>
           ) : null}
-          <span>{t('home:communities.activeWeek', { count: active, formatted: active.toLocaleString() })}</span>
+          {live ? (
+            <span className="home-community-news">
+              <CheckIcon className="home-community-glyph" aria-hidden="true" />
+              <span className="home-community-words">{t('home:communities.liveWeek', { count: live })}</span>
+            </span>
+          ) : null}
         </span>
       ) : null}
-    </span>
+    </>
   );
 }
 
