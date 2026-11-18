@@ -21103,20 +21103,18 @@ html[data-side-strip="left"] #notifications-sheet {
     --platform-strip-pill-top: calc(var(--platform-strip-top) + var(--platform-strip-back) + 10px);
   }
 
-  /* THE TABS, ONE PILL DOWN THE STRIP (Evan, 24 Oct 2026). A 64px capsule
-     centred in the strip, from under the back button's slot to the
-     home-indicator strip. Home,
-     Discover, Messages and Communities at its head, you at its foot, the
-     way the desktop rail ends on you, and between them an open stretch
-     where the app you left stands (below). The cells keep the bar's glyph
-     over its label, a point smaller so "Communities" fits a 64px cell, and
-     the bar's lit marker is measured off them as before (tab-bar.tsx
-     markerBoxFor reads both offsets), so it moves up and down instead of
-     across, and keeps to its cell there (markerBoxFor `inCell`) rather than
-    to its label, which ran it past the pill's sides. The pill's corners are
-    the marker's own 16px radius plus the 4px it is inset by, so the two
-    curves run together. The faked glass is the bar's own layer, clipped to
-    the pill. */
+  /* THE TABS, A COLUMN OF BUBBLES (Evan, 24 Oct 2026; #6788, 17 Nov 2026).
+     A 64px column centred in the strip, from under the back button's slot to
+     the home-indicator strip. Home, Homeroom bot, Messages and You at its
+     head, you at its foot, the way the desktop rail ends on you, and between
+     them an open stretch where the app you left stands (below). Each place
+     is a rounded bubble around its glyph on the page's own ground — the
+     shape the strip's app tiles have — and the lit one is filled from the
+     bar's own `--lit-*` tokens, so the sliding marker is not drawn here
+     (below). The capsule that used to hold the column is gone: the strip is
+     the Duo's own side bar, not a pane laid over the page. The cells keep
+     the bar's glyph over its label, a point smaller so the longest word
+     fits a 64px cell. */
   html[data-side-strip] #platform-tabs {
     left: auto;
     right: calc((var(--platform-strip-w, 0px) - 64px) / 2);
@@ -21128,9 +21126,15 @@ html[data-side-strip="left"] #notifications-sheet {
     gap: 2px;
     padding: 6px 0;
     border-top: 0;
-    border-radius: 20px;
-    box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-    clip-path: inset(0 round 20px);
+    /* NO CAPSULE (#6788): the bubbles stand on the wallpaper. */
+    border-radius: 0;
+    box-shadow: none;
+    clip-path: none;
+  }
+  /* …and no fake glass behind them either: that layer WAS the capsule's
+     blue, and an id outranks the brand look's own background on it. */
+  html[data-side-strip] #platform-tabs::before {
+    content: none;
   }
   html[data-side-strip] #platform-tab-me {
     margin-top: auto;
@@ -21160,11 +21164,47 @@ html[data-side-strip="left"] #notifications-sheet {
   html[data-side-strip] #platform-tabs::after {
     content: none;
   }
+  /* THE LIT STATE IS DRAWN ONCE, as the desktop rail already does: the
+     marker is still measured (tab-bar.tsx), it is just not painted here. */
+  html[data-side-strip] .platform-tabs-marker {
+    display: none;
+  }
+  /* THE BUBBLE (#6788): the shape the Apps section's tiles have, one per
+     place. The faint fill is the page's own ink, so light and dark both
+     read; the count's badge anchors to this box, so it sits on the bubble's
+     corner. */
+  html[data-side-strip] .platform-tab .platform-tab-mark {
+    width: 40px;
+    height: 30px;
+    border-radius: 10px;
+    align-items: center;
+    justify-content: center;
+    background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+    color: var(--text-muted);
+  }
+  /* …and the place you are on is filled from the bar's own lit tokens, with
+     their hairline, exactly as the phone's marker and the rail's lit row
+     are. On a community's page no drawn place is lit (its own, Communities,
+     is not on the bar) and Home stands for it, as the brand block does. */
+  html[data-side-strip] .platform-tab[aria-current="page"] .platform-tab-mark,
+  html[data-side-strip] #platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home .platform-tab-mark {
+    background: var(--lit-tint);
+    box-shadow: inset 0 0 0 1px var(--lit-line);
+    color: var(--lit-ink);
+  }
   html[data-side-strip] .platform-tab {
     flex: none;
     height: 54px;
+    color: var(--text-muted);
     font-size: 10px;
     letter-spacing: 0;
+  }
+  /* The label sits on the wallpaper now, so it uses the text tokens rather
+     than the lit ink, which was chosen to read on the capsule. */
+  html[data-side-strip] .platform-tab[aria-current="page"],
+  html[data-side-strip] #platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
+    color: var(--text-primary);
+    font-weight: 700;
   }
   /* 9px and tighter (overnight audit U02, 2 November 2026): at 9.5px
      "Communities" was wider than its lit pill in the phone's own font and ran
@@ -21237,6 +21277,11 @@ html[data-side-strip="left"] #notifications-sheet {
   }
   html[data-side-strip] .platform-side-app[aria-current="page"] {
     color: var(--lit-ink);
+  }
+  /* Without the pill, a thin highlight ring on the app's own tile is what
+     says it is the one on screen. */
+  html[data-side-strip] .platform-side-app[aria-current="page"] .platform-side-app-tile {
+    box-shadow: 0 0 0 2px var(--lit-tint), 0 0 0 3px var(--lit-ink);
   }
   html[data-side-strip] .platform-side-app .platform-tab-label {
     max-width: 100%;
@@ -29231,6 +29276,25 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
      Home is read on the marker there. */
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
     color: var(--bl-on-sun);
+  }
+  /* THE DUO'S SIDE STRIP IS NOT THAT BAR (#6788): its capsule is gone, so
+     the white words chosen to read on the blue go with it, and the bubbles
+     and labels read the page's own ink again. The lit bubble keeps the
+     brand's sun, and the app on screen its ring. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] #platform-tabs {
+    --text-primary: inherit;
+    --text-muted: inherit;
+    --lit-tint: var(--bl-sun);
+    --lit-ink: var(--bl-on-sun);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] .platform-tab:not([aria-current="page"]) {
+    color: var(--text-muted);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] #platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
+    color: var(--text-primary);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] .platform-side-app[aria-current="page"] {
+    color: var(--text-primary);
   }
 }
 
