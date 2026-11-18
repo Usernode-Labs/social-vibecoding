@@ -7213,7 +7213,7 @@ const AppView = {
               ? PlatformI18n.t(mergedIds.includedIn, { number: included.number })
               : PlatformI18n.t(mergedIds.includedInAnother))
             : PlatformI18n.t(mergedIds.alone))
-            : item.status === 'closed' ? PlatformI18n.t('changes:page.hero.status.closed')
+            : item.status === 'closed' || item.status === 'archived' ? PlatformI18n.t('changes:page.hero.status.closed')
               : String(item.status || '');
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     // First-session run-through, 4 Oct 2026: a flatmate's first look at the
@@ -8032,7 +8032,7 @@ const AppView = {
     // the change merged or is merging: a card drawn before the merge carries
     // the open-vote pill, so the row's current status decides then (#6490).
     const settled = item.status === 'merged' || item.status === 'merging';
-    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+    const statusState = ['active', 'paused', 'closed', 'archived'].includes(item.status)
       ? null
       : ((!settled && card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
@@ -8248,6 +8248,37 @@ const AppView = {
     };
   },
 
+  // #6100: the reason code a close recorded ('auto-rejected', 'stale-pr', ...),
+  // as the whole catalog id that words it (the bell's rows read the same
+  // sentences, notifications.js CLOSE_REASON_IDS). One literal per code: a
+  // message is translated whole. A code this build does not know, or a close
+  // from before reasons were kept, maps to nothing and the card keeps its
+  // plain closed note.
+  CLOSE_REASON_IDS: Object.freeze({
+    'auto-rejected': 'core:change.closedWhy.autoRejected',
+    'admin-no': 'core:change.closedWhy.adminNo',
+    'admin-declined': 'core:change.closedWhy.adminDeclined',
+    'approver-no': 'core:change.closedWhy.approverNo',
+    'proposal-replaced': 'core:change.closedWhy.replaced',
+    superseded: 'core:change.closedWhy.superseded',
+    'already-on-main': 'core:change.closedWhy.alreadyOnMain',
+    'request-closed': 'core:change.closedWhy.requestClosed',
+    'red-checks': 'core:change.closedWhy.redChecks',
+    'stale-pr': 'core:change.closedWhy.stale',
+    'campaign-refused': 'core:change.closedWhy.campaignRefused',
+    'pr-closed': 'core:change.closedWhy.prClosed',
+    'pr-merged': 'core:change.closedWhy.prMerged',
+    'update-skipped': 'core:change.closedWhy.updateSkipped',
+    'update-replaced': 'core:change.closedWhy.updateReplaced',
+    'update-refused': 'core:change.closedWhy.updateRefused',
+    'merged-elsewhere': 'core:change.closedWhy.mergedElsewhere',
+    manual: 'core:change.closedWhy.withdrawn',
+  }),
+  _closeReasonLine(reason) {
+    const id = reason && Object.prototype.hasOwnProperty.call(AppView.CLOSE_REASON_IDS, reason) ? AppView.CLOSE_REASON_IDS[reason] : null;
+    return id ? PlatformI18n.t(id) : null;
+  },
+
   // The Votes card: its figure ("Needs 1 more yes", in the accent when the
   // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
   // needs, and one line under it: who can give it, any yes a newer push
@@ -8265,11 +8296,13 @@ const AppView = {
         note: [mine ? submission.note : PlatformI18n.t('changes:page.votes.note.notAsked')].filter(Boolean),
       };
     }
-    if (item.status === 'closed') {
+    // #6100: a closed change's own row reads 'archived'. Its card says Closed
+    // either way, with why, and no tally nobody can add to.
+    if (item.status === 'closed' || item.status === 'archived') {
       return {
         name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.closed'), tone: 'muted', done: false,
         segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.votes.label.closed'),
-        note: [PlatformI18n.t('changes:page.votes.note.closed')],
+        note: [PlatformI18n.t('changes:page.votes.note.closed'), AppView._closeReasonLine(item.close_reason)].filter(Boolean),
       };
     }
     // #6490: a card drawn before the merge keeps the open-vote pill in its
