@@ -152,3 +152,96 @@ test('home pins: join pins the community, so does making one, an app pin joins n
     await root.end().catch(() => {});
   }
 });
+
+// Home's community cards (Drea's review of #6699, services/home-pins.js
+// activity): for each pinned community, how many members, what went live
+// this week, and who took part this week (people only, the most recent
+// first, with their picture), never for a community the viewer cannot see.
+test('home pins: each pinned community says its members, what went live and who was there this week (PostgreSQL)', async (t) => {
+  const dsn = process.env.TEST_DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
+  const root = new Client({ connectionString: dsn, connectionTimeoutMillis: 2000 });
+  try { await root.connect(); } catch (err) { await root.end().catch(() => {}); return t.skip(`Local test database unavailable: ${err.code}`); }
+  const name = `home_pins_activity_${process.pid}`;
+  let pool;
+  let server;
+  try {
+    await root.query(`CREATE DATABASE ${name}`);
+    const url = new URL(dsn); url.pathname = `/${name}`;
+    pool = new Pool({ connectionString: url.toString() });
+    await pool.query(fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8'));
+    const addUser = async (username, synthetic = false) => (await pool.query(
+      'INSERT INTO users (username, password, is_synthetic) VALUES ($1, \'unused\', $2) RETURNING id, username', [username, synthetic])).rows[0];
+    const alice = await addUser('alice');
+    const bob = await addUser('bob');
+    const carol = await addUser('carol');
+    const dana = await addUser('dana');
+    const bot = await addUser('activity_bot', true);
+    const addApp = async (slug, visibility = 'public') => {
+      await pool.query(
+        `INSERT INTO apps (slug, name, created_by, view_visibility, collab_visibility)
+         VALUES ($1, $1, $2, $3, $3)`, [slug, bob.id, visibility]);
+      return (await pool.query('SELECT * FROM apps WHERE slug = $1', [slug])).rows[0];
+    };
+    const tide = await addApp('tide');
+    const garden = await addApp('garden');
+    const secret = await addApp('secret', 'private');
+    await communities.join(pool, tide, alice.id);
+    await communities.join(pool, tide, carol.id);
+    await pool.query('INSERT INTO home_community_pins (community_id, user_id, position) VALUES ($1, $2, 5), ($3, $2, 6)',
+      [garden.community_id, alice.id, secret.community_id]);
+
+    const say = (app, user, ago) => pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, created_at) VALUES ($1, $2, 'hi', NOW() - $3::interval)`,
+      [app.id, user.id, ago]);
+    await say(tide, bob, '3 days');
+    await say(tide, carol, '1 hour');
+    await say(tide, bot, '10 minutes'); // a bot is nobody active
+    await say(tide, dana, '10 days'); // last week's is not this week's
+    const session = async (app, user, extra = {}) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, merged_at, live_at, created_at)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6, NOW())) RETURNING id`,
+      [app.id, user.id, extra.status || 'active', extra.mergedAt || null, extra.liveAt || null, extra.createdAt || null])).rows[0];
+    const shipped = await session(tide, bob, { status: 'merged', mergedAt: new Date(Date.now() - 2 * 864e5), liveAt: new Date() });
+    await session(tide, bob, { status: 'merged', mergedAt: new Date(Date.now() - 20 * 864e5), liveAt: new Date(Date.now() - 20 * 864e5), createdAt: new Date(Date.now() - 21 * 864e5) });
+    await pool.query('INSERT INTO pr_votes (session_id, user_id, vote, created_at) VALUES ($1, $2, \'yes\', NOW() - INTERVAL \'2 hours\')',
+      [shipped.id, dana.id]);
+    await session(garden, carol);
+    await pool.query(
+      `INSERT INTO user_avatars (id, user_id, content_type, size_bytes, data, sha256)
+       VALUES ('carolpic', $1, 'image/png', 1, '\\x00', 'x')`, [carol.id]);
+
+    const web = express();
+    web.use((req, res, next) => { req.user = { alice }[req.get('x-test-user')]; next(); });
+    web.use(homePinRoutes({}, { pool }));
+    server = web.listen(0, '127.0.0.1');
+    await new Promise((resolve) => server.once('listening', resolve));
+    const get = async (user = 'alice') => {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/api/me/home-pins/activity`, { headers: { 'x-test-user': user } });
+      return { status: res.status, body: await res.json() };
+    };
+    assert.equal((await get('')).status, 401, 'signed out has none');
+    const { activity } = (await get()).body;
+    assert.deepEqual(Object.keys(activity).sort(), ['garden', 'tide'], 'the pins Home draws, not the private one');
+    // tide: alice and carol joined it. Bob's change, just now, is the
+    // latest; then carol's message, an hour ago; then dana's vote. One change
+    // went live this week, the other three weeks ago.
+    assert.deepEqual(activity.tide, {
+      members: 2,
+      liveWeek: 1,
+      activeWeek: 3,
+      people: [
+        { username: 'bob', avatarUrl: null },
+        { username: 'carol', avatarUrl: '/avatars/carolpic' },
+        { username: 'dana', avatarUrl: null },
+      ],
+    });
+    assert.deepEqual(activity.garden, {
+      members: 0, liveWeek: 0, activeWeek: 1, people: [{ username: 'carol', avatarUrl: '/avatars/carolpic' }],
+    });
+  } finally {
+    if (server) await new Promise((resolve) => server.close(resolve));
+    if (pool) await pool.end().catch(() => {});
+    await root.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`).catch(() => {});
+    await root.end().catch(() => {});
+  }
+});

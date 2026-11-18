@@ -28,12 +28,14 @@ const item = (id, slug, extra = {}) => ({
   kind: 'proposal', id, title: `Change ${id}`, app: { slug, name: slug.toUpperCase() }, ...extra,
 });
 
-test('the island mounts it under Standard (WIP), in a row of its own before Challenges', () => {
+test('the island mounts it under Standard (WIP) and the brand look, in a row of its own before Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  // Mounted as soon as the look and the viewer are known, so its place is held from the first paint.
-  assert.match(island, /const aside = wip && viewer;/);
-  assert.match(island, /\{wip \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
-  assert.match(island, /\{wip \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
+  // The brand look takes the same row (Drea's review of #6699).
+  // Standard (WIP) mounts it as soon as the look and the viewer are known, so its
+  // place is held from the first paint; the brand look mounts it with the grid.
+  assert.match(island, /const aside = wip \? viewer : brand && grid\.ready && !!grid\.create;/);
+  assert.match(island, /\{wip \|\| brand \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
+  assert.match(island, /\{wip \|\| brand \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
   // A row of its own, as wide as the column, placed right under Pinned projects.
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);

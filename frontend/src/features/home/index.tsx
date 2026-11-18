@@ -154,11 +154,16 @@ export function HomeScreen() {
   const frame = isFrameSkin(skin) && viewer;
   // Standard (WIP), lib/skin.ts: the pinned lists drawn as cards.
   const wip = skin === 'wip';
+  // "Paper, simplified, with brand styling" (Drea's review of #6699) takes
+  // two of Standard (WIP)'s pieces in its own colours (app.css, the brand
+  // look's HOME): New project as a button on the search row, and the Needs
+  // you card in a row of its own under Pinned apps.
+  const brand = skin === 'brand';
   // The grid's trailing tile depends on the look (Home.hasSideCard): a look
   // picked while Home is up repaints it.
   // Only once the grid has drawn: a render before the apps are in would
   // publish an empty grid and take the loading placeholders away early.
-  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip]);
+  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip, brand]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -173,9 +178,10 @@ export function HomeScreen() {
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
   // Standard (WIP): the Needs you card rides Challenges' row.
-  // Mounted as soon as the look is known, not when the grid is ready: the
-  // card holds its place from the first paint (./needs-you-card.tsx).
-  const aside = wip && viewer;
+  // Under Standard (WIP) it is mounted as soon as the look is known, not
+  // when the grid is ready: the card holds its place from the first paint
+  // (./needs-you-card.tsx). The brand look mounts it with the grid, as it did.
+  const aside = wip ? viewer : brand && grid.ready && !!grid.create;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
@@ -264,7 +270,7 @@ export function HomeScreen() {
               &times;
             </button>
           </div>
-          {wip && grid.ready && grid.create ? (
+          {(wip || brand) && grid.ready && grid.create ? (
             <WipCta id="home-new-project-top" onClick={() => { (window as any).App?.showCreateModal?.(); }}>
               {t('home:create.label')}
             </WipCta>
@@ -451,7 +457,7 @@ export function HomeScreen() {
         {/* Standard (WIP): Home is one column, and under Pinned projects the
             Needs you card is a row of its own, then Challenges
             (app.css, "STANDARD (WIP)"), at every width. */}
-        {wip ? (
+        {wip || brand ? (
           <div id="home-row" className="home-row">
             {aside ? (
               <aside id="home-aside" className="home-aside">
@@ -520,7 +526,7 @@ export function HomeScreen() {
             GitHub and X. Nothing in the prerender, like the card above.
         */}
         {frame ? null : <VerifyCard />}
-        {wip ? null : <ChallengesSection />}
+        {wip || brand ? null : <ChallengesSection />}
         <HomeJoin />
         {/*
             THE "YOU" AREA IS GONE, and Profile did not go with it. A fifth
