@@ -224,7 +224,8 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
   assert.match(ws, /const wipLook = useLiveSkin\(\) === 'wip';/);
   assert.match(ws, /inviteCard=\{!wipLook\}/);
   assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
-  assert.match(card, /\{wipLook && data\.audience === 'solo' && data\.can_manage && !data\.audience_change \? \(\s*<MakePublic /, 'Make it public is offered to exactly whom Share it offered it');
+  assert.match(card, /\{wipLook \? <WipHeroPublic slug=\{slug\} name=\{displayName\} data=\{data\} \/> : null\}/);
+  assert.match(card, /function WipHeroPublic\([^)]*\): ReactNode \{\s*if \(data\.audience !== 'solo' \|\| !data\.can_manage \|\| data\.audience_change\) return null;\s*return <MakePublic /, 'Make it public is offered to exactly whom Share it offers it');
   // Invite ends the line about who is here, for a member, and opens the same pane.
   assert.match(card, /\{member \? \(\s*<button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title=\{t\('project:communityCard\.invite\.title'\)\} onClick=\{openInviteLinks\}>/);
   assert.match(card, /\{wipLook \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
@@ -239,10 +240,14 @@ test('Standard (WIP): a project\'s hub folds Invite and Make it public into its 
 });
 
 test('Standard (WIP): a project\'s empty Needs you says so as good news, with the ways on under it', () => {
+  // The run knows no look: the two pieces beside it read it (project-needs.tsx).
   const flow = read('frontend/src/features/review-flow/review-flow.tsx');
-  assert.match(flow, /if \(wipLook && project && slug\) \{\s*return \(\s*<div ref=\{anchorRef\} className="wip-needs" data-needs-empty="" data-review-flow="">/, 'the same hooks the plain line carries');
-  assert.match(flow, /\{wipLook && project && slug \? <WipWaysIn slug=\{slug\} project=\{project\} \/> : null\}/, 'under what waits, too');
-  assert.match(flow, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
+  const beside = read('frontend/src/features/review-flow/project-needs.tsx');
+  assert.match(flow, /<ProjectNeedsEmpty slug=\{slug\} project=\{project\} anchorRef=\{anchorRef\}>\s*<p ref=\{anchorRef as never\}[^>]*data-needs-empty="" data-review-flow="">/, 'the plain line is every other look\'s');
+  assert.match(flow, /<ProjectWaysIn slug=\{slug\} project=\{project\} \/>/, 'under what waits, too');
+  assert.match(beside, /return useLiveSkin\(\) === 'wip' && !!slug && !!project;/);
+  assert.match(beside, /if \(!drawn\) return children;\s*return \(\s*<div ref=\{anchorRef\} className="wip-needs" data-needs-empty="" data-review-flow="">/, 'the same hooks the plain line carries');
+  assert.match(beside, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
   assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');
   assert.equal(message('communities:reel.caughtUp.next'), 'While you\'re here');
 });

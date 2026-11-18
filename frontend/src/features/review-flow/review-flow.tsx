@@ -51,7 +51,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { reducedMotion } from '../../lib/reduced-motion';
-import { useLiveSkin } from '../../lib/skin';
+import { ProjectNeedsEmpty, ProjectWaysIn } from './project-needs';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
@@ -546,41 +546,7 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, 
 
 /* ── The run ──────────────────────────────────────────────────────────── */
 
-/**
- * Standard (WIP): the ways on into a project, under its Needs you whatever
- * waits there: its Workshop, its discussion and its hub, as three doors of
- * the hub's own shape under a label of the look.
- */
-function WipWaysIn({ slug, project }: { slug: string; project: string }) {
-  const t = useMessages('communities');
-  const go = (place: string) => {
-    const win = window as any;
-    try { win.AppView?._landOnTab?.(slug, place); } catch { /* the page opens on what it remembers */ }
-    win.App?.navigateToApp?.(slug, 'dev');
-  };
-  const door = (mark: string, place: string, glyph: ReactNode, title: string, text: string) => (
-    <button type="button" className="wip-caught-door" data-mark={mark} onClick={() => go(place)}>
-      <span className="wip-caught-door-tile" aria-hidden="true">{glyph}</span>
-      <span className="wip-caught-door-text">
-        <span className="wip-caught-door-title">{title}</span>
-        <span className="wip-caught-door-sub">{text}</span>
-      </span>
-      <ChevronRightIcon className="wip-caught-door-go" aria-hidden="true" />
-    </button>
-  );
-  return (
-    <section className="wip-ways" data-needs-ways="">
-      <h3 className="wip-ways-label"><span className="wip-head-words">{t('communities:reel.caughtUp.next')}</span></h3>
-      <div className="wip-caught-doors">
-        {door('1', 'workshop', <SparklesIcon className="wip-caught-door-glyph" />, t('communities:reel.caughtUp.workshop.title'), t('communities:reel.caughtUp.workshop.text'))}
-        {door('3', 'discussion', <ChatIcon className="wip-caught-door-glyph" />, t('communities:reel.caughtUp.discussion.title'), t('communities:reel.caughtUp.discussion.text'))}
-        {door('2', 'status', <PlayIcon className="wip-caught-door-glyph" />, t('communities:reel.caughtUp.hub.title', { project }), t('communities:reel.caughtUp.hub.text'))}
-      </div>
-    </section>
-  );
-}
-
-export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, header = 'communities', project, slug, grows = false }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, slug, header = 'communities', project, grows = false }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
@@ -616,8 +582,6 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
    */
   onSettled?: (id: number) => void;
 }) {
-  // Standard (WIP) draws a project's empty page as a next step, not a bare line.
-  const wipLook = useLiveSkin() === 'wip';
   const t = useMessages('communities');
   const anchorRef = useRef<HTMLDivElement>(null);
   const pageRef = useRef<HTMLDivElement>(null);
@@ -1015,26 +979,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
               />
             ))}
           </GroupedList>
-          {wipLook && project && slug ? <WipWaysIn slug={slug} project={project} /> : null}
+          <ProjectWaysIn slug={slug} project={project} />
         </div>
       );
     }
-    // Standard (WIP), on a project's own page: nothing waiting is said as
-    // good news, and the page offers what there is to do next in the
-    // project (its requests, its discussion, its hub).
-    if (wipLook && project && slug) {
-      return (
-        <div ref={anchorRef} className="wip-needs" data-needs-empty="" data-review-flow="">
-          <div className="wip-caught">
-            <span className="wip-caught-mark" aria-hidden="true"><CheckIcon className="wip-caught-glyph" /></span>
-            <h3 className="wip-caught-title">{t('communities:reel.caughtUp.title')}</h3>
-            <p className="wip-caught-text">{t('communities:reel.emptyProject', { project })}</p>
-          </div>
-          <WipWaysIn slug={slug} project={project} />
-        </div>
-      );
-    }
-    return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{project ? t('communities:reel.emptyProject', { project }) : t('communities:reel.empty')}</p>;
+    // One look draws this as good news with the ways on under it (./project-needs.tsx); every other, this line.
+    return (
+      <ProjectNeedsEmpty slug={slug} project={project} anchorRef={anchorRef}>
+        <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{project ? t('communities:reel.emptyProject', { project }) : t('communities:reel.empty')}</p>
+      </ProjectNeedsEmpty>
+    );
   }
 
   const page = open ? (
@@ -1229,8 +1183,8 @@ export function ProjectReviewFlow({ slug, onDone, project }: { slug: string; onD
         onDone={onDone}
         doneLabel={t('communities:review.end.backToProject')}
         header="project"
-        project={project}
         slug={slug}
+        project={project}
         grows
       />
     </div>

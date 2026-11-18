@@ -75,7 +75,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type Ref } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, LockIcon, PlayIcon, ShieldCheckIcon, SwooshArrowIcon, UserGroupIcon, UserIcon, UserPlusIcon, XIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { listText, t as translate } from '../../../lib/i18n/runtime';
@@ -721,11 +721,7 @@ function HeroIdentity({ slug, name, iconUrl, iconEmoji, data, member }: {
               ) : null}
               {member ? (
                 // A drawn arrow, for show: it swoops from the people to the open seat.
-<svg className="wip-hub-meta-arrow" viewBox="0 0 56 24" aria-hidden="true">
-                  {/* A brush stroke: nothing at its tail, full by its head. */}
-                  <path d="M2 19 C 13 5, 29 3, 42.5 9.6 L 41.2 13.4 C 29 7.6, 15 8.8, 2 19 Z" />
-                  <path d="M52 14.8 L 44.2 5.6 L 43 11.2 L 38 15.4 Z" />
-                </svg>
+<SwooshArrowIcon className="wip-hub-meta-arrow" aria-hidden="true" />
               ) : null}
               {member ? (
                 <button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title={t('project:communityCard.invite.title')} onClick={openInviteLinks}>
@@ -927,6 +923,18 @@ function MakePublic({ slug, name, onOpened }: {
  * community's invite preview (../../invite-preview). `children` hang under
  * the button: the hero's Join question.
  */
+/**
+ * Standard (WIP) only: "Make it public" in the hero, beside Open app, for
+ * exactly whom the Share it card offers it under every other look (a just
+ * yours project its viewer manages, with no such change already up). That
+ * card is not drawn under this look, so this is its one place there.
+ * Under Standard the hero has no such button (#4045, #4666).
+ */
+function WipHeroPublic({ slug, name, data }: { slug: string; name: string; data: CommunityPayload }): ReactNode {
+  if (data.audience !== 'solo' || !data.can_manage || data.audience_change) return null;
+  return <MakePublic slug={slug} name={name} onOpened={() => { void reloadCommunity(slug); }} />;
+}
+
 export function InviteCard({ offer, name, unnamed = false, busy, onJoin, joinRef, children }: {
   offer: Pick<InviteOffer, 'inviter' | 'inviterName' | 'inviterMadeIt' | 'building' | 'note'>;
   name: string;
@@ -1346,12 +1354,8 @@ export function CommunityCard({ slug, name, iconUrl = null, iconEmoji = null, me
       <div className="dev-ws-hero-row">
       <div className="dev-ws-hero-actions">
         {appButton}
-        {/* Standard (WIP): "Make it public" is the hero's, beside Open app,
-            for whom the Share it card would offer it (that card is not
-            drawn under this look: Invite is here too). */}
-        {wipLook && data.audience === 'solo' && data.can_manage && !data.audience_change ? (
-          <MakePublic slug={slug} name={displayName} onOpened={() => { void reloadCommunity(slug); }} />
-        ) : null}
+        {/* Standard (WIP): "Make it public" beside Open app (WipHeroPublic). */}
+        {wipLook ? <WipHeroPublic slug={slug} name={displayName} data={data} /> : null}
         {/* Standard (WIP) has Invite on the line about who is here (HeroIdentity). */}
         {wipLook ? null : (
           <>

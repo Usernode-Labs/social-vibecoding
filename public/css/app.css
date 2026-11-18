@@ -6901,7 +6901,7 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [dat
 html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-join-anchor { margin-inline-start: 0; }
 html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop {
   inset-inline: 0 auto;
-  width: min(20rem, calc(100vw - 2rem));
+  width: min(20rem, var(--platform-float-w));
   border: 0;
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
@@ -6953,10 +6953,10 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev
 .wip-hub-meta-arrow {
   flex: none;
   width: 2.5rem;
-  height: 1.0625rem;
+  height: 2.5rem;
+  margin-block: -0.75rem;
   margin-inline: -0.125rem -0.25rem;
-  fill: var(--wip-ink);
-  stroke: none;
+  color: var(--wip-ink);
   transform: rotate(-4deg);
   transition: transform 0.25s ease;
 }
@@ -7264,7 +7264,7 @@ html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-rec
    pointer or the keyboard puts the look's soft ground under a row and
    nudges it; the row the menu marks (Build it now) wears that soft ground
    at rest. It opens with a short rise. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu {
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
   width: 19rem;
   padding: 0.5rem;
   border: 0;
@@ -7273,9 +7273,9 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu {
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
   font-family: var(--wip-font);
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu:not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu * { border-top-width: 0; border-bottom-width: 0; }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) {
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) * { border-top-width: 0; border-bottom-width: 0; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) {
   align-items: center;
   box-shadow: none; /* not the hero's own buttons' edge: these are rows */
   color: var(--wip-ink);
@@ -7287,9 +7287,9 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button
   background-color: transparent;
   transition: background-color 0.12s ease, transform 0.12s ease;
 }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) > svg:first-child {
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:first-child {
   box-sizing: content-box;
   width: 1rem;
   height: 1rem;
@@ -7300,19 +7300,19 @@ html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button
   color: var(--wip-mark-1-ink);
 }
 /* The rows take the three marks in turn. */
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
-html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
 @media (prefers-reduced-motion: reduce) {
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu:not(.hidden) { animation: none; }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) { transition: none; }
-  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a):is(:hover, :focus-visible) { transform: none; }
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
 }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary #dev-plus-menu:not(.hidden) { animation: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a) { transition: none; }
-html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary #dev-plus-menu :is(button, a):is(:hover, :focus-visible) { transform: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
 /* A PROJECT'S NEEDS YOU is laid out as its hub is (review-flow.tsx): the
    page's whole width on the page's own ground, its name a label of the
    look, what waits as rows of Home's kind in the look's card, in the look's
