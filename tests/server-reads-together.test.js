@@ -141,3 +141,69 @@ test('the public directory answers from its copy while one read refreshes it, fo
   const src = read('src/routes/public-api.js');
   assert.match(src, /const DIRECTORY_STALE_MS = 2 \* 60 \* 1000;/);
 });
+
+// ── The public directory is kept warm while people ask for it ──────────
+
+test('the directory is read at start, refreshed behind its readers, and left alone when nobody asks', async (t) => {
+  const poolMod = require('../src/db/pool');
+  const realGetPool = poolMod.getPool;
+  let reads = 0;
+  poolMod.getPool = () => ({
+    query: async (sql) => {
+      if (/view_visibility/.test(String(sql)) && /FROM apps/.test(String(sql)) && !/WHERE slug = \$1/.test(String(sql))) reads += 1;
+      return { rows: [] };
+    },
+  });
+  delete require.cache[require.resolve('../src/routes/public-api')];
+  const { publicApiRoutes } = require('../src/routes/public-api');
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'], now: 1_000_000 });
+  t.after(() => {
+    t.mock.timers.reset();
+    poolMod.getPool = realGetPool;
+    delete require.cache[require.resolve('../src/routes/public-api')];
+  });
+  const settle = async () => { for (let i = 0; i < 6; i += 1) await new Promise((resolve) => setImmediate(resolve)); };
+
+  const router = publicApiRoutes({});
+  assert.equal(reads, 0, 'mounting the router reads nothing: only a web process starting does');
+  assert.equal(await router.warmDirectory(), true);
+  const first = reads;
+  assert.ok(first >= 1, 'one read as the process starts');
+
+  // Half a minute on, with a visitor ten seconds ago: read again behind them.
+  t.mock.timers.tick(30_000);
+  await settle();
+  assert.equal(reads, first * 2, 'a copy past its half minute is refreshed while people are asking');
+  t.mock.timers.tick(30_000);
+  await settle();
+  assert.equal(reads, first * 3);
+
+  // Ten minutes with no request: the refreshing stops by itself.
+  t.mock.timers.tick(10 * 60_000);
+  await settle();
+  const quiet = reads;
+  t.mock.timers.tick(5 * 60_000);
+  await settle();
+  assert.equal(reads, quiet, 'nobody asking, nothing read');
+
+  const server = read('server.js');
+  assert.match(server, /const publicApi = publicApiRoutes\(config\);\napp\.use\(publicApi\);/);
+  const servesBlock = server.slice(server.indexOf("require('./src/services/language-cache').live(getPool(config))"));
+  assert.ok(servesBlock.indexOf('publicApi.warmDirectory();') > 0 && servesBlock.indexOf('publicApi.warmDirectory();') < 900,
+    'warmed where a web process warms its other caches');
+  assert.match(read('src/routes/public-api.js'), /const DIRECTORY_KEEP_WARM_MS = 10 \* 60 \* 1000;/);
+});
+
+// ── The conversations list reads a few conversations at a time ─────────
+
+test('the conversations list reads four at a time, in order, and never more', () => {
+  const src = read('src/services/conversations.js');
+  const fn = src.slice(src.indexOf('async function listConversations(pool, user) {'), src.indexOf('const LIST_READS_AT_ONCE = 4;'));
+  assert.ok(fn.length > 0 && fn.length < 2500, 'the list and its bound sit together');
+  assert.match(fn, /for \(let at = 0; at < rows\.length; at \+= LIST_READS_AT_ONCE\) \{/);
+  assert.match(fn, /rows\.slice\(at, at \+ LIST_READS_AT_ONCE\)\.map\(\(row\) => getConversation\(pool, user, row\.id\)\)/);
+  assert.match(fn, /for \(const conversation of group\) if \(conversation\) out\.push\(conversation\);/,
+    'each group lands whole and in the list\'s order');
+  assert.doesNotMatch(fn, /for \(const row of rows\) \{\s*const conversation = await getConversation/,
+    'not one conversation after another');
+});
