@@ -42,7 +42,7 @@ function homeStubs({ pins = [], joined = [], owed = {}, apps = [], grid = {}, mo
       scrollParent: () => null,
     },
     '../add-apps-sheet': { openAddAppsSheet() {} },
-    '../use-home-query': { useHomeQuery: () => query, matchesQuery },
+    '../use-home-query': { useHomeQuery: () => query, useSettledHomeQuery: () => query, matchesQuery },
     '../panels-store': { panelsStore: fixedStore({ painted: true, challenges }) },
     '../../app-frame/live-apps': { useLiveAppSlugs: () => live, liveAppLabel: () => 'Still open' },
     '../../workshop/community-scope': { communityScopeStore: fixedStore({ slug: null, list: [], badgeNeeds: needs }) },
@@ -86,7 +86,7 @@ test('the page is the kit\'s: the head with one fixed sentence, the search field
   const html = render({}, homeStubs({ apps: [app('a', 'Alpha')], challenges: CHALLENGES }));
   assert.match(html, /^<div class="fr" data-home-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Home<\/h1><p class="fr-purpose">Your apps and your communities\.<\/p><\/div><\/div><div data-home-frame-search=""><div class="fr-search">/);
   assert.doesNotMatch(html, /class="fr-acts"/, 'no button in the head: New project is Pinned apps\' own');
-  assert.match(html, /<input type="search" class="fr-v" placeholder="Search apps and communities… \(Ctrl\+K\)" aria-label="Search apps and communities" value=""\/>/, 'the standard field\'s own words');
+  assert.match(html, /<input type="search" class="fr-v" placeholder="Search apps and communities…" aria-label="Search apps and communities" value=""\/>/, 'the standard field\'s own words (the first render names no shortcut: the device is not known yet)');
   assert.match(html, /<div class="fr-cols fr-mix"><div class="fr-stack">/, 'the tour\'s 720 and 320, not the wide Home of 10 Nov');
   // The directory is the work column's tail: on a phone, and in a window too
   // narrow for two columns, the challenges come before it, as on the
@@ -124,7 +124,7 @@ test('what the first tour invented is gone: no Needs you rows, Live this week, Y
 
 test('the search field drives Home\'s own search, and the shortcut finds it', () => {
   assert.match(SRC, /own\.value = next;\s*own\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\);/, 'each change is written into #home-search-input with the event home.js and use-home-query listen for');
-  assert.match(SRC, /const query = useHomeQuery\(\);/, 'the communities read the same words');
+  assert.match(SRC, /const query = useSettledHomeQuery\(\);/, 'the communities read the same words as the apps');
   assert.match(SRC, /setAttribute\('aria-keyshortcuts', HOME_SEARCH_SHORTCUT_KEYS\)/);
   assert.match(SRC, /if \(event\.key !== 'Escape' \|\| !words\) return;/, 'Escape clears it, as on the standard field');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');

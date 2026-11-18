@@ -828,7 +828,7 @@
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "The app library anyone can edit",
       "allowConsoleErrors": true
     },
     {
@@ -1773,7 +1773,7 @@
       "name": "Landing tells the story and asks people to get started (first session)",
       "path": "/?shot=anon#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header [data-landing-sign-in]:not(.hidden)) [data-guest-discover] [data-landing-story] h1",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "The app library anyone can edit",
       "allowConsoleErrors": true
     },
     {
@@ -1928,9 +1928,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing has Sign in and Sign up in its bar, and one button to make an account under the story (first session)",
+      "name": "Landing has Sign in and one filled button in its bar, and under the story Explore apps and no link (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-join]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-explore]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
       "expectText": "Sign in",
       "allowConsoleErrors": true
     },
@@ -4856,11 +4856,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row of large cards, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-lead] [data-guest-lead]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {

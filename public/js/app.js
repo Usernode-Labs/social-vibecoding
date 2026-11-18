@@ -1736,15 +1736,34 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'settings-back') return;
-    setTimeout(() => {
+    // #6805: this boot runs as soon as the session is known, usually well
+    // before the document's `load` (which waits for every subresource). A
+    // fragment navigation a script starts before the document is completely
+    // loaded REPLACES the current history entry instead of pushing one, so on
+    // a slow pod the drill-in below replaced `#settings` — and the `back()`
+    // then traversed out of the document, abandoning its boot fetches and
+    // lazy chunks and leaving the checks runner's network-idle wait with
+    // nothing that ever drains. Start only once the document has loaded, so
+    // the drill-in really pushes.
+    const start = () => setTimeout(() => {
       // A drill-in: one dispatch (a hash assignment fires hashchange only).
+      let entries = 0;
+      try { entries = history.length; } catch (err) { /* ignore */ }
       try { location.hash = '#settings/password'; } catch (err) { /* ignore */ }
       // Then back out of it once that push has settled — the traversal, and
-      // with it the duplicate popstate + hashchange pair.
+      // with it the duplicate popstate + hashchange pair. Only over the entry
+      // the drill-in actually pushed: if it was a replace, `back()` would
+      // leave the document entirely, so never traverse in that case (the
+      // check then fails on its own assertion, not a 30s load timeout).
       setTimeout(() => {
+        let pushed = false;
+        try { pushed = history.length > entries; } catch (err) { /* ignore */ }
+        if (!pushed) return;
         try { history.back(); } catch (err) { /* ignore */ }
       }, 200);
     }, 50);
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
   },
 
   // Screenshot-state deep link `?shot=notif-permissions`: present the real
@@ -3416,9 +3435,10 @@ const App = {
           // truncated event — see services/ws-bus.js. "Something you are
           // looking at moved; go and re-read it" is exactly what a dropped
           // socket already means, so it takes the identical recovery path
-          // rather than a second one that could drift from it.
+          // rather than a second one that could drift from it. Several in a
+          // row are one sweep, on the settle gap the reconnect path keeps.
           case 'resync_hint':
-            App.resyncCurrentView();
+            App._resyncFromHint();
             break;
           // The answer to the socket's own `ping` (_pingEvents): this
           // server answers, so from now on a silence is held against it.
@@ -3473,9 +3493,9 @@ const App = {
             App.handleWorkshopUpdate(data);
             break;
           case 'board_order_update':
-            // #613: someone reordered a Dev-board column. refreshDevData
-            // re-pulls the board (including the manual order fetched by
-            // _loadDevData) and repaints, so every open board converges.
+            // #613: someone reordered a Dev-board column. The burst re-reads
+            // the manual order alone (#6791) and repaints, so every open
+            // board converges.
             App._liveRefresh('board-order', null, { appSlug: data.appSlug || App.currentApp });
             break;
           case 'app_allowance_changed':
@@ -3611,8 +3631,26 @@ const App = {
   // the socket reopening and the probe it nudges say the same thing.
   _lastResyncAt: 0,
   RESYNC_SETTLE_MS: 5000,
+  // A resync_hint is that same nudge arriving over the socket, and several can
+  // follow one another for a burst of writes: they take the same settle gap,
+  // with the last one getting its sweep.
+  _resyncHintTimer: null,
+  _resyncFromHint() {
+    if (App._resyncHintTimer) return;
+    const wait = App._lastResyncAt + App.RESYNC_SETTLE_MS - Date.now();
+    if (wait <= 0) { App.resyncCurrentView(); return; }
+    App._resyncHintTimer = setTimeout(() => {
+      App._resyncHintTimer = null;
+      App.resyncCurrentView();
+    }, wait);
+  },
   resyncCurrentView() {
     App._lastResyncAt = Date.now();
+    // A reconnect sweep does everything a waiting hint would.
+    if (App._resyncHintTimer) {
+      clearTimeout(App._resyncHintTimer);
+      App._resyncHintTimer = null;
+    }
     // `Home` and `AppView` are classic-script top-level `const` — they
     // live in the script-global lexical env but are NOT on `window`,
     // so `window.Home` / `window.AppView` would silently be undefined.
@@ -3692,13 +3730,15 @@ const App = {
    * later phase for that slug then takes the `if (card)` branch above, which
    * keeps `data-status` current with no further fetching.
    *
-   * Deliberately not gated on which screen is showing: Home.load() is the
-   * same call the running/error branch makes, the payload is one request, and
-   * gating it would mean the grid is stale the moment somebody navigates back
-   * to it mid-build — which is the bug wearing a different hat.
+   * While Home is not the screen showing, this does nothing and does not
+   * mark the slug: the grid is one request for every app the viewer can see
+   * (670 KB on production), and nobody is looking at it. The slug stays
+   * unmarked, so the first status seen while Home is up still pulls it once,
+   * and routing to Home loads the list anyway.
    */
   _listNewlyCreatedApp(slug) {
     if (!slug || App._listedNewApps.has(slug)) return;
+    if (!App._isScreenVisible('home-screen')) return;
     App._listedNewApps.add(slug);
     if (window.Home && typeof Home.load === 'function') Home.load();
   },
@@ -3738,8 +3778,10 @@ const App = {
       card.dataset.status = data.status;
       // #416: 'error' also triggers a re-pull — the fresh list carries
       // the (server-gated) last_failure_reason for the card tooltip and
-      // the "View build log" menu item.
-      if (data.status === 'running' || data.status === 'error') {
+      // the "View build log" menu item. Only while the grid is on screen:
+      // nothing else draws the list (#6791).
+      if ((data.status === 'running' || data.status === 'error')
+          && App._isScreenVisible('home-screen')) {
         Home.load();
       }
     } else {

@@ -66,7 +66,7 @@ const SKINS: readonly Skin[] = ['standard', ...MENU_SKINS];
  * the rest. Offered by the look picker beside the bell, to admins, while
  * that look is on.
  */
-export const WIP_TOKEN_SETS = ['current', 'brand'] as const;
+export const WIP_TOKEN_SETS = ['current', 'brand', 'brand2'] as const;
 export type WipTokens = typeof WIP_TOKEN_SETS[number];
 
 /** The device's token config for Standard (WIP); 'current' when the head module is absent. */

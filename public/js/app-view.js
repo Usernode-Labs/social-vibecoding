@@ -7213,7 +7213,7 @@ const AppView = {
               ? PlatformI18n.t(mergedIds.includedIn, { number: included.number })
               : PlatformI18n.t(mergedIds.includedInAnother))
             : PlatformI18n.t(mergedIds.alone))
-            : item.status === 'closed' ? PlatformI18n.t('changes:page.hero.status.closed')
+            : item.status === 'closed' || item.status === 'archived' ? PlatformI18n.t('changes:page.hero.status.closed')
               : String(item.status || '');
     const age = item.created_at ? AppView._agePart(item.created_at) : null;
     // First-session run-through, 4 Oct 2026: a flatmate's first look at the
@@ -8032,7 +8032,7 @@ const AppView = {
     // the change merged or is merging: a card drawn before the merge carries
     // the open-vote pill, so the row's current status decides then (#6490).
     const settled = item.status === 'merged' || item.status === 'merging';
-    const statusState = ['active', 'paused', 'closed'].includes(item.status)
+    const statusState = ['active', 'paused', 'closed', 'archived'].includes(item.status)
       ? null
       : ((!settled && card && card.pill && card.pill.state) || AppView.statusPillState(item, kind === 'gov' ? { kind: 'gov' } : {}) || null);
     return {
@@ -8248,6 +8248,37 @@ const AppView = {
     };
   },
 
+  // #6100: the reason code a close recorded ('auto-rejected', 'stale-pr', ...),
+  // as the whole catalog id that words it (the bell's rows read the same
+  // sentences, notifications.js CLOSE_REASON_IDS). One literal per code: a
+  // message is translated whole. A code this build does not know, or a close
+  // from before reasons were kept, maps to nothing and the card keeps its
+  // plain closed note.
+  CLOSE_REASON_IDS: Object.freeze({
+    'auto-rejected': 'core:change.closedWhy.autoRejected',
+    'admin-no': 'core:change.closedWhy.adminNo',
+    'admin-declined': 'core:change.closedWhy.adminDeclined',
+    'approver-no': 'core:change.closedWhy.approverNo',
+    'proposal-replaced': 'core:change.closedWhy.replaced',
+    superseded: 'core:change.closedWhy.superseded',
+    'already-on-main': 'core:change.closedWhy.alreadyOnMain',
+    'request-closed': 'core:change.closedWhy.requestClosed',
+    'red-checks': 'core:change.closedWhy.redChecks',
+    'stale-pr': 'core:change.closedWhy.stale',
+    'campaign-refused': 'core:change.closedWhy.campaignRefused',
+    'pr-closed': 'core:change.closedWhy.prClosed',
+    'pr-merged': 'core:change.closedWhy.prMerged',
+    'update-skipped': 'core:change.closedWhy.updateSkipped',
+    'update-replaced': 'core:change.closedWhy.updateReplaced',
+    'update-refused': 'core:change.closedWhy.updateRefused',
+    'merged-elsewhere': 'core:change.closedWhy.mergedElsewhere',
+    manual: 'core:change.closedWhy.withdrawn',
+  }),
+  _closeReasonLine(reason) {
+    const id = reason && Object.prototype.hasOwnProperty.call(AppView.CLOSE_REASON_IDS, reason) ? AppView.CLOSE_REASON_IDS[reason] : null;
+    return id ? PlatformI18n.t(id) : null;
+  },
+
   // The Votes card: its figure ("Needs 1 more yes", in the accent when the
   // viewer can give it, or "1 of 1 yes"), one part of the bar per yes it
   // needs, and one line under it: who can give it, any yes a newer push
@@ -8265,11 +8296,13 @@ const AppView = {
         note: [mine ? submission.note : PlatformI18n.t('changes:page.votes.note.notAsked')].filter(Boolean),
       };
     }
-    if (item.status === 'closed') {
+    // #6100: a closed change's own row reads 'archived'. Its card says Closed
+    // either way, with why, and no tally nobody can add to.
+    if (item.status === 'closed' || item.status === 'archived') {
       return {
         name: PlatformI18n.t('changes:page.votes.name'), figure: PlatformI18n.t('changes:page.votes.figure.closed'), tone: 'muted', done: false,
         segments: [{ weight: 1, pct: 0, state: 'moving' }], label: PlatformI18n.t('changes:page.votes.label.closed'),
-        note: [PlatformI18n.t('changes:page.votes.note.closed')],
+        note: [PlatformI18n.t('changes:page.votes.note.closed'), AppView._closeReasonLine(item.close_reason)].filter(Boolean),
       };
     }
     // #6490: a card drawn before the merge keeps the open-vote pill in its
@@ -8843,7 +8876,11 @@ const AppView = {
       // #6288: left out when main is not failing these tests, so the card's
       // shape is exactly what it was before this change.
       const mainFailure = AppView._mainFailureLink(v);
-      if (botFix && botFix.state === 'fixing') {
+      // #6807: its failing check is not the change's own, and Homeroom bot
+      // is getting that check fixed in another request: the card keeps
+      // "Tests failed" (they did fail), the bot's line, and the re-run, which
+      // cannot undo a fix that lives elsewhere.
+      if (botFix && botFix.state === 'fixing' && botFix.reason !== 'flaky_check') {
         if (rerun) {
           actions.push({
             key: 'recheck', cls: 'gc-vote-btn gc-vote-btn-accent', label: PlatformI18n.t('changes:recheck.label'),
@@ -9006,6 +9043,25 @@ const AppView = {
       return html ? { state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number(item.id) || null } : null;
     }
     const running = !view.notStarted && (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(view.state) || view.retrying);
+    // The previous version's shots (shots-view.js previous) stay on the card
+    // while this version's are taken, and after they failed or were
+    // skipped, labelled so, until this version's publish: a new commit
+    // never leaves the card without pictures.
+    const previous = AppView._shotsPrevious(shots);
+    const shown = previous ? AppView._changeShotsView(kind, { ...item, shots: previous }) : null;
+    if (shown && shown.state === 'verified') {
+      return {
+        ...shown,
+        previous: {
+          state: view.state,
+          waiting: running,
+          line: PlatformI18n.t(running ? 'changes:page.shots.previousTaking' : 'changes:page.shots.previous'),
+          // Why this version has none, as the card would say it.
+          detail: running ? null : (view.sentence || null),
+        },
+        retake: !running && AppView._canRetakeShots(item) ? Number(item.id) : null,
+      };
+    }
     if (running) return { state: view.state, html: '', line: PlatformI18n.t('changes:page.shots.taking'), waiting: true };
     return {
       state: view.state, html: '', line: view.sentence, waiting: false,
@@ -10830,7 +10886,12 @@ const AppView = {
   //   { kinds: Set, ids: Set | null, merged: boolean }
   // With it, a refresh reads only what those rows need (_partsForLive), and
   // a proposal's page reads only that proposal (_refreshTopicLive). Without
-  // it (every direct caller), it reloads the board as it always did.
+  // it (every direct caller), it reloads the board as it always did, at once.
+  //
+  // A live burst that cannot be narrowed reloads the whole board, but no more
+  // often than BOARD_FULL_MIN_GAP_MS (#6791): an idle hub used to pay eleven
+  // reads per event. A direct caller is the viewer's own action and still
+  // runs at once; it makes any waiting live run unnecessary.
   //
   // Returns the refresh's promise (or undefined when there is nothing on
   // screen to refresh), so castVote can tell when its post-vote read landed.
@@ -10882,12 +10943,65 @@ const AppView = {
     }
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
+    // A burst that needs the whole board waits out the gap; a direct caller
+    // (a vote, a retry, pull to refresh) runs at once and stands the waiting
+    // live run down.
+    if (live) return AppView._liveFullBoard(opts);
+    return AppView._fullBoardLoad(opts);
+  },
+
+  // A whole-board live reload waits at least this long after the last one, so
+  // a burst of events that each need everything costs one read. Modelled on
+  // App._refreshHomeLive; the difference is that the run's promise settles
+  // with the load, so _flushLiveRefresh keeps waiting for it.
+  BOARD_FULL_MIN_GAP_MS: 5000,
+  _boardFullAt: 0,
+  _boardFullPending: null,
+  _liveFullBoard(opts) {
+    // Before the first whole load there is nothing to hold back.
+    if (!AppView._devDataReady) return AppView._fullBoardLoad(opts);
+    const pending = AppView._boardFullPending;
+    if (pending) {
+      if (opts) pending.fresh = true;
+      return pending.promise;
+    }
+    const wait = AppView._boardFullAt + AppView.BOARD_FULL_MIN_GAP_MS - Date.now();
+    if (wait <= 0) return AppView._fullBoardLoad(opts);
+    const slug = AppView.appData && AppView.appData.slug;
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    const entry = { fresh: !!opts, promise, resolve };
+    entry.timer = setTimeout(() => {
+      if (AppView._boardFullPending === entry) AppView._boardFullPending = null;
+      // The reader left the board, or switched app, while it waited: nothing
+      // to paint, and the next visit loads as usual.
+      if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'forum'
+          || !AppView.appData || AppView.appData.slug !== slug) {
+        resolve(true);
+        return;
+      }
+      AppView._fullBoardLoad(entry.fresh ? { fresh: true } : undefined)
+        .then(resolve, () => resolve(undefined));
+    }, wait);
+    AppView._boardFullPending = entry;
+    return promise;
+  },
+  _fullBoardLoad(opts) {
+    AppView._boardFullAt = Date.now();
+    const pending = AppView._boardFullPending;
+    if (pending) {
+      AppView._boardFullPending = null;
+      clearTimeout(pending.timer);
+    }
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
-    return AppView._loadDevFeed().then((r) => {
+    const promise = AppView._loadDevFeed().then((r) => {
       AppView._refreshOpenChangeFromBoard();
       return r;
     });
+    // This run reads the whole board, so the queued one has nothing left to do.
+    if (pending) promise.then((r) => pending.resolve(r), () => pending.resolve(undefined));
+    return promise;
   },
 
   // (#5164) The project hub's quiet refresh: the For you card (the votes
@@ -11151,19 +11265,38 @@ const AppView = {
     return true;
   },
 
-  // What a live burst moved, as board parts: a vote moves the proposals'
-  // tallies (and, on a merge, the Completed list); a verdict moves the one
-  // row's checks, wherever it lives. Anything else — a session appearing or
-  // leaving, an issue, the board order — is the whole board. Rows the page
-  // does not hold ask for nothing: that is someone else's work, on a board
-  // this viewer is not looking at.
+  // What a live burst moved, as board parts (#6791): a vote moves the
+  // proposals' tallies (and, on a merge, the Completed list); a verdict moves
+  // the one row's checks, wherever it lives; a request moves the issue list;
+  // a reorder moves the board order; a change appearing, moving or leaving
+  // re-reads the session caches and the proposals. Each kind asks for the
+  // parts it moved, and a burst takes their union. Only a kind that cannot be
+  // narrowed — or a vote/checks event that names no row — is the whole board
+  // (`null`, which a live burst runs through _liveFullBoard's gap). Rows the
+  // page does not hold ask for nothing: that is someone else's work, on a
+  // board this viewer is not looking at.
   _partsForLive(live) {
-    if (!live || !AppView._devDataReady || !live.ids || !live.ids.size) return null;
-    for (const k of live.kinds || []) if (k !== 'vote' && k !== 'checks') return null;
+    if (!live || !AppView._devDataReady) return null;
     const parts = new Set();
-    for (const id of live.ids) {
-      const where = AppView._whereHeld(id);
-      if (where) parts.add(where);
+    for (const k of live.kinds || []) {
+      if (k === 'vote' || k === 'checks') {
+        if (!live.ids || !live.ids.size) return null;
+        for (const id of live.ids) {
+          const where = AppView._whereHeld(id);
+          if (where) parts.add(where);
+        }
+      } else if (k === 'issue') {
+        parts.add('issues');
+      } else if (k === 'board-order') {
+        parts.add('order');
+      } else if (k === 'session') {
+        // A change that just started, moved or stopped: it left one part of
+        // the board for another, so both are read.
+        parts.add('sessions');
+        parts.add('promoted');
+      } else {
+        return null;
+      }
     }
     if (live.merged) { parts.add('promoted'); parts.add('merged'); }
     return parts;
@@ -14014,7 +14147,12 @@ const AppView = {
     const n = attempt || 0;
     const force = !!(opts && opts.force);
     const cur = AppView._workshopThemes;
-    if (!n && !force && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    // One check a minute per slug, whether or not a regrouping is pending:
+    // the board's WS-driven reloads call this freely, and the themes endpoint
+    // rebuilds the server's input each time. A pending one is held back too
+    // once its own poll chain is gone — its next step, or the server's
+    // `workshop_update` broadcast, still brings it in.
+    if (!n && !force && cur && cur.slug === slug && (Date.now() - (cur.at || 0)) < 60000) return;
     // A chain is already polling this slug: let it finish rather than
     // starting a second one beside it.
     if (!n && !force && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
@@ -20077,6 +20215,9 @@ const AppView = {
   // time; waiting its turn; or handed to the people who can take it on.
   _botFixNote(botFix) {
     if (!botFix || typeof botFix !== 'object') return null;
+    if (botFix.state === 'fixing' && botFix.reason === 'flaky_check') {
+      return PlatformI18n.t('changes:page.testing.note.botFixingCheck', { number: botFix.request });
+    }
     if (botFix.state === 'fixing') {
       const at = botFix.since ? new Date(botFix.since).getTime() : NaN;
       const minutes = Number.isFinite(at) ? Math.max(0, Math.round((Date.now() - at) / 60000)) : 0;
@@ -26171,6 +26312,18 @@ const AppView = {
     };
   },
 
+  // The previous version's shots (shots-view.js `previous`), as a published
+  // run's view marked `previousVersion`: what a version whose own shots are
+  // being taken, failed or were skipped keeps showing, labelled so. Null
+  // once this version's publish, or when there are none.
+  _shotsPrevious(shots) {
+    if (!shots || typeof shots !== 'object' || String(shots.state || '') === 'verified') return null;
+    const prev = shots.previous;
+    if (!prev || typeof prev !== 'object' || prev.state !== 'verified'
+      || !Array.isArray(prev.artifacts) || !prev.artifacts.length) return null;
+    return { ...prev, previous: null, previousVersion: true };
+  },
+
   // Whether the viewer may start a failed run again: its author or an app
   // admin, the same people the change page's ⋯ menu offers it to, and only
   // while the platform is not already retrying it on its own. A failure
@@ -26468,7 +26621,13 @@ const AppView = {
       return value;
     };
     const stateCopy = AppView._shotsStateCopy(shots);
-    const badge = state === 'verified'
+    // The previous version's shots (_shotsPrevious), drawn as published ones
+    // are but marked as the previous version's, with no retake of their own.
+    const previousVersion = state === 'verified' && shots.previousVersion === true;
+    const shownState = previousVersion ? 'previous' : 'verified';
+    const badge = previousVersion
+      ? `<span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400" data-shots-previous-badge="1">${PlatformI18n.htmlText('changes:shots.card.previousBadge')}</span>`
+      : state === 'verified'
       ? `<span class="dev-badge bg-violet-500/10 text-violet-700 dark:text-violet-400">${PlatformI18n.htmlText('changes:shots.card.readyBadge')}</span>`
       : `<span class="dev-badge ${state === 'failed' && shots.failureCode !== 'shots_stopped' && shots.automaticRetryPending !== true ? 'bg-red-500/10 text-red-700 dark:text-red-400' : 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400'}">${esc((stateCopy[state] || [PlatformI18n.t('changes:shots.state.pending.label')])[0])}</span>`;
     const code = (inner) => `<code>${inner}</code>`;
@@ -26501,12 +26660,17 @@ const AppView = {
       const override = state === 'overridden' && shots.overriddenAt
         ? `<div class="text-[0.68rem] text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:shots.card.overriddenAt', { when: new Date(shots.overriddenAt).toLocaleString(undefined, PlatformI18n.timeZone && PlatformI18n.timeZone() ? { timeZone: PlatformI18n.timeZone() } : {}) })}</div>`
         : '';
+      // The previous version's shots, under this version's state, until
+      // this version's publish (the change page's card draws them itself:
+      // _changeShotsView).
+      const previous = !thread && !detailsOnly ? AppView._shotsPrevious(shots) : null;
+      const previousHtml = previous ? AppView.shotsHtml(previous, opts) : '';
       return `<section data-shots="1" data-shots-state="${attr(state)}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
         <div class="flex items-center justify-between gap-3"><strong class="text-sm">${esc(copy[0])}</strong>${badge}</div>
         <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(copy[1])}</p>
         ${declared ? `<ul class="mt-2 list-disc pl-4 text-xs text-zinc-700 dark:text-zinc-300">${declared}</ul>` : ''}
         <div class="mt-2 flex flex-wrap items-center gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${provenance}${retry}${stop}</div>${override}
-      </section>`;
+      </section>${previousHtml ? `<div class="mt-3" data-shots-previous="1">${previousHtml}</div>` : ''}`;
     }
 
     const by = (storyId, viewport, side, variant, media = null, theme = 'light') => artifacts.find((a) => (
@@ -26812,7 +26976,9 @@ const AppView = {
       return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">${PlatformI18n.htmlText('changes:shots.card.missingDetails')}</section>`;
     }
     const withClips = artifacts.some((artifact) => artifact?.variant === 'animation');
-    const lookCopy = afterOnly
+    const lookCopy = previousVersion
+      ? PlatformI18n.htmlText('changes:shots.card.previousIntro')
+      : afterOnly
       ? PlatformI18n.htmlText(withClips ? 'changes:shots.card.introNewAppClips' : 'changes:shots.card.introNewApp')
       : PlatformI18n.htmlText(withClips ? 'changes:shots.card.introClips' : 'changes:shots.card.intro');
     if (detailsOnly) {
@@ -26849,15 +27015,16 @@ const AppView = {
       }).join('')}</ul></section>`
       : '';
     if (thread) {
-      return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body"${afterOnly ? ' data-shots-after-only="1"' : ''}>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
+      return `<section data-shots="1" data-shots-state="${shownState}" aria-label="${PlatformI18n.htmlText('changes:shots.thread.title')}" class="dev-change-shots-body"${afterOnly ? ' data-shots-after-only="1"' : ''}>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}</section>`;
     }
     // Ready shots can be taken again too: after better steps or hints, or to
     // outline a run from before outlines were worked out. The route lets only
-    // the author or an app manager do it.
-    const retake = Number.isInteger(sessionId) && sessionId > 0
+    // the author or an app manager do it. The previous version's are not
+    // this version's to take again: its own state above says how.
+    const retake = Number.isInteger(sessionId) && sessionId > 0 && !previousVersion
       ? `<button type="button" data-shots-retake="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.rerunShots(${sessionId}, this)">${PlatformI18n.htmlText('changes:shots.card.takeAgain')}</button>`
       : '';
-    return `<section data-shots="1" data-shots-state="verified" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"${afterOnly ? ' data-shots-after-only="1"' : ''}><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
+    return `<section data-shots="1" data-shots-state="${shownState}" aria-label="${PlatformI18n.htmlText('changes:shots.card.label')}" class="space-y-3"${afterOnly ? ' data-shots-after-only="1"' : ''}><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">${lookCopy}</p>${badge}</div>${viewer}${items.length ? `<ol class="shots-claims">${items.join('')}</ol>` : ''}${noticed}
       <div class="flex flex-wrap items-start justify-between gap-3"><details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">${PlatformI18n.htmlText('changes:shots.card.details')}</summary>
         <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>${PlatformI18n.htmlRich('changes:shots.card.planHash', { hash: String(shots.planHash || '').slice(0, 12) || PlatformI18n.t('changes:shots.card.unknownPlan') }, [code])}</span>${shotResults.length ? `<span>${PlatformI18n.htmlText('changes:shots.card.takenByAgent')}</span>` : ''}</div>
       </details>${retake}</div></section>`;

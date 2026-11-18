@@ -725,9 +725,14 @@ const Home = {
     let skin = 'standard';
     try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
     // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
-    // search row at every width, so its grid draws no tile. Every other
-    // look, Standard among them, ends Pinned apps with the tile.
-    return skin === 'wip';
+    // search row at every width, so its grid draws no tile. The brand look
+    // ('brand') has the same button from 768px, where the search row is on
+    // screen; a phone, whose search row waits to be pulled into view, keeps
+    // the tile. Every other look, Standard among them, ends Pinned apps with
+    // the tile.
+    if (skin === 'wip') return true;
+    if (skin !== 'brand') return false;
+    try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },
 
   _wireRowBudget() {
@@ -1150,7 +1155,7 @@ const Home = {
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
     gridStore.set({
-      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing,
+      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, query, notice: null, create, editing,
     });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in

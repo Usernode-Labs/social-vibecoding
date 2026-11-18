@@ -155,6 +155,45 @@ export async function refreshHomePins({ force = false }: { force?: boolean } = {
   await Promise.all([loadHomePins(), loadCommunities(force)]);
 }
 
+/**
+ * WHAT IS GOING ON IN EACH PINNED COMMUNITY (Drea's review of #6699), for
+ * the cards Pinned communities draws on a wide screen in the default look:
+ * GET /api/me/home-pins/activity (services/home-pins.js `activity`), keyed
+ * by slug. Read only where the cards are drawn, so a phone asks for nothing
+ * it does not show; quiet on failure, when each card draws its name alone.
+ */
+export interface PinActivity {
+  members: number;
+  liveWeek: number;
+  activeWeek: number;
+  people: Array<{ username: string; avatarUrl: string | null }>;
+}
+
+export const homePinsActivityStore = createStore<{ ready: boolean; bySlug: Record<string, PinActivity> }>(
+  { ready: false, bySlug: {} },
+);
+
+let activityLoading: Promise<void> | null = null;
+
+async function readActivity(): Promise<void> {
+  try {
+    const body = await readJson('/api/me/home-pins/activity');
+    const bySlug = body && body.activity && typeof body.activity === 'object' ? body.activity : {};
+    homePinsActivityStore.set({ ready: true, bySlug });
+  } catch {
+    /* the cards keep what they had */
+  }
+}
+
+export function loadHomePinsActivity(): Promise<void> {
+  if (activityLoading) return activityLoading;
+  const run = readActivity();
+  activityLoading = run;
+  const settle = () => { if (activityLoading === run) activityLoading = null; };
+  run.then(settle, settle);
+  return run;
+}
+
 function toast(text: string) {
   try { (window as any).PlatformUI?.toast?.(text); } catch { /* no kit */ }
 }

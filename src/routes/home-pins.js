@@ -24,6 +24,16 @@ function homePinRoutes(config, { pool = getPool(config) } = {}) {
     }
   };
   router.get('/api/me/home-pins', run((req) => pins.list(pool, req.user.id)));
+  // What Home's community cards say under each pinned community's name:
+  // members, what went live this week and who was there (services/home-pins.js).
+  router.get('/api/me/home-pins/activity', async (req, res) => {
+    try {
+      res.json({ activity: await pins.activity(pool, req.user.id) });
+    } catch (err) {
+      log.error('home-pins', 'Activity read failed', { message: err.message });
+      res.status(500).json({ error: 'Could not read your communities. Try again.' });
+    }
+  });
   router.post('/api/me/home-pins/import', sameOriginBrowserOnly,
     run((req) => pins.importPins(pool, req.user, req.body?.slugs)));
   router.put('/api/me/home-pins', sameOriginBrowserOnly,

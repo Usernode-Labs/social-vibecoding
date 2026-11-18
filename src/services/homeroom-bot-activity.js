@@ -450,6 +450,16 @@ const ANSWER_REASONS = new Set(['dm_answer', 'thread', 'plan_change', 'dm_commen
 async function noteReading(pool, { app, issueNumber, requester, bot, jobKey, card, reason = null, dm, first = false }) {
   try {
     if (typeof dm.noteStep !== 'function' || !card?.messageId) return null;
+    // 18 Nov 2026 (#6806): once a project's first version is live, its
+    // first-version thread says where things stand on its own (its card,
+    // its live buttons), so a look nobody asked for says nothing there: a
+    // stray "Reading it." under the live buttons read as the bot going back
+    // to work on a request it had already finished. The first line before
+    // the plan, and the line after the person answers, are still said.
+    if (!first && !ANSWER_REASONS.has(reason)) {
+      const live = await firstVersionsLive(pool, [app.id]);
+      if (live.get(Number(app.id))?.issueNumber === Number(issueNumber)) return null;
+    }
     let again = !first;
     if (again) {
       // A card sent when the request was filed or queued has had no look yet.

@@ -35,22 +35,23 @@ const HOME = fs.readFileSync(
  * Only that method and its Set are exercised, so the rest of app.js does not
  * need a browser.
  */
-function harness() {
+function harness({ homeVisible = true } = {}) {
   const body = SRC.match(/_listNewlyCreatedApp\(slug\) \{[\s\S]*?\n  \},/);
   assert.ok(body, 'the helper is defined in app.js');
   const loads = [];
-  const sandbox = { loads };
+  const sandbox = { loads, homeVisible };
   sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     'var Home = { load: function () { loads.push(1); } };'
     + 'var window = { Home: Home };'
     + 'var App = { _listedNewApps: new Set(), '
+    + '_isScreenVisible: function (id) { return id === "home-screen" && homeVisible; }, '
     + body[0].replace(/,$/, '')
     + ' };'
     + 'globalThis.__App = App;',
     sandbox);
-  return { App: sandbox.__App, loads };
+  return { App: sandbox.__App, loads, sandbox };
 }
 
 test('the first status for an unlisted app pulls the list once', () => {
@@ -88,8 +89,54 @@ test('it is reached exactly when there is no card for that slug', () => {
   const upToAppView = handler.slice(0, handler.indexOf('// Update app view'));
   assert.match(upToAppView, /const card = document\.querySelector\(/);
   assert.match(upToAppView, /\} else \{\s*\n\s*App\._listNewlyCreatedApp\(data\.slug\);/);
-  // And the running/error reload the card branch already did is untouched.
-  assert.match(upToAppView, /if \(data\.status === 'running' \|\| data\.status === 'error'\) \{/);
+  // And the running/error reload the card branch already did is untouched,
+  // except that it now waits for Home to be the screen showing (#6791).
+  assert.match(upToAppView,
+    /if \(\(data\.status === 'running' \|\| data\.status === 'error'\)\s*\n\s*&& App\._isScreenVisible\('home-screen'\)\) \{/);
+});
+
+test('#6791: while Home is not showing, a new app pulls no list and stays unmarked', () => {
+  const { App, loads, sandbox } = harness({ homeVisible: false });
+  App._listNewlyCreatedApp('brand-new');
+  assert.equal(loads.length, 0, 'nobody is looking at the grid');
+  assert.equal(App._listedNewApps.has('brand-new'), false, 'and the slug is not marked');
+  // Back on Home, the next status for it pulls the list once, as before.
+  sandbox.homeVisible = true;
+  App._listNewlyCreatedApp('brand-new');
+  assert.equal(loads.length, 1);
+  App._listNewlyCreatedApp('brand-new');
+  assert.equal(loads.length, 1, 'and only once');
+});
+
+test('#6791: the running/error reload in the card branch needs Home on screen', () => {
+  // Behaviour, not only the source: the handler is run over a card that holds
+  // the slug, first with Home hidden and then with it showing.
+  const body = SRC.match(/handleAppStatusUpdate\(data\) \{[\s\S]*?\n  \},/);
+  assert.ok(body, 'the handler is defined in app.js');
+  const member = body[0].replace(/,$/, '');
+  const loads = [];
+  const sandbox = { loads };
+  sandbox.PlatformI18n = englishPlatformI18n();
+  vm.createContext(sandbox);
+  vm.runInContext(
+    'var Home = { load: function () { loads.push(1); } };'
+    + 'var document = { querySelector: function () { return { dataset: {} }; } };'
+    + 'var AppView = { _rememberPendingAppStatus: function () {}, evictKeptApp: function () {} };'
+    + 'var window = {};'
+    + 'var App = { currentApp: null, currentTab: "dev", '
+    + '_isScreenVisible: function (id) { return id === "home-screen" && homeVisible; }, '
+    + '_listNewlyCreatedApp: function () {}, '
+    + member
+    + ' };'
+    + 'globalThis.__App = App;',
+    sandbox);
+  const App = sandbox.__App;
+  sandbox.homeVisible = false;
+  App.handleAppStatusUpdate({ slug: 'demo', status: 'running' });
+  assert.equal(loads.length, 0, 'a status for a tile nobody can see pulls nothing');
+  sandbox.homeVisible = true;
+  App.handleAppStatusUpdate({ slug: 'demo', status: 'running' });
+  assert.equal(loads.length, 1, 'the grid re-reads when it is the screen showing');
 });
 
 test('the tile already has the words for a building app', () => {

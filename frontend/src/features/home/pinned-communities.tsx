@@ -35,16 +35,21 @@
  */
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { PlusIcon, SpeechCheckIcon, Squares2X2Icon } from '@/components/ui/icons';
+import { PlusIcon, SpeechCheckIcon, Squares2X2Icon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useCommunityColor } from '../../lib/community-color';
 import { useMessages } from '../../lib/i18n/react';
+import { useSkin } from '../../lib/skin';
 import { useStoreState } from '../../lib/use-store-state';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { swatchFor } from '../messages/format';
 import { SectionHeading } from './panels/ui';
 import { communityScopeStore } from '../workshop/community-scope';
-import { homePinsStore, importDevicePins, loadHomePins, loadHomePinsForSession, setHomePin, wireHomePins, type HomePin } from './home-pins-store';
-import { matchesQuery, useHomeQuery } from './use-home-query';
+import {
+  homePinsActivityStore, homePinsStore, importDevicePins, loadHomePins, loadHomePinsActivity, loadHomePinsForSession,
+  setHomePin, wireHomePins, type HomePin, type PinActivity,
+} from './home-pins-store';
+import { matchesQuery, useSettledHomeQuery } from './use-home-query';
 
 const HEAD_ACTION = 'shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
 const TILE = 'flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-1 text-center no-underline un-touch-target';
@@ -89,11 +94,12 @@ export function CommunityTileFace({ slug, name, iconUrl, iconEmoji, iconColor }:
   );
 }
 
-function PinTile({ pin, votes, editing, faded = false, onUnpin, onPin }: {
+function PinTile({ pin, votes, editing, faded = false, detail, onUnpin, onPin }: {
   pin: Omit<HomePin, 'member'>;
   votes: number;
   editing: boolean;
   faded?: boolean;
+  detail?: PinActivity;
   onUnpin?: () => void;
   onPin?: () => void;
 }) {
@@ -137,9 +143,71 @@ function PinTile({ pin, votes, editing, faded = false, onUnpin, onPin }: {
         ) : null}
       </span>
       <span className={NAME}>{pin.name}</span>
+      {detail ? <CommunityDetail detail={detail} /> : null}
       {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
   );
+}
+
+/** How many faces a card shows (services/home-pins.js ACTIVITY_FACES). */
+const CARD_FACES = 3;
+
+/**
+ * WHAT IS GOING ON THERE (Drea's review of #6699): under a pinned
+ * community's name on its card, how many members, what went live this week
+ * (one pill, the only one on the card) and the faces of a few of the people
+ * who were there this week, beside how many there were. A zero says nothing:
+ * each line is drawn only when it has something to say. The cards are the
+ * default look's, from 1280px (app.css, "PINNED COMMUNITIES AS PEOPLE
+ * PLACES"); everywhere else this stays hidden and the tile is the icon and
+ * name it always was.
+ */
+function CommunityDetail({ detail }: { detail: PinActivity }) {
+  const t = useMessages('home');
+  const members = Math.max(0, Number(detail.members) || 0);
+  const live = Math.max(0, Number(detail.liveWeek) || 0);
+  const active = Math.max(0, Number(detail.activeWeek) || 0);
+  const people = (detail.people || []).filter((p) => p && p.username).slice(0, CARD_FACES);
+  if (!members && !live && !active) return null;
+  return (
+    <span className="hidden" data-home-community-detail="">
+      {members ? (
+        <span className="home-community-line">
+          <UserGroupIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+          <span>{t('home:communities.members', { count: members, formatted: members.toLocaleString() })}</span>
+        </span>
+      ) : null}
+      {live ? <span className="home-community-news">{t('home:communities.liveWeek', { count: live })}</span> : null}
+      {active ? (
+        <span className="home-community-people">
+          {people.length ? (
+            <span className="dev-ws-hero-faces" aria-hidden="true">
+              {people.map((p) => (
+                <span key={p.username} className="dev-ws-hero-face" style={{ background: swatchFor(p.username) }} title={`@${p.username}`}>
+                  {p.avatarUrl ? <img src={p.avatarUrl} alt="" loading="lazy" draggable={false} /> : (p.username.charAt(0) || '?').toUpperCase()}
+                </span>
+              ))}
+            </span>
+          ) : null}
+          <span>{t('home:communities.activeWeek', { count: active, formatted: active.toLocaleString() })}</span>
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** True on a window at least 1280px wide, where the cards are drawn; false in the prerender. */
+function useWide(): boolean {
+  const [wide, setWide] = useState(false);
+  useEffect(() => {
+    let query: MediaQueryList | null = null;
+    try { query = window.matchMedia('(min-width: 1280px)'); } catch { return undefined; }
+    const update = () => setWide(!!query?.matches);
+    update();
+    query.addEventListener?.('change', update);
+    return () => query?.removeEventListener?.('change', update);
+  }, []);
+  return wide;
 }
 
 /**
@@ -189,7 +257,7 @@ function ActionTile({ label, icon, onClick, dashed = false, muted = false, press
 export function PinnedCommunities() {
   const t = useMessages('home');
   const state = useStoreState(homePinsStore);
-  const query = useHomeQuery();
+  const query = useSettledHomeQuery();
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
   // "All communities" elsewhere (the switcher, the tour's last step) opens
@@ -201,6 +269,17 @@ export function PinnedCommunities() {
   }, []);
   const { badgeNeeds } = useStoreState(communityScopeStore) as { badgeNeeds?: number };
   const needs = Math.max(0, Number(badgeNeeds) || 0);
+  // THE CARDS (Drea's review of #6699): in the default look on a wide
+  // screen each pinned community says what is going on there. Read after
+  // mount only (useSkin, useWide), and only where it is drawn.
+  const skin = useSkin();
+  const wide = useWide();
+  const cards = skin === 'brand' && wide;
+  const activity = useStoreState(homePinsActivityStore);
+  const pinKey = state.pins.map((p) => p.slug).join(',');
+  useEffect(() => {
+    if (cards && state.ready && pinKey) void loadHomePinsActivity();
+  }, [cards, state.ready, pinKey]);
 
   useEffect(() => {
     const moved = (count: number) => t('home:devicePins.moved', { count });
@@ -256,6 +335,7 @@ export function PinnedCommunities() {
             pin={pin}
             votes={state.owed[pin.slug] || 0}
             editing={editing}
+            detail={cards ? activity.bySlug[pin.slug] : undefined}
             onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
           />
         ))}
