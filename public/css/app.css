@@ -2885,9 +2885,12 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
    viewport. A flat `100dvh - 3rem` is 48px, and the status-bar inset on a
    notched phone is 54pt — so at the cap the sheet's head slid UNDER the clock
    and the signal bars, which is the one place the gap exists to prevent. The
-   fallback keeps desktop and any browser without the env() unchanged. */
+   fallback keeps desktop and any browser without the env() unchanged.
+   #6813: the keyboard's height comes off too — the kit stands the sheet on
+   the keys, so a sheet as tall as the screen had its top that far above it. */
 .platform-sheet-adopted#messages-sheet {
-  max-height: calc(100dvh - env(safe-area-inset-top, 0px) - 3rem) !important;
+  max-height: calc(100dvh - env(safe-area-inset-top, 0px)
+    - var(--un-kb-inset, 0px) - 3rem) !important;
 }
 
 /* The app menu stops at 80%, matching the no-kit bottom-sheet rule in the
@@ -2904,7 +2907,8 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
    touch device WIDER than 639px (a tablet) matches the desktop rule and the
    kit adoption at once, so without this the kit's sheet could present an
    invisible panel. It is not merely theoretical insurance for the open state
-   either: the kit measures the content at present time. */
+   either: the kit measures the content at present time.
+   #6813: the keyboard's height comes off both caps, for the reason above. */
 /* HANDED BACK BY THE KIT, OUT OF SIGHT until its next presentation
    (lib/kit-surface.ts REHOMED_CLASS): the menu's bottom sheet stood again
    at its open place for 190ms after the kit's exit had taken it away. */
@@ -2913,7 +2917,8 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
   transition: none !important;
 }
 .platform-sheet-adopted#apps-switcher-sheet {
-  max-height: min(80dvh, calc(100dvh - env(safe-area-inset-top, 0px) - 3rem)) !important;
+  max-height: min(calc(80dvh - var(--un-kb-inset, 0px)),
+    calc(100dvh - env(safe-area-inset-top, 0px) - var(--un-kb-inset, 0px) - 3rem)) !important;
   opacity: 1 !important;
   visibility: visible !important;
 }
@@ -2936,10 +2941,18 @@ html.dark[data-contrast="more"] .dark\:border-zinc-800 { border-color: #48484a; 
    down, and a third of the screen spent on the page behind it bought
    nothing. The bottom safe inset is the kit's own padding under the sheet.
    `height` has to beat `height: auto !important` above, hence the
-   !important. */
+   !important.
+   #6813: two more terms in the sum. The keyboard's height comes off, because
+   the kit stands the sheet on the keys and a full-height sheet would put its
+   head that far above the screen — searching inside the sheet used to send
+   the box being typed into to y -194. And the top gap has a FLOOR: on the
+   Duo's cover screen the status bar is in the side column, so
+   env(safe-area-inset-top) is 0 and the 2.25rem sliver left the sheet at
+   y -9 with its grabber clipped. */
 .platform-sheet-adopted#notifications-sheet {
-  height: calc(100dvh - env(safe-area-inset-top, 0px)
-    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - 2.25rem) !important;
+  height: calc(100dvh - max(env(safe-area-inset-top, 0px), 12px)
+    - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))
+    - var(--un-kb-inset, 0px) - 2.25rem) !important;
   max-height: none !important;
 }
 
@@ -28069,6 +28082,9 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-tiles-legend { display: block; }
 @media (max-width: 520px) { .dev-thread-tiles { flex-wrap: wrap; } .dev-thread-tiles-cap { flex-basis: 100%; } }
+/* #6814: "What it touches" takes the empty box's place on a change's page,
+   so it keeps the box's distance from the summary above it. */
+.dev-thread-card .dev-ws-touches { margin-top: 14px; }
 .dev-thread-wait > b { font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-wait > span { max-width: 46ch; font-size: 13.5px; line-height: 20px; }
 
