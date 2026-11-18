@@ -73,7 +73,7 @@ test('a chip narrows All, never Unread, and is forgotten when the sheet closes',
   assert.match(SHEET_SRC, /kindOn \? all\.filter\(\(view\) => matchesKindFilter\(view\.kind, kindOn\)\) : all/);
   assert.match(SHEET_SRC, /if \(!open\) setKindFilter\(null\);/);
   // The pinned sections step aside while a chip is lit.
-  assert.match(SHEET_SRC, /\{searching \|\| kindOn \? null : <NotificationsPinnedSections \/>\}/);
+  assert.match(SHEET_SRC, /\{searching \|\| kindOn \|\| isThreads \? null : <NotificationsPinnedSections \/>\}/);
   // The initial state is null, so the prerendered sheet is unchanged.
   assert.match(SHEET_SRC, /useState<KindFilter \| null>\(null\)/);
 });

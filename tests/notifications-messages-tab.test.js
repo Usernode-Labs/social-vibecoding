@@ -122,8 +122,8 @@ test('the count rides only on a genuine collapse', () => {
 
 // ── 2. #5289: no Messages filter in the bell ────────────────────────────
 
-test('the strip is Unread and All, and nothing filters on a Messages tab', () => {
-  assert.match(SHEET_SRC, /type Tab = 'all' \| 'unread';/);
+test('the strip is Unread, Recent threads and All, and nothing filters on a Messages tab', () => {
+  assert.match(SHEET_SRC, /type Tab = 'all' \| 'unread' \| 'threads';/);
   assert.doesNotMatch(SHEET_SRC, /notifications-tab-messages|notifications-all-messages|'messages'/);
   assert.doesNotMatch(SHEET_SRC, /notifications-see-older-messages|loadOlderMessages/);
   assert.doesNotMatch(HTML, /id="notifications-tab-messages"/);
@@ -159,7 +159,8 @@ test('declared checks follow the agent rows to Messages and keep a collapsed row
   const messageChecks = dapp.tests.filter((t) => (t.expectSelector || '').includes('[data-notif-id="990207"]'));
   assert.ok(messageChecks.length >= 2);
   for (const check of messageChecks) assert.equal(check.path, '/?shot=notifications-all&demo=1', check.name);
-  assert.match(FE_SRC, /shot !== 'notifications-all'\) return;/, 'the All link opens the sheet');
+  assert.match(FE_SRC, /shot !== 'notifications-all'[\s\S]{0,120}?shot !== 'notifications-threads'\) return;/,
+    'the All and Recent threads links open the sheet');
   assert.match(SHEET_SRC, /if \(shot === 'notifications-all'\) setTab\('all'\);/, 'and the sheet lands on All');
   // The work-order row was checked on Messages' Agents list until that list
   // left Messages (16 Nov 2026); no check selects it on the bell either.
