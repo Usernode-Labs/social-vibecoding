@@ -183,6 +183,11 @@ app.use(inflightRequests.inflightRequests());
 // src/services/server-error-counts.js). It only listens for `finish`.
 app.use(require('./src/middleware/request-counts').requestCounts());
 
+// Every successful /api/ response says what it cost in a Server-Timing
+// header: its database time and query count, and its total
+// (src/middleware/server-timing.js, #6792).
+app.use(require('./src/middleware/server-timing').serverTiming());
+
 // A server error people commonly see also says itself in their language, as
 // `error_message` beside the unchanged `error`. It wraps res.json here, ahead
 // of every router, so the ones mounted before auth and the error handler all
@@ -390,6 +395,8 @@ app.use((req, res, next) => {
   express.json()(req, res, next);
 });
 app.use(cookieParser());
+// A body parser reads outside the request's async context: enter it again.
+app.use(require('./src/middleware/server-timing').resumeServerTiming);
 app.use(require('./src/services/browser-api-cache').browserApiCachePolicy);
 
 app.get('/health', (_req, res) => {
