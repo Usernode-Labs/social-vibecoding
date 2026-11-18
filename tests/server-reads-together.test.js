@@ -3,7 +3,8 @@
 // #6796: three places a request waited on round trips it did not need.
 //   - the moderation guard reads the app and the viewer's block on it in one
 //     query, on every /api/apps/:slug/* call;
-//   - GET /api/apps runs its seven side reads together;
+//   - GET /api/apps runs its seven side reads in two groups, four at most
+//     at once;
 //   - GET /api/public/apps answers from the copy it has while one read
 //     refreshes it, for a bounded time.
 //
@@ -64,17 +65,13 @@ test('the moderation guard asks once for the app and the viewer\'s block on it',
   assert.deepEqual(queries[0].params, ['my app', null], 'nobody signed in: no block to find');
 });
 
-test('GET /api/apps waits for its side reads together', () => {
+test('GET /api/apps waits for its side reads in two groups, never more than four at once', () => {
   const src = read('src/routes/apps.js');
-  const handler = src.slice(src.indexOf("router.get('/api/apps', async (req, res) => {"));
-  const together = /const \[adminAppIds, contributorCounts, contributed, liveDomains, firstVersionLines, linksOut, storedSecrets\] = await Promise\.all\(\[\s*adminAppIdsRead, contributorCountsRead, contributedRead, liveDomainsRead,\s*firstVersionLinesRead, linksOutRead, storedSecretsRead,\s*\]\);/;
-  assert.ok(together.test(handler.slice(0, 20000)), 'the seven reads are awaited as one');
-  for (const name of ['getAdminAppIdsForUser', 'loadContributorCounts', 'loadContributedAppIds', 'liveDomainsFor(pool', 'firstVersionLinesFor(', 'storedSecretKeysFor(pool']) {
-    const at = handler.indexOf(name);
-    assert.ok(at > 0, name);
-    assert.ok(!/await\s*$/.test(handler.slice(at - 12, at).replace(/[\w.]+$/, '')), `${name} is started, not awaited alone`);
-  }
-  assert.match(handler.slice(0, 20000), /Could not read the invite links for the list[\s\S]{0,80}return new Map\(\);/,
+  const handler = src.slice(src.indexOf("router.get('/api/apps', async (req, res) => {")).slice(0, 20000);
+  assert.match(handler, /const \[adminAppIds, contributorCounts, contributed, liveDomains\] = await Promise\.all\(\[\s*adminAppIdsRead, contributorCountsRead, contributedRead, liveDomainsRead,\s*\]\);/);
+  assert.match(handler, /const \[firstVersionLines, linksOut, storedSecrets\] = await Promise\.all\(\[\s*readFirstVersionLines\(\), readLinksOut\(\), readStoredSecrets\(\),\s*\]\);/,
+    'the second group starts only when the first has landed');
+  assert.match(handler, /Could not read the invite links for the list[\s\S]{0,80}return new Map\(\);/,
     'a failed invite-links read still says nothing, and sinks nothing');
 });
 

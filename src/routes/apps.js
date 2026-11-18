@@ -934,7 +934,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // of, so accessFlags below can resolve can_manage per row without
       // a round-trip each.
       // #6796: this read and the six after it need only the rows above, not
-      // each other, so they run together: seven round trips' wait is one.
+      // each other, so they run together, in two groups: seven round trips'
+      // wait is two. Never more than four at once, whatever the list's size:
+      // the web's pool is small, and this list once held all of it
+      // (tests/app-first-version-postgres.test.js).
       const adminAppIdsRead = appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
 
       // How many people BUILT each app, for the Discover cards on the
@@ -958,26 +961,28 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // #4053: where each first version Homeroom bot is making stands, for
       // its Home tile, in the build line this viewer reads.
       const firstVersionPhases = new Map();
-      const firstVersionLinesRead = firstVersionLinesFor(
+      const readFirstVersionLines = () => firstVersionLinesFor(
         pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null, firstVersionPhases
       );
       // The viewer's live invite links, for the Communities list's "Invite
       // link out" (inviteLinkOut): one query for every project they are in.
       // Best-effort: a read that fails says nothing on any row.
-      const linksOutRead = userId
+      const readLinksOut = () => (userId
         ? Promise.resolve()
           .then(() => communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId))
           .catch((err) => {
             log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
             return new Map();
           })
-        : Promise.resolve(new Map());
+        : Promise.resolve(new Map()));
 
-      const storedSecretsRead = storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+      const readStoredSecrets = () => storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
 
-      const [adminAppIds, contributorCounts, contributed, liveDomains, firstVersionLines, linksOut, storedSecrets] = await Promise.all([
+      const [adminAppIds, contributorCounts, contributed, liveDomains] = await Promise.all([
         adminAppIdsRead, contributorCountsRead, contributedRead, liveDomainsRead,
-        firstVersionLinesRead, linksOutRead, storedSecretsRead,
+      ]);
+      const [firstVersionLines, linksOut, storedSecrets] = await Promise.all([
+        readFirstVersionLines(), readLinksOut(), readStoredSecrets(),
       ]);
 
       let apps = await Promise.all(rows.map(async (a) => {
