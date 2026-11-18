@@ -38,8 +38,8 @@ test('in the app: asked while the permission is undecided and the build can ask'
     moment: 'invite_sent', state: STATE(), native: true, permission: 'undetermined', canRequest: true, ...over,
   }).show;
   assert.equal(app(), 'app');
-  assert.equal(app({ permission: null }), null,
-    'the permission could not be read: nothing is asked, since it may already be allowed');
+  assert.equal(app({ permission: 'undetermined' }), 'app', 'never decided: ask');
+  assert.equal(app({ permission: null }), null, 'an unreadable permission is unknown: no ask');
   assert.equal(app({ permission: 'granted' }), null, 'nothing to ask');
   assert.equal(app({ permission: 'denied' }), null, 'the OS shows no prompt: never asked again');
   assert.equal(app({ canRequest: false }), null, 'a build that cannot ask');
@@ -278,6 +278,32 @@ test('a bridge that never answers still settles', async () => {
     { outcome: 'granted', settings: false }, 'the bound passes and the re-read answers');
   assert.deepEqual(await askOsOf(hung({ permission: null, canOpenSettings: true }), 20),
     { outcome: 'unknown', settings: true }, 'still unreadable: the card settles rather than waiting forever');
+});
+
+test('an unreadable phone leaves planAsk with no ask, not an undetermined one', async () => {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const priorWindow = globalThis.window;
+  const priorFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() { return { asks: [], phone: false, email: false }; },
+  });
+  globalThis.window = {
+    usernode: { isNative: true },
+    NativeChrome: {
+      async notifyAskPermission() { throw new Error('bridge timed out'); },
+    },
+  };
+  try {
+    const { planAsk } = loadTsx('frontend/src/features/notify-ask/ask-state.ts');
+    const context = await planAsk('invite_sent');
+    assert.equal(context.native.permission, null, 'a rejected read is explicitly unknown');
+    assert.equal(context.native.canRequest, false);
+    assert.equal(context.plan.show, null, 'an unknown answer never draws the card');
+  } finally {
+    globalThis.fetch = priorFetch;
+    if (had) globalThis.window = priorWindow; else delete globalThis.window;
+  }
 });
 
 test('only a real refusal draws the off line, and every tap settles', () => {

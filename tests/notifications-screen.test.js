@@ -108,7 +108,7 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   // The screen partitions client-side and acts through the controller.
   // #5289: two tabs, Unread and All; the Messages filter is gone.
   // #3206: on All a kind chip may narrow it (tests/notifications-kind-filter.test.js).
-  assert.match(screen, /const rows = tab === 'unread' \? unread\s*: kindOn \? all\.filter\(/);
+  assert.match(screen, /const rows = isThreads \? \[\]\s*: tab === 'unread' \? unread\s*: kindOn \? all\.filter\(/);
   assert.match(screen, /at: view\.createdAtMs \|\| 0/);
   // #6479: Today / Earlier is the picked zone's calendar day (splitToday).
   assert.match(screen, /const \{ today, earlier \} = splitToday\(entries\)/);
@@ -116,4 +116,69 @@ test('the screen renders from the store: all rows, tabs, sections, pager', () =>
   assert.match(screen, /markAllRead\(\)/);
   assert.match(screen, /loadOlder\(\)/);
   assert.match(screen, /screenCanLoadMore/);
+});
+
+test('#6785: Recent threads never paints a blank list before its first fetch', () => {
+  // There is a paint between choosing the tab and the effect that starts the
+  // fetch: nothing is loaded and nothing is marked loading yet. A list that
+  // waits only on `threadsLoading` draws an empty panel there, which reads as
+  // "no threads" — so the placeholders are guarded by `threadsPending`, which
+  // includes that gap, and the error/empty line waits until a page answered.
+  assert.match(screen,
+    /const threadsPending = !threadsLoaded \|\| \(threadsLoading && !\(threads \|\| \[\]\)\.length\)/);
+  assert.match(screen,
+    /!searching && isThreads && threadsPending && !threadsError \? \(\s*<div id="notifications-threads-list" aria-busy="true">/);
+  assert.match(screen,
+    /const threadsSettled = isThreads && threadsLoaded && !threadsLoading && !threadsPending/);
+  assert.match(screen, /id="notifications-threads-empty"/);
+  assert.match(screen, /id="notifications-threads-error"/);
+});
+
+test('#6785: a ?shot= link still opens the panel when the feed cannot be read', () => {
+  // The opener used to run only after a populated refresh, so a feed failure
+  // left the sheet shut and the capture showed the page underneath — the
+  // shooting link has to present the panel, whose tabs draw their own empty
+  // and error lines.
+  assert.match(controllerSrc,
+    /if \(!res\.ok\) \{\s*\/\/ #6785:[\s\S]{0,400}?Notifications\._maybeShotOpen\(\);\s*return false;/);
+  // And the guard that keeps it harmless for an ordinary visit.
+  assert.match(controllerSrc, /if \(Notifications\._shotOpened \|\| Notifications\.open\) return;/);
+  // The shooting link itself lands on the tab (no declared check reads it).
+  assert.match(screen, /if \(shot === 'notifications-threads'\) setTab\('threads'\);/);
+});
+
+test('#6785: a Recent threads row is one thread, with the app tile on the left', () => {
+  // "Each row shows the icon of the app its thread belongs to, on the left."
+  // The tile is the one the sheet's own rows already wear (`app-icon-tile`
+  // with AppIconContent), and it comes FIRST in the row: the row reads
+  // [project's icon] [what it is] [title] [project, when]. There is no
+  // declared check on the tab's route — the request change adds no slot to
+  // the manifest's pinned count — so the row's anatomy is pinned here.
+  const row = screen.slice(screen.indexOf('function ThreadRow'));
+  assert.match(row,
+    /data-thread-id=\{thread\.threadId\}[\s\S]{0,900}?>\s*<span\s+aria-hidden="true"\s+data-icon=\{appIconKind\(app\)\}\s+className="app-icon-tile[\s\S]{0,300}?<AppIconContent app=\{app\} \/>\s*<\/span>/,
+    'the project tile leads the row, drawn by AppIconContent');
+  // Then the thread's own words, in the sheet's type scale: the kind line,
+  // the 15/650 title and the 13px project-and-when line.
+  assert.match(row, /notifications:sheet\.threads\.kind\.request/, 'the kind line says what the thread is');
+  const afterTile = row.slice(row.indexOf('<AppIconContent app={app} />'));
+  assert.match(afterTile, /text-\[15px\] font-\[650\][\s\S]{0,160}?\{thread\.title\}/, 'the title is a row title, 15 over 13');
+  assert.match(afterTile,
+    /id="notifications:sheet\.threads\.meta"[\s\S]{0,200}?values=\{\{ project: thread\.appName \|\| ''/, 'and the project it belongs to, with when');
+  // A row stands for a discussion, so it carries no unread dot and no
+  // bookmark: it opens the thread and dismisses the sheet.
+  assert.doesNotMatch(row.slice(0, row.indexOf('\nfunction ')), /data-notif-id|notifications-row-unread/);
+  assert.match(row, /window\.location\.hash = thread\.href;\s*NotificationsSheet\.close\(\);/);
+});
+
+test('#6785: the tab lists every page in the order the server sent it', () => {
+  // "Every thread I have taken part in appears there, newest first" is the
+  // server's order (services/recent-threads.js orders by last activity and
+  // pages by cursor), so the sheet must neither sort nor drop rows: it
+  // appends the next page behind the one before it.
+  assert.match(screen,
+    /setThreads\(\(previous\) => \(cursor \? \[\.\.\.\(previous \|\| \[\]\), \.\.\.rows\] : rows\)\);/,
+    'a page appends in the server’s order');
+  assert.equal((screen.match(/\{threads\.map\(\(thread\) => <ThreadRow key=\{thread\.threadId\} thread=\{thread\} \/>\)\}/g) || []).length, 1,
+    'the tab draws the list once, unsorted and unfiltered');
 });

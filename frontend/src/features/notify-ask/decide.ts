@@ -19,9 +19,10 @@
  * rules are all reasons NOT to ask:
  *   - the moment was asked about on this surface already;
  *   - two "Not now"s on this surface;
- *   - in the app: the permission is allowed (nothing to ask), denied (the OS
- *     shows no prompt; Settings has the way to its settings page), or could
- *     not be read (a tap would be a guess), or this build cannot ask;
+ *   - in the app: the permission is allowed (nothing to ask) or denied (the OS
+ *     shows no prompt; Settings has the way to its settings page), an answer
+ *     that could not be read (unknown is not undetermined), or this build
+ *     cannot ask;
  *   - on the web: a phone of theirs takes the push already, they said yes to
  *     getting the app before, or there is no app to get.
  */
@@ -109,6 +110,12 @@ export function decideNotifyAsk(input: AskInput): AskPlan {
     // an unreadable one may already be allowed, and asking would lead nowhere.
     if (input.permission !== 'undetermined') return { show: null, reason: 'the permission could not be read' };
     if (input.canRequest !== true) return { show: null, reason: 'this app build cannot ask' };
+    // Only a phone that says notifications were never decided may be asked
+    // here. A permission that could not be read is unknown, and forcing the
+    // card on it shows "Notify me" to somebody who already said yes.
+    if (input.permission !== 'undetermined') {
+      return { show: null, reason: 'the phone\'s answer could not be read' };
+    }
     return { show: 'app' };
   }
   if (state.phone) return { show: null, reason: 'a phone of theirs takes the push' };

@@ -428,10 +428,11 @@ test('the control is quiet words like a group\'s Mark read, never a second fille
   for (const kept of ['un-touch-target', 'disabled:opacity-40', 'focus-visible:ring-2', 'focus-visible:ring-violet-500']) {
     assert.ok(classes.includes(kept), `it keeps ${kept}`);
   }
-  // Still exactly two tabs and the one Mark all read pill above it.
+  // Three tabs since #6785 (Unread, Recent threads, All), and still the one
+  // Mark all read pill above them.
   assert.match(html, /id="notifications-tab-unread"[^>]*aria-selected="true"/);
   assert.equal((html.match(/id="notifications-screen-mark-all"/g) || []).length, 1);
-  assert.equal((html.match(/role="tab"/g) || []).length, 2, 'no third tab');
+  assert.equal((html.match(/role="tab"/g) || []).length, 3, 'Unread, Recent threads and All');
 });
 
 test('pressing it lets the old rows go and asks the controller for a week\'s clear', () => {

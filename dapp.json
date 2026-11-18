@@ -3075,9 +3075,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
-      "name": "The notifications strip reads Unread, All, and it opens on Unread (#2718 review, #5289)",
+      "name": "The notifications strip reads Unread, Recent threads, All, and it opens on Unread (#2718 review, #5289, #6785)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-all:last-child"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-threads + #notifications-tab-all:last-child"
     },
     {
       "name": "The Unread footer shows older notifications in place rather than jumping to All",

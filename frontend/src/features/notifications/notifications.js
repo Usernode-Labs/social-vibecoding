@@ -260,7 +260,15 @@ const Notifications = {
             ...(controller ? { signal: controller.signal } : {}),
           } : fresh ? { cache: 'no-cache' } : undefined
         );
-        if (!res.ok) return false;
+        if (!res.ok) {
+          // #6785: a `?shot=` link exists to photograph the panel, and the
+          // panel's own tabs draw their own empty and error states, so a feed
+          // that could not be read must not leave the sheet shut over the
+          // page. `_maybeShotOpen` runs once per load and is a no-op without
+          // a `?shot=` naming the sheet.
+          Notifications._maybeShotOpen();
+          return false;
+        }
         data = await res.json();
       } finally {
         if (timeout) clearTimeout(timeout);
@@ -565,7 +573,9 @@ const Notifications = {
     if (Notifications._shotOpened || Notifications.open) return;
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { /* ignore */ }
-    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all') return;
+    // #6785: and `?shot=notifications-threads` opens it on Recent threads.
+    if (shot !== 'notifications' && shot !== 'notifications-messages' && shot !== 'notifications-all'
+      && shot !== 'notifications-threads') return;
     Notifications._shotOpened = true;
     // The list is the Notifications SHEET now (Streamlined Concept), so the
     // deep link resolves a screen underneath and presents over it rather
