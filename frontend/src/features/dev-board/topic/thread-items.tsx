@@ -109,6 +109,13 @@ function demoQS(): string {
   try { return (window as any).AppView?._demoQS?.() || ''; } catch { return ''; }
 }
 
+/** The same URL carrying the demo flag, when the page is a staging deep link. */
+function withDemo(url: string): string {
+  const demo = demoQS();
+  if (!demo) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}${demo.replace(/^\?/, '')}`;
+}
+
 /**
  * #6827: one read answers a change's page — the change, where it lives, its
  * thread and its proposal row with the before/after picture addresses
@@ -138,7 +145,7 @@ interface PrefetchedChangePage {
 const prefetchedChangePages = new Map<string, PrefetchedChangePage>();
 
 export function changePagePath(slug: string, number: number): string {
-  return `/api/apps/${encodeURIComponent(slug)}/changes/${number}/page${demoQS()}`;
+  return withDemo(`/api/apps/${encodeURIComponent(slug)}/changes/${number}/page`);
 }
 
 /** The picture a change's page draws first (after, else before). */
@@ -251,7 +258,7 @@ export function prefetchThread(slug: string | null, number: number | null): Prom
   const entry: PrefetchedThread = {
     at: Date.now(), settled: false, data: null, promise: Promise.resolve(null),
   };
-  entry.promise = fetch(pathWithChanges(path), { credentials: 'same-origin' })
+  entry.promise = fetch(withDemo(pathWithChanges(path)), { credentials: 'same-origin' })
     .then((res) => (res.ok ? res.json() : null))
     .then((json) => {
       entry.settled = true;
