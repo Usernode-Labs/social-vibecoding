@@ -131,6 +131,11 @@ function makeMockPool() {
       const slug = params[1];
       return { rows: APPS.filter((a) => !slug || a.slug === slug).map((a) => ({ ...a })) };
     }
+    // The landing's "This month" figures (publicMonthActivity), read beside
+    // the list.
+    if (/AS contributors/.test(s) && /INTERVAL '30 days'/.test(s)) {
+      return { rows: [{ changes: 12, contributors: 5 }] };
+    }
     // The pictures anybody may see of those changes (services/shots-public.js):
     // none here; tests/shots-public-postgres.test.js runs that query.
     if (/FROM shot_artifacts|JOIN shot_artifacts f/i.test(s)) return { rows: [] };
@@ -264,6 +269,44 @@ test('apps list: include_wallets=0 omits wallet_address everywhere', async () =>
       }
     }
   } finally { await srv.close(); }
+});
+
+// The landing's "This month" (frontend/src/features/auth/story.tsx): how many
+// changes went live across the public directory in 30 days and how many
+// people made them, beside the list and under its rules.
+test('apps list: the month\'s changes and the people who made them ride beside it', async () => {
+  const pool = makeMockPool();
+  const srv = await startTestServer(pool);
+  try {
+    const { status, body } = await get(srv.baseUrl, '/api/public/apps?include_wallets=0');
+    assert.equal(status, 200);
+    assert.deepEqual(body.month, { changes: 12, contributors: 5 });
+    const read = pool.calls.find((c) => /AS contributors/.test(c.sql) && /INTERVAL '30 days'/.test(c.sql));
+    assert.ok(read, 'one read for the two figures');
+    // A change that went live, in an app the directory lists: the list's own
+    // WHERE clause and its merged counts' own rule.
+    assert.match(read.sql, /cs\.status = 'merged' AND cs\.live_at IS NOT NULL/);
+    assert.match(read.sql, /COALESCE\(cs\.merged_at, cs\.created_at\) >= NOW\(\) - INTERVAL '30 days'/);
+    assert.match(read.sql, /NOT a\.self_hosted\s+AND a\.moderation_suspended_at IS NULL\s+AND a\.view_visibility = 'public'\s+AND a\.status <> ALL\(\$1::text\[\]\)\s+AND a\.directory_review_status <> ALL\(\$2::text\[\]\)/);
+    // A person once, however many changes; an account that is not a person, never.
+    assert.match(read.sql, /COUNT\(DISTINCT cs\.user_id\) FILTER \(WHERE u\.is_synthetic IS NOT TRUE\)::int AS contributors/);
+    assert.deepEqual(read.params[0], ['error', 'creating', 'awaiting_secrets']);
+  } finally { await srv.close(); }
+
+  // The figures are an extra: when they cannot be read the list still answers.
+  const failing = makeMockPool();
+  const query = failing.query;
+  failing.query = async (sql, params) => {
+    if (/AS contributors/.test(String(sql))) throw new Error('db down');
+    return query(sql, params);
+  };
+  const srv2 = await startTestServer(failing);
+  try {
+    const { status, body } = await get(srv2.baseUrl, '/api/public/apps?include_wallets=0');
+    assert.equal(status, 200);
+    assert.equal(body.month, null);
+    assert.ok(body.apps.length > 0);
+  } finally { await srv2.close(); }
 });
 
 // #6591: the directory's query is the heaviest a page load makes and its

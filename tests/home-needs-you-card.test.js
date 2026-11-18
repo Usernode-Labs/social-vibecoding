@@ -28,11 +28,14 @@ const item = (id, slug, extra = {}) => ({
   kind: 'proposal', id, title: `Change ${id}`, app: { slug, name: slug.toUpperCase() }, ...extra,
 });
 
-test('the island mounts it under Standard (WIP), in a row of its own before Challenges', () => {
+test('the island mounts it under Standard (WIP) and the brand look, in a row of its own before Challenges', () => {
   const island = read('frontend/src/features/home/index.tsx');
-  assert.match(island, /const aside = wip && grid\.ready && !!grid\.create;/);
-  assert.match(island, /\{wip \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
-  assert.match(island, /\{wip \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
+  // The brand look takes the same row (Drea's review of #6699).
+  // Standard (WIP) mounts it as soon as the look and the viewer are known, so its
+  // place is held from the first paint; the brand look mounts it with the grid.
+  assert.match(island, /const aside = wip \? viewer : brand && grid\.ready && !!grid\.create;/);
+  assert.match(island, /\{wip \|\| brand \? \(\s*<div id="home-row" className="home-row">\s*\{aside \? \(\s*<aside id="home-aside" className="home-aside">\s*<NeedsYouCard \/>\s*<\/aside>\s*\) : null\}\s*<ChallengesSection \/>\s*<\/div>\s*\) : null\}/);
+  assert.match(island, /\{wip \|\| brand \? null : <ChallengesSection \/>\}/, 'every other look keeps Challenges in its own place');
   // A row of its own, as wide as the column, placed right under Pinned projects.
   const css = read('public/css/app.css');
   assert.match(css, /html\[data-skin-wip\] \.home-row > \.home-aside > \* \{ flex: 1 1 auto; min-width: 0; \}/);
@@ -57,7 +60,7 @@ test('it is a section as Pinned projects is: its label line on the page, then on
   assert.equal(message('home:needsCard.waiting_one'), '{{count}} decision waiting for your vote');
   assert.equal(message('home:needsCard.waiting_other'), '{{count}} decisions waiting for your vote');
   // The card holds the list alone.
-  assert.match(src, /<WipCard className="wip-panel">\s*<ul className="wip-rows wip-rows-cols"/);
+  assert.match(src, /<WipCard className="wip-panel" data-tone="ask">\s*<ul className="wip-rows wip-rows-cols"/);
 });
 
 test('the feed is read at every width, and again when the count moves', () => {
@@ -65,7 +68,24 @@ test('the feed is read at every width, and again when the count moves', () => {
   assert.doesNotMatch(src, /matchMedia/, 'the card is drawn at every width, so nothing waits on one');
   assert.match(src, /if \(!waiting\) \{ setFeed\(null\); return undefined; \}/, 'nothing waits: nothing is read');
   assert.match(src, /sharedJson<\{ items\?: NeedsCardItem\[\] \}>\(`\/api\/workshop\/needs-feed\$\{demoQuery\(\)\}`, \{ fresh: true \}\)/);
-  assert.match(src, /\}, \[waiting\]\);/);
+  assert.match(src, /\}, \[waiting, known\]\);/);
+  assert.match(src, /if \(!known\) return undefined;/, 'the list is read once the count is this load\'s own, not on the remembered one');
+});
+
+test('while the list is on its way the card holds its place, from what the last visit saw', () => {
+  const src = read(CARD);
+  const { NEEDS_HINT_KEY } = loadTsx(CARD);
+  assert.equal(NEEDS_HINT_KEY, 'homeroom:needs-waiting');
+  // The count of the last visit stands in until this load's is known, and is kept once it is.
+  assert.match(src, /const \[hint\] = useState\(readNeedsHint\);/);
+  assert.match(src, /const waiting = Math\.max\(0, known \? Number\(badgeNeeds\) \|\| 0 : hint\);/);
+  assert.match(src, /useEffect\(\(\) => \{ if \(known\) writeNeedsHint\(Number\(badgeNeeds\) \|\| 0\); \}, \[known, badgeNeeds\]\);/);
+  // Zero is removed, so somebody with nothing waiting gets no placeholder to flash and go.
+  assert.match(src, /if \(count > 0\) window\.localStorage\.setItem\(NEEDS_HINT_KEY, String\(count\)\);\s*else window\.localStorage\.removeItem\(NEEDS_HINT_KEY\);/);
+  // As many placeholder rows as wait, in the list's own columns, said once in words.
+  assert.match(src, /\{!feed \? \(/);
+  assert.match(src, /<WipCard className="wip-panel animate-pulse" data-tone="ask" data-loading="" role="status" aria-label=\{t\('home:grid\.loading'\)\}>/);
+  assert.match(src, /Array\.from\(\{ length: Math\.min\(summary\.total, NEEDS_ROWS\) \}, \(_, i\) => <li key=\{i\}><WipSkelRow \/><\/li>\)/);
 });
 
 test('the numbers: the count until the feed is read, then the feed\'s own split', () => {

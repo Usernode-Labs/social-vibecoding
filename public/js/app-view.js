@@ -10830,7 +10830,12 @@ const AppView = {
   //   { kinds: Set, ids: Set | null, merged: boolean }
   // With it, a refresh reads only what those rows need (_partsForLive), and
   // a proposal's page reads only that proposal (_refreshTopicLive). Without
-  // it (every direct caller), it reloads the board as it always did.
+  // it (every direct caller), it reloads the board as it always did, at once.
+  //
+  // A live burst that cannot be narrowed reloads the whole board, but no more
+  // often than BOARD_FULL_MIN_GAP_MS (#6791): an idle hub used to pay eleven
+  // reads per event. A direct caller is the viewer's own action and still
+  // runs at once; it makes any waiting live run unnecessary.
   //
   // Returns the refresh's promise (or undefined when there is nothing on
   // screen to refresh), so castVote can tell when its post-vote read landed.
@@ -10882,12 +10887,65 @@ const AppView = {
     }
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
+    // A burst that needs the whole board waits out the gap; a direct caller
+    // (a vote, a retry, pull to refresh) runs at once and stands the waiting
+    // live run down.
+    if (live) return AppView._liveFullBoard(opts);
+    return AppView._fullBoardLoad(opts);
+  },
+
+  // A whole-board live reload waits at least this long after the last one, so
+  // a burst of events that each need everything costs one read. Modelled on
+  // App._refreshHomeLive; the difference is that the run's promise settles
+  // with the load, so _flushLiveRefresh keeps waiting for it.
+  BOARD_FULL_MIN_GAP_MS: 5000,
+  _boardFullAt: 0,
+  _boardFullPending: null,
+  _liveFullBoard(opts) {
+    // Before the first whole load there is nothing to hold back.
+    if (!AppView._devDataReady) return AppView._fullBoardLoad(opts);
+    const pending = AppView._boardFullPending;
+    if (pending) {
+      if (opts) pending.fresh = true;
+      return pending.promise;
+    }
+    const wait = AppView._boardFullAt + AppView.BOARD_FULL_MIN_GAP_MS - Date.now();
+    if (wait <= 0) return AppView._fullBoardLoad(opts);
+    const slug = AppView.appData && AppView.appData.slug;
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    const entry = { fresh: !!opts, promise, resolve };
+    entry.timer = setTimeout(() => {
+      if (AppView._boardFullPending === entry) AppView._boardFullPending = null;
+      // The reader left the board, or switched app, while it waited: nothing
+      // to paint, and the next visit loads as usual.
+      if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'forum'
+          || !AppView.appData || AppView.appData.slug !== slug) {
+        resolve(true);
+        return;
+      }
+      AppView._fullBoardLoad(entry.fresh ? { fresh: true } : undefined)
+        .then(resolve, () => resolve(undefined));
+    }, wait);
+    AppView._boardFullPending = entry;
+    return promise;
+  },
+  _fullBoardLoad(opts) {
+    AppView._boardFullAt = Date.now();
+    const pending = AppView._boardFullPending;
+    if (pending) {
+      AppView._boardFullPending = null;
+      clearTimeout(pending.timer);
+    }
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
-    return AppView._loadDevFeed().then((r) => {
+    const promise = AppView._loadDevFeed().then((r) => {
       AppView._refreshOpenChangeFromBoard();
       return r;
     });
+    // This run reads the whole board, so the queued one has nothing left to do.
+    if (pending) promise.then((r) => pending.resolve(r), () => pending.resolve(undefined));
+    return promise;
   },
 
   // (#5164) The project hub's quiet refresh: the For you card (the votes
@@ -11151,19 +11209,38 @@ const AppView = {
     return true;
   },
 
-  // What a live burst moved, as board parts: a vote moves the proposals'
-  // tallies (and, on a merge, the Completed list); a verdict moves the one
-  // row's checks, wherever it lives. Anything else — a session appearing or
-  // leaving, an issue, the board order — is the whole board. Rows the page
-  // does not hold ask for nothing: that is someone else's work, on a board
-  // this viewer is not looking at.
+  // What a live burst moved, as board parts (#6791): a vote moves the
+  // proposals' tallies (and, on a merge, the Completed list); a verdict moves
+  // the one row's checks, wherever it lives; a request moves the issue list;
+  // a reorder moves the board order; a change appearing, moving or leaving
+  // re-reads the session caches and the proposals. Each kind asks for the
+  // parts it moved, and a burst takes their union. Only a kind that cannot be
+  // narrowed — or a vote/checks event that names no row — is the whole board
+  // (`null`, which a live burst runs through _liveFullBoard's gap). Rows the
+  // page does not hold ask for nothing: that is someone else's work, on a
+  // board this viewer is not looking at.
   _partsForLive(live) {
-    if (!live || !AppView._devDataReady || !live.ids || !live.ids.size) return null;
-    for (const k of live.kinds || []) if (k !== 'vote' && k !== 'checks') return null;
+    if (!live || !AppView._devDataReady) return null;
     const parts = new Set();
-    for (const id of live.ids) {
-      const where = AppView._whereHeld(id);
-      if (where) parts.add(where);
+    for (const k of live.kinds || []) {
+      if (k === 'vote' || k === 'checks') {
+        if (!live.ids || !live.ids.size) return null;
+        for (const id of live.ids) {
+          const where = AppView._whereHeld(id);
+          if (where) parts.add(where);
+        }
+      } else if (k === 'issue') {
+        parts.add('issues');
+      } else if (k === 'board-order') {
+        parts.add('order');
+      } else if (k === 'session') {
+        // A change that just started, moved or stopped: it left one part of
+        // the board for another, so both are read.
+        parts.add('sessions');
+        parts.add('promoted');
+      } else {
+        return null;
+      }
     }
     if (live.merged) { parts.add('promoted'); parts.add('merged'); }
     return parts;
@@ -14014,7 +14091,12 @@ const AppView = {
     const n = attempt || 0;
     const force = !!(opts && opts.force);
     const cur = AppView._workshopThemes;
-    if (!n && !force && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    // One check a minute per slug, whether or not a regrouping is pending:
+    // the board's WS-driven reloads call this freely, and the themes endpoint
+    // rebuilds the server's input each time. A pending one is held back too
+    // once its own poll chain is gone — its next step, or the server's
+    // `workshop_update` broadcast, still brings it in.
+    if (!n && !force && cur && cur.slug === slug && (Date.now() - (cur.at || 0)) < 60000) return;
     // A chain is already polling this slug: let it finish rather than
     // starting a second one beside it.
     if (!n && !force && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;

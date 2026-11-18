@@ -528,6 +528,10 @@ const KEPT_WHILE_QUIET_REASONS = Object.freeze([...SELF_QUEUED_REASONS, BACKLOG_
 const RETRY_FAILED_REASON = 'retry_failed';
 const FAILED_TRIAGE_TRIES = 2;
 const FAILED_TRIAGE_RETRY_AFTER_MS = 30 * 60 * 1000;
+// #6806: how far past the bot's own comment on a request the issue's
+// updated_at may be and still be that comment's doing. requests.comment()
+// inserts the comment and bumps updated_at in a second statement just after.
+const OWN_POST_SLACK_MS = 5000;
 // #3703: what runTriage answers when a row the loop started as a follow-up
 // (beside other work on its app, see "How much at once") no longer has the
 // bot's proposal to follow up on. It touches nothing and is handed back, to
@@ -1903,7 +1907,7 @@ function toMs(value) {
  * has seen only once it is over: read as a change, the request was read
  * again mid-build and built twice (Plant Pal #1 and #3, 2026-10-03).
  */
-function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = false, lastRun = null, now = Date.now() }) {
+function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = false, lastRun = null, now = Date.now(), ownPostAt = null }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
   if (issue.state && issue.state !== 'open') return { eligible: false, reason: 'closed' };
   if (busy) return { eligible: false, reason: 'in_progress' };
@@ -1932,6 +1936,15 @@ function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = fals
     // why. Step 5: a message the bot's voice judged to change the ask
     // (`voiceAt`, its ask_changed) says so, as its own debt does.
     const byThread = toMs(threadLastAt) > lastSeenMs && toMs(threadLastAt) >= toMs(issue.updatedAt);
+    // #6806: what moved the issue is the bot's own comment on it (its spec,
+    // its "It's live" note, a failure note) and nobody said anything after:
+    // not a change to read. The live note used to count as one, and the look
+    // it queued added a stray "Reading it." to the first version's thread.
+    // A later edit or comment moves updated_at past the post's own slack, and
+    // is read as before. The other caller passes no ownPostAt.
+    if (!byThread && toMs(ownPostAt) > lastSeenMs && toMs(issue.updatedAt) <= toMs(ownPostAt) + OWN_POST_SLACK_MS) {
+      return { eligible: false, reason: 'unchanged', threadSeenAt };
+    }
     const changedBy = !byThread ? 'github' : voiceAt && toMs(voiceAt) >= toMs(threadLastAt) ? 'voice' : 'discussion';
     return { eligible: true, reason: 'changed', priority: 2, threadSeenAt, changedBy };
   }
@@ -2083,6 +2096,25 @@ async function threadActivityByIssue(pool, appId) {
       WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.msg_type = 'message'
         AND u.is_synthetic IS NOT TRUE
       GROUP BY m.thread_ref`,
+    [appId],
+  );
+  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+/**
+ * #6806: when each of `appId`'s requests last got a post from the platform
+ * itself (its own comment: the spec, the "It's live" note, a failure note, a
+ * move, a platform signal), Map(issue number → time). requests.comment() is
+ * the only writer of these, and it posts as `homeroom` with no user.
+ * classifyIssue reads it so that a refresh is not taken for a change when the
+ * only thing new on a request is the bot's own comment on it.
+ */
+async function ownPostsByIssue(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT number AS n, MAX(created_at) AS last_at
+       FROM request_comments
+      WHERE app_id = $1 AND user_id IS NULL AND author_login = 'homeroom'
+      GROUP BY number`,
     [appId],
   );
   return new Map(rows.map((r) => [Number(r.n), r.last_at]));
@@ -2344,7 +2376,7 @@ async function refreshApp(pool, app, {
   // as if the bot had seen it at the import, so it waits until something
   // happens on it, rather than the whole backlog being worked at once.
   // "Triage again" on the admin screen takes all of them.
-  const [holders, threads, lastRuns, proposalThreads, importedAt] = await Promise.all([
+  const [holders, threads, lastRuns, proposalThreads, importedAt, ownPosts] = await Promise.all([
     issueHolders(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
@@ -2353,6 +2385,9 @@ async function refreshApp(pool, app, {
     capRoom && bot && !voiceModule(null).voiceOn(settings, { type: 'session' })
       ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
+    // #6806: what the bot itself posted on each request, so its own comment
+    // there is not read as a change to read.
+    ownPostsByIssue(pool, app.id).catch(() => new Map()),
   ]);
   const backlogUntil = toMs(importedAt);
   // Papote #3, and step 5 for every request: what the bot's voice answers
@@ -2414,6 +2449,7 @@ async function refreshApp(pool, app, {
       voiceAt: voiceAt(n),
       busy: busy.has(n),
       lastRun,
+      ownPostAt: ownPosts.get(n) || null,
     });
     if (verdict.eligible && verdict.reason === RETRY_FAILED_REASON && lastRun?.id != null
         && spentRetries.get(n) === Number(lastRun.id)) {

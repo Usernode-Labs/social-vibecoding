@@ -147,18 +147,19 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   // Polish N10: the email line's "Sign in" opens the same sheet titled Sign in.
   // The story heads the guest Discover now, in its short version
   // (features/guest, tests/guest-discover.test.js), with the same two ways in.
-  // Its button says join the waitlist while new accounts wait (guest-data newAccountsWait).
-  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{accountsWait\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
+  // It has no button of its own since 13 Nov 2026: the bar's says join the
+  // waitlist while new accounts wait (guest-data newAccountsWait), and the
+  // story is handed the month's two figures instead.
+  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+month=\{month\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
   const story = read('frontend/src/features/auth/story.tsx');
-  // No "learn more" link on it, and the full story asks nobody to join a
-  // waitlist. The short one over the guest Discover does, with its one
-  // button, while new accounts wait (Evan, 21 Oct 2026; pinned in
+  // No "learn more" link on it, and neither story asks anybody to join a
+  // waitlist: that is the bar's button, while new accounts wait (pinned in
   // tests/guest-discover.test.js).
   assert.doesNotMatch(story, /Learn more about Homeroom/i);
-  const full = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, waitlist: true });
+  const full = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   assert.doesNotMatch(full, /Join the waitlist/i);
 });
 

@@ -192,8 +192,24 @@ test('home.js installs the shortcut in _wireSearch, and the field announces the 
 
 // ── 4. The words ──────────────────────────────────────────────────────
 
-test('the search box carries the Ctrl+K hint', () => {
-  const text = message('home:search.placeholder');
-  assert.match(text, /\(Ctrl\+K\)$/);
-  assert.ok(text.startsWith('Search apps and communities'), 'the field\'s own words stay first');
+test('the search box names the device\'s own shortcut, and none on a phone', () => {
+  const plain = message('home:search.placeholder');
+  assert.equal(plain, 'Search apps and communities…', 'a phone, a tablet and the first render name no key');
+  assert.equal(message('home:search.placeholderCtrl'), `${plain} (Ctrl+K)`);
+  assert.equal(message('home:search.placeholderCmd'), `${plain} (Cmd+K)`, 'a Mac says Cmd');
+  const { searchHintFor } = require('./lib/render-tsx').loadTsx('frontend/src/features/home/search-hint.ts');
+  assert.equal(searchHintFor({ coarse: false, platform: 'MacIntel' }), 'cmd');
+  assert.equal(searchHintFor({ coarse: false, platform: 'macOS' }), 'cmd');
+  assert.equal(searchHintFor({ coarse: false, platform: 'Win32' }), 'ctrl');
+  assert.equal(searchHintFor({ coarse: false, platform: 'Linux x86_64' }), 'ctrl');
+  assert.equal(searchHintFor({ coarse: true, platform: 'iPhone' }), 'none');
+  assert.equal(searchHintFor({ coarse: true, platform: 'Linux armv8l' }), 'none', 'an Android phone');
+  assert.equal(searchHintFor({ coarse: true, platform: 'MacIntel' }), 'none', 'an iPad says it is a Mac, and has no key to press');
+  // Every screen that draws the field asks the one hook.
+  const fs = require('node:fs'); const path = require('node:path');
+  for (const file of ['features/home/index.tsx', 'features/home/frame/home-frame.tsx', 'features/guest/frame/landing-frame.tsx', 'features/guest/guest-discover.tsx']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', file), 'utf8');
+    assert.match(src, /placeholder=\{searchPlaceholder\}/, file);
+    assert.match(src, /const searchPlaceholder = useHomeSearchPlaceholder\(\);/, file);
+  }
 });

@@ -69,3 +69,27 @@ export function WipHeadMore({ direction, label, href, onClick, id, expanded, chi
     </button>
   );
 }
+
+/**
+ * A placeholder: the shape of something still on its way, so the page holds
+ * its place and nothing under it moves when it lands. `shape` is what it
+ * stands for (an icon, a line of words, a shorter one, a pill, a whole
+ * card). Decorative: whoever draws them says "loading" once, in words.
+ */
+export function WipSkel({ shape }: { shape: 'icon' | 'line' | 'line-short' | 'pill' | 'card' }) {
+  return <span className={`wip-skel wip-skel-${shape}`} aria-hidden="true" />;
+}
+
+/** A list row's placeholder: its icon, its two lines and its pill. */
+export function WipSkelRow() {
+  return (
+    <span className="wip-row" aria-hidden="true">
+      <WipSkel shape="icon" />
+      <span className="wip-item-text wip-skel-lines">
+        <WipSkel shape="line" />
+        <WipSkel shape="line-short" />
+      </span>
+      <WipSkel shape="pill" />
+    </span>
+  );
+}

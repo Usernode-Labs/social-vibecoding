@@ -248,6 +248,7 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 // The look's own colours, one set per mode. A rule for either mode names no
 // colour of the page, the cards, the bars or the sky: it reads these.
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
+  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-lift-home',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
   '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down',
@@ -332,8 +333,12 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
   assert.ok(media, 'the sidebar\'s rules apply from 768px, where the bar is a sidebar');
   const bar = ruleAt(`${EITHER} #platform-tabs`);
   assert.ok(bar, 'the bar itself, for either mode');
-  assert.match(bar.body, /background:\s*var\(--bl-side\);/);
-  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#1a63c4', 'the deep sky');
+  // A fade from its top to its foot (Drea's review of #6699): a step lighter
+  // and softer than the deep sky it was, so it sits back from the content.
+  assert.match(bar.body, /background:\s*linear-gradient\(180deg, var\(--bl-side\), var\(--bl-side-end\)\);/);
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side'), '#3c7bd8', 'a softened sky at the top');
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-side-end'), '#3370d0', 'a little deeper at the foot');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-side-end'), '#122a52', 'flat in dark');
   assert.equal(valueOf(ruleAt(DARK).body, '--bl-side'), '#122a52', 'a dark blue in dark, so it does not glare beside a dark page');
   // Its rows draw from the tokens, so hover and focus follow without a rule each.
   assert.match(bar.body, /--text-primary:\s*rgba\(255, 255, 255, 0\.94\);/);
@@ -476,7 +481,7 @@ test('Home\'s pinned apps and pinned communities each sit on a card, and the lau
     'both grids, in both modes, and nothing else');
   assert.match(card.body, /background-color:\s*var\(--bl-card\);/, 'the mode\'s card: white in light, one step off the page in dark');
   assert.match(card.body, /border-radius:\s*20px;/, 'a card\'s radius');
-  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/, 'and its hairline and lift');
+  assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift-home\);/, 'and its hairline and Home\'s lift');
   // The launcher's drag overlay mirrors #app-list's padding, and a dropped
   // tile is measured against it (app.css .home-grid-overlay, Home._rectForCell):
   // the look paints the grid and moves nothing.
@@ -571,7 +576,9 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     const licence = path.join(ROOT, 'public', path.dirname(file), 'LICENSE.txt');
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
-  assert.ok(!/Young Serif/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Young Serif');
+  // Standard (WIP)'s second brand token config names it too, for its section titles (the kit's serif role).
+  const outsideSerif = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
+  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look, Standard (WIP)\'s brand2 config and the signed-out pages\' names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {
@@ -609,4 +616,72 @@ test('a conversation\'s bubbles have a ground and an edge of their own inside th
   assert.equal(valueOf(light, '--bl-bubble-line-own'), 'rgba(26, 99, 196, 0.24)');
   assert.equal(valueOf(dark, '--bl-bubble-line'), 'rgba(220, 230, 248, 0.2)');
   assert.equal(valueOf(dark, '--bl-bubble-line-own'), 'rgba(127, 188, 247, 0.42)');
+});
+
+// DREA'S REVIEW OF #6699. The page wears the standard wallpaper's washes
+// again, in the look's own tints; Home takes Standard (WIP)'s New project
+// button and Needs you card in the look's colours; and from 1280px Pinned
+// communities are cards that say what is going on in each community.
+test('the page is the standard wallpaper\'s washes in the look\'s own tints, and the fixed layer follows', () => {
+  const light = ruleAt(LIGHT).body;
+  const dark = ruleAt(DARK).body;
+  assert.equal(valueOf(light, '--bl-wash-a'), '255, 253, 240', 'a lighter cream where the standard wash is lilac');
+  assert.equal(valueOf(light, '--bl-wash-b'), '247, 220, 200', 'a blush where it is pink');
+  assert.equal(valueOf(light, '--bl-wash-c'), '251, 230, 175', 'a sun where it is peach');
+  for (const name of ['--bl-wash-a', '--bl-wash-b', '--bl-wash-c']) {
+    const [r, g, b] = valueOf(dark, name).split(',').map(Number);
+    assert.ok(b > g && g > r, `${name} stays a blue round the dark page`);
+  }
+  const ground = ruleFor('body:has(#platform-tabs)').filter((rule) => /--look-washes:/.test(rule.body));
+  assert.equal(ground.length, 2, 'the phone\'s three washes, and from 640px the seven');
+  const wide = ground[1].body;
+  for (const at of ['circle at calc(100% - 92px) 115px', 'ellipse 38vw 36vh at 24% 20%', 'ellipse 34vw 28vh at 90% 32%']) {
+    assert.ok(wide.includes(at), `a wash ${at}, where the standard wallpaper has it`);
+  }
+  assert.match(wide, /rgba\(var\(--bl-wash-c\), 0\.75\) 90px/);
+  assert.match(ground[0].body, /background:\s*var\(--look-wallpaper\);/);
+  assert.match(ground[0].body, /var\(--home-star, none\)/, 'the star falls back to nothing where the route rule does not define it');
+  assert.match(ruleFor('body::before')[0].body, /background:\s*var\(--look-wallpaper, var\(--bl-page\)\);/);
+});
+
+test('Home takes Standard (WIP)\'s New project button and Needs you card, in the look\'s colours', () => {
+  const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
+  assert.match(island, /const brand = skin === 'brand';/);
+  assert.match(island, /\{\(wip \|\| brand\) && grid\.ready && grid\.create \? \(\s*<WipCta id="home-new-project-top"/);
+  assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
+  const home = read('frontend', 'src', 'features', 'home', 'home.js');
+  const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));
+  assert.match(side, /if \(skin !== 'brand'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
+    'the grid drops its tile only where the search row shows the button');
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  const tokens = at('#home-screen').body;
+  assert.equal(valueOf(tokens, '--wip-cta-from'), 'var(--bl-sun)', 'the filled action is the sun');
+  assert.equal(valueOf(tokens, '--wip-cta-ink'), 'var(--bl-on-sun)');
+  assert.equal(valueOf(tokens, '--wip-ink-action'), 'var(--bl-sky)', 'a link is the sky');
+  assert.equal(valueOf(tokens, '--wip-card-bg'), 'var(--bl-card)');
+  assert.match(at('#home-screen .wip-cta').body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(lookBlock(), /@media \(max-width: 767\.98px\) \{\s*html\[data-skin="brand"\][^{]*#home-new-project-top \{\s*display: none;/);
+  // The order: Pinned apps, Needs you, Pinned communities, the rest, Challenges, Communities to join.
+  assert.match(at('#home-screen .home-main > *').body, /order:\s*4;/);
+  assert.match(at('#home-screen .home-row > .home-aside').body, /order:\s*1;/);
+  assert.match(at('#home-screen .home-main > #home-communities-section').body, /order:\s*2;/);
+  assert.match(at('#home-screen .home-row > #home-challenges-section').body, /order:\s*5;/);
+  assert.match(at('#home-screen .home-main > #home-join-section').body, /order:\s*6;/);
+  assert.match(at('#home-screen:has(#home-needs-card) #home-needs-tile').body, /display:\s*none;/, 'its card says the same thing');
+});
+
+test('a pinned community\'s card says its members, what went live and who was there, read only where it is drawn', () => {
+  const src = read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx');
+  assert.match(src, /const cards = skin === 'brand' && wide;/);
+  assert.match(src, /if \(cards && state\.ready && pinKey\) void loadHomePinsActivity\(\);/);
+  assert.match(src, /detail=\{cards \? activity\.bySlug\[pin\.slug\] : undefined\}/, 'pinned ones only, not the faded rest');
+  assert.match(src, /<span className="hidden" data-home-community-detail="">/, 'hidden everywhere the look does not draw cards');
+  assert.match(src, /if \(!members && !live && !active\) return null;/, 'a zero says nothing');
+  const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
+  assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
+  assert.match(ruleAt(`${EITHER} #home-communities-section [data-home-community-detail]`).body, /display:\s*flex;/);
+  const home = JSON.parse(read('frontend', 'locales', 'en', 'home.json'));
+  assert.equal(home['communities.liveWeek_other'].text, '{{count}} changes went live');
+  assert.equal(home['communities.activeWeek_other'].text, '{{formatted}} active this week');
+  assert.equal(home['communities.members_other'].text, '{{formatted}} members');
 });

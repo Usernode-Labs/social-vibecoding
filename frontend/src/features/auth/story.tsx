@@ -35,11 +35,11 @@
 // tier list drawn as one.
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-import { BallotIcon, LightBulbIcon, PlusIcon } from '@/components/ui/icons';
-import { cn } from '@/lib/utils';
+import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { Message, RichMessage } from '../../lib/i18n/react';
 import { noteSignUpFrom } from './sign-up-from';
+import { reducedMotion } from '../../lib/reduced-motion';
 import { FRONT } from '../first-session/examples';
 import { useMessages } from '../../lib/i18n/react';
 import { TierChart } from '../first-session/tier-chart';
@@ -49,6 +49,47 @@ const STORY_LINK = 'font-semibold text-violet-700 dark:text-violet-400 hover:und
 
 // Also the dead invite link's welcome (./invite-card.tsx DeadInvite).
 export const SMALL_CAPS = 'text-[12px] leading-4 font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400';
+
+// THE SHORT STORY IS DRAWN IN THE WEBSITE'S LOOK (13 Nov 2026): it is a
+// visitor's next click after onhomeroom.com, so it is that site's sky band
+// with a white window in it, serif headlines and sun on an ink outline.
+// Every colour here is a variable of public/css/app.css's "THE WEBSITE'S LOOK
+// ON THE SIGNED-OUT PAGES", which the dark shell moves; nothing below names a
+// dark class of its own.
+const SITE_SERIF = 'font-[family-name:var(--site-serif)] font-normal';
+// The hero's own face (Drea's mock-up, 17 Nov 2026): a lighter, tighter serif
+// than the section headings', at a sturdy optical size.
+export const SITE_DISPLAY = "font-[family-name:var(--site-display)] font-normal [font-variation-settings:'opsz'_28]";
+// The small label over a headline, as the site sets "Currently in early testing".
+export const SITE_LABEL = 'text-[13px] leading-[18px] uppercase tracking-[0.04em] text-[color:var(--site-label)]';
+// A link inside a sentence: ink, underlined (the site has no second accent).
+const SITE_LINK = 'font-semibold text-[color:var(--site-ink)] underline decoration-1 underline-offset-[3px] un-touch-target';
+// One of the three dots a window's strip carries.
+const WINDOW_DOT = 'h-2 w-2 rounded-full border border-[color:var(--site-line)] md:h-2.5 md:w-2.5';
+
+// The short story's button: a sun pill on an ink outline, as the bar's
+// button is.
+const HERO_PILL = 'inline-flex min-h-11 items-center justify-center rounded-full whitespace-nowrap px-[18px] py-2 text-center font-[family-name:var(--site-display)] text-[16px] leading-[22px] font-medium no-underline shadow-[inset_0_0_0_1px_var(--site-line),0_2px_0_var(--site-line)] un-touch-target';
+export const HERO_PRIMARY = `${HERO_PILL} bg-[var(--site-sun)] text-[color:var(--site-on-sun)]`;
+
+// "Explore apps" brings what follows the story (the communities, which start
+// right under it) to the top of the screen, clear of the bar.
+function exploreApps(event: { currentTarget: HTMLElement }): void {
+  let next = event.currentTarget.closest('[data-landing-story]')?.nextElementSibling as HTMLElement | null;
+  // A block that is put away (the search, while nothing is pinned) has no height: pass it.
+  while (next && !next.offsetHeight) next = next.nextElementSibling as HTMLElement | null;
+  if (!next) return;
+  next.style.scrollMarginTop = '52px';
+  const calm = reducedMotion();
+  next.scrollIntoView({ behavior: calm ? 'auto' : 'smooth', block: 'start' });
+}
+
+// The short story's headline. On a phone it leads the page, the welcome label
+// being a wide screen's; under a greeted address (`welcomeEmail`) the label
+// shows on a phone too, so the headline keeps its room above there as well.
+const HERO_HEADLINE_TYPE = `${SITE_DISPLAY} text-[31px] leading-[35px] tracking-[-0.03em] text-[color:var(--site-ink)] md:text-[50px] md:leading-[54px] xl:text-[60px] xl:leading-[64px]`;
+const HERO_HEADLINE = `${HERO_HEADLINE_TYPE} md:mt-4`;
+const HERO_HEADLINE_AFTER = `mt-2 ${HERO_HEADLINE_TYPE}`;
 
 // THE STORY SHRINKS TO FIT ITS SCREEN (Evan, 10 Oct 2026, iPhone Safari): on
 // a phone shorter than the story, Get started fell below the fold, under
@@ -106,7 +147,7 @@ export function nextStep(fit: number, footBottom: number, screenBottom: number):
   return fit + 1;
 }
 
-export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false, waitlist = false }: {
+export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, compact = false, lookAround = false, month = null }: {
   primaryClass: string;
   /** The address a "You're in" mail's link names, greeted under the welcome. */
   welcomeEmail?: string | null;
@@ -115,22 +156,22 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
   onSignIn?: () => void;
   /**
    * THE SHORT STORY, over the guest Discover (features/guest/guest-discover.tsx):
-   * the welcome, the headline, one line that says the apps below can be
-   * looked around, and one filled button under it that opens the sheet
-   * with every way in (`onStart`). From the 21 Oct 2026 review: two Sign
-   * ins, then two Sign ups, on one screen read as a mistake, and four
-   * "Continue with" buttons made the top of the page tall, so the bar
-   * carries the one Sign in. But with nothing to press under the headline,
-   * making an account was a small pill in the corner, and for the waitlist
-   * weeks that is the one thing the page asks for (Evan, 21 Oct 2026): the
-   * button says what it does, joining the waitlist while new accounts wait
-   * (`waitlist`), else signing up. No examples (the real apps follow it)
-   * and, on a phone, no picture, so the first apps are near the first
-   * screen; nothing to fit, so no steps.
+   * the headline, two short lines that say what this place is like, and one
+   * button: Explore apps, which brings the list under it to the top. It
+   * makes no account: the 21 Oct 2026 review found two Sign ins, then two Sign ups, on
+   * one screen read as a mistake, so that is the bar's filled button alone
+   * ("Join the waitlist" while new accounts wait, landing.tsx). No examples
+   * (the real apps follow it) and, on a phone, no pictures, so the first
+   * apps are near the first screen; nothing to fit, so no steps.
    */
   compact?: boolean;
-  /** The short story's button says "Join the waitlist" (guest-data newAccountsWait). */
-  waitlist?: boolean;
+  /**
+   * The short story's two figures, "This month": changes that went live
+   * across the public apps in the last 30 days and the people who made them
+   * (GET /api/public/apps `month`). Null until the directory is read, and
+   * when it came without them; then nothing is drawn in their place.
+   */
+  month?: { changes: number; contributors: number } | null;
   /**
    * Inside the Homeroom app the full story is still the front door
    * (landing.tsx `storyFront`), and this adds "Look around first" under its
@@ -241,61 +282,114 @@ export function Story({ primaryClass, welcomeEmail = null, onStart, onSignIn, co
     </>
   );
   if (compact) {
-    // On the page itself, as the story always was, and short: the welcome,
-    // the headline, one line, what an account adds, and the button, with a
-    // small picture beside them from md. WHAT AN ACCOUNT ADDS is the three
-    // points the "Want to join in?" card used to make between the first
-    // cards and the rest (Evan, 22 Oct 2026: it popped in out of nowhere,
-    // saying what the hero says, with the same way in): vote, ask, make your
-    // own, each with its line from md; on a phone only their titles, in a
-    // row, so the apps still start near the first screen. The button is
-    // sized to its words, not the column.
-    const points = [
-      { icon: <BallotIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.vote.title'), body: t('auth:guest.join.vote.body') },
-      { icon: <LightBulbIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.ask.title'), body: t('auth:guest.join.ask.body') },
-      { icon: <PlusIcon className="h-[18px] w-[18px]" />, title: t('auth:guest.join.make.title'), body: t('auth:guest.join.make.body') },
-    ];
+    // On the page itself, as the story always was, and short. THE PITCH
+    // (Evan, 13 Nov 2026): Homeroom is the app library anyone can edit, said
+    // the way Wikipedia says it of an encyclopedia. The headline, then the
+    // comparison as two lines, then one button. The three numbered points
+    // and the closing line that were here (13 Nov) went on 17 Nov 2026: they
+    // stood between a visitor and the apps, which say it better.
+    //
+    // ONE BUTTON, NOT AN ACCOUNT: Explore apps scrolls to the list under the
+    // hero. The bar's filled button is still the one way to make an account
+    // (landing.tsx).
+    //
+    // THE PICTURES are for the eye only: the communities page beside the
+    // words from lg, and from md the people on the window's bottom edge with
+    // "This month" beside them (how many changes went live across the public
+    // apps and how many people made them, once the directory's read has
+    // brought them: `month`). From lg the yellow window laps over the white
+    // one and the people over the page under the sky.
+    //
+    // ON A PHONE the apps should start near the first screen: no "Welcome to
+    // Homeroom" (the wordmark is directly above), no pictures, and the two
+    // figures as one line.
+    const figures = month ? [
+      { id: 'auth:guest.hero.month.changes', count: month.changes },
+      { id: 'auth:guest.hero.month.contributors', count: month.contributors },
+    ] : [];
     return (
-      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="px-4 pt-5 md:pt-8 flex items-center gap-10">
-        <div className="flex min-w-0 flex-1 flex-col items-start text-start">
-          <div className={SMALL_CAPS}>{t('auth:story.welcome')}</div>
-          {welcomeEmail ? (
-            <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-zinc-700 dark:text-zinc-300 [overflow-wrap:anywhere]">{welcomeEmail}</div>
-          ) : null}
-          <h1 className="mt-2 text-[26px] leading-[31px] md:text-[34px] md:leading-[40px] font-extrabold text-balance">
-            {t('auth:story.headline')}
-          </h1>
-          <p className="mt-2 text-base leading-[22px] text-zinc-500 dark:text-zinc-400 text-balance">{t('auth:guest.hero.line')}</p>
-          <ul data-landing-story-points="" className="mt-5 grid w-full grid-cols-3 gap-3 md:max-w-[820px] md:gap-6">
-            {points.map((p) => (
-              <li key={p.title} className="flex min-w-0 flex-col items-start gap-2 md:flex-row md:gap-3">
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-50 text-violet-700 dark:bg-violet-950 dark:text-violet-300" aria-hidden="true">
-                  {p.icon}
-                </span>
-                <span className="min-w-0">
-                  <span className="block text-[13px] leading-[17px] font-[650] text-zinc-900 md:text-[15px] md:leading-5 dark:text-zinc-100">{p.title}</span>
-                  <span className="hidden text-[13px] leading-[18px] text-zinc-500 md:block dark:text-zinc-400">{p.body}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-          <button
-            type="button"
-            data-landing-story-join=""
-            className={cn(primaryClass, 'mt-5 h-11 w-auto px-5 text-[15px]')}
-            onClick={() => { noteSignUpFrom('hero'); onStart(); }}
-          >
-            {waitlist ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.hero.signUp')}
-          </button>
+      <div ref={storyRef} data-landing-story="" data-landing-story-compact="" className="site-band site-clouds [--band:var(--site-sky)] px-3 pt-3 pb-4 md:px-6 md:pt-5 md:pb-6 lg:pb-0">
+        {/* DREA'S HERO (17 Nov 2026): one white window on the clouds, its
+            words centred in the left part and a picture of the communities
+            page on the right; the people sit on the window's bottom edge and
+            "This month" is a yellow window on the sky beside them. */}
+        <div data-landing-story-window="" className="border border-[color:var(--site-line)] bg-[var(--site-panel)] lg:grid lg:grid-cols-[minmax(0,9fr)_minmax(0,11fr)] lg:items-center">
+          <div className="flex min-w-0 flex-col items-center px-4 pt-6 pb-6 text-center md:px-8 md:pt-10 md:pb-20 lg:ps-6 lg:pe-0 lg:pt-14 lg:pb-20">
+            <div className={welcomeEmail ? SITE_LABEL : `${SITE_LABEL} hidden md:block`}>{t('auth:story.welcome')}</div>
+            {welcomeEmail ? (
+              <div data-landing-story-email="" className="mt-1 max-w-full text-[15px] leading-5 font-semibold text-[color:var(--site-muted)] [overflow-wrap:anywhere]">{welcomeEmail}</div>
+            ) : null}
+            <h1 className={welcomeEmail ? HERO_HEADLINE_AFTER : HERO_HEADLINE}>
+              {t('auth:guest.hero.headline')}
+            </h1>
+            {/* Its two sentences are a line each, at every width. */}
+            <p className="mt-3 text-[17px] leading-[24px] text-[color:var(--site-muted)] md:mt-4 md:text-[20px] md:leading-[28px]">
+              <RichMessage id="auth:guest.hero.sub" components={[<span className="block" />, <span className="block" />]} />
+            </p>
+            {month ? (
+              <p data-landing-story-month="" className="mt-2.5 flex flex-wrap justify-center gap-x-3 gap-y-0.5 text-[15px] leading-5 text-[color:var(--site-muted)] md:hidden">
+                <span>{t('auth:guest.hero.month.title')}</span>
+                {figures.map((f) => (
+                  <span key={f.id}>
+                    <RichMessage id={f.id} values={{ count: f.count, total: f.count.toLocaleString() }} components={[<strong className="font-semibold text-[color:var(--site-ink)]" />]} />
+                  </span>
+                ))}
+              </p>
+            ) : null}
+            <div data-landing-story-actions="" className="mt-5 flex flex-wrap justify-center gap-2.5 md:mt-6">
+              <button type="button" data-landing-story-explore="" className={HERO_PRIMARY} onClick={exploreApps}>
+                {t('auth:guest.hero.explore')}
+              </button>
+            </div>
+          </div>
+          <div className="hidden min-w-0 py-7 ps-6 pe-8 lg:block xl:pe-10" aria-hidden="true">
+            <img
+              src="/brand/landing-communities.webp"
+              alt=""
+              width={1060}
+              height={656}
+              draggable={false}
+              className="mx-auto h-auto w-full max-w-[640px]"
+            />
+          </div>
         </div>
-        <img
-          src="/brand/people.png"
-          alt=""
-          width={816}
-          height={612}
-          draggable={false}
-          className="hidden md:block h-auto w-[200px] shrink-0"
-        />
+        {/* The yellow window laps over the white one, and the people over the
+            page under the sky (from lg, where there is room for both). */}
+        <div className="relative z-10 -mt-16 hidden grid-cols-[minmax(0,9fr)_minmax(0,11fr)] items-start md:grid lg:-mb-7">
+          <div className="flex min-w-0 justify-center ps-4 lg:ps-6">
+            <img
+              src="/brand/landing-people.webp"
+              alt=""
+              width={619}
+              height={434}
+              draggable={false}
+              className="h-auto w-[280px] max-w-full shrink-0 lg:w-[380px]"
+            />
+          </div>
+          <div className="flex min-w-0 justify-center px-6 pt-20 lg:pt-10">
+            {month ? (
+              <div data-landing-story-month="" className="w-full max-w-[460px] border border-[color:var(--site-on-sun)] bg-[var(--site-sun)] text-[color:var(--site-on-sun)]">
+                <div className="flex h-8 items-center gap-2.5 border-b border-[color:var(--site-on-sun)] px-3 text-[13px] leading-[18px] font-semibold uppercase tracking-[0.04em]">
+                  <span className="flex gap-1.5" aria-hidden="true">
+                    <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#e8452e]" />
+                    <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#f2a531]" />
+                    <span className="h-2.5 w-2.5 rounded-full border border-[color:var(--site-on-sun)] bg-[#3cc23c]" />
+                  </span>
+                  {t('auth:guest.hero.month.title')}
+                </div>
+                <div className="p-3">
+                  <div className="grid grid-cols-2 border border-[color:var(--site-on-sun)] bg-[var(--site-sun-pale)] py-3.5">
+                    {figures.map((f) => (
+                      <p key={f.id} className="min-w-0 px-3 text-center text-[15px] leading-5 uppercase tracking-[0.02em]">
+                        <RichMessage id={f.id} values={{ count: f.count, total: f.count.toLocaleString() }} components={[<strong className="mb-1 block text-[40px] leading-[44px] font-normal tracking-[-0.03em]" />]} />
+                      </p>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </div>
     );
   }
