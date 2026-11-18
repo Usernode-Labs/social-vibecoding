@@ -212,14 +212,32 @@ test('each side carries its own caption, and the seam wipes it with its picture'
   // The After caption lies over the after picture; the Before caption is
   // inside the clip with the before picture, so the seam cuts both alike.
   assert.match(src, /<div className="rf-cap rf-cap-after"[\s\S]*?<div className="rf-layer-clip"/);
-  assert.match(src, /<div className="rf-layer-clip"[^>]*>\s*<div className="rf-layer"[^>]*>\{img\(before, 'before'\)\}\{veilAt\}<\/div>\s*<div className="rf-cap rf-cap-before"/);
+  assert.match(src, /<div className="rf-layer-clip"[^>]*>\s*<div className="rf-layer"[^>]*>\{img\('before', 'before'\)\}\{veilAt\}<\/div>\s*<div className="rf-cap rf-cap-before"/);
   // The landing dim rides each side's own picture, so the seam wipes it too.
-  assert.match(src, /data-rf-cam="">\{img\(after \|\| before, after \? 'after' : 'before'\)\}\{closeups\(after \? 'after' : 'before'\)\}\{veilAt\}<\/div>/);
+  assert.match(src, /data-rf-cam="">\{img\(after \? 'after' : 'before', after \? 'after' : 'before'\)\}\{closeups\(after \? 'after' : 'before'\)\}\{veilAt\}<\/div>/);
   assert.match(src, /RichMessage id="communities:review\.compare\.captionAfter"/);
   assert.match(src, /RichMessage id="communities:review\.compare\.captionBefore"/);
   assert.equal(message('communities:review.compare.captionBefore'), 'Before <0>· Today</0>');
   assert.equal(message('communities:review.compare.captionAfter'), '<0>If it passes ·</0> After');
   assert.doesNotMatch(src, /rf-pill|rf-tab/, 'the pill and the ›› tab are gone');
+});
+
+// #6825: a card's whole-screen picture loads the smallest copy sharp for its
+// slot, over the blurred preview, and the dense url stays the fallback. A
+// placed (zoomed) picture keeps the one url.
+test('a whole-screen picture picks a smaller copy and draws its preview first', () => {
+  const src = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(src, /srcSet=\{whole\?\.srcSet\}/);
+  assert.match(src, /sizes=\{whole\?\.srcSet \? `\$\{Math\.max\(1, Math\.round\(W\)\)\}px` : undefined\}/);
+  assert.match(src, /shotPreview\(whole\)/);
+  assert.match(src, /const whole = place \? null : shot;/, 'a placed or zoomed picture keeps its one url');
+  const lib = read('frontend/src/lib/shot-img.ts');
+  // Only this proposal's own shots route, with a copy's own query.
+  assert.match(lib, /\^\\\/api\\\/apps\\\/\[\^\/\?#\]\+\\\/proposals\\\/\\d\+\\\/shots\\\/\[0-9a-f\]\{32\}\(\?:\\\?\(\?:density=device\|size=\(\?:thumb\|screen\)\)\)\?\$/);
+  // The preview is a 20 px WebP data URI, and nothing else.
+  assert.match(lib, /\^data:image\\\/webp;base64,\[A-Za-z0-9\+\/=\]\+\$/);
+  assert.match(read('frontend/src/features/dev-board/topic/thread-picture.tsx'), /src=\{shotThumb\(one\.after\) \|\| one\.after\.url\}/,
+    'a strip tile loads the thumbnail only');
 });
 
 test('the switch flips the view and its knob says which side, a press leans the seam in', () => {

@@ -19,6 +19,7 @@
 const planContract = require('./visible-changes');
 const shots = require('./shots-files');
 const shotsDiff = require('./shots-diff');
+const shotsSized = require('./shots-sized');
 const comparison = require('./shots-diff-worker');
 const log = require('./logger');
 const closeups = require('./shots-closeups');
@@ -437,6 +438,8 @@ class RunControl {
 // ── Persistence ─────────────────────────────────────────────────────────
 
 const RUN_ID = /^[0-9a-f]{32}$/;
+// A still's smaller copies are WebP (#6825).
+const WEBP = 'image/webp';
 
 // A saved file's slot as Postgres keeps it (shot_run_files.slot, and the
 // slots a run publishes): its change, screen, side and kind. The in-memory
@@ -476,6 +479,17 @@ function fileEntry(row) {
     // A close-up's number on its screen, region and density (shots-closeups.js).
     ...(row.variant === 'closeup' ? { part: Number(row.part) || 1, scale: Number(row.scale), focusRect: row.focus_rect || null }
       : { focusRect: null }),
+    // A still's smaller copies and its preview (#6825); null for a clip, a
+    // close-up, and every still saved before they existed.
+    sized: row.thumb_sha256 || row.screen_sha256 || row.placeholder ? {
+      thumb: row.thumb_sha256 ? {
+        width: row.thumb_width, height: row.thumb_height, bytes: row.thumb_bytes, sha256: row.thumb_sha256,
+      } : null,
+      screen: row.screen_sha256 ? {
+        width: row.screen_width, height: row.screen_height, bytes: row.screen_bytes, sha256: row.screen_sha256,
+      } : null,
+      placeholder: row.placeholder || null,
+    } : null,
     stageLabels: null,
     publicSafe: row.public_safe === true ? true : null,
   };
@@ -531,7 +545,9 @@ async function load(db, runId, { lock = false } = {}) {
   if (!row) return null;
   const { rows: files } = await db.query(
     `SELECT slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256,
-            density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe
+            density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
+            thumb_width, thumb_height, thumb_bytes, thumb_sha256,
+            screen_width, screen_height, screen_bytes, screen_sha256, placeholder
        FROM shot_run_files WHERE run_id = $1`, [runId]);
   return { row, control: fromRow(row, files) };
 }
@@ -543,13 +559,26 @@ async function persist(db, control, store) {
     control.dropped.clear();
   }
   const dirty = [...control.dirty].map((key) => control.saved.get(key));
+  // #6825: each still's smaller copies and preview, made once here (the
+  // still's own PNG is kept as it is). From the device-density original when
+  // the run has one, so a copy is never made from the averaged-down 1x. A
+  // failure leaves the still saved, exactly as it loaded before.
+  for (const file of dirty) {
+    if (file.sized) continue;
+    file.sized = file.media === 'png' && (file.variant === 'context' || file.variant === 'focus')
+      ? await shotsSized.sizedCopies(file.dense?.data || file.data) : null;
+  }
   // Serialize retakes of existing slots before taking shared registry
   // keys, so concurrent saves keep the same row/key lock order.
   if (dirty.length) await db.query(
     'SELECT slot FROM shot_run_files WHERE run_id = $1 AND slot = ANY($2::text[]) ORDER BY slot FOR UPDATE',
     [control.runId, dirty.map(dbSlot)]);
+  const copies = (file) => [
+    ...(file.sized?.thumb?.data ? [{ data: file.sized.thumb.data, contentType: WEBP }] : []),
+    ...(file.sized?.screen?.data ? [{ data: file.sized.screen.data, contentType: WEBP }] : []),
+  ];
   const uploads = dirty.flatMap((file) => [{ data: file.data, contentType: file.contentType },
-    ...(file.dense?.data ? [{ data: file.dense.data, contentType: file.contentType }] : [])]);
+    ...(file.dense?.data ? [{ data: file.dense.data, contentType: file.contentType }] : []), ...copies(file)]);
   const keys = await mediaStore.putMany(db, store, uploads);
   let nextKey = 0;
   await db.query(
@@ -565,13 +594,18 @@ async function persist(db, control, store) {
   for (const f of dirty) {
     const objectKey = keys[nextKey++];
     const denseObjectKey = f.dense?.data ? keys[nextKey++] : null;
+    const thumbObjectKey = f.sized?.thumb?.data ? keys[nextKey++] : null;
+    const screenObjectKey = f.sized?.screen?.data ? keys[nextKey++] : null;
     const slot = dbSlot(f);
     await db.query(
       `INSERT INTO shot_run_files
          (run_id, slot, story_id, viewport, side, variant, media, theme, content_type, width, height, bytes, sha256,
           density, dense_width, dense_height, dense_bytes, dense_sha256, part, scale, focus_rect, public_safe,
-          object_key, dense_object_key)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23, $24)
+          object_key, dense_object_key,
+          thumb_object_key, thumb_width, thumb_height, thumb_bytes, thumb_sha256,
+          screen_object_key, screen_width, screen_height, screen_bytes, screen_sha256, placeholder)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21::jsonb, $22, $23, $24,
+               $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
        ON CONFLICT (run_id, slot) DO UPDATE
          SET object_key = EXCLUDED.object_key, dense_object_key = EXCLUDED.dense_object_key,
              content_type = EXCLUDED.content_type, media = EXCLUDED.media,
@@ -580,13 +614,25 @@ async function persist(db, control, store) {
              dense_width = EXCLUDED.dense_width, dense_height = EXCLUDED.dense_height,
              dense_bytes = EXCLUDED.dense_bytes, dense_sha256 = EXCLUDED.dense_sha256,
              part = EXCLUDED.part, scale = EXCLUDED.scale, focus_rect = EXCLUDED.focus_rect,
-             public_safe = EXCLUDED.public_safe, saved_at = NOW()`,
+             public_safe = EXCLUDED.public_safe,
+             thumb_object_key = EXCLUDED.thumb_object_key, thumb_width = EXCLUDED.thumb_width,
+             thumb_height = EXCLUDED.thumb_height, thumb_bytes = EXCLUDED.thumb_bytes,
+             thumb_sha256 = EXCLUDED.thumb_sha256,
+             screen_object_key = EXCLUDED.screen_object_key, screen_width = EXCLUDED.screen_width,
+             screen_height = EXCLUDED.screen_height, screen_bytes = EXCLUDED.screen_bytes,
+             screen_sha256 = EXCLUDED.screen_sha256, placeholder = EXCLUDED.placeholder,
+             saved_at = NOW()`,
       [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType,
         f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1,
         f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null,
         f.variant === 'closeup' ? f.part : 0, f.variant === 'closeup' ? f.scale : null,
         f.variant === 'closeup' && f.focusRect ? JSON.stringify(f.focusRect) : null, f.publicSafe === true ? true : null,
-        objectKey, denseObjectKey]);
+        objectKey, denseObjectKey,
+        thumbObjectKey, f.sized?.thumb?.width || null, f.sized?.thumb?.height || null,
+        f.sized?.thumb?.bytes ?? null, f.sized?.thumb?.sha256 || null,
+        screenObjectKey, f.sized?.screen?.width || null, f.sized?.screen?.height || null,
+        f.sized?.screen?.bytes ?? null, f.sized?.screen?.sha256 || null,
+        f.sized?.placeholder || null]);
   }
   control.dirty.clear();
 }

@@ -39,6 +39,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { HistoryIcon, SparklesIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
+import { shotPreview } from '../../lib/shot-img';
 import {
   densityOf, focusBox, magnet, placeBox, rubberBand, seamStops,
   type Box, type Placement, type ReviewScreen,
@@ -340,15 +341,32 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     ))
     : null);
 
-  const img = (url: string | null, which: 'before' | 'after') => (url && near ? (
-    <img
-      src={url}
-      alt={which === 'after' ? t('communities:review.alt.after') : t('communities:review.alt.before')}
-      draggable={false}
-      className={place ? 'rf-shot-img' : 'rf-shot-img rf-shot-whole'}
-      style={place ? { width: screen!.width, height: which === 'after' ? screen!.after.height : screen!.before.height } : undefined}
-    />
-  ) : null);
+  // #6825: a whole-screen still takes the smallest copy sharp for this slot
+  // (`srcset` and `sizes`, the slot's drawn width), over its blurred preview,
+  // so the card fills in sooner and nothing moves when the sharp one lands.
+  // A placed or zoomed still and a close-up keep the one url.
+  const shotOf = (which: 'before' | 'after'): { url: string; srcSet?: string; placeholder?: string | null } | null => (
+    screen ? screen[which] : pair ? { url: pair[which] ?? '' } : null);
+  const img = (which: 'before' | 'after', alt: 'before' | 'after') => {
+    const shot = shotOf(which);
+    const url = shot && shot.url ? shot.url : null;
+    if (!url || !near) return null;
+    const whole = place ? null : shot;
+    return (
+      <img
+        src={url}
+        srcSet={whole?.srcSet}
+        sizes={whole?.srcSet ? `${Math.max(1, Math.round(W))}px` : undefined}
+        alt={alt === 'after' ? t('communities:review.alt.after') : t('communities:review.alt.before')}
+        draggable={false}
+        className={place ? 'rf-shot-img' : 'rf-shot-img rf-shot-whole'}
+        style={{
+          ...(place ? { width: screen!.width, height: which === 'after' ? screen!.after.height : screen!.before.height } : null),
+          ...(whole ? shotPreview(whole) : null),
+        }}
+      />
+    );
+  };
 
   return (
     <div
@@ -370,7 +388,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       onContextMenu={(e) => e.preventDefault()}
       data-rf-compare=""
     >
-      <div className="rf-layer" style={layerStyle(satAfter)} aria-hidden="true" data-rf-cam="">{img(after || before, after ? 'after' : 'before')}{closeups(after ? 'after' : 'before')}{veilAt}</div>
+      <div className="rf-layer" style={layerStyle(satAfter)} aria-hidden="true" data-rf-cam="">{img(after ? 'after' : 'before', after ? 'after' : 'before')}{closeups(after ? 'after' : 'before')}{veilAt}</div>
       {canCompare ? (
         <div className="rf-cap rf-cap-after" style={{ opacity: marks ? 1 : 0 }} aria-hidden="true">
           <span className="rf-cap-line">
@@ -381,7 +399,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       ) : null}
       {canCompare ? (
         <div className="rf-layer-clip" style={{ clipPath: `inset(0 ${(W - shown).toFixed(2)}px 0 0)` }} aria-hidden="true">
-          <div className="rf-layer" style={layerStyle(satBefore)} data-rf-cam="">{img(before, 'before')}{veilAt}</div>
+          <div className="rf-layer" style={layerStyle(satBefore)} data-rf-cam="">{img('before', 'before')}{veilAt}</div>
           <div className="rf-cap rf-cap-before" style={{ opacity: marks ? 1 : 0 }}>
             <span className="rf-cap-line">
               <HistoryIcon width={13} height={13} strokeWidth="2.2" />
@@ -431,7 +449,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
               transformOrigin: '0 0',
             }}
           >
-            {img(lensSide === 'after' ? after || before : before, lensSide)}
+            {img(lensSide === 'after' && after ? 'after' : 'before', lensSide)}
             {closeups(lensSide)}
           </span>
         </span>

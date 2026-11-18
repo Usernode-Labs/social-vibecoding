@@ -14,6 +14,8 @@ import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
+// #6825: a tile is a strip thumbnail, so it loads the small copy only.
+import { shotThumb } from '../../../lib/shot-img';
 import { ExpandIcon } from '@/components/ui/icons';
 import { CompareSlider } from '../../review-flow/compare';
 import { focusBox, placeBox, type Placement, type ReviewScreen } from '../../review-flow/model';
@@ -108,7 +110,7 @@ export function ThreadPicture({ s, captions = null }: {
               aria-label={t('project:topic.card.shots.tile', { index: i + 1, total: screens.length })}
               onClick={() => setPicked(i)}
             >
-              <img src={one.after.url} alt="" loading="lazy" decoding="async" />
+              <img src={shotThumb(one.after) || one.after.url} alt="" loading="lazy" decoding="async" />
             </button>
           )) : null}
           <div className="dev-thread-tiles-cap">

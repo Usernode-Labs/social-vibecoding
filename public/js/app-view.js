@@ -13233,6 +13233,28 @@ const AppView = {
     });
   },
 
+  // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
+  // srcset, smallest first, so a slot takes the smallest copy sharp for it
+  // and its screen. Empty for a still saved before the copies existed, which
+  // then loads its one url as it always did.
+  _shotSrcSet(artifact) {
+    const copyOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}\?size=(?:thumb|screen)$/.test(String(url || ''));
+    const parts = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
+      .filter((copy) => copy && copyOk(copy.url) && Number(copy.width) > 0)
+      .map((copy) => `${copy.url} ${Math.round(Number(copy.width))}w`);
+    if (!parts.length) return '';
+    const own = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : 0;
+    if (own && artifact.url) parts.push(`${artifact.url} ${own}w`);
+    return parts.join(', ');
+  },
+
+  // The blurred preview a slot draws until its still decodes: the 20 px WebP
+  // the server sent inside the shots view, and nothing else.
+  _shotPlaceholder(artifact) {
+    const value = artifact && typeof artifact.placeholder === 'string' ? artifact.placeholder : '';
+    return value.length <= 1400 && /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/.test(value) ? value : '';
+  },
+
   // The first before/after capture pair, as the Needs-you feed's picture.
   // `visuals` is the server shape visualsTilesHtml reads — the grouped form
   // or the legacy flat one — and this keeps only what the feed draws: one
@@ -13246,7 +13268,7 @@ const AppView = {
       // null suppresses the legacy capture instead of substituting a picture
       // that may have nothing to do with the claim.
       if (shots.state !== 'verified') return null;
-      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
+      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device|\?size=(?:thumb|screen))?$/.test(String(url || ''));
       // The picture follows the page's mode, as the full viewer does: a
       // light page takes a light shot (a run from before modes recorded
       // counts as light) and never a dark one; a dark page takes the dark
@@ -13328,8 +13350,8 @@ const AppView = {
           width,
           density,
           closeups,
-          before: { url: base.url, height: heightBefore },
-          after: { url: head.url, height: heightAfter },
+          before: { url: base.url, height: heightBefore, srcSet: AppView._shotSrcSet(base), placeholder: AppView._shotPlaceholder(base) },
+          after: { url: head.url, height: heightAfter, srcSet: AppView._shotSrcSet(head), placeholder: AppView._shotPlaceholder(head) },
           regions,
           changes,
         };
@@ -26663,9 +26685,10 @@ const AppView = {
       ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
     const shotsUrl = (url) => {
       const value = String(url || '');
-      // A sharp still has its own address, `?density=device` (shots-view.js
-      // shotUrl); nothing else may follow the id.
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.exec(value);
+      // A sharp still has its own address, `?density=device`, and a smaller
+      // copy its own, `?size=thumb` or `?size=screen` (shots-view.js
+      // artifactUrl); nothing else may follow the id.
+      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device|\?size=(?:thumb|screen))?$/.exec(value);
       if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
       return value;
     };
@@ -26946,7 +26969,17 @@ const AppView = {
         const dark = themes
           ? by(screen.shot, screen.viewport, which === 'base' ? 'base' : 'head', 'context', null, 'dark')
           : null;
-        const inner = `<img src="${attr(shotsUrl(artifact.url))}" ${alt} class="shots-img-light" loading="lazy">${dark ? `<img src="${attr(shotsUrl(dark.url))}" ${alt} class="shots-img-dark" loading="lazy">` : ''}${drawn[which]}`;
+        // #6825: the still takes the smallest copy sharp for this slot (its
+        // stage is at most about 640 px wide), over its blurred preview, so
+        // the picture arrives sooner and nothing moves when it lands.
+        const still = (artifact, cls) => {
+          const set = AppView._shotSrcSet(artifact);
+          const preview = AppView._shotPlaceholder(artifact);
+          const style = preview ? ` style="${attr(`background-image:url("${preview}");background-size:cover;background-position:center`)}"` : '';
+          const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) 100vw, 640px"` : '';
+          return `<img src="${attr(shotsUrl(artifact.url))}"${srcsets} ${alt} class="${cls}" loading="lazy"${style}>`;
+        };
+        const inner = `${still(artifact, 'shots-img-light')}${dark ? still(dark, 'shots-img-dark') : ''}${drawn[which]}`;
         if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
         const at = which === 'base' ? crop.before : crop.after;
         const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;

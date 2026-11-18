@@ -114,10 +114,34 @@ function cleanScreens(screens, claims) {
 }
 
 // A dense still's own address (`?density=device`) is a different address,
-// so a browser that cached one copy never answers for the other.
-function artifactUrl(slug, sessionId, artifactId, { dense = false } = {}) {
+// so a browser that cached one copy never answers for the other. A still's
+// smaller copies have their own addresses too (#6825): `?size=thumb` and
+// `?size=screen`.
+function artifactUrl(slug, sessionId, artifactId, { dense = false, size = null } = {}) {
   if (!ARTIFACT_ID_RE.test(String(artifactId || ''))) return null;
-  return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/shots/${artifactId}${dense ? '?density=device' : ''}`;
+  const query = size === 'thumb' || size === 'screen' ? `?size=${size}` : dense ? '?density=device' : '';
+  return `/api/apps/${encodeURIComponent(slug)}/proposals/${Number(sessionId)}/shots/${artifactId}${query}`;
+}
+
+// The preview a slot draws before its still decodes: a data URI this view
+// sent, and nothing else. Anything else is dropped.
+const PLACEHOLDER_RE = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
+function cleanPlaceholder(value) {
+  return typeof value === 'string' && value.length <= 1400 && PLACEHOLDER_RE.test(value) ? value : null;
+}
+
+// A still's smaller copies (#6825), each with its own address, pixels and
+// bytes, smallest first. Empty for a clip and for every still saved before
+// the copies existed.
+function cleanSizes(artifact, { slug, sessionId }) {
+  const sizes = [];
+  for (const size of ['thumb', 'screen']) {
+    const width = artifact?.[`${size}Width`];
+    const height = artifact?.[`${size}Height`];
+    if (!wholePx(width) || !wholePx(height) || width < 1 || height < 1) continue;
+    sizes.push({ size, url: artifactUrl(slug, sessionId, artifact.id, { size }), width, height });
+  }
+  return sizes;
 }
 
 // A still kept at device density as well (services/shots-density.js): its
@@ -201,6 +225,11 @@ function cleanArtifacts(items, { slug, sessionId, verified, dense = false }) {
         ? artifact.stageLabels.slice(0, 40).map((label) => String(label).slice(0, 100))
         : null,
       url: artifactUrl(slug, sessionId, artifact.id, { dense: !!sharp }),
+      // #6825: the smaller copies a slot picks from with srcset, and the
+      // preview it draws until the picture decodes. A still saved before
+      // them lists none, and a slot falls back to `url`.
+      sizes: artifact.media === 'png' ? cleanSizes(artifact, { slug, sessionId }) : [],
+      placeholder: artifact.media === 'png' ? cleanPlaceholder(artifact.placeholder) : null,
     };
   }).concat(closeups);
 }
@@ -414,6 +443,9 @@ async function getForSessions(pool, sessions, slug, { viewer = null } = {}) {
                   'contentType', a.content_type, 'width', a.width,
                   'height', a.height, 'bytes', a.bytes,
                   'density', a.density, 'denseWidth', a.dense_width, 'denseHeight', a.dense_height,
+                  'thumbWidth', a.thumb_width, 'thumbHeight', a.thumb_height,
+                  'screenWidth', a.screen_width, 'screenHeight', a.screen_height,
+                  'placeholder', a.placeholder,
                   'focusRect', a.focus_rect, 'stageLabels', a.stage_labels,
                   'part', a.part, 'scale', a.scale
                 ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme, a.part)

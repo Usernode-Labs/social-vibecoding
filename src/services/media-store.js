@@ -147,7 +147,9 @@ async function removeOrphan(pool, store, key, cutoff) {
     // for new or other referencing tables, and concurrent new references.
     const { rows: [references] } = await tx.query(`SELECT EXISTS (
       SELECT 1 FROM shot_run_files WHERE object_key = $1 OR dense_object_key = $1
+        OR thumb_object_key = $1 OR screen_object_key = $1
       UNION ALL SELECT 1 FROM shot_artifacts WHERE object_key = $1 OR dense_object_key = $1
+        OR thumb_object_key = $1 OR screen_object_key = $1
       UNION ALL SELECT 1 FROM shots_eval_artifacts WHERE object_key = $1
       UNION ALL SELECT 1 FROM shot_diagnostic_artifacts WHERE object_key = $1
       UNION ALL SELECT 1 FROM session_visuals WHERE object_key = $1

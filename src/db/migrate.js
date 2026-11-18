@@ -11,6 +11,7 @@ const { reindexAfterHostMove } = require('./reindex-after-host-move');
 const { applySchemaWithLockRetry } = require('./schema-migrations');
 const { seedReferenceData } = require('./reference-data');
 const { withStagingMedia } = require('../services/staging-media');
+const media = require('../services/media-store');
 // Read by seedStagingPlatformMail's at-the-ceiling fixture, so the number
 // of seeded sends tracks the rule instead of restating it.
 const mailRateLimit = require('../services/mail/rate-limit');
@@ -10458,6 +10459,36 @@ async function seedStagingGalleryProposals(pool) {
 // no-op outside staging.
 const STAGING_SHOTS_NOTICED_SESSION_ID = 900108;
 
+// #6825: the smaller copies a saved still keeps, and its blurred preview, as
+// a real run makes them (services/shots-sized.js). Seeded beside the
+// artifact so a staging preview has what a saved still has; a copy that
+// cannot be made leaves the still exactly as it was.
+async function seedSizedCopies(pool, file) {
+  const { sizedCopies } = require('../services/shots-sized');
+  const copies = await sizedCopies(file.data);
+  const keys = {};
+  for (const name of ['thumb', 'screen']) {
+    const copy = copies[name];
+    if (!copy) continue;
+    await withStagingMedia(pool, copy.data, 'image/webp', (tx, m) => Promise.resolve(m));
+    keys[name] = copy;
+  }
+  if (!keys.thumb && !keys.screen && !copies.placeholder) return;
+  await pool.query(
+    `UPDATE shot_artifacts
+        SET thumb_object_key = $2, thumb_width = $3, thumb_height = $4, thumb_bytes = $5, thumb_sha256 = $6,
+            screen_object_key = $7, screen_width = $8, screen_height = $9, screen_bytes = $10, screen_sha256 = $11,
+            placeholder = $12
+      WHERE id = $1`,
+    [file.id,
+      keys.thumb ? media.objectKey(keys.thumb.data) : null, keys.thumb?.width ?? null, keys.thumb?.height ?? null,
+      keys.thumb?.bytes ?? null, keys.thumb?.sha256 ?? null,
+      keys.screen ? media.objectKey(keys.screen.data) : null, keys.screen?.width ?? null, keys.screen?.height ?? null,
+      keys.screen?.bytes ?? null, keys.screen?.sha256 ?? null,
+      copies.placeholder]
+  );
+}
+
 async function seedStagingShotsNoticed(pool) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   const crypto = require('crypto');
@@ -10616,6 +10647,10 @@ async function seedStagingShotsNoticed(pool) {
         [file.id, runId, file.viewport, file.side, m.key, file.width, file.height,
           file.data.length, file.sha256, file.theme]
       ));
+      // #6825: the still's smaller copies and its blurred preview, which a
+      // real run makes as it saves (services/shots-sized.js), so a slot on a
+      // preview picks a copy by size and draws the preview while it loads.
+      await seedSizedCopies(pool, file);
     }
     log.info('db', 'Staging shots "Also noticed" fixture seeded', { sessionId: id });
   } catch (err) {
