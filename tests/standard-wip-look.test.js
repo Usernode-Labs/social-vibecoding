@@ -81,7 +81,7 @@ test('every rule of its block is scoped to the look or is a component of its kit
 test('colours are written once, as tokens in the block\'s first rule', () => {
   const all = rules(wipBlock());
   // The token rules: the look's own (the config called Current) and each other config's, in light and dark.
-  const tokens = all.filter((r) => /^html\[data-skin-wip\](\[data-wip-tokens="[a-z]+"\])?(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
+  const tokens = all.filter((r) => /^html\[data-skin-wip\](\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
   assert.ok(tokens.length >= 1, 'the block declares its tokens');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);

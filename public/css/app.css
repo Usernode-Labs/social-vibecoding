@@ -5702,6 +5702,25 @@ html[data-skin-wip] {
      shell; another config may name its own. */
   --wip-page-bg: transparent;
   --wip-font: inherit;
+  /* A section's label under a token config: its face, size, case, spacing,
+     weight and ink. These are the shell's own label's values, so a config
+     that does not name them draws the label as it is. */
+  --wip-label-font: inherit;
+  --wip-label-size: 0.75rem;
+  --wip-label-case: uppercase;
+  --wip-label-track: 0.06em;
+  --wip-label-weight: 700;
+  --wip-label-ink: var(--wip-ink-muted);
+  /* A card that asks something of the viewer (Needs you) may wear its own
+     colours. By default they are the card's. */
+  --wip-ask-bg: var(--wip-card-bg);
+  --wip-ask-line: var(--wip-card-line);
+  --wip-ask-ink: var(--wip-ink);
+  --wip-ask-ink-muted: var(--wip-ink-muted);
+  --wip-ask-pill-bg: var(--wip-pill-bg);
+  --wip-ask-pill-ink: var(--wip-pill-ink);
+  /* A placeholder's fill: a tenth of the ink, on whatever it sits on */
+  --wip-skeleton: color-mix(in srgb, var(--wip-ink) 10%, transparent);
   /* Space */
   --wip-gutter: 12px;          /* the page's side gutter, a section's px-3 */
   --wip-row-gap: 2rem;         /* between Home's rows */
@@ -5732,7 +5751,7 @@ html[data-skin-wip] {
   --wip-tile-h: 6.25rem;       /* p-3 12 + icon 72 + p-3 12, and the text's 94 */
   --wip-tile-gap: 0.75rem;
   --wip-icon: 4.5rem;
-  --wip-icon-radius: 0.875rem;  /* 14px: an icon is a step rounder than the things beside it, about a fifth of its side */
+  --wip-icon-radius: 1.125rem;  /* 18px: an icon is rounder than the things beside it, a quarter of its side, as a phone's app icon is */
   --wip-icon-glyph: 2rem;      /* an emoji icon's size */
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 6px 14px -4px rgb(0 0 0 / 0.2);
   --wip-icon-edge: var(--wip-card-line); /* a hairline round an icon's tile, so a white icon keeps its shape on a white card */
@@ -5749,7 +5768,7 @@ html[data-skin-wip] {
   /* A panel's row of items (Needs you) */
   --wip-item-radius: var(--wip-radius-inner);
   --wip-item-icon: 2.25rem;
-  --wip-item-icon-radius: 0.5rem; /* 8px, the same fifth of a small icon's side */
+  --wip-item-icon-radius: 0.5625rem; /* 9px, the same quarter of a small icon's side */
   --wip-ink: var(--text-primary);
   --wip-ink-soft: var(--text-secondary);
   --wip-pill-bg: var(--accent);
@@ -5834,6 +5853,75 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
   --lit-tint: rgb(255 254 234 / 0.1);
   --lit-line: rgb(255 254 234 / 0.18);
 }
+/* BRAND2 ("Homeroom brand kit V2"): the kit again, drawn with more of its
+   voice (confident, playful, simple) than BRAND's cream and white. Section
+   titles are headlines, in the kit's serif role (Young Serif stands in for
+   the licensed STK Bureau Serif, as Source Serif does on the kit's own
+   page), sentence case, in the ink. What needs the viewer is the kit's
+   first pairing, Black + Yellow: a yellow block with black words and black
+   pills. Cards are white on cream with a firmer edge; the filled action is
+   Cream + Black; blue is progress and the pill on a white card; green is a
+   thing done. Interface text is Geist. */
+html[data-skin-wip][data-wip-tokens="brand2"] {
+  --wip-page-bg: #fffeea;
+  --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --wip-label-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
+  --wip-label-size: 1.25rem;
+  --wip-label-case: none;
+  --wip-label-track: -0.01em;
+  --wip-label-weight: 400;
+  --wip-label-ink: #000000;
+  --wip-card-bg: #ffffff;
+  --wip-card-line: rgb(0 0 0 / 0.16);
+  --wip-ink: #000000;
+  --wip-ink-soft: rgb(0 0 0 / 0.74);
+  --wip-ink-muted: rgb(0 0 0 / 0.62);
+  --wip-ink-action: #000000;
+  --wip-icon-shadow: 0 1px 0 rgb(0 0 0 / 0.08), 0 8px 16px -8px rgb(0 0 0 / 0.2);
+  --wip-cta-from: #000000;
+  --wip-cta-via: #000000;
+  --wip-cta-to: #000000;
+  --wip-cta-ink: #fffeea;
+  --wip-cta-glow: rgb(0 0 0 / 0.24);
+  --wip-pill-bg: #3090e1;
+  --wip-pill-ink: #000000;
+  --wip-count-bg: #000000;
+  --wip-count-ink: #fffeea;
+  --wip-meter: #3090e1;
+  --wip-ok: #4f8a3c; /* the kit's green, deepened to carry text and a thin line on white */
+  --wip-ask-bg: #ffee6f;
+  --wip-ask-line: rgb(0 0 0 / 0.14);
+  --wip-ask-ink: #000000;
+  --wip-ask-ink-muted: rgb(0 0 0 / 0.68);
+  --wip-ask-pill-bg: #000000;
+  --wip-ask-pill-ink: #fffeea;
+  --lit-ink: #000000;
+  --lit-tint: #fcfab3; /* the kit's pale yellow marks where you are */
+  --lit-line: rgb(0 0 0 / 0.14);
+}
+/* In the dark: cream on black, and the yellow block stays the yellow block. */
+html[data-skin-wip][data-wip-tokens="brand2"].dark {
+  --wip-page-bg: #0b0b0c;
+  --wip-label-ink: #fffeea;
+  --wip-card-bg: #171715;
+  --wip-card-line: rgb(255 254 234 / 0.16);
+  --wip-ink: #fffeea;
+  --wip-ink-soft: rgb(255 254 234 / 0.8);
+  --wip-ink-muted: rgb(255 254 234 / 0.64);
+  --wip-ink-action: #fffeea;
+  --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 14px -4px rgb(0 0 0 / 0.6);
+  --wip-cta-from: #ffee6f;
+  --wip-cta-via: #ffee6f;
+  --wip-cta-to: #ffee6f;
+  --wip-cta-ink: #000000;
+  --wip-cta-glow: rgb(255 238 111 / 0.18);
+  --wip-count-bg: #ffee6f;
+  --wip-count-ink: #000000;
+  --wip-ok: #a9cf97;
+  --lit-ink: #fffeea;
+  --lit-tint: rgb(255 238 111 / 0.14);
+  --lit-line: rgb(255 254 234 / 0.18);
+}
 /* How many columns a list of the look has, by the room there is: one, two
    from 640px, three from 1024px, four from 1440px. Needs you's rows and
    Challenges' cards read the same number, so their columns line up. */
@@ -5859,6 +5947,20 @@ html[data-skin-wip].dark {
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+/* A card that asks something of the viewer wears the config's "ask"
+   colours: it re-points the tokens its insides read, so rows, pills and
+   words follow without a rule of their own. Under this look only: another
+   look that borrows the kit (the brand look sets the kit's tokens from its
+   own) has no "ask" colours to point at. */
+html[data-skin-wip] .wip-card[data-tone="ask"] {
+  --wip-card-bg: var(--wip-ask-bg);
+  --wip-card-line: var(--wip-ask-line);
+  --wip-ink: var(--wip-ask-ink);
+  --wip-ink-muted: var(--wip-ask-ink-muted);
+  --wip-ink-action: var(--wip-ask-ink);
+  --wip-pill-bg: var(--wip-ask-pill-bg);
+  --wip-pill-ink: var(--wip-ask-pill-ink);
 }
 /* The page's one filled action. */
 .wip-cta {
@@ -6064,6 +6166,17 @@ html[data-skin-wip].dark {
    place, so the posters stay level, and draws no track that would read as a
    rule under the words. */
 .wip-poster[data-state="new"] .wip-meter { background-color: transparent; }
+/* Placeholders: the shape of what is still on its way. Each is a block of
+   the placeholder's fill; whoever holds them pulses. */
+/* The fill falls back to the shell's hairline where a look borrows the kit without naming one. */
+.wip-skel { display: block; flex: none; border-radius: var(--wip-radius-small); background-color: var(--wip-skeleton, var(--app-sheet-line)); }
+.wip-skel-icon { width: var(--wip-item-icon); height: var(--wip-item-icon); border-radius: var(--wip-item-icon-radius); }
+.wip-skel-lines { gap: 0.4375rem; }
+.wip-skel-line { width: 78%; height: 0.6875rem; }
+.wip-skel-line-short { width: 44%; height: 0.5625rem; }
+.wip-skel-pill { width: 3rem; height: 1.5rem; border-radius: var(--wip-radius-pill); }
+/* A card's placeholder: a picture's 16:10 and the three lines of words under it. */
+.wip-skel-card { height: auto; padding-bottom: calc(62.5% + 4.5rem); border-radius: var(--wip-card-radius); }
 /* A filter line: the choices at its start (they scroll sideways when they
    do not fit) and one menu at its end, close over the list they filter. */
 .wip-filterbar {
@@ -6268,6 +6381,76 @@ html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
   inset: 0;
   background: inherit;
   filter: var(--wip-cover-lift);
+}
+/* The sidebar's community icons are rounded squares, as the icons on Home
+   are, not discs: the tile's own small corner, and the picture inside it
+   takes the same one (it rounded itself into a circle). */
+html[data-skin-wip] .platform-rail-tile,
+html[data-skin-wip] .platform-rail-tile > img { border-radius: var(--wip-radius-small); }
+/* Under a token config, Home's section labels are drawn from the config's
+   label tokens (the shell's own label's values unless the config names
+   others): the three label lines and Featured's. */
+html[data-skin-wip][data-wip-tokens] #home-screen .home-area-label > span:first-child,
+html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3 {
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+/* The shell's own placeholders, drawn in this look's shapes while Home
+   loads (the prerender does not know the look; these rules do, before the
+   first paint), so what arrives takes the place its placeholder held.
+   Pinned projects, from 1024px: rows, an icon and two lines beside it. */
+@media (min-width: 1024px) {
+  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div {
+    flex-direction: row;
+    align-items: center;
+    gap: var(--wip-tile-gap);
+    height: var(--wip-tile-h);
+  }
+  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :first-child {
+    width: var(--wip-icon);
+    height: var(--wip-icon);
+    border-radius: var(--wip-icon-radius);
+  }
+  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :last-child {
+    flex: 1 1 0;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 0.5rem;
+    height: auto;
+    padding-top: 0;
+  }
+  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :last-child > div { width: 55%; height: 0.75rem; }
+  html[data-skin-wip] #app-list:not([data-view]) > .animate-pulse > div > :last-child::after {
+    content: "";
+    width: 85%;
+    height: 0.625rem;
+    border-radius: var(--wip-radius-small);
+    background-color: var(--wip-skeleton);
+  }
+}
+/* Challenges: a card of posters, as many as the look has columns for (the
+   placeholder brings three). */
+html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body {
+  padding: var(--wip-card-pad);
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body > div {
+  flex-direction: row;
+  gap: var(--wip-col-gap);
+  overflow: hidden;
+}
+html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body > div > div {
+  flex: 0 0 calc((100% - (var(--wip-cols) - 1) * var(--wip-col-gap)) / var(--wip-cols));
+  height: 8rem;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-skeleton);
 }
 /* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
    Pinned communities: the section stays mounted, since it loads the pins
