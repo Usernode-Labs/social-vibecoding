@@ -183,11 +183,6 @@ app.use(inflightRequests.inflightRequests());
 // src/services/server-error-counts.js). It only listens for `finish`.
 app.use(require('./src/middleware/request-counts').requestCounts());
 
-// Every successful /api/ response says what it cost in a Server-Timing
-// header: its database time and query count, and its total
-// (src/middleware/server-timing.js, #6792).
-app.use(require('./src/middleware/server-timing').serverTiming());
-
 // A server error people commonly see also says itself in their language, as
 // `error_message` beside the unchanged `error`. It wraps res.json here, ahead
 // of every router, so the ones mounted before auth and the error handler all
@@ -228,6 +223,12 @@ app.use(publicApiCors());
 // sameOriginCookieWrites). Mounted ahead of every router, the pre-auth ones
 // included, so no route can be added outside it.
 app.use(require('./src/middleware/same-site-browser').sameOriginCookieWrites);
+
+// Every successful /api/ response says what it cost in a Server-Timing
+// header: its database time and query count, and its total
+// (src/middleware/server-timing.js, #6792). After the guard above, which
+// reads nothing, and ahead of every router.
+app.use(require('./src/middleware/server-timing').serverTiming());
 
 // OS domain verification is anonymous and must never reach login redirects
 // or the SPA/static fallback (which does not serve dot directories).

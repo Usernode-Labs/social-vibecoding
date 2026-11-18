@@ -163,7 +163,9 @@ test('the server mounts it ahead of every route, and the main pool is counted', 
   const timing = server.indexOf("require('./src/middleware/server-timing').serverTiming()");
   const resume = server.indexOf("require('./src/middleware/server-timing').resumeServerTiming");
   assert.ok(timing > 0 && resume > timing);
-  assert.ok(timing < server.indexOf('app.use(responseCompression())'), 'before compression and every router');
+  assert.ok(timing > server.indexOf("require('./src/middleware/same-site-browser').sameOriginCookieWrites"),
+    'after the cookie-write guard, which stays first (tests/same-site-browser.test.js)');
+  assert.ok(timing < server.indexOf('app.use(mobileAppLinkRoutes())'), 'and ahead of every router');
   assert.ok(resume > server.indexOf('app.use(cookieParser())'), 'entered again after the body parsers');
   assert.match(fs.readFileSync(path.join(root, 'src/db/pool.js'), 'utf8'), /server-timing'\)\.instrumentPool\(pool\)/);
 });
