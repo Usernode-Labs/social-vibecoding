@@ -1771,10 +1771,18 @@
         if (!state.permission && perms && perms.notificationsGranted === true) {
           state.permission = 'granted';
         }
+        // Neither in the snapshot: the social push state reports this
+        // phone's notification permission on both platforms.
+        if (!state.permission) state.permission = await NativeChrome._iosPushPermissionStatus();
         state.canRequest = await can('requestNotificationPermission');
       } else {
         state.permission = NativeChrome._permissionStatusOf(
           perms && perms.notificationPermission);
+        // A build that reports the switch but not the status: an allowed
+        // notification permission is the same "granted".
+        if (!state.permission && perms && perms.notificationsGranted === true) {
+          state.permission = 'granted';
+        }
         if (!state.permission) state.permission = await NativeChrome._iosPushPermissionStatus();
         state.canRequest = await can('requestPermissions');
       }

@@ -24,8 +24,9 @@ import type { NotifyMoment } from './decide';
  *   the phone's own permission prompt (iOS shows it once, Android twice).
  *   Allowed, the card settles to "✓ We'll let you know"; refused, it says
  *   notifications are off, with the way to the phone's settings. When the
- *   phone's answer could not be read, it says so and keeps the ask, rather
- *   than claiming notifications are off.
+ *   phone's answer could not be read it says so, with the way to its
+ *   settings, and asks nothing more: every tap settles the card, and the
+ *   moment it settled is not asked about again.
  *   In a browser Homeroom has no push, so it is "Get the app": the store on a
  *   phone, a code to scan on a computer (./get-app-sheet.tsx), with "Until
  *   then, we'll email you" where email stands in for that moment.
@@ -152,12 +153,13 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
   };
 
   const notifyMe = async () => {
-    if (phase !== 'app' && phase !== 'unsure') return;
+    if (phase !== 'app') return;
     setPhase('asking');
     const telemetry = askTelemetry();
     const answer = await askOs();
-    // Only a clear answer is the account's: an unreadable one may ask again.
-    if (answer.outcome === 'granted' || answer.outcome === 'denied') {
+    // Every settled answer is the account's, including one that could not be
+    // read: the card has stopped asking, so this moment is done.
+    if (answer.outcome !== 'no-app') {
       void recordAsk('app', moment, 'yes');
     }
     if (answer.outcome === 'granted') {
@@ -170,6 +172,7 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
       setPhase('off');
     } else {
       telemetry.done('failure', { errorCode: 'unknown' });
+      setSettings(answer.settings);
       setPhase('unsure');
     }
   };
@@ -192,6 +195,7 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
       data-notify-ask={moment}
       data-notify-ask-surface={surface}
       aria-live="polite"
+      aria-busy={phase === 'asking' ? 'true' : undefined}
       className={`rounded-[20px] ${TONE[tone]} p-4 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] ${className}`}
     >
       {phase === 'on' ? (
@@ -199,9 +203,13 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
           <CheckIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
           <span>{t('notifications:ask.on')}</span>
         </p>
-      ) : phase === 'off' ? (
+      ) : phase === 'off' || phase === 'unsure' ? (
         <div className="flex flex-wrap items-center gap-3">
-          <p data-notify-ask-off="" className="min-w-0 flex-1 text-[15px] leading-5 text-zinc-900 dark:text-zinc-100">{t('notifications:ask.off')}</p>
+          {phase === 'off' ? (
+            <p data-notify-ask-off="" className="min-w-0 flex-1 text-[15px] leading-5 text-zinc-900 dark:text-zinc-100">{t('notifications:ask.off')}</p>
+          ) : (
+            <p data-notify-ask-unsure="" className="min-w-0 flex-1 text-[15px] leading-5 text-zinc-900 dark:text-zinc-100">{t('notifications:ask.unsure')}</p>
+          )}
           {settings ? (
             <Button variant="pillNeutral" ink="neutral" size="sm" onClick={openNotificationSettings}>{t('notifications:ask.turnOn')}</Button>
           ) : null}
@@ -212,11 +220,7 @@ export function NotifyAsk({ moment, project = '', small = false, tone = 'plane',
             <BellIcon className="mt-0.5 h-5 w-5 shrink-0 text-violet-600 dark:text-violet-400" aria-hidden="true" />
             <div className="min-w-0 flex-1">
               <p data-notify-ask-title="" className="text-[15px] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{title}</p>
-              {phase === 'unsure' ? (
-                <p data-notify-ask-unsure="" className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{t('notifications:ask.unsure')}</p>
-              ) : (
-                <p className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{body}</p>
-              )}
+              <p className="mt-0.5 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">{body}</p>
             </div>
           </div>
           <div className="mt-3 flex flex-wrap gap-2 ps-8">

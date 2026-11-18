@@ -106,6 +106,9 @@ export function decideNotifyAsk(input: AskInput): AskPlan {
     if (input.permission === 'denied') {
       return { show: null, reason: 'notifications are denied, and the OS shows no prompt for that' };
     }
+    // Only a permission the phone says is undecided may be asked by a tap:
+    // an unreadable one may already be allowed, and asking would lead nowhere.
+    if (input.permission !== 'undetermined') return { show: null, reason: 'the permission could not be read' };
     if (input.canRequest !== true) return { show: null, reason: 'this app build cannot ask' };
     // Only a phone that says notifications were never decided may be asked
     // here. A permission that could not be read is unknown, and forcing the

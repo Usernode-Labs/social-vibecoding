@@ -171,14 +171,41 @@ export async function planAsk(moment: NotifyMoment): Promise<AskContext> {
 export type AskOutcome = 'granted' | 'denied' | 'no-app' | 'unknown';
 
 /** One read of the phone's notification permission, swallowed if it fails. */
-async function rereadPermission(chrome: NonNullable<NotifyAskHost['NativeChrome']>): Promise<OsPermission> {
+interface PermissionReading {
+  permission: OsPermission;
+  /** This build has a way to Homeroom's notification settings. */
+  canOpenSettings: boolean;
+}
+
+async function rereadPermission(chrome: NonNullable<NotifyAskHost['NativeChrome']>): Promise<PermissionReading> {
   try {
-    if (typeof chrome.notifyAskPermission !== 'function') return null;
+    if (typeof chrome.notifyAskPermission !== 'function') return { permission: null, canOpenSettings: false };
     const reading = await chrome.notifyAskPermission();
-    return reading?.permission ?? null;
+    return {
+      permission: reading?.permission ?? null,
+      canOpenSettings: reading?.canOpenSettings === true,
+    };
   } catch {
-    return null;
+    return { permission: null, canOpenSettings: false };
   }
+}
+
+/** How long a tap waits for the phone's own answer before reading once more. */
+export const ASK_OS_LIMIT_MS = 60_000;
+
+/**
+ * `promise`, or null when it has not settled within `ms`. A rejection is the
+ * same nothing: the caller reads the permission again. The timer is cleared
+ * the moment the answer lands, so a late answer is simply ignored.
+ */
+function withinLimit<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (value) => { clearTimeout(timer); resolve(value); },
+      () => { clearTimeout(timer); resolve(null); },
+    );
+  });
 }
 
 /**
@@ -188,28 +215,31 @@ async function rereadPermission(chrome: NonNullable<NotifyAskHost['NativeChrome'
  * be undone from the OS settings page.
  *
  * The outcome is kept apart on purpose: only a real refusal may be drawn as
- * notifications being off. A missing bridge is 'no-app'; a throw or an
- * answer that cannot be read is 'unknown'.
+ * notifications being off. A missing bridge is 'no-app'; an answer that
+ * cannot be read is 'unknown', so the card can stop asking without guessing.
  *
- * A refusal is read once more before it is trusted, since a grant can land
- * just after Android's watch ended: granted becomes 'granted', denied stays
- * 'denied' (keeping `settings`), and anything else is 'unknown'. Never
- * throws.
+ * A 'granted' answer is trusted. Anything else, a refusal, an unreadable
+ * answer, or no answer at all within ASK_OS_LIMIT_MS (a bridge that never
+ * settles), is read once more before it is trusted, since a grant can land
+ * just after the phone's watch ended or its answer was lost: granted becomes
+ * 'granted', denied stays 'denied' (with a way to the settings page), and
+ * anything else is 'unknown'. Never throws.
  */
-export async function askOs(): Promise<{ outcome: AskOutcome; settings: boolean }> {
+export async function askOs(limitMs: number = ASK_OS_LIMIT_MS): Promise<{ outcome: AskOutcome; settings: boolean }> {
   const chrome = host().NativeChrome;
   if (!chrome || typeof chrome.notifyWhenReady !== 'function') return { outcome: 'no-app', settings: false };
   try {
-    const answer = await chrome.notifyWhenReady();
+    const answer = await withinLimit(chrome.notifyWhenReady(), limitMs);
     const outcome = answer?.outcome;
     if (outcome === 'granted') return { outcome: 'granted', settings: false };
     if (outcome === 'no-app') return { outcome: 'no-app', settings: false };
-    if (outcome !== 'denied') return { outcome: 'unknown', settings: false };
     const settings = answer?.settings === true;
     const again = await rereadPermission(chrome);
-    if (again === 'granted') return { outcome: 'granted', settings: false };
-    if (again === 'denied') return { outcome: 'denied', settings };
-    return { outcome: 'unknown', settings: false };
+    if (again.permission === 'granted') return { outcome: 'granted', settings: false };
+    if (again.permission === 'denied') {
+      return { outcome: 'denied', settings: settings || again.canOpenSettings };
+    }
+    return { outcome: 'unknown', settings: again.canOpenSettings };
   } catch {
     return { outcome: 'unknown', settings: false };
   }
