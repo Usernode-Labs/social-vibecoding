@@ -15,7 +15,7 @@
 //
 // When the bot speaks is unchanged (decision 9): today's rules, written down.
 
-const KINDS = Object.freeze(['private', 'design', 'request', 'change', 'channel', 'reply']);
+const KINDS = Object.freeze(['private', 'design', 'draft', 'request', 'change', 'channel', 'reply']);
 
 // A project's thread kind, by the place type the chat stores it under.
 const PLACE_KIND = Object.freeze({ issue: 'request', session: 'change', chat: 'channel', category: 'channel', message: 'reply' });
@@ -72,15 +72,34 @@ const DESIGN_LIMITS = Object.freeze({
   editsPerCall: 16,
 });
 
+// A private thread with an open live draft (services/live-drafts.js): the
+// bot changes the draft's code while its preview runs beside the chat. An
+// answer reads some code, edits, saves (the preview restarts) and replies;
+// a save that stops the app is fixed in the same turn, so it may save a few
+// times.
+const DRAFT_LIMITS = Object.freeze({
+  rounds: 18,
+  appliesPerTurn: 3,
+  editsPerCall: 16,
+  outputTokens: 16000,
+  retryOutputTokens: 32000,
+  requestTimeoutMs: 180_000,
+  history: 16,
+  replyChars: 1500,
+});
+
 const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
-  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'close_thread',
+  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'open_app_preview', 'close_thread',
   'report_problem', 'offer_new_project', 'reply',
 ]);
 const DESIGN_TOOLS = Object.freeze([
   'write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'read_plan', 'compare_versions',
   'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'offer_request', 'list_requests', 'get_request', 'capture_page',
+]);
+const DRAFT_TOOLS = Object.freeze([
+  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes', 'reply',
 ]);
 // Every project thread offers these; each kind adds its own.
 const THREAD_TOOLS = Object.freeze([
@@ -107,6 +126,11 @@ const PROFILES = Object.freeze({
   }),
   design: profile('design', {
     surface: 'design', scope: 'design', prompt: 'design', limits: DESIGN_LIMITS, tools: DESIGN_TOOLS,
+  }),
+  // A private thread whose live draft is open: every message there is the
+  // draft bot's (services/live-draft-bot.js) while it stays open.
+  draft: profile('draft', {
+    surface: 'draft', scope: 'draft', prompt: 'draft', limits: DRAFT_LIMITS, tools: DRAFT_TOOLS,
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
@@ -164,11 +188,12 @@ function profileOfPlace(place) {
  * message is always in one or the other; one in no other thread is its own
  * thread's first (homeroom-bot-dm.js messageThread).
  */
-function kindInChat({ design = null } = {}) {
+function kindInChat({ design = null, draft = null } = {}) {
+  if (draft) return 'draft';
   return design ? 'design' : 'private';
 }
 
 module.exports = {
-  KINDS, PLACE_KIND, CHAT_LIMITS, THREAD_LIMITS, DESIGN_LIMITS, THREAD_CHECKS, PROFILES,
+  KINDS, PLACE_KIND, CHAT_LIMITS, THREAD_LIMITS, DESIGN_LIMITS, DRAFT_LIMITS, THREAD_CHECKS, PROFILES,
   profileOf, kindOfPlace, profileOfPlace, kindInChat,
 };

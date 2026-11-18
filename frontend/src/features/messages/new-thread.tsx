@@ -55,7 +55,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 
 import { ChatComposerBar } from '@/components/ui/chat';
-import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
+import { AppWindowIcon, ArrowTopRightOnSquareIcon, ArrowUpIcon, ChatIcon, FlagIcon, PaperClipIcon, PencilSquareIcon, PlayIcon, PlusIcon, SparklesIcon, XIcon } from '@/components/ui/icons';
 import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useAutoGrow } from '../../lib/use-auto-grow';
@@ -90,6 +90,23 @@ export const NEW_THREAD_STARTS = [
   { key: 'newPage', kind: 'design', label: 'messages:newThread.starts.newPage.label', text: 'messages:newThread.starts.newPage.text', Icon: AppWindowIcon },
   { key: 'ask', kind: 'any', label: 'messages:newThread.starts.ask.label', text: 'messages:newThread.starts.ask.text', Icon: ChatIcon },
 ] as const;
+
+/**
+ * A sixth start, drawn only once a project of its own is picked (never Any
+ * project, never Homeroom itself): changing the project live. Homeroom bot
+ * opens a live draft of it beside the chat (homeroom-bot-mayor.js
+ * open_app_preview, services/live-drafts.js) and changes it as they talk.
+ * Its kind is any: the thread is no particular kind of change.
+ */
+export const LIVE_START = {
+  key: 'live', kind: 'any', label: 'messages:newThread.starts.live.label', text: 'messages:newThread.starts.live.text', Icon: PlayIcon,
+} as const;
+
+/** Pure: whether the live start is offered for the picked project. */
+export function offersLive(project: string | null | undefined, info: Record<string, { selfHosted?: boolean } | undefined>): boolean {
+  if (!project) return false;
+  return !info[project]?.selfHosted;
+}
 
 /**
  * Pure: the start a message begins with (its words, ignoring case and the
@@ -239,7 +256,10 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   // Plain Enter sends on this device: the hint and the tooltip say so.
   const enterKey = useEnterSends();
   // The starts in the reader's language: what each writes, and what it is for.
-  const starts = NEW_THREAD_STARTS.map((start) => ({ ...start, text: t(start.text) }));
+  const scope = useSyncExternalStore(communityScopeStore.subscribe, communityScopeStore.get, communityScopeStore.get);
+  const offered = offersLive(project, scope.info as Record<string, { selfHosted?: boolean } | undefined>)
+    ? [...NEW_THREAD_STARTS, LIVE_START] : NEW_THREAD_STARTS;
+  const starts = offered.map((start) => ({ ...start, text: t(start.text) }));
   const begun = startOf(words, starts);
   const drawing = begun?.kind === 'design';
 

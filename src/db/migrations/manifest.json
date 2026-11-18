@@ -445,6 +445,11 @@
       "id": "work-state-marks-shots",
       "sha256": "b497831d6ed7bb3d5ba4fb95579753abe8630e66e475e8b629a92f5d4eec5e0f",
       "schemaSha256": "f974fd23a77665f83f43f9ac698af8072785e13444ca45b4002d1b7614d3f143"
+    },
+    {
+      "id": "live-drafts",
+      "sha256": "ebc3eddb83712a37716e0526d95bfde7222a43efd6998e0cb603167d25b87c23",
+      "schemaSha256": "b9d342b60862e2d992be6fde657197983e33427a8d02e865133d7ce9d44dbebe"
     }
   ]
 }

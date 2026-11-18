@@ -1425,6 +1425,33 @@ function adminRoutes(config) {
     res.json({ ...snap, configured });
   });
 
+  // Live app drafts (services/live-drafts.js): open to everyone, and a full
+  // admin's switch turns them off for everyone at once, with no deploy: no
+  // new draft opens, no edit runs, and an open draft's thread is answered as
+  // any other. Read open to view-only admins; the write is requireAdminWrite.
+  router.get('/api/admin/live-drafts', async (_req, res) => {
+    try {
+      res.json(await require('../services/live-drafts').adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read live drafts switch failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/live-drafts', requireAdminWrite, async (req, res) => {
+    const on = req.body ? req.body.enabled : undefined;
+    if (typeof on !== 'boolean') return res.status(400).json({ error: 'Provide enabled: true or false.' });
+    try {
+      const drafts = require('../services/live-drafts');
+      await drafts.setEnabled(pool, { on, actorId: req.user.id });
+      log.info('admin', 'Live drafts switched', { by: req.user.username, enabled: on });
+      res.json(await drafts.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Switch live drafts failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
     const body = req.body || {};
     if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {
