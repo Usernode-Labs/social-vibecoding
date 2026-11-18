@@ -1827,6 +1827,9 @@ async function recordAsk(pool, {
     );
     const running = (await askState(pool, sessionId)).running
       || await changeBusy(pool, sessionId);
+    // #6819: a queued ask is an update on its way, so the change's stored
+    // work state stops asking for a vote at once, as its page says.
+    await require('./work-state').touched(pool, [{ sessionId }]);
     if (!enqueue) return { id: Number(row.id), running, queued: null };
     // Its follow-up first in the queue: null when one has it claimed now
     // (it takes this ask after), undefined when it could not be queued.
@@ -1859,6 +1862,8 @@ async function takeAsks(pool, { sessionId, runTag }) {
      RETURNING a.*, (SELECT username FROM users WHERE id = a.asker_id) AS asker`,
     [Number(sessionId), String(runTag)],
   );
+  // #6819: an ask taken is an update under way: read its change again.
+  if (rows.length) await require('./work-state').touched(pool, [{ sessionId }]);
   return rows.sort((a, b) => a.id - b.id);
 }
 
@@ -1878,6 +1883,8 @@ async function releaseAsks(pool, { runTag, refund = false }) {
       RETURNING *, (SELECT username FROM users WHERE id = asker_id) AS asker`,
     [String(runTag), MAX_ASK_TRIES, !!refund],
   );
+  // #6819: the asks are let go, so their changes are read again.
+  await touchAskSessions(pool, rows);
   return rows.filter((r) => r.status === 'failed');
 }
 
@@ -1893,11 +1900,23 @@ async function asksOf(pool, runTag) {
 }
 
 async function finishAsks(pool, { runTag, runId = null, status = 'done' }) {
-  await pool.query(
+  const { rows } = await pool.query(
     `UPDATE homeroom_bot_change_asks SET status = $3, run_id = $2, done_at = NOW()
-      WHERE run_tag = $1 AND status = 'taken'`,
+      WHERE run_tag = $1 AND status = 'taken'
+      RETURNING session_id`,
     [String(runTag), runId, status],
   );
+  // #6819: the update landed: its change asks for a vote again if its
+  // checks passed. Inside the caller's transaction, the refresh's push goes
+  // out when it commits.
+  await touchAskSessions(pool, rows);
+}
+
+/** #6819: read each change an ask was about again, at once per change. */
+async function touchAskSessions(db, rows) {
+  const sessionIds = [...new Set((rows || []).map((r) => Number(r.session_id)).filter((id) => id > 0))];
+  const workState = require('./work-state');
+  for (const sessionId of sessionIds) await workState.touched(db, [{ sessionId }]);
 }
 
 /** Whether asks wait on `sessionId` (the follow-up queues itself again after a run). */

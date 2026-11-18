@@ -701,5 +701,51 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     state = await stored('change', ownTakeover.id);
     assert.deepEqual([state.stage, state.line], ['checking', { code: 'checks_failing' }], 'a verdict after it clears it');
   });
+
+  // #6819: a follow-up turn refreshes the change's stored work state at its
+  // start and its end, so the row never says "up for a vote" while the
+  // change's page says an update is coming. A shots turn is no update.
+  await t.test('#6819: a follow-up turn refreshes the stored work state, and lets go of it', async () => {
+    const worker = require('../src/services/worker');
+    const voice = require('../src/services/homeroom-bot-voice');
+    await pool.query("UPDATE apps SET repo_url = 'https://github.com/seed/swap' WHERE id = $1", [app.id]);
+    const followed = await change(bob, 610, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await pool.query("UPDATE chat_sessions SET branch_name = 'seed-swap-610' WHERE id = $1", [followed.id]);
+    await ws.refresh(pool, [{ sessionId: followed.id }]);
+    const voteOpen = async () => (await one(
+      `SELECT vote_open FROM work_states WHERE item_kind = 'change' AND item_ref = $1`, [followed.id])).vote_open;
+    assert.deepEqual([(await stored('change', followed.id)).stage, await voteOpen()], ['up_for_vote', true]);
+
+    // The turn starts: the row is read again, without any route's write.
+    const persisted = await worker._persistActiveTurn(followed.id, {
+      turnId: 'turn-6819', phase: 'dispatch_pending', mode: 'build', journal: 'j6819', branchName: 'seed-swap-610',
+    });
+    assert.equal(persisted.ok, true);
+    let state = await stored('change', followed.id);
+    assert.deepEqual([state.stage, state.line], ['building', { code: 'revising' }], 'a build turn is an update under way');
+    assert.equal(await voteOpen(), false, 'and not a vote to owe');
+
+    // The turn ends: it asks again.
+    await worker.finishTurn(followed.id, { turnId: 'turn-6819', journal: 'j6819' });
+    assert.equal((await stored('change', followed.id)).stage, 'up_for_vote');
+
+    // A shots turn is no update, at its start or its end.
+    await worker._persistActiveTurn(followed.id, {
+      turnId: 'turn-6819-shots', phase: 'dispatch_pending', mode: 'shots', journal: 'j6819s', branchName: 'seed-swap-610',
+    });
+    assert.equal((await stored('change', followed.id)).stage, 'up_for_vote', 'a shots turn leaves the vote up');
+    await worker.finishTurn(followed.id, { turnId: 'turn-6819-shots', journal: 'j6819s' });
+    assert.equal((await stored('change', followed.id)).stage, 'up_for_vote');
+
+    // The asks: one taken is an update under way, and one done lets the vote go.
+    await one(
+      `INSERT INTO homeroom_bot_change_asks (app_id, session_id, issue_number, instruction, status)
+       VALUES ($1, $2, NULL, 'drop the second line', 'queued') RETURNING id`, [app.id, followed.id]);
+    await voice.takeAsks(pool, { sessionId: followed.id, runTag: 'run-6819' });
+    state = await stored('change', followed.id);
+    assert.deepEqual([state.stage, state.line], ['building', { code: 'revising' }], 'an ask taken is an update under way');
+    await voice.finishAsks(pool, { runTag: 'run-6819' });
+    assert.equal((await stored('change', followed.id)).stage, 'up_for_vote', 'the update landed: it asks again');
+  });
 });
 
