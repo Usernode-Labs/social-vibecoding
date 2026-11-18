@@ -343,6 +343,10 @@ async function migrate(config) {
   // it, so its card offers to watch the bot build it. A fresh copy has no bot
   // mid-build, so one is seeded, for the same member.
   await seedStagingFirstVersionBuildingThread(pool);
+  // #6816's shots: enough recent threads for the shots' member fixture that
+  // Home's card beside Pinned apps cannot list them all, so its last row has
+  // a "N more" state to show. Obviously fake, idempotent.
+  await seedStagingRecentThreads(pool);
   // #6124's before/after shots follow a change renamed before it had a pull
   // request: the correction is in proposed_pr_title and the session still
   // carries the old name. A fresh clone has no such row for the shots'
@@ -3179,6 +3183,90 @@ async function seedStagingFirstVersionBuildingThread(pool) {
     );
   } catch (err) {
     log.warn('db', 'Staging building first version thread seeding failed', { message: err.message });
+  }
+}
+
+// #6816's shots: Home's card beside Pinned apps lists the viewer's recent
+// threads, as many as fit, and when some do not fit its last row says how
+// many more there are and opens the whole list. A fresh staging copy holds a
+// handful of threads for the shots' member fixture (usernode-capture) and
+// they all fit beside Pinned apps, so the "N more" row is a state no copy can
+// reach. This seeds ten requests filed by them, spread over the last ten
+// days, on one obviously fake project of their own: each request joins a
+// thread of its own (requests_attach_thread), so the card has more to list
+// than a column can hold. Nothing here is a signal the app reads to decide
+// what to show beyond being the threads it lists. Idempotent through the
+// project's fixed id and each request's number; strictly a no-op outside
+// staging.
+const STAGING_RECENT_THREADS = Object.freeze({
+  appId: 900157,
+  slug: 'staging-demo-kite-log',
+  name: 'Staging demo: kite log',
+  firstNumber: 990601,
+});
+
+/** Each obviously fake request's title, with how many minutes ago it was filed, newest first. */
+const STAGING_RECENT_THREAD_TITLES = Object.freeze([
+  ['Staging demo: log a kite by its colour', 20],
+  ['Staging demo: count how many kites flew today', 95],
+  ['Staging demo: add a picture to a kite\'s entry', 260],
+  ['Staging demo: list the windiest afternoons', 700],
+  ['Staging demo: share a kite with a friend', 1500],
+  ['Staging demo: remind me to fly on a Sunday', 2900],
+  ['Staging demo: sort kites by how high they flew', 4300],
+  ['Staging demo: hide kites I have given away', 6100],
+  ['Staging demo: name the field I fly from', 9000],
+  ['Staging demo: export my kite log', 13000],
+]);
+
+async function seedStagingRecentThreads(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const fixture = STAGING_RECENT_THREADS;
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    if (!people.rows.length) return;
+    const memberId = people.rows[0].id;
+    // The fake project, theirs: a project's INSERT mints its community, and
+    // their own collaborator row is what lets them open it (and puts them in
+    // that community by trigger), as seedStagingStorageNotices writes it.
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility, created_by)
+       VALUES ($1::int, $2::text, $3::text, 'running', 'members', 'private', $4::int)
+       ON CONFLICT (id) DO NOTHING`,
+      [fixture.appId, fixture.name, fixture.slug, memberId],
+    );
+    const app = await pool.query('SELECT id FROM apps WHERE id = $1', [fixture.appId]);
+    if (!app.rows.length) return;
+    await pool.query(
+      `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+       VALUES ($1::int, $2::int, 'member', NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [fixture.appId, memberId],
+    );
+    for (const [index, [title, minutesAgo]] of STAGING_RECENT_THREAD_TITLES.entries()) {
+      const number = fixture.firstNumber + index;
+      await pool.query(
+        `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+         SELECT $1::int, $2::int, $3::text, 'Staging demo: obviously fake.', $4::int,
+                NOW() - make_interval(mins => $5::int), NOW() - make_interval(mins => $5::int - 5)
+          WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1::int AND number = $2::int)`,
+        [fixture.appId, number, title, memberId, minutesAgo],
+      );
+      // The request's trigger made its thread just now (requests_attach_thread),
+      // and a thread's creation counts as its last activity: without this the
+      // ten would all read "just now" and sort by id. Its request's own moment
+      // is when it started, so the thread takes that.
+      await pool.query(
+        `UPDATE threads t
+            SET created_at = r.created_at
+           FROM requests r
+          WHERE r.app_id = $1::int AND r.number = $2::int
+            AND t.id = r.thread_id AND t.created_at <> r.created_at`,
+        [fixture.appId, number],
+      );
+    }
+  } catch (err) {
+    log.warn('db', 'Staging recent threads seeding failed', { message: err.message });
   }
 }
 
@@ -16515,6 +16603,8 @@ module.exports = {
   seedStagingOlderFirstVersionThread,
   // A first version being built, whose plan was answered with Build it.
   seedStagingFirstVersionBuildingThread,
+  // #6816: more recent threads than Home's card beside Pinned apps can list.
+  seedStagingRecentThreads,
   seedStagingPlatformMail, auditDuplicatePrSessions,
   migrateWaitlistCountryCodes,
   seedStagingHelperCalls,
