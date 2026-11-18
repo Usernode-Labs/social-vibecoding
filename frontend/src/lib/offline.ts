@@ -193,7 +193,8 @@ function publishStatus(now: number = Date.now()): void {
     if (!hideTimer) hideTimer = setTimeout(() => { hideTimer = null; publishStatus(); }, hold);
     return;
   }
-  hiddenAt = now;
+  // A restart notice going is no flap: only an offline spell counts.
+  if (current !== 'updating') hiddenAt = now;
   connectionStatusStore.set({ status: 'online' });
   // Back online, every screen reads again: nothing saved is on show.
   resetFreshness();

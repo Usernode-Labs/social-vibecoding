@@ -186,8 +186,11 @@ class MirrorStore implements KeptStore {
         }
       });
     }
-    // Written while loading: newer than what the database had.
-    for (const [key, value] of saved) if (!this.copies.has(key) && !this.removedWhileLoading.has(key)) this.copies.set(key, value);
+    // Written while loading: newer than what the database had. Cleared while
+    // loading (another account signed in): nothing it had is theirs.
+    if (!this.clearedWhileLoading) {
+      for (const [key, value] of saved) if (!this.copies.has(key) && !this.removedWhileLoading.has(key)) this.copies.set(key, value);
+    }
     this.removedWhileLoading.clear();
     // An older build's copies, in localStorage: move them across, once.
     const ls = local();
@@ -209,6 +212,15 @@ class MirrorStore implements KeptStore {
   }
 
   private readonly removedWhileLoading = new Set<string>();
+  private clearedWhileLoading = false;
+
+  /** Forget every copy, those the database holds and has not loaded yet included. */
+  clear(): void {
+    this.copies.clear();
+    this.order = null;
+    if (!this.loaded) this.clearedWhileLoading = true;
+    this.write((store) => { store.clear(); });
+  }
 
   private write(run: (store: IDBObjectStore) => void): void {
     this.chain = this.chain.then(async () => {
@@ -321,7 +333,8 @@ function forViewer(): { store: KeptStore; scope: string } | null {
   if (!store || !owner || !scope) return null;
   try {
     if (owner.getItem(OWNER_KEY) !== scope) {
-      removeStarting(store, PREFIX);
+      if (store instanceof MirrorStore) store.clear();
+      else removeStarting(store, PREFIX);
       if (owner !== store) removeStarting(owner, PREFIX);
       owner.setItem(OWNER_KEY, scope);
     }
@@ -454,7 +467,8 @@ export function keepRecent(family: string, id: string | number, max: number): vo
 /** Forget everything kept, for everyone: a session that is over (App._dropCachedSession). */
 export function forgetKeptCopies(): void {
   const store = storage();
-  if (store) removeStarting(store, PREFIX);
+  if (store instanceof MirrorStore) store.clear();
+  else if (store) removeStarting(store, PREFIX);
   const ls = local();
   if (ls && ls !== store) removeStarting(ls, PREFIX);
 }

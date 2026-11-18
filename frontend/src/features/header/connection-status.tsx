@@ -72,7 +72,7 @@ export function ConnectionStatus() {
       aria-live="polite"
       data-status={mounted ? status : 'online'}
       className="connection-status hidden pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 -translate-x-1/2
-                 inline-flex max-w-[calc(100vw-2rem)] items-center gap-1.5 whitespace-nowrap rounded-full
+                 inline-flex max-w-[calc(var(--platform-float-w)-24px)] items-center gap-1.5 whitespace-nowrap rounded-full
                  bg-zinc-800/90 px-3 py-1 text-xs font-medium text-white shadow-sm
                  dark:bg-zinc-100/90 dark:text-zinc-900"
     >

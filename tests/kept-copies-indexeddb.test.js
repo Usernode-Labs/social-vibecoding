@@ -37,6 +37,7 @@ function fakeIndexedDb(data = new Map()) {
         getAll: () => ({ result: [...data.values()] }),
         put: (value, key) => { data.set(key, value); },
         delete: (key) => { data.delete(key); },
+        clear: () => { data.clear(); },
       });
       setTimeout(() => tx.oncomplete && tx.oncomplete(), 0);
       return tx;
@@ -109,6 +110,20 @@ test('an older build\'s copies in localStorage move to IndexedDB on the first lo
   assert.equal(local.getItem('usernode:kept:owner'), ADA, 'whose the copies are stays in localStorage');
   assert.equal(idb.data.get('usernode:kept:home:pins'), entry);
   assert.deepEqual(kept.keptCopy('home:pins'), { pins: [{ slug: 'p' }] });
+});
+
+test('another account signing in before the database loaded reads none of the last one\'s copies', async (t) => {
+  const BEA = 'b'.repeat(64);
+  const entry = JSON.stringify({ scope: ADA, at: Date.now() - 1000, data: { conversations: [{ id: 9 }] } });
+  const idb = fakeIndexedDb(new Map([['usernode:kept:conversations', entry]]));
+  device(t, { idb, local: fakeStorage({ 'usernode:kept:owner': ADA }) });
+  globalThis.document.cookie = `__Host-usernode_api_scope=${BEA}`;
+  const kept = loadTsx(KEPT);
+  assert.equal(kept.keptCopy('conversations'), null);
+  await kept.keptLoaded();
+  await settle();
+  assert.equal(kept.keptCopy('conversations'), null, 'still none once it has loaded');
+  assert.equal(idb.data.size, 0, 'and the database holds none of them');
 });
 
 test('a sign-out forgets every copy, in the database and in localStorage', async (t) => {

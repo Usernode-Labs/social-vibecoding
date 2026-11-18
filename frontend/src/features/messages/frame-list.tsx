@@ -7,8 +7,9 @@
  * kit's one row in one card. The standard list's People section is the
  * tab, and everything inside it is as it is there: a group's member count
  * after its name, and "N new" or the time. Agents was the second tab until
- * it left Messages (16 Nov 2026). What the list says when it is offline,
- * failed, loading, empty or searched to nothing is the product's sentence.
+ * it left Messages (16 Nov 2026). What the list says when it has failed, is
+ * loading, empty or searched to nothing is the product's sentence; being
+ * offline the header's connection status says, for every screen.
  *
  * Presentational. The list pane (./index.tsx ConversationList) builds each
  * row from the conversations and words it already has, and hands the result
@@ -17,7 +18,7 @@
  */
 import type { MouseEvent, ReactNode } from 'react';
 
-import { Btn, Card, Frame, Head, Icon, Note, Pill, Row, Search, Sec, Tabs, k } from '@/components/ui/kit';
+import { Btn, Card, Frame, Head, Icon, Pill, Row, Search, Sec, Tabs, k } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 
 export interface FrameInboxRow {
@@ -48,6 +49,7 @@ export interface FrameInboxState {
   /** The read failed, in the store's words. */
   error: string | null;
   onRetry: () => void;
+  /** Offline. Nothing in the list says so (the header's connection status does); kept for the pane that passes it. */
   offline: boolean;
   /** The inbox holds nothing at all (not: this search matched nothing). */
   empty: boolean;
