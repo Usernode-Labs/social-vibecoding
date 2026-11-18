@@ -5513,7 +5513,7 @@ html[data-skin-wip] {
   --wip-tile-h: 6.25rem;       /* p-3 12 + icon 72 + p-3 12, and the text's 94 */
   --wip-tile-gap: 0.75rem;
   --wip-icon: 4.5rem;
-  --wip-icon-radius: 0.875rem;  /* 14px: an icon is a step rounder than the things beside it, about a fifth of its side */
+  --wip-icon-radius: 1.125rem;  /* 18px: an icon is rounder than the things beside it, a quarter of its side, as a phone's app icon is */
   --wip-icon-glyph: 2rem;      /* an emoji icon's size */
   --wip-icon-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 6px 14px -4px rgb(0 0 0 / 0.2);
   --wip-icon-edge: var(--wip-card-line); /* a hairline round an icon's tile, so a white icon keeps its shape on a white card */
@@ -5530,7 +5530,7 @@ html[data-skin-wip] {
   /* A panel's row of items (Needs you) */
   --wip-item-radius: var(--wip-radius-inner);
   --wip-item-icon: 2.25rem;
-  --wip-item-icon-radius: 0.5rem; /* 8px, the same fifth of a small icon's side */
+  --wip-item-icon-radius: 0.5625rem; /* 9px, the same quarter of a small icon's side */
   --wip-ink: var(--text-primary);
   --wip-ink-soft: var(--text-secondary);
   --wip-pill-bg: var(--accent);
@@ -6050,6 +6050,11 @@ html[data-skin-wip] #home-join-section [data-guest-card-cover][style]::before {
   background: inherit;
   filter: var(--wip-cover-lift);
 }
+/* The sidebar's community icons are rounded squares, as the icons on Home
+   are, not discs: the tile's own small corner, and the picture inside it
+   takes the same one (it rounded itself into a circle). */
+html[data-skin-wip] .platform-rail-tile,
+html[data-skin-wip] .platform-rail-tile > img { border-radius: var(--wip-radius-small); }
 /* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
    Pinned communities: the section stays mounted, since it loads the pins
    other parts of Home read, and is not displayed. */
