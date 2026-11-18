@@ -26,13 +26,38 @@
 import { flushSync } from 'react-dom';
 
 import { stagingBridge, visualCompareBridge } from './staging-bridge.js';
-import { stagingStore, visualCompareStore } from './staging-store.js';
+import { stagingHandlers, stagingStore, visualCompareStore } from './staging-store.js';
+import { placePreview, togglePreviewSize, unplacePreview } from './placement';
 
 // Legacy callers read the DOM on their next statement (`_watchStagingIframeLoad`
 // straight after `open()`), so store writes must land synchronously — the same
 // contract an `innerHTML` assignment used to give them.
 stagingStore.setFlush(flushSync);
 visualCompareStore.setFlush(flushSync);
+
+// Where the preview stands (./placement.ts), which needs the detail column's
+// and the side panel's stores, so it joins the bridge here rather than in
+// the React-free ./staging-bridge.js the tests drive on its own.
+Object.assign(stagingBridge, {
+  place: (input?: { sessionId?: number | null; wide?: boolean }) => placePreview(input || {}),
+  unplace: () => unplacePreview(),
+  placementNow: () => {
+    const s = stagingStore.get();
+    return s.expanded ? 'full' : s.placement;
+  },
+});
+
+// The header's own controls, which need nothing from app-view.js: Full
+// window and back, the Preview | Before & after switch, and Comment, which
+// turns on comment mode over the preview (its pins in the preview go to the
+// change, ../comment-pin/).
+stagingHandlers.onSize = () => { togglePreviewSize(); };
+stagingHandlers.onView = (view?: string) => { stagingBridge.setView(view === 'shots' ? 'shots' : 'preview'); };
+stagingHandlers.onComment = () => {
+  import('../comment-pin/comment-pin')
+    .then((m) => m.toggleCommentMode({ via: 'switch' }))
+    .catch(() => {});
+};
 
 export { stagingBridge, visualCompareBridge };
 

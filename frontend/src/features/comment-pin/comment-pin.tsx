@@ -99,6 +99,15 @@ import {
 export const HOST_ID = 'comment-pin-host';
 // Where a request can go, in the order the two choices are drawn.
 const TARGETS: readonly Target[] = ['app', 'platform'];
+/** Pinned in a change's preview: the change itself comes first, and is the default. */
+const PREVIEW_TARGETS: readonly Target[] = ['change', 'app', 'platform'];
+
+/** The change number the open preview shows (AppView._stagingPreview.number), or null. */
+function previewChangeNumber(): number | null {
+  const pv = (window as unknown as { AppView?: { _stagingPreview?: { number?: unknown } | null } }).AppView?._stagingPreview;
+  const n = Number(pv?.number);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
 const BOX_WIDTH = 360;
 /** A control on a phone: a 44px target round a 32px grey disc, seen and
  *  hit. The sheet's ✕ was a 16px grey glyph in a 32px box, easy to miss and
@@ -1123,7 +1132,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       }
     }
     const first = live[0] || d.comments[0];
-    const target: Target = app ? (d.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform';
+    const inPreview = !!(app && first?.inApp && first.preview);
+    const target: Target = app ? (d.chosen ?? (inPreview ? 'change' : first?.inApp ? 'app' : 'platform')) : 'platform';
     return {
       text: numberedWords(live.map((c) => c.text)),
       target,
@@ -1134,6 +1144,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       title: titleToSend(d),
       bounty: !KUDOS_PARKED && d.kudos && budget.remaining !== 0,
       change: changeLine(live.find((c) => c.inApp && c.preview)?.preview ?? null, app?.slug ?? null),
+      sessionId: live.find((c) => c.inApp && c.preview)?.preview ?? null,
     };
   }, [app, budget.remaining]);
 
@@ -1146,16 +1157,22 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     if (outcome.ok) {
       const live = liveComments(d);
       const many = live.length > 1;
-      const name = post.target === 'app' && app ? app.name : 'Homeroom';
-      const number = numberFromUrl(outcome.url);
-      const slug = post.target === 'app' ? app?.slug : platformSlug();
+      const toChange = post.target === 'change' && !!app && !!post.sessionId;
+      const changeNumber = previewChangeNumber();
+      const name = toChange
+        ? (changeNumber ? t('devchat:commentPin.target.change', { number: changeNumber }) : t('devchat:commentPin.target.thisChange'))
+        : post.target === 'app' && app ? app.name : 'Homeroom';
+      const number = toChange ? null : numberFromUrl(outcome.url);
+      const slug = post.target === 'platform' ? platformSlug() : app?.slug;
       setPosted((list) => [...list, {
         key: d.key,
         title: outcome.title || post.title || '',
         words: post.text,
         to: name,
         number: number || null,
-        href: number && slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${number}` : null,
+        href: toChange && slug
+          ? `#app/${encodeURIComponent(slug)}/dev/proposals/${post.sessionId}`
+          : number && slug ? `#app/${encodeURIComponent(slug)}/dev/issues/${number}` : null,
         // #6121: what the request actually carries.
         pictures: Math.max(0, (post.shots?.length || 0) + (post.images?.length || 0) - outcome.droppedPictures),
         comments: live.length,
@@ -1565,7 +1582,13 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
     : carry ? t('devchat:commentPin.hint.carry') : postedCount ? t('devchat:commentPin.hint.another') : t('devchat:commentPin.hint.start');
 
   const first = draft ? draft.comments[0] : null;
-  const target: Target | null = draft ? (app ? (draft.chosen ?? (first?.inApp ? 'app' : 'platform')) : 'platform') : null;
+  const inPreview = !!(app && first?.inApp && first.preview);
+  const targets = inPreview ? PREVIEW_TARGETS : TARGETS;
+  const target: Target | null = draft ? (app ? (draft.chosen ?? (inPreview ? 'change' : first?.inApp ? 'app' : 'platform')) : 'platform') : null;
+  const changeNumber = inPreview ? previewChangeNumber() : null;
+  const targetLabel = (value: Target): string => (value === 'change'
+    ? (changeNumber ? t('devchat:commentPin.target.change', { number: changeNumber }) : t('devchat:commentPin.target.thisChange'))
+    : value === 'app' && app ? app.name : 'Homeroom');
   const count = draft ? pictureCount(draft) : 0;
   const live = draft ? liveComments(draft).length : 0;
   const numbered = !!draft && (draft.comments.length > 1 || draft.active == null);
@@ -1620,7 +1643,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
 
   // Where the request goes is one tab stop, and the arrow keys move the
   // pick (#6510). Nothing moves while it is sending: its radios are disabled.
-  const targetKeys = radioGroupKeys(TARGETS, target, (value) => {
+  const targetKeys = radioGroupKeys(targets, target, (value) => {
     if (draft && !draft.sending) update(draft.key, { chosen: value });
   });
 
@@ -1630,7 +1653,7 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
       {app ? (
         <div className="flex min-w-0 items-center gap-1 text-[13px]" role="radiogroup" aria-label={t('devchat:commentPin.target.groupLabel')} onKeyDown={targetKeys.onKeyDown}>
           <span className="text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.target.to')}</span>
-          {TARGETS.map((value) => [value, value === 'app' ? app.name : 'Homeroom'] as const).map(([value, label]) => (
+          {targets.map((value) => [value, targetLabel(value)] as const).map(([value, label]) => (
             <button
               key={value}
               type="button"
@@ -1640,9 +1663,10 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
               id={`comment-pin-to-${value}`}
               disabled={draft.sending}
               onClick={() => update(draft.key, { chosen: value })}
-              className={target === value
+              // The change keeps its whole name ("Change #34"); the others give way.
+              className={`${value === 'change' ? 'shrink-0 ' : ''}${target === value
                 ? 'max-w-[120px] truncate rounded-full bg-zinc-200 px-2.5 py-1 font-medium text-zinc-900 dark:bg-zinc-700 dark:text-white'
-                : 'max-w-[120px] truncate rounded-full px-2.5 py-1 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'}
+                : 'max-w-[120px] truncate rounded-full px-2.5 py-1 text-zinc-600 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-800'}`}
             >
               {label}
             </button>
@@ -1972,7 +1996,8 @@ function CommentMode({ session, onClose }: { session: Session; onClose: () => vo
             )))}
             {nextPinRow}
           </div>
-          <div id="comment-pin-title" className="flex min-h-[32px] items-center gap-2 rounded-[10px] bg-zinc-100 py-1 ps-2.5 pe-1 text-[13px] dark:bg-zinc-800">
+          {/* A comment on a change is a message in its thread: it has no title. */}
+          <div id="comment-pin-title" className={`${target === 'change' ? 'hidden' : 'flex'} min-h-[32px] items-center gap-2 rounded-[10px] bg-zinc-100 py-1 ps-2.5 pe-1 text-[13px] dark:bg-zinc-800`}>
             <span className="shrink-0 font-semibold text-zinc-500 dark:text-zinc-400">{t('devchat:commentPin.title.label')}</span>
             {draft.editingTitle ? (
               <input

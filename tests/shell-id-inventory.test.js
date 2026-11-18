@@ -430,6 +430,22 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── The change preview's redesign (Nov 2026) ───────────────────────
+  // features/staging/staging-overlay.tsx: one header in the theme's colours
+  // with the change's name, its vote and the Preview | Before & after switch,
+  // and one optional line under it. Every one ships in the prerender (hidden
+  // where it waits on state) and is toggled through refs.
+  'staging-facts': 'The line under a change preview\'s title: "Change #34 · Needs 1 more yes", read the way the chat\'s vote card reads it.',
+  'staging-view-switch': 'The change preview\'s Preview | Before & after switch, shown only when the change has verified before-and-after shots.',
+  'staging-view-preview': 'The Preview side of that switch: the running change.',
+  'staging-view-shots': 'The Before & after side of that switch: the change\'s shots viewer (AppView.shotsHtml), drawn over the preview frame, which keeps running.',
+  'staging-vote-btn': 'The platform\'s Vote button in the change preview\'s header (See the vote once voted), opening the change\'s Votes card as the chat\'s vote card does.',
+  'staging-comment-btn': 'Comment in the change preview\'s header: turns on comment mode over the preview; pins there go to the change\'s thread by default.',
+  'staging-size-btn': 'Full window, and back beside the page, for a change preview standing in a column or the side panel (features/staging/placement.ts).',
+  'staging-context': 'The one optional line under the change preview\'s header: the first-visit note, How to test and the shown-at moment.',
+  'staging-note': 'The first-visit note in that line (the preview keeps its own data), with Got it, which puts it away on the device.',
+  'staging-shots': 'The host of the change\'s before-and-after viewer inside the preview, over the frame.',
+  'staging-live-pill': 'The Live mark after the app\'s name in the shell header while a change preview stands in the side panel beside the running app.',
   // ── #6510: Reduce motion, Settings > Accessibility ─────────────────
   'settings-reduce-motion': 'The Reduce motion switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): writes data-motion="reduce" on <html> through the head module (window.Display). Ships off in the prerender and reads the stored setting in an effect, like #settings-high-contrast beside it.',
   // ── Card preview loops: Settings > Accessibility ───────────────────

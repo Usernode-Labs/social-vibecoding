@@ -73,9 +73,52 @@ function previewAnswer(session) {
   return startPath ? { startPath } : {};
 }
 
+// The narrowest screen a desktop layout is drawn at. A change whose declared
+// before/after shots are ALL at least this wide is about large screens: a
+// column beside a thread (400 to 900 px) would show the app's narrow layout,
+// which is not what the change is about, so Try it opens it full width.
+const DESKTOP_WIDTH = 1024;
+
+/**
+ * Whether every screen the change declared for its before/after shots is a
+ * desktop one (services/visible-changes.js `viewports`). False when nothing
+ * is declared, or when any declared screen is narrower. Never throws.
+ */
+function declaredWide(shotsDetail) {
+  const stories = shotsDetail
+    && typeof shotsDetail === 'object'
+    && shotsDetail.intent
+    && typeof shotsDetail.intent === 'object'
+    ? shotsDetail.intent.stories
+    : null;
+  if (!Array.isArray(stories)) return false;
+  const widths = [];
+  for (const story of stories) {
+    const viewports = story && typeof story === 'object' ? story.viewports : null;
+    if (!Array.isArray(viewports)) continue;
+    for (const viewport of viewports) {
+      const width = viewport && typeof viewport === 'object' ? Number(viewport.width) : NaN;
+      if (!Number.isFinite(width)) return false;
+      widths.push(width);
+    }
+  }
+  return widths.length > 0 && widths.every((width) => width >= DESKTOP_WIDTH);
+}
+
+/**
+ * `{ wide: true }` for a change declared for large screens only, nothing
+ * otherwise, so every other answer stays exactly as it was.
+ */
+function wideAnswer(session) {
+  return declaredWide(session && session.shots_detail) ? { wide: true } : {};
+}
+
 module.exports = {
   ROOT,
+  DESKTOP_WIDTH,
   declaredStartPath,
+  declaredWide,
+  wideAnswer,
   startPathFor,
   previewAnswer,
 };

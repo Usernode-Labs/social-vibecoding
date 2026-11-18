@@ -3027,6 +3027,22 @@ function sessionRoutes(config) {
     }
   });
 
+  // The change a preview shows, as its header names it. Null fields when the
+  // session has no pull request yet (a dev session's preview).
+  function previewChangeAnswer(session) {
+    const number = Number(session && session.pr_number);
+    const title = String((session && (session.pr_title || session.proposed_pr_title)) || '').trim();
+    const hasNumber = Number.isInteger(number) && number > 0;
+    if (!hasNumber && !title) return {};
+    return {
+      change: {
+        number: hasNumber ? number : null,
+        title: title ? title.slice(0, 256) : null,
+        status: session && typeof session.status === 'string' ? session.status : null,
+      },
+    };
+  }
+
   async function loadPreviewSession(sessionId) {
     const { rows } = await pool.query(
       `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -3114,6 +3130,15 @@ function sessionRoutes(config) {
       // the preview there instead of the first screen. Absent when neither
       // names one, so those answers stay byte-identical.
       ...previewStart.previewAnswer(session),
+      // A change declared for large screens only opens full width rather
+      // than in a column beside a thread (services/preview-start.js).
+      ...previewStart.wideAnswer(session),
+      // Which change this is, for the preview's header: its title, its pull
+      // request number and where it stands. Absent for a session with
+      // neither (a dev session's preview), so those answers stay as they
+      // were. The vote's tally is the page's own reading of the change
+      // (AppView.voteState / GET .../promoted).
+      ...previewChangeAnswer(session),
     };
   }
 

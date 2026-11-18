@@ -44,7 +44,96 @@ export const stagingBridge = {
       testHtml: '',
       clockLabel: '',
       clockAsNow: false,
+      changeTitle: '',
+      changeNumber: 0,
+      appName: '',
+      appTile: '',
+      appTileImage: '',
+      selfHosted: false,
+      vote: null,
+      shotsHtml: '',
+      view: 'preview',
+      placement: 'full',
+      rect: null,
+      expanded: false,
+      wide: false,
+      beside: null,
+      liveSpot: null,
     });
+  },
+
+  /**
+   * Which change the preview shows, for its header (`{ title, number, tile,
+   * tileImage, selfHosted }`). Only words the header; never touches the
+   * iframe.
+   */
+  setChange(change) {
+    // A patch: a field left out keeps what the header shows, so the change's
+    // name can arrive after the app's tile without clearing it.
+    const c = change || {};
+    const next = {};
+    if (c.title !== undefined) next.changeTitle = typeof c.title === 'string' ? c.title.trim().slice(0, 256) : '';
+    if (c.number !== undefined) {
+      const number = Number(c.number);
+      next.changeNumber = Number.isInteger(number) && number > 0 ? number : 0;
+    }
+    if (c.appName !== undefined) next.appName = typeof c.appName === 'string' ? c.appName.trim().slice(0, 120) : '';
+    if (c.tile !== undefined) next.appTile = typeof c.tile === 'string' ? c.tile.slice(0, 16) : '';
+    if (c.tileImage !== undefined) {
+      next.appTileImage = typeof c.tileImage === 'string' && /^(https?:\/\/|\/)/.test(c.tileImage) ? c.tileImage : '';
+    }
+    if (c.selfHosted !== undefined) next.selfHosted = !!c.selfHosted;
+    stagingStore.set(next);
+  },
+  /** The vote as the chat's vote card reads it, or null when it is not up for one. */
+  setVote(vote) {
+    if (!vote || typeof vote !== 'object') { stagingStore.set({ vote: null }); return; }
+    const num = (v) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+    stagingStore.set({
+      vote: {
+        yes: num(vote.yes),
+        needed: num(vote.needed),
+        needsOtherMember: !!vote.needsOtherMember,
+        myVote: vote.myVote === 'yes' || vote.myVote === 'no' ? vote.myVote : null,
+        status: typeof vote.status === 'string' ? vote.status : 'promoted',
+      },
+    });
+  },
+  /** The before and after viewer's markup (built escaped by AppView.shotsHtml), or ''. */
+  setShots(html) {
+    const shotsHtml = html || '';
+    stagingStore.set(shotsHtml ? { shotsHtml } : { shotsHtml: '', view: 'preview' });
+  },
+  /** The switch: 'preview' (the running change) or 'shots' (its before and after). */
+  setView(view) {
+    const st = stagingStore.get();
+    stagingStore.set({ view: view === 'shots' && st.shotsHtml ? 'shots' : 'preview' });
+  },
+  /** Where it stands (./placement.ts): `{ placement, rect, wide, beside }`. */
+  setPlacement(p) {
+    const placement = p && (p.placement === 'column' || p.placement === 'panel') ? p.placement : 'full';
+    stagingStore.set({
+      placement,
+      rect: placement === 'full' ? null : (p.rect || null),
+      wide: !!(p && p.wide),
+      beside: placement === 'panel' && p && p.beside === 'app' ? 'app' : null,
+    });
+  },
+  /** The spot moved (a resize, a column dragged): only the rectangle changes. */
+  setRect(rect) {
+    if (stagingStore.get().placement === 'full') return;
+    stagingStore.set({ rect: rect || null });
+  },
+  /** Full window (true), or back to the column or the panel (false). */
+  setExpanded(expanded) {
+    stagingStore.set({ expanded: !!expanded });
+  },
+  isExpanded() {
+    return stagingStore.get().expanded;
+  },
+  /** The first-visit line was put away on this device. */
+  setNoteSeen(seen) {
+    stagingStore.set({ noteSeen: !!seen });
   },
   isOpen() {
     return stagingStore.get().open;

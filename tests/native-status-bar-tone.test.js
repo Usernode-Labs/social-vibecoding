@@ -40,13 +40,16 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 function fakeElement(classes = []) {
   const set = new Set(classes);
+  const attributes = new Map();
   return {
     classes: set,
+    attributes,
     classList: {
       contains: (name) => set.has(name),
       add: (name) => set.add(name),
       remove: (name) => set.delete(name),
     },
+    getAttribute: (name) => (attributes.has(name) ? attributes.get(name) : null),
   };
 }
 
@@ -156,12 +159,18 @@ test('statusBarToneFor: an open dark overlay wins, then the app, then nothing', 
   const tone = (s) => NativeChrome.statusBarToneFor(s);
   assert.equal(tone({}), null, 'nothing on screen: the app\'s theme decides');
   assert.equal(tone(undefined), null);
-  assert.equal(tone({ previewFullscreen: true }), 'dark');
+  // Nov 2026: the change preview's header is drawn in the theme's colours,
+  // so filling the screen it hands the bar back to the theme.
+  assert.equal(tone({ previewFullscreen: true }), null);
   assert.equal(tone({ compareOpen: true }), 'dark');
   assert.equal(tone({ appTone: 'dark' }), 'dark');
   assert.equal(tone({ appTone: 'light' }), 'light');
-  assert.equal(tone({ appTone: 'light', previewFullscreen: true }), 'dark',
-    'the preview covers the app, and its bar is near-black whatever is under it');
+  assert.equal(tone({ appTone: 'dark', previewFullscreen: true }), null,
+    'the preview covers the app, and its header is the theme\'s whatever is under it');
+  assert.equal(tone({ communityTint: true, previewFullscreen: true }), null,
+    'and covers the community\'s navy bar too');
+  assert.equal(tone({ previewFullscreen: true, compareOpen: true }), 'dark',
+    'the compare overlay, opened from it, is still near-black');
   assert.equal(tone({ appTone: 'sepia' }), null, 'nothing but the two tones');
   // Polish board #6: a project's pages wear the community's colour on the
   // header, always fitted for white text, so the glyphs are light there.
@@ -175,15 +184,22 @@ test('statusBarToneFor: an open dark overlay wins, then the app, then nothing', 
   assert.equal(tone({ sideStrip: true, communityTint: true }), null,
     'the strip is the wallpaper: the app\'s theme decides');
   assert.equal(tone({ sideStrip: true, appTone: 'dark' }), null);
-  assert.equal(tone({ sideStrip: true, previewFullscreen: true }), 'dark');
+  assert.equal(tone({ sideStrip: true, compareOpen: true }), 'dark');
+  assert.equal(tone({ sideStrip: true, previewFullscreen: true }), null);
 });
 
-test('the preview counts while it is shown: it is always fullscreen', async () => {
+test('the preview counts while it fills the screen, not docked beside a page', async () => {
   const h = boot();
   const read = () => h.NativeChrome._statusBarToneState();
   assert.deepEqual(plain(read()), { previewFullscreen: false, compareOpen: false, communityTint: false, appTone: null, sideStrip: false });
 
   h.overlays['staging-overlay'].classes.delete('hidden');
+  assert.equal(read().previewFullscreen, true, 'shown, and full until it says otherwise');
+  h.overlays['staging-overlay'].attributes.set('data-placement', 'column');
+  assert.equal(read().previewFullscreen, false, 'in a column it starts below the header');
+  h.overlays['staging-overlay'].attributes.set('data-placement', 'panel');
+  assert.equal(read().previewFullscreen, false, 'and in the side panel');
+  h.overlays['staging-overlay'].attributes.set('data-placement', 'full');
   assert.equal(read().previewFullscreen, true);
 
   h.overlays['visual-compare-overlay'].classes.delete('hidden');
@@ -203,13 +219,17 @@ test('it publishes on boot, then each CHANGE, and nothing else', async () => {
     'and an accepted tone retires the CSS stopgap');
 
   await h.mutate((o) => o['staging-overlay'].classes.delete('hidden'));
-  assert.deepEqual(h.tones(), [null, 'dark'], 'the fullscreen preview opened');
+  assert.deepEqual(h.tones(), [null], 'the fullscreen preview opened: its header is the theme\'s, nothing to send');
+  await h.mutate((o) => o['staging-overlay'].classes.add('hidden'));
+
+  await h.mutate((o) => o['visual-compare-overlay'].classes.delete('hidden'));
+  assert.deepEqual(h.tones(), [null, 'dark'], 'the near-black compare overlay opened');
 
   await h.mutate(() => {});
   await h.NativeChrome.publishStatusBarTone();
   assert.deepEqual(h.tones(), [null, 'dark'], 'an unchanged tone is not re-sent');
 
-  await h.mutate((o) => o['staging-overlay'].classes.add('hidden'));
+  await h.mutate((o) => o['visual-compare-overlay'].classes.add('hidden'));
   assert.deepEqual(h.tones(), [null, 'dark', null], 'closed: back to the theme');
 
   h.setAppTone('light');
@@ -248,8 +268,8 @@ test('it watches exactly what decides the tone', () => {
   }));
   assert.deepEqual(plain(targets), [
     { target: 'html', filter: ['data-app-tone', 'data-community-tint', 'data-side-strip'] },
-    { target: 'staging-overlay', filter: ['class'] },
-    { target: 'visual-compare-overlay', filter: ['class'] },
+    { target: 'staging-overlay', filter: ['class', 'data-placement'] },
+    { target: 'visual-compare-overlay', filter: ['class', 'data-placement'] },
   ]);
 });
 
@@ -259,13 +279,13 @@ test('a change that lands while a publish is in flight is not lost', async () =>
     setStatusBarToneImpl: () => new Promise((resolve) => { release = resolve; }),
   });
   await settle();
-  // The boot publish (null) is in flight. The preview opens and closes
-  // again before the app answers: the tone that finally holds is null.
-  await h.mutate((o) => o['staging-overlay'].classes.delete('hidden'));
+  // The boot publish (null) is in flight. The compare overlay opens and
+  // closes again before the app answers: the tone that finally holds is null.
+  await h.mutate((o) => o['visual-compare-overlay'].classes.delete('hidden'));
   release(true);
   await settle(); await settle(); await settle();
   assert.deepEqual(h.tones(), [null, 'dark'], 'the open was picked up');
-  await h.mutate((o) => o['staging-overlay'].classes.add('hidden'));
+  await h.mutate((o) => o['visual-compare-overlay'].classes.add('hidden'));
   release(true);
   await settle(); await settle(); await settle();
   assert.deepEqual(h.tones(), [null, 'dark', null], 'and so was the close');
@@ -299,7 +319,7 @@ test('a DEGRADED probe is inconclusive, not a latched "unsupported" (#978)', asy
   });
   await settle();
   assert.deepEqual(h.tones(), [], 'the boot probe hit the hiccup');
-  await h.mutate((o) => o['staging-overlay'].classes.delete('hidden'));
+  await h.mutate((o) => o['visual-compare-overlay'].classes.delete('hidden'));
   assert.deepEqual(h.tones(), ['dark'], 're-probed on the next change');
 });
 
@@ -415,27 +435,16 @@ test('both copies of the hosted bridge carry it', () => {
 
 // ── 4. The stopgap, and the contract ───────────────────────────────────
 
-test('until the app takes a tone, the preview bar\'s safe-area band is the shell\'s ground', () => {
+test('the preview\'s header paints its own ground under the status bar', () => {
+  // Nov 2026: the band under the clock used to be painted in the shell's
+  // ground until the app took a tone, because the preview's bar was
+  // near-black. Its header is the theme's own sheet now, padded down under
+  // the clock, so there is no band to paint and no stopgap to retire.
   const css = read('public', 'css', 'app.css');
-  const head = read('frontend', 'src', 'head.html');
-  const ground = {
-    light: /html\s*\{\s*background-color:\s*(#[0-9a-f]{6})/.exec(head)[1],
-    dark: /html\.dark\s*\{\s*background-color:\s*(#[0-9a-f]{6})/.exec(head)[1],
-  };
-  const bar = '#staging-overlay .staging-chrome-bar';
-  const rule = (prefix) => {
-    const at = css.indexOf(`${prefix} ${bar} {`);
-    assert.ok(at !== -1, `missing: ${prefix} ${bar}`);
-    return css.slice(at, css.indexOf('}', at));
-  };
-  const light = rule('html.in-native-webview:not(.native-status-bar-tone)');
-  const dark = rule('html.dark.in-native-webview:not(.native-status-bar-tone)');
-  const band = (color) => new RegExp(
-    `linear-gradient\\(${color} var\\(--platform-safe-top\\), transparent var\\(--platform-safe-top\\)\\)`);
-  assert.match(light, band(ground.light), 'the light ground, exactly the head\'s');
-  assert.match(dark, band(ground.dark), 'the dark ground, exactly the head\'s');
+  assert.doesNotMatch(css, /native-status-bar-tone\)\s*#staging-overlay/, 'no stopgap band');
+  assert.match(css, /\.staging-head\s*\{[^}]*background:\s*var\(--dc-sheet-solid\)/, 'the header is the theme\'s sheet');
 
-  // The class the CSS stands down on is the one the publisher writes.
+  // The class the app's first accepted tone writes is still the publisher's.
   const { NativeChrome } = boot();
   assert.equal(NativeChrome._STATUS_TONE_CLASS, 'native-status-bar-tone');
 

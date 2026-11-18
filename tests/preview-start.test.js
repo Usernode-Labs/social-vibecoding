@@ -106,3 +106,20 @@ test('a self-app hash-route path passes through as-is', () => {
   // a fragment route. preview-start must not get in the way of that.
   assert.equal(previewStart.startPathFor({ testing_path: '/app/x/dev' }), '/app/x/dev');
 });
+// Nov 2026: a change whose declared before/after screens are ALL desktop
+// sizes opens its preview full width, since a column beside a thread would
+// show the app's narrow layout (features/staging/placement.ts).
+test('declaredWide: every declared screen is a desktop one', () => {
+  const at = (...widths) => ({ intent: { stories: [{ viewports: widths.map((width, i) => ({ name: `s${i}`, width, height: 900 })) }] } });
+  assert.equal(previewStart.DESKTOP_WIDTH, 1024);
+  assert.equal(previewStart.declaredWide(at(1440)), true);
+  assert.equal(previewStart.declaredWide(at(1024, 1920)), true);
+  assert.equal(previewStart.declaredWide(at(390, 1440)), false, 'a phone screen among them');
+  assert.equal(previewStart.declaredWide(at(800)), false);
+  assert.equal(previewStart.declaredWide({ intent: { stories: [{}] } }), false, 'nothing declared');
+  assert.equal(previewStart.declaredWide(null), false);
+  assert.equal(previewStart.declaredWide({ intent: { stories: [{ viewports: [{ name: 'x' }] }] } }), false, 'a malformed screen');
+  assert.deepEqual(previewStart.wideAnswer({ shots_detail: at(1440) }), { wide: true });
+  assert.deepEqual(previewStart.wideAnswer({ shots_detail: at(390) }), {}, 'absent otherwise, so answers stay as they were');
+  assert.deepEqual(previewStart.wideAnswer(null), {});
+});
