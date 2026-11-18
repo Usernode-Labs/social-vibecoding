@@ -1,23 +1,30 @@
 /**
- * The side panel beside a running app, on a desktop-width window — the TOP
- * document's half (the panel's own document runs ./embedded.ts).
+ * The side panel: the column beside the Homeroom bot tab's list, on a window
+ * from 768px wide — the TOP document's half (the panel's own document runs
+ * ./embedded.ts).
  *
  * ── What it is ─────────────────────────────────────────────────────────
  *
- * While an app runs on its App tab, the pieces of its work — a proposal, an
- * issue, a change — and the conversations a notification points at open in a
- * panel beside it instead of replacing it. The app keeps running next to the
- * panel and is never reloaded. A community's page is never one of them: it is
- * a place of its own, and a link to it replaces the app, full screen
- * (./routes.ts).
+ * While the Homeroom bot tab's page is up, the pieces of a project's work
+ * its lists open — a proposal, an issue, a change — and the conversations a
+ * notification points at open in the column beside the list, in the place
+ * of the chat docked there, instead of replacing the page. A community's
+ * page is never one of them: it is a place of its own, and a link to it
+ * leaves the page, full screen (./routes.ts).
+ *
+ * NO LONGER BESIDE A RUNNING APP (18 Nov 2026). The same panel used to open
+ * those pages beside an app on its App tab, at a third of the window under
+ * a header of its own (Back, the page's title, Expand, Close). That was a
+ * fourth way to draw a thread; such a link now leaves the app and opens the
+ * page itself, so the panel takes a page only beside the bot's page
+ * (`canTake`) and goes as soon as that page does (`appPresence`).
  *
  * ── Why the panel is the platform, framed ─────────────────────────────
  *
  * The platform's screens are singletons behind one router: App._showOnlyScreen
- * shows exactly one root, the running app's iframe and that app's Workshop
- * are two tabs of the same #app-view, the discussion renders into ids the
- * legacy chat module owns, and every store is global. Showing the app and one
- * of those pages at once natively would mean re-architecting the router. So
+ * shows exactly one root, the discussion renders into ids the legacy chat
+ * module owns, and every store is global. Showing the bot's page and one of
+ * those pages at once natively would mean re-architecting the router. So
  * the panel is a same-origin <iframe> of the platform itself at
  * `/?panel=1#<route>`, in an embedded mode that draws no chrome (see
  * lib/side-panel-mode.ts and head.html) — the pages it shows are the real
@@ -25,9 +32,9 @@
  *
  * ── What this file owns ────────────────────────────────────────────────
  *
- *   - WHEN a navigation goes to the panel (`canTake`): an app on screen on its
- *     App tab, a desktop-width window, not chromeless, not the native app,
- *     not inside the panel itself.
+ *   - WHEN a navigation goes to the panel (`canTake`): the bot's page on
+ *     screen, a window from 768px wide, not chromeless, not inside the panel
+ *     itself.
  *   - The two chokepoints that catch a navigation BEFORE it lands: a
  *     capture-phase click on a link, and (where the browser has the
  *     Navigation API) a script's `location.hash = …`. Both refuse the
@@ -39,16 +46,14 @@
  *     HERE rather than in the browser's session history, because an iframe's
  *     entries are the top window's entries too — and Chromium keeps them after
  *     the frame is gone, as Back presses that do nothing.
- *   - Expand (the page, full width, leaving the app — App._syncParkedApp parks
- *     it) and Close (the panel only).
- *   - Dropping the frame when the app leaves the screen by any route:
- *     App._syncPlatformTabs, the one place that decides whether the running
- *     app is on screen, calls `appPresence`.
+ *   - Expand (the page, full width: the pill's ↗) and Close (the column only).
+ *   - Dropping the frame when the bot's page leaves the screen by any route:
+ *     App._syncPlatformTabs, the one place that decides which screen is up,
+ *     calls `appPresence`.
  *   - The top window's `?side=<route>` (SIDE_PARAM): the page the panel is
- *     showing, kept in the address with replaceState so a reload — or Back
- *     to the app — brings the panel back where it was. Written while the
- *     panel is open, removed when it closes or goes with the app.
- */
+ *     showing, kept in the address with replaceState so a reload brings the
+ *     panel back where it was. Written while the panel is open, removed when
+ *     it closes or goes with the page. */
 
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
 import { isBotChatRoute } from '../ai/door';
@@ -68,21 +73,11 @@ import {
 import { INITIAL, sidePanelRefs, sidePanelStore } from './store.js';
 
 /**
- * The panel needs room for both: about 480px of app beside
- * `clamp(360px, 36vw, 560px)` of panel. The rail and the app layer switch to
- * their desktop layout at 768px (`md`), where the app would be left 408px;
- * 1024px (`lg`, which app.css already uses) is the first breakpoint at which
- * the app keeps at least 480px — 655px, in fact. Keep in step with the
- * `(min-width: 1024px)` block in public/css/app.css.
- */
-export const DESKTOP_QUERY = '(min-width: 1024px)';
-
-/**
  * 1 Nov 2026: beside the Homeroom bot tab's page the panel is the column a
  * thread docks in, which the page draws from 768px (features/ai/), so it
- * takes a page there from 768px too: there is no app beside it to keep
- * 480px for. Keep in step with the `(max-width: 1023.98px)` rule for
- * #platform-side-panel in public/css/app.css.
+ * takes a page there from 768px. Keep in step with the
+ * `(max-width: 1023.98px)` rule for #platform-side-panel in
+ * public/css/app.css.
  */
 export const BESIDE_AI_QUERY = '(min-width: 768px)';
 
@@ -274,33 +269,8 @@ function writeAddress(route: string | null): void {
 }
 
 /**
- * Plant `route` in the top window's `?side=` parameter WITHOUT opening the
- * panel: the caller is about to navigate the top window to an app, and the
- * router's own appPresence(true) → restoreFromAddress() then opens the panel
- * on this page once the app is on screen. False in the panel's own document
- * (there is no top window to write from there); the write itself is in place,
- * no history entry, exactly as writeAddress keeps it.
- */
-export function pend(route: string): boolean {
-  if (typeof window === 'undefined' || isEmbeddedPanel()) return false;
-  if (!isPanelRoute(route)) return false;
-  writeAddress(route);
-  return true;
-}
-
-/**
- * Take a parameter pend() planted back out — the caller's navigation failed,
- * or the viewer backed out before the app came on screen. The panel's own
- * give-up (restoreFromAddress) covers the reload path; this covers the
- * moment before it.
- */
-export function clearPending(): void {
-  writeAddress(null);
-}
-
-/**
- * The app is on screen and the address names a panel page nobody has opened
- * yet — a reload, or Back to the app: open it. The app's screen is revealed in
+ * The bot's page is on screen and the address names a panel page nobody has
+ * opened yet — a reload, or Back to the page: open it. The page is revealed in
  * a transition after the router reports it, so this waits (briefly) for the
  * moment the panel may take a page, and gives up by taking the parameter out.
  */
@@ -344,33 +314,32 @@ function go(route: string): void {
 /**
  * May a navigation to a panel page go to the panel right now?
  *
- * Only in the TOP document, only while an app is running on its App tab or
- * the AI tab's page is up (features/ai/: the panel takes the place of Main,
- * the chat docked beside the list, so a request opened from the list keeps
- * the list), only at desktop width, and not in chromeless mode or the native
- * app beside an app — the Homeroom app's WebView owns its own back stack and
- * bridge relay, and the panel is a desktop arrangement. Everywhere else every
- * one of these links navigates exactly as it always has.
+ * Only in the TOP document, only while the Homeroom bot tab's page is up
+ * (features/ai/: the panel takes the place of Main, the chat docked beside
+ * the list, so a request opened from the list keeps the list), only from
+ * 768px, and not in chromeless mode. Everywhere else every one of these
+ * links navigates exactly as it always has.
+ *
+ * NEVER BESIDE A RUNNING APP (18 Nov 2026). A request, a change or a
+ * conversation opened while an app ran used to open in this panel beside
+ * the app. It was a fourth way to draw a thread, at a third of the window,
+ * with two headers stacked over it; such a link now leaves the app and
+ * opens the page itself, as a link to a community already did.
  *
  * BESIDE THE HOMEROOM BOT TAB, THE NATIVE APP TOO (1 Nov 2026). Unfolded and
  * held sideways, iPhone Duo draws the tab's page with Main docked, and a
  * request opened from its list took the whole screen instead of the
  * column's place. That page is a root with no back arrow, so the WebView's back swipe
  * is off there already (header/native-back-navigation.ts), and the column's
- * own × is the way back. Beside an app the native app keeps the
- * whole screen.
+ * own × is the way back.
  */
 export function canTake(): boolean {
   if (typeof window === 'undefined' || isEmbeddedPanel()) return false;
   const A = app();
   if (!A || !A.user || A.chromeless) return false;
-  const seen = (id: string) => typeof A._isScreenVisible !== 'function' || A._isScreenVisible(id);
-  const besideApp = !!A.currentApp && A.currentTab === 'app' && seen('app-view');
-  const besideAi = typeof A._isScreenVisible === 'function' && A._isScreenVisible('ai-screen');
-  if (!besideApp && !besideAi) return false;
+  if (typeof A._isScreenVisible !== 'function' || !A._isScreenVisible('ai-screen')) return false;
   try {
-    if (besideApp && document.documentElement.classList.contains('in-native-webview')) return false;
-    return window.matchMedia(besideApp ? DESKTOP_QUERY : BESIDE_AI_QUERY).matches;
+    return window.matchMedia(BESIDE_AI_QUERY).matches;
   } catch {
     return false;
   }
@@ -531,18 +500,16 @@ export function openInWorkshop(): void {
 }
 
 /**
- * The router's word on whether the running app is still on screen, from
- * App._syncPlatformTabs — every route out of an app passes through it: the
- * header's close, a tab, the peeked rail, Back, Expand, chromeless, the
- * signed-out shell. Switching straight to ANOTHER app keeps the answer true,
- * and keeps the panel.
+ * The router's word on whether the Homeroom bot tab's page is still on
+ * screen, from App._syncPlatformTabs — every route away from it passes
+ * through there: a tab, the peeked rail, Back, Expand, chromeless, the
+ * signed-out shell, and opening an app (18 Nov 2026: the panel no longer
+ * stays beside one). The name is the one the router has always called.
  */
-export function appPresence(inApp: boolean): void {
-  if (!inApp) drop();
+export function appPresence(onBotPage: boolean): void {
+  if (!onBotPage) drop();
   else {
     restoreFromAddress();
-    // The app and the AI tab's page both keep the panel: from one to the
-    // other, its page puts its own way back away or out again.
     markBeside();
   }
 }
@@ -593,15 +560,14 @@ function embeddedNavigated(route: string, title: string, push: boolean): void {
 }
 
 /**
- * The panel never runs an app. Its document hands an app's App tab up here:
- * the app beside the panel is the one that is asked for (nothing to do), or
- * another app, which REPLACES the running one — and the panel stays.
+ * The panel never runs an app. Its document hands an app's App tab up here,
+ * and the top window opens it, which leaves the bot's page and so drops the
+ * panel (18 Nov 2026: it no longer stays beside the app).
  */
 function embeddedOpenApp(slug: string): void {
   window.setTimeout(() => {
     const A = app();
     if (!A || !slug) return;
-    if (A.currentApp === slug && A.currentTab === 'app') return;
     A.openAppTab?.(slug, 'app');
   }, 0);
 }
@@ -813,8 +779,6 @@ export const SidePanel = {
   isOpen,
   panelMenuRows,
   runPanelMenuRow,
-  pend,
-  clearPending,
   embedded: embeddedApi,
 };
 
