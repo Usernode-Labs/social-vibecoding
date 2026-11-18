@@ -50,7 +50,7 @@ function liveDraftRoutes(config) {
     } catch (err) { failed(res, 'Read', err); }
   });
 
-  router.post('/api/live-drafts', drainGuard, sameOriginBrowserOnly, conversationActionLimiter, json, async (req, res) => {
+  router.post('/api/live-drafts', drainGuard, conversationActionLimiter, sameOriginBrowserOnly, json, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Sign in first' });
     const rootId = idOf(req.body?.rootId);
     if (!rootId) return res.status(400).json({ error: 'rootId is required' });
@@ -71,7 +71,7 @@ function liveDraftRoutes(config) {
     } catch (err) { failed(res, 'Preview', err); }
   });
 
-  router.post('/api/live-drafts/:id/propose', drainGuard, sameOriginBrowserOnly, conversationActionLimiter, json, async (req, res) => {
+  router.post('/api/live-drafts/:id/propose', drainGuard, conversationActionLimiter, sameOriginBrowserOnly, json, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Sign in first' });
     const id = idOf(req.params.id);
     if (!id) return res.status(404).json({ ok: false, error: 'no_draft' });
@@ -82,7 +82,7 @@ function liveDraftRoutes(config) {
     } catch (err) { failed(res, 'Propose', err); }
   });
 
-  router.post('/api/live-drafts/:id/close', sameOriginBrowserOnly, conversationActionLimiter, async (req, res) => {
+  router.post('/api/live-drafts/:id/close', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Sign in first' });
     const id = idOf(req.params.id);
     if (!id) return res.status(404).json({ ok: false, error: 'no_draft' });
