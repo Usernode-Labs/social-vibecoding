@@ -3416,9 +3416,10 @@ const App = {
           // truncated event — see services/ws-bus.js. "Something you are
           // looking at moved; go and re-read it" is exactly what a dropped
           // socket already means, so it takes the identical recovery path
-          // rather than a second one that could drift from it.
+          // rather than a second one that could drift from it. Several in a
+          // row are one sweep, on the settle gap the reconnect path keeps.
           case 'resync_hint':
-            App._resyncForHint();
+            App._resyncFromHint();
             break;
           // The answer to the socket's own `ping` (_pingEvents): this
           // server answers, so from now on a silence is held against it.
@@ -3473,9 +3474,9 @@ const App = {
             App.handleWorkshopUpdate(data);
             break;
           case 'board_order_update':
-            // #613: someone reordered a Dev-board column. refreshDevData
-            // re-pulls the board (including the manual order fetched by
-            // _loadDevData) and repaints, so every open board converges.
+            // #613: someone reordered a Dev-board column. The burst re-reads
+            // the manual order alone (#6791) and repaints, so every open
+            // board converges.
             App._liveRefresh('board-order', null, { appSlug: data.appSlug || App.currentApp });
             break;
           case 'app_allowance_changed':
@@ -3611,12 +3612,11 @@ const App = {
   // the socket reopening and the probe it nudges say the same thing.
   _lastResyncAt: 0,
   RESYNC_SETTLE_MS: 5000,
-  // A `resync_hint` re-reads everything on screen, and a busy stretch sends
-  // several in a row (#6791). One sweep covers them: a hint inside
-  // RESYNC_SETTLE_MS of the last sweep waits for the window to close and
-  // runs once then, so the last hint is never dropped.
+  // A resync_hint is that same nudge arriving over the socket, and several can
+  // follow one another for a burst of writes: they take the same settle gap,
+  // with the last one getting its sweep.
   _resyncHintTimer: null,
-  _resyncForHint() {
+  _resyncFromHint() {
     if (App._resyncHintTimer) return;
     const wait = App._lastResyncAt + App.RESYNC_SETTLE_MS - Date.now();
     if (wait <= 0) { App.resyncCurrentView(); return; }
@@ -3627,6 +3627,11 @@ const App = {
   },
   resyncCurrentView() {
     App._lastResyncAt = Date.now();
+    // A reconnect sweep does everything a waiting hint would.
+    if (App._resyncHintTimer) {
+      clearTimeout(App._resyncHintTimer);
+      App._resyncHintTimer = null;
+    }
     // `Home` and `AppView` are classic-script top-level `const` — they
     // live in the script-global lexical env but are NOT on `window`,
     // so `window.Home` / `window.AppView` would silently be undefined.
@@ -3706,10 +3711,11 @@ const App = {
    * later phase for that slug then takes the `if (card)` branch above, which
    * keeps `data-status` current with no further fetching.
    *
-   * Only while Home is showing (#6791): the list is every app the viewer can
-   * see, and every way back to Home reads it again (restoreFromHash), so a
-   * hidden Home is never stale when somebody returns to it mid-build. The
-   * slug is remembered only once the pull was made.
+   * While Home is not the screen showing, this does nothing and does not
+   * mark the slug: the grid is one request for every app the viewer can see
+   * (670 KB on production), and nobody is looking at it. The slug stays
+   * unmarked, so the first status seen while Home is up still pulls it once,
+   * and routing to Home loads the list anyway.
    */
   _listNewlyCreatedApp(slug) {
     if (!slug || App._listedNewApps.has(slug)) return;
@@ -3753,10 +3759,11 @@ const App = {
       card.dataset.status = data.status;
       // #416: 'error' also triggers a re-pull — the fresh list carries
       // the (server-gated) last_failure_reason for the card tooltip and
-      // the "View build log" menu item.
-      if (data.status === 'running' || data.status === 'error') {
-        // Only while Home is showing (#6791): going back to it reads the list.
-        if (App._isScreenVisible('home-screen')) Home.load();
+      // the "View build log" menu item. Only while the grid is on screen:
+      // nothing else draws the list (#6791).
+      if ((data.status === 'running' || data.status === 'error')
+          && App._isScreenVisible('home-screen')) {
+        Home.load();
       }
     } else {
       App._listNewlyCreatedApp(data.slug);

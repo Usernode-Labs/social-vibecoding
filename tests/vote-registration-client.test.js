@@ -253,9 +253,25 @@ test('a live vote on the board reloads the proposals alone; a merge adds Complet
   assert.equal(AppView._partsForLive({ kinds: new Set(['something-new']), ids: new Set([7]) }), null,
     'a kind with no part of its own is the whole board');
   assert.equal(AppView._partsForLive({ kinds: new Set(['vote']), ids: null }), null,
-    'an event that names no row is the whole board');
+    'a vote that names no row is the whole board');
   AppView._devDataReady = false;
   assert.equal(vote([7]), null, 'and so is any refresh before the first whole load');
+});
+
+test('#6791: each live kind reads the part of the board it moved', () => {
+  const AppView = makeAppView();
+  AppView.appData = { slug: 'demo-app' };
+  AppView._devDataReady = true;
+  const parts = (kinds, ids = null) => AppView._partsForLive({ kinds: new Set(kinds), ids });
+  assert.deepEqual([...parts(['issue'])], ['issues'], 'a request filed or edited reads the issue list');
+  assert.deepEqual([...parts(['board-order'])], ['order'], 'a reorder reads the order');
+  assert.deepEqual([...parts(['session'])].sort(), ['promoted', 'sessions'],
+    'a change appearing, moving or leaving reads the session caches and the proposals');
+  assert.deepEqual([...parts(['issue', 'board-order', 'session'])].sort(),
+    ['issues', 'order', 'promoted', 'sessions'], 'a mixed burst takes the union');
+  assert.equal(parts(['other']), null, 'a kind the request does not name still reloads the whole board');
+  assert.equal(parts(['issue', 'other']), null, 'and one such kind in a mixed burst is enough');
+  assert.deepEqual([...parts([])], [], 'a burst about nothing this board draws asks for nothing');
 });
 
 test('a partial load sends only its requests and keeps every other cache', async () => {

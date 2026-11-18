@@ -10830,7 +10830,12 @@ const AppView = {
   //   { kinds: Set, ids: Set | null, merged: boolean }
   // With it, a refresh reads only what those rows need (_partsForLive), and
   // a proposal's page reads only that proposal (_refreshTopicLive). Without
-  // it (every direct caller), it reloads the board as it always did.
+  // it (every direct caller), it reloads the board as it always did, at once.
+  //
+  // A live burst that cannot be narrowed reloads the whole board, but no more
+  // often than BOARD_FULL_MIN_GAP_MS (#6791): an idle hub used to pay eleven
+  // reads per event. A direct caller is the viewer's own action and still
+  // runs at once; it makes any waiting live run unnecessary.
   //
   // Returns the refresh's promise (or undefined when there is nothing on
   // screen to refresh), so castVote can tell when its post-vote read landed.
@@ -10884,12 +10889,65 @@ const AppView = {
     }
     // Session rows render inside the board/feed now, so the full-feed
     // reload below covers session_update events too (no separate strip).
+    // A burst that needs the whole board waits out the gap; a direct caller
+    // (a vote, a retry, pull to refresh) runs at once and stands the waiting
+    // live run down.
+    if (live) return AppView._liveFullBoard(opts);
+    return AppView._fullBoardLoad(opts);
+  },
+
+  // A whole-board live reload waits at least this long after the last one, so
+  // a burst of events that each need everything costs one read. Modelled on
+  // App._refreshHomeLive; the difference is that the run's promise settles
+  // with the load, so _flushLiveRefresh keeps waiting for it.
+  BOARD_FULL_MIN_GAP_MS: 5000,
+  _boardFullAt: 0,
+  _boardFullPending: null,
+  _liveFullBoard(opts) {
+    // Before the first whole load there is nothing to hold back.
+    if (!AppView._devDataReady) return AppView._fullBoardLoad(opts);
+    const pending = AppView._boardFullPending;
+    if (pending) {
+      if (opts) pending.fresh = true;
+      return pending.promise;
+    }
+    const wait = AppView._boardFullAt + AppView.BOARD_FULL_MIN_GAP_MS - Date.now();
+    if (wait <= 0) return AppView._fullBoardLoad(opts);
+    const slug = AppView.appData && AppView.appData.slug;
+    let resolve;
+    const promise = new Promise((r) => { resolve = r; });
+    const entry = { fresh: !!opts, promise, resolve };
+    entry.timer = setTimeout(() => {
+      if (AppView._boardFullPending === entry) AppView._boardFullPending = null;
+      // The reader left the board, or switched app, while it waited: nothing
+      // to paint, and the next visit loads as usual.
+      if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'forum'
+          || !AppView.appData || AppView.appData.slug !== slug) {
+        resolve(true);
+        return;
+      }
+      AppView._fullBoardLoad(entry.fresh ? { fresh: true } : undefined)
+        .then(resolve, () => resolve(undefined));
+    }, wait);
+    AppView._boardFullPending = entry;
+    return promise;
+  },
+  _fullBoardLoad(opts) {
+    AppView._boardFullAt = Date.now();
+    const pending = AppView._boardFullPending;
+    if (pending) {
+      AppView._boardFullPending = null;
+      clearTimeout(pending.timer);
+    }
     // A fresh run started first is the one the feed's own load then joins.
     if (opts) AppView._loadDevData(opts);
-    return AppView._loadDevFeed().then((r) => {
+    const promise = AppView._loadDevFeed().then((r) => {
       AppView._refreshOpenChangeFromBoard();
       return r;
     });
+    // This run reads the whole board, so the queued one has nothing left to do.
+    if (pending) promise.then((r) => pending.resolve(r), () => pending.resolve(undefined));
+    return promise;
   },
 
   // (#5164) The project hub's quiet refresh: the For you card (the votes
