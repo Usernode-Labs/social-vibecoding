@@ -74,6 +74,7 @@ import { changeHref } from '../../../lib/change-href';
 import { BuildLine, type BuildLineState, buildLineOf, phaseLine, useNow } from '../../first-session/build-line';
 import { useTourRunning } from '../../first-session/tour-running';
 import { DrawnLook, isDrawnLook, ownSrc, useLookSwap } from '../../first-session/drawn-look';
+import { useLiveSkin } from '../../../lib/skin';
 import { firstLookSrc } from '../../first-session/first-look';
 import { countsDown, estimateOf, leftNote } from '../../app-frame/first-version-eta';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
@@ -495,8 +496,34 @@ export function NothingToVote({ unclaimed, onOpen, alone = false }: {
   alone?: boolean;
 }): ReactNode {
   const t = useMessages('project');
+  // Standard (WIP): the line is a card of For you's row, shaped as its two
+  // neighbours are (a tile, "Needs you", then this sentence under it).
+  const wipLook = useLiveSkin() === 'wip';
   const claims = Math.max(0, Number(unclaimed) || 0);
-  if (alone && !claims) return null;
+  // Under that look the card is always there, so the row keeps its three
+  // cards: with nothing waiting it says so.
+  if (alone && !claims && !wipLook) return null;
+  if (wipLook) {
+    return (
+      <div className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none="">
+        <IconTile size="xs"><BallotIcon aria-hidden="true" /></IconTile>
+        <span className="wip-hub-door-text">
+          <span className="wip-hub-door-title">{t('project:hub.needs.title')}</span>
+          <span className="wip-hub-door-sub">
+            {!claims ? t('project:hub.needs.none') : (
+              <RichMessage
+                id={alone ? 'project:hub.needs.requestsAlone' : 'project:hub.needs.noneButRequests'}
+                values={{ count: claims }}
+                components={[
+                  <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="" />,
+                ]}
+              />
+            )}
+          </span>
+        </span>
+      </div>
+    );
+  }
   return (
     <p className="dev-ws-week-note" data-ws-hub-needs-none="">
       {!claims ? t('project:hub.needs.none') : (

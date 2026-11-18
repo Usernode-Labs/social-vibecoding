@@ -215,3 +215,34 @@ test('the brand kit V2 tokens use yellow and green as marks, never as a row\'s g
   // One size at every width, outside any media query.
   assert.match(css, /\nhtml\[data-skin-wip\] #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
 });
+
+test('Standard (WIP): a project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
+  const card = read('frontend/src/features/dev-board/workshop/community-card.tsx');
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const hub = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
+  // No Invite card and no Share it card under the look: both actions are the hero's.
+  assert.match(ws, /const wipLook = useLiveSkin\(\) === 'wip';/);
+  assert.match(ws, /inviteCard=\{!wipLook\}/);
+  assert.match(card, /if \(wipLook\) return null;/, 'Share it is not drawn under the look');
+  assert.match(card, /\{wipLook && data\.audience === 'solo' && data\.can_manage && !data\.audience_change \? \(\s*<MakePublic /, 'Make it public is offered to exactly whom Share it offered it');
+  // Invite ends the line about who is here, for a member, and opens the same pane.
+  assert.match(card, /\{member \? \(\s*<button type="button" className="wip-hub-meta-invite" data-ws-community-invite="" title=\{t\('project:communityCard\.invite\.title'\)\} onClick=\{openInviteLinks\}>/);
+  assert.match(card, /\{wipLook \? null : \(\s*<>\s*\{member && !\(inviteCard && showsInviteHero\(data\) && !inviteClosed\) \? \(/, 'one Invite on the page');
+  // The hero's scenery is for show.
+  assert.match(card, /<span className="wip-hero-wash" aria-hidden="true" \/>\s*<span className="wip-hero-art" aria-hidden="true">/);
+  // Needs you stays in the row with nothing waiting, shaped as its neighbours.
+  assert.match(hub, /if \(alone && !claims && !wipLook\) return null;/);
+  assert.match(hub, /className="dev-ws-week-note wip-hub-door" data-ws-hub-needs-none=""/);
+  const css = read('public/css/app.css');
+  assert.match(css, /html\[data-skin-wip\] #dev-workshop \[data-ws-hub-topics\] \{ display: none; \}/);
+  assert.match(css, /grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/, 'For you is three across from 768px');
+});
+
+test('Standard (WIP): a project\'s empty Needs you says so as good news, with the ways on under it', () => {
+  const flow = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(flow, /if \(wipLook && project && slug\) \{\s*return \(\s*<div ref=\{anchorRef\} className="wip-needs" data-needs-empty="" data-review-flow="">/, 'the same hooks the plain line carries');
+  assert.match(flow, /\{wipLook && project && slug \? <WipWaysIn slug=\{slug\} project=\{project\} \/> : null\}/, 'under what waits, too');
+  assert.match(flow, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
+  assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');
+  assert.equal(message('communities:reel.caughtUp.next'), 'While you\'re here');
+});
