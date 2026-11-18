@@ -35,7 +35,7 @@ fixed color, not the scalable source the app UI uses.
 
 | File | Figma file key | Node id | Export | Dimensions | Size |
 |---|---|---|---|---|---|
-| `people.png` | `4kAYqXh9NhpoCU44QwWvYo` | `1246:166` | the node's raw image fill, downsampled and quantised (below) | 816 × 612, 8-bit palette PNG with `tRNS`, sRGB | 87.9 KB |
+| `people.png` | n/a — no Figma export | n/a | "Collaborative Circle of Young Creatives.png", supplied by the designer (Drea) in the review of #6699 (18 Nov 2026), quantised (below) | 576 × 432, 8-bit palette PNG with `tRNS`, sRGB | 52.3 KB |
 | `homeroom-mark.png` | n/a — no Figma export | n/a | supplied by the product owner as a finished raster during the navigation design study (#2718) and committed verbatim; no re-encoding, no quantisation, no tooling involved | 261 × 261, 8-bit RGBA PNG | 7.8 KB |
 | `homeroom-logotype-black.png` | n/a — no Figma export | n/a | the eight `WORDMARK_PATHS` from `frontend/@/components/ui/wordmark.tsx` (viewBox `0 0 1236.9 319.2`) written into a plain SVG with `fill="#1c1c1e"` (`zinc-900`), then `rsvg-convert -w 280` (librsvg 2.63.2, a one-off local step whose output is committed) on a transparent background; drawn at 140 × 37 in the mail, so 2× (#2908) | 280 × 73, 8-bit RGBA PNG | 7.9 KB |
 | `homeroom-logo-black.png` | n/a — no Figma export | n/a | hand-encoded: a 5×7 bitmap "HOMEROOM" wordmark rasterized to `zinc-900` (`#1c1c1e`) on a transparent RGBA background, then wrapped in a minimal PNG (`IHDR`/`IDAT`/`IEND`) using only Node's built-in `zlib.deflateSync` — see the one-off generator note in the git history for #2673, since the repo has no `sharp`/`canvas`/ImageMagick to export from | 294 × 54, 8-bit RGBA PNG | 451 B |
@@ -48,31 +48,33 @@ here would prove only that nobody has changed the file since it was written
 down, which the diff already proves. The file key plus the node id plus the
 export recipe below IS the reproducibility claim.
 
-**How `people.png` was made, and why not simply "export the node".** The
-node's own PNG export bakes an opaque `#FFFEEA` frame background into the
-image, which would draw as a cream rectangle on the dark ground — and the
-illustration is specified to sit straight on the ground in both themes, with
-no plate. So the export is the node's raw uploaded image fill instead, which
-is transparent: 1448 × 1086 RGBA, Lanczos-downsampled to 816 px wide and
-quantised with
+**How `people.png` was made.** It is the designer's own file, the four
+friends on the floor with a laptop, a tablet and a second laptop, as Drea
+attached it to her onboarding review of #6699 on 18 Nov 2026 ("Collaborative
+Circle of Young Creatives.png", 576 × 432 RGBA, 361 KB). It replaced the first
+illustration, the raw image fill of node `1246:166` in Figma file
+`4kAYqXh9NhpoCU44QwWvYo` (1448 × 1086 RGBA, downsampled to 816 px), which is
+the same scene in louder colours. Like that one, the file is transparent, so
+it sits straight on the ground in both themes with no plate; it was not
+resized, only quantised with
 
-    pngquant --quality=70-95 --speed 1 64
+    pngquant --quality=70-95 --speed 1 --strip 64
 
-`pngquant` is on a developer machine (Homebrew), not in CI — this is a one-off
-local step whose OUTPUT is committed. Measured at export against the
-unquantised 3× render, the quantisation costs RMSE 4.1/255, which is invisible
-on this artwork and takes the file from roughly 605 KB to 87.9 KB.
+`pngquant` is on a developer machine, not in CI — this is a one-off local step
+whose OUTPUT is committed. Measured composited on the brand look's cream and
+on its navy, the quantisation costs RMSE 4.2/255, which is invisible on this
+artwork and takes the file from 361 KB to 52.3 KB.
 
-**Why 816 px.** The landing draws the illustration in a 272 pt box, so 816 is
-3× — sharp on a 3× phone, which is the screen this redesign was drawn for and
-the only one it is judged on. The weight is the reason to state that
-explicitly: 87.9 KB is several times the largest artwork committed anywhere
-else in the tree (the nine challenge illustrations run 5.5–21 KB, capped at
-64 KB by `tests/challenge-illustrations.test.js`). Nothing in the suite
-enforces a budget on this file. It is the logged-out screen's one image, it
-carries the whole first impression, and 2× would save about 40 KB and lose the
-reason it is there — but it was a choice, and this paragraph is where it is
-recorded.
+**Why 576 px, and why the tags still say 816 × 612.** 576 is the width the
+designer's file came at. The largest box the picture is drawn in is the
+landing's, 272 px on a phone and 320 px from `xl`, so this is a little over 2×
+there and about 4× in the 140 px box on the Welcome page. The first
+illustration was exported at 816, 3× the landing's phone box; the reason for
+576 is that it is the drawing the designer chose, not a budget. Every `<img>`
+that draws it (`landing.tsx`, `story.tsx`, `welcome-page.tsx`, `waiting.tsx`,
+`invite-card.tsx`) sets its own CSS width with `h-auto`, so its `width={816}
+height={612}` attributes only reserve a 4:3 box before the file arrives, and
+this file is 4:3 as well. Nothing in the suite enforces a budget on this file.
 
 ## What each one is for
 

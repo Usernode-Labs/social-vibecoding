@@ -28650,10 +28650,24 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body::before {
   background: var(--look-wallpaper, var(--bl-page));
 }
-/* A screen that paints itself with the wallpaper (Make it, the made
-   screen, sign-in) does so in its own style attribute, which only
-   !important outranks: it is the flat page here too. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) [style*="--home-wallpaper"] {
+/* A screen that paints itself with the wallpaper (Welcome, Make it, the
+   made screen, sign-in) does so in its own style attribute, which only
+   !important outranks. In light it paints the washes and grain Home stands
+   on, so a new person's first screens are not plainer than Home; in dark it
+   is the flat navy (Drea's onboarding review of #6699). Each of these
+   screens is a fixed layer the size of the window, so the washes land where
+   the body's do. The star is where the standard wallpaper puts it on these
+   screens, top right beside the mark: they have no navy bar, and Home's
+   place for it, below that bar, is behind the Welcome page's picture. Make
+   it leaves the star out, as the standard wallpaper does there: its bar
+   holds only the ✕ and the mark. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [style*="--home-wallpaper"] {
+  background: var(--home-star, none) right 32px top var(--home-star-y, 0px) / 97px 78px no-repeat, var(--home-grain, none) 0 0 / 240px 240px repeat, var(--look-washes, var(--bl-page)) !important;
+}
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) [data-first-session-make][style*="--home-wallpaper"] {
+  background: var(--home-grain, none) 0 0 / 240px 240px repeat, var(--look-washes, var(--bl-page)) !important;
+}
+html[data-skin="brand"].dark:not([data-app-tone="light"]) [style*="--home-wallpaper"] {
   background: var(--bl-page) !important;
 }
 /* The planes over the page. A strip (the pane a screen stands on) is the

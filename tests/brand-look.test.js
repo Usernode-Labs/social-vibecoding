@@ -645,6 +645,27 @@ test('the page is the standard wallpaper\'s washes in the look\'s own tints, and
   assert.match(ruleFor('body::before')[0].body, /background:\s*var\(--look-wallpaper, var\(--bl-page\)\);/);
 });
 
+// Drea's onboarding review (18 Nov 2026): Welcome, Make it and the made
+// screen paint the wallpaper in their own style attribute, and the look
+// had flattened them in both modes. Light keeps the page Home stands on;
+// dark keeps the flat navy.
+test('a screen that paints its own wallpaper wears Home\'s washes in light and the flat navy in dark', () => {
+  const own = '[style*="--home-wallpaper"]';
+  const washes = 'var\\(--home-grain, none\\) 0 0 \\/ 240px 240px repeat, var\\(--look-washes, var\\(--bl-page\\)\\) !important;';
+  // The star where the standard wallpaper draws it on these screens, which
+  // have no navy bar to sit below.
+  assert.match(ruleAt(`${LIGHT} ${own}`).body, new RegExp(`background:\\s*var\\(--home-star, none\\) right 32px top var\\(--home-star-y, 0px\\) \\/ 97px 78px no-repeat, ${washes}`));
+  const make = ruleAt(`${LIGHT} [data-first-session-make]${own}`).body;
+  assert.match(make, new RegExp(`background:\\s*${washes}`));
+  assert.doesNotMatch(make, /--look-stars|--look-wallpaper|--home-star/, 'Make it leaves the star out, as the standard wallpaper does there');
+  assert.match(ruleAt(`${DARK} ${own}`).body, /background:\s*var\(--bl-page\) !important;/);
+  assert.equal(ruleAt(`${EITHER} ${own}`), undefined, 'no rule flattens both modes any more');
+  // The screens it reaches still paint the wallpaper that way.
+  for (const [dir, file] of [['auth', 'welcome-page.tsx'], ['first-session', 'make.tsx'], ['first-session', 'made.tsx']]) {
+    assert.match(read('frontend', 'src', 'features', dir, file), /style=\{\{ background: 'var\(--home-wallpaper, #f4f2e4\)' \}\}/, `${file} paints its own wallpaper`);
+  }
+});
+
 test('from 1280px Home has the side column beside Pinned apps, and Pinned communities runs the full width under it', () => {
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
   assert.match(island, /const aside = wip && grid\.ready && !!grid\.create;/);
