@@ -58,6 +58,7 @@ import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon
 import { useMessages } from '../../lib/i18n/react';
 import { changeHref } from '../../lib/change-href';
 import { watch } from '../../lib/live-reads';
+import { usePageDark } from '../../lib/page-theme';
 import { pushIsFor } from '../../lib/work-state';
 import { pacedReads } from '../ai/live';
 import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
@@ -613,7 +614,11 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
   };
   useEffect(() => () => { timers.current.forEach(clearTimeout); }, []);
 
-  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items]);
+  // Shaped again when the page's mode flips: `shape` runs
+  // AppView._workshopVisuals, which picks each picture for the mode the page
+  // is in, so `dark` changes what the run's stills are (#6820).
+  const dark = usePageDark();
+  const shaped = useMemo(() => (items ? orderForReview(toReviewItems(items, shape)) : null), [items, dark]);
   // #6344: the items the run cannot draw (a group decision, competing
   // changes, the bot's question). Each is decided on its own page, so when
   // nothing else waits they are listed with a way there.
@@ -640,6 +645,19 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
     setIndex(took.open);
     setDone(false);
   }, [shaped, list]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A mode switch re-picks every picture the run already holds, without
+  // dealing it again: its order, the change on show and your votes stay, and
+  // only the stills come from the new look. Laid out before the paint, so a
+  // card never stays in the other mode.
+  const modeShown = useRef(dark);
+  useLayoutEffect(() => {
+    if (modeShown.current === dark) return;
+    modeShown.current = dark;
+    if (!items || !list) return;
+    const fresh = new Map(toReviewItems(items, shape).map((it) => [it.key, it]));
+    setList(list.map((it) => fresh.get(it.key) || it));
+  }, [dark, items]);
 
   const run = list ? filterByVoteType(list, filter, reviewVoteType) : [];
   // The chips count the whole run, whatever kind is picked: they say how
