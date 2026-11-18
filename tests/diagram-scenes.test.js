@@ -79,3 +79,21 @@ test('#6832: a "no visible change" with no picture counts as incomplete, and the
     assert.ok(seen > 0 && moment > seen && steps > moment, `${name} name seen, then moment, then steps`);
   }
 });
+
+test('#6832: on a 390px phone a five-step row fits the card, with no sideways scroll', () => {
+  const css = read('public/css/app.css');
+  const m = css.match(/@media \(max-width: 419px\) \{[\s\S]*?\.dev-ws-diagram-step-caption \{[^}]*\}[\s\S]*?\n\}/);
+  assert.ok(m, 'the narrow block exists');
+  const block = m[0];
+  assert.match(block, /\.dev-ws-diagram-step-pic \{ width: 56px; \}/);
+  assert.match(block, /\.dev-ws-diagram-steps \{ gap: 12px; \}/);
+  assert.match(block, /\.dev-ws-diagram-step-pic > svg \{ width: 32px; height: 32px; \}/);
+  assert.match(block, /\.dev-ws-diagram-step-caption \{[^}]*overflow-wrap: anywhere;/,
+    'a caption wraps rather than pushing its column wider');
+  // The card's own inline padding must leave room for five 56px columns and
+  // four 12px gaps (328px) inside a 390px phone's 32px gutters.
+  const pad = block.match(/\.dev-ws-item > \.dev-ws-diagram \{ padding-inline: (\d+)px/);
+  assert.ok(pad, 'the card picture narrows its inline padding on a phone');
+  const inner = 390 - 32 - 2 * Number(pad[1]);
+  assert.ok(inner >= 5 * 56 + 4 * 12, `five steps fit: ${inner}px available, 328px needed`);
+});

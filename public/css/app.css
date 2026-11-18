@@ -18768,7 +18768,12 @@ button.dev-ws-recent-card {
   .dev-ws-diagram-steps { gap: 12px; }
   .dev-ws-diagram-step-pic { width: 56px; }
   .dev-ws-diagram-step-pic > svg { width: 32px; height: 32px; }
-  .dev-ws-diagram-step-caption { font-size: 12px; line-height: 1.25; }
+  .dev-ws-diagram-step-caption { font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+  /* The card's picture keeps the other kinds' generous inline padding, which
+     on a phone squeezes a five-step row: 390 less the card's 32px gutters and
+     104px of padding leaves 254px for a row of 328px. Narrower padding lets
+     the row fit inside the gutters without wrapping or scrolling sideways. */
+  .dev-ws-item > .dev-ws-diagram { padding-inline: 12px; }
 }
 
 /* Mermaid: the library's SVG, scaled to the sheet. */
