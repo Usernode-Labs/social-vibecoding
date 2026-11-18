@@ -793,6 +793,51 @@ const AppView = {
   // asserting a count or an emptiness they don't know yet. See
   // frontend/src/features/dev-board/card/skeleton.tsx.
   _devDataReady: false,
+  // The same question asked of the two phases a whole load publishes in
+  // (#6826). The Done list (`/merged`) is by far the slowest read, and the
+  // Workshop's Overview, the open items and the votes do not need it. So a
+  // whole load publishes everything BUT merged first — `_devCoreReady` —
+  // paints, and publishes merged when it lands, which fills only the parts
+  // drawn from finished work (the Done column, "live this week", What
+  // happened, Recently live). `_devMergedReady` is that second phase.
+  // Both are cleared wherever `_devDataReady` is (see _resetDevDataFlags).
+  _devCoreReady: false,
+  _devMergedReady: false,
+  // The app whose last board was drawn from memory this visit (#6826): the
+  // per-project board `_restoreBoardMemory` copied back at the app's open,
+  // drawn at once while the reads run. It is NOT `_devDataReady` — what is
+  // on screen is remembered, not read, and becomes read when the fresh
+  // answer lands and clears this.
+  _devDataRemembered: null,
+  // Each project's last board, in memory only, for this session (#6826):
+  // `${user id}:${slug}` -> the caches a successful load wrote. Bounded so
+  // a long session with many projects stays small.
+  _devBoardMemory: new Map(),
+  DEV_BOARD_MEMORY_MAX: 8,
+  // Is there a board to draw for the open app — read this visit, or held
+  // from an earlier one? Everything the board states as fact is gated on
+  // this, not on `_devDataReady`.
+  _devDrawableSlug() {
+    return (AppView.appData && AppView.appData.slug)
+      || (typeof App !== 'undefined' ? App.currentApp : null) || null;
+  },
+  // A completed load answers both questions too: it implies both phases.
+  _devBoardDrawable() {
+    return !!AppView._devDataReady || !!AppView._devCoreReady
+      || (!!AppView._devDataRemembered && AppView._devDataRemembered === AppView._devDrawableSlug());
+  },
+  _devMergedDrawable() {
+    return !!AppView._devDataReady || !!AppView._devMergedReady
+      || (!!AppView._devDataRemembered && AppView._devDataRemembered === AppView._devDrawableSlug());
+  },
+  // Every flag a visit owns, cleared together: leaving, switching app, and
+  // the open's own reset all mean "this is a different visit".
+  _resetDevDataFlags() {
+    AppView._devDataReady = false;
+    AppView._devCoreReady = false;
+    AppView._devMergedReady = false;
+    AppView._devDataRemembered = null;
+  },
   // The app the dev-data lists (`_ghIssues`, `_proposals`, `_merged`, …)
   // were loaded FOR — set beside `_devDataReady` in _fetchDevData and
   // deliberately NOT cleared by open() or close() (#4524). The lists are
@@ -950,8 +995,12 @@ const AppView = {
       // A different app's board is a different board: until its own load
       // lands, the caches still hold the PREVIOUS app's cards, and painting
       // those under this app's name is worse than painting placeholders.
-      AppView._devDataReady = false;
+      AppView._resetDevDataFlags();
       AppView._resetMergedPagination();
+      // ...unless THIS project was opened earlier in the session: its own
+      // last board is drawn at once, and replaced when the reads answer
+      // (#6826).
+      AppView._restoreBoardMemory(appData.slug);
     }
     AppView.appData = appData;
 
@@ -1599,8 +1648,10 @@ const AppView = {
     AppView.iframeTokenSlug = null;
     // Leaving the app retires its board data as far as the surfaces are
     // concerned: the next open re-loads, and until it does the caches on this
-    // object are stale by definition.
-    AppView._devDataReady = false;
+    // object are stale by definition. (The board was remembered against its
+    // project by the load that read it — #6826 — so coming back draws that
+    // while it reloads.)
+    AppView._resetDevDataFlags();
     AppView._resetMergedPagination();
     if (window.DevConsole) {
       DevConsole.hide();
@@ -5206,6 +5257,12 @@ const AppView = {
         AppView.openTopic('proposal', parseInt(el.dataset.sharedSessionRow, 10));
       }
     }, { signal: devBodySignal });
+
+    // #6826: a project opened earlier in this session draws its last board
+    // now — no skeleton — and the load below replaces it the moment its own
+    // answer lands. (_restoreBoardMemory ran at the app's open.) A first
+    // visit has nothing to draw and keeps the skeleton the shell wrote.
+    if (AppView._devBoardDrawable()) AppView._repaintDevBody();
 
     await AppView._loadDevFeed();
 
@@ -10931,6 +10988,12 @@ const AppView = {
     // `fresh` queues a new load behind it instead.
     const fresh = kind === 'vote' || !!(live && live.kinds && live.kinds.has('vote'));
     const opts = fresh ? { fresh: true } : undefined;
+    // A correction names the reads it moved (`live.urls`). Everywhere but
+    // the board's own feed that still means "re-read what is shown", which
+    // is what a plain `live` of null asks for — so it is narrowed away here
+    // and read below, at the feed.
+    const urls = kind === 'api-update' && live && live.urls ? live.urls : null;
+    if (urls) live = null;
     if (App.currentSubTab === 'chat') {
       if (live && !AppView._liveTouchesVotes(live)) return Promise.resolve(true);
       return AppView.loadVoteState(AppView.appData.slug);
@@ -10954,6 +11017,21 @@ const AppView = {
       return Promise.resolve(AppView._refreshTopicOwnRow()).then(() => true);
     }
     if (App.currentSubTab !== 'forum') return undefined;
+    // #6826: a late-answer correction (`api-updated`) names the reads the
+    // worker had to serve from cache and then corrected. Only the parts
+    // those reads fill are read again — a `/merged` correction used to
+    // reload all seven board reads for a Done list that had just landed.
+    if (urls) {
+      const fromUrls = AppView._partsForApiUrls(urls);
+      // A board not yet loaded whole is not partly refreshed, and an
+      // unknown URL answers no narrower question: both reload it whole.
+      if (!AppView._devDataReady || !fromUrls) return AppView._fullBoardLoad();
+      if (!fromUrls.size) return Promise.resolve(true);
+      return AppView._loadDevFeed({ parts: fromUrls }).then((r) => {
+        AppView._refreshOpenChangeFromBoard();
+        return r;
+      });
+    }
     const parts = live ? AppView._partsForLive(live) : null;
     // The burst was about rows this board does not show.
     if (parts && !parts.size) return Promise.resolve(true);
@@ -11309,6 +11387,28 @@ const AppView = {
   // (`null`, which a live burst runs through _liveFullBoard's gap). Rows the
   // page does not hold ask for nothing: that is someone else's work, on a
   // board this viewer is not looking at.
+  // Which parts of the board a set of corrected URLs moved (#6826). The
+  // service worker posts the request's `url` when a slow answer differed
+  // from the copy it served (public/sw.js). `/github-issues` and `/issues`
+  // both fill the issue side; the theme grouping is not a board part, so a
+  // corrected one answers no narrower question and gives null — the caller
+  // reloads the whole board, as it always did.
+  _partsForApiUrls(urls) {
+    const out = new Set();
+    for (const raw of urls || []) {
+      // The path alone, whether the worker sent an absolute URL or a path.
+      const path = String(raw || '').split('?')[0].split('#')[0];
+      if (/\/github-issues$/.test(path) || /\/issues$/.test(path)) out.add('issues');
+      else if (/\/promoted$/.test(path)) out.add('promoted');
+      else if (/\/merged$/.test(path)) out.add('merged');
+      else if (/\/board-order$/.test(path)) out.add('order');
+      else if (/\/active-sessions$/.test(path) || /\/shared-sessions$/.test(path)
+        || /\/sessions$/.test(path) || /\/archived-sessions$/.test(path)) out.add('sessions');
+      else if (/\/topic-categories$/.test(path)) out.add('categories');
+      else return null;
+    }
+    return out;
+  },
   _partsForLive(live) {
     if (!live || !AppView._devDataReady) return null;
     const parts = new Set();
@@ -11820,6 +11920,92 @@ const AppView = {
     AppView._mergedCtx = null;
     AppView._doneShowAll = false;
   },
+  // ── Each project's last board, kept for the session (#6826) ──────────
+  //
+  // Going back to a project you opened a minute ago used to start from the
+  // skeleton again, because the open's reset drops every cache. This keeps
+  // the caches a successful load wrote, per project and per signed-in
+  // person, and copies them back at the open so the board draws at once.
+  //
+  // It does NOT make the reads cheaper or optional: the open's load still
+  // runs, and its answer replaces what the memory drew. What the reader
+  // ends up with is the current state — the memory only says what to draw
+  // while it arrives. In memory only: a reload or a sign-out empties it.
+  _memoryKey(slug) {
+    const userId = (typeof App !== 'undefined' && App.user && App.user.id) || null;
+    if (!slug || userId == null) return null;
+    return `${userId}:${slug}`;
+  },
+  _rememberBoard(slug) {
+    const key = AppView._memoryKey(slug);
+    if (!key) return;
+    // Re-inserted so the newest write is last: the cap drops the first key.
+    AppView._devBoardMemory.delete(key);
+    AppView._devBoardMemory.set(key, {
+      ghIssues: AppView._ghIssues,
+      ghIssuesMeta: AppView._ghIssuesMeta,
+      envIssueNumbers: AppView._envIssueNumbers,
+      proposals: AppView._proposals,
+      govProposals: AppView._govProposals,
+      proposalsCtx: AppView._proposalsCtx,
+      boardOrder: AppView._boardOrder,
+      merged: AppView._merged,
+      mergedCtx: AppView._mergedCtx,
+      mergedHasMore: AppView._mergedHasMore,
+      mergedCursor: AppView._mergedCursor,
+      mergedTotal: AppView._mergedTotal,
+      mergedShipped: AppView._mergedShipped,
+      voteState: AppView.voteState,
+      mySessions: AppView._mySessions,
+      sharedSessions: AppView._sharedSessions,
+      sharedById: AppView._sharedById,
+      archivedSessions: AppView._archivedSessions,
+      sessionsSig: AppView._sessionsSig,
+      // The themes ride with the board so a revisit does not regroup it
+      // twice: first by category from what it has, then by theme.
+      themes: (AppView._workshopThemes && AppView._workshopThemes.slug === slug)
+        ? AppView._workshopThemes : null,
+    });
+    while (AppView._devBoardMemory.size > AppView.DEV_BOARD_MEMORY_MAX) {
+      AppView._devBoardMemory.delete(AppView._devBoardMemory.keys().next().value);
+    }
+  },
+  // Copy the project's remembered board back, and say the visit may draw it.
+  // Returns whether there was one.
+  _restoreBoardMemory(slug) {
+    const key = AppView._memoryKey(slug);
+    const entry = key ? AppView._devBoardMemory.get(key) : null;
+    if (!entry) return false;
+    AppView._ghIssues = entry.ghIssues;
+    AppView._ghIssuesMeta = entry.ghIssuesMeta;
+    AppView._envIssueNumbers = entry.envIssueNumbers;
+    AppView._proposals = entry.proposals;
+    AppView._govProposals = entry.govProposals;
+    AppView._proposalsCtx = entry.proposalsCtx;
+    AppView._boardOrder = entry.boardOrder;
+    AppView._merged = entry.merged;
+    AppView._mergedCtx = entry.mergedCtx;
+    AppView._mergedHasMore = entry.mergedHasMore;
+    AppView._mergedCursor = entry.mergedCursor;
+    AppView._mergedTotal = entry.mergedTotal;
+    AppView._mergedShipped = entry.mergedShipped;
+    AppView.voteState = entry.voteState;
+    AppView._mySessions = entry.mySessions;
+    AppView._sharedSessions = entry.sharedSessions;
+    AppView._sharedById = entry.sharedById;
+    AppView._archivedSessions = entry.archivedSessions;
+    AppView._sessionsSig = entry.sessionsSig;
+    // The themes cache is throttled per slug; only fill it when it does not
+    // already name this project, so a fresher answer is never overwritten.
+    if (entry.themes && !(AppView._workshopThemes && AppView._workshopThemes.slug === slug)) {
+      AppView._workshopThemes = entry.themes;
+    }
+    AppView._devDataRemembered = slug;
+    // The lists now name this app, so a topic page opened from the drawn
+    // board resolves its rows against them (#4524).
+    AppView._devDataSlug = slug;
+    return true;
+  },
   _mergedPagerFor(slug) {
     if (AppView._mergedPager && AppView._mergedPager.slug !== slug) {
       AppView._resetMergedPagination();
@@ -12028,6 +12214,10 @@ const AppView = {
       if (AppView._devDataInflight === queued.run) AppView._devDataInflightParts = queued.parts;
       return queued.run;
     }
+    // #6826: a whole run is the board's own load. Stamping it here means a
+    // whole-board live burst right after an open waits out the gap instead
+    // of sending a second round of the same seven reads at once.
+    if (!parts) AppView._boardFullAt = Date.now();
     const entry = { slug, started: false, run: null, parts };
     const clear = () => {
       if (AppView._devDataInflight === run) {
@@ -12076,6 +12266,20 @@ const AppView = {
     const KEEP = { keep: true };
     const want = (part) => !parts || parts.has(part);
     const keep = (value) => value === KEEP;
+    // #6826: a WHOLE load publishes in two phases — everything but the Done
+    // list first, so the Workshop draws, then the Done list, which is the
+    // read that held the page for up to two seconds. A partial load is a
+    // live refresh of a board already on screen and writes in one go, as it
+    // always did.
+    const phased = !parts;
+    // The Done-list read starts WITH the others (it must not be sent last);
+    // it is only awaited later. Its handler turns a rejection into a value
+    // so a failure that lands after an early return, or after the core
+    // failed, is never an unhandled one.
+    const mergedRun = (want('merged')
+      ? AppView._fetchMergedRange(pager)
+      : Promise.resolve(KEEP))
+      .then((value) => ({ ok: true, value }), (reason) => ({ ok: false, reason }));
     try {
       const results = await Promise.allSettled([
         want('issues') ? fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`) : KEEP,
@@ -12088,11 +12292,10 @@ const AppView = {
         // fetched only to discard — on the platform app, all 325 open rows.
         want('issues') ? fetch(`/api/apps/${slug}/issues${AppView._withDemo('kinds=governance')}`) : KEEP,
         want('promoted') ? fetch(`/api/apps/${slug}/promoted${AppView._withDemo('results=failing')}`) : KEEP,
-        // Forward ?demo=1 to /merged too so the kanban "Done" column (and
-        // the list's Completed block) populate in a staging ?demo=1 preview.
-        // Server-side the demo append is gated on IS_STAGING, so this is a
-        // no-op in production. votes.js stagingMockMerged() supplies the rows.
-        want('merged') ? AppView._fetchMergedRange(pager) : KEEP,
+        // The Done-list read is `mergedRun` above: the second phase, awaited
+        // after this one publishes. (?demo=1 still reaches it through
+        // _fetchMergedPage, so a staging preview's Done column is seeded;
+        // votes.js stagingMockMerged() supplies the rows.)
         // #613: the manual drag-and-drop order overlay for the Issues + In
         // review columns. Forward ?demo=1 so a staging preview seeds a
         // visibly non-default order; a no-op in production. `.catch` keeps a
@@ -12112,16 +12315,13 @@ const AppView = {
       if (!AppView._mergedPagerActive(pager)) return null;
       const failed = results.find((result) => result.status === 'rejected');
       if (failed) throw failed.reason;
-      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = results.map((result) => result.value);
+      const [ghRes, issuesRes, promotedRes, orderRes] = results.map((result) => result.value);
       // #2261: the Issues column's answer is read defensively — a degraded
       // one must not repaint a board that already has a list on it as "no
       // open issues". See where _ghIssues is stored below.
       const ghData = keep(ghRes) ? KEEP : (ghRes && ghRes.ok) ? await ghRes.json().catch(() => null) : null;
       const issuesData = keep(issuesRes) ? KEEP : issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = keep(promotedRes) ? KEEP : promotedRes.ok ? await promotedRes.json() : { promoted: [] };
-      const mergedData = mergedRes;
-      if (!mergedData || !AppView._mergedPagerActive(pager)) return null;
-      const merged = keep(mergedData) ? (AppView._merged || []) : (mergedData.merged || []);
       // #613: manual card-order overlay per column. Shape { issues:[{type,ref}],
       // review:[{type,ref}] }. Tolerates a missing/failed fetch (older server
       // or transient error) by keeping the previous cache / defaulting empty.
@@ -12151,7 +12351,9 @@ const AppView = {
       const ghDegraded = !ghIssues || (!ghIssues.length && !!ghData.note);
       if (keep(ghData)) {
         // A partial load: the issue list is not what moved.
-      } else if (ghDegraded && AppView._devDataReady) {
+      } else if (ghDegraded && AppView._devBoardDrawable()) {
+        // #6826: a board drawn from memory counts here too — a degraded
+        // answer on a revisit must not blank the issues it is showing.
         AppView._ghIssuesMeta = {
           ...(AppView._ghIssuesMeta || {}),
           note: (ghData && ghData.note) || 'fetch failed',
@@ -12195,21 +12397,29 @@ const AppView = {
       // the chat view's activity rows stay in sync without a refetch.
       // Close-issue rows stay OUT of voteState: it's a PR concept keyed by
       // chat_sessions ids, and issues.id can collide with those numerically.
-      const voteRows = [
-        ...(merged || []).filter((r) => (r.row_type || 'pr') === 'pr'),
-        ...promoted,
-      ];
-      AppView.voteState = {
-        bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
-        byPrNumber: Object.fromEntries(
-          voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
-        ),
-        majority,
-        activeUsers,
+      //
+      // #6826: it is published twice on a whole load — once with the merged
+      // rows the board already holds (a revisit's remembered ones, or none),
+      // so the first phase is whole, and once from the fresh rows when the
+      // Done list lands.
+      const publishVoteState = (mergedRows) => {
+        const voteRows = [
+          ...(mergedRows || []).filter((r) => (r.row_type || 'pr') === 'pr'),
+          ...promoted,
+        ];
+        AppView.voteState = {
+          bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
+          byPrNumber: Object.fromEntries(
+            voteRows.filter((pr) => pr.pr_number != null).map((pr) => [String(pr.pr_number), pr])
+          ),
+          majority,
+          activeUsers,
+        };
+        if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+          GroupChat.refreshVoteControls();
+        }
       };
-      if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
-        GroupChat.refreshVoteControls();
-      }
+      publishVoteState(AppView._merged || []);
 
       AppView._proposals = promoted;
       if (!keep(issuesData)) {
@@ -12246,6 +12456,32 @@ const AppView = {
         releaseStall: promotedData.releaseStall && typeof promotedData.releaseStall === 'object'
           ? promotedData.releaseStall : null,
       };
+      // ── Phase one: everything the open work draws from is in ──────────
+      // The board may now state its counts, its columns and its emptiness
+      // as fact; only the parts drawn from finished work wait for the Done
+      // list below. Painted here so the Workshop is on screen before the
+      // slow read lands (#6826).
+      if (phased) {
+        AppView._devCoreReady = true;
+        // #4524: the lists above now belong to `slug` — set in phase one so
+        // a topic page that paints from them resolves against this app
+        // while the Done list is still on its way.
+        AppView._devDataSlug = slug;
+        AppView._paintDevBoardEarly();
+      }
+
+      // ── Phase two: the Done list, awaited where the earlier code had it
+      // in the same allSettled ───────────────────────────────────────────
+      const mergedSettled = await mergedRun;
+      if (!AppView._mergedPagerActive(pager)) return null;
+      // A failed Done read fails the load, as it always did — but the board
+      // phase one painted stays up, its finished-work parts keep their
+      // placeholders, and the next whole load retries it.
+      if (!mergedSettled.ok) throw mergedSettled.reason;
+      const mergedData = mergedSettled.value;
+      if (!mergedData) return null;
+      const merged = keep(mergedData) ? (AppView._merged || []) : (mergedData.merged || []);
+      publishVoteState(merged);
       if (!keep(mergedData)) {
       AppView._merged = merged;
       AppView._mergedCtx = {
@@ -12288,11 +12524,15 @@ const AppView = {
       // failed load leaves the placeholders up and _loadDevFeed paints its
       // own error, and a not-ready-yet call (the `null` return above) never
       // reaches here.
+      AppView._devMergedReady = true;
       AppView._devDataReady = true;
       // #4524: the lists above now belong to `slug`. Set on the same success
       // path, and never cleared — a same-app stale list is exactly the
       // cached answer a topic page paints from while the board reloads.
       AppView._devDataSlug = slug;
+      // What is on screen is read now, not remembered (#6826).
+      AppView._devDataRemembered = null;
+      AppView._rememberBoard(slug);
       return true;
     } catch {
       return AppView._mergedPagerActive(pager) ? false : null;
@@ -12309,19 +12549,35 @@ const AppView = {
     // is how the board came to show an error message during a slow open.
     if (ok === null) return;
     if (!ok) {
-      if (AppView._devDataReady) return;
+      // #6826: a board already drawn — read this visit, or from the last
+      // visit's memory — keeps what it has and leaves the finished-work
+      // parts on their placeholders, rather than replacing itself with an
+      // error for a read that failed halfway.
+      if (AppView._devBoardDrawable()) return;
       body.innerHTML = `<div class="text-xs text-zinc-500 dark:text-zinc-400">${PlatformI18n.htmlText('changes:feed.loadFailed')}</div>`;
       return;
     }
+    AppView._paintDevBoardEarly();
+    // The themes ride in behind the board's own data: the Workshop paints
+    // first from what it has (every item under "Everything on the board")
+    // and regroups when they land. A partial live load moved rows the themes
+    // already place, so it leaves them be. (The early paint starts them too,
+    // and the throttle there makes the second call free.)
+    if (!(opts && opts.parts)) AppView._loadWorkshopThemes(App.currentApp);
+  },
+
+  // The board's own paint, once what it draws from is in: the three app
+  // notices, the board itself (keeping a reader's place in Done) and the
+  // themes, which ride in behind it. Called at the end of a whole load and
+  // by _fetchDevData's first phase (#6826). No-op without the board mounted
+  // — a thread's own document draws none of this.
+  _paintDevBoardEarly() {
+    if (!document.getElementById('dev-body')) return;
     AppView._renderMainPauseNotice();
     AppView._renderReleaseStallNotice();
     AppView._renderCodePauseNotice();
     AppView._repaintDevBodyKeepingPosition();
-    // The themes ride in behind the board's own data: the Workshop paints
-    // first from what it has (every item under "Everything on the board")
-    // and regroups when they land. A partial live load moved rows the themes
-    // already place, so it leaves them be.
-    if (!(opts && opts.parts)) AppView._loadWorkshopThemes(App.currentApp);
+    AppView._loadWorkshopThemes(App.currentApp);
   },
 
   // Preserve the visible Done card across asynchronous data publications.
@@ -14191,7 +14447,7 @@ const AppView = {
   // _loadDevFeed freely, and the themes endpoint rebuilds the server's input
   // each time. `opts.force` is the `workshop_update` broadcast's: the server
   // just wrote a grouping, so the throttle and any running chain yield.
-  async _loadWorkshopThemes(slug, attempt, opts) {
+  _loadWorkshopThemes(slug, attempt, opts) {
     if (!slug) return;
     const n = attempt || 0;
     const force = !!(opts && opts.force);
@@ -14205,6 +14461,25 @@ const AppView = {
     // A chain is already polling this slug: let it finish rather than
     // starting a second one beside it.
     if (!n && !force && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;
+    // #6826: two full board loads in the first seconds of an open (the open
+    // itself and a late-answer correction) both passed the 60s throttle,
+    // because `cur.at` is stamped only after an answer. A check already on
+    // its way for this slug is the answer both are waiting for.
+    if (!n && !force) {
+      const flying = AppView._themesInflight;
+      if (flying && flying.slug === slug) return flying.promise;
+    }
+    const promise = AppView._fetchWorkshopThemes(slug, n, opts);
+    AppView._themesInflight = { slug, promise };
+    const clear = () => {
+      if (AppView._themesInflight && AppView._themesInflight.promise === promise) AppView._themesInflight = null;
+    };
+    promise.then(clear, clear);
+    return promise;
+  },
+  _themesInflight: null,
+  async _fetchWorkshopThemes(slug, n, opts) {
+    const force = !!(opts && opts.force);
     if (AppView._workshopPollTimer != null) {
       clearTimeout(AppView._workshopPollTimer);
       AppView._workshopPollTimer = null;
@@ -14386,7 +14661,13 @@ const AppView = {
       },
       autoExpand: null,
     };
-    if (!AppView._devDataReady) return { loading: true, emptyNote: null, ...empty, ...ctx };
+    // #6826: a board drawn from the last visit's memory is not `loading` —
+    // it draws at once and the fresh answer replaces it. What still waits
+    // for the Done list is `mergedPending` below.
+    if (!AppView._devBoardDrawable()) {
+      return { loading: true, mergedPending: true, emptyNote: null, ...empty, ...ctx };
+    }
+    const mergedPending = !AppView._devMergedDrawable();
 
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -14874,7 +15155,10 @@ const AppView = {
       shippedWeek: shippedThisWeek,
       shippedPrevWeek: shippedPrev,
       shippedPrevWeekToDate: shippedPrevToDate,
-      people: Number(AppView._mergedCtx && AppView._mergedCtx.activeUsers) || 0,
+      // #6826: `activeUsers` rides in on the Done list's answer; while that
+      // is pending the proposals' own answer carries the same number, so the
+      // figure does not wait for it.
+      people: Number((AppView._mergedCtx || AppView._proposalsCtx || {}).activeUsers) || 0,
       unclaimed: idle.length,
       busiest: AppView._busiestTheme(named),
       // The model's three windowed lines, when there are any: the Workshop
@@ -14922,7 +15206,10 @@ const AppView = {
       // whole Done column (#433), so it is exact whatever page is loaded;
       // on an older server without `total` it falls back to the loaded
       // page's length, which is still zero exactly when there is nothing.
-      everShipped: (Number(AppView._mergedTotal) || 0) > 0,
+      // #6826: null while the Done list is pending — unknown, not "no".
+      // The start-here banner reads `=== false`, so a busy project never
+      // offers it for the moment the list takes to land.
+      everShipped: mergedPending ? null : (Number(AppView._mergedTotal) || 0) > 0,
     };
 
     // ── The Needs-you queue ──
@@ -15042,6 +15329,11 @@ const AppView = {
     // placeholders for good.
     return {
       loading: false,
+      // #6826: the Done list has not answered yet this visit — or this is a
+      // remembered board drawn while it reloads. The figures, What happened,
+      // Recently live and the Done column draw their own placeholders and
+      // fill in when it lands.
+      mergedPending,
       emptyNote,
       // Which tab a URL asked for, or null for the viewer's own choice.
       tab: AppView._workshopTab(),
@@ -16839,6 +17131,9 @@ const AppView = {
         empty: kDone.length ? null : emptyNote,
         footer: doneFooter,
         status: doneDeployment,
+        // #6826: this column alone is drawn from the Done list, so it alone
+        // keeps its placeholders while that read is on its way.
+        pending: !AppView._devMergedDrawable(),
       },
     ];
     // #4486: a private session of yours on a request in Requests or Underway
@@ -16861,7 +17156,7 @@ const AppView = {
     // from; `unfolded` is the ?cards=open state (every card at full size).
     const slug = (AppView.appData && AppView.appData.slug) || App.currentApp || '';
     return {
-      activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devDataReady,
+      activeTab: AppView._activeKanbanTab(), cols, loading: !AppView._devBoardDrawable(),
       slug, canPost: !!(AppView.appData && AppView.appData.can_collaborate),
       unfolded: AppView._cardsOpen(),
     };

@@ -577,8 +577,18 @@ export interface WorkshopTheme {
 }
 
 export interface DevWorkshopView {
-  /** True until the board's first fetch lands — the skeleton stays up. */
+  /**
+   * True until there is a board to draw — read this visit, or held from an
+   * earlier one (#6826) — the skeleton stays up only for the first.
+   */
   loading?: boolean;
+  /**
+   * #6826: the Done list has not answered yet this visit (or this is a
+   * remembered board drawn while it reloads). Only what is counted from
+   * finished work waits for it: the live this week figure, What happened,
+   * Recently live, the Done column and the start-here banner.
+   */
+  mergedPending?: boolean;
   /** The open app, which the inline composer posts to. */
   slug?: string;
   /** Whether the viewer may post into a row's thread (collab-gated server-side). */
@@ -987,6 +997,12 @@ export interface KanbanColView {
   /** The no-cards note ('Nothing here yet' / 'No matching cards'), or null. */
   empty?: string | null;
   footer: FooterSpec | null;
+  /**
+   * #6826: this column's own read has not answered yet, while the others
+   * draw — the Done column while the Done list is on its way. Its count and
+   * its cards are placeholders until it lands.
+   */
+  pending?: boolean;
 }
 
 export interface DevKanbanView {

@@ -707,7 +707,7 @@ test('serving a stale boot read is only safe because the page is told', () => {
   assert.match(body, /served\.fromCache && changed/,
     'and only when the page was actually shown the stale bytes');
   const app = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(app, /_onApiUpdated\(\)/, 'the page listens for it');
+  assert.match(app, /_onApiUpdated\(event\)/, 'the page listens for it');
   assert.match(app, /App\.refreshActiveScreen/, 'and re-runs the visible screen\'s loader');
   // Both screens the fast lane is for have a branch in that loader. Without
   // one, a corrected answer would sit in the cache until the next reload and
@@ -719,7 +719,9 @@ test('serving a stale boot read is only safe because the page is told', () => {
     app.indexOf('_refreshLeaderboard() {'));
   assert.match(loader, /AppView\._watchCreatingStatus\(AppView\.appData, \{ immediate: true \}\)/,
     'and a corrected creating record revalidates the open App tab');
-  assert.match(loader, /AppView\.refreshDevData\('api-update'\)/, 'the board repaints');
+  // #6826: with the reads the correction names, so the board re-reads those
+  // parts rather than all seven.
+  assert.match(loader, /AppView\.refreshDevData\('api-update', urls \? \{ urls \} : null\)/, 'the board repaints');
   assert.match(loader, /Home\.load\(\)/, 'and so does home');
 });
 
