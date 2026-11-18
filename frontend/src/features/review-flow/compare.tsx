@@ -357,6 +357,10 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
         src={url}
         srcSet={whole?.srcSet}
         sizes={whole?.srcSet ? `${Math.max(1, Math.round(W))}px` : undefined}
+        // The still's own size keeps the slot's box before it loads, so the
+        // preview fills exactly the space the sharp picture will take.
+        width={whole && screen ? Math.round(screen.width) : undefined}
+        height={whole && screen ? Math.round(which === 'after' ? screen.after.height : screen.before.height) : undefined}
         alt={alt === 'after' ? t('communities:review.alt.after') : t('communities:review.alt.before')}
         draggable={false}
         className={place ? 'rf-shot-img' : 'rf-shot-img rf-shot-whole'}
@@ -364,6 +368,14 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
           ...(place ? { width: screen!.width, height: which === 'after' ? screen!.after.height : screen!.before.height } : null),
           ...(whole ? shotPreview(whole) : null),
         }}
+        // If no smaller copy loads, the full-size picture takes over rather
+        // than leaving the slot on its blurred preview (#6825).
+        onError={whole?.srcSet ? (event) => {
+          const node = event.currentTarget;
+          node.removeAttribute('srcset');
+          node.removeAttribute('sizes');
+          node.style.backgroundImage = 'none';
+        } : undefined}
       />
     );
   };

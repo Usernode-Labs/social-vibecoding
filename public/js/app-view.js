@@ -26977,7 +26977,14 @@ const AppView = {
           const preview = AppView._shotPlaceholder(artifact);
           const style = preview ? ` style="${attr(`background-image:url("${preview}");background-size:cover;background-position:center`)}"` : '';
           const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) 100vw, 640px"` : '';
-          return `<img src="${attr(shotsUrl(artifact.url))}"${srcsets} ${alt} class="${cls}" loading="lazy"${style}>`;
+          // The preview is this box's own background, so the box is fixed
+          // before a byte arrives: its width and height are the still's
+          // pixels, and the decoded picture covers the preview in place. If
+          // no copy loads at all, the preview gives way to the full-size
+          // picture rather than staying blurred forever.
+          const box = `${Number(artifact.width) > 0 ? ` width="${Math.round(Number(artifact.width))}"` : ''}${Number(artifact.height) > 0 ? ` height="${Math.round(Number(artifact.height))}"` : ''}`;
+          const fallback = set ? ` onerror="this.onerror=null;this.removeAttribute('srcset');this.removeAttribute('sizes');this.style.backgroundImage='none'"` : '';
+          return `<img src="${attr(shotsUrl(artifact.url))}"${srcsets}${box} ${alt} class="${cls}" loading="lazy"${style}${fallback}>`;
         };
         const inner = `${still(artifact, 'shots-img-light')}${dark ? still(dark, 'shots-img-dark') : ''}${drawn[which]}`;
         if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
