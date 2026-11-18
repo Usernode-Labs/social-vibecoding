@@ -5711,6 +5711,11 @@ html[data-skin-wip] {
   --wip-label-track: 0.06em;
   --wip-label-weight: 700;
   --wip-label-ink: var(--wip-ink-muted);
+  /* A highlighter's stroke through the lower half of a label's words: none unless a config names its colour. */
+  --wip-label-mark: transparent;
+  /* What a challenge is worth: plain words unless a config gives them a ground. */
+  --wip-worth-bg: transparent;
+  --wip-worth-ink: var(--wip-ink);
   /* A card that asks something of the viewer (Needs you) may wear its own
      colours. By default they are the card's. */
   --wip-ask-bg: var(--wip-card-bg);
@@ -5719,6 +5724,20 @@ html[data-skin-wip] {
   --wip-ask-ink-muted: var(--wip-ink-muted);
   --wip-ask-pill-bg: var(--wip-pill-bg);
   --wip-ask-pill-ink: var(--wip-pill-ink);
+  /* A card of things to aim for (Challenges) may wear its own colours too:
+     its ground and edge, its words, its meter, and how much of a picture's
+     tone its band wears. By default they are the card's. */
+  --wip-goal-bg: var(--wip-card-bg);
+  --wip-goal-line: var(--wip-card-line);
+  --wip-goal-ink: var(--wip-ink);
+  --wip-goal-ink-muted: var(--wip-ink-muted);
+  --wip-goal-meter: var(--wip-meter);
+  --wip-goal-poster-tone: var(--wip-poster-tone);
+  --wip-goal-poster-deep: var(--wip-poster-deep);
+  /* The soft disc under a title's chevron when the pointer is on the title */
+  --wip-head-disc: var(--wip-count-bg);
+  /* A card's lift off the page: none here, where its edge is a hairline. */
+  --wip-card-shadow: 0 0 transparent;
   /* A placeholder's fill: a tenth of the ink, on whatever it sits on */
   --wip-skeleton: color-mix(in srgb, var(--wip-ink) 10%, transparent);
   /* Space */
@@ -5726,7 +5745,8 @@ html[data-skin-wip] {
   --wip-row-gap: 2rem;         /* between Home's rows */
   --wip-card-gap: 1rem;        /* between two cards of one row */
   --wip-card-pad: 12px;
-  --wip-col-gap: 1rem;         /* between two columns of a list */
+  --wip-col-gap: 0.5rem;       /* between two columns of a list: the projects grid's own gap, so every list's columns fall on the same lines */
+  --wip-cell-pad: 0.75rem;     /* inside a column, before its icon: a project tile's own padding */
   /* Corners: three steps and the pill. A card; what sits inside a card (an
      icon, an inner card, a field); a small mark (a count, a status). The
      pill is for what is pressed (a button, a chip) and nothing else. An
@@ -5749,6 +5769,7 @@ html[data-skin-wip] {
   --wip-ink-action: var(--accent);
   /* A project's tile */
   --wip-tile-h: 6.25rem;       /* p-3 12 + icon 72 + p-3 12, and the text's 94 */
+  --wip-tile-h-stacked: 8.25rem; /* under 1024px: p 12 + icon 56 + gap 6 + two lines of the name 38 + p 12, and a breath */
   --wip-tile-gap: 0.75rem;
   --wip-icon: 4.5rem;
   --wip-icon-radius: 1.125rem;  /* 18px: an icon is rounder than the things beside it, a quarter of its side, as a phone's app icon is */
@@ -5786,6 +5807,7 @@ html[data-skin-wip] {
   /* A meter's fill, and a hairline round a count */
   --wip-meter: var(--wip-ink-action);
   --wip-count-line: transparent;
+  --wip-poster-art: 4rem;      /* a challenge's picture, a step under a project's icon */
   /* A thing done */
   --wip-ok: var(--state-ok);
   /* Widths */
@@ -5853,26 +5875,38 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
   --lit-tint: rgb(255 254 234 / 0.1);
   --lit-line: rgb(255 254 234 / 0.18);
 }
-/* BRAND2 ("Homeroom brand kit V2"): the kit again, drawn with more of its
-   voice (confident, playful, simple) than BRAND's cream and white. Section
-   titles are headlines, in the kit's serif role (Young Serif stands in for
-   the licensed STK Bureau Serif, as Source Serif does on the kit's own
-   page), sentence case, in the ink. What needs the viewer is the kit's
-   first pairing, Black + Yellow: a yellow block with black words and black
-   pills. Cards are white on cream with a firmer edge; the filled action is
-   Cream + Black; blue is progress and the pill on a white card; green is a
-   thing done. Interface text is Geist. */
+/* BRAND2 ("Homeroom brand kit V2"): the kit again, with more of its voice
+   (confident, playful, simple) than BRAND, and with its colours used small.
+   Cream and white carry the page; yellow and green are marks, never
+   grounds (as blocks behind a whole row they shouted):
+     Cream   the page, and the frame round it.
+     White   every card, with no outline: it lifts off the cream on a soft
+             shadow.
+     Yellow  a highlighter: a stroke through the lower half of each section
+             title's words, and, pale, the mark of where you are in the
+             sidebar. Never a ground behind a row.
+     Green   what a challenge is worth: a small pale ground behind its
+             points, and a thing done.
+     Blue    getting somewhere: a meter's fill, and the disc under a
+             title's chevron.
+   What is pressed is the kit's Cream + Black: the filled action, the Vote
+   pill and the count beside a title.
+   Section titles are headlines, in the kit's serif role (Young Serif stands
+   in for the licensed STK Bureau Serif, as Source Serif does on the kit's
+   own page), sentence case, in the ink. The filled action is Cream + Black.
+   Interface text is Geist. */
 html[data-skin-wip][data-wip-tokens="brand2"] {
   --wip-page-bg: #fffeea;
   --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --wip-label-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
-  --wip-label-size: 1.25rem;
+  --wip-label-size: 1.375rem;
   --wip-label-case: none;
   --wip-label-track: -0.01em;
   --wip-label-weight: 400;
   --wip-label-ink: #000000;
   --wip-card-bg: #ffffff;
-  --wip-card-line: rgb(0 0 0 / 0.16);
+  --wip-card-line: rgb(0 0 0 / 0.07);
+  --wip-card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 14px 28px -18px rgb(0 0 0 / 0.28);
   --wip-ink: #000000;
   --wip-ink-soft: rgb(0 0 0 / 0.74);
   --wip-ink-muted: rgb(0 0 0 / 0.62);
@@ -5883,28 +5917,28 @@ html[data-skin-wip][data-wip-tokens="brand2"] {
   --wip-cta-to: #000000;
   --wip-cta-ink: #fffeea;
   --wip-cta-glow: rgb(0 0 0 / 0.24);
-  --wip-pill-bg: #3090e1;
-  --wip-pill-ink: #000000;
+  --wip-label-mark: #ffee6f;
+  --wip-pill-bg: #000000;
+  --wip-pill-ink: #fffeea;
   --wip-count-bg: #000000;
   --wip-count-ink: #fffeea;
   --wip-meter: #3090e1;
-  --wip-ok: #4f8a3c; /* the kit's green, deepened to carry text and a thin line on white */
-  --wip-ask-bg: #ffee6f;
-  --wip-ask-line: rgb(0 0 0 / 0.14);
-  --wip-ask-ink: #000000;
-  --wip-ask-ink-muted: rgb(0 0 0 / 0.68);
-  --wip-ask-pill-bg: #000000;
-  --wip-ask-pill-ink: #fffeea;
+  --wip-worth-bg: rgb(169 207 151 / 0.5);
+  --wip-worth-ink: #000000;
+  --wip-ok: #2f6b1e; /* the kit's green, deepened to carry words on white */
+  --wip-head-disc: rgb(48 144 225 / 0.16);
   --lit-ink: #000000;
   --lit-tint: #fcfab3; /* the kit's pale yellow marks where you are */
   --lit-line: rgb(0 0 0 / 0.14);
 }
-/* In the dark: cream on black, and the yellow block stays the yellow block. */
+/* In the dark: cream on black, lifted by an edge and not a shadow, with the
+   same small marks. */
 html[data-skin-wip][data-wip-tokens="brand2"].dark {
   --wip-page-bg: #0b0b0c;
   --wip-label-ink: #fffeea;
   --wip-card-bg: #171715;
   --wip-card-line: rgb(255 254 234 / 0.16);
+  --wip-card-shadow: 0 0 transparent;
   --wip-ink: #fffeea;
   --wip-ink-soft: rgb(255 254 234 / 0.8);
   --wip-ink-muted: rgb(255 254 234 / 0.64);
@@ -5915,20 +5949,27 @@ html[data-skin-wip][data-wip-tokens="brand2"].dark {
   --wip-cta-to: #ffee6f;
   --wip-cta-ink: #000000;
   --wip-cta-glow: rgb(255 238 111 / 0.18);
-  --wip-count-bg: #ffee6f;
+  --wip-label-mark: rgb(255 238 111 / 0.32);
+  --wip-pill-bg: #fffeea;
+  --wip-pill-ink: #000000;
+  --wip-count-bg: #fffeea;
   --wip-count-ink: #000000;
+  --wip-worth-bg: rgb(169 207 151 / 0.22);
+  --wip-worth-ink: #fffeea;
   --wip-ok: #a9cf97;
+  --wip-head-disc: rgb(48 144 225 / 0.28);
   --lit-ink: #fffeea;
   --lit-tint: rgb(255 238 111 / 0.14);
   --lit-line: rgb(255 254 234 / 0.18);
 }
 /* How many columns a list of the look has, by the room there is: one, two
-   from 640px, three from 1024px, four from 1440px. Needs you's rows and
-   Challenges' cards read the same number, so their columns line up. */
+   from 640px, and four from 1024px, where Pinned projects' own four columns
+   become rows. Needs you's rows and Challenges' posters read the same
+   number, the same gap and the same padding as that grid, so the three
+   lists' columns fall on the same lines. */
 html[data-skin-wip] { --wip-cols: 1; }
 @media (min-width: 640px) { html[data-skin-wip] { --wip-cols: 2; } }
-@media (min-width: 1024px) { html[data-skin-wip] { --wip-cols: 3; } }
-@media (min-width: 1440px) { html[data-skin-wip] { --wip-cols: 4; } }
+@media (min-width: 1024px) { html[data-skin-wip] { --wip-cols: 4; } }
 /* In the dark (either config): an icon's tile is a step lighter than the
    card and edged, so a dark picture stays a shape; a community's colour is
    lifted less; a challenge's band wears a third of its tone's deep colour. */
@@ -5946,7 +5987,7 @@ html[data-skin-wip].dark {
 .wip-card {
   border-radius: var(--wip-card-radius);
   background-color: var(--wip-card-bg);
-  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
 }
 /* A card that asks something of the viewer wears the config's "ask"
    colours: it re-points the tokens its insides read, so rows, pills and
@@ -5957,10 +5998,24 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
   --wip-card-bg: var(--wip-ask-bg);
   --wip-card-line: var(--wip-ask-line);
   --wip-ink: var(--wip-ask-ink);
+  --wip-ink-soft: var(--wip-ask-ink); /* a plain pill's words (Advisory) are the block's own ink, not the page's */
   --wip-ink-muted: var(--wip-ask-ink-muted);
   --wip-ink-action: var(--wip-ask-ink);
   --wip-pill-bg: var(--wip-ask-pill-bg);
   --wip-pill-ink: var(--wip-ask-pill-ink);
+}
+/* A card of things to aim for wears the config's "goal" colours, the same
+   way. */
+html[data-skin-wip] .wip-card[data-tone="goal"] {
+  --wip-card-bg: var(--wip-goal-bg);
+  --wip-card-line: var(--wip-goal-line);
+  --wip-ink: var(--wip-goal-ink);
+  --wip-ink-soft: var(--wip-goal-ink);
+  --wip-ink-muted: var(--wip-goal-ink-muted);
+  --wip-ink-action: var(--wip-goal-ink);
+  --wip-meter: var(--wip-goal-meter);
+  --wip-poster-tone: var(--wip-goal-poster-tone);
+  --wip-poster-deep: var(--wip-goal-poster-deep);
 }
 /* The page's one filled action. */
 .wip-cta {
@@ -6010,7 +6065,7 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
   color: var(--wip-ink-action);
   transition: background-color 150ms;
 }
-.wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-count-bg); }
+.wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-head-disc); }
 .wip-head-chevron-glyph { width: 0.875rem; height: 0.875rem; }
 /* Rows: one thing a line, a hairline between them. */
 .wip-rows { display: grid; min-width: 0; margin-top: 0.25rem; overflow: hidden; }
@@ -6025,7 +6080,7 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
   align-items: center;
   gap: 0.75rem;
   min-height: 3.25rem;
-  padding: 0.5rem 0.25rem;
+  padding: 0.5rem var(--wip-cell-pad);
   border-radius: var(--wip-item-radius);
 }
 .wip-row:hover .wip-item-title { color: var(--wip-ink-action); }
@@ -6096,8 +6151,10 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
 }
 /* Posters: things side by side in one card with no card of their own, each
    as wide as one of the look's columns; the row scrolls sideways for what
-   does not fit (Challenges). A poster's picture runs across its top on the
-   picture's own tone. */
+   does not fit, by a swipe, a wheel or the arrow drawn at whichever end has
+   more (Challenges). A poster is its picture at the side, on the picture's
+   own tone, and its words beside it. */
+.wip-posters-card { position: relative; }
 .wip-posters {
   display: flex;
   gap: var(--wip-col-gap);
@@ -6111,19 +6168,24 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
 .wip-poster {
   display: flex;
   flex: 0 0 calc((100% - (var(--wip-cols, 1) - 1) * var(--wip-col-gap)) / var(--wip-cols, 1));
-  flex-direction: column;
+  align-items: center;
+  gap: var(--wip-tile-gap);
   min-width: 0;
+  padding: 0.5rem var(--wip-cell-pad);
   text-align: start;
   scroll-snap-align: start;
 }
 .wip-poster:hover .wip-item-title { color: var(--wip-ink-action); }
 .wip-poster-art {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: center;
-  height: 4.25rem;
-  margin-bottom: 0.625rem;
+  width: var(--wip-poster-art);
+  height: var(--wip-poster-art);
   overflow: hidden;
+  border-radius: var(--wip-icon-radius);
+  font-size: 1.75rem;
   /* The picture's own tone (.home-tone-* sets --tone-50 and its deeper
      --tone-light-line) over the card, in the parts the tokens say: the pale
      tone in the light, a third of the deep one in the dark, where the
@@ -6134,20 +6196,42 @@ html[data-skin-wip] .wip-card[data-tone="ask"] {
     var(--tone-50, var(--wip-card-line)) var(--wip-poster-tone),
     color-mix(in srgb, var(--tone-light-line, var(--wip-card-line)) var(--wip-poster-deep), var(--wip-card-bg))
   );
-  border-radius: var(--wip-radius-inner);
-  font-size: 2rem;
 }
-.wip-poster-art > img { width: 3.75rem; height: 3.75rem; object-fit: contain; transition: transform 200ms; } /* the band's height but a breath */
+.wip-poster-art > img { width: 82%; height: 82%; object-fit: contain; transition: transform 200ms; }
 .wip-poster:hover .wip-poster-art > img { transform: scale(1.06); }
+/* The row's arrows: a disc at the card's edge, over the row, at whichever
+   end has more. */
+.wip-rail-arrow {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin-top: -1rem;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-card-bg);
+  color: var(--wip-ink);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-icon-shadow);
+  transition: transform 150ms;
+}
+.wip-rail-arrow:hover { transform: scale(1.08); }
+.wip-rail-arrow-back { inset-inline-start: -0.625rem; } /* astride the card's edge, clear of the first picture */
+.wip-rail-arrow-on { inset-inline-end: -0.625rem; }
+.wip-rail-arrow-glyph { width: 1rem; height: 1rem; }
 .wip-poster-facts { display: flex; align-items: baseline; gap: 0.5rem; }
 .wip-poster-facts > .wip-item-meta { flex: 1 1 0; min-width: 0; }
 /* What it is worth is the line's strong half: a step larger than where the
    viewer stands, in the ink. Earned, it is in the done colour. */
 .wip-poster-worth {
   flex: none;
+  padding: 0.0625rem 0.4375rem;
+  border-radius: var(--wip-radius-small);
+  background-color: var(--wip-worth-bg);
   font-size: var(--wip-link-size);
   font-weight: 700;
-  color: var(--wip-ink);
+  color: var(--wip-worth-ink);
 }
 .wip-poster-worth-ok { color: var(--wip-ok); }
 /* A meter: a track, and the accent as far as the thing has come; green once
@@ -6245,8 +6329,23 @@ html[data-skin-wip] .wip-filterbar > select {
    A tile with no sentence is the name and the people, nothing held open. The
    drag overlay's rows follow the same height token. Narrower, the tile is
    the grid's own: the icon and, under it, the name alone. */
+/* A project's name is the same size and weight at every width (the row's
+   title size): under the icon it may take two lines, and the cell is a
+   little taller for them. */
+html[data-skin-wip] #app-list .app-card-title {
+  font-size: var(--wip-title-size);
+  line-height: 1.25;
+  font-weight: var(--wip-title-weight);
+}
 @media (max-width: 1023.98px) {
   html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people) { display: none; }
+  html[data-skin-wip] { --home-cell-h: var(--wip-tile-h-stacked); }
+  html[data-skin-wip] #app-list .app-card-title { min-height: 2.5em; }
+}
+/* On a phone the tile gives its side padding to the name: at this size a
+   name needs every pixel of its quarter of the screen. */
+@media (max-width: 639.98px) {
+  html[data-skin-wip] #app-list > .app-card { padding-inline: 2px; }
 }
 @media (min-width: 1024px) {
   html[data-skin-wip] { --home-cell-h: var(--wip-tile-h); }
@@ -6266,9 +6365,6 @@ html[data-skin-wip] .wip-filterbar > select {
     line-clamp: 1;
     min-height: 0;
     text-align: start;
-    font-size: var(--wip-title-size);
-    line-height: 1.3;
-    font-weight: var(--wip-title-weight);
   }
 }
 /* The icon sits a little above the card: one soft shadow, at every width,
@@ -6399,6 +6495,19 @@ html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3
   text-transform: var(--wip-label-case);
   color: var(--wip-label-ink);
 }
+/* The highlighter: a thick stroke of the config's mark colour through the
+   lower half of the label's words (their own words only: a count or a
+   chevron beside them is not struck). In a label that is a link, the
+   kit's own span round the words carries it. */
+html[data-skin-wip][data-wip-tokens] #home-screen .home-area-label > span:first-child:not(:has(.wip-head-words)),
+html[data-skin-wip][data-wip-tokens] #home-screen .home-area-label .wip-head-words,
+html[data-skin-wip][data-wip-tokens] #home-screen [data-home-join-featured] > h3 {
+  text-decoration-line: underline;
+  text-decoration-color: var(--wip-label-mark);
+  text-decoration-thickness: 0.42em;
+  text-underline-offset: -0.16em;
+  text-decoration-skip-ink: none;
+}
 /* The shell's own placeholders, drawn in this look's shapes while Home
    loads (the prerender does not know the look; these rules do, before the
    first paint), so what arrives takes the place its placeholder held.
@@ -6448,7 +6557,7 @@ html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-
 }
 html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-body > div > div {
   flex: 0 0 calc((100% - (var(--wip-cols) - 1) * var(--wip-col-gap)) / var(--wip-cols));
-  height: 8rem;
+  height: var(--wip-poster-art);
   border-radius: var(--wip-radius-inner);
   background-color: var(--wip-skeleton);
 }
