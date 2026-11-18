@@ -4890,7 +4890,7 @@ function voteRoutes(config) {
           ? [appRows[0].id, userId, before.toISOString(), beforeIdRaw, limit + 1]
           : [appRows[0].id, userId, before.toISOString(), limit + 1];
       const { rows: prRows } = await pool.query(
-        `${mergedRowSelect({ results: listTestResults.resultsSelect(req, 'cs') })}
+        `${mergedRowSelect({ results: listTestResults.pagedResultsSelect(req, 'cs') })}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
            ${noNewerMergedTwin()}
            ${prCursorSql}
@@ -4899,7 +4899,9 @@ function voteRoutes(config) {
         // Fetch limit+1 so an extra row signals there's another page.
         prParams
       );
-      listTestResults.unpackListed(prRows);
+      // The list form of the page's own rows, read by id: in the query above
+      // it would be worked out for every merged row before the LIMIT.
+      await listTestResults.attachListed(pool, req, prRows);
       const mergedShots = config.shots?.present
         ? await shotsView.getForSessions(pool, prRows, req.params.slug, { viewer: req.user })
         : new Map();

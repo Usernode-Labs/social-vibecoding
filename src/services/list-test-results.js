@@ -148,6 +148,45 @@ function unpackListed(rows) {
   return rows;
 }
 
+// A PAGED list reads the list form for its page alone. In a query that ends
+// in ORDER BY and LIMIT, Postgres works a select-list subquery out for every
+// row that matches before it sorts and cuts: with listedResultsSql in
+// /merged's own SELECT, each read unpacked the check results of every merged
+// change the project ever had, to keep twenty (measured on production with
+// Server-Timing, 18 Nov 2026: 245 ms became about 1,050 ms). So the paged
+// query selects LISTED_LATER in the column's place, and attachListed reads
+// the list form by id for the rows that came back.
+const LISTED_LATER = 'NULL::jsonb AS test_results';
+
+// What a paged list's query selects for the check results.
+function pagedResultsSelect(req, alias) {
+  return wantsFailingResults(req) ? LISTED_LATER : `${alias}.test_results`;
+}
+
+async function attachListed(pool, req, rows) {
+  if (!wantsFailingResults(req) || !Array.isArray(rows) || !rows.length) return rows;
+  const ids = [...new Set(rows.map((row) => Number(row && row.id)).filter((id) => Number.isInteger(id) && id > 0))];
+  const byId = new Map();
+  if (ids.length) {
+    const { rows: listed } = await pool.query(
+      `SELECT cs.id, ${listedResultsSql('cs')} FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`,
+      [ids]
+    );
+    for (const row of listed) byId.set(Number(row.id), row);
+  }
+  for (const row of rows) {
+    const listed = row ? byId.get(Number(row.id)) : null;
+    if (listed) {
+      row.test_results_listed = listed.test_results_listed;
+      row.test_results = listed.test_results;
+    } else if (row && row.test_results == null) {
+      // No stored row to read (a change deleted between the two reads).
+      row.test_results = [];
+    }
+  }
+  return unpackListed(rows);
+}
+
 // The row as a server reader that asks about the unit suite needs it
 // (merge-requirements levelAndGreen): a passing suite's row, which the list
 // form left out, is put back. Never sent.
@@ -205,6 +244,9 @@ module.exports = {
   forListing,
   listedResultsSql,
   resultsSelect,
+  pagedResultsSelect,
+  attachListed,
+  LISTED_LATER,
   unpackListed,
   listedRowForServer,
   slimListRow,
