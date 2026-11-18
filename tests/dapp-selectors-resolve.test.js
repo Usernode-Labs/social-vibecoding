@@ -240,12 +240,9 @@ test('the self-app hash routes dapp.json targets are the ones visuals.js normali
   // shell's own document, served at that pathname with a link preview in its
   // head, and the SPA draws the invite landing from it. It is not a hash
   // route, and rewriting it into one would lose the view the check is about.
-  // /communities is the signed-out page about private communities
-  // (frontend/src/features/guest/guest-communities.tsx): the shell's own
-  // document again, which the landing draws that page from by its pathname.
   const STANDALONE = ['/cli/authorize', '/usernode-native/', '/dashboard', '/admin-features',
     '/status', '/node-status', '/debug', '/gallery', '/reports/', '/api/public/',
-    '/waitlist/connect/', '/api/me/staking/context', '/invite/', '/communities'];
+    '/waitlist/connect/', '/api/me/staking/context', '/invite/'];
 
   const unroutable = [];
   for (const t of declared) {

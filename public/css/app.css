@@ -4347,24 +4347,23 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
 }
 
 /* ── THE WEBSITE'S LOOK ON THE SIGNED-OUT PAGES (13 Nov 2026) ────────────
-   The guest Discover (its story and its list) and the page about private
-   communities are a visitor's next click after onhomeroom.com, so they are
-   drawn in that site's own look: a sky band with a white window in it,
-   serif headlines, sun pills on an ink outline, outlined cards, and bands
-   of colour down the page. The app's own look starts once somebody is in.
+   The guest Discover (its story and its list) is a visitor's next click
+   after onhomeroom.com, so it is drawn in that site's own look: a sky band
+   with a white window in it, serif headlines, sun pills on an ink outline
+   and outlined cards. The app's own look starts once somebody is in.
 
-   The two components that are only ever drawn here
-   (frontend/src/features/auth/story.tsx's short story and
-   ../guest/guest-communities.tsx) spell every colour as one of the
-   variables below. The pieces they share with the signed-in app (the bar's
-   button, the search, the chips, the cards) keep their classes and are
-   repainted from here, by their own hooks, under #auth-landing-screen only.
+   The one component that is only ever drawn here
+   (frontend/src/features/auth/story.tsx's short story) spells every colour
+   as one of the variables below. The pieces the page shares with the
+   signed-in app (the bar's button, the search, the chips, the cards) keep
+   their classes and are repainted from here, by their own hooks, under
+   #auth-landing-screen only.
 
    The dark shell gets the same drawing on its own ground: the second rule
    moves the variables and nothing else. Sun keeps its ink words in both.
    Young Serif and Geist are the faces the new look (the last block of this
    sheet) declares; a browser downloads them only where a rule that names
-   them matches, which is now the new look and these two pages
+   them matches, which is now the new look and this page
    (tests/new-look.test.js). This block sits with the landing's own rules,
    well before the looks' hand-written blocks and generated section, which
    have to stay together and directly before the new look's. */
@@ -4382,27 +4381,17 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   --site-sun: #ffee6f;
   --site-sun-lit: #fff4a0;
   --site-sun-pale: #fff6ac;
-  --site-sun-deep: #f9e869;
-  --site-window: #fbfab3;
-  --site-leaf: #96b885;
-  --site-leaf-pale: #eaf2e6;
-  --site-sky-pale: #cfe6ff;
-  --site-mint: #d9ecd0;
   --site-on-sun: #121a0e;
   --site-chosen: #121a0e;
   --site-chosen-ink: #fffeea;
-  /* The band behind the rules, a hairline between rows, and the face of
-     the hub in the private page's picture. */
-  --site-sun-band: #fff6ac;
-  --site-line-soft: rgba(18, 26, 14, 0.2);
-  --site-ground-card: #fffeea;
 }
 .dark #auth-landing-screen {
   /* THE SITE AT NIGHT (17 Nov 2026). The same poster with the lights off:
      the ground and the cards are the navy of the brand look's dark mode
      (--bl-page, --bl-card), the words and the outlines the site's cream, a
-     dark sky with stars, leaf still green and sun still sun. It used to be transparent over the app's dark wallpaper, whose red
-     and purple washes are no colour of this site. */
+     dark sky with stars, and sun still sun. It used to be transparent over
+     the app's dark wallpaper, whose red and purple washes are no colour of
+     this site. */
   --site-ink: #fffeea;
   --site-muted: #c9ccb6;
   --site-label: #a8ad97;
@@ -4411,17 +4400,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   --site-ground: #0d1421;
   --site-panel: #182135;
   --site-sun-pale: transparent;
-  --site-sun-band: #131c2e;
-  --site-sun-deep: #3b3713;
-  --site-window: #243047;
-  --site-leaf: #2d4a2a;
-  --site-leaf-pale: #3a5c36;
-  --site-sky-pale: #173560;
-  --site-mint: #2f4d2b;
   --site-chosen: #fffeea;
   --site-chosen-ink: #0d1421;
-  --site-line-soft: rgba(255, 254, 234, 0.18);
-  --site-ground-card: #202b43;
 }
 /* One colour edge to edge, around content that keeps the column's width:
    the band's own fill, let out to both sides as a border image (a flat
@@ -4448,30 +4428,6 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   width: var(--platform-usable-w);
   transform: translateX(-50%);
   background: var(--site-sky) url('/brand/sky.webp') center / cover no-repeat;
-}
-/* The large "Friend groups" card on the private page: the same sky, faded
-   out under its words. At night it is the night's sky. */
-#auth-landing-screen .site-sky-card {
-  background:
-    linear-gradient(90deg, var(--site-panel) 0%, color-mix(in srgb, var(--site-panel) 78%, transparent) 42%, transparent 78%),
-    var(--site-sky) url('/brand/sky.webp') center / cover no-repeat;
-}
-.dark #auth-landing-screen .site-sky-card {
-  background-color: var(--site-sky);
-  background-image:
-    linear-gradient(90deg, var(--site-panel) 0%, color-mix(in srgb, var(--site-panel) 72%, transparent) 42%, transparent 78%),
-    radial-gradient(1.2px 1.2px at 481px 246px, #fffeea 98%, transparent),
-    radial-gradient(1.2px 1.2px at 105px 102px, #ffee6f 98%, transparent),
-    radial-gradient(2.0px 2.0px at 322px 103px, #fffeea 98%, transparent),
-    radial-gradient(1.2px 1.2px at 54px 283px, #fffeea 98%, transparent),
-    radial-gradient(2.0px 2.0px at 29px 312px, #fffeea 98%, transparent),
-    radial-gradient(2.0px 2.0px at 342px 323px, #ffee6f 98%, transparent),
-    radial-gradient(1.2px 1.2px at 433px 278px, #fffeea 98%, transparent),
-    radial-gradient(1.2px 1.2px at 458px 131px, #fffeea 98%, transparent),
-    radial-gradient(1.2px 1.2px at 175px 233px, #fffeea 98%, transparent),
-    radial-gradient(1.2px 1.2px at 127px 335px, #fffeea 98%, transparent),
-    linear-gradient(180deg, #050d1c 0%, #0b1f43 100%);
-  background-size: auto, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, auto;
 }
 /* At night the band is a dark sky with stars in place of the clouds (the
    clouds read oddly dimmed). The stars are two tiles of small dots, of
@@ -4503,18 +4459,18 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
   background-size: 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 520px 360px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, 730px 410px, auto;
   background-repeat: repeat;
 }
-/* The ground under the two pages is the site's cream, flat: the washes of
+/* The ground under the page is the site's cream, flat: the washes of
    the app's wallpaper are the app's. The bar's faked glass follows it. Not
    under a look (html[data-skin]), which paints its own ground and draws the
    landing in its own frame. */
-html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) {
+html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) {
   background: var(--site-ground);
 }
-html:not([data-skin]) #auth-landing-screen:has(:is([data-guest-discover], [data-guest-groups])) #landing-header {
+html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-header {
   --fake-glass-tint: var(--site-ground);
 }
-/* Words on the two pages are the site's sans. */
-#auth-landing-screen :is([data-guest-discover], [data-guest-groups]) {
+/* Words on the page are the site's sans. */
+#auth-landing-screen [data-guest-discover] {
   font-family: var(--site-sans);
 }
 /* DO THIS is a sun pill on an ink outline: the bar's button on every

@@ -1779,28 +1779,23 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // 733 → 734: +1 (#6643): a change held for an admin says so on its card,
   // with the reason. No existing check opens that demo card's warning, and
   // a hold is a state no other route reaches. 734 leaves 146 slots.
-  // 734 → 735: +1 (private communities' page): the signed-out page at
-  // `/communities` is a pathname of its own, which no check of the landing
-  // loads, so nothing could take it in a :has(); the landing's own door to
-  // it rides the existing "one filled button in its bar" check. 735 leaves
-  // 145 slots.
-  // 735 → 736: +1 (Admin › Onboarding flows): the new section's own route,
+  // 734 → 735: +1 (Admin › Onboarding flows): the new section's own route,
   // which no existing check opens, drawn on its demo payload with its five
-  // views. 736 leaves 144 slots.
-  // 736 → 719: −17 (15 Nov 2026, agent chats, dev chats and headless runs
+  // views. 735 leaves 145 slots.
+  // 735 → 718: −17 (15 Nov 2026, agent chats, dev chats and headless runs
   // retired) the checks of the agent session pane, the dev chat's spec
   // viewer, chat sharing and the auto-solve work states went with them;
-  // three were re-pointed to the old addresses' new landings. 719 leaves 161 slots.
-  // 719 → 718: −1 (15 Nov 2026) Settings › Agent instructions & skills retired
-  // with the builds that copied those files into the worker. 718 leaves 162 slots.
-  // 718 → 716: −2 (15 Nov 2026) the restart-recovery and interrupted-reply
-  // pill fixtures (#786) went with the session Mayor's quick replies. 716
-  // leaves 164 slots.
-  // 716 → 707: −9 (16 Nov 2026) Messages lists conversations alone: the
+  // three were re-pointed to the old addresses' new landings. 718 leaves 162 slots.
+  // 718 → 717: −1 (15 Nov 2026) Settings › Agent instructions & skills retired
+  // with the builds that copied those files into the worker. 717 leaves 163 slots.
+  // 717 → 715: −2 (15 Nov 2026) the restart-recovery and interrupted-reply
+  // pill fixtures (#786) went with the session Mayor's quick replies. 715
+  // leaves 165 slots.
+  // 715 → 706: −9 (16 Nov 2026) Messages lists conversations alone: the
   // eight checks of its Agents rows (changes and work orders in flight) and
   // the Agents fold went with the section; "nothing folds" joined
-  // messages.inbox. 707 leaves 173 slots.
-  checkCap.assertPinned(DAPP.tests.length, 707);
+  // messages.inbox. 706 leaves 174 slots.
+  checkCap.assertPinned(DAPP.tests.length, 706);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

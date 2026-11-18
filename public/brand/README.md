@@ -86,17 +86,14 @@ recorded.
   absolute `${PRODUCTION_ORIGIN}/brand/people.png` URL in the
   `waitlist_released` template's first version (`src/db/email-template-seeds.js`, #4570), with the same
   empty `alt` — the headline under it carries the meaning there too.
-- **sky.webp** — the clouds behind the two signed-out heroes (the landing's
-  short story, `frontend/src/features/auth/story.tsx`, and the page about
-  private communities, `frontend/src/features/guest/guest-communities.tsx`),
-  drawn by `.site-clouds::before` in `public/css/app.css` in the light shell
-  only. Under it is the flat `--site-sky`, which is what shows if the file
+- **sky.webp** — the clouds behind the signed-out hero (the landing's short
+  story, `frontend/src/features/auth/story.tsx`), drawn by
+  `.site-clouds::before` in `public/css/app.css` in the light shell only. Under it is the flat `--site-sky`, which is what shows if the file
   does not load.
 - **landing-communities.webp** — the picture of the communities page beside
   the landing hero's words, from 1024px. Decorative, empty `alt`.
-- **landing-people.webp** — the people on the bottom edge of both heroes'
-  windows, from 768px on the landing and 1024px on the private communities
-  page. Decorative, empty `alt`. It is drawn at up to 400px wide, so it is
+- **landing-people.webp** — the people on the bottom edge of the landing
+  hero's window, from 768px. Decorative, empty `alt`. It is drawn at up to 400px wide, so it is
   soft on a 2× screen: the mock-up it was cut from had no more pixels.
 - **homeroom-logotype-black.png** — the logo at the top of every
   transactional email (#2908), referenced by the standard email layout's first
