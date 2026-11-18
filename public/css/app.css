@@ -30639,12 +30639,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   background: var(--bl-card);
   box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
 }
-/* The Communities tab carries no count here: Home's Needs you card says
-   what waits on you, in this look, and a second number beside it would be
-   the same news twice. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tab-workshop :is(.platform-tab-votes, .platform-tab-badge) {
-  display: none;
-}
 
 /* HOME'S ACTIONS AND ITS ORDER (Drea's review of #6699). The look takes two
    of Standard (WIP)'s pieces (features/home/index.tsx, wip-kit.tsx) in its

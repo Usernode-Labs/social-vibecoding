@@ -126,7 +126,7 @@ test('the page draws Pinned, led by Needs you while a vote waits, then Joined, t
   // No filled button in the standard look: it is the kit's, for Standard (WIP) and the brand look.
   assert.doesNotMatch(html, /communities-new-top/);
   assert.match(read(PAGE), /const kit = wip \|\| brand;/);
-  assert.match(read(PAGE), /const needsTile = !kit && needs > 0 && !q && !editing;/, 'those looks say Needs you on Home');
+  assert.match(read(PAGE), /const needsTile = needs > 0 && !q && !editing;/, 'every look: Home\'s side card is Recent threads (#6812)');
 
   const discover = section(html, 'communities-discover-section');
   assert.match(discover, new RegExp(message('communities:page.discover.title')));

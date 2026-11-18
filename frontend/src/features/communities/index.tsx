@@ -25,10 +25,9 @@
  *   Joined               every community you are a member of that is not
  *                        pinned. While editing, each takes a + that pins it.
  *   Needs you            the tile that opens Needs you (`#needs`), first in
- *                        Pinned, while a vote waits. Only in a look whose Home
- *                        has no Needs you card (Standard and the frame's
- *                        looks): Standard (WIP) and the brand look say it on
- *                        Home.
+ *                        Pinned, while a vote waits, in every look: Home's
+ *                        side card is Recent threads now (#6812), so no look
+ *                        says it on Home any more.
  *   New community        the create flow. In Standard (WIP) and the brand
  *                        look it is the filled button beside the search field
  *                        from 768px, as New project is on Home; everywhere
@@ -105,8 +104,8 @@ export function CommunitiesScreen() {
   const wip = skin === 'wip';
   const brand = skin === 'brand';
   // Standard (WIP) and the brand look draw Home with the kit (../home/wip-kit):
-  // their Home has the Needs you card and New project as a filled button, so
-  // this page takes the same button and leaves the Needs you tile out.
+  // their Home has New project as a filled button, so this page takes the
+  // same button for New community.
   const kit = wip || brand;
   const wide = useWide();
   // THE CARDS (Drea's review of #6699): in the brand look on a wide screen
@@ -142,8 +141,8 @@ export function CommunitiesScreen() {
   const createOn = offerCreate && !!win?.Home?.canCreate?.();
   const locked = th('home:communities.newLocked', { hint: th('home:create.disabledHint') });
   const create = () => { (window as any).App?.showCreateModal?.(); };
-  // The Needs you tile, where Home has no card for it (see the header).
-  const needsTile = !kit && needs > 0 && !q && !editing;
+  // The Needs you tile, in every look (see the header).
+  const needsTile = needs > 0 && !q && !editing;
   // New community as a tile: where the look has no filled button for it, and
   // on a phone under every look (app.css hides whichever is not the width's).
   const createTile = offerCreate && !q && !editing;

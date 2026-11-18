@@ -801,7 +801,7 @@ test('Recent threads stands beside Pinned apps on a wide screen, and is a sidewa
   assert.match(at('#home-needs-card .wip-rows > li').body, /flex:\s*0 0 78%;\s*scroll-snap-align:\s*start;/, 'the next card shows at the edge');
 });
 
-test('the Communities page wears the look: its button, its cards, and no count on its tab', () => {
+test('the Communities page wears the look: its button, its cards, and its tab keeps its count', () => {
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   // The kit's tokens are set on Home and on the page, for New community's button.
   const tokens = at(':is(#home-screen, #communities-screen)').body;
@@ -811,7 +811,9 @@ test('the Communities page wears the look: its button, its cards, and no count o
   assert.match(page, /\{kit && offerCreate \? \(\s*<WipCta\s+id="communities-new-top"/, 'the filled button, in the looks that draw Home with the kit');
   assert.match(at(':is(#home-create-tile, #communities-new-community) .home-create-glyph').body, /background:\s*var\(--bl-sun\);/, 'and the tile under 768px is the same sun');
   assert.match(at('.communities-discover').body, /background:\s*var\(--bl-card\);/);
-  assert.match(at('#platform-tab-workshop :is(.platform-tab-votes, .platform-tab-badge)').body, /display:\s*none;/, 'Home\'s Needs you card says it');
+  // Home's side card is Recent threads (#6812), so the tab's count of votes
+  // waiting is the look's own way to say it, as in the standard look.
+  assert.equal(at('#platform-tab-workshop :is(.platform-tab-votes, .platform-tab-badge)'), undefined, 'the tab keeps its count');
 });
 
 test('a community\'s card says its members, what went live and who was there, read only where it is drawn', () => {
