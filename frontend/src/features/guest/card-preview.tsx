@@ -3,11 +3,11 @@
  * that plays over the card's picture (the featured-illustration record's
  * `preview`, public directory `preview_url`).
  *
- * WHEN it plays is ../../lib/card-previews.ts: on a device with a mouse
- * after a moment of pointing at the card (or keyboard focus on it), looping
- * until the pointer or focus leaves; on a phone, the one card most in view,
- * once, when scrolling settles; one at a time; never under reduced motion,
- * Data Saver or with "Play previews" off.
+ * WHEN it plays is ../../lib/card-previews.ts: on a device that hovers, after
+ * a moment of pointing at the card (or keyboard focus on it), looping until
+ * the pointer or focus leaves; one at a time; never under reduced motion,
+ * Data Saver or with "Play previews" off. A phone never plays it: it shows
+ * the picture, so nothing starts on its own and no full screen player opens.
  *
  * HOW it stays quiet:
  *  - The first render is an empty, inert layer: no <video> in the prerender
@@ -28,11 +28,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 
 import {
-  HOVER_DELAY_MS, LEFT_VIEW, PHONE_MAX_SECONDS, activePreview, canHover, claimPreview, markPreviewFailed,
-  onActivePreview, onPreviewsPref, previewFailed, previewsAllowed, releasePreview, reportInView,
+  HOVER_DELAY_MS, activePreview, canHover, claimPreview, markPreviewFailed, onActivePreview, onPreviewsPref,
+  previewFailed, previewsAllowed, releasePreview,
 } from '../../lib/card-previews';
-
-const THRESHOLDS = [0, LEFT_VIEW, 0.5, 0.6, 0.75, 0.9, 1];
 
 export function CardPreview({ src }: { src: string }) {
   const layer = useRef<HTMLSpanElement>(null);
@@ -41,8 +39,6 @@ export function CardPreview({ src }: { src: string }) {
   // Mounted: this card's preview is the one playing. Shown: it has started.
   const [mounted, setMounted] = useState(false);
   const [shown, setShown] = useState(false);
-  // A phone's play is once and short; a pointer's loops until it leaves.
-  const [once, setOnce] = useState(false);
 
   // Which card plays is decided in one place for the whole page.
   useEffect(() => onActivePreview(() => {
@@ -58,48 +54,33 @@ export function CardPreview({ src }: { src: string }) {
     const el = layer.current;
     const card = el?.closest('article') || el?.parentElement || null;
     if (!el || !card) return undefined;
-    const start = (loop: boolean) => {
+    // A phone, or any device without a hover: the picture only. Nothing is
+    // followed, claimed or fetched, so no clip starts by itself.
+    if (!canHover()) return undefined;
+    const start = () => {
       if (!previewsAllowed() || previewFailed(src)) return;
-      setOnce(!loop);
       claimPreview(id);
     };
-    if (canHover()) {
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      const intend = () => {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(() => { timer = null; start(true); }, HOVER_DELAY_MS);
-      };
-      const stop = () => {
-        if (timer) { clearTimeout(timer); timer = null; }
-        releasePreview(id);
-      };
-      const blur = (e: FocusEvent) => { if (!card.contains(e.relatedTarget as Node | null)) stop(); };
-      card.addEventListener('pointerenter', intend);
-      card.addEventListener('pointerleave', stop);
-      card.addEventListener('focusin', intend);
-      card.addEventListener('focusout', blur);
-      return () => {
-        card.removeEventListener('pointerenter', intend);
-        card.removeEventListener('pointerleave', stop);
-        card.removeEventListener('focusin', intend);
-        card.removeEventListener('focusout', blur);
-        stop();
-      };
-    }
-    if (typeof IntersectionObserver === 'undefined') return undefined;
-    let unregister: (() => void) | null = null;
-    const observer = new IntersectionObserver((entries) => {
-      for (const entry of entries) {
-        const ratio = entry.isIntersecting ? entry.intersectionRatio : 0;
-        unregister = reportInView(id, ratio, () => start(false));
-        if (ratio < LEFT_VIEW) releasePreview(id);
-      }
-    }, { threshold: THRESHOLDS });
-    observer.observe(card);
-    return () => {
-      observer.disconnect();
-      if (unregister) unregister();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const intend = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { timer = null; start(); }, HOVER_DELAY_MS);
+    };
+    const stop = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
       releasePreview(id);
+    };
+    const blur = (e: FocusEvent) => { if (!card.contains(e.relatedTarget as Node | null)) stop(); };
+    card.addEventListener('pointerenter', intend);
+    card.addEventListener('pointerleave', stop);
+    card.addEventListener('focusin', intend);
+    card.addEventListener('focusout', blur);
+    return () => {
+      card.removeEventListener('pointerenter', intend);
+      card.removeEventListener('pointerleave', stop);
+      card.removeEventListener('focusin', intend);
+      card.removeEventListener('focusout', blur);
+      stop();
     };
   }, [id, src]);
 
@@ -124,7 +105,7 @@ export function CardPreview({ src }: { src: string }) {
           muted
           playsInline
           preload="none"
-          loop={!once}
+          loop
           tabIndex={-1}
           disablePictureInPicture
           data-card-preview-video=""
@@ -134,7 +115,6 @@ export function CardPreview({ src }: { src: string }) {
           )}
           onPlaying={() => setShown(true)}
           onEnded={() => releasePreview(id)}
-          onTimeUpdate={(e) => { if (once && e.currentTarget.currentTime >= PHONE_MAX_SECONDS) releasePreview(id); }}
           onError={() => { markPreviewFailed(src); releasePreview(id); }}
         />
       ) : null}
