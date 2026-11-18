@@ -193,9 +193,12 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
     assert.deepEqual([meta.status, meta.chosen, meta.madeSlug], ['answered', 'make', res.data.app.slug], 'the card says what it made');
     assert.equal((await cardMeta(otherCard.messageId)).status, 'open', 'nobody else\'s thread is settled');
 
-    // A body with a thread that is not a positive integer changes nothing.
+    // A thread that is not { rootId: a positive integer } is refused, as
+    // #6784 defined it (threadForProject), and settles no card: only a card
+    // in the person's own thread is answered, by the create that succeeds.
     const plain = await post({ name: 'Chore Chart two', audience: 'solo', brief: 'Another chore chart', thread: { rootId: 'x' } }, maker);
-    assert.equal(plain.status, 201, JSON.stringify(plain.data));
+    assert.equal(plain.status, 400, JSON.stringify(plain.data));
+    assert.match(plain.data.error, /thread must be \{ rootId \}/);
     assert.equal((await cardMeta(otherCard.messageId)).status, 'open');
   });
 
