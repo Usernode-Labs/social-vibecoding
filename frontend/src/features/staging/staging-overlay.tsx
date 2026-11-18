@@ -190,7 +190,9 @@ export function StagingOverlay(): ReactNode {
   useHiddenClass(liveRef, !(docked && state.beside === 'app' && !!state.liveSpot));
 
   const title = state.changeTitle || state.urlLabel || t('devchat:staging.header.preview');
-  const facts = previewFacts({ appName: state.appName, number: state.changeNumber, vote: state.vote, withApp: !docked });
+  // The project's name under a change's own title in the whole window; the
+  // fallback title ("Homeroom · Preview") already carries it.
+  const facts = previewFacts({ appName: state.appName, number: state.changeNumber, vote: state.vote, withApp: !docked && !!state.changeTitle });
   const rect = docked ? state.rect : null;
   const position: CSSProperties | undefined = rect
     ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height }
