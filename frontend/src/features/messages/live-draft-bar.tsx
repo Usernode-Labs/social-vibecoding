@@ -198,13 +198,10 @@ export function LiveDraftBar({ rootId, app }: { rootId: number; app: { slug: str
         <span className="min-w-0 flex-1" data-live-draft-proposed="">
           {t('messages:liveDraft.proposed')}
           {proposed.number ? (
-            <>
-              {' '}
-              <a className="font-semibold text-violet-700 dark:text-violet-300"
-                href={`#app/${encodeURIComponent(proposed.slug)}/dev/changes/${proposed.number}`}>
-                {t('messages:liveDraft.openChange', { number: proposed.number })}
-              </a>
-            </>
+            <a className="ml-1 font-semibold text-violet-700 dark:text-violet-300"
+              href={`#app/${encodeURIComponent(proposed.slug)}/dev/changes/${proposed.number}`}>
+              {t('messages:liveDraft.openChange', { number: proposed.number })}
+            </a>
           ) : null}
         </span>
       ) : null}
