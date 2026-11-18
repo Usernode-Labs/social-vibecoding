@@ -7,8 +7,8 @@
  * full-width amber strip across the top of every screen ("Reconnecting to
  * Homeroom. Showing saved content"), and screens repeated it in their own
  * notes, three at once on Messages. This replaces all of them: a small
- * neutral pill hanging from the header's lower edge, over the top of the
- * screen, saying
+ * neutral pill fixed just under the header, over the top of the screen,
+ * saying
  *
  *   - "Connecting…" while Homeroom does not answer,
  *   - "No internet" when the phone itself has none,
@@ -18,6 +18,13 @@
  * saved ("Updated 12:41", lib/freshness.ts). It is never red: being offline
  * is a condition, not an error. lib/offline.ts holds it up for a while once
  * shown, so a patchy link does not make it flicker.
+ *
+ * It is the header's, but not inside it: on most screens app.css clips the
+ * header to its own rounded box (`clip-path`, "the clip cuts nothing"), which
+ * would cut a pill hanging below it. So the shell renders it beside the
+ * header, fixed at the header's foot (`--platform-header-h`, under any
+ * install strip). Below the sign-in screens' overlays (z-40), which have
+ * their own offline words, and below dialogs and the drawer.
  *
  * ── Hydration ──────────────────────────────────────────────────────────
  *
@@ -71,7 +78,8 @@ export function ConnectionStatus() {
       role="status"
       aria-live="polite"
       data-status={mounted ? status : 'online'}
-      className="connection-status hidden pointer-events-none absolute left-1/2 top-full z-20 mt-1.5 -translate-x-1/2
+      className="connection-status hidden pointer-events-none fixed left-1/2 z-30 -translate-x-1/2
+                 top-[calc(var(--browser-banner-h,0px)+var(--platform-header-h)+var(--platform-safe-top)+0.375rem)]
                  inline-flex max-w-[calc(var(--platform-float-w)-24px)] items-center gap-1.5 whitespace-nowrap rounded-full
                  bg-zinc-800/90 px-3 py-1 text-xs font-medium text-white shadow-sm
                  dark:bg-zinc-100/90 dark:text-zinc-900"

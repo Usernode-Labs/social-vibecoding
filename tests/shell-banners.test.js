@@ -30,7 +30,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const BANNERS = read('frontend/src/features/shell/banners.tsx');
 const STATUS = read('frontend/src/features/header/connection-status.tsx');
-const HEADER = read('frontend/src/features/header/platform-header.tsx');
+const SHELL = read('frontend/src/Shell.tsx');
 const SETTINGS = read('frontend/src/features/settings/settings.js');
 const INDEX_HTML = read('public/index.html');
 
@@ -41,7 +41,10 @@ test("the header's connection status follows the status store and writes its cla
     'and applies `hidden` through a ref, so a re-render never rewrites `class`');
   assert.match(STATUS, /const shown = mounted && status !== 'online'/,
     'nothing of the state shows before it has mounted: the first render matches the prerender');
-  assert.match(HEADER, /<ConnectionStatus \/>/, 'it hangs from the header');
+  assert.match(SHELL, /<Island name="ConnectionStatus"><ConnectionStatus \/><\/Island>/,
+    'the shell renders it beside the header, which is clipped to its own box on most screens');
+  assert.match(STATUS, /fixed left-1\/2[\s\S]*top-\[calc\(var\(--browser-banner-h,0px\)\+var\(--platform-header-h\)\+var\(--platform-safe-top\)/,
+    'fixed at the header\'s foot');
   assert.doesNotMatch(BANNERS, /OFFLINE_BANNER_ID|offline-banner"/, 'the strip is gone from the banners');
 });
 

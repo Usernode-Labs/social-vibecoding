@@ -3586,7 +3586,7 @@
     {
       "name": "The header's connection status ships in the shell (#487)",
       "path": "/",
-      "expectSelector": "#platform-header #connection-status"
+      "expectSelector": "#connection-status"
     },
     {
       "name": "PR-import: self-app dev proposals view loads with the flag on (#687)",

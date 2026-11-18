@@ -544,7 +544,7 @@ test('offline, the header says so and the shell reserves no strip for it', () =>
     'the strip height the install strip stacks on is zero');
   assert.doesNotMatch(CSS, /body\.is-offline\s*\{[^}]*padding-top/, 'no room is reserved for it');
   assert.match(FRONTEND('features/header/connection-status.tsx'), /id="connection-status"/);
-  assert.match(FRONTEND('features/header/platform-header.tsx'), /<ConnectionStatus \/>/);
+  assert.match(FRONTEND('Shell.tsx'), /<ConnectionStatus \/>/);
 });
 
 test('.offline-only blocks are inert until offline', () => {

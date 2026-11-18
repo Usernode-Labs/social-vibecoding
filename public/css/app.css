@@ -25690,7 +25690,7 @@ html.un-kb body:has(#ai-screen:not(.hidden)) .side-panel { bottom: var(--un-kb-i
    is the ordinary platform). The frame is narrow, so every screen takes its
    phone layout, which is the point: the panel is a phone-width column. */
 html.in-side-panel :is(#platform-header, #platform-tabs, #platform-rail-peek,
-    #platform-parked, #chromeless-pill, #mobile-install-banner,
+    #platform-parked, #chromeless-pill, #connection-status, #mobile-install-banner,
     #view-as-non-admin-banner, #language-notice, #platform-side-panel) {
   display: none !important;
 }

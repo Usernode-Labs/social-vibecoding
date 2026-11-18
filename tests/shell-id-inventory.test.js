@@ -439,7 +439,7 @@ const ADDED_IDS = {
   // ── The native-offline proposal (18 Nov 2026) ──────────────────────
   // features/header/connection-status.tsx: the header's word on the
   // connection ("Connecting…", "No internet", "Updated 12:41"), a pill
-  // hanging from the bar while Homeroom cannot be reached. Prerendered hidden.
+  // fixed under the bar while Homeroom cannot be reached. Prerendered hidden.
   'connection-status': 'The header\'s connection status, in place of the offline strip (native-offline proposal).',
   // ── The change preview's redesign (Nov 2026) ───────────────────────
   // features/staging/staging-overlay.tsx: one header in the theme's colours
