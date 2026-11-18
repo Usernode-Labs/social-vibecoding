@@ -26,7 +26,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { placeHref } from '../dev-board/workshop/places';
 import { communityScopeStore } from '../workshop/community-scope';
 import { SectionHeading } from './panels/ui';
-import { WipCard, WipHeadMore } from './wip-kit';
+import { WipCard, WipHeadMore, WipSkelRow } from './wip-kit';
 
 /** What the card reads of a feed item (../workshop/needs-reel.tsx NeedsFeedItem). */
 export interface NeedsCardItem {
@@ -67,6 +67,18 @@ function demoQuery(): string {
 // label, the count and See all on one line, then what waits as rows in
 // one to four columns by the screen's width, each with its whole title, opening its project's Needs you.
 
+/** Where the count of the last visit is kept on the device, for the first paint's placeholder. */
+export const NEEDS_HINT_KEY = 'homeroom:needs-waiting';
+export function readNeedsHint(): number {
+  try { return Math.max(0, Math.trunc(Number(window.localStorage.getItem(NEEDS_HINT_KEY)) || 0)); } catch { return 0; }
+}
+export function writeNeedsHint(count: number): void {
+  try {
+    if (count > 0) window.localStorage.setItem(NEEDS_HINT_KEY, String(count));
+    else window.localStorage.removeItem(NEEDS_HINT_KEY);
+  } catch { /* the next load draws no placeholder */ }
+}
+
 /** How many decisions the card lists (two lines of four on a wide screen); See all has the rest. */
 export const NEEDS_ROWS = 8;
 
@@ -102,17 +114,27 @@ function AppIcon({ app }: { app: NeedsCardItem['app'] }) {
 export function NeedsYouCard(): ReactNode {
   const t = useMessages('home');
   const { badgeNeeds } = useStoreState(communityScopeStore) as { badgeNeeds?: number | null };
-  const waiting = Math.max(0, Number(badgeNeeds) || 0);
+  // Until the count is known this load, the card stands on what the last
+  // visit saw on this device, so its place is held from the first paint and
+  // nothing under it moves when the count and the list arrive. Somebody with
+  // nothing waiting last time gets no placeholder to flash and go.
+  const [hint] = useState(readNeedsHint);
+  const known = typeof badgeNeeds === 'number';
+  const waiting = Math.max(0, known ? Number(badgeNeeds) || 0 : hint);
+  useEffect(() => { if (known) writeNeedsHint(Number(badgeNeeds) || 0); }, [known, badgeNeeds]);
   const [feed, setFeed] = useState<NeedsCardItem[] | null>(null);
   // Read again whenever the count moves: a vote cast, or a new one opened.
   useEffect(() => {
     if (!waiting) { setFeed(null); return undefined; }
+    // The remembered count draws the placeholder; the list is read once the
+    // count is this load's own.
+    if (!known) return undefined;
     let live = true;
     sharedJson<{ items?: NeedsCardItem[] }>(`/api/workshop/needs-feed${demoQuery()}`, { fresh: true })
       .then((body) => { if (live && body && Array.isArray(body.items)) setFeed(body.items); })
       .catch(() => { /* the card keeps its count; the page says what failed */ });
     return () => { live = false; };
-  }, [waiting]);
+  }, [waiting, known]);
 
   const summary = needsSummary(waiting, feed);
   if (!summary) return null;
@@ -137,8 +159,16 @@ export function NeedsYouCard(): ReactNode {
         <span className="sr-only">{t('home:needsCard.waiting', { count: summary.total })}</span>
       </SectionHeading>
       {/* What waits, in one to four columns by the room there is, each a row that opens its project's Needs you. */}
-      {rows.length ? (
-        <WipCard className="wip-panel">
+      {!feed ? (
+        // The list is on its way: as many placeholder rows as wait (as far as
+        // the card lists), in the same columns, so the card is its own height.
+        <WipCard className="wip-panel animate-pulse" data-tone="ask" data-loading="" role="status" aria-label={t('home:grid.loading')}>
+          <ul className="wip-rows wip-rows-cols">
+            {Array.from({ length: Math.min(summary.total, NEEDS_ROWS) }, (_, i) => <li key={i}><WipSkelRow /></li>)}
+          </ul>
+        </WipCard>
+      ) : rows.length ? (
+        <WipCard className="wip-panel" data-tone="ask">
         <ul className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">
           {rows.map((item) => {
             const slug = item.app?.slug || '';

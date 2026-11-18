@@ -30,6 +30,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -1245,10 +1246,24 @@ test('route() stamps what it did, so the ordering is assertable after the fact',
   );
 });
 
+/** One method's whole source, by brace matching from its name. */
+function methodSource(src, name) {
+  const at = src.indexOf(`${name}() {`);
+  assert.ok(at > -1, `${name} exists`);
+  let i = src.indexOf('{', at);
+  let depth = 0;
+  for (; i < src.length; i += 1) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}') { depth -= 1; if (depth === 0) { i += 1; break; } }
+  }
+  return src.slice(at, i);
+}
+
 test('the ?shot=settings-back driver runs a real traversal from init()', () => {
   assert.match(appJs, /_applySettingsBackShot\(\)\s*\{/, 'app.js defines the driver');
-  const at = appJs.indexOf('_applySettingsBackShot() {');
-  const body = appJs.slice(at, at + 1200);
+  // The WHOLE method: it has grown past the first 1200 characters, and a
+  // truncated slice silently stops checking the traversal it pins (#6805).
+  const body = methodSource(appJs, '_applySettingsBackShot');
   assert.match(body, /shot !== 'settings-back'/, 'it is gated on its own shot value');
   assert.match(body, /location\.hash = '#settings\/password'/,
     'it drills in through a real hash write, so the app routes exactly as a tap would');
@@ -1269,6 +1284,72 @@ test('the ?shot=settings-back driver runs a real traversal from init()', () => {
   const routed = appJs.slice(appJs.indexOf('  _routeFromHash() {'), appJs.indexOf('  restoreFromHash() {'));
   assert.doesNotMatch(routed, /_applySettingsBackShot/,
     'the per-fragment re-apply deliberately leaves the traversal driver out');
+});
+
+// #6805: the drill-in only PUSHES a history entry once the document is
+// completely loaded. Run earlier, a script-started fragment navigation
+// replaces the current entry, and the `back()` that followed then traversed
+// out of the document — abandoning the boot's fetches and lazy chunks, which
+// is what the checks runner sat on until its 30s load wait expired.
+// `\/?shot=settings-back#settings`' dapp.json check stays exactly as it is;
+// these pin the driver's own discipline.
+function runSettingsBackDriver({ readyState = 'loading', pushes = true, search = '?shot=settings-back' } = {}) {
+  const method = methodSource(appJs, '_applySettingsBackShot');
+  const body = method.slice(method.indexOf('{') + 1, method.lastIndexOf('}'));
+  const calls = { hash: [], back: 0 };
+  const history = { length: 3 };
+  history.back = () => { calls.back += 1; };
+  const location = { search };
+  Object.defineProperty(location, 'hash', {
+    get() { return ''; },
+    set(value) { calls.hash.push(value); if (pushes) history.length += 1; },
+  });
+  const listeners = {};
+  const timers = [];
+  const sandbox = {
+    location,
+    history,
+    document: { readyState },
+    window: { addEventListener: (name, fn, opts) => { listeners[name] = { fn, opts }; } },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); },
+    URLSearchParams,
+  };
+  vm.runInNewContext(`(function () {${body}\n})`, sandbox)();
+  const runTimers = () => { while (timers.length) timers.shift().fn(); };
+  return { calls, history, listeners, timers, runTimers };
+}
+
+test('#6805: the settings-back drill-in waits for the document to finish loading', () => {
+  const driver = runSettingsBackDriver({ readyState: 'loading' });
+  assert.deepEqual(driver.calls.hash, [], 'nothing drills in while the document is still loading');
+  assert.equal(driver.timers.length, 0, 'and no timer is armed to do it behind load');
+  assert.equal(driver.calls.back, 0, 'so the traversal has not happened either');
+  assert.ok(driver.listeners.load, 'it waits for the load event instead');
+  assert.equal(driver.listeners.load.opts && driver.listeners.load.opts.once, true,
+    'once per document');
+  driver.listeners.load.fn();
+  driver.runTimers();
+  assert.deepEqual(driver.calls.hash, ['#settings/password'],
+    'after load the hash is written once — a real drill-in, as a tap would');
+  assert.equal(driver.calls.back, 1, 'and then the real traversal backs out of it once');
+});
+
+test('#6805: an already-loaded document starts the drill-in without waiting for load', () => {
+  const driver = runSettingsBackDriver({ readyState: 'complete' });
+  assert.equal(driver.listeners.load, undefined,
+    'no load listener is armed for an event that has already fired');
+  driver.runTimers();
+  assert.deepEqual(driver.calls.hash, ['#settings/password'], 'the hash is written straight away');
+  assert.equal(driver.calls.back, 1, 'and it backs out of it');
+});
+
+test('#6805: a drill-in that replaced the entry never traverses out of the document', () => {
+  const driver = runSettingsBackDriver({ readyState: 'complete', pushes: false });
+  driver.runTimers();
+  assert.deepEqual(driver.calls.hash, ['#settings/password'], 'the drill-in still happens');
+  assert.equal(driver.calls.back, 0,
+    'but back() is not called over an entry the drill-in did not push — it would leave the page');
+  assert.equal(driver.history.length, 3, 'and history was not otherwise touched');
 });
 
 // ── Homeroom-app section: a failed native read is diagnosable ───────────

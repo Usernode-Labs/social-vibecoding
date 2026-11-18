@@ -43,6 +43,7 @@ const API = 'frontend/src/features/messages/api.ts';
 
 const activity = require('../src/services/homeroom-bot-activity');
 const dmSvc = require('../src/services/homeroom-bot-dm');
+const homeroomBot = require('../src/services/homeroom-bot');
 
 // ── What a piece of work came to ──
 
@@ -1300,4 +1301,89 @@ test('B6: a thread leaves out a card Build it moved under its plan, and the clie
   assert.match(screen, /\.\.\.replies\.filter\(\(message\) => !carried\(message\)\)\.map\(\(message\) => \(\{ kind: 'reply' as const, message \}\)\),/,
     'left out before the rows are ordered and grouped, so the row after it is drawn as it would be');
   assert.match(screen, /import \{ BotActivitySync, isActivityMessage, isMovedActivity \} from '\.\/bot-activity';/);
+});
+
+// ── #6806: once a first version is live, no stray "Reading it." ──
+
+// The pool allowanceDeps builds, answering the two reads a live first
+// version's thread adds: its project's first version (firstVersionsLive),
+// and whether a live look ever began after the card (noteReading's `again`).
+function liveFirstVersionDeps({ liveAt = '2026-11-18T10:00:00Z', issueNumber = 1, looked = false, existing = true } = {}) {
+  const deps = allowanceDeps({ low: false, existing });
+  const real = deps.pool.query.bind(deps.pool);
+  deps.pool.query = async (sql, params) => {
+    const text = String(sql);
+    if (/FROM homeroom_bot_first_versions fv/.test(text)) {
+      return { rows: liveAt ? [{ app_id: 11, issue_number: issueNumber, live_at: liveAt }] : [] };
+    }
+    if (/SELECT EXISTS \(SELECT 1 FROM homeroom_bot_runs r JOIN conversation_messages m/.test(text)) {
+      return { rows: [{ any: looked }] };
+    }
+    return real(sql, params);
+  };
+  return deps;
+}
+
+test('#6806: a live first version\'s thread says nothing when a look begins on its own', async () => {
+  const { pool, dm, steps, settings } = liveFirstVersionDeps();
+  const out = await activity.startCard(pool, { app, issueNumber: 1, requester: maker, bot, jobKey: 345, reason: 'changed', settings, deps: { dm } });
+  assert.deepEqual(out, { messageId: 800, conversationId: 5, duplicate: true, continued: true }, 'the card still follows the look');
+  assert.deepEqual(steps.filter((s) => s.step === 'reading'), [], 'no stray "Reading it." under the live buttons');
+});
+
+test('#6806: the line after the person answers is still said on a live first version', async () => {
+  const { pool, dm, steps, settings } = liveFirstVersionDeps({ looked: true });
+  await activity.startCard(pool, { app, issueNumber: 1, requester: maker, bot, jobKey: 345, reason: 'dm_answer', settings, deps: { dm } });
+  const reading = steps.filter((s) => s.step === 'reading');
+  assert.equal(reading.length, 1);
+  assert.equal(reading[0].content, 'Reading it again with your answer.');
+});
+
+test('#6806: a first version that is not live yet keeps its "Reading it."', async () => {
+  const { pool, dm, steps, settings } = liveFirstVersionDeps({ liveAt: null });
+  await activity.startCard(pool, { app, issueNumber: 1, requester: maker, bot, jobKey: 345, reason: 'changed', settings, deps: { dm } });
+  const reading = steps.filter((s) => s.step === 'reading');
+  assert.equal(reading.length, 1);
+  assert.equal(reading[0].content, 'Reading it.');
+});
+
+test('#6806: a live first version\'s new card still opens with "Reading it.", before the plan', async () => {
+  const { pool, dm, steps, sent, settings } = liveFirstVersionDeps({ existing: false });
+  await activity.startCard(pool, { app, issueNumber: 1, requester: maker, bot, jobKey: 345, reason: 'changed', settings, deps: { dm } });
+  assert.equal(sent.length, 1, 'the card itself is still sent');
+  const reading = steps.filter((s) => s.step === 'reading');
+  assert.equal(reading.length, 1);
+  assert.equal(reading[0].content, 'Reading it.');
+});
+
+test('#6806: the bot\'s own post on a request does not queue a look', () => {
+  const issueAt = (ms) => ({ number: 12, state: 'open', createdAt: '2026-11-18T09:00:00Z', updatedAt: new Date(ms).toISOString() });
+  const seen = '2026-11-18T09:30:00Z';
+  const ownPostMs = Date.parse('2026-11-18T10:00:00Z');
+  const lastRun = { thread_seen_at: seen };
+
+  // The comment's insert moved updated_at a second later, and nobody said
+  // anything on Homeroom since the last read: nothing to read.
+  assert.equal(homeroomBot.classifyIssue({
+    issue: issueAt(ownPostMs + 1000), lastRun, ownPostAt: new Date(ownPostMs).toISOString(),
+  }).reason, 'unchanged');
+
+  // A person's message past the last read is still a change.
+  const byThread = homeroomBot.classifyIssue({
+    issue: issueAt(ownPostMs + 1000), lastRun, ownPostAt: new Date(ownPostMs).toISOString(),
+    threadLastAt: new Date(ownPostMs + 2000).toISOString(),
+  });
+  assert.equal(byThread.reason, 'changed');
+  assert.equal(byThread.changedBy, 'discussion');
+
+  // A title or text edit a minute after the post is not the post's doing.
+  const later = homeroomBot.classifyIssue({
+    issue: issueAt(ownPostMs + 60 * 1000), lastRun, ownPostAt: new Date(ownPostMs).toISOString(),
+  });
+  assert.equal(later.reason, 'changed');
+  assert.equal(later.changedBy, 'github');
+
+  // A caller that reads no own posts (the older-requests order) behaves as
+  // it did: the issue moved, so it is read.
+  assert.equal(homeroomBot.classifyIssue({ issue: issueAt(ownPostMs + 1000), lastRun }).reason, 'changed');
 });

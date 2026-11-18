@@ -1243,6 +1243,10 @@
     "text": "Homeroom brand kit",
     "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): that look drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name."
   },
+  "experimental.wipTokens.brand2": {
+    "text": "Homeroom brand kit V2",
+    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): a second, bolder drawing of that look from Homeroom's brand guidelines (a yellow block for what needs you, serif section titles, black and cream). V2 means version two. Homeroom is the product name."
+  },
   "experimental.look.description": {
     "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",
     "description": "Explanation under the Look menu in Settings, Experimental, which only admins see while the looks are being drawn. Homeroom is the product name; Home is its first screen."
