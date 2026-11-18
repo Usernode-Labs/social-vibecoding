@@ -1365,7 +1365,18 @@ const App = {
     // arrives pushed on /ws/events (`platform_version`, #2545), which is
     // what usually gets there first; this poll is what carries a tab whose
     // socket is down, and everything the message does not say.
-    setInterval(App.loadVersion, 10_000);
+    // A tab nobody is looking at does not ask (#6797): six requests a minute
+    // from every background tab told nobody anything. It asks once when it
+    // comes back (App._foregroundResync).
+    setInterval(App._pollVersion, 10_000);
+  },
+  _versionPollMissed: false,
+  _pollVersion() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      App._versionPollMissed = true;
+      return;
+    }
+    App.loadVersion();
   },
 
   // Admin / moderation console entry point (#588). Was a header shield
@@ -9514,6 +9525,11 @@ window.App = App;
 // switches where the tab stays "visible" throughout.
 App._foregroundResync = () => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  // The version poll stood down while the tab was hidden: ask once now.
+  if (App._versionPollMissed) {
+    App._versionPollMissed = false;
+    App.loadVersion();
+  }
   if (window.SessionState) SessionState.syncIfStale?.();
   // #6429: coming back to the tab is also a reason to ask who is signed in,
   // when the boot's check ran out of time. A slow server used to leave the
