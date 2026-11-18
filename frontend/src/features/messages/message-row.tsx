@@ -28,6 +28,7 @@ import { DesignVersionCard, designVersionOf } from './design-card';
 import { BotRichCard, botCardOf } from './bot-cards';
 import { BotLookedLine } from './bot-looked';
 import { BotHtmlReply, botReplyHtml } from './bot-html';
+import { BotLiveCard, isLiveCardObject, liveWorkOf } from './bot-live-card';
 import { LinkEmbeds } from './link-cards';
 import { plainText } from './plain-text';
 import { confirmAction } from '../../lib/confirm';
@@ -369,7 +370,10 @@ export const MessageRow = memo(function MessageRow({
   // line naming what it is about is that thing's card (#4097,
   // ./bot-head-card.tsx), which is then not drawn again under the words.
   const head = botHead(message.content, botMeta(message));
-  const objects = head ? message.objects.filter((object) => !isHeadCard(head, object)) : message.objects;
+  // 18 Nov 2026: a reply that started work draws its request as a live card
+  // (./bot-live-card.tsx), in place of the request's plain card.
+  const liveWork = liveWorkOf(message);
+  const objects = message.objects.filter((object) => !(head && isHeadCard(head, object)) && !isLiveCardObject(liveWork, object));
   // #6151: a design filed as a request says what happens to it next, after
   // its line, in the reader's language (./bot-track.tsx filedNextLine).
   const filedNext = botMeta(message)?.kind === 'design_filed' ? filedNextLine(botMeta(message)?.filedNext) : null;
@@ -400,7 +404,12 @@ export const MessageRow = memo(function MessageRow({
   // own messages and theirs share one style, so a thread reads top to
   // bottom"): every row is the named row a channel draws.
   const frame = isFrameSkin(useLiveSkin());
-  const sided = !frame && kind !== 'channel' && !step && !message.system && !isCardMessage;
+  // 18 Nov 2026: in the chat with Homeroom bot every message of the bot's is
+  // the flat named row its answers are, a notice as much as a reply with
+  // buttons: the same speaker no longer changes style message by message.
+  // People's own messages keep their bubble.
+  const botRow = botChat && !!message.sender.bot;
+  const sided = !frame && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
@@ -472,6 +481,8 @@ export const MessageRow = memo(function MessageRow({
       {message.sender.bot && (message.metadata?.homeroomBot?.question || message.metadata?.homeroomBot?.actions?.length)
         && !isTwoQuestions(message) && !isReadyMessage(message)
         ? <BotQuestion message={message} conversationId={conversationId} hidePrompts={hidePrompts} /> : null}
+      {/* 18 Nov 2026: the request the reply started work on, followed live. */}
+      {liveWork ? <BotLiveCard work={liveWork} objects={message.objects} /> : null}
       {/* Homeroom bot parity (P1-P9): a card the bot put under its reply (./bot-cards/). */}
       {botCardOf(message) ? <BotRichCard message={message} conversationId={conversationId} /> : null}
       {message.attachments.length ? <div className="messages-attachments">{message.attachments.map((attachment) => <Attachment key={attachment.id} attachment={attachment} />)}</div> : null}

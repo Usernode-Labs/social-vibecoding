@@ -432,9 +432,14 @@
       "schemaSha256": "cf82a338d78ea866385758e2a6442c619c534d845c15cf81cfca572f039e3414"
     },
     {
+      "id": "bot-reply-html-status",
+      "sha256": "c6b8d2aca7b1269e1d7a48dced948dbc069b9442e4c78eb5b0305c7888beb533",
+      "schemaSha256": "b85d99e22b8d8c6c9edf572b445988a072e927b224584f293f1788effc5a631f"
+    },
+    {
       "id": "work-state-marks-all-inputs",
       "sha256": "328b57233da7143333baed827e8f6ad166d8dbc736c6052be07a63a1d2df4f56",
-      "schemaSha256": "81f790fb41e55e603556f57f93b35a688afecda64dcc1191eea6e5f5d62f311c"
+      "schemaSha256": "b66affb6bb116fa7244b59de154c6266cf42db7fdfb1dbb1067b46002252ab15"
     }
   ]
 }

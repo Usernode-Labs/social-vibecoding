@@ -1669,6 +1669,8 @@ const GroupChat = {
       botSuggest: view.botSuggest,
       // #6684: the build note card says where the note is now.
       botBuildNote: view.botBuildNote,
+      // 18 Nov 2026: a reply's laid-out copy that came after its words.
+      botHtml: view.botHtml,
       ...(frame.metadata.specShare ? { specShare: view.specShare } : {}),
     });
   },

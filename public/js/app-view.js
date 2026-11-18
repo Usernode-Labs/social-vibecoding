@@ -11162,6 +11162,18 @@ const AppView = {
   // `voteOwed` while its vote is still open), and the request open on the
   // page repaints from it: its status card says where it stands now, not
   // after the row is read again. True when the page held the request.
+  // Is this a stage push that names another project than the one open? The
+  // same test _applyWorkStatePush makes (by address, else by id). A push
+  // that names no project, or no push at all (the reconnect sweep), is
+  // nobody else's.
+  _workPushIsElsewhere(push) {
+    if (!push || push.type !== 'work_state') return false;
+    const app = AppView.appData || {};
+    const named = !!push.appSlug || Number(push.appId) > 0;
+    if (!named) return false;
+    return !((!!push.appSlug && push.appSlug === app.slug)
+      || (Number(push.appId) > 0 && Number(push.appId) === Number(app.id)));
+  },
   _applyWorkStatePush(push) {
     if (!push || push.type !== 'work_state' || !push.item) return false;
     // #6821: a change's own stored row moved: the change open on screen (or
@@ -32386,8 +32398,20 @@ if (typeof window !== 'undefined') {
   window.addEventListener('homeroom-bot-work-changed', (event) => {
     // 11 Nov 2026: a work_state push is drawn at once where the page holds
     // its request; the reads below then bring the rest of its row.
-    AppView._applyWorkStatePush(event && event.detail);
-    const refreshed = AppView.refreshDevData('homeroom-bot');
+    const push = event && event.detail;
+    AppView._applyWorkStatePush(push);
+    // On a project's board, a stage that moved is that project's alone, and
+    // it moves a request's row and the changes' lists, not the whole board.
+    // This reloaded everything, at once and for a work event of ANY project:
+    // measured on production (18 Nov 2026), an idle Workshop made 115
+    // requests and parsed 14 MB of JSON in 40 seconds, most of it for other
+    // projects' bots.
+    const onBoard = typeof App !== 'undefined' && App.currentTab === 'dev'
+      && App.currentSubTab === 'forum' && !!AppView.appData;
+    if (onBoard && AppView._workPushIsElsewhere(push)) return;
+    const refreshed = onBoard && push && push.type === 'work_state'
+      ? AppView.refreshDevData('homeroom-bot', { kinds: new Set(['issue', 'session']), ids: null })
+      : AppView.refreshDevData('homeroom-bot');
     // #6390: off the board (the Homeroom bot tab's side column) that does
     // nothing; the request open there re-reads its own row instead.
     if (refreshed === undefined) AppView._refreshOpenRequestRow();

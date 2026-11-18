@@ -2413,6 +2413,23 @@ function _getPoolSafe() {
   }
 }
 
+// #6819: a turn that updates a change changes what its stored work state
+// (services/work-state.js) says: while it runs the change is Building with a
+// revision on its way, not up for a vote, and when it ends the row is read
+// again. Only a route's own writes used to refresh that row, so a follow-up
+// turn left it saying "up for a vote" while the change's page said an update
+// was coming. Refreshed at the turn's start and end here. A shots turn is no
+// update (it holds the vote its own way), and `touched` never throws: best
+// effort, and the sweep corrects anything this missed.
+async function _refreshTurnWorkState(pool, sessionId, mode) {
+  if (!pool || mode === 'shots') return;
+  try {
+    await require('./work-state').touched(pool, [{ sessionId }]);
+  } catch {
+    // Best effort: the sweep reads the row again on its next pass.
+  }
+}
+
 // Resolves { ok: true } or { ok: false, code }: the code says why the record
 // could not be written (#4575), so execInWorker can tell a session another
 // turn already owns (session_busy, which a caller may wait out) from a
@@ -2457,6 +2474,10 @@ async function _persistActiveTurn(sessionId, turn) {
       await require('./turn-publication').captureTarget(db, sessionId, turn.turnId, turn.branchName, turn.journal);
       await db.query('COMMIT');
     }
+    // #6819: a turn that updates a change changes what its stored work state
+    // says: read it again now, so no list asks for a vote its page says is
+    // coming back.
+    await _refreshTurnWorkState(pool, sessionId, turn.mode);
     return { ok: true };
   } catch (err) {
     if (transaction) await db.query('ROLLBACK').catch(() => {});
@@ -2524,6 +2545,8 @@ async function clearActiveTurn(sessionId, { turnId = null, journal = null } = {}
     }
     await turnLifecycle.markCleanupPending(pool, { sessionId, turnId, journal });
     await turnLifecycle.clearCleanupPending(pool, { sessionId, turnId, journal });
+    // #6819: the turn ended, so the change's stored work state is read again.
+    await _refreshTurnWorkState(pool, sessionId, current?.mode || null);
     return true;
   } catch (err) {
     log.warn('worker', 'Failed to clear active_turn', { sessionId, err: err.message });
@@ -2644,9 +2667,11 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   let ownsCleanup = false;
   let cleanupTurnId = null;
   let cleanupJournal = null;
+  let turnMode = null;
   try {
     const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (current) {
+      turnMode = current.mode || null;
       // Never infer ownership from the record currently occupying the
       // session. A stale caller may be looking at a replacement turn; only
       // the identity it carried (or execInWorker remembered for it) can clear.
@@ -2718,6 +2743,8 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
     }
   }
   _registryUpsert(sessionId, { finishedJournal: null, finishedTurnId: null });
+  // #6819: the turn ended, so the change's stored work state is read again.
+  await _refreshTurnWorkState(pool, sessionId, turnMode);
   return true;
 }
 
@@ -6323,6 +6350,9 @@ module.exports = {
   workerStartReason,
   _setGithubStartRetryDelaysForTests,
   execInWorker,
+  // #6819: the turn record's own start, which refreshes a change's stored
+  // work state; exported so a test can drive it without docker.
+  _persistActiveTurn,
   stopTurn,
   stopTurnByJournal,
   stopOwnedTurn,

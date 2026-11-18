@@ -395,3 +395,53 @@ test('#6595: the topic sub-view leaves the row to the dev refresh it already mad
   assert.deepEqual(resyncs, [{ reason: 'thread', url: '/api/apps/other/threads/6580' }],
     'but the thread read is still this entry\'s');
 });
+
+// ── A work event on a project's board reads that project's parts alone ──
+//
+// Measured on production (18 Nov 2026): an idle Workshop made 115 requests
+// and parsed 14 MB of JSON in 40 seconds. The listener reloaded the whole
+// board, at once, for a `work_state` of any project on the platform.
+test('a work event on the board: another project\'s is ignored, this one\'s reads two parts, a sweep reads all', () => {
+  const { AppView, sandbox, listeners } = makeAppView();
+  const fire = (detail) => listeners['homeroom-bot-work-changed'][0](
+    new sandbox.CustomEvent('homeroom-bot-work-changed', detail === undefined ? undefined : { detail }));
+  const push = (over = {}) => ({
+    type: 'work_state', appId: 9, appSlug: 'demo',
+    item: { kind: 'request', ref: 3, issueNumber: 3, sessionId: 77 },
+    state: { stage: 'building' },
+    ...over,
+  });
+  AppView.appData = { id: 9, slug: 'demo' };
+  sandbox.App.currentTab = 'dev';
+  sandbox.App.currentSubTab = 'forum';
+  const asked = [];
+  AppView.refreshDevData = (kind, live) => {
+    asked.push({ kind, parts: live ? [...AppView._partsForLive(live)].sort() : 'whole' });
+    return Promise.resolve(true);
+  };
+  AppView._devDataReady = true;
+
+  fire(push({ appId: 10, appSlug: 'other' }));
+  fire(push({ appId: 10, appSlug: undefined }));
+  assert.deepEqual(asked, [], 'another project\'s bot moves nothing on this board');
+
+  fire(push());
+  assert.deepEqual(asked, [{ kind: 'homeroom-bot', parts: ['issues', 'promoted', 'sessions'] }],
+    'this project\'s: the request lists and the changes, not the order, the categories or Completed');
+
+  asked.length = 0;
+  fire(undefined);
+  fire({ type: 'homeroom_bot_work_changed' });
+  assert.deepEqual(asked, [{ kind: 'homeroom-bot', parts: 'whole' }, { kind: 'homeroom-bot', parts: 'whole' }],
+    'the reconnect sweep and the viewer\'s own bot work still read the board');
+
+  // Off the board nothing changes: the open thread decides for itself.
+  asked.length = 0;
+  sandbox.App.currentSubTab = 'topic';
+  fire(push({ appId: 10, appSlug: 'other' }));
+  assert.deepEqual(asked, [{ kind: 'homeroom-bot', parts: 'whole' }], 'a thread still hears every push, as before');
+
+  assert.equal(AppView._workPushIsElsewhere(push()), false);
+  assert.equal(AppView._workPushIsElsewhere(push({ appSlug: undefined, appId: undefined })), false, 'a push that names no project is nobody else\'s');
+  assert.equal(AppView._workPushIsElsewhere(null), false);
+});

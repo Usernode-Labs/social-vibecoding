@@ -190,8 +190,14 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     },
   };
   const lastAck = () => pool.query(
-    'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
+    'SELECT id, content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
   );
+  // 18 Nov 2026: one card per action. A tap is answered on the card it
+  // decided (mayor.settleOnCard), and no message under it says it again.
+  const outcomeOf = async (offered) => {
+    assert.equal(Number((await lastAck()).rows[0].id), Number(offered.messageId), 'nothing said under the card');
+    return (await read(offered)).metadata.homeroomBot.outcome;
+  };
 
   await t.test('the chat model offers it; Propose to close opens the request page\'s close vote', async () => {
     await request(6, { title: 'Richer synth tones' });
@@ -223,8 +229,10 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
       && /proposed closing issue #6/.test(m.content)), 'a line on the request\'s discussion');
     const decided = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [action.id]);
     assert.equal(decided.rows[0].status, 'done');
-    const ack = await lastAck();
-    assert.match(ack.rows[0].content, /^Done\. I opened a vote on closing request \[#6\]\(https:\/\/app\.test\/#app\/ear-trainer\/dev\/issues\/6\) on Ear trainer\. It closes if its group votes for it\.$/);
+    const outcome = await outcomeOf(offered);
+    assert.equal(outcome.state, 'done');
+    assert.equal(outcome.kind, 'closing');
+    assert.match(outcome.text, /^I opened a vote on closing request \[#6\]\(https:\/\/app\.test\/#app\/ear-trainer\/dev\/issues\/6\) on Ear trainer\. It closes if its group votes for it\.$/);
     assert.equal((await tap(action, 'yes')).status, 409, 'decided once');
     assert.equal((await closeVotes()).rows.length, 1, 'no second vote');
   });
@@ -324,8 +332,8 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
       [ears.id, JSON.stringify({ issueNumber: 11, issueTitle: 'Late race', reason: 'Sam got there first.' }), sam.id],
     );
     assert.deepEqual(await tap(await actionOf(offered.messageId), 'yes'), { ok: true, choice: 'yes', label: 'Propose to close' });
-    const ack = await lastAck();
-    assert.equal(ack.rows[0].content, 'A vote on closing it is already open.');
+    const refusedOutcome = await outcomeOf(offered);
+    assert.deepEqual([refusedOutcome.state, refusedOutcome.text], ['failed', 'A vote on closing it is already open.']);
     assert.equal((await closeVotes()).rows.filter((v) => v.payload.issueNumber === 11).length, 1, 'nothing is duplicated');
     const action = await actionOf(offered.messageId);
     assert.equal(action.status, 'failed');
@@ -339,9 +347,9 @@ test('#4525: an offer to open a vote on closing a request, decided by its tap', 
     ]);
     await pool.query('DELETE FROM community_members WHERE user_id = $1', [ada.id]);
     assert.deepEqual(await tap(await actionOf(offered.messageId), 'yes'), { ok: true, choice: 'yes', label: 'Propose to close' });
-    const ack = await lastAck();
-    assert.equal(ack.rows[0].content,
-      'I couldn\'t propose closing it: you need to be a member of that project first. You can join it from its page.');
+    const joinOutcome = await outcomeOf(offered);
+    assert.deepEqual([joinOutcome.state, joinOutcome.text], ['failed',
+      'I couldn\'t propose closing it: you need to be a member of that project first. You can join it from its page.']);
     assert.equal((await closeVotes()).rows.filter((v) => v.payload.issueNumber === 12).length, 0);
     await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2)', [ears.community_id, ada.id]);
   });

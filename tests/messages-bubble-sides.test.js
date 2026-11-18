@@ -90,11 +90,14 @@ test('the row that is not something a person said keeps its full-width named row
   const notice = row({ message: message(BOT, 5, { system: true }), kind: 'group' });
   assert.doesNotMatch(notice, /messages-message-bubble/, 'a platform notice has no side');
 
-  // The bot's plain words in its own chat are something it said: a bubble
-  // on the left, with its avatar — its cards are what stay full width.
+  // 18 Nov 2026: the bot's plain words in its own chat are the same flat
+  // named row as its answers with buttons and its cards: one speaker, one
+  // style, whatever the message. A person's words there keep their bubble.
   const bot = row({ message: message(BOT, 6, { content: 'How is it going?' }), kind: 'direct', botChat: true });
-  assert.match(bot, /class="messages-message group messages-message-bubble /);
-  assert.match(bot, /<div class="messages-bubble" dir="auto">/);
+  assert.doesNotMatch(bot, /messages-message-bubble|class="messages-bubble/, 'the bot\'s words have no side in its chat');
+  assert.match(bot, /class="messages-message-author ?">homeroom_bot<\/span>/, 'named, as its answers are');
+  const theirs = row({ message: message(ME, 9, { content: 'Thanks' }), kind: 'direct', botChat: true });
+  assert.match(theirs, /class="messages-message group messages-message-bubble /, 'a person\'s words keep theirs');
 });
 
 test('a grouped continuation keeps its side and its bubble, with the time in the gutter', () => {

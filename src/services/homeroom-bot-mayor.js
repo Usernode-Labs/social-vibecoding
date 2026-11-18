@@ -89,6 +89,8 @@ const log = require('./logger');
 const crypto = require('node:crypto');
 const { withoutEmDashes } = require('./em-dashes');
 const replyHtml = require('./homeroom-bot-html');
+// 18 Nov 2026: a long reply with no copy that matches its words is laid out from them.
+const layout = require('./homeroom-bot-layout');
 const progressSvc = require('./homeroom-bot-progress');
 const repoRef = require('./repo-ref');
 const { isStandIn, lastRoundNote, standInNote, readingDoneNote } = require('./homeroom-bot-reply-guards');
@@ -817,6 +819,13 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  table (Markdown), still in plain words, and lead with the answer itself.',
     '- Any reply longer than two short lines also goes in the reply tool\'s html field, laid out as its description',
     '  says, beside the same words in text.',
+    // 18 Nov 2026: fix 4, less repetition.
+    '- Lead with the answer itself, in the first sentence. No preamble and no hedging: never explain how you know',
+    '  something ("from the code and its history rather than from clicking through the app"), never open with "Worth',
+    '  knowing", and never add what nobody asked (how the queue works, that the vote stays open meanwhile, that it',
+    '  is not made yet when nothing said it was).',
+    '- Never restate what a card under your reply already shows: a request\'s card, a draft, a live card for work you',
+    '  started. Say only what it does not.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
     '- From this chat you cannot build, merge, vote, close requests yourself or change settings, or change anybody else\'s',
     '  change. Changes come from requests, and your own changes are updated through',
@@ -2173,16 +2182,98 @@ function checkedWords(ctx, finalText = '') {
 }
 
 /**
- * Pure (task 2020): the laid-out copy a reply is sent with, or null. Only
- * beside the words exactly as the reply wrote them: not when words written
- * beside a call lead the answer (the copy would leave them out), when a
- * repeat or a draft's echo was taken out, or when a claim was cut, since the
- * copy would still say what the words no longer do.
+ * Pure (task 2020): the model's own laid-out copy a reply is sent with, or
+ * null. Beside the words exactly as the reply wrote them; and (18 Nov 2026)
+ * beside words that changed only where the copy still says what they say
+ * (homeroom-bot-html.js matchesWords): words written beside a call that lead
+ * the answer are not in the copy, and a repeat or a draft's echo taken out
+ * still is, so either drops it. Never when a claim was cut, since the copy
+ * would still say what the words no longer do. A reply whose own copy is
+ * dropped is laid out from its final words instead (homeroom-bot-layout.js).
  */
 function replyHtmlFor(ctx, text) {
   const html = ctx?.reply?.html;
   if (!html || !text || ctx.checkedProblems?.length) return null;
-  return text === clip(cleanReply(ctx.reply.text), MAX_REPLY_CHARS) ? html : null;
+  if (text === clip(cleanReply(ctx.reply.text), MAX_REPLY_CHARS)) return html;
+  return replyHtml.matchesWords(html, text) ? html : null;
+}
+
+/**
+ * Pure (18 Nov 2026): the transport a turn lays its reply out with. A turn
+ * whose model was handed to it (a test, a replay) lays out only with the
+ * layout transport handed with it, never the network.
+ */
+function layoutTransport(t, deps = {}) {
+  if (typeof deps.layoutChat === 'function') return deps.layoutChat;
+  if (deps.layoutChat === false || deps.chat) return null;
+  return t?.chat || null;
+}
+
+/**
+ * 18 Nov 2026: the copy a long answer goes with, from its final words, when
+ * the model's own did not survive (layout.js). Waits for it WAIT_MS at most.
+ * Resolves { html, status, model, later }: `later` the layout still running,
+ * for the copy to be put on the message once it lands (layLate). Its cost is
+ * the turn's (t.usage). Never throws.
+ */
+async function answerHtml(t, ctx, { text, html, laysOut, check = null, deps = {} }) {
+  const model = layout.htmlModel({ wrote: !!ctx?.reply?.html, kept: !!html });
+  if (html) return { html, status: 'model', model, later: null };
+  if (!text || !laysOut) return { html: null, status: replyHtml.wantsLayout(text) ? 'none' : 'short', model, later: null };
+  if (!replyHtml.wantsLayout(text)) return { html: null, status: 'short', model, later: null };
+  const chat = layoutTransport(t, deps);
+  if (!chat) return { html: null, status: 'none', model, later: null };
+  const { now, later } = await layout.layOutInTime({
+    text, chat, apiKey: t.apiKey, config: t.config || {}, model: t.model,
+    sessionId: `hrbot-dm-${t.user?.id}-${t.message?.id}-layout`, check,
+  }, { waitMs: deps.layoutWaitMs ?? layout.WAIT_MS, sleep: deps.layoutSleep || null });
+  if (!now) return { html: null, status: 'late', model, later };
+  addUsage(t.usage, now.usage);
+  if (now.html) return { html: now.html, status: 'layout', model, later: null };
+  t.failures.push(`layout:${now.code}`);
+  return { html: null, status: 'failed', model, later: null };
+}
+
+/** Add a request's usage to a turn's. */
+function addUsage(into, usage) {
+  if (!into || !usage) return;
+  into.inputTokens += usage.inputTokens || 0;
+  into.outputTokens += usage.outputTokens || 0;
+  into.costUsd += usage.costUsd || 0;
+}
+
+/**
+ * 18 Nov 2026: a copy that came after the words were sent goes on the
+ * message, which every device it is open on draws again (setQuestionState),
+ * and its turn's record says so, with its cost (charged as the turn's). One
+ * that failed leaves the words, and its turn says why. Never throws.
+ */
+async function layLate(pool, { later, messageId, turnId = null, bot, user, conversationId, deps = {} }) {
+  if (!later || !messageId) return;
+  try {
+    const result = await later;
+    const usage = result?.usage || {};
+    const cost = Number(usage.costUsd) || 0;
+    if (result?.html) {
+      await dmModule(deps).setQuestionState(pool, Number(messageId), { html: result.html }, {
+        ws: deps.ws || null, conversationId, userId: user.id,
+      });
+    }
+    if (turnId) {
+      await pool.query(
+        `UPDATE homeroom_bot_dm_turns
+            SET html_status = $2, cost_usd = COALESCE(cost_usd, 0) + $3,
+                output_tokens = COALESCE(output_tokens, 0) + $4, input_tokens = COALESCE(input_tokens, 0) + $5,
+                failures = CASE WHEN $6::text IS NULL THEN failures ELSE array_append(failures, $6::text) END
+          WHERE id = $1`,
+        [Number(turnId), result?.html ? 'late' : 'failed', cost, Number(usage.outputTokens) || 0, Number(usage.inputTokens) || 0,
+          result?.html ? null : `layout:${result?.code || 'error'}`],
+      );
+    }
+    if (cost > 0) await turnEngine.chargeTurn(pool, bot.id, cost, { what: 'a DM reply\'s layout', category: 'homeroom-bot-mayor' });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not put a late layout on a reply', { messageId, err: clip(err?.message, 200) });
+  }
 }
 
 /**
@@ -2750,18 +2841,23 @@ async function botKey(pool, config, botId) {
  */
 async function recordTurn(pool, row) {
   try {
-    await pool.query(
+    // 18 Nov 2026: how its laid-out copy went (layout.js htmlModel says the values).
+    const { rows } = await pool.query(
       `INSERT INTO homeroom_bot_dm_turns
          (user_id, conversation_id, message_id, model, rounds, tools, input_tokens, output_tokens, cost_usd, error,
-          failures, fallback)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          failures, fallback, html_status, html_model)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       RETURNING id`,
       [row.userId, row.conversationId || null, row.messageId || null, row.model || null, row.rounds || 0,
         row.tools || [], row.inputTokens ?? null, row.outputTokens ?? null, row.costUsd ?? null,
         row.error ? clip(row.error, 500) : null,
-        (row.failures || []).slice(0, MAX_FAILURES_RECORDED).map((f) => clip(f, 80)), row.fallback || null],
+        (row.failures || []).slice(0, MAX_FAILURES_RECORDED).map((f) => clip(f, 80)), row.fallback || null,
+        row.htmlStatus || null, row.htmlModel || null],
     );
+    return rows?.[0]?.id ? Number(rows[0].id) : null;
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not record a DM turn', { userId: row.userId, err: err.message });
+    return null;
   }
 }
 
@@ -4154,7 +4250,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     text = claims.cut(text, ctx.checkedProblems, ctx);
     cutAll = !text;
   }
-  const html = replyHtmlFor(ctx, text);
+  const ownHtml = replyHtmlFor(ctx, text);
   let cards = [];
   let fallback = null;
   let defer = false;
@@ -4171,10 +4267,19 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // Stopped while the fallback's one plain request ran: nothing it wrote is sent.
     if (stoppedNow()) return sayStopped();
   }
-  await recordTurn(pool, {
+  // 18 Nov 2026: the answer's laid-out copy, from its final words when the
+  // model's own did not survive them. Never for an offer (its words are one
+  // line over its draft), a screen handed to the designer, or a fallback.
+  const laid = await answerHtml(t, ctx, {
+    text, html: ownHtml, laysOut: !fallback && !ctx.offer && !ctx.drawScreen, deps,
+    check: async (made) => !(await claims.checkReply(pool, ctx, replyHtml.htmlWords(made))).length,
+  });
+  const html = laid.html;
+  const turnId = await recordTurn(pool, {
     userId: user.id, conversationId, messageId: message.id, model: t.model, rounds: turnRounds.rounds, tools: toolsUsed,
     inputTokens: t.usage.inputTokens, outputTokens: t.usage.outputTokens, costUsd: t.usage.costUsd, error,
     failures: t.failures, fallback: defer && fallback === 'plain' ? 'plain_later' : fallback,
+    htmlStatus: fallback ? null : laid.status, htmlModel: laid.model,
   });
   state.recorded = true;
   // The bot's own weekly cap counts it too, as its other turns do.
@@ -4209,6 +4314,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     ...(ctx.newProjectOffer ? { newProject: true } : {}),
     ...(ctx.newProjectBrief?.idea ? { projectIdea: ctx.newProjectBrief.idea } : {}),
     ...(ctx.newProjectBrief?.name ? { projectName: ctx.newProjectBrief.name } : {}),
+    // 18 Nov 2026: the request it started work on, followed live under it.
+    ...(ctx.liveWork ? { liveWork: ctx.liveWork } : {}),
   };
   // #6783: a New project offer that carried a brief is its own card under the
   // reply, sent once the reply is in (both below). A card that cannot be sent
@@ -4268,6 +4375,11 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   }).then(async (said) => {
     // #6783: the New project card goes under the reply, never before it.
     await sendOfferCard();
+    // 18 Nov 2026: a copy still being laid out goes on the reply when it lands.
+    if (laid.later && said?.messageId && !said.duplicate) {
+      const late = layLate(pool, { later: laid.later, messageId: said.messageId, turnId, bot, user, conversationId, deps });
+      if (deps.awaitLateLayout) await late;
+    }
     return said;
   });
 }
@@ -4985,7 +5097,7 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
   if (!yes) return ack('OK, not yet. Tell me when it looks right and I\'ll offer it again.');
   const failed = async (error, text) => {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
-    return ack(text);
+    return ack(text, { failed: true });
   };
   const { rows: [thread] } = await pool.query(
     'SELECT root_message_id FROM private_threads WHERE id = $1 AND user_id = $2', [action.private_thread_id, user.id]);
@@ -4996,6 +5108,8 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
       user, rootId: Number(thread.root_message_id), version: Number(action.design_version) || null,
       issueNumber: Number(action.source_issue_number) > 0 ? Number(action.source_issue_number) : null,
       appId: Number(action.app_id) || null, allowEmptier: true, deps,
+      // 18 Nov 2026: a tap's card says it in place (settleOnCard).
+      notice: !ack.inPlace,
     });
   } catch (err) {
     log.warn('homeroom-bot-mayor', 'Could not post a design as a plan', { actionId: action.id, err: err.message });
@@ -5009,6 +5123,14 @@ async function decidePostDesign(pool, config, { user, action, yes, ack, key = nu
     return failed(posted.code || posted.error || 'refused', `I couldn't post it: ${why}. Nothing was posted.`);
   }
   await pool.query('UPDATE bot_cards SET issue_number = $2 WHERE id = $1', [action.id, posted.number]);
+  if (ack.inPlace && posted.said) {
+    await ack(posted.said, {
+      metadata: {
+        kind: posted.state === 'filed' ? 'filed' : 'plan', issueNumber: posted.number,
+        ...(posted.filedNext ? { filedNext: posted.filedNext } : {}),
+      },
+    });
+  }
   return { posted: true, number: posted.number, state: posted.state };
 }
 
@@ -5349,9 +5471,21 @@ async function settleOffer(pool, config, {
   // A tap is answered where its offer is: in its request's thread, when the
   // offer was said there (homeroom-bot-dm.js threadRootFor reads the thread
   // off the message; the bot's own message is never quoted).
-  const ack = (content, extra = {}) => dm.sendDm(pool, {
+  // `failed` and `declined` are for a card's outcome (settleOnCard), never a message's.
+  // eslint-disable-next-line no-unused-vars
+  const sendAck = (content, { failed: _failed, declined: _declined, ...extra } = {}) => dm.sendDm(pool, {
     bot, userId: user.id, content, idempotencyKey: ackKey, replyToId: replyToId || action.message_id || null, ...extra,
   });
+  // 18 Nov 2026: one card per action. A tap is answered on the card it
+  // decided: the card changes into what came of it ("Filed as request #12",
+  // "Posted version 7 as the plan"), and no message says it again under a
+  // second copy of the same request's card. Typed words are still answered
+  // with words, under them.
+  const inPlace = tapped && !!action.message_id;
+  const ack = inPlace
+    ? (content, extra = {}) => settleOnCard(pool, dm, { action, user, content, extra })
+    : sendAck;
+  ack.inPlace = inPlace;
   // Decided once: the first tap wins, and a second says what happened.
   // `claimKey`: the workflow work item deciding it (a tap's act, or the
   // answer to a typed or quoted decision): a retry of that same item after a
@@ -5367,8 +5501,8 @@ async function settleOffer(pool, config, {
     if (tapped) return { alreadyDecided: true };
     // A copy is filed on another project, so its own words name it, not
     // alreadyFiled's (which reads the original's project).
-    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request' && action.kind !== 'copy_request') return ack(...await alreadyFiled(pool, action));
-    return ack('That one is already decided.');
+    if (action.status === 'done' && action.issue_number && action.kind !== 'move_request' && action.kind !== 'copy_request') return sendAck(...await alreadyFiled(pool, action));
+    return sendAck('That one is already decided.');
   }
   // The buttons give way to the choice on every device it is open on.
   if (action.message_id) {
@@ -5384,7 +5518,11 @@ async function settleOffer(pool, config, {
   if (no && tapped && action.kind === 'post_reply' && action.title === 'plan_change' && action.target_message_id) {
     await dm.notePlanChangeDropped(pool, { user, messageId: Number(action.target_message_id), deps });
   }
-  if (no && tapped) return { declined: true };
+  // 18 Nov 2026: a tapped no says what it left, on the card.
+  if (no && tapped) {
+    if (inPlace) await settleOnCard(pool, dm, { action, user, content: DECLINED_LINES[action.kind] || DECLINED_LINES.file_request, extra: { declined: true } });
+    return { declined: true };
+  }
   // The act's claim (`key`) rides with it, so what it calls can tell a
   // failure to retry from one to say.
   const actDeps = key ? { ...deps, actKey: key } : deps;
@@ -5407,7 +5545,7 @@ async function settleOffer(pool, config, {
   const app = apps[0];
   if (!app || !(await canFile(pool, app, user))) {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, 'not_allowed']);
-    return ack('I couldn\'t file it: you need to be a member of that project first. You can join it from its page.');
+    return ack('I couldn\'t file it: you need to be a member of that project first. You can join it from its page.', { failed: true });
   }
   try {
     // B4: what they asked for: the request as it is filed (askedFor).
@@ -5434,6 +5572,8 @@ async function settleOffer(pool, config, {
     }
     const name = app.name || app.slug;
     const builds = liveModule(deps).isLiveFor(settings, app);
+    // 18 Nov 2026: the draft's card says what it became, in place.
+    const filedLine = `Filed as request #${filed.issueNumber}.`;
     if (builds && filed.queueId) {
       // #3767: the request's card is the answer. Filing used to send a
       // "Filed:" message with the request's card under it, then the activity
@@ -5451,11 +5591,22 @@ async function settleOffer(pool, config, {
         },
         deps: { dm },
       });
-      if (card?.messageId) return card;
+      if (card?.messageId) {
+        // The activity card under it follows the build: the draft's says only what it became.
+        if (inPlace) await settleOnCard(pool, dm, { action, user, content: filedLine, extra: { metadata: { kind: 'filed', issueNumber: Number(filed.issueNumber) } } });
+        return card;
+      }
     }
     // #4097: the request's line leads, which Messages draws as the card it
     // carries, so the card is said once and in its place.
     const line = require('./homeroom-bot-dm').requestLine({ appName: name, issueNumber: filed.issueNumber, issueTitle: action.title });
+    if (inPlace) {
+      return ack(`${filedLine} ${builds
+        ? 'I\'ll look at it now. How it goes shows on its page.'
+        : `I don't build on ${name} yet, so it waits in its requests for the group.`}`, {
+        metadata: { kind: 'filed', issueNumber: Number(filed.issueNumber) },
+      });
+    }
     return ack(
       `${line}\n\nFiled. ${builds
         // 5 Nov 2026: its news is on its page, not in this chat (step 4).
@@ -5473,8 +5624,55 @@ async function settleOffer(pool, config, {
     // A failure a retry can cure: the act's work tries again, its claim kept.
     if (retryAct(err, key)) throw err;
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(err.message, 300)]);
-    return ack('I couldn\'t file it just now. Try again, or post it on the project\'s page.');
+    return ack('I couldn\'t file it just now. Try again, or post it on the project\'s page.', { failed: true });
   }
+}
+
+// 18 Nov 2026: what a tapped no leaves, said on the card it decided.
+const DECLINED_LINES = Object.freeze({
+  file_request: 'Not filed.',
+  post_reply: 'Kept here. Nothing was posted.',
+  close_request: 'Left open.',
+  withdraw_proposal: 'Left up for its vote.',
+  move_request: 'Left where it is.',
+  copy_request: 'Not copied.',
+  post_design: 'Not posted yet.',
+});
+
+/**
+ * Pure (18 Nov 2026): the words a decided offer's card says what came of it
+ * with: the act's own answer, less a leading "Done." (the card is the
+ * thing that was done). A move's or a copy's answer keeps its line naming
+ * the new request, which the card is not.
+ */
+function outcomeWords(content) {
+  return clip(String(content || '').trim().replace(/^Done\.\s+/, ''), 600);
+}
+
+/**
+ * 18 Nov 2026: a tapped offer's card, changed into what came of it, on every
+ * device it is open on (setQuestionState): `outcome` { text, kind, state,
+ * issueNumber?, filedNext? }, the record the separate ack message used to
+ * carry. Resolves like a message the tap was answered with. Never throws.
+ */
+async function settleOnCard(pool, dm, { action, user, content, extra = {} }) {
+  const meta = extra?.metadata && typeof extra.metadata === 'object' ? extra.metadata : {};
+  const issueNumber = Number(meta.issueNumber);
+  const outcome = {
+    text: outcomeWords(content),
+    state: extra.declined ? 'declined' : extra.failed ? 'failed' : 'done',
+    ...(meta.kind ? { kind: String(meta.kind) } : {}),
+    ...(Number.isSafeInteger(issueNumber) && issueNumber > 0 ? { issueNumber } : {}),
+    ...(meta.filedNext && typeof meta.filedNext === 'object' ? { filedNext: meta.filedNext } : {}),
+  };
+  try {
+    await dm.setQuestionState(pool, Number(action.message_id), { outcome }, {
+      conversationId: action.conversation_id, userId: user.id,
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-mayor', 'Could not put what came of an offer on its card', { actionId: action.id, err: err.message });
+  }
+  return { messageId: Number(action.message_id), inPlace: true, outcome };
 }
 
 /**
@@ -5853,6 +6051,27 @@ async function commentOnRequest(pool, ctx, args) {
 }
 
 /**
+ * 18 Nov 2026: the request this turn queued or started work on (a build, a
+ * fix, a new plan), which goes under the reply as a card that follows it
+ * live, from queued to building, checks, the vote and live, or what stopped
+ * it (frontend features/messages/bot-live-card.tsx, from the request's own
+ * track). With it there, the reply need not offer to say when it is ready.
+ */
+function noteLiveWork(ctx, app, issueNumber, title = null) {
+  const n = Number(issueNumber);
+  if (!ctx || !app?.slug || !Number.isSafeInteger(n) || n <= 0) return;
+  ctx.liveWork = {
+    appSlug: app.slug, appName: app.name || app.slug, issueNumber: n,
+    ...(title ? { title: clip(String(title), 200) } : {}),
+  };
+}
+
+/** What a tool's result says when its work has a live card under the reply. */
+const LIVE_CARD_NOTE = 'A live card for it goes under your reply and shows where it stands as it moves (queued, building, '
+  + 'checks, the vote, live, or what stopped it). Say in one short sentence what you started. Do not restate what the card '
+  + 'shows, and do not offer to tell them when it is ready: the card does.';
+
+/**
  * #3771: `start_request`. "Can you start on #14?" got "I can't kick it off
  * from this chat". A request of theirs on a project the bot builds on goes
  * to the front of the queue, as a reply to its question does
@@ -5914,11 +6133,13 @@ async function startRequest(pool, ctx, args) {
     const went = await dm.buildWaitingPlan(pool, { user, appId: app.id, issueNumber: n, deps });
     if (!went.ok) return { ok: false, error: 'Its plan stopped waiting just now, so nothing was started. Check request_detail for where it stands.' };
     ctx.started = name;
+    noteLiveWork(ctx, app, n);
     ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
     require('./bot-work-changed').noteWorkChanged(user.id, deps);
     return {
       ok: true,
       built: 'That was Build it: the plan they were shown goes ahead as written, and it was not planned again. Its build starts as soon as a builder is free.',
+      card: LIVE_CARD_NOTE,
     };
   }
   // Whoever asks pays: this person, on their own building time, whether or
@@ -5936,12 +6157,14 @@ async function startRequest(pool, ctx, args) {
       appId: app.id, issueNumber: n, userId: user.id, reason: 'dm_own_version', payerId: user.id,
     });
     ctx.started = name;
+    noteLiveWork(ctx, app, n);
     ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
     require('./bot-work-changed').noteWorkChanged(user.id, deps);
     return {
       ok: true,
       ...(queuedOwn ? {} : { already: 'A look on it is running now; this one follows it.' }),
       built: 'Your own version starts as soon as a builder is free. It begins from their change, fixes what fails and brings it up to date with main.',
+      card: LIVE_CARD_NOTE,
     };
   }
   const open = await liveModule(deps).openBotProposal(pool, ctx.bot.id, app.id, n);
@@ -5956,10 +6179,12 @@ async function startRequest(pool, ctx, args) {
   const before = await entryFor().catch(() => null);
   if (before?.busyNow) {
     ctx.started = name;
+    noteLiveWork(ctx, app, n);
     return { ok: true, already: `You are on it now: ${before.says}.` };
   }
   if (await pendingBuild(pool, app.id, n)) {
     ctx.started = name;
+    noteLiveWork(ctx, app, n);
     return {
       ok: true,
       already: `It is ready and its build is already on its way${before?.says ? ` (${before.says})` : ''}, so nothing new was queued: a new look would only start it over.`,
@@ -6000,6 +6225,7 @@ async function startRequest(pool, ctx, args) {
     payerId: theirs ? null : user.id,
   });
   ctx.started = name;
+  noteLiveWork(ctx, app, n);
   ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
   require('./bot-work-changed').noteWorkChanged(user.id, deps);
   const after = await entryFor().catch(() => null);
@@ -6013,6 +6239,7 @@ async function startRequest(pool, ctx, args) {
     queued: queued ? 'At the front of your queue.' : 'You are already on it: it is not waiting in the queue.',
     ...(after ? { status: after.says } : {}),
     ...left,
+    card: LIVE_CARD_NOTE,
   };
 }
 
@@ -6061,6 +6288,7 @@ async function replanRequest(pool, ctx, args) {
     appId: app.id, issueNumber: n, userId: user.id, reason: 'plan_change', payerId: theirs ? null : user.id,
   });
   ctx.started = name;
+  noteLiveWork(ctx, app, n);
   ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: n });
   require('./bot-work-changed').noteWorkChanged(user.id, deps);
   return {
@@ -6178,6 +6406,7 @@ async function reviseProposal(pool, ctx, args) {
     if (!posted.ok) return { ok: false, error: `Could not send it: ${posted.why}. Nothing was queued.` };
     ctx.revised = true;
     ctx.cards.push({ type: 'proposal', appId: Number(app.id), sessionId: Number(session.id) });
+    noteLiveWork(ctx, app, issueNumber, session.title || null);
     require('./bot-work-changed').noteWorkChanged(payer, deps);
     return {
       ok: true,
@@ -6188,6 +6417,7 @@ async function reviseProposal(pool, ctx, args) {
         : posted.queued === false
           ? 'You are following up on this proposal right now; you read this as soon as that finishes.'
           : 'You read it on your next look at the project, as any reply there.',
+      ...(ctx.liveWork ? { card: LIVE_CARD_NOTE } : {}),
       next: theirs
         ? 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask them one question if something is missing. What you do is posted in its discussion, and a change or a question reaches them here too.'
         : 'You read what they asked and change the proposal (which clears its votes, so the group looks again), or ask one question if something is missing, in its discussion, where they can see it.',
@@ -6636,7 +6866,7 @@ async function decidePost(pool, { bot, user, settings, action, yes, ack, deps = 
   const failed = async (error, text) => {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
     await keepPlan();
-    return ack(text);
+    return ack(text, { failed: true });
   };
   const later = 'I couldn\'t post it just now. Try again in a minute.';
   const { rows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [action.app_id]);
@@ -6738,7 +6968,7 @@ async function decideClose(pool, { user, action, yes, ack, deps = {} }) {
   if (!yes) return ack('OK, I\'ll leave it open.');
   const failed = async (error, text) => {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
-    return ack(text);
+    return ack(text, { failed: true });
   };
   const closed = 'I couldn\'t propose closing it just now. Try again in a minute.';
   const { rows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [action.app_id]);
@@ -6786,7 +7016,7 @@ async function decideWithdraw(pool, { bot, user, action, yes, ack, deps = {} }) 
   if (!yes) return ack('OK, I\'ll leave it up.');
   const failed = async (error, text) => {
     await pool.query('UPDATE bot_cards SET status = \'failed\', error = $2 WHERE id = $1', [action.id, clip(error, 300)]);
-    return ack(text);
+    return ack(text, { failed: true });
   };
   const gate = await withdrawGate(pool, { bot, user, sessionId: Number(action.session_id), deps });
   if (!gate.ok) return failed(gate.code, `I couldn't withdraw it: ${WITHDRAW_REFUSED[gate.code] || 'something changed.'}`);
@@ -7221,6 +7451,14 @@ module.exports = {
   answerText,
   checkedWords,
   replyHtmlFor,
+  noteLiveWork,
+  LIVE_CARD_NOTE,
+  settleOnCard,
+  outcomeWords,
+  DECLINED_LINES,
+  answerHtml,
+  layLate,
+  layoutTransport,
   REPLY_HTML_DESCRIPTION,
   BESIDE_NOTE,
   noteLookup,

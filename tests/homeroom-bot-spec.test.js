@@ -395,6 +395,64 @@ test('#4612: publishSpec says when the plan it stores is a revision', async () =
   assert.equal(published[1].hadSpec, false, 'the first plan is stored as it always was');
 });
 
+// 18 Nov 2026, Saved Places request #8: three plan specs (sessions 13929,
+// 13935, 13939), all version 1, so the rework was posted as "📋 Plan v1"
+// again, right after the bot said version 1 was all it could see. A plan
+// is numbered across every session its author planned the request in.
+test('18 Nov 2026: a request planned again is its next plan version, and a build keeps the number of the plan it builds', async () => {
+  const published = [];
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/AS top/.test(String(sql))) return { rows: [{ top: 2 }] };
+      return { rows: [] };
+    },
+  };
+  const sessions = { async persistScoutPublication(args) { published.push(args); return { specVersion: args.atLeastVersion || 1 }; } };
+  // A new plan for request #8, which the bot planned twice before.
+  assert.equal(await live.publishSpec({ pool, sessions, session: { id: 13940 }, specMd: SPEC, model: 'm' }), 3);
+  assert.equal(published[0].atLeastVersion, 3, 'one past the request\'s newest plan');
+  const top = queries.find((q) => /AS top/.test(q.sql));
+  assert.deepEqual(top.params, [13940]);
+  assert.match(top.sql, /cs\.user_id = me\.user_id AND cs\.id <> me\.id/, 'the same author\'s other sessions');
+  assert.match(top.sql, /cs\.created_from_issue_number = me\.created_from_issue_number\s+OR me\.created_from_issue_number = ANY\(cs\.linked_issues\)/, 'for the same request');
+  // The copy of the plan a build was told to build keeps that plan's number.
+  queries.length = 0;
+  assert.equal(await live.publishSpec({ pool, sessions, session: { id: 13939 }, specMd: SPEC, model: 'm', keepVersion: 2 }), 2);
+  assert.equal(published[1].atLeastVersion, 2);
+  assert.equal(queries.length, 0, 'its number is known: nothing to read');
+  // A request planned once, or one that cannot be read, numbers as it always did.
+  const fresh = { async query() { return { rows: [{ top: 0 }] }; } };
+  await live.publishSpec({ pool: fresh, sessions, session: { id: 1 }, specMd: SPEC, model: 'm' });
+  assert.equal('atLeastVersion' in published[2], false, 'the session\'s own next number');
+  const down = { async query() { throw new Error('db is down'); } };
+  await live.publishSpec({ pool: down, sessions, session: { id: 1 }, specMd: SPEC, model: 'm' });
+  assert.equal('atLeastVersion' in published[3], false, 'a failed read never stops the plan being stored');
+  // A revision's plan is the request's next version too.
+  await live.publishSpec({ pool, sessions, session: { id: 13939 }, specMd: SPEC, model: 'm', revised: true });
+  assert.equal(published[4].atLeastVersion, 3);
+  assert.equal(published[4].hadSpec, true);
+
+  // The version row takes that number, or its session's next, whichever is higher.
+  const { snapshotSessionSpec } = require('../src/routes/sessions');
+  const inserts = [];
+  const db = { async query(sql, params) { inserts.push({ sql: String(sql), params }); return { rows: [{ version: 3 }] }; } };
+  assert.equal(await snapshotSessionSpec(db, 13940, SPEC, { atLeastVersion: 3 }), 3);
+  assert.match(inserts[0].sql, /GREATEST\(COALESCE\(\(SELECT MAX\(version\) FROM chat_session_specs WHERE session_id = \$1\), 0\) \+ 1, \$4::int\)/);
+  assert.equal(inserts[0].params[3], 3);
+  await snapshotSessionSpec(db, 13940, SPEC);
+  assert.equal(inserts[1].params[3], 1, 'unset, the floor is 1: MAX(version)+1 as before');
+
+  // The build passes the version of the plan it builds from, and the retry
+  // of a first version the first try's.
+  const bot = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot.js'), 'utf8');
+  assert.match(bot, /\.\.\.\(presetSpec && Number\(builtFrom\?\.version\) > 0 \? \{ presetVersion: Number\(builtFrom\.version\) \} : \{\}\),/);
+  assert.match(bot, /presetVersion: Number\(first\.specVersion\) > 0 \? Number\(first\.specVersion\) : \(buildArgs\.presetVersion \?\? null\),/);
+  const liveSrc = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-live.js'), 'utf8');
+  assert.match(liveSrc, /keepVersion: presetVersion,/);
+});
+
 test('live.post puts the card in the thread and the full spec on GitHub', async () => {
   const sent = [];
   const comments = [];
