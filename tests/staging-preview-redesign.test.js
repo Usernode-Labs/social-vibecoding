@@ -643,3 +643,26 @@ test('header: the facts under the name stay whole, so "Needs 1 more yes" is neve
   assert.match(css, /\.staging-fact \{[^}]*white-space: nowrap;/, 'each fact stays whole');
   assert.match(css, /\.staging-titles \{ overflow: hidden; \}/, 'the dot before a line\'s first fact sits in the clipped gutter');
 });
+
+test('name: the change\'s row is kept when it answers after the preview began loading', async () => {
+  // swapToStaging takes a load id of its own (#6077); a row that answered
+  // after it was dropped, and a reload (no row in memory) lost the vote line.
+  let answerRow;
+  const { AppView, sandbox } = appViewAt({
+    fetchImpl: (url) => (String(url).includes('/promoted')
+      ? new Promise((resolve) => { answerRow = resolve; })
+      : Promise.resolve({ ok: true, status: 200, json: async () => ({ status: 'ready', url: 'https://x.example/', verified: true }) })),
+  });
+  sandbox.GroupChat = { _voteView: (row) => ({ yes: row.yes_count, needed: row.votes_required, needsOtherMember: false, myVote: null, status: row.status }) };
+  AppView.swapToStaging = () => { AppView._stagingLoadId += 1; };
+  await AppView.ensureStaging(9201, null, null, { app: { slug: 'audit-garden' } });
+  answerRow({ ok: true, json: async () => ({ promoted: [{ id: 9201, pr_number: 34, pr_title: 'Remind whoever is on watering duty', status: 'promoted', yes_count: 1, votes_required: 2 }] }) });
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+  const st = storeMod.stagingStore.get();
+  assert.ok(st.vote, 'the vote line is drawn');
+  assert.equal(st.vote.needed, 2);
+  assert.equal(st.changeTitle, 'Remind whoever is on watering duty');
+  AppView.closeStagingOverlay();
+  assert.equal(AppView._stagingOpenSeq, 0, 'closed: a lookup still out writes nothing');
+});
