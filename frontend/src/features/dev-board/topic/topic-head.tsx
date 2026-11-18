@@ -803,6 +803,23 @@ export const CHANGE_ROW_TTL_MS = 10_000;
 const changeReads = new Map<string, Promise<any>>();
 const prefetchedChanges = new Map<string, { at: number; promise: Promise<any> }>();
 
+/**
+ * #6827: hand rows a page's own answer already carries (a thread's
+ * `?with=changes`, a change page's read) to `readChangeDetail`, so a card
+ * or a page that asks for one takes the answer instead of a new request.
+ */
+export function seedPrefetchedChange(rows: Record<string, any> | any[] | null): void {
+  if (!rows) return;
+  const list = Array.isArray(rows) ? rows : Object.values(rows);
+  for (const row of list) {
+    if (!row || row.id == null) continue;
+    const url = changeDetailPath(row);
+    const hit = prefetchedChanges.get(url);
+    if (hit && Date.now() - hit.at < CHANGE_ROW_TTL_MS) continue;
+    prefetchedChanges.set(url, { at: Date.now(), promise: Promise.resolve(row) });
+  }
+}
+
 /** Start a change's own read before its page mounts (thread-items.tsx). */
 export function prefetchChangeDetail(item: any): void {
   if (!item || item.id == null) return;
