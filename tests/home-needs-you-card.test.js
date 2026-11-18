@@ -251,3 +251,43 @@ test('Standard (WIP): a project\'s empty Needs you says so as good news, with th
   assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');
   assert.equal(message('communities:reel.caughtUp.next'), 'While you\'re here');
 });
+
+test('Standard (WIP): a board card\'s line says who and when first, then the item\'s number as a code', () => {
+  const src = read('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.match(src, /<span className="dev-ws-wrow-sub">\{rowWords\(b, \{ whoFirst: wipLook \}\)\}<\/span>/);
+  assert.match(src, /if \(opts\.whoFirst\) \{\s*if \(b\.by && opts\.by !== false\) parts\.push\(b\.by\);\s*if \(b\.ago && opts\.ago !== false\) parts\.push\(b\.ago\);\s*parts\.push\(codeWords\(b\)\);/);
+  assert.equal(message('project:workRow.code.request', { number: 6465 }), 'R#6465');
+  assert.equal(message('project:workRow.code.change', { number: 5990 }), 'PR#5990');
+});
+
+test('Standard (WIP): the board ties a request to the changes made for it, and opens on the board', () => {
+  const { tiesOf } = loadTsx('frontend/src/features/dev-board/workshop/board-links.ts');
+  const row = (noun, num, links) => ({
+    getAttribute: (name) => ({ 'data-ws-noun': noun, 'data-ws-num': String(num), 'data-ws-for': links || null })[name] ?? null,
+  });
+  const request = row('request', 6464);
+  const other = row('request', 6420);
+  const change = row('change', 6460, '6464');
+  const both = row('change', 6500, '6420,6464');
+  const vote = row('vote', 2462);
+  const rows = [request, other, change, both, vote];
+  // From the request: each change made for it, request → change.
+  assert.deepEqual(tiesOf(request, rows), [{ from: request, to: change }, { from: request, to: both }]);
+  // From a change: the requests it is for that are on the board, still request → change.
+  assert.deepEqual(tiesOf(both, rows), [{ from: request, to: both }, { from: other, to: both }]);
+  assert.deepEqual(tiesOf(vote, rows), [], 'a vote is tied to nothing');
+  // Nothing is written to the board: the drawing is a layer of its own on <body>.
+  const src = read('frontend/src/features/dev-board/workshop/board-links.ts');
+  assert.match(src, /document\.body\.appendChild\(svg\);/);
+  assert.doesNotMatch(src, /classList|setAttribute\('class'|\.style\./, 'no class or style is written to a row');
+  const row2 = read('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.match(row2, /\{\.\.\.\(board && wipLook && b\.n \? \{\s*'data-ws-noun': b\.noun,\s*'data-ws-num': String\(b\.n\),/);
+  // The Workshop's door opens the board, and the board is by stage alone.
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(ws, /if \(!wipLook \|\| tab !== 'workshop'\) return;\s*if \(was === 'all' \|\| was === 'bot'\) return;\s*if \(traversed\.current\) \{ traversed\.current = false; return; \}\s*cameFrom\.current = 'all';\s*setTab\('all'\);/);
+  assert.match(ws, /if \(wipLook && group !== 'stage'\) callAppView\('_setWorkshopGroup', 'stage'\);/);
+  assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
+  // Advanced mode is on <html> for the look's one detail kept for it.
+  assert.match(read('frontend/src/head.html'), /root\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
+  assert.match(read('public/css/app.css'), /html\[data-skin-wip\]\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
+});
