@@ -29764,6 +29764,12 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-wash-a: 255, 253, 240;
   --bl-wash-b: 247, 220, 200;
   --bl-wash-c: 251, 230, 175;
+  /* The splotches the light page wears in their place (THE SPLOTCHES,
+     below): the standard wallpaper's own lilac, pink and peach, as r, g, b,
+     scattered thin over the cream. Light only: dark keeps its washes. */
+  --bl-splotch-a: 229, 216, 239;
+  --bl-splotch-b: 245, 215, 230;
+  --bl-splotch-c: 252, 219, 212;
   /* Home's cards lift a little further off the washes. */
   --bl-lift-home: 0 1px 2px rgba(18, 26, 14, 0.05), 0 18px 40px -22px rgba(70, 50, 20, 0.38);
   --bl-sun: #ffee6f;
@@ -29858,6 +29864,12 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-wash-a: 30, 42, 68;
   --bl-wash-b: 24, 38, 84;
   --bl-wash-c: 22, 50, 82;
+  /* Dark keeps the washes (THE SPLOTCHES are light's), so its splotch
+     colours are the washes' own blues, set only so each mode has the
+     look's every colour. */
+  --bl-splotch-a: 30, 42, 68;
+  --bl-splotch-b: 24, 38, 84;
+  --bl-splotch-c: 22, 50, 82;
   --bl-lift-home: var(--bl-lift);
   --bl-sun: #ffee6f;
   --bl-sun-lit: #fff6ac;
@@ -29947,7 +29959,8 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]):not([data-contrast="mo
    star below the navy bar rather than under it; from 640px two more copies
    of the star, larger and quieter, sit lower on the page. The star and the
    grain are the route rule's variables, so each falls back to nothing on a
-   screen that rule does not name rather than voiding the whole background. */
+   screen that rule does not name rather than voiding the whole background.
+   In light the washes give way to THE SPLOTCHES (below); dark keeps them. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body:has(#platform-tabs) {
   --home-ground: var(--bl-page);
   --un-zoom-bg: var(--bl-page);
@@ -29974,6 +29987,25 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
       var(--home-star, none) left 20% bottom 120px / 240px 193px no-repeat,
       var(--home-star, none) right 300px top 56% / 170px 137px no-repeat;
   }
+}
+/* THE SPLOTCHES (Evan's wallpaper review on the iPhone Duo, 18 Nov 2026:
+   option 5b, "scatter, lilac, softer"). In light the cream carries six small
+   round splotches scattered over the whole page instead of the corner
+   washes, in --bl-splotch-*, each fading to half by its middle stop and to
+   nothing at its edge, faint enough that the cream stays the ground. Their
+   radii are in vmin, set against the Duo's 466pt-wide cover where they were
+   chosen (30px there is 6.44vmin), so a splotch keeps its size against the
+   screen on every phone, tablet and desktop, and one set serves every width:
+   this rule comes after the 640px one above, which is dark's alone now. The
+   grain and the stars are unchanged. */
+html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) body:has(#platform-tabs) {
+  --look-washes:
+    radial-gradient(circle at 24% 14%, rgba(var(--bl-splotch-a), 0.39) 6.44vmin, rgba(var(--bl-splotch-a), 0.195) 17.17vmin, rgba(var(--bl-splotch-a), 0) 27.9vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 96% 30%, rgba(var(--bl-splotch-b), 0.42) 6.44vmin, rgba(var(--bl-splotch-b), 0.21) 19.31vmin, rgba(var(--bl-splotch-b), 0) 32.19vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 36% 58%, rgba(var(--bl-splotch-c), 0.42) 5.36vmin, rgba(var(--bl-splotch-c), 0.21) 16.09vmin, rgba(var(--bl-splotch-c), 0) 26.82vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 86% 86%, rgba(var(--bl-splotch-a), 0.39) 8.58vmin, rgba(var(--bl-splotch-a), 0.195) 21.46vmin, rgba(var(--bl-splotch-a), 0) 34.33vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 4% 84%, rgba(var(--bl-splotch-b), 0.39) 6.44vmin, rgba(var(--bl-splotch-b), 0.195) 17.17vmin, rgba(var(--bl-splotch-b), 0) 27.9vmin) 0 0 / 100% 100% no-repeat,
+    radial-gradient(circle at 72% 4%, rgba(var(--bl-splotch-c), 0.39) 4.29vmin, rgba(var(--bl-splotch-c), 0.195) 12.88vmin, rgba(var(--bl-splotch-c), 0) 21.46vmin) 0 0 / 100% 100% no-repeat var(--bl-page);
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) body::before {
   background: var(--look-wallpaper, var(--bl-page));

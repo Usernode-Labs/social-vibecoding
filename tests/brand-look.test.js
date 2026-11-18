@@ -248,7 +248,7 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 // The look's own colours, one set per mode. A rule for either mode names no
 // colour of the page, the cards, the bars or the sky: it reads these.
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
-  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-lift-home',
+  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-splotch-a', '--bl-splotch-b', '--bl-splotch-c', '--bl-lift-home',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
   '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down',
@@ -636,7 +636,10 @@ test('the page is the standard wallpaper\'s washes in the look\'s own tints, and
     const [r, g, b] = valueOf(dark, name).split(',').map(Number);
     assert.ok(b > g && g > r, `${name} stays a blue round the dark page`);
   }
-  const ground = ruleFor('body:has(#platform-tabs)').filter((rule) => /--look-washes:/.test(rule.body));
+  // The shared rules, which dark wears; light lays THE SPLOTCHES over them
+  // (the next test).
+  const ground = ruleFor('body:has(#platform-tabs)')
+    .filter((rule) => rule.selectors[0].startsWith(EITHER) && /--look-washes:/.test(rule.body));
   assert.equal(ground.length, 2, 'the phone\'s three washes, and from 640px the seven');
   const wide = ground[1].body;
   for (const at of ['circle at calc(100% - 92px) 115px', 'ellipse 38vw 36vh at 24% 20%', 'ellipse 34vw 28vh at 90% 32%']) {
@@ -646,6 +649,34 @@ test('the page is the standard wallpaper\'s washes in the look\'s own tints, and
   assert.match(ground[0].body, /background:\s*var\(--look-wallpaper\);/);
   assert.match(ground[0].body, /var\(--home-star, none\)/, 'the star falls back to nothing where the route rule does not define it');
   assert.match(ruleFor('body::before')[0].body, /background:\s*var\(--look-wallpaper, var\(--bl-page\)\);/);
+});
+
+// EVAN'S WALLPAPER REVIEW, 18 Nov 2026 (option 5b, "scatter, lilac,
+// softer"): in light, six small splotches in the standard wallpaper's lilac,
+// pink and peach, scattered thin over the cream, sized against the screen.
+test('in light the cream wears six scattered lilac splotches, at every width, and dark keeps its washes', () => {
+  const light = ruleAt(LIGHT).body;
+  assert.equal(valueOf(light, '--bl-splotch-a'), '229, 216, 239', 'the standard wallpaper\'s lilac');
+  assert.equal(valueOf(light, '--bl-splotch-b'), '245, 215, 230', 'its pink');
+  assert.equal(valueOf(light, '--bl-splotch-c'), '252, 219, 212', 'its peach');
+  const rule = ruleAt(`${LIGHT} body:has(#platform-tabs)`);
+  assert.ok(rule, 'one light-only rule lays the splotches over the shared washes');
+  assert.equal(ruleFor('--bl-splotch').length, 0, 'no selector names them');
+  assert.equal(lookRules().filter((r) => /var\(--bl-splotch-/.test(r.body)).length, 1,
+    'only that light rule reads them: dark keeps its washes round the navy');
+  const washes = valueOf(rule.body, '--look-washes');
+  assert.equal((washes.match(/radial-gradient\(circle at /g) || []).length, 6, 'six splotches');
+  for (const at of ['24% 14%', '96% 30%', '36% 58%', '86% 86%', '4% 84%', '72% 4%']) {
+    assert.ok(washes.includes(`circle at ${at}, rgba(var(--bl-splotch-`), `a splotch at ${at}`);
+  }
+  assert.match(washes, /rgba\(var\(--bl-splotch-a\), 0\.39\) 6\.44vmin, rgba\(var\(--bl-splotch-a\), 0\.195\) 17\.17vmin, rgba\(var\(--bl-splotch-a\), 0\) 27\.9vmin/,
+    'faint, half by the middle stop, gone at the edge');
+  assert.doesNotMatch(washes, /\d(px|vw|vh)\b/, 'sized in vmin, so a splotch keeps its size against the screen');
+  assert.ok(/var\(--bl-page\)$/.test(washes), 'on the cream');
+  // After the 640px rule in the sheet, so the one set holds at every width.
+  const block = lookBlock();
+  assert.ok(block.indexOf(`${LIGHT} body:has(#platform-tabs) {`) > block.indexOf('ellipse 34vw 28vh at 90% 32%'),
+    'the light rule follows the 640px washes');
 });
 
 test('Home takes Standard (WIP)\'s New project button and Needs you card, in the look\'s colours', () => {
