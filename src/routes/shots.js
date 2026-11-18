@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const log = require('../services/logger');
+const { parseRange } = require('../services/byte-range');
 const shots = require('../services/shots-files');
 const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
@@ -70,26 +71,6 @@ const REFUSALS = new Map([
 function refused(res, reason) {
   const code = String(reason || 'shots_refused');
   return res.status(code === 'not_authorized' ? 403 : 409).json({ error: code, message: REFUSALS.get(code) || 'The before & after shots could not do that now.' });
-}
-
-function parseRange(header, total) {
-  if (!header) return null;
-  const match = /^bytes=(\d*)-(\d*)$/.exec(String(header).trim());
-  if (!match || (!match[1] && !match[2])) return false;
-  let start;
-  let end;
-  if (!match[1]) {
-    const suffix = Number(match[2]);
-    if (!Number.isSafeInteger(suffix) || suffix <= 0) return false;
-    start = Math.max(0, total - suffix);
-    end = total - 1;
-  } else {
-    start = Number(match[1]);
-    end = match[2] ? Number(match[2]) : total - 1;
-  }
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)
-      || start < 0 || end < start || start >= total) return false;
-  return { start, end: Math.min(end, total - 1) };
 }
 
 const LEGACY_PATH_RE = /^(\/api\/apps\/[^/?]+\/proposals\/[^/?]+\/)evidence(?=[/?]|$)/;

@@ -1987,8 +1987,13 @@ and `id` (to delete later) in your own tables:
 ```json
 { "id": "<32-hex>", "url": "https://<platform>/app-files/<32-hex>",
   "filename": "dish.jpg", "contentType": "image/jpeg",
-  "sizeBytes": 812345, "visibility": "public" }
+  "sizeBytes": 812345, "visibility": "public",
+  "owner": "user", "sha256": "<64-hex>", "createdAt": "<ISO time>" }
 ```
+
+`owner` is `user` for a person's upload and `app` for a file the app
+keeps for itself (see "Files the app keeps for itself" below);
+`sha256` is the digest of the stored bytes, for checking a copy.
 
 Limits and rules (both paths):
 
@@ -2006,9 +2011,8 @@ Limits and rules (both paths):
 - **Video**: MP4 (H.264/AAC, `.mp4` or `.m4v`) and WebM (`.webm`) —
   sniffed from the bytes; QuickTime and Matroska files are refused.
   Max **100 MB** per file. Render it inline with
-  `<video src="${url}" controls>`. Files are served whole with no
-  range support, so it plays from the start in Chrome and Firefox;
-  Safari on iPhone usually wants pieces and may not play it.
+  `<video src="${url}" controls>`. Byte ranges are served, so it
+  seeks, and Safari on iPhone plays it.
 - **Text and data**: plain text (`.txt`), CSV (`.csv`), JSON
   (`.json`) and calendar (`.ics`) — 5 MB each. They must be valid
   UTF-8 with no NUL bytes, a `.json` must parse, and an `.ics` must
@@ -2017,9 +2021,12 @@ Limits and rules (both paths):
 - **Never accepted**: HTML, SVG, JavaScript and XML under any name.
   An upload is checked by its bytes, so a web page renamed
   `menu.pdf` is refused.
-- **Quotas**: 10 GB per app, 1 GB per user per app, shared by every
-  kind above (staging-preview uploads: 100 MB per app, auto-deleted
-  after 7 days — one large video can use most of a preview's space).
+- **Quotas**: 10 GB per app unless Homeroom's admins gave the app its
+  own allowance, and 1 GB per user per app for what people upload,
+  shared by every kind above. Files the app keeps for itself count
+  against the app's allowance only. (Staging-preview uploads: 100 MB
+  per app, auto-deleted after 7 days — one large video can use most of
+  a preview's space.)
   Structured error codes on rejection:
   `file_too_large`, `invalid_image`, `invalid_audio`, `invalid_file`,
   `app_quota_exceeded`, `user_quota_exceeded`,
@@ -2030,8 +2037,9 @@ Limits and rules (both paths):
   requires a platform user token at view time: render those as
   `<img src="${url}?token=${theIframeToken}">` (or
   `<audio ...>`/`<video ...>` with the same `?token=` for narration
-  and clips). Files
-  are served whole; there is no range/skip-ahead support.
+  and clips). A `Range` header is answered with that part of the file
+  (206), so `<audio>` and `<video>` seek without your server keeping a
+  copy.
 - **Files are immutable** — there is no overwrite; upload a new file
   and update your stored URL. Deleting makes the URL 404 for fresh
   fetches immediately.
@@ -2102,6 +2110,49 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
 //   app's files (the takedown/moderation path), same two headers.
 // GET `${USERNODE_STORAGE_URL}/usage`          — quota meter, same headers.
 ```
+
+### Files the app keeps for itself (no signed-in person)
+
+Narration your server generates, chapter text, computed data: files
+that belong to the app rather than to whoever happened to be signed
+in. Upload them with the app token **alone** and `owner=app`. They
+count against the app's allowance, never a person's; no user token is
+needed, so a background job can store them the moment they are made,
+and they are not removed when someone deletes their account. Never
+keep such a file on the container's disk waiting for a token: the
+disk is gone at the next restart.
+
+```js
+const base = process.env.USERNODE_STORAGE_URL;
+const app = { 'x-usernode-app-token': process.env.USERNODE_STORAGE_TOKEN };
+
+// Store: same body and query params as above, plus owner=app.
+const res = await fetch(`${base}/files?filename=chapter-3.mp3&visibility=public&owner=app`, {
+  method: 'POST',
+  headers: { ...app, 'content-type': 'application/octet-stream' },
+  body: mp3Buffer,
+});
+const file = await res.json(); // { ok, id, url, sizeBytes, sha256, owner: 'app', ... }
+
+// List your files a page at a time, each with its size and sha256:
+//   GET `${base}/files?owner=app&after=<last id>&limit=1000`
+//   → { ok, files: [...], next }   (next: the id to pass as `after`, or null)
+// Read one back (private ones too; a Range header reads part of it):
+//   GET `${base}/files/<id>`
+// Delete and usage take the app token alone as well:
+//   DELETE `${base}/files/<id>`, GET `${base}/usage`
+//   (usage adds `appOwnedBytes`; `userBytes` is null without a user token)
+```
+
+- Moving data you kept in your own database into storage: copy it in
+  a resumable job (record each file's id and `sha256` beside its row
+  as it is stored), check the copy against the list (counts and
+  digests), switch your reads to the stored files, and only then
+  clear the database copy.
+- App-owned uploads are rate-limited per app (300 a minute) rather
+  than per person; `rate_limited` (429) means wait a minute and go on.
+- A user token sent with `owner=app` is ignored for ownership; a
+  person's upload (no `owner`, or `owner=user`) still needs one.
 
 ### Staging notes
 
