@@ -35,6 +35,7 @@ const diagramContract = require('../services/diagram');
 const proposalTouches = require('../services/proposal-touches');
 const shotsState = require('../services/shots-state');
 const shotsView = require('../services/shots-view');
+const stagingDemoPreview = require('../services/staging-demo-preview');
 const summaryFreshness = require('../services/summary-freshness');
 const homeroomCommits = require('../services/homeroom-commits');
 const proposalDelivery = require('../services/proposal-delivery');
@@ -1425,16 +1426,26 @@ function stagingMockProposals(viewer) {
 // submitted that waits for their Yes. Without a user they stay mocks nobody
 // owns.
 const OWN_DEMO_PROPOSALS = new Set([9000493, 9000494, 9000495]);
-function ownDemoProposals(rows, user) {
-  if (!user || user.id == null || !user.username) return rows;
-  return rows.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)
+// #6817: the demo change up for a vote also carries verified before &
+// after shots (services/staging-demo-preview.js), so its page's Before &
+// after and the preview have something to show on staging. The tally is
+// mk()'s own (5 yes, 3 required), and `shots_detail` stays unset, so the
+// shots gate is off for the row as it is for every demo proposal. Attached
+// here rather than in the fixture list, which is pure data the demo-id
+// test runs on its own.
+function ownDemoProposals(rows, user, slug) {
+  const withShots = rows.map((row) => (row.id === stagingDemoPreview.DEMO_PREVIEW_SESSION_ID && !row.shots
+    ? { ...row, shots: stagingDemoPreview.demoShots(row, slug) }
+    : row));
+  if (!user || user.id == null || !user.username) return withShots;
+  return withShots.map((row) => (OWN_DEMO_PROPOSALS.has(row.id)
     ? { ...row, user_id: user.id, username: user.username } : row));
 }
 
 // One ?demo=1 proposal, as `user` reads it, or null: for a route outside
 // this file that answers for a mock (sessions.js's checks explanation).
-function stagingMockProposalFor(id, user) {
-  return ownDemoProposals(stagingMockProposals(user && user.username), user).find((m) => m.id === id) || null;
+function stagingMockProposalFor(id, user, slug) {
+  return ownDemoProposals(stagingMockProposals(user && user.username), user, slug).find((m) => m.id === id) || null;
 }
 
 // The ?demo=1 merged change that waits for the platform's next release.
@@ -4590,7 +4601,7 @@ function voteRoutes(config) {
       const demoMode = IS_STAGING && req.query.demo === '1';
       if (demoMode) {
         const have = new Set(rows.map((r) => r.id));
-        rows.push(...ownDemoProposals(stagingMockProposals(req.user?.username), req.user).filter((m) => !have.has(m.id)));
+        rows.push(...ownDemoProposals(stagingMockProposals(req.user?.username), req.user, req.params.slug).filter((m) => !have.has(m.id)));
       }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
@@ -5523,7 +5534,7 @@ function voteRoutes(config) {
       if (!proposal && IS_STAGING && req.query.demo === '1') {
         const sessionMocks = require('./sessions');
         proposal = stagingMockMerged(req.user).find((m) => m.id === id)
-          || ownDemoProposals(stagingMockProposals(), req.user).find((m) => m.id === id)
+          || ownDemoProposals(stagingMockProposals(), req.user, req.params.slug).find((m) => m.id === id)
           || stagingDemoNeedsProposal(id, req.params.slug)
           || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
           || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)

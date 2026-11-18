@@ -82,7 +82,7 @@ function makeAppView(fetchImpl, { stubSwap = true, uiTelemetry = null } = {}) {
     // can't hold the test process open after its case has passed.
     setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
     clearTimeout, setInterval, clearInterval,
-    AbortController, URL,
+    AbortController, URL, URLSearchParams,
     // The real swapToStaging normalises the url through dev-host.js and
     // composes the iframe src with the URL API.
     resolveDevHost: (u) => u,
@@ -910,4 +910,62 @@ test('#6077 with no way back the stuck page keeps the old advice: a reader, and 
   await direct.AppView.swapToStaging('https://live.example', null, { verified: true });
   held.iframe[0]();
   assertOffersNoRetry(direct.dom, 'changes:frame.loader.slowStillLoading');
+});
+
+// ── #6817: a staging demo change's Try it ────────────────────────────────
+//
+// With the demo data the ensure routes answer a demo change with a page on
+// this host (services/staging-demo-preview.js). The client forwards the demo
+// flag and turns that path into a same-origin URL before opening the frame,
+// through the same swap and token as any preview.
+
+function asDemo(app, sandbox) {
+  sandbox.location.search = '?demo=1';
+  return app;
+}
+
+test('#6817 on a demo page the ensure call carries the demo flag', async () => {
+  const endpoints = [];
+  const { AppView, sandbox } = makeAppView(async (url) => {
+    endpoints.push(url);
+    return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+  });
+  asDemo(AppView, sandbox);
+  await AppView.ensureStaging(7, null, null, {});
+  await AppView.ensureStaging(7, null, null, { readOnly: true });
+  assert.deepEqual(endpoints, [
+    '/api/sessions/7/ensure-staging?demo=1',
+    '/api/sessions/7/preview-status?demo=1',
+  ]);
+});
+
+test('#6817 a sample preview opens at the same origin, with its startPath', async () => {
+  const { AppView, dom, swaps, sandbox } = makeAppView(okJson({
+    status: 'ready',
+    url: '/api/staging-demo/sample-app',
+    startPath: '/api/staging-demo/sample-app',
+    verified: true,
+    checksRunning: false,
+    prNumber: 900113,
+    title: '[Mock] Near-majority test',
+  }));
+  asDemo(AppView, sandbox);
+  await AppView.ensureStaging(9000013, null, null, {});
+  assert.equal(swaps.length, 1, 'the preview opened');
+  assert.equal(swaps[0].url, 'https://platform.example/api/staging-demo/sample-app',
+    'a path on this host becomes an absolute same-origin URL');
+  assert.equal(swaps[0].opts.startPath, '/api/staging-demo/sample-app', 'the page the change is about');
+  assert.equal(swaps[0].opts.verified, true);
+  assert.equal(dom.els['staging-overlay'].classList._hidden, false, 'the overlay is up');
+});
+
+test('#6817 outside the demo the endpoint and the URL are untouched', async () => {
+  const endpoints = [];
+  const { AppView, swaps } = makeAppView(async (url) => {
+    endpoints.push(url);
+    return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+  });
+  await AppView.ensureStaging(7, null, null, {});
+  assert.deepEqual(endpoints, ['/api/sessions/7/ensure-staging']);
+  assert.equal(swaps[0].url, 'https://live.example', 'an absolute URL is passed through');
 });
