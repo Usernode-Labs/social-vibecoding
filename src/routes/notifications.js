@@ -3,6 +3,7 @@ const { rateLimit } = require('express-rate-limit');
 const { queueTestAlert } = require('../services/test-alert');
 const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
+const recentThreads = require('../services/recent-threads');
 const messageBookmarks = require('../services/message-bookmarks');
 const notificationBookmarks = require('../services/notification-bookmarks');
 const { notificationBookmarkLimiter } = require('../middleware/rate-limits');
@@ -641,6 +642,61 @@ function notificationsRoutes(config) {
       return res.json(await notificationAsks.recordAsk(pool, req.user.id, value));
     } catch (err) {
       log.error('notification-asks', 'record failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #6785: the notifications sheet's Recent threads tab — every thread this
+  // account took part in, newest activity first, across every project it can
+  // still see. It reads the threads themselves (services/recent-threads.js)
+  // because the feed above holds only what was sent TO them, and their own
+  // posts and votes leave no notification there.
+  //
+  // `/api/me/` rather than `/api/notifications/…`: `/api/notifications/:id`
+  // answers for a single notification and would otherwise catch the name.
+  // The cursor is the last row's `(lastAt, threadId)`, answered back as
+  // `nextBefore`; a page exactly `limit` long means there may be more.
+  router.get('/api/me/recent-threads', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    res.set('Cache-Control', 'private, no-store');
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(Math.trunc(rawLimit), 1), 50)
+      : 30;
+    let before = null;
+    let beforeId = null;
+    if (req.query.before) {
+      const at = Date.parse(String(req.query.before));
+      const id = Number(req.query.before_id);
+      if (!Number.isFinite(at) || !Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid cursor' });
+      }
+      before = new Date(at).toISOString();
+      beforeId = id;
+    }
+    try {
+      // Staging-only demo rows (?demo=1), see demoThreads: the first page
+      // only, and a strict no-op outside staging.
+      if (IS_STAGING && req.query.demo === '1' && !before) {
+        const demo = recentThreads.demoThreads();
+        return res.json({ threads: demo, total: demo.length, hasMore: false, nextBefore: null });
+      }
+      const { threads: rows, total } = await recentThreads.recentThreadsPage(pool, req.user.id, {
+        limit, before, beforeId, isAdmin: !!req.user.isAdmin,
+      });
+      const hasMore = rows.length === limit;
+      const last = rows[rows.length - 1];
+      // `total` is how many threads there are in all, which outlasts one page:
+      // Home's card says how many more it has than the rows it could list
+      // (#6816).
+      return res.json({
+        threads: rows,
+        total,
+        hasMore,
+        nextBefore: hasMore && last ? { lastAt: last.lastAt, id: last.threadId } : null,
+      });
+    } catch (err) {
+      log.error('recent-threads', 'list failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

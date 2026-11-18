@@ -266,6 +266,13 @@
     _badgePublishedCount: null, // last count native confirmed applying
     _badgePublishPromise: null,
     _badgePublishRerun: false,
+    _badgeRetryable: false,     // the last attempt may be retried
+    _badgeRetryTimer: null,
+    _badgeRetryAttempt: 0,
+    // The whole budget: after the table is spent the app stops calling a
+    // phone that is not answering, until something real happens (online,
+    // foreground, a new admission, the bridge handshake).
+    _BADGE_RETRY_MS: Object.freeze([1000, 3000, 10000, 30000, 60000]),
 
     async _badgeSupported() {
       if (SocialPush._badgeSupportPromise) return SocialPush._badgeSupportPromise;
@@ -318,6 +325,14 @@
           SocialPush._badgePublishRerun = false;
           applied = await SocialPush._badgePublishOnce();
         } while (SocialPush._badgePublishRerun);
+        // A dropped answer must not leave the pushed number on the icon: a
+        // retryable miss is kept and sent again. Applied and conclusive
+        // unsupported results settle the budget.
+        if (SocialPush._badgeRetryable && !applied) {
+          SocialPush._scheduleBadgeRetry();
+        } else {
+          SocialPush._resetBadgeRetry();
+        }
         return applied;
       })();
       SocialPush._badgePublishPromise = run.finally(() => {
@@ -329,12 +344,24 @@
 
     async _badgePublishOnce() {
       const value = SocialPush._badgeCount;
+      SocialPush._badgeRetryable = false;
       if (value === null) return false;
-      if (!SocialPush._sessionAdmitted()) return false;
-      if (!await SocialPush._badgeSupported()) return false;
+      if (!SocialPush._sessionAdmitted()) {
+        SocialPush._badgeRetryable = true;
+        return false;
+      }
+      if (!await SocialPush._badgeSupported()) {
+        // A probe that emptied its cache was inconclusive and stays
+        // retryable; a cached answer is a build without the capability.
+        SocialPush._badgeRetryable = SocialPush._badgeSupportPromise === null;
+        return false;
+      }
       // Admission may have flipped while the probe was in flight; the
       // admission listener republishes, so skipping here loses nothing.
-      if (!SocialPush._sessionAdmitted()) return false;
+      if (!SocialPush._sessionAdmitted()) {
+        SocialPush._badgeRetryable = true;
+        return false;
+      }
       if (SocialPush._badgePublishedCount === value) return true;
       try {
         await window.usernode.setSocialBadgeCount(value);
@@ -345,18 +372,57 @@
       } catch (err) {
         console.warn('[social-push] badge publish failed:',
           err && err.message ? err.message : err);
+        SocialPush._badgeRetryable = true;
         return false;
       }
+    },
+
+    _clearBadgeRetry() {
+      if (SocialPush._badgeRetryTimer) clearTimeout(SocialPush._badgeRetryTimer);
+      SocialPush._badgeRetryTimer = null;
+    },
+
+    _resetBadgeRetry() {
+      SocialPush._clearBadgeRetry();
+      SocialPush._badgeRetryAttempt = 0;
+    },
+
+    // One timer at a time, walked down the delay table and then stopped:
+    // the same no-endless-retry rule announceBridgeReady follows. The timer
+    // reads _badgeCount when it fires, so a newer total is what goes out.
+    _scheduleBadgeRetry() {
+      if (SocialPush._badgeCount === null || SocialPush._badgeRetryTimer) return;
+      const delays = SocialPush._BADGE_RETRY_MS;
+      if (SocialPush._badgeRetryAttempt >= delays.length) return;
+      const delay = delays[SocialPush._badgeRetryAttempt];
+      SocialPush._badgeRetryAttempt += 1;
+      SocialPush._badgeRetryTimer = setTimeout(() => {
+        SocialPush._badgeRetryTimer = null;
+        if (SocialPush._badgePublishedCount === SocialPush._badgeCount) return;
+        SocialPush._runBadgePublish();
+      }, delay);
     },
 
     // Native state can move underneath a remembered publish (a new session
     // admission replays state; a BFCache restore may resume a realm another
     // realm badged over). Forget what was confirmed and send the remembered
-    // count again.
+    // count again, with a fresh retry budget.
     _republishBadge() {
+      SocialPush._resetBadgeRetry();
       SocialPush._badgePublishedCount = null;
       if (SocialPush._badgeCount === null) return Promise.resolve(false);
       return SocialPush._runBadgePublish();
+    },
+
+    // A real signal (the connection returning, the bridge handshake) arms a
+    // new retry budget, but only sends anything when the phone has not
+    // confirmed the remembered count.
+    _republishBadgeIfUnconfirmed() {
+      if (SocialPush._badgeCount === null ||
+          SocialPush._badgePublishedCount === SocialPush._badgeCount) {
+        return Promise.resolve(false);
+      }
+      return SocialPush._republishBadge();
     },
 
     _notificationId(value) {
@@ -586,6 +652,9 @@
   window.addEventListener('online', () => {
     SocialPush.drainPending();
     SocialPush.retryForegroundInvalidation();
+    // A badge the phone did not take gets a fresh budget when the network
+    // is back; a confirmed one is left alone.
+    SocialPush._republishBadgeIfUnconfirmed();
   });
   // The native shell refreshes registration/delivery status when it resumes.
   // Treat its state event as an invalidation and read through the admitted
@@ -653,10 +722,13 @@
       bridgeReadyAttempt = 0;
       if (result && result.ready === true) {
         bridgeReady = true;
+        // The link to the phone is up: send a count it did not take.
+        SocialPush._republishBadgeIfUnconfirmed();
         return;
       }
       // A conclusive unsupported result belongs to an older app build.
       bridgeReady = true;
+      SocialPush._republishBadgeIfUnconfirmed();
     }).catch((err) => {
       if (!bridgePageActive) return;
       console.warn('[social-push] native bridge readiness failed:',
@@ -734,6 +806,7 @@
   window.addEventListener('pagehide', () => {
     SocialPush._foregroundPageActive = false;
     SocialPush._clearTapRetry();
+    SocialPush._clearBadgeRetry();
     SocialPush._foregroundLifecycleEpoch += 1;
     // If this realm is later restored from BFCache, another realm may have
     // received and already consumed a shared invalidation while this UI was

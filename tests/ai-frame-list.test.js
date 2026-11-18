@@ -176,6 +176,11 @@ test('one project picked: the same lists narrowed to it, no project names over t
   assert.doesNotMatch(html, /fr-track/, 'no five-stop line on a row');
   const empty = render({ picked: ['quiet'], appFor: (slug) => ({ slug, name: 'Quiet Place' }) });
   assert.match(empty, /<p class="fr-txt" data-ai-empty="project">[^<]*Quiet Place[^<]*<\/p>/, 'a project with nothing of yours says so by name');
+  // #6714: a project a link (or the AI tab press) picked is a tab even when
+  // no list names it, and All leads, unpressed, one tap away.
+  assert.match(empty, /class="fr-tab fr-on" aria-pressed="true" data-ai-chip="quiet">/, 'the picked project is offered and chosen');
+  assert.match(empty, /class="fr-tab" aria-pressed="false">All<\/button>/, 'All leads, unpressed');
+  assert.ok(empty.indexOf('>All</button>') < empty.indexOf('data-ai-chip="quiet"'), 'All comes first');
 });
 
 test('what the standard list says when it has nothing, cannot read, or finds no match', () => {

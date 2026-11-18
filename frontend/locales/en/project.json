@@ -4616,16 +4616,16 @@
     "description": "The same row once the app is pinned: takes the app's tile off Home's Pinned apps. Membership does not change."
   },
   "menu.homeCommunity.add": {
-    "text": "Pin community to Home",
-    "description": "Row in a project's ⋯ menu on its hub: puts the community among Home's Pinned communities, where its tile opens this hub. Pinning does not join."
+    "text": "Pin community",
+    "description": "Row in a project's ⋯ menu on its hub: puts the community in the Pinned group of the Communities page, where its tile opens this hub. Pinning does not join."
   },
   "menu.homeCommunity.sub": {
     "text": "Its tile opens this hub",
-    "description": "Second line under Pin community to Home in the project's ⋯ menu, saying what the pinned tile does."
+    "description": "Second line under Pin community in the project's ⋯ menu, saying what the pinned tile does."
   },
   "menu.homeCommunity.remove": {
-    "text": "Unpin community from Home",
-    "description": "The same row once the community is pinned: takes its tile off Home's Pinned communities. Membership does not change."
+    "text": "Unpin community",
+    "description": "The same row once the community is pinned: takes its tile out of the Pinned group of the Communities page. Membership does not change."
   },
   "menu.appSettings.title": {
     "text": "App settings",
@@ -6579,6 +6579,10 @@
     "text": "How it got here",
     "description": "Heading over the timeline of a thread's big events on a request's or a change's page: who asked, the plan, each change built, its tests, and where it stands now. Also the section's accessible name."
   },
+  "topic.rail.resize": {
+    "text": "Resize How it got here",
+    "description": "Accessible name of the draggable line between a request's or a change's card and its \"How it got here\" timeline on a wide page: dragging it makes the timeline wider or narrower. \"How it got here\" is the timeline's heading; translate it the same way."
+  },
   "topic.rail.asked": {
     "text": "Asked",
     "description": "Name of the first step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card): the request was filed."
@@ -6618,6 +6622,46 @@
   "topic.rail.testsFailedPlain": {
     "text": "Tests failed",
     "description": "Name of a step in the \"How it got here\" timeline on a request's or a change's page (the list of the thread's big events, beside its card), drawn in red, when the number of failed tests is not known."
+  },
+  "topic.card.foot.stoppedTests": {
+    "text": "Stopped: its tests still fail",
+    "description": "Headline at the foot of a change's card, in red, when its tests failed and Homeroom bot has stopped trying to fix them."
+  },
+  "topic.card.foot.tally": {
+    "text": "{{yes}} of {{needed}}",
+    "description": "Short fact at the foot of a change's card while it is up for a vote: the yes votes so far out of the number needed, for example \"0 of 2\". It is followed by a dot and the viewer's own line (\"You haven't voted\")."
+  },
+  "topic.card.foot.since": {
+    "text": "Since {{when}}",
+    "description": "Short fact at the foot of a change's card once it is live: the day it went live, for example \"Since Nov 14\"."
+  },
+  "topic.rail.fixing": {
+    "text": "Fixing",
+    "description": "Name of the current step in the \"How it got here\" timeline on a change's page while Homeroom bot is fixing the change's failed tests."
+  },
+  "topic.rail.waitingFix": {
+    "text": "Waiting for a fix",
+    "description": "Name of the current step in the \"How it got here\" timeline on a change's page when its tests failed and its author has to fix them."
+  },
+  "topic.rail.testing": {
+    "text": "Testing",
+    "description": "Name of the current step in the \"How it got here\" timeline on a change's page while its tests are running."
+  },
+  "topic.rail.note.fixing": {
+    "text": "Homeroom bot is fixing what its tests found. It is tested again after that.",
+    "description": "Note under the Fixing step of the \"How it got here\" timeline on a change's page."
+  },
+  "topic.rail.note.waitingFix": {
+    "text": "Its tests have to pass before it can go live. A new version is tested again when it arrives.",
+    "description": "Note under the Waiting for a fix step of the \"How it got here\" timeline on a change's page."
+  },
+  "topic.rail.note.approved": {
+    "text": "It has the yes it needs. Homeroom syncs it with main, then it goes live.",
+    "description": "Note under the Approved step of the \"How it got here\" timeline on a change's page: the change has enough yes votes and its tests passed, and its merge is next."
+  },
+  "topic.rail.note.stoppedTests": {
+    "text": "Its tests still fail and nobody is fixing them. It moves on when a new version arrives.",
+    "description": "Note under the Stopped step of the \"How it got here\" timeline on a change's page, when its tests failed and Homeroom bot stopped trying to fix them."
   },
   "topic.rail.voted": {
     "text": "Approved",
@@ -6747,10 +6791,6 @@
     "text": "Summary by Homeroom bot, from the request and its changes.",
     "description": "Small line under the summary on a request's page when Homeroom bot wrote it: who wrote it and what it was written from. Here two or more changes have been built for the request."
   },
-  "topic.card.foot.alsoTests": {
-    "text": "Its tests: {{what}}",
-    "description": "Second row at the foot of a change's card, under the vote's status, when the change is up for a vote while its tests have failed or are still running. {{what}} is the tests' own status sentence, for example \"The preview didn’t start. Could not parse repo URL.\""
-  },
   "topic.card.layer.close": {
     "text": "Close",
     "description": "Accessible name of the × button, and of the dimmed area behind, on the panel that opens over a thread's card when a step of the \"How it got here\" timeline is pressed: closes the panel."
@@ -6879,6 +6919,10 @@
     "text": "Which one should go live?",
     "description": "Question shown at the foot of a request's card when two or more changes built for it compete for the group's vote after Vote is pressed, over a button for each change and one for none of them."
   },
+  "topic.card.ballot.notVoted": {
+    "text": "you haven’t voted",
+    "description": "Second part of the line at the foot of a request's card while its competing changes are up for one vote, after the counts and a dot, when the viewer has not voted yet. Lowercase: it follows a dot, as in \"A 2 · B 1 · Neither 0 · you haven’t voted\"."
+  },
   "topic.card.ballot.cancel": {
     "text": "Cancel",
     "description": "Link beside the choices at the foot of a request's card when two or more changes built for it compete for the group's vote: puts the question away without voting."
@@ -6890,6 +6934,46 @@
   "topic.card.shots.noneText": {
     "text": "This change is to how it works underneath, so there are no before and after screenshots. The summary above says what it does.",
     "description": "Sentence under \"Nothing you can see changes\" in the box where a change's before and after screenshots would be."
+  },
+  "topic.card.shots.notYetTitle": {
+    "text": "No screenshots yet",
+    "description": "Title of the quiet box on a change's card where its before and after picture will be, while the change's tests have not passed yet."
+  },
+  "topic.card.shots.notYetText": {
+    "text": "The before and after screenshots are taken once its tests pass.",
+    "description": "Line under \"No screenshots yet\" on a change's card."
+  },
+  "topic.card.shots.neverTitle": {
+    "text": "No screenshots",
+    "description": "Title of the quiet box on a change's card where its before and after picture would be, when its tests failed and nothing is fixing them."
+  },
+  "topic.card.shots.neverText": {
+    "text": "This version never passed its tests, so none were taken.",
+    "description": "Line under \"No screenshots\" on a change's card whose tests failed and whose fix stopped."
+  },
+  "topic.card.checks.failed_one": {
+    "text": "{{count}} failed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests failed, for example \"1 failed\"."
+  },
+  "topic.card.checks.failed_other": {
+    "text": "{{count}} failed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests failed, for example \"2 failed\"."
+  },
+  "topic.card.checks.passed_one": {
+    "text": "{{count}} passed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests passed, for example \"1 passed\"."
+  },
+  "topic.card.checks.passed_other": {
+    "text": "{{count}} passed",
+    "description": "Chip in the layer that opens over a change's card to show its tests: how many tests passed, for example \"736 passed\"."
+  },
+  "topic.card.look.yes_one": {
+    "text": "{{count}} yes",
+    "description": "Chip under a competing change's summary, in the layer Look opens over a request's card: how many members voted yes for it, for example \"1 yes\"."
+  },
+  "topic.card.look.yes_other": {
+    "text": "{{count}} yes",
+    "description": "Chip under a competing change's summary, in the layer Look opens over a request's card: how many members voted yes for it, for example \"2 yes\" or \"0 yes\"."
   },
   "topic.card.shots.tile": {
     "text": "Screen {{index}} of {{total}}",

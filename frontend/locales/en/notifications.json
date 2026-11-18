@@ -197,7 +197,7 @@
   },
   "sheet.filters": {
     "text": "Notification filters",
-    "description": "Accessible name of the row of two filter buttons (Unread, All) at the top of the notifications sheet."
+    "description": "Accessible name of the row of three filter buttons (Unread, Recent threads, All) at the top of the notifications sheet."
   },
   "sheet.tab.unread": {
     "text": "Unread",
@@ -218,6 +218,34 @@
   "sheet.tab.all": {
     "text": "All",
     "description": "Filter button at the top of the notifications sheet: shows every notification, read ones included."
+  },
+  "sheet.tab.threads": {
+    "text": "Recent threads",
+    "description": "Filter button between Unread and All at the top of the notifications sheet: lists every discussion the viewer took part in, newest activity first, whatever has or has not been read."
+  },
+  "sheet.empty.threads": {
+    "text": "Threads you take part in show up here.",
+    "description": "Shown on the notifications sheet's Recent threads filter when the viewer has not taken part in any thread yet."
+  },
+  "sheet.threads.error": {
+    "text": "Your threads could not be loaded.",
+    "description": "Shown on the notifications sheet's Recent threads filter when its list could not be fetched: one line in place of the list."
+  },
+  "sheet.threads.kind.request": {
+    "text": "Request #{{number}}",
+    "description": "Small first line of a row on the notifications sheet's Recent threads filter: the thread is a request. {{number}} is its number, like 214."
+  },
+  "sheet.threads.kind.change": {
+    "text": "Change #{{number}}",
+    "description": "Small first line of a row on the notifications sheet's Recent threads filter: the thread is a change. {{number}} is its number, like 88."
+  },
+  "sheet.threads.kind.decision": {
+    "text": "Decision",
+    "description": "Small first line of a row on the notifications sheet's Recent threads filter: the thread is a group decision, which has no number."
+  },
+  "sheet.threads.meta": {
+    "text": "{{project}} · <0>{{when}}</0>",
+    "description": "Small last line of a row on the notifications sheet's Recent threads filter: the thread's project, then how long ago something last happened in it. Keep the <0></0> tags around the time. {{project}} is the project's name, like Plant Pal; {{when}} is the time, like 5m ago."
   },
   "sheet.today": {
     "text": "Today",
@@ -289,7 +317,7 @@
   },
   "sheet.search.placeholder": {
     "text": "Search notifications…",
-    "description": "Placeholder and accessible name of the search field between the title and the Unread and All filters in the notifications sheet. It narrows the notifications already loaded to those whose project, kind or subject matches."
+    "description": "Placeholder and accessible name of the search field between the title and the filter buttons in the notifications sheet. It narrows the notifications, or the threads on the Recent threads filter, already loaded to those whose project, kind or subject matches."
   },
   "sheet.search.noMatches": {
     "text": "No notifications match “{{query}}”.",
@@ -1748,8 +1776,8 @@
     "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says only when the phone reported that notifications were refused."
   },
   "ask.unsure": {
-    "text": "We couldn’t check notifications on this phone. Tap Notify me to try again.",
-    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says under its title when the phone's answer could not be read after Notify me; the button stays to try again."
+    "text": "We couldn’t check notifications on this phone.",
+    "description": "Part of the notification ask: a small card that appears at a moment when the person has just started waiting on something, asking whether Homeroom may notify them about it. What the card says, in place of the question, when the phone's answer could not be read after Notify me. No retry button is shown."
   },
   "ask.turnOn": {
     "text": "Turn on notifications",
@@ -1810,5 +1838,13 @@
   "row.chat.changeReplyPr": {
     "text": "Replied on change PR {{number}}",
     "description": "First line of a notification: somebody posted in the discussion of a change on a project whose code is on GitHub, where a change's number is written PR, not #. The viewer built it, voted on it or posted in it. {{number}} is the change's number. \"Change\" is a noun. The message is on the line below."
+  },
+  "row.changeClosed.label": {
+    "text": "Closed",
+    "description": "First line of a notification telling the viewer that a change they made was closed without going live. An adjective describing the change. The change's title is on the line below, followed by one sentence saying why."
+  },
+  "row.changeClosed.yourChange": {
+    "text": "your change",
+    "description": "Second line of a notification that the viewer's change was closed, when the change has no title. Lower case: it stands where the title would."
   }
 }

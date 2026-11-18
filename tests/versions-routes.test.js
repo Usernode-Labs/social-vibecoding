@@ -126,7 +126,7 @@ test('the hub: counts, suggestions (a private version unnamed), lately, and the 
     count: 4,
     following: 2,
     suggestions: [
-      { sessionId: 70, href: '#app/tier-list/dev/changes/9', title: 'Suggested by Cities: Sort', from: { slug: 'cities', name: 'Cities' } },
+      { sessionId: 70, href: '#app/tier-list/dev/changes/9/70', title: 'Suggested by Cities: Sort', from: { slug: 'cities', name: 'Cities' } },
       { sessionId: 71, href: '#app/tier-list/dev/proposals/71', title: 'Suggested by Mine: Dark', from: null },
     ],
     lately: { versions: 2, changes: 3, rows: [{ title: 'Add a timer', from: { slug: 'cities', name: 'Cities' }, at: '2026-10-20T10:00:00.000Z' }] },
@@ -265,7 +265,7 @@ test('POST follow-pr opens the proposal on a conductor and answers where it is',
     assert.equal(res.status, 400, 'that is how it is already');
     res = await post('cities', { follow: true });
     assert.equal(res.status, 201);
-    assert.deepEqual(await res.json(), { ok: true, sessionId: 81, prNumber: 14, href: '#app/cities/dev/changes/14' });
+    assert.deepEqual(await res.json(), { ok: true, sessionId: 81, prNumber: 14, href: '#app/cities/dev/changes/14/81' });
     assert.equal(asked.length, 1);
     assert.equal(asked[0].op, 'manifest.propose');
     assert.deepEqual(asked[0].input, { flavor: 'follow', args: { follow: true, originalName: 'Tier list' }, repoUrl: VERSION.repo_url });
@@ -285,7 +285,7 @@ test('POST follow-pr: one in flight, named; not on a project that is not a versi
     assert.equal(res.status, 409);
     const body = await res.json();
     assert.equal(body.code, 'already_open');
-    assert.deepEqual([body.sessionId, body.prNumber, body.href], [60, 7, '#app/cities/dev/changes/7']);
+    assert.deepEqual([body.sessionId, body.prNumber, body.href], [60, 7, '#app/cities/dev/changes/7/60']);
     assert.equal(fx.asked.length, 0);
   } finally {
     s.close();
@@ -314,7 +314,7 @@ test('POST follow-pr: one in flight, named; not on a project that is not a versi
     });
     assert.equal(res.status, 409);
     const body = await res.json();
-    assert.deepEqual([body.code, body.sessionId, body.href], ['already_open', 61, '#app/cities/dev/changes/8']);
+    assert.deepEqual([body.code, body.sessionId, body.href], ['already_open', 61, '#app/cities/dev/changes/8/61']);
   } finally {
     s.close();
     fx.restore();

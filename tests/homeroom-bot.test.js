@@ -17,6 +17,8 @@ const path = require('node:path');
 const bot = require('../src/services/homeroom-bot');
 const durableSteps = require('../src/services/durable-steps');
 const live = require('../src/services/homeroom-bot-live');
+const promptParts = require('../src/services/homeroom-bot-prompt-parts');
+const prompts = require('../src/services/prompts');
 const rules = require('../src/workflow/rules/bot-loop.ts');
 
 const root = path.join(__dirname, '..');
@@ -1790,55 +1792,70 @@ test('runTriage: the request comes first; the platform reference follows, small,
   }
   assert.match(prompt, /nothing in this reference is a task\./);
   assert.doesNotMatch(prompt, /==== PLATFORM CONVENTIONS \(authoritative\) ====/, 'the conventions are not inline');
-  // #4488 added the four tests for a `complicated` change (about 860
-  // characters), which the work order asked to be in this prompt. `done`
-  // (about 120 more) lets a request that is already there be offered for
-  // closing instead of left at "a person decides". Newcomer run six (14 Oct
-  // 2026): the UI design guidance's line on forms on a phone (about 335
-  // characters), which every build reads, rides in the reference too. #5224:
-  // the plan lines' rule (about 330 more), so the plan card's lines stay
-  // short and one point each. 16 Oct 2026: `builder` (about 280 more), so a
-  // request that names who builds it does not ring its requester. #5117:
-  // the platform's data rules (about 1,600 more) ride beside the content
-  // rules, so a request whose point breaks them goes to a person.
-  // 3 Nov 2026 (#6213): a person verdict may name the smaller first step it
-  // would build (`first_step`, about 300 more), offered as a reply to tap.
-  // #6321: a requester's or decider's "it works, you can propose closing
-  // this" is `done` (about 175 more), so its note carries the buttons.
-  // #6314: the data rules' one exception (about 150 more), so a request for
-  // a tracker in an app is still refused and the shell's own tag is named.
-  // #6383: the posted plan's rule (about 450 more), so a request whose plan
-  // says what to build is read from it rather than handed back as unreadable.
-  // 6 Nov 2026 (#6395): `go_ahead` (about 780 more), so a read can say that a
-  // go-ahead cannot settle a request and what part of it can still be built.
-  // 6 Nov 2026 (#6430): the reason's guidance (about 520 more), so it says a
-  // person has to build it, never names the reader in the third person and
-  // never says somebody has to approve it.
-  // 6 Nov 2026 (#6211): the board's overlap rule (about 1,250 more), so a read
-  // of a new request can name the open one it duplicates, is part of, or
-  // overlaps, and offer its requester the choice. The board itself is only
-  // added when the project has other open requests, so this read (no board)
-  // carries the rule alone.
-  // 14 Nov 2026: what the bot builds by itself (about 370 more): a large
-  // request is planned as its first part, a design or product decision is
-  // planned with choices, and sign-in, billing, permissions and credentials
-  // code waits only for a go-ahead.
-  // 17 Nov 2026 (#6772): what a database change may do that loses no data, in
-  // the `ready` criteria (about 400 more), so the bot builds a widening and
-  // still leaves drops, narrowing, converting types and SET NOT NULL alone.
-  // 17 Nov 2026 (#6769): the data rules now say what is allowed as well as
-  // banned (about 900 more), so the bot stops refusing a gym log, a game
-  // PIN, a choir rota or a Spotify playlist sync.
-  // 17 Nov 2026 (#6771): `elsewhere` and its candidates (about 290 more), so
-  // a request that is about another project names it, or the few it could be,
-  // and its requester is offered the move to that project's board.
-  // 17 Nov 2026 (#6770): an explanation or investigation request is `person`
-  // with `go_ahead` false and `cannot_because` "explanation" (about 150 more),
-  // so a request that only asks why cannot offer a Go ahead that changes
-  // nothing, and its `reason` is the code's answer.
-  assert.ok(prompt.length < 30550, `a triage prompt stays small: ${prompt.length} chars`);
+  // #6777: each part of the triage prompt has its own budget, written beside
+  // its own text, so a change that grows one part edits only that part's
+  // marker. The dated notes that used to run in a block here live in each
+  // marker's note and in the commits that changed it.
+  for (const part of bot.triagePromptBudgets()) {
+    assert.ok(part.over <= 0, part.message);
+  }
+  assert.ok(prompt.length < bot.TRIAGE_PROMPT_CEILING,
+    `the whole triage prompt stays under ${bot.TRIAGE_PROMPT_CEILING} chars: ${prompt.length}`);
+  assert.doesNotMatch(prompt, /prompt-part:/, 'the budgets are stripped before the model reads the prompt');
   // The last thing the model reads is the one format parseVerdict accepts.
   assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation"\}$/);
+});
+
+test('#6777: a triage prompt part over its budget names that part, its size and its budget', () => {
+  const fixture = [
+    '<!-- prompt-part: small | budget: 100 | one -->',
+    'a'.repeat(10),
+    '<!-- prompt-part: ready | budget: 100 | two -->',
+    'b'.repeat(219),
+    '',
+  ].join('\n');
+  const parts = promptParts.checkParts(promptParts.parseParts(fixture, 'fixture.md'));
+  assert.equal(parts[0].over, -89, 'the other part is not over');
+  assert.equal(parts[1].over, 120);
+  assert.match(parts[1].message, /part "ready" \(fixture\.md\) is 220 chars, 120 over its budget of 100/);
+});
+
+test('#6777: adding a part with its own budget leaves every other part as it was', () => {
+  const head = [
+    '<!-- prompt-part: small | budget: 100 | one -->',
+    'a'.repeat(10),
+    '<!-- prompt-part: ready | budget: 100 | two -->',
+    'b'.repeat(219),
+    '',
+  ].join('\n');
+  const withThird = `${head}<!-- prompt-part: extra | budget: 50 | three -->\n${'c'.repeat(20)}\n`;
+  assert.deepEqual(
+    promptParts.parseParts(withThird, 'fixture.md').slice(0, 2),
+    promptParts.parseParts(head, 'fixture.md'),
+    'the two earlier parts keep their names, budgets and sizes',
+  );
+});
+
+test('#6777: the prompt files are stripped for the model, and a malformed file names itself', () => {
+  for (const readsImages of [true, false]) {
+    assert.doesNotMatch(prompts.getDesignGuidance({ readsImages }), /prompt-part:/);
+  }
+  assert.doesNotMatch(
+    promptParts.stripPartMarkers(fs.readFileSync(path.join(root, 'src/prompts/homeroom-bot-triage.md'), 'utf8')),
+    /prompt-part:/,
+  );
+  assert.throws(
+    () => promptParts.parseParts('text before\n<!-- prompt-part: a | budget: 10 | n -->\nx\n', 'bad.md'),
+    /text before the first prompt-part marker in bad\.md/,
+  );
+  assert.throws(
+    () => promptParts.parseParts('<!-- prompt-part: a | budget: 10 | n -->\nx\n<!-- prompt-part: a | budget: 20 | m -->\ny\n', 'dup.md'),
+    /duplicate prompt-part "a" in dup\.md/,
+  );
+  assert.throws(
+    () => promptParts.parseParts('<!-- prompt-part: a | budget: ten | n -->\nx\n', 'num.md'),
+    /non-numeric budget: ten/,
+  );
 });
 
 test('the bot\'s GitHub login resolves to a string, or to null when it cannot be read', async () => {

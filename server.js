@@ -224,6 +224,12 @@ app.use(publicApiCors());
 // included, so no route can be added outside it.
 app.use(require('./src/middleware/same-site-browser').sameOriginCookieWrites);
 
+// Every successful /api/ response says what it cost in a Server-Timing
+// header: its database time and query count, and its total
+// (src/middleware/server-timing.js, #6792). After the guard above, which
+// reads nothing, and ahead of every router.
+app.use(require('./src/middleware/server-timing').serverTiming());
+
 // OS domain verification is anonymous and must never reach login redirects
 // or the SPA/static fallback (which does not serve dot directories).
 app.use(mobileAppLinkRoutes());
@@ -390,6 +396,8 @@ app.use((req, res, next) => {
   express.json()(req, res, next);
 });
 app.use(cookieParser());
+// A body parser reads outside the request's async context: enter it again.
+app.use(require('./src/middleware/server-timing').resumeServerTiming);
 app.use(require('./src/services/browser-api-cache').browserApiCachePolicy);
 
 app.get('/health', (_req, res) => {
@@ -789,7 +797,8 @@ app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
 // PUBLIC_PATHS (src/middleware/auth.js).
-app.use(publicApiRoutes(config));
+const publicApi = publicApiRoutes(config);
+app.use(publicApi);
 // Public-profile reads use the anonymous /api/public prefix; owner controls,
 // reports and moderation share this router but remain behind authMiddleware.
 app.use(publicProfileRoutes(config));
@@ -1377,6 +1386,11 @@ async function start() {
     // (services/language-cache.js), so warming it here leaves the first
     // request reading memory.
     require('./src/services/language-cache').live(getPool(config)).catch(() => {});
+    // And the public directory every page load reads (routes/public-api.js):
+    // its query takes 1.5 to 2.5 seconds, which the first visitor after a
+    // release used to wait on, with every other read of that page load
+    // queued behind it.
+    publicApi.warmDirectory();
   }
   // Every process writes its own server-error counts to the database once a
   // minute (services/server-error-counts.js), on an unref'd timer; a minute

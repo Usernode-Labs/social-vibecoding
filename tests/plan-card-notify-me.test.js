@@ -171,6 +171,21 @@ test('notifyWhenReady on Android asks for notifications, never the alarm permiss
   assert.deepEqual({ ...(await no.NativeChrome.notifyWhenReady()) }, { outcome: 'denied', settings: true });
 });
 
+test('notifyAskPermission: an allowed switch is granted even when no status is reported', async () => {
+  const ios = boot({ permissions: { platform: 'ios', notificationsGranted: true } });
+  assert.equal((await ios.NativeChrome.notifyAskPermission()).permission, 'granted',
+    'the switch says allowed, though the build reports no status');
+
+  const android = boot({ platform: 'android', permissions: { platform: 'android' },
+    pushState: { permissionStatus: 'authorized' } });
+  assert.equal((await android.NativeChrome.notifyAskPermission()).permission, 'granted',
+    'the social push state answers where the snapshot says nothing');
+
+  const unreadable = boot({ permissions: null, pushState: null });
+  assert.equal((await unreadable.NativeChrome.notifyAskPermission()).permission, null,
+    'nothing readable is still unreadable, never a guess');
+});
+
 test('notifyWhenReady in a browser asks nothing', async () => {
   const h = boot({ native: false });
   assert.deepEqual({ ...(await h.NativeChrome.notifyWhenReady()) }, { outcome: 'no-app', settings: false });

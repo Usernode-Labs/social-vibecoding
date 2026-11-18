@@ -372,24 +372,13 @@ const Home = {
     else location.hash = `#app/${encodeURIComponent(slug)}/dev/hub`;
   },
 
-  // Home's Pinned communities (One Home, #6361), where the communities you
-  // are in live: Home, scrolled to them once they are drawn. `all` opens
-  // the section's All communities too (the ones you are in but have not
-  // pinned), which is what "All communities" anywhere else names now that
-  // the Communities screen's list is gone (features/home/pinned-communities.tsx
-  // listens for SHOW_ALL_COMMUNITIES).
-  SHOW_ALL_COMMUNITIES: 'home:show-all-communities',
-  showCommunities({ all = false } = {}) {
-    if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
-    if (all) {
-      try { document.dispatchEvent(new CustomEvent(Home.SHOW_ALL_COMMUNITIES)); } catch (err) { /* the section opens on its own press */ }
-    }
-    const scroll = () => {
-      // Under a look the kit page draws the section (frame/home-frame.tsx).
-      const el = document.getElementById('home-frame-communities') || document.getElementById('home-communities-section');
-      if (el && !el.hidden) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
-    };
-    requestAnimationFrame(() => requestAnimationFrame(scroll));
+  // Where the communities you are in live: the Communities tab's page
+  // (`#communities`, features/communities/), pinned and joined. They were
+  // Home's Pinned communities (One Home, #6361) until the tab came back
+  // (18 Nov 2026); the tour's Finish and "All communities" anywhere still
+  // come through here.
+  showCommunities() {
+    if (location.hash !== '#communities') location.hash = '#communities';
   },
 
   // The sidebar's search glyph (features/nav/rail-communities.tsx): Home,
@@ -725,9 +714,14 @@ const Home = {
     let skin = 'standard';
     try { skin = window.Skin?.get?.() || 'standard'; } catch { /* the standard look */ }
     // Standard (WIP) (lib/skin.ts 'wip') has New project as a button on the
-    // search row at every width, so its grid draws no tile. Every other
-    // look, Standard among them, ends Pinned apps with the tile.
-    return skin === 'wip';
+    // search row at every width, so its grid draws no tile. The brand look
+    // ('brand') has the same button from 768px, where the search row is on
+    // screen; a phone, whose search row waits to be pulled into view, keeps
+    // the tile. Every other look, Standard among them, ends Pinned apps with
+    // the tile.
+    if (skin === 'wip') return true;
+    if (skin !== 'brand') return false;
+    try { return !!window.matchMedia('(min-width: 768px)').matches; } catch { return false; }
   },
 
   _wireRowBudget() {
@@ -972,6 +966,8 @@ const Home = {
     // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
+    // An unfolded grid that would hide rows when folded: "Show less" has a job.
+    let canFold = false;
     // The trailing "Create an app" tile — null in the search view, which is a
     // transient list of matches rather than the launcher.
     let create = null;
@@ -1042,6 +1038,7 @@ const Home = {
       }
       const hiddenRows = !editing && !Home._appsExpanded
         && canvas.some((it) => it.row > rowBound);
+      canFold = !editing && Home._appsExpanded && canvas.some((it) => it.row > rowBound);
       let shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
@@ -1147,7 +1144,7 @@ const Home = {
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
     gridStore.set({
-      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create, editing,
+      ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, query, notice: null, create, editing,
     });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
@@ -1155,7 +1152,7 @@ const Home = {
     // explicit cell placement #app-list uses. Its reorder recognizer is
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
-    Home._renderAppsMore(moreCount);
+    Home._renderAppsMore(moreCount, canFold);
     // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
@@ -1845,9 +1842,10 @@ const Home = {
   // Kept its name and its caller. It no longer touches the DOM, and the
   // listener it used to re-attach on every paint is now attached once by
   // ./apps-more.tsx to an element React keeps.
-  _renderAppsMore(count) {
+  _renderAppsMore(count, canFold) {
     chromeStore.set({
       moreCount: count || 0,
+      canFold: !!canFold,
       strip: Home.widgetSectionView(),
     });
   },
@@ -2302,8 +2300,8 @@ const Home = {
     if (!app) return Home._favoriteUnknown(slug, desired, onChange);
     // ONE HOME (#6361): pinning an app is only that. It no longer joins the
     // app's community, and taking it off Home no longer asks about leaving
-    // (#5962's sheet): the community has its own pin, on Pinned communities,
-    // and its own Leave, on its hub.
+    // (#5962's sheet): the community has its own pin, on the Communities
+    // tab's page, and its own Leave, on its hub.
     const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;

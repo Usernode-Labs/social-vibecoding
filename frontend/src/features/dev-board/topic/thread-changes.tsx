@@ -60,6 +60,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { i18n, t as translate } from '../../../lib/i18n/runtime';
 import { projectChangesOnGithub } from '../../../lib/change-ref';
+import { changeHref } from '../../../lib/change-href';
 import { reload as reloadTab } from '../../../lib/tab-build';
 import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
@@ -68,10 +69,10 @@ import { Avatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
 import type { DevCardModel } from '../card/model';
-import { ChangeFoot, ChangeGates, ShotsCard } from './change-head';
-import { ballotHeadline } from './card-model';
-import { StepLayer, ThreadCardContext, ThreadFoot } from './thread-card';
-import { closeStep, openStep, useOpenStep } from './step-store';
+import { ChangeFoot, ChangeGates, PreviousShotsLine, ShotsCard , phaseOf } from './change-head';
+import { ballotHeadline, fixStanding } from './card-model';
+import { StepLayer, ThreadCardContext, ThreadFoot , NoPicture } from './thread-card';
+import { closeStep, openStep, publishLead, useOpenStep } from './step-store';
 import { dotLine } from './frame/topic-page';
 import { changeDetailAsk, mergeChangePatch } from './change-detail-refresh';
 import type { ChangeThreadView, TopicBody } from './model';
@@ -471,7 +472,7 @@ function ShotsPair({ id, number, s }: {
     // #6315: two frames for the column to open where this page has one; if
     // nothing drew it, go to the change's page, where the arrival opens it.
     const slug = pageSlug();
-    const target = number && slug ? `app/${encodeURIComponent(slug)}/dev/changes/${number}` : '';
+    const target = number && slug ? changeHref(slug, id, number).replace(/^#/, '') : '';
     const after = () => {
       if (detailDrawn() || !target) return;
       if (window.location.hash.replace(/^#/, '') === target) return;
@@ -486,6 +487,8 @@ function ShotsPair({ id, number, s }: {
   };
   return (
     <div className="dev-thread-shots" data-thread-change-shots={id}>
+      {/* The previous version's pair, while this version's are taken. */}
+      {s.previous ? <PreviousShotsLine s={s} /> : null}
       <button type="button" className="dev-thread-shots-pair" onClick={expand} aria-label={t('project:topic.thread.page.shotsOpen')}>
         {(['before', 'after'] as const).map((side) => (
           <span key={side} className="dev-thread-shot" data-thread-shot={side}>
@@ -727,14 +730,37 @@ function ClosesOf({ item, requests }: { item: ThreadItem; requests: number }): R
  * that says so), and the sheets its ⋯ opens. `ballot`: folded under the
  * ballot, which is where it is voted on.
  */
-function ChangeBody({ item, view, plan = null, ballot = false, request, tail = null }: {
+/** Two facts about a competing change, under its summary: how its tests went and how many said yes. */
+function LookFacts({ v }: { v: ChangeThreadView }): ReactNode {
+  const t = useMessages('project');
+  const yes = Number(v.status?.yes) || 0;
+  const tests = v.testing;
+  return (
+    <p className="dev-thread-facts" data-thread-look-facts="">
+      {tests.tone === 'bad' ? (
+        <span className="dev-thread-fact" data-tone="bad"><XIcon className="h-3.5 w-3.5" aria-hidden="true" />{tests.figure || tests.name}</span>
+      ) : tests.done ? (
+        <span className="dev-thread-fact" data-tone="ok"><CheckIcon className="h-3.5 w-3.5" aria-hidden="true" />{t('project:topic.rail.tested')}</span>
+      ) : (
+        <span className="dev-thread-fact">{tests.figure ? `${tests.name} · ${tests.figure}` : tests.name}</span>
+      )}
+      <span className="dev-thread-fact">{t('project:topic.card.look.yes', { count: yes })}</span>
+    </p>
+  );
+}
+
+function ChangeBody({ item, view, plan = null, ballot = false, request, tail = null, covered = false, look = false }: {
+  /** Opened from its row in a ballot (the card look's Look): its summary, two facts and its picture. */
+  look?: boolean;
   item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
+  /** The card's summary already speaks for this change (the request's one change): its own is left out. */
+  covered?: boolean;
   /** A quiet row at the end of the change's foot (./change-head.tsx ChangeFoot). */
   tail?: ReactNode;
 }): ReactNode {
   const t = useMessages('project');
   const propose = useProposeChange(item);
-  const summary = view?.body.summaryHtml || '';
+  const summary = covered ? '' : view?.body.summaryHtml || '';
   const threadRequests = useContext(ThreadRequests);
   const thread = useContext(ThreadCardContext);
   const lone = thread.card && !ballot;
@@ -747,12 +773,16 @@ function ChangeBody({ item, view, plan = null, ballot = false, request, tail = n
       {view?.body.summaryStale && summary
         ? <p className="dev-change-stale" role="note" data-thread-change-stale={item.id}>{t('project:topic.change.summaryStale')}</p>
         : null}
-      {plan ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
+      {look && view ? <LookFacts v={view.v} /> : null}
+      {/* Under the card look the plan is the timeline's Planned step. */}
+      {plan && !thread.card ? <PlanLine plan={plan} builtFrom={item.builtFrom} /> : null}
       {/* Under the card look the picture is the card's one picture, with the
           Before and After switch on it, as a change's own page draws it. */}
       {view?.v.shots ? (thread.card
         ? <ShotsCard s={view.v.shots} single status={view.v.status?.key || null} />
-        : <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} />) : null}
+        : <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} />)
+        : lone && view && item.state !== 'underway' && hasCards(item)
+          ? <NoPicture none={!!view.v.shotsNone} phase={phaseOf(view.v)} stopped={fixStanding(view.v.testing) === 'stopped'} touches={view.v.touches} /> : null}
       {/* On its own under the request's card, its foot says where it stands;
           the pair below is then the content of the layer the timeline's
           steps open (change-head.tsx ChangeGates). */}
@@ -786,7 +816,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request, tail = n
             {t(item.ready ? 'project:topic.thread.page.ready' : 'project:topic.thread.page.underway')}
           </p>
         )
-      ) : view ? (
+      ) : look ? null : view ? (
         <ChangeGates id={item.id} card={view.card} v={view.v} ballot={ballot} closes={closesList(item)} />
       ) : (
         // #6387: the cards keep their place while the change's own read is
@@ -812,6 +842,26 @@ function ChangeBlock({ item, plan = null, request, onChanged, sole = false }: {
   // Under the card look a change that is past being built has a foot, which
   // says where it stands and holds what there is to press.
   const footed = thread.card && !!view && item.state !== 'underway' && hasCards(item);
+  // The request's one change tells the request's timeline where it stands
+  // (./step-store.ts leadStore), so the timeline ends on this foot's phase.
+  const leads = footed && sole;
+  // As text, so a re-read that changes nothing publishes nothing: the view
+  // is a new object on every render, and the request's head re-renders on
+  // each publish.
+  const leadText = leads && view ? JSON.stringify({
+    id: item.id,
+    author: item.by || view.v.author || null,
+    at: item.at || view.v.at || null,
+    plan: null,
+    status: view.v.status ? { key: view.v.status.key, label: view.v.status.label, yes: view.v.status.yes, majority: view.v.status.majority } : null,
+    votes: view.v.votes || null,
+    testing: view.v.testing || null,
+    merge: view.v.merge || null,
+    fixNote: view.v.testing?.authorNote || null,
+    liveAt: view.v.liveAt || item.liveAt || null,
+  }) : '';
+  useEffect(() => { publishLead(thread.page, leadText ? JSON.parse(leadText) : null); }, [leadText, thread.page]);
+  useEffect(() => () => publishLead(thread.page, null), [thread.page]);
   // 1 Nov 2026: ask about it, or sketch a revision, privately. #6392: the
   // words say so, and the bot building or fixing it leaves this out.
   const workWithBot = (
@@ -825,7 +875,7 @@ function ChangeBlock({ item, plan = null, request, onChanged, sole = false }: {
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} propose={propose} footed={footed} sole={thread.card && sole} />
-      <ChangeBody item={item} view={view} plan={plan} request={request} tail={footed ? workWithBot : null} />
+      <ChangeBody item={item} view={view} plan={plan} request={request} tail={footed ? workWithBot : null} covered={thread.card && sole && !!thread.covers} />
       {footed ? null : workWithBot}
     </div>
   );
@@ -1047,16 +1097,17 @@ function LookedChange({ item, i, view, plan, request, open, onChanged }: {
   onChanged?: () => void;
 }): ReactNode {
   const kicker = useKicker(item, letterOf(i));
-  const status = view?.v.status || null;
   const propose = useProposeChange(item, onChanged);
   return (
     <div data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-look={item.id} data-thread-fold={open ? 'open' : 'shut'}>
+      {/* What it is and what it does, two facts, then its picture: it is
+          voted on with the card's one Vote button, so no Votes card and no
+          status pill stand here (17 Nov 2026). */}
       <div className="flex min-w-0 items-center gap-2" data-thread-change-line={item.id}>
         <span className={`${KICKER} min-w-0 flex-1 truncate`}>{kicker}</span>
-        {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
         <ChangeMenu item={item} view={view} propose={propose} />
       </div>
-      {open ? <ChangeBody item={item} view={view} plan={plan} ballot request={request} /> : null}
+      {open ? <ChangeBody item={item} view={view} plan={plan} ballot look request={request} /> : null}
     </div>
   );
 }
@@ -1253,12 +1304,12 @@ export function Competing({ slug, data, anchor, options, close, onChanged, plans
           <ThreadFoot
             what="ballot"
             headline={ballotHeadline(choices.slice(0, options.length), (id, values) => t(id, values))}
-            sub={sentences([
-              `${dotLine([
-                ...choices.map((c) => t('project:topic.card.ballot.count', { choice: c.label, yes: c.yes })),
-                ballot.pick === null ? null : t('project:topic.thread.ballot.picked'),
-              ])}.`,
-              close ? t('project:topic.thread.ballot.aboutClose', { project }) : t('project:topic.thread.ballot.about', { project }),
+            // The counts and the viewer's own line. The rule (the first to
+            // pass goes live, the others close) is the note under the
+            // timeline's current step (./rail-model.ts nowStep).
+            sub={dotLine([
+              ...choices.map((c) => t('project:topic.card.ballot.count', { choice: c.label, yes: c.yes })),
+              ballot.pick === null ? t('project:topic.card.ballot.notVoted') : t('project:topic.thread.ballot.picked'),
             ])}
             extra={asking ? (
               <div className="dev-thread-foot-ask" role="radiogroup" aria-label={t('project:topic.thread.ballot.label')}>

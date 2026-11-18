@@ -692,23 +692,36 @@
         Date.now() - at < NativeChrome._REASK_AFTER_MS;
     },
 
+    // A bridge read that times out or fails resolves null rather than
+    // rejecting. Read once more after this pause before calling the answer
+    // unknown: a slow answer must never be read as "never asked".
+    _READ_RETRY_MS: 400,
+
     // iOS: whether the app has ever presented the OS notification prompt.
     // The settings snapshot only carries the exactAlarmGranted boolean,
     // which cannot distinguish "denied" from "never asked" — the social
     // push state can. Resolves 'undetermined' | 'granted' | 'denied', or
-    // null when the build doesn't expose it (callers fall back to the
-    // boolean). Tolerates both notDetermined / not_determined spellings.
+    // null when the build doesn't expose it or the answer could not be
+    // read twice. Tolerates both notDetermined / not_determined spellings.
     async _iosPushPermissionStatus() {
       if (!(await NativeChrome.has('getSocialPushState'))) return null;
       const bridge = window.usernode;
       if (!bridge || typeof bridge.getSocialPushState !== 'function') {
         return null;
       }
-      let state = null;
-      try { state = await bridge.getSocialPushState(); } catch (_) {
-        return null;
+      const read = async () => {
+        try { return await bridge.getSocialPushState(); } catch (_) {
+          return null;
+        }
+      };
+      let state = await read();
+      if (!state) {
+        await new Promise((resolve) => setTimeout(
+          resolve, NativeChrome._READ_RETRY_MS));
+        state = await read();
       }
-      return NativeChrome._permissionStatusOf(state && state.permissionStatus);
+      if (!state) return null;
+      return NativeChrome._permissionStatusOf(state.permissionStatus);
     },
 
     // One spelling for a native permission status, wherever it was read
@@ -1709,6 +1722,25 @@
       return { verdict: 'ask' };
     },
 
+    // The settings snapshot's `permissions`, or null when the read timed
+    // out or failed. A missing answer is read once more before anything is
+    // decided from it; a second miss stays unknown, never "never asked".
+    async _settingsPermissions(bridge) {
+      const read = async () => {
+        try {
+          const snapshot = await bridge.getSettingsState();
+          return (snapshot && snapshot.permissions) || null;
+        } catch (_) {
+          return null;
+        }
+      };
+      const first = await read();
+      if (first) return first;
+      await new Promise((resolve) => setTimeout(
+        resolve, NativeChrome._READ_RETRY_MS));
+      return read();
+    },
+
     // Everything decideReadyPing needs, read without asking anything.
     async _readyPingState() {
       const bridge = window.usernode;
@@ -1725,10 +1757,7 @@
       let perms = null;
       if (typeof bridge.getSettingsState === 'function' &&
           (await NativeChrome.supports('getSettingsState')) !== false) {
-        try {
-          const snapshot = await bridge.getSettingsState();
-          perms = snapshot && snapshot.permissions;
-        } catch (_) { /* unreadable: decided from what else is known */ }
+        perms = await NativeChrome._settingsPermissions(bridge);
       }
       if (perms && typeof perms.platform === 'string') state.platform = perms.platform;
       const can = async (method) => typeof bridge[method] === 'function' &&
@@ -1742,10 +1771,18 @@
         if (!state.permission && perms && perms.notificationsGranted === true) {
           state.permission = 'granted';
         }
+        // Neither in the snapshot: the social push state reports this
+        // phone's notification permission on both platforms.
+        if (!state.permission) state.permission = await NativeChrome._iosPushPermissionStatus();
         state.canRequest = await can('requestNotificationPermission');
       } else {
         state.permission = NativeChrome._permissionStatusOf(
           perms && perms.notificationPermission);
+        // A build that reports the switch but not the status: an allowed
+        // notification permission is the same "granted".
+        if (!state.permission && perms && perms.notificationsGranted === true) {
+          state.permission = 'granted';
+        }
         if (!state.permission) state.permission = await NativeChrome._iosPushPermissionStatus();
         state.canRequest = await can('requestPermissions');
       }
@@ -2029,12 +2066,11 @@
     // `setStatusBarTone`), and capability-gated like setAppearance, so an
     // older build never sees the call.
     //
-    // Until a build takes the tone, app.css paints the fullscreen preview
-    // bar's safe-area band in the shell's ground colour, so the glyphs the
-    // theme picked sit on the ground they were picked for. The first tone
-    // the app accepts puts _STATUS_TONE_CLASS on <html>, which retires that
-    // stopgap: from then on the band is the bar's own dark and the glyphs
-    // follow it.
+    // The first tone the app accepts puts _STATUS_TONE_CLASS on <html>. The
+    // fullscreen preview's header used to need it (its band under the clock
+    // was painted in the shell's ground until then); it is drawn in the
+    // theme's colours now, so nothing keys off the class but this record of
+    // a build that takes tones.
     _STATUS_TONE_CLASS: 'native-status-bar-tone',
     // `undefined` until the first publish, so the boot publish always goes
     // out: null at boot also clears an override a previous document left
@@ -2046,7 +2082,11 @@
     // Pure: 'dark' | 'light' | null for the ground under the status bar.
     statusBarToneFor(state) {
       const s = state || {};
-      if (s.previewFullscreen === true || s.compareOpen === true) return 'dark';
+      if (s.compareOpen === true) return 'dark';
+      // The change preview, filling the screen, is drawn in the theme's own
+      // colours (Nov 2026; it used to be a near-black bar), so the bar is
+      // the theme's: the override is cleared.
+      if (s.previewFullscreen === true) return null;
       // iPhone Duo: the clock is in the column of chrome down the screen's
       // edge, over the wallpaper, not over the header or the app, which both
       // stop at it (app.css, THE SIDE STRIP). So neither's colour is the
@@ -2067,7 +2107,10 @@
       try {
         const shown = (el) => !!el && !el.classList.contains('hidden');
         const preview = document.getElementById('staging-overlay');
-        state.previewFullscreen = shown(preview);
+        // Only filling the screen puts it under the status bar: docked in a
+        // column or the side panel it starts below the shell's header.
+        state.previewFullscreen = shown(preview)
+          && (preview.getAttribute('data-placement') || 'full') === 'full';
         state.compareOpen = shown(document.getElementById('visual-compare-overlay'));
         state.communityTint = document.documentElement.getAttribute('data-community-tint') !== null;
         state.appTone = document.documentElement.getAttribute('data-app-tone');
@@ -2168,7 +2211,7 @@
         // the preview iframe, whose identity is pinned).
         ['staging-overlay', 'visual-compare-overlay'].forEach((id) => {
           const el = document.getElementById(id);
-          if (el) observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+          if (el) observer.observe(el, { attributes: true, attributeFilter: ['class', 'data-placement'] });
         });
       } catch (err) {
         console.warn('[native-chrome] status-bar tone observer failed:',

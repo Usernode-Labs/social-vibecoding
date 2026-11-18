@@ -280,6 +280,23 @@ test('#6763: a turn that offers New project, or a thread whose foot shows it, ba
   assert.deepEqual(await kinds(pool(), { user: { id: 1 }, appIds: new Set(), deps: {} }, SCREENSHOT_REPLY), []);
 });
 
+test('#6783: words that point at the New project card below are kept with the offer, and cut without it', async () => {
+  const cardWords = 'Check the name and what it will do below, then Make it.';
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectOffer: true }), cardWords), []);
+  assert.deepEqual(await kinds(pool(), threadTurn(), cardWords), ['new_project']);
+  assert.equal(claims.cut(cardWords, await claims.checkReply(pool(), threadTurn(), cardWords), threadTurn()), '');
+  // The card named plainly: "the card below", "under this reply".
+  for (const words of [
+    'The card below has the name and what it does.',
+    'The card under this reply makes it.',
+  ]) {
+    assert.deepEqual(await kinds(pool(), threadTurn(), words), ['new_project'], words);
+    assert.deepEqual(await kinds(pool(), threadTurn({ newProjectOffer: true }), words), [], words);
+  }
+  // Without a pointer at the card, an ordinary sentence is left alone.
+  assert.deepEqual(await kinds(pool(), threadTurn(), 'Here is what the project would do, in your words.'), []);
+});
+
 test('#6763: the repair note asks for the offer, or says not to mention it', () => {
   const problems = [{ kind: 'new_project', said: 'points at a New project button under it' }];
   const withTool = claims.repairNote(problems, { tools: new Set(['reply', 'offer_new_project']) });
@@ -292,4 +309,34 @@ test('#6763: the repair note asks for the offer, or says not to mention it', () 
     assert.doesNotMatch(note, /—/);
     assert.doesNotMatch(note, /retract/i);
   }
+});
+
+// ── #6784: the plan in the reply, not a line of it, is what is offered ─────
+
+const PLAN_REPLY = [
+  'Here is the plan as it now stands, with your answers kept.',
+  '- Home page: popular public lists, ranked by how many people saved them',
+  '- Lists: public or private, who can see each',
+  '- Adding places: search, results on a real map, tap one to add it',
+  '- Sharing: invite link with a role, or by username; viewer and editor',
+].join('\n');
+
+test('#6784: a one-line idea beside a longer plan is asked for again with the whole plan', async () => {
+  const turn = threadTurn({ newProjectOffer: true, newProjectBrief: { idea: 'An app for collecting saved places into lists on a real map.' } });
+  const found = await claims.checkReply(pool(), turn, PLAN_REPLY);
+  assert.deepEqual(found.map((p) => p.kind), ['short_brief']);
+  const note = claims.repairNote(found, { tools: new Set(['reply', 'offer_new_project']) });
+  assert.match(note, /Your offer_new_project idea is shorter than the plan in your reply\. Call offer_new_project again with idea holding every point of the plan and every answer they gave, as bullets, then reply\./);
+  assert.doesNotMatch(note, /—/);
+  // The bullets are harmless in the reply: nothing is cut for this.
+  assert.equal(claims.cut(PLAN_REPLY, found, turn), PLAN_REPLY);
+});
+
+test('#6784: a bullet idea, or a short idea with a short reply, is no problem', async () => {
+  const full = ['- Home page: popular lists', '- Lists: public or private', '- Sharing: by invite link', '- First version: the whole loop'].join('\n');
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectBrief: { idea: full } }), PLAN_REPLY), []);
+  assert.deepEqual(await kinds(pool(), threadTurn({ newProjectBrief: { idea: 'A small app for lists.' } }), 'Here is the plan:\n- Lists'), []);
+  assert.deepEqual(await kinds(pool(), threadTurn({}), PLAN_REPLY), [], 'no idea, nothing to compare');
+  assert.equal(claims.briefShortOfPlan('', PLAN_REPLY), false);
+  assert.equal(claims.briefShortOfPlan('A line', PLAN_REPLY), true);
 });

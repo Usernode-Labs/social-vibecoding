@@ -172,7 +172,7 @@ const requestView = (status) => ({
 test('the root post is the card: the kicker, the title, the words and whose they are, then a foot that says where it stands', () => {
   const html = renderComponent(HEAD, 'RequestHead', { r: requestView() });
   assert.match(html, /<article class="messages-message dev-request-root dev-thread-card" data-ref-issue="4417" data-request-root="4417" data-thread-card="request">/);
-  assert.match(html, /<p class="dev-thread-kicker" data-thread-kicker="request"><span class="min-w-0">Request #4417<\/span><\/p>/);
+  assert.match(html, /<p class="dev-thread-kicker" data-thread-kicker="request"><span class="min-w-0">Request #4417 · Communities &amp; projects<\/span><\/p>/, 'the topic is said in the kicker: its own row above the card is gone');
   // Who asked and when stay in the markup; app.css puts the row away, and
   // the timeline beside the card says them.
   assert.match(html, /messages-message-author">evan<\/span><time[^>]*>04:01 PM<\/time>/);
@@ -358,7 +358,7 @@ test('the status card asks the bot no more once its change waits for approval', 
   assert.equal(built.lead, 'Up for a vote.');
   assert.equal(built.note, null);
   assert.equal(built.action.label, 'See the change');
-  assert.equal(built.action.href, '#app/example/dev/changes/12');
+  assert.equal(built.action.href, '#app/example/dev/changes/12/9');
   assert.equal(built.action.act, undefined);
 });
 

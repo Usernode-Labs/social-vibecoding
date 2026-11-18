@@ -487,7 +487,7 @@ test('#6110: the panel writes its item\'s own address in place, and the page\'s 
     // Another item in the same panel: the page's address is the one kept.
     AppView._topicProposal = { id: 51, pr_number: 77 };
     assert.equal(AppView._followPanelAddress('proposal', 51), true);
-    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/dev/changes/77?ws=needs`, '#4367: a change with a pull request by its number');
+    assert.equal(win.entries[0].url.href, `${ORIGIN}/app/garden/dev/changes/77/51?ws=needs`, '#4367/#6718: a change with a pull request by its number, then its own id');
     assert.equal(AppView._panelAddress.from, '/app/garden/workshop?ws=needs');
     assert.equal(win.entries[0].state[PANEL_KEY].from, '/app/garden/workshop?ws=needs');
 

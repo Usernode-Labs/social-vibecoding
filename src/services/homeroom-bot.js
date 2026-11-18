@@ -56,6 +56,7 @@ const log = require('./logger');
 const githubBudget = require('./github-budget');
 const live = require('./homeroom-bot-live');
 const followup = require('./homeroom-bot-followup');
+const { parseParts, stripPartMarkers, checkParts } = require('./homeroom-bot-prompt-parts');
 const durableSteps = require('./durable-steps');
 const durableTurn = require('./durable-turn');
 const { FIX_COMMIT_MESSAGES } = require('./homeroom-commits');
@@ -527,6 +528,10 @@ const KEPT_WHILE_QUIET_REASONS = Object.freeze([...SELF_QUEUED_REASONS, BACKLOG_
 const RETRY_FAILED_REASON = 'retry_failed';
 const FAILED_TRIAGE_TRIES = 2;
 const FAILED_TRIAGE_RETRY_AFTER_MS = 30 * 60 * 1000;
+// #6806: how far past the bot's own comment on a request the issue's
+// updated_at may be and still be that comment's doing. requests.comment()
+// inserts the comment and bumps updated_at in a second statement just after.
+const OWN_POST_SLACK_MS = 5000;
 // #3703: what runTriage answers when a row the loop started as a follow-up
 // (beside other work on its app, see "How much at once") no longer has the
 // bot's proposal to follow up on. It touches nothing and is handed back, to
@@ -1902,7 +1907,7 @@ function toMs(value) {
  * has seen only once it is over: read as a change, the request was read
  * again mid-build and built twice (Plant Pal #1 and #3, 2026-10-03).
  */
-function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = false, lastRun = null, now = Date.now() }) {
+function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = false, lastRun = null, now = Date.now(), ownPostAt = null }) {
   if (!issue || !Number.isInteger(issue.number)) return { eligible: false, reason: 'invalid' };
   if (issue.state && issue.state !== 'open') return { eligible: false, reason: 'closed' };
   if (busy) return { eligible: false, reason: 'in_progress' };
@@ -1931,6 +1936,15 @@ function classifyIssue({ issue, threadLastAt = null, voiceAt = null, busy = fals
     // why. Step 5: a message the bot's voice judged to change the ask
     // (`voiceAt`, its ask_changed) says so, as its own debt does.
     const byThread = toMs(threadLastAt) > lastSeenMs && toMs(threadLastAt) >= toMs(issue.updatedAt);
+    // #6806: what moved the issue is the bot's own comment on it (its spec,
+    // its "It's live" note, a failure note) and nobody said anything after:
+    // not a change to read. The live note used to count as one, and the look
+    // it queued added a stray "Reading it." to the first version's thread.
+    // A later edit or comment moves updated_at past the post's own slack, and
+    // is read as before. The other caller passes no ownPostAt.
+    if (!byThread && toMs(ownPostAt) > lastSeenMs && toMs(issue.updatedAt) <= toMs(ownPostAt) + OWN_POST_SLACK_MS) {
+      return { eligible: false, reason: 'unchanged', threadSeenAt };
+    }
     const changedBy = !byThread ? 'github' : voiceAt && toMs(voiceAt) >= toMs(threadLastAt) ? 'voice' : 'discussion';
     return { eligible: true, reason: 'changed', priority: 2, threadSeenAt, changedBy };
   }
@@ -2082,6 +2096,25 @@ async function threadActivityByIssue(pool, appId) {
       WHERE m.app_id = $1 AND m.thread_type = 'issue' AND m.msg_type = 'message'
         AND u.is_synthetic IS NOT TRUE
       GROUP BY m.thread_ref`,
+    [appId],
+  );
+  return new Map(rows.map((r) => [Number(r.n), r.last_at]));
+}
+
+/**
+ * #6806: when each of `appId`'s requests last got a post from the platform
+ * itself (its own comment: the spec, the "It's live" note, a failure note, a
+ * move, a platform signal), Map(issue number → time). requests.comment() is
+ * the only writer of these, and it posts as `homeroom` with no user.
+ * classifyIssue reads it so that a refresh is not taken for a change when the
+ * only thing new on a request is the bot's own comment on it.
+ */
+async function ownPostsByIssue(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT number AS n, MAX(created_at) AS last_at
+       FROM request_comments
+      WHERE app_id = $1 AND user_id IS NULL AND author_login = 'homeroom'
+      GROUP BY number`,
     [appId],
   );
   return new Map(rows.map((r) => [Number(r.n), r.last_at]));
@@ -2343,7 +2376,7 @@ async function refreshApp(pool, app, {
   // as if the bot had seen it at the import, so it waits until something
   // happens on it, rather than the whole backlog being worked at once.
   // "Triage again" on the admin screen takes all of them.
-  const [holders, threads, lastRuns, proposalThreads, importedAt] = await Promise.all([
+  const [holders, threads, lastRuns, proposalThreads, importedAt, ownPosts] = await Promise.all([
     issueHolders(pool, app.id),
     threadActivityByIssue(pool, app.id),
     lastRunsByIssue(pool, app.id),
@@ -2352,6 +2385,9 @@ async function refreshApp(pool, app, {
     capRoom && bot && !voiceModule(null).voiceOn(settings, { type: 'session' })
       ? proposalThreadActivityByIssue(pool, app.id, bot.id) : new Map(),
     capRoom ? require('./homeroom-bot-dm').importedAt(pool, app.id).catch(() => null) : null,
+    // #6806: what the bot itself posted on each request, so its own comment
+    // there is not read as a change to read.
+    ownPostsByIssue(pool, app.id).catch(() => new Map()),
   ]);
   const backlogUntil = toMs(importedAt);
   // Papote #3, and step 5 for every request: what the bot's voice answers
@@ -2413,6 +2449,7 @@ async function refreshApp(pool, app, {
       voiceAt: voiceAt(n),
       busy: busy.has(n),
       lastRun,
+      ownPostAt: ownPosts.get(n) || null,
     });
     if (verdict.eligible && verdict.reason === RETRY_FAILED_REASON && lastRun?.id != null
         && spentRetries.get(n) === Number(lastRun.id)) {
@@ -2599,8 +2636,44 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
 
 function triagePrompt() {
   if (triagePromptCache) return triagePromptCache;
-  triagePromptCache = fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8');
+  triagePromptCache = stripPartMarkers(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'));
   return triagePromptCache;
+}
+
+// #6777: the whole assembled prompt's ceiling, separate from each part's own
+// budget. About 8% above the 30,550 the one shared cap held, so ordinary
+// growth in one part does not move it. A change raises a part's budget, never
+// this.
+const TRIAGE_PROMPT_CEILING = 33000;
+
+// Every part of the triage prompt, with its size, its budget and how far it
+// is over. The parts are the triage file's own sections and the design
+// guidance it includes (measured with the longer self-check, since that is
+// what a turn can carry), plus the conventions' content and data rules, whose
+// text is a section of a document other apps read, so their budget lives in
+// homeroom-bot-live.js beside where they are added.
+//
+// The rules are measured in the same short form the triage prompt carries
+// (`{ triage: true }`, #6766). Measuring the full section instead charges
+// this prompt for text it never reads, since only the spec, build and
+// follow-up prompts get the whole thing.
+function triagePromptBudgets() {
+  const prompts = require('./prompts');
+  const withImages = prompts.designGuidanceSource({ readsImages: true });
+  const textOnly = prompts.designGuidanceSource({ readsImages: false });
+  const design = withImages.length >= textOnly.length ? withImages : textOnly;
+  const rules = live.requestRulesLines({ triage: true }).join('\n').trim();
+  return checkParts([
+    ...parseParts(fs.readFileSync(TRIAGE_PROMPT_PATH, 'utf8'), 'src/prompts/homeroom-bot-triage.md'),
+    ...parseParts(design, 'src/prompts/design-guidance.md'),
+    {
+      name: 'request-rules',
+      budget: live.REQUEST_RULES_BUDGET,
+      note: live.REQUEST_RULES_NOTE,
+      chars: rules.length,
+      source: 'src/services/homeroom-bot-live.js',
+    },
+  ]);
 }
 
 // What the triage knows of the platform. A request often turns on it (its
@@ -2691,7 +2764,7 @@ function triagePromptFor({
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     personPlanTriageNote(personPlan),
     locale ? `The requester's locale is \`${locale}\`.` : null,
-    live.requestRulesLines().join('\n').trim(),
+    live.requestRulesLines({ triage: true }).join('\n').trim(),
     signal ? signalNote(signal) : null,
     require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
@@ -2875,7 +2948,7 @@ function deciderNote(decider) {
       who,
       '- A request that fails a `ready` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is a `question` to them, not `person`. Ask it plainly, say what it would change, and give `answers` they can tap: "Go ahead" first, then "Leave it".',
       '- When the request or its discussion already shows them choosing (they answered your question, or said to go ahead), that criterion is decided: judge the rest as usual.',
-      '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
+      '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. A key the app declares in `dapp.json` `secrets` is not operator work. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
       rulesLine(decider.role ? `@${decider.requester} can` : 'its creator or admins can'),
     ].join('\n');
   }
@@ -2889,7 +2962,7 @@ function deciderNote(decider) {
     `@${decider.requester} asked for this. On this project ${named} ${deciders.length > 1 ? 'decide' : 'decides'} what gets built; the group still votes on every change.`,
     `- A request that fails a \`ready\` criterion only because it needs their go-ahead (a change to sign-in, billing, permissions or credentials code) is \`person\`, and its \`reason\` says it waits for ${either} to say go ahead in this request's discussion.`,
     `- When the request's discussion shows ${either} choosing (answering your question, or saying to go ahead), that criterion is decided: judge the rest as usual. A go-ahead from anyone else, @${decider.requester} included, does not decide it.`,
-    '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
+    '- Database changes that could lose data already stored (a drop, a rename, a narrowing or converting type change, `SET NOT NULL`), and operator work outside this app, are still `person`, with `go_ahead` false and its `cannot_because`; `reason` says who acts and where. A key the app declares in `dapp.json` `secrets` is not operator work. So is a request that only asks for an explanation, with `cannot_because` "explanation": `reason` is its answer.',
     rulesLine(`${either} can`),
   ].join('\n');
 }
@@ -2913,7 +2986,7 @@ function goAheadNote(goAhead) {
     '',
     `@${by}, who your last note on this request named, said to go ahead ${inThread
       ? 'in this request\'s discussion just now, in reply to your last note. Their words are below in the discussion.'
-      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that could lose data already stored are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work". So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
+      : 'in their private chat with you just now. Their words are not in the discussion below.'} What that note left for a person to decide is decided: judge the rest as usual. Do not return \`person\` for it again. Database changes that could lose data already stored are still \`person\`, with \`go_ahead\` false and \`cannot_because\` "destructive_db"; \`reason\` says what kind of change this is in plain words, once. It never names the person who gave the go-ahead or anybody who said it in the third person, and never says somebody has to approve it. So is operator work outside this app, with \`cannot_because\` "operator_work"; a key the app declares in \`dapp.json\` \`secrets\` is not. So is a request that only asks for an explanation, with \`cannot_because\` "explanation": \`reason\` is its answer. Nothing else is \`go_ahead\` false.`,
   ].join('\n');
 }
 
@@ -4327,6 +4400,9 @@ async function runTriage(pool, config, {
             activeWorkers, votes: deps.votes || null, dm: deps.dm || null, fixedCheckSync: deps.fixedCheckSync || null, ...liveD,
             // P6 (homeroom-bot-flaky-checks.js), stubbed in tests.
             ...(deps.flakyChecks ? { flakyChecks: deps.flakyChecks } : {}),
+            // #6778: the repository mirror a fix turn reads main's log from,
+            // stubbed in tests.
+            ...(deps.repoMirror ? { repoMirror: deps.repoMirror } : {}),
             // #6347: the description step's writing helper, stubbed in tests.
             ...(deps.llm ? { llm: deps.llm } : {}),
             ...(deps.voice ? { voice: deps.voice } : {}), ...(deps.voiceDeps ? { voiceDeps: deps.voiceDeps } : {}),
@@ -5941,6 +6017,8 @@ async function runFollowUp(pool, config, {
     requester: requester?.username || null,
     // #6406: the newer plan this update should follow, when there is one.
     newerPlan: basis.newerPlan || null,
+    // 18 Nov 2026: its name now, which a revision keeps (renameKeepsChange).
+    title: changeTitleOf(session),
   });
   snapshot = {
     stage: 'followup', appId: app.id, issueNumber,
@@ -6117,7 +6195,12 @@ async function runFollowUp(pool, config, {
   // #3767: and its name, when the revision changed what it does. Ear Trainer's
   // size options were taken out and its proposal was still called "Lead size
   // options with the number of sounds" when it merged.
-  if (moved && parsed?.title) await look.once('rename', async () => { await renameRevised({ pool, github, repo, session, title: parsed.title, app }); return true; });
+  // 18 Nov 2026: and only to a name for the whole change. A new title that
+  // drops most of what the old one named, and that nobody asking for this
+  // revision talked about, names the revision alone (Saved Places change
+  // #12): it is refused and the old title stays (renameKeepsChange).
+  const newTitle = moved && parsed?.title ? keptRename({ session, title: parsed.title, replies, app }) : null;
+  if (newTitle) await look.once('rename', async () => { await renameRevised({ pool, github, repo, session, title: newTitle, app }); return true; });
 
   // #4612: when the revision changed what the plan says, the turn wrote the
   // whole updated plan before its JSON block. Store it as the change's next
@@ -6157,7 +6240,7 @@ async function runFollowUp(pool, config, {
             try {
               const generated = await (deps.llm || require('./llm')).generateRevisedDescription({
                 previous: editable.pr_summary_md || null,
-                title: parsed.title || session.pr_title || null,
+                title: newTitle || changeTitleOf(session),
                 summary: parsed.summary || null,
                 reply: parsed.reply || null,
                 plan: planRead?.ok ? planRead.specMd : null,
@@ -6291,6 +6374,33 @@ async function runFollowUp(pool, config, {
   if (!moved) await requeueChecks();
   await requeueAsks();
   return { ran: true, verdict: followup.VERDICT_FOR[action], runId, acted: `followup_${action}` };
+}
+
+/** The change's name now, as its vote shows it, or null. Pure. */
+function changeTitleOf(session) {
+  for (const t of [session?.pr_title, session?.proposed_pr_title, session?.session_title]) {
+    const s = typeof t === 'string' ? t.replace(/\s+/g, ' ').trim() : '';
+    if (s) return s;
+  }
+  return null;
+}
+
+/**
+ * 18 Nov 2026: the title a revision may give its change, or null to keep
+ * the one it has (followup.renameKeepsChange, against what the people who
+ * asked for the revision wrote). Pure, but for its log line.
+ */
+function keptRename({ session, title, replies = [], app = null }) {
+  const from = changeTitleOf(session);
+  if (!from) return title;
+  if (from === title) return null;
+  const asked = (Array.isArray(replies) ? replies : []).map((r) => String(r?.body || ''));
+  const verdict = followup.renameKeepsChange({ from, to: title, asked });
+  if (verdict.ok) return title;
+  log.info('homeroom-bot', 'Kept the change\'s title: the revision\'s new one names only part of it', {
+    app: app?.slug || null, sessionId: session?.id || null, kept: verdict.kept, touched: verdict.touched, of: verdict.of,
+  });
+  return null;
 }
 
 /**
@@ -6452,7 +6562,7 @@ async function oweChecksFix(pool, look, { sessionId }) {
  * left to it). Throws what it could not read or write, so the work runs
  * again.
  */
-async function queueChecksFix(pool, { sessionId, head = null } = {}) {
+async function queueChecksFix(pool, { sessionId, head = null, again = null } = {}) {
   const out = await checksFixDue(pool, { sessionId, head });
   if (!out.due) return { queued: false, why: out.why };
   const { due, row, issueNumber } = out;
@@ -6473,9 +6583,12 @@ async function queueChecksFix(pool, { sessionId, head = null } = {}) {
     [Number(row.id)],
   ).catch(() => ({ rows: [] }));
   const grantKey = grantRows[0]?.id ? `:grant:${grantRows[0].id}` : '';
+  // #6776: a re-asked round (a grant whose round never started) is a fresh
+  // ask, so the receipt of the earlier one does not swallow it.
+  const againKey = again ? `:again:${String(again).slice(0, 64)}` : '';
   await appendEvent(pool, loopRules.BOT_REQUEST, loopRules.requestKey(row.app_id, issueNumber), {
     type: 'FixAsked', payload: { appId: Number(row.app_id), issueNumber, sessionId: Number(row.id), head: due.head },
-  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
+  }, { requestKey: `fix:${Number(row.id)}:${due.head}${grantKey}${againKey}`, source: { kind: 'system', name: 'bot-change' }, appId: Number(row.app_id) });
   log.info('homeroom-bot', due.failing.length
     ? 'Its proposal\'s checks failed; asked its request to fix them'
     : due.broken?.length
@@ -6836,8 +6949,15 @@ async function runChecksFix(pool, config, {
   // rule (localeRule); unset, the note to the group stays English.
   const requester = await (deps.dm || require('./homeroom-bot-dm'))
     .requesterOf(pool, app.id, issueNumber).catch(() => null);
+  // #6778: what main and the project's other open changes did to the same
+  // files since the previous try, so a fix is not spent on a line that just
+  // moved under it. A read that fails costs the turn its two blocks, not the
+  // turn.
+  const overlap = await fixOverlapContext(pool, { app, session, head, failing, deps })
+    .catch(() => ({ mainChanges: [], openOverlaps: [], firstTry: false }));
   const prompt = followup.checksFixPrompt({
     seed, proposalBlock, prNumber, failing, total, broken, skipped, locale: requester?.locale || null,
+    mainChanges: overlap.mainChanges, openOverlaps: overlap.openOverlaps, firstTry: overlap.firstTry,
   });
   snapshot = {
     stage: 'checks_fix', appId: app.id, issueNumber,
@@ -6847,6 +6967,8 @@ async function runChecksFix(pool, config, {
       failing: JSON.stringify(failing),
       ...(broken.length ? { broken: JSON.stringify(broken) } : {}),
       ...(skipped.length ? { skipped: JSON.stringify(skipped) } : {}),
+      ...(overlap.mainChanges.length ? { main_changes: JSON.stringify(overlap.mainChanges) } : {}),
+      ...(overlap.openOverlaps.length ? { open_overlaps: JSON.stringify(overlap.openOverlaps) } : {}),
       thread: snapshots.frozenThread({
         issueNumber, issue, comments, threadMessages: issueThread?.messages || [], botLogin,
       }),
@@ -6893,6 +7015,47 @@ async function runChecksFix(pool, config, {
   }
 
   const parsed = turn.stopped || code ? null : followup.parseFollowUp(result.lastResultText);
+  // #6822: a claim about a screen both copies already have is answered by
+  // re-declaring it against a ready-made state, or by saying none fits.
+  // Neither changes any code: the round looks at the head all the same.
+  if (parsed && (parsed.action === 'redeclare' || parsed.action === 'unstageable')) {
+    const redeclared = parsed.action === 'redeclare'
+      && await declarationChanged(pool, session.id, skipped).catch(() => false);
+    if (redeclared) {
+      runId = await insertRun(pool, {
+        ...billingOf(item, runMode),
+        readReason: readReasonOf(item), lookKind: 'fix',
+        appId: app.id, issueNumber, mode: runMode, verdict: 'revise',
+        reason: parsed.reply, buildNote: 'Declared the change again against a ready-made demo state; its shots are taken again.',
+        threadSeenAt, model, durationMs: Date.now() - startedMs,
+        proposalSessionId: session.id, checksHeadSha: head, ...spent,
+      });
+      await recordSnapshot(runId);
+      await dropRow();
+      roundEnded();
+      log.info('homeroom-bot', 'Declared its change again against a ready-made state for its shots', {
+        app: app.slug, issueNumber, sessionId: session.id, head, runId,
+      });
+      return { ran: true, verdict: 'revise', runId, acted: 'checks_shots_redeclared' };
+    }
+    const reason = String(parsed.missingState || parsed.reply || 'no ready-made state on the copies holds it')
+      .replace(/\s+/g, ' ').trim();
+    runId = await insertRun(pool, {
+      ...billingOf(item, runMode),
+      readReason: readReasonOf(item), lookKind: 'hand_off',
+      appId: app.id, issueNumber, mode: runMode, verdict: 'person',
+      reason: parsed.reply || reason, threadSeenAt, model, durationMs: Date.now() - startedMs,
+      proposalSessionId: session.id, checksHeadSha: head, ...spent,
+    });
+    await recordSnapshot(runId);
+    await dropRow();
+    roundEnded();
+    await recordUnstageable(pool, config, { app, bot, session, head, reason });
+    log.info('homeroom-bot', 'Its change cannot be shown on a copy: no ready-made state holds it', {
+      app: app.slug, issueNumber, sessionId: session.id, head, runId, reason,
+    });
+    return { ran: true, verdict: 'person', runId, acted: 'checks_shots_unstageable' };
+  }
   // Decided once across the look's attempts, before the reconcile moves the
   // reviewed head (as runFollowUp's).
   const moved = await look.once('moved', () => !turn.stopped && !code && followup.headMoved({
@@ -6985,6 +7148,75 @@ async function runChecksFix(pool, config, {
     notChange: parsed?.action === 'person' && parsed.cause === 'not_change' && failing.length > 0 && !broken.length,
     cause: parsed?.action === 'person' ? parsed.cause : null,
   });
+}
+
+/**
+ * #6822: whether a `redeclare` really declared the change again: the
+ * change's stored declaration now differs from the one its shots skipped,
+ * in a claim or its steps. A redeclare that declared nothing
+ * new is treated as unstageable, so the round still ends with an answer.
+ */
+async function declarationChanged(pool, sessionId, skipped) {
+  const { rows } = await pool.query('SELECT shots_detail FROM chat_sessions WHERE id = $1', [Number(sessionId)]);
+  const stories = rows[0]?.shots_detail?.intent?.stories;
+  if (!Array.isArray(stories) || !stories.length) return false;
+  // A skip's claim carries its claim and steps (bot-readiness.ts Claim), so
+  // those are what a re-declaration is compared by.
+  const shape = (story) => JSON.stringify([String(story.claim || ''), Array.isArray(story.steps) ? story.steps : []]);
+  const before = new Map((Array.isArray(skipped) ? skipped : []).map((s) => [s.id, shape(s)]));
+  return stories.some((story) => !before.has(story.id) || shape(story) !== before.get(story.id));
+}
+
+// The source the bot's report of a missing demo state is filed under, so one
+// state files once.
+const UNSTAGEABLE_SOURCE = 'shots_unstageable';
+
+/**
+ * #6822: record that a declared change about a screen both copies already
+ * have cannot be shown on them (no visible change, with the shots agent's
+ * reason), and tell the platform which state is missing, once per state.
+ * Each step is best-effort: the round's run is recorded either way.
+ */
+async function recordUnstageable(pool, config, { app, bot, session, head, reason }) {
+  const shotsView = require('./shots-view');
+  const rationale = `${shotsView.UNSTAGEABLE_PREFIX} ${reason}`.slice(0, 1000);
+  try {
+    await require('./shots-state').recordIntent(pool, session.id, {
+      version: 1, impact: 'none', rationale, stories: [],
+    }, { headSha: head });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not record that its change cannot be shown on a copy', {
+      app: app.slug, sessionId: session.id, err: err.message,
+    });
+  }
+  const feedback = require('./feedback-reports');
+  const title = `Before & after shots: no demo state for "${clip(reason, 90)}"`;
+  try {
+    const seen = await pool.query(
+      `SELECT 1 FROM feedback_reports
+        WHERE user_id = $1 AND source = $2
+          AND lower(regexp_replace(title, '\\s+', ' ', 'g')) = lower(regexp_replace($3, '\\s+', ' ', 'g'))
+          AND created_at > NOW() - INTERVAL '7 days'
+        LIMIT 1`,
+      [bot.id, UNSTAGEABLE_SOURCE, title],
+    );
+    if (seen.rows.length) return;
+  } catch {
+    return;
+  }
+  await feedback.filePlatformReport(pool, config, {
+    user: { id: bot.id, username: BOT_USERNAME, isAdmin: true },
+    title,
+    body: [
+      'A change declared a screen that already exists, and the before & after shots could not show it on either copy, because no ready-made demo state holds it (src/services/shots-demo-states.js).',
+      '',
+      `State the copies lack: ${reason}`,
+      `Change: app ${app.slug}, session ${Number(session.id)}${head ? `, head ${String(head).slice(0, 7)}` : ''}.`,
+    ].join('\n'),
+    description: `Homeroom bot: the shots could not show a change on a copy, and no ready-made state holds it. ${reason}`,
+    source: UNSTAGEABLE_SOURCE,
+    via: 'while taking a change\'s before & after screenshots',
+  }).catch(() => {});
 }
 
 // #4572: the error a timed-out fix records when it is tried once more, one
@@ -9324,6 +9556,10 @@ async function buildLive({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
       ...recipeBudgets(app, config, turnBudgetMs, { firstVersion, recipe }), model, specModel, deps, onSpec, proposalCeiling,
       platformRepo: isPlatformRepo(app, config), presetSpec,
+      // 18 Nov 2026: the version of the plan it builds from, which its copy
+      // on the build's session keeps (live.publishSpec keepVersion), so the
+      // change says it is built from that version and not a newer one.
+      ...(presetSpec && Number(builtFrom?.version) > 0 ? { presetVersion: Number(builtFrom.version) } : {}),
       // #6407: the person's plan this change is built from, with the version
       // of its after screen the triage named: the build's prompt and the
       // change's summary say which plan, which version, and where they left it.
@@ -9461,6 +9697,8 @@ async function buildLive({
       const tryKey = first ? 'retry' : 'try';
       const tryArgs = first ? {
         ...buildArgs, presetSpec: first.specMd, onSpec: null,
+        // The same plan as the first try's, under its number.
+        presetVersion: Number(first.specVersion) > 0 ? Number(first.specVersion) : (buildArgs.presetVersion ?? null),
         // Its first look was drawn by the first try.
         onFirstLook: null, onScreen: null,
       } : buildArgs;
@@ -11494,6 +11732,121 @@ async function overlapOthers(pool, { app, issueNumber, github }) {
 const overlapSubject = (w) => (w?.prNumber ? `PR #${Number(w.prNumber)}`
   : w?.issueNumber ? `the change for request #${Number(w.issueNumber)}` : 'another open change');
 
+// #6778: a repository path named in a failing check's own words (a test file
+// in its reason, a path in its name). A token that names no real file simply
+// matches nothing.
+const REPO_PATH_TOKEN = /[\w.@-]+(?:\/[\w.@-]+)+\.[a-z]{1,5}\b/g;
+
+function repoPathsIn(value) {
+  return String(value || '').match(REPO_PATH_TOKEN) || [];
+}
+
+/**
+ * #6778: what moved under a fix try. Two lists, as data for the fix turn's
+ * prompt (followup.checksFixPrompt):
+ *
+ *   - mainChanges: the changes merged to the default branch since the bot's
+ *     previous try on this change (or since it started, on a first try) whose
+ *     files touch the files this change edits or the failing test's file.
+ *     Time-based on purpose: a sync with main that already brought a merged
+ *     change into the branch happened BEFORE the last try, and a merge-base
+ *     window would not see it. That was try 1 on PR 6748.
+ *   - openOverlaps: the project's other open changes (#6421, #6423, #6428's
+ *     query) whose diff shares a file with this one.
+ *
+ * A merge commit is named by its pull request when its subject ends
+ * "Title (#1234)", else by its short commit id. Both lists are left
+ * uncapped: the prompt caps them, so its count of the rest is exact. A read
+ * that fails is an empty list, never a stopped turn.
+ */
+async function fixOverlapContext(pool, { app, session, head, failing = [], deps = {} }) {
+  const empty = { mainChanges: [], openOverlaps: [], firstTry: false };
+  const repo = parseRepo(app.repo_url);
+  if (!repo) return empty;
+  const mirror = deps.repoMirror || require('./repo-mirror');
+  const github = deps.github || require('./github');
+  // The previous fix try on this change recorded the head it looked at; a
+  // first try has none, so the window starts when the change did.
+  const { rows: [previous] = [] } = await pool.query(
+    `SELECT created_at FROM homeroom_bot_runs
+      WHERE proposal_session_id = $1 AND checks_head_sha IS NOT NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [Number(session.id)],
+  ).catch(() => ({ rows: [] }));
+  const firstTry = !previous?.created_at;
+  let since = previous?.created_at || session.created_at || null;
+  if (!since) {
+    const { rows: [made] = [] } = await pool.query(
+      'SELECT created_at FROM chat_sessions WHERE id = $1', [Number(session.id)],
+    ).catch(() => ({ rows: [] }));
+    since = made?.created_at || null;
+  }
+  // The failing test's file, and the files this change edits: what an
+  // overlap has to share to matter.
+  const failingFiles = [...new Set(failing.flatMap((f) => [
+    ...repoPathsIn(f?.name), ...repoPathsIn(f?.path), ...repoPathsIn(f?.reason),
+  ]))];
+  let dir = null;
+  let tip = null;
+  let changeFiles = [];
+  try {
+    dir = await mirror.ensureMirror(repo.owner, repo.repo);
+    tip = await mirror.defaultBranchSha(dir);
+    const base = await mirror.mergeBase(dir, tip, head);
+    if (base) changeFiles = await mirror.changedPaths(dir, base, head);
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read the files a fix touches from the mirror', {
+      app: app.slug, sessionId: session.id, err: err.message,
+    });
+  }
+  if (!changeFiles.length && github?.isEnabled?.() && typeof github.listChangedFiles === 'function' && session.branch_name) {
+    changeFiles = await github.listChangedFiles(repo.owner, repo.repo, `main...${session.branch_name}`)
+      .catch(() => []);
+  }
+  const wanted = new Set([...changeFiles, ...failingFiles]);
+  const mainChanges = [];
+  if (dir && tip && since && wanted.size) {
+    const log_ = await mirror.mainLogSince(dir, tip, since).catch(() => null);
+    for (const commit of log_ || []) {
+      const common = (Array.isArray(commit.files) ? commit.files : []).filter((f) => wanted.has(f));
+      if (!common.length) continue;
+      const named = /^(.*)\s\(#(\d+)\)$/.exec(commit.subject || '');
+      const prNumber = named ? Number(named[2]) : null;
+      // Its own change is not "changed on main".
+      if (prNumber && session.pr_number != null && Number(session.pr_number) === prNumber) continue;
+      mainChanges.push({
+        prNumber,
+        title: named ? named[1] : (commit.subject || String(commit.sha || '').slice(0, 7)),
+        mergedAt: commit.mergedAt,
+        sha: commit.sha,
+        files: common,
+      });
+    }
+  }
+  const ownRequest = Number(session.linked_issues?.[0]);
+  const others = await overlapOthers(pool, {
+    app, issueNumber: Number.isInteger(ownRequest) && ownRequest > 0 ? ownRequest : 0, github,
+  }).catch(() => []);
+  const shared = others
+    .filter((o) => Number(o.sessionId) !== Number(session.id))
+    .map((o) => ({ ...o, shared: (Array.isArray(o.files) ? o.files : []).filter((f) => wanted.has(f)) }))
+    .filter((o) => o.shared.length);
+  const titles = new Map();
+  if (shared.length) {
+    const { rows } = await pool.query(
+      `SELECT id, COALESCE(NULLIF(pr_title, ''), NULLIF(proposed_pr_title, ''), NULLIF(session_title, '')) AS title
+         FROM chat_sessions WHERE id = ANY($1::int[])`,
+      [shared.map((o) => o.sessionId)],
+    ).catch(() => ({ rows: [] }));
+    for (const row of rows) titles.set(Number(row.id), row.title || null);
+  }
+  const openOverlaps = shared.map((o) => ({
+    prNumber: o.prNumber, title: titles.get(o.sessionId) || null, status: o.status,
+    issueNumber: o.issueNumber, files: o.shared,
+  }));
+  return { mainChanges, openOverlaps, firstTry };
+}
+
 // #6423, #6428: what this build shares with the project's other open
 // changes, and whether it goes on top of one. `dependsOn` names the requests
 // its own depends on (a "build first" link, #6211); nothing passes it yet,
@@ -11685,6 +12038,9 @@ async function sweep(config, pool, { deps = {} } = {}) {
   // #6420: a change that names requests it closes tells them once, including
   // the links set when the change was made or that became visible later.
   await each('claimsAnnounced', () => require('./change-claims').announce(pool, { appId: null }));
+  // #6776: a try somebody granted that never started is queued again, or
+  // closed with the reason it could not be.
+  await each('grantsRequeued', () => require('./homeroom-bot-retry-grants').sweepStrandedGrants(pool, settings, deps));
   return out;
 }
 
@@ -11801,6 +12157,8 @@ module.exports = {
   DEFAULT_IMAGE_MODEL,
   MODEL_ID_RE,
   triagePromptFor,
+  triagePromptBudgets,
+  TRIAGE_PROMPT_CEILING,
   personPlanTriageNote,
   signalNote,
   firstVersionNote,
@@ -11940,6 +12298,13 @@ module.exports = {
   NOT_FOLLOW_UP,
   checksToFix,
   runChecksFix,
+  // #6822: tests/shots-demo-states-postgres.test.js reads what a claim no
+  // copy can show records.
+  recordUnstageable,
+  declarationChanged,
+  // #6778: what main and the project's other open changes did to a fix
+  // turn's files, exported for its tests.
+  fixOverlapContext,
   // #6234: whether a fix of a head ran out of time once, for the change
   // page's "trying once more" (homeroom-bot-progress.js changeBotFix).
   checksRetried,

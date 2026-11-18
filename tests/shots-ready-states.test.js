@@ -78,7 +78,10 @@ test('the states that cost changes their shots are ready-made on Homeroom\'s cop
   assert.equal(child.length, 3);
   assert.match(child[0], /^approval-chip seems to need a change waiting for approval, and this app's copies have no ready-made states\./);
   assert.match(child[0], /or seed it in the app's own staging seed \(its IS_STAGING seed\)\. A seed this proposal adds reaches only the after copy/);
-  assert.match(child[0], /seed such a state in this proposal\. A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\.$/);
+  assert.match(child[0], /seed such a state in this proposal\. A change to a state that already existed needs it on both copies, so its seed merges first, in its own proposal\./);
+  // 18 Nov 2026 (#6822): said outright, since PR #6819's author declared a
+  // state the copies lacked though this answer said where data comes from.
+  assert.match(child[0], /A claim about a screen that already exists \(a story whose baseState is "present"\) therefore needs a ready-made state these copies already hold, from availableStates: declare it against one, and a seed in this proposal cannot stand in for it\.$/);
   assert.match(readyStates.declarationAdvice(held, { selfApp: false }).dataNote, /A seed is idempotent and obviously fake/);
   assert.match(child[1], /^activity-times seems to need standings rows with recorded activities/);
   assert.match(child[2], /^bot-thanks seems to need an answered first-version plan/);
@@ -104,17 +107,20 @@ test('the states the October changes went unshot for are ready-made on Homeroom\
   // Each has a ready-made state. PR 4622's line still needs the bot to take
   // its turn, which no state makes, so it is warned about the model; and
   // the nearly spent allowance is the full admin's, so a member's change
-  // that needs it is told whose it is.
-  assert.equal(own.warnings.length, 2);
+  // that needs it is told whose it is. 18 Nov 2026: a request's hand-off to
+  // a person is on its page now, never in the chat with the bot, and the
+  // state that drew it there is retired, so PR 4763's line is told nothing
+  // ready-made holds it.
+  assert.equal(own.warnings.length, 3);
   assert.match(own.warnings[0], /^low-credits-note seems to need a weekly allowance nearly spent, and the ready-made state that holds it on these copies is for full_admin \(see availableStates\)\. Declare the change for full_admin, or add hints\.setup/);
   assert.match(own.warnings[1], /^working-line seems to need a live reply from a model/);
+  assert.match(own.warnings[2], /^person-card seems to need a Homeroom bot hand-off that needs a person to decide, and no ready-made state on these copies holds it \(see availableStates\)/);
   const asFullAdmin = declare(story('low-credits-note', held.stories[1].claim,
     { persona: 'full_admin', steps: held.stories[1].intent.steps }));
   assert.deepEqual(warned(asFullAdmin, true), [], 'declared for the persona the state is for');
   const names = own.availableStates.map((state) => state.name);
   for (const id of ['shots-demo-member-voted-change-live-v1', 'shots-demo-full-admin-allowance-low-v1',
-    'shots-demo-member-bot-built-proposal-v1', 'shots-demo-member-bot-deciders-v1',
-    'shots-demo-member-checks-part-way-v1']) {
+    'shots-demo-member-bot-built-proposal-v1', 'shots-demo-member-checks-part-way-v1']) {
     const state = readyStates.READY_STATES.find((each) => each.id === id);
     assert.ok(names.includes(state.name), id);
   }
@@ -155,7 +161,8 @@ test('a change needing a state no ready-made state holds is warned about, once p
   assert.match(warnings[0], /a member in their first session \(its tour\), and no ready-made state on these copies holds it \(see availableStates\)/);
   assert.match(warnings[0], /seed it in the staging seeds in src\/db\/migrate\.js/);
   assert.match(warnings[0], /A seed this proposal adds reaches only the after copy, which is the side a state new in this proposal needs/);
-  assert.match(warnings[0], /its seed merges first, in its own proposal\.$/);
+  assert.match(warnings[0], /its seed merges first, in its own proposal\./);
+  assert.match(warnings[0], /A claim about a screen that already exists \(a story whose baseState is "present"\) therefore needs a ready-made state/);
   assert.doesNotMatch(warnings.join(' '), /merged before this one/, 'a new state is seeded in the proposal that makes it');
   assert.match(warnings[1], /an account somebody invited/);
   assert.match(warnings[2], /an empty state, or an account with nothing of its own yet/);
@@ -206,6 +213,60 @@ test('no warning when the author says how to make it, for the guest\'s own state
   // The steps and the checkpoint are its words too.
   assert.equal(warned(declare(story('steps', 'The card has a new line.',
     { steps: ['Open the hub as a member on the waitlist'] })), true).length, 1);
+});
+
+// 18 Nov 2026: the bot's own screens whose shots failed for want of data
+// (PRs 6695, 6682, 6662, among others): a request waiting its turn, one
+// nobody picked up under Not moving, and a change whose votes are in while
+// its checks run. Each is the member's on Homeroom's copies, and named on a
+// child app's.
+test('the bot tab\'s waiting rows and an approved change still checking are ready-made for the member', () => {
+  const held = declare(
+    story('queued-row', 'A request waiting its turn says its number in line on the bot\'s tab.'),
+    story('still-lit', 'A row under Not moving stays lit while its panel is open.'),
+    story('approved-checking', 'When a change\'s votes are all in while its checks are still running, it says Approved.'),
+  );
+  assert.deepEqual(warned(held, true), [], 'each has a ready-made state for the member');
+  const needs = warned(held, false).map((w) => w.split(' to need ')[1].split(', and ')[0]);
+  assert.deepEqual(needs, [
+    'a request waiting its turn to be built',
+    'a request nobody has picked up (Not moving)',
+    'a change whose votes are in while its checks still run',
+  ]);
+  // The read-only admin is not who they are for.
+  const asAdmin = warned(declare(story('queued-row', held.stories[0].claim, { persona: 'read_only_admin' })), true);
+  assert.equal(asAdmin.length, 1);
+  assert.match(asAdmin[0], /is for member \(see availableStates\)/);
+  const names = readyStates.declarationAdvice(held, { selfApp: true }).availableStates.map((state) => state.name);
+  for (const id of ['shots-demo-member-request-queued-v1', 'shots-demo-member-request-not-moving-v1',
+    'shots-demo-member-approved-checks-running-v1']) {
+    assert.ok(names.includes(readyStates.READY_STATES.find((state) => state.id === id).name), id);
+  }
+  // Retired: the chat with the bot draws neither any more.
+  for (const id of ['shots-demo-member-bot-run-card-v1', 'shots-demo-member-bot-deciders-v1']) {
+    assert.ok(!demoStates.STATE_IDS.includes(id), id);
+  }
+});
+
+// 18 Nov 2026 (#6822): PR #6819's change (an update on its way takes a
+// change out of Needs you) could not be shot: no copy held a change being
+// updated. Its family is ready-made for the member now.
+test('a change being updated, one syncing with main and one back up for a vote are ready-made for the member', () => {
+  const held = declare(
+    story('updating-row', 'While an update is on its way to a change, its row says Updating.'),
+    story('sync-line', 'A change catching up with main says it is syncing with main.'),
+  );
+  assert.deepEqual(warned(held, true), [], 'each has a ready-made state for the member');
+  const needs = warned(held, false).map((w) => w.split(' to need ')[1].split(', and ')[0]);
+  assert.deepEqual(needs, ['a Homeroom bot update running on a change (Updating)', 'a change syncing with main']);
+  const names = readyStates.declarationAdvice(held, { selfApp: true }).availableStates.map((state) => state.name);
+  for (const id of ['shots-demo-member-vote-update-running-v1', 'shots-demo-member-approved-syncing-v1',
+    'shots-demo-member-vote-after-update-v1']) {
+    const state = readyStates.READY_STATES.find((each) => each.id === id);
+    assert.ok(state, id);
+    assert.ok(names.includes(state.name), id);
+    assert.deepEqual([...state.personas], ['member'], id);
+  }
 });
 
 test('a change whose steps wait for a model\'s reply is warned about whatever setup or state it names', () => {

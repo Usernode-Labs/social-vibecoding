@@ -55,6 +55,14 @@
     "text": "To",
     "description": "Short label before the two destination choices in the comment box in comment mode (the box beside a pin where the person writes their request) (the app's name, and Homeroom): the request is sent to the chosen one. A preposition, as on a letter."
   },
+  "commentPin.target.change": {
+    "text": "Change #{{number}}",
+    "description": "In the comment box, a choice of where the comment goes, shown when it was pinned in a change's preview: the change itself, as a message in its thread that its builder and voters read. {{number}} is the change's number."
+  },
+  "commentPin.target.thisChange": {
+    "text": "This change",
+    "description": "The same choice when the change has no number yet: the change whose preview the comment was pinned in."
+  },
   "commentPin.target.toHomeroom": {
     "text": "To Homeroom",
     "description": "Line in the comment box in comment mode (the box beside a pin where the person writes their request) when there is no app to choose: the request is sent to Homeroom, the platform. Homeroom is the product name."
@@ -72,12 +80,12 @@
     "description": "Error line in the pinned-comment box when the server refused the comment and gave no reason of its own."
   },
   "staging.banner.solo": {
-    "text": "Preview of your change. It goes live when you vote it in. Anything you add here stays in the preview and won't carry over.",
-    "description": "Line under the top bar of the staging preview, on a project that only its creator belongs to. Says the previewed change is not live until they approve it, and that data entered in the preview is not copied to the live app."
+    "text": "This is your change, not live yet: it goes live when you vote it in. Anything you add here stays in the preview.",
+    "description": "First-visit line under the header of a change's preview, on a project that only its creator belongs to. Says the change is not live until they approve it, and that data entered in the preview is not copied to the live app. Followed by a Got it button that puts the line away."
   },
   "staging.banner.group": {
-    "text": "Preview of this change. Members can try it before they vote. Anything you add here stays in the preview and won't carry over.",
-    "description": "Line under the top bar of the staging preview, on a project with several members. Says the change can be tried before voting, and that data entered in the preview is not copied to the live app."
+    "text": "Members try a change here before they vote. Anything you add here stays in the preview.",
+    "description": "First-visit line under the header of a change's preview, on a project with several members. Says the change can be tried before voting, and that data entered in the preview is not copied to the live app. Followed by a Got it button that puts the line away."
   },
   "staging.clock.showingNow": {
     "text": "Showing it as it is now.",
@@ -95,9 +103,49 @@
     "text": "See it as now",
     "description": "Button in the staging preview: reloads the preview at the present time instead of the moment the change declared."
   },
-  "staging.testThisChange": {
-    "text": "Test this change",
-    "description": "Button in the staging preview's top bar: opens the coding agent's instructions for how to try the previewed change."
+  "staging.header.preview": {
+    "text": "Preview",
+    "description": "Title of a change's preview header while the change's name is not known yet."
+  },
+  "staging.switch.label": {
+    "text": "Show",
+    "description": "Accessible name of the two-way switch in a change's preview header that picks between the running preview and the change's before-and-after screenshots."
+  },
+  "staging.switch.preview": {
+    "text": "Preview",
+    "description": "One side of the switch in a change's preview header: the running app with the change in it, which you can use. A noun."
+  },
+  "staging.switch.shots": {
+    "text": "Before & after",
+    "description": "The other side of the switch in a change's preview header: the change's before-and-after screenshots."
+  },
+  "staging.comment": {
+    "text": "Comment",
+    "description": "Button in a change's preview header that turns on comment mode, where a click on the preview leaves a comment on the change. A verb."
+  },
+  "staging.fullWindow": {
+    "text": "Full window",
+    "description": "Button in a change's preview header, shown when the preview stands in a column or a side panel: makes the preview fill the whole window."
+  },
+  "staging.dock": {
+    "text": "Back beside the page",
+    "description": "The same button once the preview fills the window: puts it back in the column or side panel it came from."
+  },
+  "staging.close": {
+    "text": "Close preview",
+    "description": "Accessible name of the × that closes a change's preview standing in a column or a side panel."
+  },
+  "staging.gotIt": {
+    "text": "Got it",
+    "description": "Button at the end of the first-visit line in a change's preview: puts that line away for good on this device."
+  },
+  "staging.wide": {
+    "text": "Opened full width: this change is for larger screens.",
+    "description": "Line under a change's preview header when it opened filling the window instead of beside the page, because its screenshots are all of large screens."
+  },
+  "staging.live": {
+    "text": "Live",
+    "description": "Small mark after an app's name in the top bar while a change's preview stands beside the running app: says the app on the left is the live one, as it is now. An adjective."
   },
   "staging.openConsole": {
     "text": "Open developer console",
@@ -118,6 +166,10 @@
   "staging.loader.retrySignIn": {
     "text": "Retry sign-in",
     "description": "Button under the spinner in the staging preview when signing the person in to the previewed app failed: tries the sign-in again."
+  },
+  "staging.loader.seeShots": {
+    "text": "See the before & after instead",
+    "description": "Link on the staging preview's waiting or \"isn't running\" screen, under its message, when the change has before-and-after pictures: shows those pictures instead of waiting for the running preview."
   },
   "staging.compare.dialogLabel": {
     "text": "Before / after comparison",

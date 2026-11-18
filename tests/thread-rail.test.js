@@ -112,8 +112,12 @@ test('tests running, tests failed, and only the screenshots left', () => {
     ...base, changes: [change()],
     standing: standing({ stage: 'stopped', reason: 'fix_stopped', change: lead({ checks: { state: 'failing', phase: 'done', failing: 1 } }) }),
   });
-  assert.deepEqual(names(one), ['Asked', 'Built', '1 test failed', 'Stopped: its tests still fail']);
+  // The step is titled "Stopped": the foot carries the server's whole
+  // headline, and why it stopped is the note under the step, tinted red.
+  assert.deepEqual(names(one), ['Asked', 'Built', '1 test failed', 'Stopped']);
   assert.equal(one[3].tone, 'bad');
+  assert.equal(one[3].noteTone, 'bad');
+  assert.ok(words(one[3].note));
   const unknown = requestRail({
     ...base, changes: [change()],
     standing: standing({ stage: 'stopped', reason: 'fix_stopped', change: lead({ checks: { state: 'failing', phase: 'done', failing: null } }) }),
@@ -173,29 +177,62 @@ test('with no standing (an older server) every step is behind, and nothing is "n
 });
 
 test("a change's own page: planned, built, its tests, then where it stands", () => {
-  const { changeRail } = loadTsx(MODEL);
+  const { changeRail, requestRail } = loadTsx(MODEL);
+  const gate = (over = {}) => ({ name: 'Votes', figure: '', tone: 'muted', done: false, note: [], ...over });
+  const passed = gate({ name: 'Tested', figure: 'All checks passed', tone: 'done', done: true });
   const input = {
     id: 51, author: 'evan', at: '2026-11-13T15:16:00Z', plan: plan({ by: 'evan' }),
-    testing: { tone: 'done', done: true, figure: 'All checks passed' },
-    status: { key: 'vote', label: 'Vote · 0/2' },
-    votes: { figure: 'Needs 2 more yes', done: false, asking: true },
+    testing: passed,
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
+    votes: gate({ figure: 'Needs 2 more yes', tone: 'ask', note: ['Any of the 63 members can give it.'] }),
   };
   const vote = changeRail(input);
   assert.deepEqual(names(vote), ['Planned', 'Built', 'Tested', 'Up for a vote']);
-  assert.equal(words(vote[3].note), 'Needs 2 more yes');
+  assert.equal(words(vote[3].note), 'Needs 2 more yes. Any of the 63 members can give it.');
+  assert.equal(vote[3].noteTone, 'act', 'a note that asks for somebody is the wash');
+  // A viewer who has voted reads "Up for a vote" too, never the pill's tally.
+  assert.deepEqual(names(changeRail({ ...input, plan: null, status: { key: 'needs_vote', label: 'Vote · 1/2', yes: 1, majority: 2 }, votes: gate({ figure: 'Needs 1 more yes' }) })), ['Built', 'Tested', 'Up for a vote']);
 
-  const failed = changeRail({ ...input, plan: null, testing: { tone: 'bad', done: false, figure: 'Found a problem' }, votes: { figure: '1 yes vote, 1 needed', done: true, asking: false } });
-  assert.deepEqual(names(failed), ['Built', 'Tests failed', 'Vote · 0/2']);
+  // Failed tests: the failure is behind it, and the last step is what the
+  // failure waits for. It used to stay on the vote ("Vote · 0/2").
+  const bad = gate({ name: 'Testing', figure: 'Found a problem', tone: 'bad' });
+  const failed = changeRail({ ...input, plan: null, testing: bad });
+  assert.deepEqual(names(failed), ['Built', 'Tests failed', 'Waiting for a fix']);
   assert.deepEqual(JSON.parse(JSON.stringify(failed[1].link.open)), { kind: 'checks', changeId: 51 });
-  assert.equal(failed[2].note, null);
+  assert.equal(words(failed[2].note), 'Its tests have to pass before it can go live. A new version is tested again when it arrives.');
+  const fixing = changeRail({ ...input, plan: null, testing: { ...bad, botFix: 'fixing' } });
+  assert.deepEqual(names(fixing), ['Built', 'Tests failed', 'Fixing']);
+  assert.equal(fixing[2].busy, true);
+  const stopped = changeRail({ ...input, plan: null, testing: { ...bad, botFix: 'stopped' }, fixNote: 'Homeroom bot stopped after two tries.' });
+  assert.deepEqual(names(stopped), ['Built', 'Tests failed', 'Stopped']);
+  assert.equal(stopped[2].tone, 'bad');
+  assert.equal(stopped[2].noteTone, 'bad');
+  assert.equal(words(stopped[2].note), 'Homeroom bot stopped after two tries.', 'the card\'s own words for who fixes it');
 
-  const testing = changeRail({ ...input, plan: null, testing: { tone: 'muted', done: false, figure: null }, status: { key: 'checking', label: 'Checking' }, votes: null });
-  assert.deepEqual(names(testing), ['Built', 'Checking']);
-  assert.equal(testing[1].busy, true);
+  // Tests still running: a Testing step, with how far they are.
+  const running = changeRail({ ...input, plan: null, testing: gate({ name: 'Testing', figure: 'about 6 min left', note: ['Preview built, checks a third done.'] }) });
+  assert.deepEqual(names(running), ['Built', 'Testing']);
+  assert.equal(running[1].busy, true);
+  assert.equal(words(running[1].note), 'About 6 min left. Preview built, checks a third done.');
+  assert.equal(running[1].noteTone, 'plain', 'a wait that needs nobody is plain');
+  assert.deepEqual(JSON.parse(JSON.stringify(running[1].open)), { kind: 'checks', changeId: 51 });
 
-  const merged = changeRail({ ...input, plan: null, status: { key: 'merged', label: 'Live' }, votes: { figure: null, done: true, asking: false } });
+  const merged = changeRail({ ...input, plan: null, status: { key: 'merged', label: '✓ Live', yes: 2, majority: 2 }, votes: gate({ tone: 'done', done: true }) });
   assert.equal(merged[merged.length - 1].tone, 'ok');
   assert.equal(words(merged[merged.length - 1].title), 'Live');
+
+  // Still being built, or closed (no pill): nothing stands after Built.
+  assert.deepEqual(names(changeRail({ ...input, plan: null, status: null })), ['Built', 'Tested']);
+
+  // On a request's page with one change, the request's last steps are that
+  // change's (./step-store.ts leadStore), so the timeline ends on the phase
+  // the card's foot shows, whatever the request's own standing says.
+  const led = requestRail({ ...base, changes: [change()], standing: standing({ stage: 'up_for_vote', change: lead() }), lead: { ...input, testing: { ...bad, botFix: 'fixing' } } });
+  assert.deepEqual(names(led), ['Asked', 'Built', 'Tests failed', 'Fixing']);
+  // A ballot between competing changes names itself, and its rule is the note.
+  const choosing = requestRail({ ...base, changes: [change()], standing: standing({ stage: 'up_for_vote', change: lead() }), ballot: { count: 2, about: 'The first to pass goes live.' } });
+  assert.equal(words(choosing[choosing.length - 1].title), 'Choosing between 2 changes');
+  assert.equal(words(choosing[choosing.length - 1].note), 'The first to pass goes live.');
 });
 
 test('the shell holds the rail between the root post and the replies, on a request and a change only', () => {
@@ -253,8 +290,33 @@ test('the stylesheet: beside the card on a wide page, a folded pile on a narrow 
   // a look paints them through the `-look` variables.
   const cards = block.slice(block.indexOf('/* THE CARDS, at every width'), block.indexOf('/* WIDE: two columns.'));
   assert.ok(cards.length > 0, 'the cards have their own part of the block');
-  for (const line of cards.split('\n').filter((l) => /^html/.test(l))) assert.ok(line.startsWith(scope), `scoped as the wide layout is: ${line.slice(0, 80)}`);
+  // …on a full page, and in the two side panels (the Workshop's, and the
+  // column beside Homeroom bot's list) and beside the open reader, which
+  // have a scope of their own.
+  const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
+  for (const line of cards.split('\n').filter((l) => /^html/.test(l))) {
+    const reader = 'html:is(:not([data-skin]), [data-skin="brand"]) .gc-tab-body:has(> .gc-spec-side-panel-open) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-sheet';
+    assert.ok(line.startsWith(scope) || line.startsWith(panel) || line.startsWith(reader) || line.startsWith('html.in-side-panel.side-panel-beside-ai .dev-thread-kicker'),
+      `scoped as the wide layout is, or to a side panel: ${line.slice(0, 80)}`);
+  }
   assert.match(cards, /--thread-card: var\(--thread-card-look, var\(--dc-sheet-fill\)\);/);
   assert.match(cards, /:is\(#gc-thread-head, #gc-thread-messages, \.dev-request-rail\) \{\s*min-width: 0;\s*border-radius: var\(--thread-card-r\);\s*background: var\(--thread-card\);/);
   assert.match(css.slice(brand), /\.dev-request \{\s*--thread-card-look: var\(--bl-card\);\s*--thread-card-solid-look: var\(--bl-card\);\s*--thread-card-edge-look: inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift\);/);
+});
+
+// #6807: a change waiting on the bot's fix for a check that is not its own
+// ends on Fixing, with the card's own line under it.
+test('#6807: a change waiting on a fix for its check ends on Fixing, with its line', () => {
+  const { changeRail } = loadTsx(MODEL);
+  const input = {
+    id: 51, author: 'evan', at: '2026-11-13T15:16:00Z', plan: null,
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
+    votes: { name: 'Votes', figure: 'Needs 2 more yes', tone: 'ask', done: false, note: [] },
+  };
+  const testing = { name: 'Testing', figure: 'Found a problem', tone: 'bad', done: false, note: [] };
+  const note = 'The check it fails on fails without the change too. Homeroom bot is getting that check fixed (request #6805).';
+  const flaky = changeRail({ ...input, testing: { ...testing, botFix: 'fixing' }, fixNote: note });
+  assert.deepEqual(names(flaky), ['Built', 'Tests failed', 'Fixing']);
+  assert.equal(words(flaky[2].note), note);
+  assert.equal(flaky[2].busy, true);
 });

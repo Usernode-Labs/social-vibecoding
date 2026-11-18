@@ -121,7 +121,7 @@ test('#6387 the thread read says when it is loading, and settles on success or f
 // read lands, so they fill in rather than pushing the page down.
 test('#6387 a change\'s cards keep their place until its own read lands', () => {
   const src = read('frontend/src/features/dev-board/topic/thread-changes.tsx');
-  assert.match(src, /\) : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
+  assert.match(src, /\) : look \? null : view \? \(\s+<ChangeGates id=\{item\.id\} card=\{view\.card\} v=\{view\.v\} ballot=\{ballot\} closes=\{closesList\(item\)\} \/>\s+\) : \([\s\S]*?<ChangeGatesSkeleton \/>/);
   assert.match(src, /export function ChangeSectionSkeleton\(\): ReactNode/);
   assert.match(src, /data-thread-change-skeleton=""/);
   assert.match(src, /label=\{t\('project:topic\.thread\.page\.changeLoading'\)\}/);

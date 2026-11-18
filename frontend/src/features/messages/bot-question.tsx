@@ -1,17 +1,18 @@
 import { useState } from 'react';
 
-import { InfoCircleIcon } from '@/components/ui/icons';
+import { CheckIcon, InfoCircleIcon, WarningTriangleIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { t as translate } from '../../lib/i18n/runtime';
 import { InviteSheet } from '../first-session/made';
-import { MakeSheet } from './bot-make';
+import { MakeSheet, ProjectOfferCard } from './bot-make';
 import type { Made } from '../first-session/make';
 import { AnsweredChoices } from './bot-plan-view';
-import { useTrackOf } from './bot-track';
+import { filedNextLine, useTrackOf } from './bot-track';
+import { plainText } from './plain-text';
 import type { MessagesApiError } from './api';
 import { answerBotQuestion, quoteInComposer, tapBotAction } from './store';
-import type { ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
+import type { BotOutcome, ConversationMessage, HomeroomBotAction, HomeroomBotMeta } from './types';
 
 // Step 3 (11 Nov 2026): what an offer's line says once its buttons went
 // because what it was about moved on (services/bot-cards.js retireFor), by
@@ -60,6 +61,33 @@ export function OfferRefused({ refusal }: { refusal: OfferRefusal | null }) {
   const t = useMessages('messages');
   if (!refusal) return null;
   return <p className="messages-bot-answered" role="status" data-bot-refused={refusal.code}>{t(refusalLine(refusal))}</p>;
+}
+
+/**
+ * 18 Nov 2026: what came of an offer, on its card where its buttons were
+ * (services/homeroom-bot-mayor.js settleOnCard): "Filed as request #12.",
+ * "Posted version 7 as a plan on request #4", "Not filed.". One card per
+ * action: no message under it says it again, and the "You chose" line it
+ * replaces is not drawn. A settled state gets no fill: a quiet line, a grey
+ * check for what was done, red only for what failed.
+ */
+export function OfferOutcome({ outcome }: { outcome: BotOutcome }) {
+  const next = outcome.filedNext ? filedNextLine(outcome.filedNext) : null;
+  const Icon = outcome.state === 'failed' ? WarningTriangleIcon : outcome.state === 'done' ? CheckIcon : null;
+  return (
+    <div
+      className={`mt-1 flex max-w-[480px] items-start gap-1.5 text-[0.8125rem] leading-[1.125rem] ${outcome.state === 'failed' ? 'text-red-700 dark:text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`}
+      role="status"
+      data-bot-outcome={outcome.state}
+      data-bot-outcome-kind={outcome.kind || undefined}
+    >
+      {Icon ? <Icon className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
+      <div className="min-w-0">
+        <p className="m-0">{plainText(outcome.text)}</p>
+        {next ? <p className="m-0 mt-0.5" data-bot-outcome-next={outcome.filedNext?.say}>{next}</p> : null}
+      </div>
+    </div>
+  );
 }
 
 /*
@@ -179,6 +207,19 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
   const meta = botMeta(message);
   // The answer tapped here, until the server's own state comes back.
   const [chosen, setChosen] = useState<string | null>(null);
+  // #6783: a private thread's New project card (the bot's offer with a brief)
+  // is its own card under the reply, not a row of buttons.
+  if (meta?.kind === 'make_offer' && meta.makeProject?.brief) {
+    return (
+      <ProjectOfferCard
+        project={meta.makeProject}
+        made={meta.madeSlug ? { slug: meta.madeSlug, name: meta.madeName || meta.madeSlug } : null}
+        closedLine={meta.status === 'closed'
+          ? (meta.retired ? t(retiredLine(meta.retired)) : meta.expired ? t('messages:bot.offer.expired') : t('messages:bot.actions.closed'))
+          : null}
+      />
+    );
+  }
   if (meta?.actions?.length) return <BotActions message={message} meta={meta} conversationId={conversationId} hidePrompts={hidePrompts} />;
   if (!meta || !meta.question) return null;
   const answers = (meta.answers || []).filter((a) => typeof a === 'string' && a.trim());
@@ -215,7 +256,8 @@ export function BotQuestion({ message, conversationId, hidePrompts = false }: {
         </div>
       ) : null}
       {open && offer && meta.dbRead === true ? <DbReadNote /> : null}
-      {answered && offer ? <p className="messages-bot-answered">{t('messages:bot.question.youChose', { answer: answered })}</p> : null}
+      {meta.outcome ? <OfferOutcome outcome={meta.outcome} /> : null}
+      {answered && offer && !meta.outcome ? <p className="messages-bot-answered">{t('messages:bot.question.youChose', { answer: answered })}</p> : null}
       {answered && !offer ? <AnsweredChoices items={[{ question: t('messages:bot.question.youAnswered'), answer: answered }]} /> : null}
       {(open || chosen) && mirrorsReplies(meta) ? (
         <p className="messages-bot-note">
@@ -364,7 +406,8 @@ function BotActions({ message, meta, conversationId, hidePrompts = false }: {
         </p>
       ) : null}
       {open && meta.dbRead === true ? <DbReadNote /> : null}
-      {chosen ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? t('messages:bot.actions.youAsked', { question: chosen }) : t('messages:bot.actions.youChose', { choice: chosen })}</p> : null}
+      {meta.outcome ? <OfferOutcome outcome={meta.outcome} /> : null}
+      {chosen && !meta.outcome ? <p className="messages-bot-answered">{chosenAction?.type === 'prompt' && !chosenAction.quote ? t('messages:bot.actions.youAsked', { question: chosen }) : t('messages:bot.actions.youChose', { choice: chosen })}</p> : null}
       {meta.status === 'closed' && !chosen ? (
         <p className="messages-bot-answered" data-bot-closed-why={closedWhy ? '' : undefined} data-bot-retired={meta.retired ? meta.retired : undefined}>
           {closedWhy || (meta.retired ? t(retiredLine(meta.retired)) : meta.expired ? t('messages:bot.offer.expired') : t('messages:bot.actions.closed'))}

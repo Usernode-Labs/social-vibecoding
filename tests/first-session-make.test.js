@@ -147,18 +147,19 @@ test('the landing: the story in place of the pitch unless switched off, for nobo
   // Polish N10: the email line's "Sign in" opens the same sheet titled Sign in.
   // The story heads the guest Discover now, in its short version
   // (features/guest, tests/guest-discover.test.js), with the same two ways in.
-  // Its button says join the waitlist while new accounts wait (guest-data newAccountsWait).
-  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+waitlist=\{accountsWait\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
+  // It has no button of its own since 13 Nov 2026: the bar's says join the
+  // waitlist while new accounts wait (guest-data newAccountsWait), and the
+  // story is handed the month's two figures instead.
+  assert.match(landing, /<Story\s+compact\s+primaryClass=\{PRIMARY_PILL\}\s+welcomeEmail=\{releaseEmail\}\s+month=\{month\}\s+onStart=\{\(\) => setSheet\('start'\)\}\s+onSignIn=\{\(\) => setSheet\('signin'\)\}\s+\/>/);
   // A new account from its sheet is asked what to make, not which communities to join.
   assert.match(landing, /sessionStorage\.setItem\('usernode:first-session:make', '1'\)/);
   assert.match(landing, /fetch\('\/api\/me\/first-session\/started', \{ method: 'POST', credentials: 'same-origin' \}\)/);
   const story = read('frontend/src/features/auth/story.tsx');
-  // No "learn more" link on it, and the full story asks nobody to join a
-  // waitlist. The short one over the guest Discover does, with its one
-  // button, while new accounts wait (Evan, 21 Oct 2026; pinned in
+  // No "learn more" link on it, and neither story asks anybody to join a
+  // waitlist: that is the bar's button, while new accounts wait (pinned in
   // tests/guest-discover.test.js).
   assert.doesNotMatch(story, /Learn more about Homeroom/i);
-  const full = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {}, waitlist: true });
+  const full = renderComponent('frontend/src/features/auth/story.tsx', 'Story', { primaryClass: 'pill', onStart() {} });
   assert.doesNotMatch(full, /Join the waitlist/i);
 });
 
@@ -281,9 +282,11 @@ test('"Make it" makes a private community through the dialog\'s own route', () =
   // A description for Homeroom bot to build from, or a ready-made app to make (below).
   // #6019 follow-up: a private thread's New project says who it is for;
   // Create and the first session make a private project otherwise.
-  assert.match(make, /audience = 'invited',\n\}: \{/);
+  assert.match(make, /audience = 'invited', threadRootId = null,\n\}: \{/);
   assert.match(make, /audience,\s+\.\.\.\(ready \? \{ template: ready\.template \} : \{ brief: text\.trim\(\), \.\.\.\(starter \? \{ template: starter\.template \} : \{\}\) \}\),/,
     'a ready-made app has nothing to build; a game preset sends its starter beside the brief');
+  assert.match(make, /\.\.\.\(threadRootId && !ready \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\),/,
+    'a thread sends its root with the brief, never with a ready-made app');
   // `from` is the door: 'first-session', or 'create' from the Create button.
   assert.match(make, /from: entry,/);
   assert.match(make, /export type MakeEntry = 'first-session' \| 'create';/);
@@ -837,6 +840,24 @@ test('a waitlist answer opens the make screen on Your own idea, filled in, with 
   assert.match(read(`${DIR}/make.tsx`), /const text = templated && said \? said\.text : brief;/);
 });
 
+test('#6781: Create opened from a thread\'s New project shows the bot\'s brief and suggested name, both editable', () => {
+  const base = { who: 'Jordan', entry: 'create', onMade() {}, onClose() {} };
+  const idea = 'An app for saving places on a real map, with public and private lists';
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea, name: 'Saved Places' });
+  // The brief in the description box, the name in the name field.
+  assert.match(html, /<textarea[^>]*id="first-session-brief"[^>]*>An app for saving places on a real map, with public and private lists<\/textarea>/);
+  assert.match(html, /<input[^>]*id="first-session-name"[^>]*value="Saved Places"/);
+  // Editable as always: a controlled field with no readonly.
+  assert.doesNotMatch(html, /<input[^>]*id="first-session-name"[^>]*readonly/);
+  // Nothing handed in leaves the field empty, as before.
+  const bare = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, idea });
+  assert.match(bare, /<input[^>]*id="first-session-name"[^>]*value=""/);
+  // A name alone seeds the field without picking a tile.
+  const named = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, name: 'Saved Places' });
+  assert.match(named, /<input[^>]*id="first-session-name"[^>]*value="Saved Places"/);
+  assert.doesNotMatch(named, /aria-pressed="true"/);
+});
+
 test('#5928: an idea from a Discover search says so, not that it came from the waitlist', () => {
   const make = loadTsx(`${DIR}/make.tsx`);
   assert.equal(message(make.SEARCH_IDEA_LINE), 'Filled in from your search.');
@@ -1188,4 +1209,41 @@ test('the first session\'s answer owes Homeroom bot\'s hello, unless making the 
   assert.ok(maker > 0, 'a ready-made app\'s maker is greeted');
   assert.match(create, /if \(readyMade\) \{\n\s+await require\('\.\.\/workflow\/platform\.ts'\)\.greet\(pool, \{ userId: req\.user\.id, kind: 'maker', appId: appRow\.id \}\)\n\s+\.catch\(/);
   assert.ok(maker < create.indexOf('answerJoinScreenByMaking('), 'owed first');
+});
+
+// #6784 (17 Nov 2026): New project in a private thread with Homeroom bot
+// makes the project from the plan agreed there. The screen says so under the
+// box, and sends the thread with the brief so the server can build it.
+test('#6784: a thread\'s plan comes along, and the thread is sent with the brief', () => {
+  const make = loadTsx(`${DIR}/make.tsx`);
+  assert.equal(message(make.THREAD_IDEA_LINE), 'Homeroom bot\'s plan from your thread comes along with it.');
+  const idea = 'An app for saving places on a real map, with public and private lists';
+  const base = { who: 'Jordan', entry: 'create', onMade() {}, onClose() {}, idea };
+  const html = renderComponent(`${DIR}/make.tsx`, 'MakeScreen', { ...base, threadRootId: 41 });
+  const line = /<p data-make-thread-idea="" class="([^"]*)">([^<]*)<\/p>/.exec(html);
+  assert.ok(line, 'the line is drawn');
+  // React escapes the apostrophe in the rendered line; the catalog's own words are pinned above.
+  assert.match(line[2], /^Homeroom bot.+s plan from your thread comes along with it\.$/);
+  assert.match(line[1], /\btext-xs\b/);
+  assert.match(line[1], /\btext-zinc-500\b/);
+  assert.doesNotMatch(line[1], /red-|amber-|font-(semi)?bold/);
+  // It is the line under the box, whatever the brief says: the plan comes
+  // along with an edited one too (the condition is the thread, not the text).
+  assert.ok(html.indexOf('data-make-thread-idea') > html.indexOf('</textarea>'));
+  assert.ok(html.indexOf('data-make-thread-idea') < html.indexOf('first-session-name'));
+  assert.match(read(`${DIR}/make.tsx`), /kept: threadRootId \? \{ attr: 'data-make-thread-idea'/);
+  // Without a thread there is no line, as before.
+  assert.doesNotMatch(renderComponent(`${DIR}/make.tsx`, 'MakeScreen', base), /data-make-thread-idea/);
+
+  // The body sends `thread` with the brief, and never with a ready-made app
+  // (which sends no brief at all).
+  assert.match(read(`${DIR}/make.tsx`),
+    /\.\.\.\(threadRootId && !ready \? \{ thread: \{ rootId: threadRootId \} \} : \{\}\),/);
+  // Create's door takes a real message id, and only with an idea to make.
+  const index = read(`${DIR}/index.tsx`);
+  assert.match(index, /const threadRootId = idea && Number\.isSafeInteger\(asked\) && asked > 0 \? asked : null;/);
+  assert.match(index, /threadRootId=\{mode\.threadRootId \?\? null\}/);
+  // The foot hands it in, from the thread the person is in.
+  assert.match(read('frontend/src/features/messages/private-thread-bar.tsx'),
+    /app\?\.showCreateModal\?\.\(\{ idea: text, name, audience, threadRootId: rootId \}\)/);
 });

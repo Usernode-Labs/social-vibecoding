@@ -39,6 +39,9 @@ fixed color, not the scalable source the app UI uses.
 | `homeroom-mark.png` | n/a — no Figma export | n/a | supplied by the product owner as a finished raster during the navigation design study (#2718) and committed verbatim; no re-encoding, no quantisation, no tooling involved | 261 × 261, 8-bit RGBA PNG | 7.8 KB |
 | `homeroom-logotype-black.png` | n/a — no Figma export | n/a | the eight `WORDMARK_PATHS` from `frontend/@/components/ui/wordmark.tsx` (viewBox `0 0 1236.9 319.2`) written into a plain SVG with `fill="#1c1c1e"` (`zinc-900`), then `rsvg-convert -w 280` (librsvg 2.63.2, a one-off local step whose output is committed) on a transparent background; drawn at 140 × 37 in the mail, so 2× (#2908) | 280 × 73, 8-bit RGBA PNG | 7.9 KB |
 | `homeroom-logo-black.png` | n/a — no Figma export | n/a | hand-encoded: a 5×7 bitmap "HOMEROOM" wordmark rasterized to `zinc-900` (`#1c1c1e`) on a transparent RGBA background, then wrapped in a minimal PNG (`IHDR`/`IDAT`/`IEND`) using only Node's built-in `zlib.deflateSync` — see the one-off generator note in the git history for #2673, since the repo has no `sharp`/`canvas`/ImageMagick to export from | 294 × 54, 8-bit RGBA PNG | 451 B |
+| `sky.webp` | n/a — no Figma export | n/a | the cloud image the Homeroom website (onhomeroom.com) draws behind its own hero, downloaded as the site serves it (PNG), resized to 1920 px wide, cropped to the middle 1080 rows and encoded with Pillow (`quality=74, method=6`), a one-off local step whose output is committed | 1920 × 1080, lossy WebP | 54.3 KB |
+| `landing-communities.webp` | n/a — STAND-IN, cut from a mock-up | n/a | cropped from the hero mock-up Drea shared in the landing change's discussion (17 Nov 2026), its white ground flood-filled to transparent from the edges, encoded with Pillow (`quality=88, method=6`). Replace with an export of the drawing itself when there is one | 1060 × 656, lossy WebP with alpha | 82.7 KB |
+| `landing-people.webp` | n/a — STAND-IN, cut from a mock-up | n/a | cropped from the same mock-up; the white window and the sky behind the figures removed by colour (flood fill from the edges, plus the sky enclosed between the figures), the window's edge line erased, the alpha edge softened by 0.7 px; Pillow (`quality=90, method=6`). Replace with an export of the drawing itself when there is one | 619 × 434, lossy WebP with alpha | 68.4 KB |
 
 There is no `sha384` column, and the omission is deliberate rather than an
 oversight. `public/vendor/README.md` records a digest per file because each of
@@ -85,6 +88,15 @@ this file is 4:3 as well. Nothing in the suite enforces a budget on this file.
   absolute `${PRODUCTION_ORIGIN}/brand/people.png` URL in the
   `waitlist_released` template's first version (`src/db/email-template-seeds.js`, #4570), with the same
   empty `alt` — the headline under it carries the meaning there too.
+- **sky.webp** — the clouds behind the signed-out hero (the landing's short
+  story, `frontend/src/features/auth/story.tsx`), drawn by
+  `.site-clouds::before` in `public/css/app.css` in the light shell only. Under it is the flat `--site-sky`, which is what shows if the file
+  does not load.
+- **landing-communities.webp** — the picture of the communities page beside
+  the landing hero's words, from 1024px. Decorative, empty `alt`.
+- **landing-people.webp** — the people on the bottom edge of the landing
+  hero's window, from 768px. Decorative, empty `alt`. It is drawn at up to 400px wide, so it is
+  soft on a 2× screen: the mock-up it was cut from had no more pixels.
 - **homeroom-logotype-black.png** — the logo at the top of every
   transactional email (#2908), referenced by the standard email layout's first
   version (`src/db/email-template-seeds.js`) as an absolute
@@ -117,6 +129,12 @@ to load draws its kind icon instead, so caching nine SVGs would buy nothing a
 reader can tell apart. The landing has no such fallback. `/index.html` is
 precached, so a signed-out visitor CAN reach the new landing offline — and
 without this entry they would reach it with a hole where the illustration is.
+
+`sky.webp`, `landing-communities.webp` and `landing-people.webp` are not in
+`SHELL_ASSETS` either. They are decoration with an empty `alt` or a flat
+colour under them, so an offline visitor loses the pictures and nothing
+else; `classifyRequest`'s `/brand/` rule still reads them from the cache once
+they have been fetched.
 
 `homeroom-logotype-black.png` (and the retired `homeroom-logo-black.png`) is
 deliberately NOT added to `SHELL_ASSETS`. The service worker only ever

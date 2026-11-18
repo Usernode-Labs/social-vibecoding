@@ -38,7 +38,8 @@ test('in the app: asked while the permission is undecided and the build can ask'
     moment: 'invite_sent', state: STATE(), native: true, permission: 'undetermined', canRequest: true, ...over,
   }).show;
   assert.equal(app(), 'app');
-  assert.equal(app({ permission: null }), 'app', 'an unreadable permission may still be asked by a tap');
+  assert.equal(app({ permission: 'undetermined' }), 'app', 'never decided: ask');
+  assert.equal(app({ permission: null }), null, 'an unreadable permission is unknown: no ask');
   assert.equal(app({ permission: 'granted' }), null, 'nothing to ask');
   assert.equal(app({ permission: 'denied' }), null, 'the OS shows no prompt: never asked again');
   assert.equal(app({ canRequest: false }), null, 'a build that cannot ask');
@@ -210,13 +211,13 @@ test('each moment has its words, in the app and on the web', () => {
 });
 
 // A tap's answer is read, not guessed: only a real refusal may say off.
-async function askOsOf(chrome) {
+async function askOsOf(chrome, limitMs) {
   const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
   const prior = globalThis.window;
   globalThis.window = { NativeChrome: chrome };
   try {
     const { askOs } = loadTsx('frontend/src/features/notify-ask/ask-state.ts');
-    return await askOs();
+    return await askOs(limitMs);
   } finally {
     if (had) globalThis.window = prior; else delete globalThis.window;
   }
@@ -251,22 +252,84 @@ test('a reported refusal is read once more before it is trusted', async () => {
   }), { outcome: 'unknown', settings: false }, 'a throwing re-read is unknown, never off');
 });
 
-test('only a real refusal draws the off line', () => {
+test('an unknown answer is read once more: an already-allowed phone settles on', async () => {
+  const read = (reading) => ({
+    notifyWhenReady: async () => ({ outcome: 'unknown' }),
+    notifyAskPermission: async () => reading,
+  });
+  assert.deepEqual(await askOsOf(read({ permission: 'granted' })), { outcome: 'granted', settings: false },
+    'the phone allows notifications after all: the card can say so');
+  assert.deepEqual(await askOsOf(read({ permission: 'denied', canOpenSettings: true })),
+    { outcome: 'denied', settings: true }, 'a refusal read again is the off line');
+  assert.deepEqual(await askOsOf(read({ permission: null, canOpenSettings: true })),
+    { outcome: 'unknown', settings: true }, 'still unreadable: the unsure line, with the way to settings');
+  assert.deepEqual(await askOsOf(read({ permission: null, canOpenSettings: false })),
+    { outcome: 'unknown', settings: false }, 'nowhere to send them: no button');
+});
+
+test('a bridge that never answers still settles', async () => {
+  const { ASK_OS_LIMIT_MS } = loadTsx('frontend/src/features/notify-ask/ask-state.ts');
+  assert.equal(ASK_OS_LIMIT_MS, 60_000, 'a minute at most, and exported for this test');
+  const hung = (reading) => ({
+    notifyWhenReady: () => new Promise(() => {}),
+    notifyAskPermission: async () => reading,
+  });
+  assert.deepEqual(await askOsOf(hung({ permission: 'granted' }), 20),
+    { outcome: 'granted', settings: false }, 'the bound passes and the re-read answers');
+  assert.deepEqual(await askOsOf(hung({ permission: null, canOpenSettings: true }), 20),
+    { outcome: 'unknown', settings: true }, 'still unreadable: the card settles rather than waiting forever');
+});
+
+test('an unreadable phone leaves planAsk with no ask, not an undetermined one', async () => {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const priorWindow = globalThis.window;
+  const priorFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    async json() { return { asks: [], phone: false, email: false }; },
+  });
+  globalThis.window = {
+    usernode: { isNative: true },
+    NativeChrome: {
+      async notifyAskPermission() { throw new Error('bridge timed out'); },
+    },
+  };
+  try {
+    const { planAsk } = loadTsx('frontend/src/features/notify-ask/ask-state.ts');
+    const context = await planAsk('invite_sent');
+    assert.equal(context.native.permission, null, 'a rejected read is explicitly unknown');
+    assert.equal(context.native.canRequest, false);
+    assert.equal(context.plan.show, null, 'an unknown answer never draws the card');
+  } finally {
+    globalThis.fetch = priorFetch;
+    if (had) globalThis.window = priorWindow; else delete globalThis.window;
+  }
+});
+
+test('only a real refusal draws the off line, and every tap settles', () => {
   const src = read('frontend', 'src', 'features', 'notify-ask', 'notify-ask.tsx');
   const ask = src.slice(src.indexOf('const notifyMe ='), src.indexOf('const gotApp'));
 
   assert.equal((src.match(/setPhase\('off'\)/g) || []).length, 1, 'one off line, in one place');
   assert.match(ask, /answer\.outcome === 'denied'[\s\S]*?setPhase\('off'\)/, 'denied: the off line');
-  assert.match(ask, /else \{\s*telemetry\.done\('failure', \{ errorCode: 'unknown' \}\);\s*setPhase\('unsure'\);/,
-    'unknown (and no-app) keep the ask instead of claiming off');
+  assert.match(ask, /else \{\s*telemetry\.done\('failure', \{ errorCode: 'unknown' \}\);\s*setSettings\(answer\.settings\);\s*setPhase\('unsure'\);/,
+    'unknown: the unsure line, with the settings it can open');
   assert.doesNotMatch(ask, /setPhase\('off'\)[\s\S]*answer\.outcome === 'denied'/,
     'nothing before a real denial says off');
+  assert.match(ask, /if \(phase !== 'app'\) return;/, 'a settled card never asks again');
+  assert.match(ask, /answer\.outcome !== 'no-app'/, 'every settled tap is recorded, so the moment is done');
 
   assert.match(src, /'notifications:ask\.unsure'/, 'a literal id');
   assert.match(src, /data-notify-ask-unsure=""/, 'the line has its own node');
+  assert.match(src, /aria-busy=\{phase === 'asking'/, 'the card says it is checking');
+
+  const unsure = src.slice(src.indexOf("phase === 'off' || phase === 'unsure'"), src.indexOf('<div className="mt-3'));
+  assert.match(unsure, /data-notify-ask-unsure/, 'the unsure ending draws its line');
+  assert.match(unsure, /openNotificationSettings/, 'and the way to the phone settings');
+  assert.doesNotMatch(unsure, /data-notify-ask-yes/, 'but no Notify me again');
 
   assert.ok(ask.indexOf('await askOs()') < ask.indexOf("recordAsk('app', moment, 'yes')"),
-    'the answer is read before it is recorded, so an unreadable one is not saved');
+    'the answer is read before it is recorded');
 });
 
 test('a small group is 2 to 8 people in a private project', () => {

@@ -131,6 +131,7 @@ import { NotificationsPinnedSections } from './notifications-list';
 import type { NotificationRowView } from './notifications-list';
 import { CardHistory, ProjectStack, foldLive, foldStories, type CardPlace, type LiveItem } from './notification-stacks';
 import { dayNumber } from '../../lib/time-zone';
+import { agoStamp } from '../../lib/timestamp';
 
 type ScreenRowView = NotificationRowView & {
   /** The unelided instant for the `<time>`'s title (#1808, stampFields). */
@@ -202,7 +203,25 @@ type ScreenRowView = NotificationRowView & {
 
 type RowTone = 'needs' | 'blocked' | 'hold';
 
-type Tab = 'all' | 'unread';
+type Tab = 'all' | 'unread' | 'threads';
+
+/**
+ * #6785: one thread the viewer took part in, as `/api/me/recent-threads`
+ * answers it (services/recent-threads.js). `kind`, `number` and `title` are
+ * what the page it opens says: a request, a change, or a decision.
+ */
+type RecentThread = {
+  threadId: number;
+  kind: 'request' | 'change' | 'decision';
+  number: number | null;
+  title: string;
+  appSlug: string;
+  appName: string;
+  appIconEmoji: string | null;
+  appIconUrl: string | null;
+  lastAt: string;
+  href: string;
+};
 
 /** #3206: the All tab's kind chips (./notifications-kinds.js). */
 type KindFilter = 'votes' | 'mentions' | 'invites';
@@ -300,6 +319,67 @@ function SectionHead({ children, ...rest }: { children: ReactNode } & Record<`da
     <div className="px-4 pt-4 pb-1 text-xs font-medium text-zinc-500 dark:text-zinc-500" {...rest}>
       {children}
     </div>
+  );
+}
+
+/**
+ * #6785: one row of the Recent threads tab. It is the tab's whole content:
+ * the project's own tile on the left (the tile notification rows from
+ * Homeroom bot already wear), then what the thread is (Request #N, Change #N
+ * or Decision), its title, and the project and when something last happened
+ * in it. The row opens the thread's page and closes the sheet, as a
+ * notification row does. It carries none of a notification's own controls —
+ * no unread dot, no bookmark, no swipe — because it stands for a discussion,
+ * not a row sent to the viewer.
+ */
+function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
+  const t = useMessages('notifications');
+  const { text: when, title: whenTitle } = agoStamp(thread.lastAt);
+  // The shape AvatarChip hands an app tile, so app-icon-tile and
+  // AppIconContent draw it exactly as the rest of the shell does.
+  const app = {
+    name: thread.appName || '',
+    icon_url: thread.appIconUrl || null,
+    icon_emoji: thread.appIconEmoji || null,
+  };
+  const number = thread.number != null ? String(thread.number) : '';
+  const kind = thread.kind === 'request'
+    ? t('notifications:sheet.threads.kind.request', { number })
+    : thread.kind === 'change'
+      ? t('notifications:sheet.threads.kind.change', { number })
+      : t('notifications:sheet.threads.kind.decision');
+  return (
+    <button
+      type="button"
+      data-thread-id={thread.threadId}
+      className="notifications-row w-full text-start ps-4 pe-4 py-3.5 hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4"
+      onClick={(event) => {
+        // Stopped like every handler in this sheet: the click navigates and
+        // dismisses, and an outside-click listener must not also answer it.
+        event.stopPropagation();
+        window.location.hash = thread.href;
+        NotificationsSheet.close();
+      }}
+    >
+      <span
+        aria-hidden="true"
+        data-icon={appIconKind(app)}
+        className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
+      >
+        <AppIconContent app={app} />
+      </span>
+      <span className="flex-1 min-w-0">
+        <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">{kind}</span>
+        <span className="block text-[15px] font-[650] text-zinc-800 dark:text-zinc-100 truncate">{thread.title}</span>
+        <span className="block text-[13px] text-zinc-500 dark:text-zinc-400 truncate">
+          <RichMessage
+            id="notifications:sheet.threads.meta"
+            values={{ project: thread.appName || '', when }}
+            components={[<time title={whenTitle} />]}
+          />
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -1573,8 +1653,10 @@ function RunCount({ view }: { view: ScreenRowView }): ReactNode {
 }
 
 export function NotificationsSheetView() {
-  const { open, adopted } = useStoreState(notificationsSheetStore) as {
+  const { open, adopted, tab: wantedTab } = useStoreState(notificationsSheetStore) as {
     open: boolean; adopted: boolean;
+    /** The tab a caller outside the sheet asked for (`#6816`: Home's card). */
+    tab?: Tab | null;
   };
 
   // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
@@ -1598,6 +1680,31 @@ export function NotificationsSheetView() {
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  // A door straight to this tab: Home's Recent threads card asks for it by
+  // leaving the tab it wants on the sheet's store, then opens the sheet
+  // (#6816). Read once per opening and cleared, so the next opening starts on
+  // whatever tab was chosen instead.
+  useEffect(() => {
+    if (!open || !wantedTab) return;
+    setTab(wantedTab);
+    notificationsSheetStore.set({ tab: null });
+  }, [open, wantedTab]);
+  // #6785: the Recent threads tab's own list. It is fetched from
+  // /api/me/recent-threads the first time the tab is chosen while the sheet
+  // is open, and again the next time it is chosen after the sheet reopens
+  // (the reset effect below). Null means "not fetched yet", which renders
+  // nothing — the SSG pass never fetches, so the prerendered markup is
+  // unchanged.
+  const [threads, setThreads] = useState<RecentThread[] | null>(null);
+  const [threadsLoaded, setThreadsLoaded] = useState(false);
+  const [threadsLoading, setThreadsLoading] = useState(false);
+  const [threadsError, setThreadsError] = useState(false);
+  const [threadsHasMore, setThreadsHasMore] = useState(false);
+  const [threadsNext, setThreadsNext] = useState<{ lastAt: string; id: number } | null>(null);
+  // Whether the sheet is open right now, for a fetch that answers after it
+  // was dismissed: a reply that lands then must not fill the list this
+  // component will draw again on the next opening.
+  const sheetOpenRef = useRef(false);
   // The Unread tab's own reveal (#4700): "See older notifications" shows the
   // older, mostly read rows IN PLACE instead of jumping to All, and turns
   // into "Hide older notifications" while they are showing. It is a per-visit
@@ -1632,11 +1739,79 @@ export function NotificationsSheetView() {
   }, []);
   const t = useMessages('notifications');
 
+  // #6785: one page of the viewer's threads, from the pager's cursor or from
+  // the top. The list is this component's own state (the notifications store
+  // is the feed's), and a failure leaves the tab's error line rather than
+  // touching the feed's list.
+  const loadThreads = useCallback(async (cursor: { lastAt: string; id: number } | null = null) => {
+    setThreadsLoading(true);
+    setThreadsError(false);
+    try {
+      const params = new URLSearchParams({ limit: '30' });
+      let demo: string | null = null;
+      try { demo = new URLSearchParams(window.location.search).get('demo'); }
+      catch { demo = null; }
+      // The staging demo rows are the route's own (?demo=1), for a preview
+      // and the declared check.
+      if (demo === '1') params.set('demo', '1');
+      if (cursor) {
+        params.set('before', cursor.lastAt);
+        params.set('before_id', String(cursor.id));
+      }
+      const res = await fetch(`/api/me/recent-threads?${params.toString()}`, {
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.json();
+      if (!sheetOpenRef.current) return;
+      const rows: RecentThread[] = Array.isArray(data.threads) ? data.threads : [];
+      setThreads((previous) => (cursor ? [...(previous || []), ...rows] : rows));
+      setThreadsHasMore(!!data.hasMore);
+      setThreadsNext(data && data.nextBefore && typeof data.nextBefore.lastAt === 'string'
+        ? { lastAt: data.nextBefore.lastAt, id: Number(data.nextBefore.id) }
+        : null);
+    } catch {
+      if (!sheetOpenRef.current) return;
+      setThreadsError(true);
+      if (!cursor) setThreads([]);
+    } finally {
+      if (sheetOpenRef.current) {
+        setThreadsLoading(false);
+        setThreadsLoaded(true);
+      }
+    }
+  }, []);
+
+  // Chosen, not merely open: the first visit to the tab fetches, and a later
+  // visit in the same visit reuses what is in hand.
+  useEffect(() => {
+    if (!open || tab !== 'threads' || threadsLoaded || threadsLoading) return;
+    void loadThreads();
+  }, [open, tab, threadsLoaded, threadsLoading, loadThreads]);
+
+  // The next time the sheet opens, the tab starts fresh: a discussion the
+  // viewer took part in while it was closed is listed then.
+  useEffect(() => {
+    sheetOpenRef.current = open;
+    if (open) return;
+    setThreads(null);
+    setThreadsLoaded(false);
+    setThreadsError(false);
+    setThreadsHasMore(false);
+    setThreadsNext(null);
+  }, [open]);
+
   // `?shot=notifications-all` lands on All, so the capture pipeline and the
   // declared checks can reach the archive, which is otherwise one click away
   // and so invisible to both. It is where a plain message's notification is
   // listed (#18: Unread leaves those to the Messages screen), since #5289
   // took out the Messages filter that used to be this address's.
+  //
+  // #6785: `?shot=notifications-threads` lands on Recent threads, the same
+  // way, so a shot reaches the tab that is otherwise two clicks away. No
+  // declared check reads it: the strip's order is pinned on the plain
+  // `?shot=notifications` route, and the tab's behavior by the unit suites,
+  // so this change adds no check to the manifest's pinned count.
   //
   // In an effect and not in the initial state, for the reason every deep link
   // in this bundle is: the SSG pass renders this island in Node, where there
@@ -1648,6 +1823,7 @@ export function NotificationsSheetView() {
     try { shot = new URLSearchParams(window.location.search).get('shot'); }
     catch { shot = null; }
     if (shot === 'notifications-all') setTab('all');
+    if (shot === 'notifications-threads') setTab('threads');
   }, []);
 
   // #5460: the remembered search comes back after mount, not in the initial
@@ -1725,8 +1901,11 @@ export function NotificationsSheetView() {
   const olderUnread = unreadNow.filter((view) => olderThanWeek(view));
   // #3206: a kind chip narrows All only; Unread is grouped by project instead.
   const kindOn = tab === 'all' ? kindFilter : null;
-  const rows = tab === 'unread' ? unread
-    : kindOn ? all.filter((view) => matchesKindFilter(view.kind, kindOn)) : all;
+  // #6785: Recent threads is a list of its own, not a view over the feed.
+  const isThreads = tab === 'threads';
+  const rows = isThreads ? []
+    : tab === 'unread' ? unread
+      : kindOn ? all.filter((view) => matchesKindFilter(view.kind, kindOn)) : all;
   // What the tab DRAWS. On Unread expanded (#4700) the older rows — the read
   // ones already in hand, plus any further page the server still has — show
   // UNDER the unread ones, on the same tab. `rows` stays the tab's own filter:
@@ -1754,6 +1933,22 @@ export function NotificationsSheetView() {
   const matches = searching
     ? entries.filter((entry) => matchesNotificationQuery(entry, needle))
     : entries;
+  // #6785: the search field narrows Recent threads too, by the thread's title
+  // and its project's name — the two things a thread row prints.
+  const threadMatches = isThreads && needle
+    ? (threads || []).filter((thread) => `${thread.title} ${thread.appName}`.toLowerCase().includes(needle))
+    : (threads || []);
+  // #6785: the wait begins on the tab's FIRST paint, not on the fetch's first
+  // state update. Between choosing the tab and the effect that starts the
+  // fetch, nothing is loaded and nothing is marked loading yet, so a panel
+  // guarded only by `threadsLoading` draws an empty list under the pills —
+  // indistinguishable from "no threads". `threadsPending` is that gap, plus
+  // every later page-1 retry; the rows in hand stay drawn while a further
+  // page loads.
+  const threadsPending = !threadsLoaded || (threadsLoading && !(threads || []).length);
+  // The one line that stands in for the list: the error when the read
+  // failed, else the empty invitation. Never while a page is in flight.
+  const threadsSettled = isThreads && threadsLoaded && !threadsLoading && !threadsPending;
   // #5406: on Unread in its collapsed state — the one the sheet opens in, and
   // the list you are trying to empty — the rows group under one heading per
   // app, with that app's "Mark read" beside it, instead of under Today and
@@ -2005,6 +2200,15 @@ export function NotificationsSheetView() {
               : t('notifications:sheet.tab.unread')}
         </button>
         <button
+          id="notifications-tab-threads"
+          role="tab"
+          aria-selected={tab === 'threads'}
+          className={tabCls(tab === 'threads')}
+          onClick={() => setTab('threads')}
+        >
+          {t('notifications:sheet.tab.threads')}
+        </button>
+        <button
           id="notifications-tab-all"
           role="tab"
           aria-selected={tab === 'all'}
@@ -2066,16 +2270,33 @@ export function NotificationsSheetView() {
           with nothing unread (disabled), so the row does not reflow the
           first time you clear the list.
       */}
-      {/* A kind chip shows only that kind, so the pinned sections step aside too. */}
-      {searching || kindOn ? null : <NotificationsPinnedSections />}
+      {/* A kind chip shows only that kind, so the pinned sections step aside too.
+          #6785: Recent threads is not the feed, so it has nothing pinned. */}
+      {searching || kindOn || isThreads ? null : <NotificationsPinnedSections />}
       {/* #5405: while searching the list is ONLY the matches — no headings,
-          no pager — and a query with no matches gets one line saying so. */}
+          no pager — and a query with no matches gets one line saying so.
+          #6785: on Recent threads the matches are thread rows. */}
       {searching ? (
-        matches.length ? matches.map(renderEntry) : (
+        isThreads ? (
+          threadMatches.length ? (
+            <div id="notifications-threads-list">
+              {threadMatches.map((thread) => <ThreadRow key={thread.threadId} thread={thread} />)}
+            </div>
+          ) : (
+            <p id="notifications-search-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-500 text-center">
+              {t('notifications:sheet.search.noMatches', { query: query.trim() })}
+            </p>
+          )
+        ) : matches.length ? matches.map(renderEntry) : (
           <p id="notifications-search-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-500 text-center">
             {t('notifications:sheet.search.noMatches', { query: query.trim() })}
           </p>
         )
+      ) : null}
+      {!searching && isThreads && threadsLoaded && threads && threads.length ? (
+        <div id="notifications-threads-list">
+          {threads.map((thread) => <ThreadRow key={thread.threadId} thread={thread} />)}
+        </div>
       ) : null}
       {!searching && (groupedUnread ? renderAppGroups() : olderGrouped ? (
         <>
@@ -2102,11 +2323,44 @@ export function NotificationsSheetView() {
           ) : null}
         </>
       ))}
-      {!searching && !entries.length ? (
+      {!searching && !isThreads && !entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? t('notifications:sheet.empty.unread')
             : kindOn ? t('notifications:sheet.empty.kind') : t('notifications:sheet.empty.other')}
         </p>
+      ) : null}
+      {/* #6785: the tab's own error and empty states. An account that has not
+          taken part in a thread yet reads one line, the same shape as the
+          feed's empty state; both live in the list's own host, so the tab
+          never shows a blank panel under its pills. */}
+      {!searching && threadsSettled && !(threads && threads.length) ? (
+        <div id="notifications-threads-list">
+          {threadsError ? (
+            <p id="notifications-threads-error" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400 text-center">
+              {t('notifications:sheet.threads.error')}
+            </p>
+          ) : (
+            <p id="notifications-threads-empty" className="px-4 py-8 text-sm text-zinc-500 dark:text-zinc-400 text-center">
+              {t('notifications:sheet.empty.threads')}
+            </p>
+          )}
+        </div>
+      ) : null}
+      {/* #6785: the first page's wait is the list's own placeholders, the
+          same row shape it fills with, so nothing jumps when it arrives. */}
+      {!searching && isThreads && threadsPending && !threadsError ? (
+        <div id="notifications-threads-list" aria-busy="true">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="notifications-row w-full ps-4 pe-4 py-3.5 flex items-center gap-4 animate-pulse">
+              <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl bg-zinc-200 dark:bg-zinc-700" />
+              <span className="flex-1 min-w-0">
+                <span className="block h-3 w-24 rounded bg-zinc-200 dark:bg-zinc-700" />
+                <span className="mt-2 block h-3.5 w-3/4 rounded bg-zinc-200 dark:bg-zinc-700" />
+                <span className="mt-2 block h-3 w-1/3 rounded bg-zinc-200 dark:bg-zinc-700" />
+              </span>
+            </div>
+          ))}
+        </div>
       ) : null}
       {/* #5929 (item 13): under the groups, above the way on — only on the
           collapsed Unread tab, and only while an unread row older than a
@@ -2212,6 +2466,20 @@ export function NotificationsSheetView() {
             onClick={() => controller()?.loadOlder()}
           >
             {snap.loadingMore ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
+          </button>
+        </div>
+      ) : isThreads && threadsHasMore ? (
+        // #6785: the same "load more as you scroll to the bottom" footer the
+        // All tab wears, on the threads tab's own cursor.
+        <div className="px-4 py-3">
+          <button
+            id="notifications-load-more-threads"
+            type="button"
+            className="w-full text-center text-sm font-semibold text-violet-700 dark:text-violet-400 hover:underline disabled:opacity-40"
+            disabled={threadsLoading}
+            onClick={() => { if (threadsNext) void loadThreads(threadsNext); }}
+          >
+            {threadsLoading ? t('notifications:sheet.older.loading') : t('notifications:sheet.older.load')}
           </button>
         </div>
       ) : null)}

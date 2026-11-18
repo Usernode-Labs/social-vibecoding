@@ -71,7 +71,11 @@ test('the landing\'s ways in: no anchor in the bar, and the guest bar\'s Sign in
   // (Apple, Google, email, a phone). The waitlist landing still defers it,
   // and nothing links to #signup.
   assert.equal((interior.match(/href="#signup"/g) || []).length, 0);
-  assert.match(header[0], /<button[^>]*data-landing-sign-up=""[^>]*>Sign up<\/button>/);
+  // It says what pressing it does: "Join the waitlist" while new accounts
+  // wait, which is what the cold document says until the options arrive
+  // (guest-data NEW_ACCOUNTS_WAIT), and "Sign up" once they no longer do
+  // (tests/guest-discover.test.js).
+  assert.match(header[0], /<button[^>]*data-landing-sign-up=""[^>]*>Join the waitlist<\/button>/);
   // The in-app survey is not one of them any more. #landing-status-link is
   // the exception and keeps its own href — see the check-my-status test.
   const pills = interior.slice(interior.indexOf('id="landing-waitlist-link"'));
@@ -218,7 +222,7 @@ test('the join pill is the marketing URL, from the server, opened externally', (
   // fetches in an effect, so neither is computed during render — a value read
   // at render time would differ between the prerender and the client and
   // console.error, and a console error on any route fails the proposal checks.
-  assert.match(tsx, /const waitlistPayload = useWaitlistOptions\(\)/,
+  assert.match(tsx, /const waitlistPayload = useWaitlistOptions\(mounted\)/,
     '…through the hook, i.e. in an effect — never during render (hydration)');
   assert.match(tsx, /const waitlistUrl = marketingWaitlistUrl\(waitlistPayload\)/,
     'the join pill derives from that one call');

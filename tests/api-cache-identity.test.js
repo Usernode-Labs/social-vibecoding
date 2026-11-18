@@ -30,7 +30,7 @@ test('same-origin API reads carry a non-credential partition and revalidate the 
   const h = page();
   assert.deepEqual(await (await h.win.fetch('/api/private')).json(), { fake: 'A' });
   assert.equal(h.calls[0].headers.get(SCOPE_HEADER), A);
-  assert.equal(h.calls[0].cache, 'reload');
+  assert.equal(h.calls[0].cache, 'no-cache', 'a permitted read revalidates: a 304 when nothing changed (#6790)');
   const controller = new AbortController();
   await h.win.fetch(new Request(ORIGIN + '/api/private', { signal: controller.signal, cache: 'no-store' }));
   assert.equal(h.calls[1].cache, 'no-store', 'explicit no-store is never weakened');
@@ -237,7 +237,7 @@ test('native 401 retry wraps the identity fence and gets a fresh request context
   assert.equal(new URL(h.calls[1].url).pathname, '/api/auth/me');
   assert.equal(h.calls[1].cache, 'no-store', 'the new native incarnation is verified without any offline copy');
   assert.equal(h.calls[1].headers.get(SCOPE_HEADER), null);
-  assert.equal(h.calls[2].cache, 'reload');
+  assert.equal(h.calls[2].cache, 'no-cache');
   assert.equal(h.calls[2].headers.get(SCOPE_HEADER), A);
 });
 
@@ -267,7 +267,7 @@ test('normal native renewal coalesces fresh verification before concurrent ordin
   }
   for (const req of h.calls.slice(1)) {
     assert.equal(req.headers.get(SCOPE_HEADER), B);
-    assert.equal(req.cache, 'reload');
+    assert.equal(req.cache, 'no-cache');
   }
   await h.win.fetch('/api/private');
   assert.equal(h.calls.length, 4, 'later reads reuse the verified epoch without another /me');

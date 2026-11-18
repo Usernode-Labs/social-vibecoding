@@ -712,7 +712,7 @@ test('the bot\'s turn is always in a thread: Main\'s profile, its tool and its w
   // A thread started with New thread can do what Main could.
   assert.match(prompts[2], /offer it as a request with offer_request/);
   assert.match(prompts[2], /call draw_screen: it is drawn here, in this thread/);
-  assert.match(prompts[2], /offer_new_project so New project shows under your reply/);
+  assert.match(prompts[2], /offer_new_project so a card with the name and what it will do shows under your reply/);
   assert.match(prompts[2], /unless they ask about everything, or nothing has been asked for in this thread yet\./,
     '"where do things stand?" as a new thread\'s first words is about everything, as it was in Main');
   assert.match(prompts[2], /For "where do things stand\?", "what needs me\?" or "status\?", call my_work/);

@@ -97,6 +97,34 @@ test('a data-rule break is flagged like a content-rule one, naming the rule', as
   assert.match(out.row.failureReason, /^Flagged: Third-party trackers or external scripts in public\/index\.html\./);
 });
 
+// #6766: the conventions now allow images, video, audio, fonts, map tiles and
+// styles, public API data and iframe players from other origins, while a
+// `<script>` tag from another origin and trackers or pixels in any form stay
+// banned. The group's follow-up named four cases the reviewer must tell
+// apart. The model is faked in this suite, so what is pinned is the guidance
+// it reads: an OpenFreeMap style and a YouTube embed are allowed, and an
+// outside script tag or an analytics pixel is a flag.
+test('#6766: the reviewer tells an allowed tile or embed from an outside script or pixel', async () => {
+  const diff = [
+    'diff --git a/src/map.js b/src/map.js',
+    '+const style = "https://tiles.openfreemap.org/styles/liberty";',
+    'diff --git a/src/page.html b/src/page.html',
+    '+<iframe src="https://www.youtube-nocookie.com/embed/abc123"></iframe>',
+    'diff --git a/public/index.html b/public/index.html',
+    '+<script src="https://cdn.example.com/widget.js"></script>',
+    '+<img src="https://analytics.example.com/pixel.gif">',
+  ].join('\n');
+  const { deps, calls } = fakeDeps({ diff, files: filesOf('src/map.js', 'src/page.html', 'public/index.html') });
+  await run({ deps });
+  for (const fixture of ['tiles.openfreemap.org/styles/liberty', 'youtube-nocookie.com/embed/abc123', 'cdn.example.com/widget.js', 'analytics.example.com/pixel.gif']) {
+    assert.ok(calls.input.includes(fixture), `${fixture} reaches the reviewer`);
+  }
+  // Both bans, with the pixel named as a tracker.
+  assert.match(calls.system, /a `<script>` tag from another origin, or trackers, analytics, ads, pixels or beacons in any form, including image pixels/);
+  // The allowed list, and the instruction that it is never a flag.
+  assert.match(calls.system, /An image, video, audio file, web font, map tile or style, public API response or embedded player in an `<iframe>` from another origin is allowed, and is never an outside script\./);
+});
+
 test('a flag is advisory by default and names the category and file', async () => {
   const diff = 'diff --git a/src/pages/dares.js b/src/pages/dares.js\n+export const dares = ["kiss", "truth"];\n';
   const { deps } = fakeDeps({ diff, files: filesOf('src/pages/dares.js'), review: { verdict: 'flag', category: 'Sexual content or nudity', file: 'src/pages/dares.js', reason: 'The dares are sexual.' } });

@@ -1423,6 +1423,10 @@
     "text": "Building",
     "description": "Tooltip of the small spinning ring beside \"Building it\" on Homeroom bot's plan card."
   },
+  "bot.plan.watch": {
+    "text": "Watch Homeroom bot build it",
+    "description": "Button under Homeroom bot's plan for a project's first version while it is being built: opens the project's App tab, where the app can be watched taking shape. \"It\" is the app; Homeroom bot is a name."
+  },
   "bot.plan.state.built": {
     "text": "Building it",
     "description": "Line on Homeroom bot's plan card after the person pressed \"Build it\": the bot is building what the plan describes."
@@ -1655,6 +1659,22 @@
     "text": "You chose {{choice}}",
     "description": "Shown under a message from Homeroom bot after the person pressed one of its buttons. {{choice}} is the label of the button they pressed."
   },
+  "bot.draft.show": {
+    "text": "Show the full draft",
+    "description": "Button under a request Homeroom bot drafted in a chat, below the one-line gist of the draft: shows the whole draft in place."
+  },
+  "bot.draft.hide": {
+    "text": "Show less",
+    "description": "Button under the whole of a request Homeroom bot drafted in a chat, once it is shown: folds it back to its one-line gist."
+  },
+  "bot.live.label": {
+    "text": "Where {{title}} stands",
+    "description": "Accessible name of the card under Homeroom bot's reply that follows a request it just started work on, live: where it is (queued, building, checks, up for a vote, live). {{title}} is the request's title."
+  },
+  "bot.live.vote": {
+    "text": "Vote",
+    "description": "Button on the card under Homeroom bot's reply that follows a request it started work on, once the change it built is up for the group's vote: opens the change, where the person votes."
+  },
   "bot.actions.closed": {
     "text": "No longer needed.",
     "description": "Line under a message from Homeroom bot whose buttons no longer apply."
@@ -1718,6 +1738,34 @@
   "bot.make.open": {
     "text": "Open {{project}}",
     "description": "Link under Homeroom bot's card once the person made a new project from a design: opens the project they made, by its name."
+  },
+  "bot.make.briefLabel": {
+    "text": "What it will do",
+    "description": "Label over the description on the card under Homeroom bot's (the platform's assistant's) reply in a private thread, when it offers to make a new project: the project as the bot and the person agreed it."
+  },
+  "bot.make.showAll": {
+    "text": "Show all",
+    "description": "Button under a long description on the card where Homeroom bot (the platform's assistant) offers to make a new project in a private thread: shows the rest of the description."
+  },
+  "bot.make.showLess": {
+    "text": "Show less",
+    "description": "Button under a long description on the card where Homeroom bot (the platform's assistant) offers to make a new project in a private thread, once Show all has opened it: shows only the first few lines again."
+  },
+  "bot.make.cardSubmit": {
+    "text": "Make it",
+    "description": "The main button on the card where Homeroom bot (the platform's assistant) offers to make a new project in a private thread: opens the short sheet that makes it. \"Make\" is a verb."
+  },
+  "bot.make.editFirst": {
+    "text": "Edit first",
+    "description": "The button beside Make it on the card where Homeroom bot (the platform's assistant) offers to make a new project in a private thread: opens the create screen with the name and description filled in, to change more first."
+  },
+  "bot.make.unnamed": {
+    "text": "A new project",
+    "description": "The card where Homeroom bot (the platform's assistant) offers to make a new project in a private thread, when the bot suggested no name: names what the card's Make it makes, for a screen reader."
+  },
+  "bot.make.noteBrief": {
+    "text": "Homeroom bot plans its first version from what it will do and tells you here.",
+    "description": "The line above the button of the sheet that makes a new project from Homeroom bot's (the platform's assistant's) description on a card in a private thread: what happens after it is made."
   },
   "bot.posted.answer.firstVersion": {
     "text": "Your answer is posted on {{project}}’s first-version request’s public discussion, where the group can see it.",
@@ -4662,6 +4710,10 @@
   "privateThread.filed": {
     "text": "Filed as request #{{number}} on {{project}}.",
     "description": "Line at the top of a thread the person started in their private chat with Homeroom bot (the AI tab) once it was filed. {{number}} is the new request's number, {{project}} the project's name."
+  },
+  "privateThread.made": {
+    "text": "Made into {{project}}.",
+    "description": "Line at the top of a private thread with Homeroom bot once a project was made from its plan. {{project}} is the new project's name; an Open link follows it."
   },
   "privateThread.posted": {
     "text": "Posted on #{{number}} on {{project}}.",

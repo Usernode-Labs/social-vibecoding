@@ -92,6 +92,9 @@ const App = {
   // took the "already on home" branch and drew Home beside the bot page
   // (#6530).
   _inAi: false,
+  // The Communities tab's page (#communities): set by navigateToCommunities(),
+  // cleared by any other screen's reveal in _showOnlyScreen, as _inAi is.
+  _inCommunities: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -1362,7 +1365,18 @@ const App = {
     // arrives pushed on /ws/events (`platform_version`, #2545), which is
     // what usually gets there first; this poll is what carries a tab whose
     // socket is down, and everything the message does not say.
-    setInterval(App.loadVersion, 10_000);
+    // A tab nobody is looking at does not ask (#6797): six requests a minute
+    // from every background tab told nobody anything. It asks once when it
+    // comes back (App._foregroundResync).
+    setInterval(App._pollVersion, 10_000);
+  },
+  _versionPollMissed: false,
+  _pollVersion() {
+    if (typeof document !== 'undefined' && document.hidden) {
+      App._versionPollMissed = true;
+      return;
+    }
+    App.loadVersion();
   },
 
   // Admin / moderation console entry point (#588). Was a header shield
@@ -1736,15 +1750,34 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'settings-back') return;
-    setTimeout(() => {
+    // #6805: this boot runs as soon as the session is known, usually well
+    // before the document's `load` (which waits for every subresource). A
+    // fragment navigation a script starts before the document is completely
+    // loaded REPLACES the current history entry instead of pushing one, so on
+    // a slow pod the drill-in below replaced `#settings` — and the `back()`
+    // then traversed out of the document, abandoning its boot fetches and
+    // lazy chunks and leaving the checks runner's network-idle wait with
+    // nothing that ever drains. Start only once the document has loaded, so
+    // the drill-in really pushes.
+    const start = () => setTimeout(() => {
       // A drill-in: one dispatch (a hash assignment fires hashchange only).
+      let entries = 0;
+      try { entries = history.length; } catch (err) { /* ignore */ }
       try { location.hash = '#settings/password'; } catch (err) { /* ignore */ }
       // Then back out of it once that push has settled — the traversal, and
-      // with it the duplicate popstate + hashchange pair.
+      // with it the duplicate popstate + hashchange pair. Only over the entry
+      // the drill-in actually pushed: if it was a replace, `back()` would
+      // leave the document entirely, so never traverse in that case (the
+      // check then fails on its own assertion, not a 30s load timeout).
       setTimeout(() => {
+        let pushed = false;
+        try { pushed = history.length > entries; } catch (err) { /* ignore */ }
+        if (!pushed) return;
         try { history.back(); } catch (err) { /* ignore */ }
       }, 200);
     }, 50);
+    if (document.readyState === 'complete') start();
+    else window.addEventListener('load', start, { once: true });
   },
 
   // Screenshot-state deep link `?shot=notif-permissions`: present the real
@@ -3416,9 +3449,10 @@ const App = {
           // truncated event — see services/ws-bus.js. "Something you are
           // looking at moved; go and re-read it" is exactly what a dropped
           // socket already means, so it takes the identical recovery path
-          // rather than a second one that could drift from it.
+          // rather than a second one that could drift from it. Several in a
+          // row are one sweep, on the settle gap the reconnect path keeps.
           case 'resync_hint':
-            App.resyncCurrentView();
+            App._resyncFromHint();
             break;
           // The answer to the socket's own `ping` (_pingEvents): this
           // server answers, so from now on a silence is held against it.
@@ -3473,9 +3507,9 @@ const App = {
             App.handleWorkshopUpdate(data);
             break;
           case 'board_order_update':
-            // #613: someone reordered a Dev-board column. refreshDevData
-            // re-pulls the board (including the manual order fetched by
-            // _loadDevData) and repaints, so every open board converges.
+            // #613: someone reordered a Dev-board column. The burst re-reads
+            // the manual order alone (#6791) and repaints, so every open
+            // board converges.
             App._liveRefresh('board-order', null, { appSlug: data.appSlug || App.currentApp });
             break;
           case 'app_allowance_changed':
@@ -3611,8 +3645,26 @@ const App = {
   // the socket reopening and the probe it nudges say the same thing.
   _lastResyncAt: 0,
   RESYNC_SETTLE_MS: 5000,
+  // A resync_hint is that same nudge arriving over the socket, and several can
+  // follow one another for a burst of writes: they take the same settle gap,
+  // with the last one getting its sweep.
+  _resyncHintTimer: null,
+  _resyncFromHint() {
+    if (App._resyncHintTimer) return;
+    const wait = App._lastResyncAt + App.RESYNC_SETTLE_MS - Date.now();
+    if (wait <= 0) { App.resyncCurrentView(); return; }
+    App._resyncHintTimer = setTimeout(() => {
+      App._resyncHintTimer = null;
+      App.resyncCurrentView();
+    }, wait);
+  },
   resyncCurrentView() {
     App._lastResyncAt = Date.now();
+    // A reconnect sweep does everything a waiting hint would.
+    if (App._resyncHintTimer) {
+      clearTimeout(App._resyncHintTimer);
+      App._resyncHintTimer = null;
+    }
     // `Home` and `AppView` are classic-script top-level `const` — they
     // live in the script-global lexical env but are NOT on `window`,
     // so `window.Home` / `window.AppView` would silently be undefined.
@@ -3692,13 +3744,15 @@ const App = {
    * later phase for that slug then takes the `if (card)` branch above, which
    * keeps `data-status` current with no further fetching.
    *
-   * Deliberately not gated on which screen is showing: Home.load() is the
-   * same call the running/error branch makes, the payload is one request, and
-   * gating it would mean the grid is stale the moment somebody navigates back
-   * to it mid-build — which is the bug wearing a different hat.
+   * While Home is not the screen showing, this does nothing and does not
+   * mark the slug: the grid is one request for every app the viewer can see
+   * (670 KB on production), and nobody is looking at it. The slug stays
+   * unmarked, so the first status seen while Home is up still pulls it once,
+   * and routing to Home loads the list anyway.
    */
   _listNewlyCreatedApp(slug) {
     if (!slug || App._listedNewApps.has(slug)) return;
+    if (!App._isScreenVisible('home-screen')) return;
     App._listedNewApps.add(slug);
     if (window.Home && typeof Home.load === 'function') Home.load();
   },
@@ -3738,8 +3792,10 @@ const App = {
       card.dataset.status = data.status;
       // #416: 'error' also triggers a re-pull — the fresh list carries
       // the (server-gated) last_failure_reason for the card tooltip and
-      // the "View build log" menu item.
-      if (data.status === 'running' || data.status === 'error') {
+      // the "View build log" menu item. Only while the grid is on screen:
+      // nothing else draws the list (#6791).
+      if ((data.status === 'running' || data.status === 'error')
+          && App._isScreenVisible('home-screen')) {
         Home.load();
       }
     } else {
@@ -4534,8 +4590,12 @@ const App = {
         suffix = '/dev/chat';
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.kind === 'proposal'
           && norm.ref.pr) {
-        // #4367: a change with a pull request is addressed by its number.
-        suffix = `/dev/changes/${norm.ref.pr}`;
+        // #4367/#6718: a change with a pull request is addressed by its
+        // number, and by its own session id after it when that is known.
+        const id = Number(norm.ref.id);
+        suffix = Number.isInteger(id) && id > 0
+          ? `/dev/changes/${norm.ref.pr}/${id}`
+          : `/dev/changes/${norm.ref.pr}`;
       } else if (norm.subTab === 'topic' && norm.ref && norm.ref.id) {
         const seg = norm.ref.kind === 'issue' ? 'issues'
           : norm.ref.kind === 'proposal' ? 'proposals'
@@ -5166,6 +5226,7 @@ const App = {
         else if (App._inMessages) App.navigateHome();
         else if (App._inWorkshop) App.navigateHome();
         else if (App._inAi) App.navigateHome();
+        else if (App._inCommunities) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -5193,7 +5254,7 @@ const App = {
         // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
           || App._inAdmin || App._inSettings
-          || App._inMessages || App._inWorkshop || App._inAi) {
+          || App._inMessages || App._inWorkshop || App._inAi || App._inCommunities) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -5307,13 +5368,16 @@ const App = {
         return;
       }
       if (parts[0] === 'communities' || parts[0] === 'workshop') {
-        // ONE HOME (#6361): the Communities screen's list is retired. Home
-        // holds your communities (Pinned communities and its All
-        // communities), and Needs you, the feed the list's top row opened,
-        // is its own page. Both addresses still arrive (a shared link, an
-        // older notification, a bookmark), so they are rewritten in place,
-        // which adds no Back step: with `?ws=needs` (in the query or the
-        // fragment's) to #needs, else to Home.
+        // THE COMMUNITIES TAB'S PAGE (`#communities`): the communities you
+        // pinned and the others you are in, with New community and the way
+        // to the ones to join (features/communities/index.tsx). One Home
+        // (#6361) had retired the Communities screen and sent this address
+        // to Home; the tab and its page are back, and Home no longer lists
+        // your communities. Needs you, the feed the old list's top row
+        // opened, stays its own page: with `?ws=needs` (in the query or the
+        // fragment's) the address is rewritten in place to #needs, which
+        // adds no Back step. `#workshop`, the tab's older address, is
+        // rewritten to `#communities` the same way.
         App.setChromeless(false);
         let toNeeds = false;
         try {
@@ -5325,8 +5389,10 @@ const App = {
           App.navigateToWorkshop();
           return;
         }
-        try { history.replaceState(null, '', App._rootUrl('')); } catch (err) { /* non-fatal */ }
-        App.navigateHome();
+        if (parts[0] === 'workshop') {
+          try { history.replaceState(null, '', App._rootUrl('#communities')); } catch (err) { /* non-fatal */ }
+        }
+        App.navigateToCommunities();
         return;
       }
       if (parts[0] === 'apps' || parts[0] === 'discover') {
@@ -5683,7 +5749,13 @@ const App = {
             ref = { kind: 'proposal', id: parseInt(parts[4]) || null };
           } else if (sec === 'changes' && App._changeNumber(parts[4])) {
             subTab = 'topic'; // #4367: by PR number; the topic view finds the session
-            ref = { kind: 'proposal', id: null, pr: App._changeNumber(parts[4]) };
+            // #6718: a 6th segment is the change's own session id, which wins
+            // over any lookup by the (possibly shared) number.
+            ref = {
+              kind: 'proposal',
+              id: App._changeNumber(parts[5]),
+              pr: App._changeNumber(parts[4]),
+            };
           } else if (sec === 'governance' && parts[4]) {
             // #6439: a vote to close a request forwards to the request's
             // page (`AppView._renderTopicSubView` and `openTopicInPanel`);
@@ -5785,6 +5857,12 @@ const App = {
       }
     } finally {
       App._isRestoring = false;
+      // A preview the address names (`?preview=<slug>/<id>`) reopens over the
+      // page it was opened on: a reload, a pasted link, Back onto its entry.
+      // After the route, so the page is the one it stands over.
+      if (typeof AppView !== 'undefined' && typeof AppView.restorePreviewFromAddress === 'function') {
+        setTimeout(() => AppView.restorePreviewFromAddress(), 0);
+      }
     }
   },
 
@@ -5992,9 +6070,10 @@ const App = {
 
   // The rail's own places: the roots its tabs navigate to. #6019: AI is the
   // Messages screen's bot chat. This list is only read at the rail's width.
+  // The Communities tab's page (#communities-screen) is one of them again.
   // Needs you (#workshop-screen) is a page under Home since One Home
   // (#6361), reached from it, not a place of the rail's.
-  _RAIL_ROOTS: ['home-screen', 'messages-screen', 'profile-screen', 'ai-screen'],
+  _RAIL_ROOTS: ['home-screen', 'communities-screen', 'messages-screen', 'profile-screen', 'ai-screen'],
 
   // Whether entering `screenEl` with `preferred` is a switch between places
   // on the desktop rail. The rail has to be on screen now (not hidden inside
@@ -6024,7 +6103,7 @@ const App = {
   // visible at a time (they are `flex-1` siblings in the body column, so
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
-  SCREEN_IDS: ['app-view', 'home-screen',
+  SCREEN_IDS: ['app-view', 'home-screen', 'communities-screen',
     'workshop-screen', 'weekly-digest-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
     'settings-screen', 'messages-screen', 'ai-screen'],
 
@@ -6098,6 +6177,8 @@ const App = {
     // is the one showing", and the reveal that shows something else is what
     // makes that untrue.
     if (revealId !== 'ai-screen') App._inAi = false;
+    // …and the Communities tab's page, which keeps no state to leave either.
+    if (revealId !== 'communities-screen') App._inCommunities = false;
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
     //
@@ -6579,15 +6660,14 @@ const App = {
         ? (App._isBotTopic() ? 'ai' : 'workshop')
         : null,
     );
-    // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
-    // from the same answer. It stands beside the running app and goes when
-    // the app goes, by any route: the header's close, a tab, the peeked rail,
-    // Back, Expand — and chromeless, which has no layout to stand beside.
-    // Switching straight to another app keeps `inApp` true, and the panel.
-    // The AI tab's page has it too, in the place of the chat docked beside
-    // its list (features/ai/).
+    // …AND THE SIDE PANEL BESIDE THE HOMEROOM BOT TAB'S PAGE (features/
+    // side-panel/), from the same answer: the panel is that page's column, in
+    // the place of the chat docked beside its list (features/ai/), and it goes
+    // when the page goes, by any route, chromeless included. It no longer
+    // stands beside a running app (18 Nov 2026): a panel opened on the bot's
+    // page closes as an app comes on screen rather than following it there.
     if (!App.embeddedPanel) {
-      window.UsernodeReact?.sidePanel?.appPresence?.((inApp || screen === 'ai-screen') && !App.chromeless);
+      window.UsernodeReact?.sidePanel?.appPresence?.(screen === 'ai-screen' && !App.chromeless);
     }
     // …AND THE PARKED APP, from the same answer (#2762). The running app
     // going off screen is what parks it, and this is the one place that says
@@ -6610,6 +6690,8 @@ const App = {
   // is reported then.
   _NAV_CODE_FOR_SCREEN: Object.freeze({
     'home-screen': 'home',
+    // The Communities tab's page (`#communities`).
+    'communities-screen': 'communities',
     'workshop-screen': 'needs',
     'leaderboard-screen': 'challenges',
     'profile-screen': 'profile',
@@ -7082,6 +7164,9 @@ const App = {
     // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
     // be listed here or the class gets the two owners the note above describes.
     'workshop-screen',
+    // The Communities tab's page (`#communities`): features/communities/index.tsx
+    // takes useVisibilityHiddenClass from its first commit, same seam.
+    'communities-screen',
     // This week (#6371): features/weekly-digest/index.tsx takes
     // useVisibilityHiddenClass from its first commit, same seam.
     'weekly-digest-screen',
@@ -7557,6 +7642,38 @@ const App = {
       App._showOnlyScreen('weekly-digest-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(PlatformI18n.t('weekly-digest:title'));
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // THE COMMUNITIES TAB'S PAGE (`#communities`, features/communities/): the
+  // communities you pinned and the others you are in. A tab root, so it
+  // takes no back control (App._BACK_SLOT), and it is the view the tab
+  // returns to: the page a community's Workshop was left on is forgotten, as
+  // choosing All communities always did. The island owns the whole root and
+  // reads from the controller's open() while still hidden.
+  navigateToCommunities() {
+    if ((App._inCommunities || App._revealedScreen === 'communities-screen') && !App.currentApp) return;
+    App._forgetWorkshopView();
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inMessages) App._exitMessages();
+    if (App._inWorkshop) App._exitWorkshop();
+    // Before the transition, like _inAi below: popstate and hashchange land
+    // in the same tick, and the reveal is not recorded until the callback
+    // runs, so a later-set flag would let the second run through.
+    App._inCommunities = true;
+    const screen = document.getElementById('communities-screen');
+    window.UsernodeReact?.communities?.open?.();
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('communities-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle(PlatformI18n.t('shell:title.communities'));
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
@@ -8265,7 +8382,9 @@ const App = {
   // new project, "What do you want to make?"
   // (frontend/src/features/first-session/make.tsx), the screen the first
   // session asks with, so a second project starts the way the first did;
-  // `{ import: true }` opens it on importing a GitHub repo. The New project
+  // `{ import: true }` opens it on importing a GitHub repo; `{ idea, name,
+  // audience }` (a private thread's New project) opens it filled in with the
+  // bot's brief and suggested name, for who they chose. The New project
   // dialog it used to open is retired. Answers whether it opened: another
   // of the island's screens (the first session's) keeps the view.
   showCreateModal(opts) {
@@ -8841,6 +8960,8 @@ const App = {
   // a tab it is not the root of is listed here with that tab's address.
   _BACK_SLOT: {
     'home-screen': ['none'],
+    // The Communities tab's page is a tab root.
+    'communities-screen': ['none'],
     'messages-screen': ['none'],
     // One Home (#6361): Needs you is a page under Home (its tile opens it),
     // so it has an arrow up to Home, as Challenges has one up to Me.
@@ -9326,13 +9447,12 @@ const App = {
   // THE SIDE PANEL, asked by openAppTab before it navigates
   // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
   // exactly as before; anything else is what openAppTab returns.
-  //   - In the TOP document, while an app runs on its App tab, a piece of
-  //     an app's work — a proposal, an issue, a change — that a
-  //     notification, a desktop alert or any other caller opens goes to a
-  //     panel BESIDE the app instead of replacing it (true). `take` says no
-  //     whenever that is not the moment: a phone-width window, no app on
-  //     screen, chromeless — and to a community's page at any moment
-  //     (side-panel/routes.ts): it replaces the app, full screen.
+  //   - In the TOP document, while the Homeroom bot tab's page is up, a
+  //     piece of an app's work — a proposal, an issue, a change — that a
+  //     notification or any other caller opens goes to that page's column
+  //     (true). `take` says no whenever that is not the moment: a phone-width
+  //     window, any other screen (a running app included), chromeless — and
+  //     to a community's page at any moment (side-panel/routes.ts).
   //   - In the panel's OWN document a piece of work opens right here, a
   //     community's page goes to the top window (full screen, leaving the
   //     app), and an App tab is the running app's, beside the panel (false).
@@ -9409,6 +9529,11 @@ window.App = App;
 // switches where the tab stays "visible" throughout.
 App._foregroundResync = () => {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  // The version poll stood down while the tab was hidden: ask once now.
+  if (App._versionPollMissed) {
+    App._versionPollMissed = false;
+    App.loadVersion();
+  }
   if (window.SessionState) SessionState.syncIfStale?.();
   // #6429: coming back to the tab is also a reason to ask who is signed in,
   // when the boot's check ran out of time. A slow server used to leave the
@@ -9554,6 +9679,7 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'apps': return frag.split('/')[1] ? 'app-view' : null;
     case 'discover': return frag.split('/')[1] ? 'app-view' : null;
     case 'needs': return 'workshop-screen';  // Needs you (One Home, #6361)
+    case 'communities': return 'communities-screen'; // the Communities tab's page
     case 'week': return 'weekly-digest-screen'; // This week (#6371)
     case 'profile': return 'profile-screen';
     case 'settings': return 'settings-screen';

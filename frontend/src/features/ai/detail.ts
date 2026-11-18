@@ -25,7 +25,13 @@
 
 import { useEffect, useState, useSyncExternalStore } from 'react';
 
-export type DetailKind = 'design' | 'plan' | 'shots' | 'draft';
+/**
+ * `preview` (Nov 2026) is a change's running preview standing in the column.
+ * The column only makes room for it: the preview itself is drawn by the
+ * staging overlay over the column's placeholder, because its frame must never
+ * move (../staging/placement.ts).
+ */
+export type DetailKind = 'design' | 'plan' | 'shots' | 'draft' | 'preview';
 
 /** What the detail is about: a design's thread, a plan's session, a change. */
 export interface DetailRef {
@@ -359,7 +365,7 @@ export function openDetail(input: {
   from?: string | null;
 }): void {
   const kind = input?.kind;
-  if (kind !== 'design' && kind !== 'plan' && kind !== 'shots' && kind !== 'draft') return;
+  if (kind !== 'design' && kind !== 'plan' && kind !== 'shots' && kind !== 'draft' && kind !== 'preview') return;
   const ref = input.ref || {};
   if (kind === 'design' && (!valid(ref.conversationId) || !valid(ref.rootId))) return;
   if (kind === 'draft' && (!valid(ref.conversationId) || !valid(ref.actionId)
@@ -440,6 +446,12 @@ export function isDetailOpen(): boolean {
 }
 
 /** The entry open now (not a hook): for the shims and for tests. */
+/** Hear every change to the detail (the preview's placement follows its column). */
+export function subscribeDetail(fn: () => void): () => void {
+  holder.listeners.add(fn);
+  return () => { holder.listeners.delete(fn); };
+}
+
 export function detailEntry(): DetailEntry | null {
   return holder.state.entry;
 }

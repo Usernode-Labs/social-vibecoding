@@ -82,6 +82,7 @@ const shotsView = require('../services/shots-view');
 const { botRequestedBySql } = require('../services/bot-requested-by');
 const { governanceKindsSql } = require('../services/governance-kinds');
 const { threadsInSql } = require('../services/ai-work');
+const { updateComingSql } = require('../services/homeroom-bot-progress');
 const { awaitingYesSql } = require('../services/vote-ready');
 const communities = require('../services/communities');
 const governance = require('../services/governance');
@@ -193,8 +194,14 @@ const BALLOT_THREAD_SQL = (cs) => `${cs}.thread_id IS NOT NULL AND cardinality($
 // own page says it is going live. Voting early stays possible on the
 // change's own page. What is left here is the viewer's own: not theirs, not
 // voted on yet, and the ballot's exclusions.
-const VOTE_OPEN_SQL = (alias) => `EXISTS (SELECT 1 FROM work_states wso
-                WHERE wso.item_kind = 'change' AND wso.item_ref = ${alias}.id AND wso.vote_open)`;
+//
+// #6819: the stored row can lag the turn that started on the change, so the
+// live check is read here too: a change whose update is coming is no vote to
+// owe, as its own page says. `alias` is a chat_sessions row, as
+// updateComingSql needs.
+const VOTE_OPEN_SQL = (alias) => `(EXISTS (SELECT 1 FROM work_states wso
+                WHERE wso.item_kind = 'change' AND wso.item_ref = ${alias}.id AND wso.vote_open)
+              AND ${updateComingSql(alias)} IS NULL)`;
 
 const OWED_PROPOSALS_WHERE = `cs.status = 'promoted'
        AND ${VOTE_OPEN_SQL('cs')}
@@ -1233,13 +1240,20 @@ const DEMO_NEEDS_FEED = [
     // deciding-first order can be seen on ?demo=1 without a governed project.
     advisory: true,
     // #4490: no diagram, so its picture is "What it touches".
+    // #6814: its author declared that nothing on screen changes, so the same
+    // picture stands where its own page would show the empty box.
+    shots_detail: {
+      intent: {
+        version: 1, impact: 'none', rationale: 'A shared list is added; nothing on screen changes yet.', stories: [],
+      },
+    },
     touches: {
-      version: 1, files: 5,
+      version: 1, files: 3,
       areas: [
-        { key: 'screens', label: 'Screens', files: 3, lines: 140 },
+        { key: 'screens', label: 'Screens', files: 0, lines: 0 },
         { key: 'server', label: 'Server', files: 1, lines: 46 },
         { key: 'database', label: 'Database', files: 1, lines: 12 },
-        { key: 'tests', label: 'Tests', files: 0, lines: 0 },
+        { key: 'tests', label: 'Tests', files: 1, lines: 20 },
         { key: 'docs', label: 'Docs', files: 0, lines: 0 },
         { key: 'other', label: 'Other', files: 0, lines: 0 },
       ],

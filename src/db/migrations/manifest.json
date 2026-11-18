@@ -415,6 +415,26 @@
       "id": "bot-cards-target-app",
       "sha256": "4f24f85148bc4953343a0d2ed40002503eb33611adaf3c1a8c3a6db3225d0f13",
       "schemaSha256": "b83e961322ac8ab1972aa5195c9523264663fce1bb4c0efde48606ec32a20005"
+    },
+    {
+      "id": "first-version-idea-thread",
+      "sha256": "781df0836023d097dd21db7a65b704a1c86d74bfc37d853d60ab18f6b18571f8",
+      "schemaSha256": "30f329665f77e2b9b9bc349b4fce32615e1690cef4162164c899f1227411a034"
+    },
+    {
+      "id": "change-close-reason",
+      "sha256": "b78d422dfab580192ffbe3cdc25c018bcff0b7a1273a9bffaa674267d1cf6a7a",
+      "schemaSha256": "1405e2ec6dec216d3fbd4fff7bb88332378c966d873000ee321dd25bca66e09e"
+    },
+    {
+      "id": "app-owned-files",
+      "sha256": "8eb7b1a1db5a3ae080db15b1d34b94aab669d076845023a0d7c41b3d2b7caa44",
+      "schemaSha256": "cf82a338d78ea866385758e2a6442c619c534d845c15cf81cfca572f039e3414"
+    },
+    {
+      "id": "bot-reply-html-status",
+      "sha256": "c6b8d2aca7b1269e1d7a48dced948dbc069b9442e4c78eb5b0305c7888beb533",
+      "schemaSha256": "b85d99e22b8d8c6c9edf572b445988a072e927b224584f293f1788effc5a631f"
     }
   ]
 }

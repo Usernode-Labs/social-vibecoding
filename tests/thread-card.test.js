@@ -39,30 +39,98 @@ const testing = (over = {}) => gate({ name: 'Tested', figure: 'All checks passed
 const standing = (state) => withWords({ since: '2026-11-08T12:00:00Z', ...state });
 
 test("a change's foot speaks for the vote once its tests have passed", () => {
-  const { changeFoot, alsoTests } = loadTsx(MODEL);
-  const foot = changeFoot({
-    status: { key: 'vote', label: 'Vote · 0/2' },
+  const { changeFoot, changePhase } = loadTsx(MODEL);
+  const input = {
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
     votes: votes({ tone: 'ask', facts: [{ key: 'tally', text: '3 waiting' }, { key: 'mine', text: 'You haven’t voted.', ask: true }], note: ['Any of the 3 members can give it.'] }),
     testing: testing(),
-  });
+  };
+  assert.equal(changePhase(input), 'vote');
+  const foot = changeFoot(input);
   assert.equal(foot.gate, 'votes');
   assert.equal(foot.key, 'vote');
   assert.equal(foot.headline, 'Needs 2 more yes');
-  assert.deepEqual(JSON.parse(JSON.stringify(foot.facts)), ['3 waiting', 'You haven’t voted.']);
+  assert.equal(foot.title, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(foot.facts)), ['3 waiting', 'You haven’t voted.'], 'the card already counts, so no second count');
   assert.deepEqual(JSON.parse(JSON.stringify(foot.sub)), ['Any of the 3 members can give it.']);
   assert.equal(foot.tone, null);
-  assert.equal(alsoTests(foot, testing()), null, 'passed tests add nothing under the vote');
+  // With no count of the card's own, the foot counts: "0 of 2", then the viewer's line.
+  const bare = changeFoot({ ...input, votes: votes({ tone: 'ask', facts: [{ key: 'mine', text: 'You haven’t voted.', ask: true }] }) });
+  assert.deepEqual(bare.facts.map(words), ['0 of 2', 'You haven’t voted.']);
 });
 
-test('a vote the viewer can cast leads even when its tests failed, which ride under it', () => {
-  const { changeFoot, alsoTests } = loadTsx(MODEL);
+test('failed tests lead even over a vote the viewer can cast, and so do tests still running', () => {
+  const { changeFoot, changePhase, fixStanding } = loadTsx(MODEL);
+  // 17 Nov 2026: nothing can go live until its tests pass, so the foot says
+  // that first, in red. Vote stays in the foot beside See what failed
+  // (change-head.tsx), a white pill; the sun pill is what moves it on.
   const bad = testing({ name: 'Testing', figure: 'The preview didn’t start', tone: 'bad', done: false, note: ['Could not parse repo URL'] });
-  const foot = changeFoot({ status: { key: 'vote', label: 'Vote · 0/2' }, votes: votes({ tone: 'ask' }), testing: bad });
-  assert.equal(foot.key, 'vote', 'the one thing the viewer can do here stays the headline');
-  const also = alsoTests(foot, bad);
-  assert.equal(also.bad, true);
-  assert.equal(also.figure, 'The preview didn’t start');
-  assert.deepEqual(JSON.parse(JSON.stringify(also.lines)), ['Could not parse repo URL']);
+  const foot = changeFoot({ status: { key: 'needs_vote', label: 'Vote · 0/2' }, votes: votes({ tone: 'ask' }), testing: bad });
+  assert.equal(foot.key, 'failed');
+  assert.equal(foot.tone, 'bad');
+  assert.equal(words(foot.title), 'Tests failed');
+  assert.deepEqual(JSON.parse(JSON.stringify(foot.facts)), ['The preview didn’t start']);
+  assert.deepEqual(JSON.parse(JSON.stringify(foot.sub)), ['Could not parse repo URL']);
+  // Whether a fix is on its way decides the headline: a bot that stopped says so.
+  assert.equal(fixStanding(bad), 'waiting');
+  assert.equal(fixStanding({ ...bad, botFix: 'fixing' }), 'fixing');
+  assert.equal(fixStanding({ ...bad, botFix: 'queued' }), 'fixing');
+  const stopped = changeFoot({ status: { key: 'needs_vote', label: 'Vote · 0/2' }, votes: votes({ tone: 'ask' }), testing: { ...bad, botFix: 'stopped' } });
+  assert.equal(words(stopped.title), 'Stopped: its tests still fail');
+  // Tests still running lead too (they used to ride under the vote as a
+  // third line): Testing, how far they are, and the bar. Vote sits beside
+  // See progress.
+  const running = testing({ name: 'Testing', figure: 'About 2 min left', tone: null, done: false, note: ['412 of 738 checks done'] });
+  const input = { status: { key: 'needs_vote', label: 'Vote · 0/2' }, votes: votes({ tone: 'ask' }), testing: running };
+  assert.equal(changePhase(input), 'testing');
+  const testingFoot = changeFoot(input);
+  assert.equal(testingFoot.key, 'testing');
+  assert.equal(testingFoot.headline, 'Testing');
+  assert.deepEqual(JSON.parse(JSON.stringify(testingFoot.facts)), ['About 2 min left']);
+  assert.deepEqual(JSON.parse(JSON.stringify(testingFoot.sub)), [], 'what the tests are doing is the note under the timeline\'s Testing step');
+  // The foot's parts, in the page.
+  const change = read(CHANGE);
+  assert.match(change, /headline=\{foot\.title \? t\(foot\.title\.id, foot\.title\.values\) : foot\.headline\}/);
+  assert.match(change, /\{failed && !ballot && v\.votes\.tone === 'ask' \? voteAction : null\}/);
+  assert.match(change, /\{failed \? null : testAction\}\s*\{\/\* Tests still running: the vote is open meanwhile, beside See progress\. \*\/\}\s*\{failed \|\| ballot \|\| decided \? null : voteAction\}/);
+  assert.doesNotMatch(read(MODEL), /alsoTests/, 'no line of tests under a vote any more');
+  assert.equal(message('project:topic.rail.testsFailedPlain'), 'Tests failed');
+});
+
+test('in a side panel the thread is the same three cards, and the picture is one picture with one switch', () => {
+  const css = read('public/css/app.css');
+  const panel = 'html:is(:not([data-skin]), [data-skin="brand"]) :is(.dev-ws-side, .in-side-panel body, .gc-tab-body:has(> .gc-spec-side-panel-open)) #dev-topic-thread .dev-request:has(.dev-request-rail:not(:empty))';
+  const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(css, new RegExp(`${esc(panel)} :is\\(#gc-thread-head, #gc-thread-messages, \\.dev-request-rail\\) \\{\\s*min-width: 0;\\s*border-radius: var\\(--thread-card-r\\);\\s*background: var\\(--thread-card\\);`));
+  assert.match(css, new RegExp(`${esc(panel)} \\.dev-request-sheet \\{ background: var\\(--thread-ground-look, transparent\\); \\}`));
+  assert.match(css, /html\.in-side-panel\.side-panel-beside-ai \.dev-thread-kicker \{ display: none; \}/, 'the panel\'s head already names the project and the number');
+  const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
+  assert.match(brand, /\.dev-request \{ --thread-ground-look: var\(--bl-page\); \}/);
+  assert.match(brand, /\.in-side-panel\.side-panel-beside-ai body:has\(\.dev-thread-card\) \{ background: var\(--bl-page\) !important; \}/);
+  // The picture: the size switch and the light and dark flip are the
+  // expanded viewer's; the caption is one quiet line.
+  assert.match(css, /\[data-thread-picture\] \.dev-change-viewer:not\(:popover-open\) :is\(\.shots-seg-size, \.shots-theme-flip\) \{ display: none; \}/);
+  assert.match(css, /\.dev-thread-tiles-legend \.shots-change strong \{[^}]*font-weight: 400;/);
+  assert.match(css, /\.dev-thread-tiles-legend \.shots-key \{ display: none; \}/);
+  // Under the card look the plan is the timeline's Planned step, not a line over the picture.
+  assert.match(read(CHANGES), /\{plan && !thread\.card \? <PlanLine plan=\{plan\} builtFrom=\{item\.builtFrom\} \/> : null\}/);
+});
+
+test('a request with one change says it once: the card\'s summary covers the change, and the timeline is a white card', () => {
+  const head = read('frontend/src/features/dev-board/topic/request-head.tsx');
+  const changes = read(CHANGES);
+  // The card's summary, written from the request and its change, is the one summary.
+  assert.match(head, /const covers = cardLook && !editing && summary\?\.basis === 'change';/);
+  assert.match(head, /useMemo\(\(\) => \(\{ card: cardLook, page, covers \}\), \[cardLook, page, covers\]\)/);
+  assert.match(changes, /covered=\{thread\.card && sole && !!thread\.covers\}/);
+  assert.match(changes, /const summary = covered \? '' : view\?\.body\.summaryHtml \|\| '';/);
+  assert.equal(message('project:topic.card.summaryByBotChange'), 'Summary by Homeroom bot, from the request and its change.');
+  // The page with the reader open beside it is the three cards too, and the
+  // step's note is a pale wash, not the header's yellow.
+  const css = read('public/css/app.css');
+  assert.match(css, /\.gc-tab-body:has\(> \.gc-spec-side-panel-open\) \.dev-request:has\(\.dev-request-rail:not\(:empty\)\) \.dev-request-sheet \{ border-top-color: transparent; box-shadow: none;/);
+  const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
+  assert.match(brand, /--rail-note: color-mix\(in srgb, var\(--bl-wash\) 50%, var\(--bl-card\)\);/);
 });
 
 test('with no vote to cast, failed tests lead in red; running tests lead with how far they are', () => {
@@ -90,24 +158,110 @@ test('with no vote to cast, failed tests lead in red; running tests lead with ho
   assert.equal(barProgress(undefined), null);
 });
 
-test('a merge under way, live and closed each say so; live is green and closed is grey', () => {
-  const { changeFoot } = loadTsx(MODEL);
-  const merging = changeFoot({
-    status: { key: 'merging', label: 'Going live…' },
-    votes: votes({ tone: 'done', done: true, figure: '2 of 2' }),
-    testing: testing(),
-    merge: gate({ name: 'Merging', figure: 'Waiting on GitHub', note: ['GitHub is building and scanning the release images.'] }),
-  });
-  assert.equal(merging.key, 'merging');
-  assert.equal(merging.headline, 'Merging');
-  assert.deepEqual(JSON.parse(JSON.stringify(merging.facts)), ['Waiting on GitHub']);
-  const live = changeFoot({ status: { key: 'merged', label: 'Live' }, votes: votes({ tone: 'done', done: true, note: ['Merged.'] }), testing: testing() });
+test('approved, going live, live and closed each say so, and one phase decides it for the foot and the timeline', () => {
+  const { changeFoot, changePhase } = loadTsx(MODEL);
+  const { changeRail } = loadTsx(RAIL_MODEL);
+  const done = votes({ tone: 'done', done: true, figure: '2 yes votes, 2 needed', note: ['You and sam said yes.'] });
+  // Approved: it has the yes it needs and its tests passed. The foot used to
+  // stay a vote ("2 yes votes, 2 needed") over a timeline step titled "2 / 2".
+  const approved = { status: { key: 'approvals', label: '2 / 2', yes: 2, majority: 2 }, votes: done, testing: testing() };
+  assert.equal(changePhase(approved), 'approved');
+  const approvedFoot = changeFoot(approved);
+  assert.equal(approvedFoot.key, 'approved');
+  assert.equal(words(approvedFoot.title), 'Approved');
+  assert.equal(approvedFoot.tone, 'ok');
+  assert.deepEqual(JSON.parse(JSON.stringify(approvedFoot.sub)), ['You and sam said yes.']);
+  const approvedRail = changeRail({ id: 7, author: 'evan', at: null, plan: null, ...approved });
+  const approvedNow = approvedRail[approvedRail.length - 1];
+  assert.equal(words(approvedNow.title), 'Approved', 'never the pill\'s "2 / 2"');
+  assert.equal(words(approvedNow.note), 'It has the yes it needs. Homeroom syncs it with main, then it goes live.');
+  // The merge held by GitHub: one short fact in the foot, its account in the timeline's note.
+  const held = { ...approved, merge: gate({ name: 'Merging', figure: 'Waiting on GitHub', note: ['GitHub is building and scanning the release images.'] }) };
+  const heldFoot = changeFoot(held);
+  assert.equal(heldFoot.key, 'approved');
+  assert.deepEqual(JSON.parse(JSON.stringify(heldFoot.facts)), ['Waiting on GitHub']);
+  assert.deepEqual(JSON.parse(JSON.stringify(heldFoot.sub)), []);
+  const heldRail = changeRail({ id: 7, author: 'evan', at: null, plan: null, ...held });
+  assert.equal(words(heldRail[heldRail.length - 1].note), 'Waiting on GitHub. GitHub is building and scanning the release images.');
+  // Going live: the merge leads, even over tests that have not reported
+  // (the foot used to say "Testing · Not started" under a step titled "Going live…").
+  const going = { status: { key: 'merging', label: 'Going live…', yes: 2, majority: 2 }, votes: done, testing: testing({ name: 'Testing', figure: 'Not started', tone: 'muted', done: false }) };
+  assert.equal(changePhase(going), 'going');
+  const goingFoot = changeFoot(going);
+  assert.equal(goingFoot.key, 'merging');
+  assert.equal(words(goingFoot.title), 'Approved');
+  assert.deepEqual(goingFoot.facts.map(words), ['Going live']);
+  const goingRail = changeRail({ id: 7, author: 'evan', at: null, plan: null, ...going });
+  assert.deepEqual(goingRail.slice(-2).map((s) => words(s.title)), ['Approved', 'Going live']);
+  assert.equal(words(goingRail[goingRail.length - 1].note), 'It has the yes it needs and is on its way to everyone.');
+  // Live and closed.
+  const live = changeFoot({ status: { key: 'merged', label: '✓ Live' }, votes: votes({ tone: 'done', done: true, note: ['Merged.'] }), testing: testing() });
   assert.equal(live.key, 'live');
-  assert.equal(live.headline, 'Live');
+  assert.equal(words(live.title), 'Live', 'the word alone: the check mark is the pill\'s');
   assert.equal(live.tone, 'ok');
+  const reload = changeFoot({ status: { key: 'merged_reload', label: 'Live · Reload' }, votes: votes({ tone: 'done', done: true }), testing: testing() });
+  assert.equal(reload.key, 'live');
+  assert.equal(reload.title, null, 'a pill that says more than Live keeps its own words');
   const closed = changeFoot({ status: { key: 'closed', label: 'Closed' }, votes: votes({ tone: 'bad', note: ['Set aside.'] }), testing: testing({ tone: 'bad', done: false }) });
   assert.equal(closed.key, 'closed', 'a closed change says closed, whatever its tests said');
   assert.equal(closed.tone, 'muted');
+  // A stalled release is a stop, in red, in the pill's own words.
+  const stuck = changeFoot({ status: { key: 'deployment_stalled', label: 'Stuck' }, votes: votes({ tone: 'done', done: true, note: ['Its release is stuck.'] }), testing: testing() });
+  assert.equal(stuck.key, 'merging');
+  assert.equal(stuck.tone, 'bad');
+  assert.equal(stuck.headline, 'Stuck');
+  // The page reads the day it went live, and offers no vote once the group has decided.
+  const change = read(CHANGE);
+  assert.match(change, /if \(foot\.key === 'live' && v\.liveAt\) facts\.unshift\(t\('project:topic\.card\.foot\.since', \{ when: shortDate\(v\.liveAt\) \}\)\);/);
+  assert.match(change, /const decided = foot\.key === 'approved' \|\| foot\.key === 'merging' \|\| foot\.key === 'live' \|\| foot\.key === 'closed';/);
+  assert.match(read('public/js/app-view.js'), /liveAt: item\.status === 'merged' \? \(item\.live_at \|\| item\.merged_at \|\| null\) : null,/);
+});
+
+test('the card keeps to itself: the menu on its first line, a reason where a picture is missing, layers under the title, the reply box after the replies', () => {
+  const css = read('public/css/app.css');
+  const card = read(CARD);
+  // The sheet's header row takes no height; its ⋯ sits on the kicker's line
+  // and the topic is said in the kicker.
+  assert.match(css, /\.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{ height: 0; position: relative; z-index: 5; box-shadow: none; \}/);
+  assert.match(css, /\.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \.messages-thread-action \{ pointer-events: auto; \}/);
+  assert.match(css, /\.dev-request:has\(\.dev-request-bar \[data-card-menu\]\) \.dev-thread-kicker \{ padding-inline-end: 44px; \}/);
+  assert.match(card, /\{dotLine\(\[app \? app\.name : null, what, category\]\)\}/);
+  assert.match(read(REQUEST), /<ThreadKicker kind="request" number=\{r\.number\} category=\{r\.category\} \/>/);
+  assert.match(read(CHANGE), /<ThreadKicker kind="change" number=\{v\.number\} category=\{v\.category\} \/>/);
+  // No picture: why, where it would be.
+  assert.match(card, /export function NoPicture\(\{ none, phase, stopped, touches, diagramLed = false \}/);
+  assert.match(read(CHANGE), /\{cardLook && !v\.shots \? <NoPicture none=\{!!v\.shotsNone\} phase=\{phaseOf\(v\)\} stopped=\{fixStanding\(v\.testing\) === 'stopped'\} touches=\{v\.touches\} diagramLed=\{!!readDiagram\(body\.diagram\)\} \/> : null\}/);
+  // #6814: a change with nothing visible shows "What it touches" where the
+  // box was, and drops the box when the author's diagram already leads.
+  assert.match(card, /if \(diagramLed\) return null;/);
+  assert.match(card, /if \(touchesPicture\) return <TouchesPicture t=\{touchesPicture\} nothingVisible \/>;/);
+  assert.match(card, /return <ShotsWait state="none" title=\{t\('project:topic\.card\.shots\.noneTitle'\)\} text=\{t\('project:topic\.card\.shots\.noneText'\)\} \/>;/, 'no touches keeps today\'s box');
+  assert.match(read(CHANGES), /<NoPicture none=\{!!view\.v\.shotsNone\} phase=\{phaseOf\(view\.v\)\} stopped=\{fixStanding\(view\.v\.testing\) === 'stopped'\} touches=\{view\.v\.touches\} \/>/);
+  assert.equal(message('project:topic.card.shots.notYetTitle'), 'No screenshots yet');
+  assert.equal(message('project:topic.card.shots.neverTitle'), 'No screenshots');
+  // A layer opens directly under the title and stays inside the card, which
+  // grows to hold it; the scrim starts under the title.
+  assert.match(card, /const wanted = from > floor && seen >= height \? from \+ 8 : floor;/);
+  assert.match(card, /card\.style\.minHeight = need > room \? `\$\{need\}px` : card\.style\.minHeight;/);
+  assert.match(css, /\.dev-step-scrim \{ position: absolute; inset: -6px; top: var\(--step-floor, -6px\);/);
+  // The tests as counts and one row per failure; the Testing card is put away under them.
+  const change = read(CHANGE);
+  assert.match(change, /<ChecksSummary v=\{v\} actions=\{<>\{testingActions\}\{testAction\}<\/>\} \/>/);
+  assert.match(css, /\[data-gates-show="checks"\]:has\(> \[data-checks-summary\]\) \.dev-change-pair \[data-change-gate="testing"\] \{ display: none; \}/);
+  assert.match(read('public/js/app-view.js'), /const blocking = failures\.filter\(\(row\) => !row\.advisory\);/);
+  assert.equal(message('project:topic.card.checks.failed', { count: 2 }), '2 failed');
+  assert.equal(message('project:topic.card.checks.passed', { count: 736 }), '736 passed');
+  // The reply box follows a short thread, and a phone's foot buttons share the row.
+  assert.match(css, /\.dev-request:has\(\.dev-thread-card\) \.dev-request-scroll \{ flex-grow: 0; \}/);
+  assert.match(css, /\.dev-thread-foot-acts > :is\(button, a\), \.dev-thread-foot-acts > \[data-thread-foot-next\] > :is\(button, a\) \{ flex: 1 1 auto; justify-content: center; \}/);
+  // A request's foot does not repeat the timeline's note, nor show a button that only says the bot is busy.
+  const request = read(REQUEST);
+  assert.match(request, /const repeats = !!said2 && !!noted && \(noted\.includes\(said2\) \|\| said2\.includes\(noted\)\);/);
+  assert.match(request, /const a = s\.action && !\(s\.action\.disabled && foot\?\.busy\) \? s\.action : null;/);
+  // The timeline's notes have three tones, and older steps show their day only.
+  assert.match(css, /\.dev-rail-note\[data-rail-note="plain"\] \{ background: var\(--rail-note-plain, /);
+  assert.match(css, /\.dev-rail-note\[data-rail-note="bad"\] \{ background: var\(--rail-bad-tint\); \}/);
+  assert.match(read('frontend/src/features/dev-board/topic/thread-rail.tsx'), /: today \? stamp\.text : shortDate\(s\.at\);/);
 });
 
 test("a request's foot is its standing in words, with a sentence for every stage", () => {
@@ -159,9 +313,9 @@ test('the timeline: a passed test opens its checks, and the last step opens its 
   const plain = (v) => JSON.parse(JSON.stringify(v));
   const built = changeRail({
     id: 51, author: 'evan', at: '2026-11-13T15:16:00Z', plan: null,
-    testing: { tone: 'done', done: true, figure: 'All checks passed' },
-    status: { key: 'vote', label: 'Vote · 0/1' },
-    votes: { figure: 'Needs 1 more yes', done: false, asking: true },
+    testing: testing(),
+    status: { key: 'needs_vote', label: 'Vote · 0/1', yes: 0, majority: 1 },
+    votes: votes({ figure: 'Needs 1 more yes', tone: 'ask' }),
   });
   const tested = built.find((s) => s.key === 'tested');
   assert.equal(words(tested.link.label), 'See checks');
@@ -169,8 +323,13 @@ test('the timeline: a passed test opens its checks, and the last step opens its 
   const now = built[built.length - 1];
   assert.deepEqual(plain(stepOpens(now)), { kind: 'votes', changeId: 51 });
   assert.equal(stepOpens(built.find((s) => s.key === 'built')), null, 'a step with nothing to show is not a press');
-  const live = changeRail({ id: 51, author: 'evan', at: null, plan: null, testing: { tone: 'done', done: true, figure: null }, status: { key: 'merged', label: 'Live' }, votes: { figure: null, done: true, asking: false } });
-  assert.equal(words(live[live.length - 1].note), 'Everyone has it now.');
+  const live = changeRail({ id: 51, author: 'evan', at: null, plan: null, testing: testing(), status: { key: 'merged', label: 'Live', yes: 1 }, votes: votes({ tone: 'done', done: true }), liveAt: '2026-11-14T09:02:00Z' });
+  const liveNow = live[live.length - 1];
+  assert.equal(words(liveNow.title), 'Live');
+  assert.equal(liveNow.at, '2026-11-14T09:02:00Z', 'the Live step has its date');
+  assert.equal(words(liveNow.desc), 'Everyone has it now.', 'one plain line: nothing is waited for, so no note box');
+  assert.equal(liveNow.note, null);
+  assert.deepEqual(live.map((s) => words(s.title)), ['Built', 'Tested', 'Approved', 'Live']);
   const asked = requestRail({ asker: 'maya', askedAt: '2026-11-07T09:12:00Z', specs: [], changes: [], standing: standing({ stage: 'building' }), track: true });
   const last = asked[asked.length - 1];
   assert.deepEqual(plain(stepOpens(last)), { kind: 'track' });
@@ -287,6 +446,29 @@ test('the ballot\'s foot says who leads, that the leaders are level, or that the
   assert.equal(message('project:topic.card.ballot.which'), 'Which one should go live?');
 });
 
+test('#6814: a change with nothing visible shows "What it touches" where the empty box was, and nothing under a diagram', () => {
+  const { renderComponent } = require('./lib/render-tsx');
+  const touches = {
+    version: 1, files: 2,
+    areas: [
+      { key: 'screens', label: 'Screens', files: 0, lines: 0 },
+      { key: 'server', label: 'Server', files: 2, lines: 9 },
+      { key: 'database', label: 'Database', files: 0, lines: 0 },
+      { key: 'tests', label: 'Tests', files: 0, lines: 0 },
+    ],
+  };
+  const none = { none: true, phase: 'live', stopped: false };
+  const drawn = renderComponent(CARD, 'NoPicture', { ...none, touches });
+  assert.match(drawn, /class="dev-ws-diagram dev-ws-touches"/);
+  assert.match(drawn, /Nothing on screen changes/);
+  assert.doesNotMatch(drawn, /data-thread-wait/, 'the empty box is not drawn under the picture');
+  assert.equal(renderComponent(CARD, 'NoPicture', { ...none, touches, diagramLed: true }), '',
+    'the author’s diagram already leads the page');
+  const box = renderComponent(CARD, 'NoPicture', { ...none });
+  assert.match(box, /data-thread-wait="none"/, 'no picture read yet keeps today’s box');
+  assert.match(box, /Nothing you can see changes/);
+});
+
 test('a request with a summary shows it on the card, says what it was written from, and keeps the asker\'s words a press away', () => {
   const { renderComponent } = require('./lib/render-tsx');
   const view = (over = {}) => ({
@@ -348,7 +530,12 @@ test('a request with competing changes is one card: a row each with Look, one fo
   assert.match(changes, /data-thread-look=\{item\.id\} data-thread-fold=\{open \? 'open' : 'shut'\}/);
   // It is voted on in the ballot, the card's foot: the opened change draws
   // its section as a ballot's change, whose Votes card has no button.
-  assert.match(changes, /\{open \? <ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot request=\{request\} \/> : null\}/);
+  assert.match(changes, /\{open \? <ChangeBody item=\{item\} view=\{view\} plan=\{plan\} ballot look request=\{request\} \/> : null\}/);
+  // Opened, it is its summary, two facts and its picture: no Votes card and
+  // no status pill, since the vote is the card's one Vote button.
+  assert.match(changes, /\{look && view \? <LookFacts v=\{view\.v\} \/> : null\}/);
+  assert.match(changes, /\) : look \? null : view \? \(\s+<ChangeGates /);
+  assert.equal(message('project:topic.card.look.yes', { count: 2 }), '2 yes');
   // The timeline names a competing change by its letter, as the card does,
   // and its step opens it over the card.
   const { requestRail } = loadTsx('frontend/src/features/dev-board/topic/rail-model.ts');
@@ -415,7 +602,7 @@ test('the foot is a band that runs to the card\'s end when it ends the card, wit
   const brand = css.slice(css.indexOf('/* ── THE BRAND LOOK: PAPER, SIMPLIFIED, WITH BRAND STYLING'));
   assert.match(brand, /--thread-foot: color-mix\(in srgb, var\(--bl-sun\) 9%, var\(--bl-card\)\);/);
   assert.match(brand, /\.dev-thread-foot-acts :is\(\.dev-vote-btn:not\(\.dev-vote-btn-yes\), \.dev-request-primary\),[^{]*\{\s*background: var\(--bl-sun\);\s*color: var\(--bl-on-sun\);\s*box-shadow: var\(--bl-pill-edge\);/);
-  assert.match(brand, /\.dev-rail \{ --rail-now-box: var\(--bl-page\); --rail-now-box-line: var\(--app-sheet-line\); \}/);
+  assert.match(brand, /\.dev-rail \{ --rail-now-box: var\(--bl-page\); --rail-now-box-line: var\(--app-sheet-line\); --rail-note-plain: transparent; \}/);
 });
 
 test('the picture\'s chip says what the side is for this change', () => {
@@ -428,4 +615,53 @@ test('the picture\'s chip says what the side is for this change', () => {
   const css = read('public/css/app.css');
   assert.match(css, /\.shots-flip-chip-after::after \{ content: var\(--thread-chip-after\); \}/);
   assert.match(css, /\.shots-flip-chip-before::after \{ content: var\(--thread-chip-before\); \}/);
+});
+
+test('a run that worked out its screens is drawn with the Needs you slider, not the tinted viewer', () => {
+  const PICTURE = 'frontend/src/features/dev-board/topic/thread-picture.tsx';
+  const change = read(CHANGE);
+  // The card look hands such a run to the slider; a run without screens keeps the viewer.
+  assert.match(change, /if \(single && s\.state === 'verified' && s\.screens && s\.screens\.length\) \{/);
+  assert.match(change, /return <ThreadPicture s=\{s\} captions=\{voting \? null : chips\} \/>;/);
+  const picture = read(PICTURE);
+  assert.match(picture, /import \{ CompareSlider \} from '\.\.\/\.\.\/review-flow\/compare';/);
+  assert.match(picture, /ground="var\(--messages-surface-2\)"/, 'the ground is the card\'s own, never a tint');
+  assert.doesNotMatch(picture, /shots-box|shots-flip-chip|groundFor/);
+  assert.match(picture, /kind: 'shots', ref: \{ changeId: s\.changeId \}/, 'Expand opens the full viewer in the detail column');
+  // The slider prints the page's own words for a change that is live or closed.
+  const compare = read('frontend/src/features/review-flow/compare.tsx');
+  assert.match(compare, /\{captions \? captions\.after : <RichMessage id="communities:review\.compare\.captionAfter"/);
+  assert.match(compare, /\{captions \? captions\.before : <RichMessage id="communities:review\.compare\.captionBefore"/);
+  // The page's model carries the screens.
+  assert.match(read('public/js/app-view.js'), /return html \? \{ state: 'verified', html, line: null, thumbs, screens, changes, changeId: Number\(item\.id\) \|\| null \} : null;/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-thread-compare \{\s*--rf-black: var\(--text-primary\); --rf-cream: var\(--bg-primary\); --rf-line: var\(--app-sheet-line\);/);
+
+  // The frame: the changed area, never larger than life, in a picture no taller than its room.
+  const { pictureFrame, PICTURE_MAX } = loadTsx(PICTURE);
+  const screen = (over = {}) => ({
+    viewport: 'desktop', width: 1280, before: { url: '/b', height: 800 }, after: { url: '/a', height: 800 },
+    regions: [{ n: 1, b: [100, 200, 400, 60], a: [100, 200, 400, 60], bMark: null, aMark: null }], changes: [1], ...over,
+  });
+  const small = pictureFrame(screen(), 600);
+  assert.equal(small.place.scale, 1, 'a small change is shown at life size');
+  assert.ok(small.height >= 300 && small.height <= PICTURE_MAX, `height ${small.height}`);
+  const tall = pictureFrame(screen({ viewport: 'mobile', width: 390, before: { url: '/b', height: 3000 }, after: { url: '/a', height: 3000 }, regions: [{ n: 1, b: [0, 0, 390, 2800], a: [0, 0, 390, 2800], bMark: null, aMark: null }] }), 600);
+  assert.ok(tall.height <= PICTURE_MAX);
+  assert.ok(tall.place.scale < 1, 'a tall change is fitted to the room');
+  const phone = pictureFrame(screen(), 340);
+  assert.ok(phone.height <= 374 && phone.height >= 200, `height ${phone.height}`);
+});
+
+// #6807: a change whose failing check is not its own, while Homeroom bot gets
+// that check fixed, keeps Tests failed for its foot: it is not Stopped.
+test('#6807: a change the bot is getting its failing check fixed for says Tests failed', () => {
+  const { changeFoot } = loadTsx(MODEL);
+  const bad = testing({ name: 'Testing', figure: 'Found a problem', tone: 'bad', done: false, note: [] });
+  const foot = changeFoot({
+    status: { key: 'needs_vote', label: 'Vote · 0/2' }, votes: votes({ tone: 'ask' }),
+    testing: { ...bad, botFix: 'fixing', authorNote: message('changes:page.testing.note.botFixingCheck', { number: 6805 }) },
+  });
+  assert.equal(foot.key, 'failed');
+  assert.equal(words(foot.title), 'Tests failed', 'not "Stopped: its tests still fail"');
 });

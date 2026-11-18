@@ -104,6 +104,14 @@ test('the island opens the Create door over nothing else, on importing when aske
     state = { kind: 'none' };
     assert.equal(island.openCreate(setMode, true), true);
     assert.deepEqual(state, { kind: 'make', entry: 'create', startImport: true });
+    // #6781: a thread's New project hands in the brief, the name and the
+    // audience; both travel into the make screen's start state.
+    state = { kind: 'none' };
+    assert.equal(island.openCreate(setMode, false, { idea: 'An app for saving places', name: 'Saved Places', audience: 'solo' }), true);
+    assert.deepEqual(state, { kind: 'make', entry: 'create', idea: 'An app for saving places', name: 'Saved Places', ideaSource: undefined, audience: 'solo' });
+    state = { kind: 'none' };
+    assert.equal(island.openCreate(setMode, false, { name: 'Saved Places' }), true);
+    assert.deepEqual(state, { kind: 'make', entry: 'create', idea: null, name: 'Saved Places', ideaSource: undefined, audience: undefined });
     // Something already up stays.
     state = { kind: 'tour', info: { slug: 'x', name: 'X' }, path: 'walk' };
     assert.equal(island.openCreate(setMode), false);
@@ -111,8 +119,9 @@ test('the island opens the Create door over nothing else, on importing when aske
   });
   const src = read(ISLAND);
   // #6019 follow-up: a private thread's New project hands it an idea and who
-  // it is for; the door still opens over nothing else.
-  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, ideaSource, audience \}\);\s+\},/);
+  // it is for; #6781 adds the name the bot suggested. The door still opens
+  // over nothing else.
+  assert.match(src, /create\(opts\?: \{ import\?: boolean; idea\?: string \| null; name\?: string \| null; ideaSource\?: IdeaSource; audience\?: CreateAudience \}\): boolean \{[\s\S]*?return openCreate\(setMode, !!opts\?\.import, \{ idea, name, ideaSource, audience \}\);\s+\},/);
   assert.doesNotMatch(src, /made\(made: Made\): boolean|onMoreOptions|dialogs\?\.create/, 'no hand-off from a dialog, and no way to one');
 });
 
@@ -331,6 +340,52 @@ test('a ready-made app lands on the made screen like an import: set up, then rea
   assert.doesNotMatch(html, /data-first-session-sketch/, 'a ready-made app is never sketched');
   const src = read(`${DIR}/made.tsx`);
   assert.match(src, /const making = imported \|\| readyMade \? appStatus !== 'running' : /);
+});
+
+test('#6801: from Create the made screen keeps a ✕ while the project builds, and the first session\'s has none', () => {
+  const made = loadTsx(`${DIR}/made.tsx`);
+  const app = { slug: 'page-turners', name: 'Page Turners', emoji: '📚', description: 'A reading club', example: null, conversationId: 7 };
+  const create = renderToHtml(createElement(made.MadeScreen, {
+    made: app, me: 'sam', entry: 'create', onContinue() {}, onOpenChat() {}, onClose() {},
+  }));
+  assert.match(create, /<button type="button" data-make-close="" aria-label="Close"/, 'the make screen\'s own ✕');
+  assert.equal((create.match(/data-make-close/g) || []).length, 1);
+  // Without the platform header it sits in the logo bar, which holds still for it.
+  assert.match(create, /<div data-first-session-made-top="" class="relative flex h-\[max\(52px/);
+
+  // Under the platform header it sits in a short bar of its own, below it.
+  const under = renderToHtml(createElement(made.MadeScreen, {
+    made: app, me: 'sam', entry: 'create', underHeader: true, onContinue() {}, onOpenChat() {}, onClose() {},
+  }));
+  assert.match(under, /<div data-first-session-made-top="" class="relative h-12 shrink-0"><button type="button" data-make-close=""/);
+
+  // The first session's made screen is unchanged: no ✕, and no bar above the
+  // project it did not have.
+  const first = renderToHtml(createElement(made.MadeScreen, {
+    made: app, me: 'sam', entry: 'first-session', onContinue() {}, onOpenChat() {},
+  }));
+  assert.doesNotMatch(first, /data-make-close/);
+  assert.doesNotMatch(first, /relative h-12 shrink-0/);
+  const firstUnder = renderToHtml(createElement(made.MadeScreen, {
+    made: app, me: 'sam', entry: 'first-session', underHeader: true, onContinue() {}, onOpenChat() {},
+  }));
+  assert.doesNotMatch(firstUnder, /data-first-session-made-top|data-make-close/);
+
+  // Escape leaves as ✕ does, and the invite sheet's own Escape closes only the
+  // sheet: the screen sees it while the sheet is up.
+  const src = read(`${DIR}/made.tsx`);
+  assert.match(src, /if \(e\.key !== 'Escape' \|\| e\.defaultPrevented\) return;/);
+  assert.match(src, /if \(invitingRef\.current\) return;\s+onClose\(\);/);
+  assert.match(src, /const invitingRef = useRef\(inviting\);\s+invitingRef\.current = inviting;/);
+  // The ✕ is the make screen's, so it reuses its attribute: no new shell id.
+  assert.match(src, /data-make-close=""\s+onClick=\{onClose\}/);
+
+  // Wired only from Create's made screen, and leaving cancels nothing: the
+  // project was made already and Home read again in onMade.
+  const island = read(ISLAND);
+  assert.match(island, /onClose=\{fromCreate \? \(\) => leaveDoor\(false\) : undefined\}/);
+  const branch = island.slice(island.indexOf("if (mode.kind === 'made') {"), island.indexOf("if (mode.kind === 'held') return <WelcomeHeld />;"));
+  assert.doesNotMatch(branch, /method: 'DELETE'|\/cancel|deleteApp/, 'nothing cancels the build: the project was made, and Home read again in onMade');
 });
 
 test('a setup that stopped says so on the made screen, with Try again or Set secrets, as the progress view did', () => {

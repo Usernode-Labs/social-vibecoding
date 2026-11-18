@@ -822,7 +822,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // View-private apps are simply absent from the list for outsiders
       // — same non-disclosure stance as the self_hosted filter.
       const { rows } = await pool.query(`
-        SELECT ${appAccess.nonSecretAppColumnList('a')},
+        SELECT ${appAccess.appListColumnList('a')},
           COALESCE(msg_counts.cnt, 0) AS message_count,
           COALESCE(activity.total_seconds, 0) AS total_seconds,
           COALESCE(au.cnt, 0) AS active_users,
@@ -933,45 +933,57 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // #788: one query for every app this viewer is a per-app admin
       // of, so accessFlags below can resolve can_manage per row without
       // a round-trip each.
-      const adminAppIds = await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
+      // #6796: this read and the six after it need only the rows above, not
+      // each other, so they run together, in two groups: seven round trips'
+      // wait is two. Never more than four at once, whatever the list's size:
+      // the web's pool is small, and this list once held all of it
+      // (tests/app-first-version-postgres.test.js).
+      const adminAppIdsRead = appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
 
       // How many people BUILT each app, for the Discover cards on the
       // launcher. One round trip for the whole page over the shared
       // contributor definition (services/contributors.js), rather than the
       // per-app fetch the directory's detail view makes: the cards show the
       // number and never the names, so the ranked list would be all cost.
-      const contributorCounts = await contributors.loadContributorCounts(
+      const contributorCountsRead = contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
       // #5823: which of these apps THIS viewer helps build — the same
       // three-source set the Contributors list draws from (services/
       // contributors.js). Carried per row for clients that ask. An
       // empty Set when nobody is signed in, with no query.
-      const contributed = await contributors.loadContributedAppIds(
+      const contributedRead = contributors.loadContributedAppIds(
         pool, rows.map((a) => a.id), userId
       );
       // #4405: the live custom domain of each app, one round trip, so the
       // Share dialog can offer it without a per-app read.
-      const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
+      const liveDomainsRead = liveDomainsFor(pool, rows.map((a) => a.id));
       // #4053: where each first version Homeroom bot is making stands, for
       // its Home tile, in the build line this viewer reads.
       const firstVersionPhases = new Map();
-      const firstVersionLines = await firstVersionLinesFor(
+      const readFirstVersionLines = () => firstVersionLinesFor(
         pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null, firstVersionPhases
       );
       // The viewer's live invite links, for the Communities list's "Invite
       // link out" (inviteLinkOut): one query for every project they are in.
       // Best-effort: a read that fails says nothing on any row.
-      let linksOut = new Map();
-      if (userId) {
-        try {
-          linksOut = await communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId);
-        } catch (err) {
-          log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
-        }
-      }
+      const readLinksOut = () => (userId
+        ? Promise.resolve()
+          .then(() => communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId))
+          .catch((err) => {
+            log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
+            return new Map();
+          })
+        : Promise.resolve(new Map()));
 
-      const storedSecrets = await storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+      const readStoredSecrets = () => storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+
+      const [adminAppIds, contributorCounts, contributed, liveDomains] = await Promise.all([
+        adminAppIdsRead, contributorCountsRead, contributedRead, liveDomainsRead,
+      ]);
+      const [firstVersionLines, linksOut, storedSecrets] = await Promise.all([
+        readFirstVersionLines(), readLinksOut(), readStoredSecrets(),
+      ]);
 
       let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. One query for every tile
@@ -1056,13 +1068,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         const lf = (canSeeFailure && a.last_failure && typeof a.last_failure === 'object')
           ? a.last_failure : null;
         const contributorCount = contributorCounts.get(a.id) || 0;
-        return {
+        return appAccess.withoutUnsentListKeys({
           ...appAccess.stripAppSecrets(a),
-          // The launcher's copy of the manifest: everything but the declared
-          // tests and platform env, which no client reads and which were most
-          // of this payload (see summarizeManifestSnapshot). GET
-          // /api/apps/:slug still answers the whole snapshot.
-          manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
+          // The launcher's copy of the manifest: its one line, the only part
+          // a client reads (#6794). The query already left out the declared
+          // tests and platform env (appListColumnList). GET /api/apps/:slug
+          // still answers the whole snapshot.
+          manifest_snapshot: appAccess.listManifestSnapshot(a.manifest_snapshot),
           // Offline apps (services/offline-cache.js): the shell frames this app
           // at its cacheable address.
           offline_cache: offlineCache.forApp(a),
@@ -1102,7 +1114,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           invite_link_out: inviteLinkOut(linksOut.get(Number(a.id)), a.member_count),
           ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
             config.selfAppSlug),
-        };
+        });
       }));
       // Resolve fork lineage (live source-name lookup, "<deleted>"
       // fallback) for every serialized app in one batched query.
@@ -1337,12 +1349,40 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // request's plan is the design (homeroom-bot-dm.js fileFirstRequest),
       // and its early plan is written from it, asking nothing.
       const homeroomBotDm = require('../services/homeroom-bot-dm');
+      // #6784: a project is made from a design or from an idea thread, never
+      // both. Said before either is read, so the answer names the mistake.
+      if (req.body.design != null && req.body.thread != null) {
+        return res.status(400).json({ error: 'A project is made from a design or a thread, not both.' });
+      }
       let fromDesign = null;
       if (req.body.design != null) {
         fromDesign = await homeroomBotDm.designForProject(pool, { user: req.user, design: req.body.design, brief: req.body.brief });
         if (!fromDesign.ok) return res.status(fromDesign.status).json({ error: fromDesign.error });
         if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
         req.body = { ...req.body, brief: fromDesign.brief };
+      }
+      // #6783: a project made from the bot's New project card (its Make it)
+      // names the private thread that card is in, so the card can say what it
+      // made, on every device. The card's own brief is what it was made from.
+      const threadRoot = fromDesign == null && Number(req.body?.thread?.rootId) > 0
+        ? Number(req.body.thread.rootId) : null;
+
+      // #6784 (17 Nov 2026): a project made from an idea thread in one of the
+      // person's private threads with Homeroom bot (New project in the
+      // thread): their own thread, with no project yet and none made before.
+      // Its brief is the plan agreed there, so a one-line pitch from the
+      // model can no longer decide what gets built, and the first request's
+      // plan is that plan.
+      let fromThread = null;
+      if (req.body.thread != null) {
+        if (!homeroomBotDm.normalizeBrief(req.body.brief)) {
+          return res.status(400).json({ error: 'A project made from a thread starts from its plan.' });
+        }
+        fromThread = await homeroomBotDm.threadForProject(pool, {
+          user: req.user, thread: req.body.thread, brief: req.body.brief,
+        });
+        if (!fromThread.ok) return res.status(fromThread.status).json({ error: fromThread.error });
+        req.body = { ...req.body, brief: fromThread.brief };
       }
 
       // Everything the project is made from is written in ONE transaction:
@@ -1516,10 +1556,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         // files it once its repository holds the starter. Never a reason the
         // create fails.
         if (owesFirstVersion) {
-          await optional('first_version', 'Homeroom bot first version not owed',
-            () => homeroomBotDm.recordFirstVersion(db, pool, config, {
+          await optional('first_version', 'Homeroom bot first version not owed', async () => {
+            const recorded = await homeroomBotDm.recordFirstVersion(db, pool, config, {
               app: appRow, user: req.user, brief: req.body.brief, design: fromDesign,
-            }));
+            });
+            // #6784: an idea thread's link, both ways, in the same savepoint
+            // and only once the first-version row is written.
+            if (recorded && fromThread) await homeroomBotDm.recordIdeaThread(db, { app: appRow, user: req.user, thread: fromThread });
+          });
         }
         await db.query('COMMIT');
       } catch (err) {
@@ -1527,6 +1571,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         throw err;
       } finally {
         db.release();
+      }
+
+      // #6783: the New project card that made this one gives way to what it
+      // made, in the person's own thread, on every device. Never a reason the
+      // create fails (noteProjectMade never throws).
+      if (threadRoot) {
+        await require('../services/homeroom-bot-mayor').noteProjectMade(pool, {
+          userId: req.user.id, rootId: threadRoot, app: appRow,
+        });
       }
 
       // A Group's invites go out now, each the same invite (and the same
@@ -1598,7 +1651,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             // Its plan is written now, for the made screen to ask its
             // questions while the project is set up (first-version-plan.js).
             // A design's was written with the project, from the design.
-            earlyPlan: MAKE_ORIGINS.has(req.body.from) || !!fromDesign,
+            earlyPlan: MAKE_ORIGINS.has(req.body.from) || !!fromDesign || !!fromThread,
             fromDesign: !!fromDesign,
           });
         } catch (err) {
@@ -1608,6 +1661,14 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (fromDesign) {
           await require('../services/homeroom-bot-mayor').noteProjectMade(pool, {
             userId: req.user.id, rootId: fromDesign.design.rootId, app: appRow,
+          });
+        }
+        // #6784: the project's first-version thread quotes the plan agreed in
+        // the thread it came from, and links it. Never a reason the create
+        // fails (it is said after the project exists).
+        if (fromThread) {
+          await homeroomBotDm.noteThreadSource(pool, config, {
+            app: appRow, user: req.user, thread: fromThread,
           });
         }
       } else {
@@ -4440,6 +4501,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           preset: described ? described.preset : null,
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
+          // #6811: the groups the project's app keeps, so the sheet lists the
+          // ones no rule names yet and matches a hand-typed name.
+          appGroups: described ? (described.appGroups || []) : [],
           creator,
           // #6281: the creator's account is gone (apps.created_by is
           // ON DELETE SET NULL), so the sheet says that rather than

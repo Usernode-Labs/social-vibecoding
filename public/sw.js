@@ -144,7 +144,7 @@ const IMMUNE_API_PATHS = [];
 // What makes serving a stale API answer safe at all is the notify path in
 // networkFirstApi: the page is told when the real answer lands and
 // disagrees. Do not shorten this one without keeping that.
-// The platform's identity fetch wrapper requests fresh reads (`reload`),
+// The platform's identity fetch wrapper requests fresh reads (`no-cache`),
 // which skip these compatibility deadlines for the much longer
 // FRESH_API_TIMEOUT_MS below.
 const NAVIGATE_TIMEOUT_MS = 200;
@@ -243,7 +243,7 @@ const BOOT_API_TIMEOUT_MS = 0;
 //
 // Every permitted page read arrives as a fresh read: the page's identity
 // wrapper (frontend/src/lib/api-cache-identity.ts) sends them all with
-// `cache: 'reload'`, and live-reads' re-reads ask with 'no-cache' (#4177).
+// `cache: 'no-cache'` (#6790), as live-reads' re-reads do (#4177).
 // Such a read used to get no deadline at all, so the saved copy answered only
 // when the fetch REJECTED. A link that connects but carries nothing (a Wi-Fi
 // with no internet behind it, a connection that died silently between

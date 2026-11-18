@@ -280,7 +280,7 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 // The look's own colours, one set per mode. A rule for either mode names no
 // colour of the page, the cards, the bars or the sky: it reads these.
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
-  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-lift-home',
+  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-splotch-a', '--bl-splotch-b', '--bl-splotch-c', '--bl-lift-home',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
   '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down',
@@ -506,11 +506,12 @@ test('a title is Geist like every other word: no rule of the look sets the serif
   assert.match(ruleFor('.dev-ws-dash-cell b')[0].body, /font-family:\s*'Geist Mono',/);
 });
 
-test('Home\'s pinned apps and pinned communities each sit on a card, and the launcher grid keeps its box', () => {
-  const card = ruleFor('#app-list').find((rule) => /background-color/.test(rule.body));
+test('Home\'s pinned apps and the Communities page\'s groups each sit on a card, and the launcher grid keeps its box', () => {
+  const COMMUNITY_GRIDS = ':is(#home-communities-section > .grid, .communities-grid)';
+  const card = ruleFor('#app-list').find((rule) => /background-color:\s*var\(--bl-card\)/.test(rule.body));
   assert.ok(card, 'the launcher grid is painted');
-  assert.deepEqual(card.selectors, [`${EITHER} #app-list`, `${EITHER} #home-communities-section > .grid`],
-    'both grids, in both modes, and nothing else');
+  assert.deepEqual(card.selectors, [`${EITHER} #app-list`, `${EITHER} ${COMMUNITY_GRIDS}`],
+    'the launcher, the Communities page\'s two groups and what Home\'s search finds, in both modes, and nothing else');
   assert.match(card.body, /background-color:\s*var\(--bl-card\);/, 'the mode\'s card: white in light, one step off the page in dark');
   assert.match(card.body, /border-radius:\s*20px;/, 'a card\'s radius');
   assert.match(card.body, /box-shadow:\s*inset 0 0 0 1px var\(--app-sheet-line\), var\(--bl-lift-home\);/, 'and its hairline and Home\'s lift');
@@ -521,14 +522,17 @@ test('Home\'s pinned apps and pinned communities each sit on a card, and the lau
     assert.doesNotMatch(rule.body, /\b(?:padding|margin|gap|width|height|inset|top|left|right|bottom|display|position)\b[^;]*:/,
       'no rule of the look moves the launcher grid');
   }
-  // The communities' grid has no overlay: it takes a card's own padding.
-  const pad = ruleAt(`${EITHER} #home-communities-section > .grid`);
-  assert.ok(pad, 'its padding is a rule of its own');
+  // The communities' grids have no overlay: they take a card's own padding.
+  const pad = ruleAt(`${EITHER} ${COMMUNITY_GRIDS}`);
+  assert.ok(pad, 'their padding is a rule of its own');
   assert.match(pad.body, /^\s*padding:\s*16px 8px 14px;\s*$/);
-  // The grids are the ones the look paints: the section's own markup.
+  // The grids are the ones the look paints: the sections' own markup.
   assert.match(read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx'),
     /<section id="home-communities-section"[^>]*>\s*<SectionHeading[\s\S]*?<\/SectionHeading>\s*<div className="grid grid-cols-4 /,
-    'the communities\' grid is the section\'s direct child, after its label');
+    'what Home\'s search finds: the grid is the section\'s direct child, after its label');
+  const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
+  assert.match(page, /const GRID = 'communities-grid grid grid-cols-4 /, 'the page\'s two groups share one grid');
+  assert.equal((page.match(/<div className=\{GRID\}>/g) || []).length, 2, 'Pinned and Joined');
   assert.match(read('frontend', 'src', 'features', 'home', 'app-grid.tsx'), /id="app-list"/);
 });
 
@@ -573,8 +577,12 @@ test('Geist loads from our own origin by an absolute path, and only for this loo
   const block = lookBlock();
   assert.match(block, /@font-face\s*\{[^}]*font-family:\s*'Geist'[^}]*url\('\/fonts\/geist\/Geist-Variable\.woff2'\)/,
     'the face points at the self-hosted file by an absolute, same-origin path');
-  // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026).
-  assert.ok(!/Geist/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Geist');
+  // Nothing else names the family (the Brand kit look, which also set it, was retired on 12 Nov 2026),
+  // but Standard (WIP)'s brand token config, which names it as that config's typeface and so
+  // loads the file only while that config is on.
+  const outside = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
+  assert.ok(!/Geist/.test(outside), 'nothing outside this look, Standard (WIP)\'s brand config and the signed-out pages\' names Geist');
+  assert.match(read('public', 'css', 'app.css'), /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{[^}]*--wip-font: 'Geist',/);
 });
 
 test('/fonts/ is a public static prefix, like /vendor/', () => {
@@ -604,7 +612,9 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     const licence = path.join(ROOT, 'public', path.dirname(file), 'LICENSE.txt');
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
-  assert.ok(!/Young Serif/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Young Serif');
+  // Standard (WIP)'s second brand token config names it too, for its section titles (the kit's serif role).
+  const outsideSerif = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
+  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look, Standard (WIP)\'s brand2 config and the signed-out pages\' names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {
@@ -726,4 +736,161 @@ test('a conversation\'s bubbles have a ground and an edge of their own inside th
   assert.equal(valueOf(light, '--bl-bubble-line-own'), 'rgba(26, 99, 196, 0.24)');
   assert.equal(valueOf(dark, '--bl-bubble-line'), 'rgba(220, 230, 248, 0.2)');
   assert.equal(valueOf(dark, '--bl-bubble-line-own'), 'rgba(127, 188, 247, 0.42)');
+});
+
+// DREA'S REVIEW OF #6699. The page wears the standard wallpaper's washes
+// again, in the look's own tints; Home takes Standard (WIP)'s New project
+// button and Needs you card in the look's colours; and from 1280px Pinned
+// communities are cards that say what is going on in each community.
+test('the page is the standard wallpaper\'s washes in the look\'s own tints, and the fixed layer follows', () => {
+  const light = ruleAt(LIGHT).body;
+  const dark = ruleAt(DARK).body;
+  assert.equal(valueOf(light, '--bl-wash-a'), '255, 253, 240', 'a lighter cream where the standard wash is lilac');
+  assert.equal(valueOf(light, '--bl-wash-b'), '247, 220, 200', 'a blush where it is pink');
+  assert.equal(valueOf(light, '--bl-wash-c'), '251, 230, 175', 'a sun where it is peach');
+  for (const name of ['--bl-wash-a', '--bl-wash-b', '--bl-wash-c']) {
+    const [r, g, b] = valueOf(dark, name).split(',').map(Number);
+    assert.ok(b > g && g > r, `${name} stays a blue round the dark page`);
+  }
+  // The shared rules, which dark wears; light lays THE SPLOTCHES over them
+  // (the next test).
+  const ground = ruleFor('body:has(#platform-tabs)')
+    .filter((rule) => rule.selectors[0].startsWith(EITHER) && /--look-washes:/.test(rule.body));
+  assert.equal(ground.length, 2, 'the phone\'s three washes, and from 640px the seven');
+  const wide = ground[1].body;
+  for (const at of ['circle at calc(100% - 92px) 115px', 'ellipse 38vw 36vh at 24% 20%', 'ellipse 34vw 28vh at 90% 32%']) {
+    assert.ok(wide.includes(at), `a wash ${at}, where the standard wallpaper has it`);
+  }
+  assert.match(wide, /rgba\(var\(--bl-wash-c\), 0\.75\) 90px/);
+  assert.match(ground[0].body, /background:\s*var\(--look-wallpaper\);/);
+  assert.match(ground[0].body, /var\(--home-star, none\)/, 'the star falls back to nothing where the route rule does not define it');
+  assert.match(ruleFor('body::before')[0].body, /background:\s*var\(--look-wallpaper, var\(--bl-page\)\);/);
+});
+
+// EVAN'S WALLPAPER REVIEW, 18 Nov 2026 (option 5b, "scatter, lilac,
+// softer"): in light, six small splotches in the standard wallpaper's lilac,
+// pink and peach, scattered thin over the cream, sized against the screen.
+test('in light the cream wears six scattered lilac splotches, at every width, and dark keeps its washes', () => {
+  const light = ruleAt(LIGHT).body;
+  assert.equal(valueOf(light, '--bl-splotch-a'), '229, 216, 239', 'the standard wallpaper\'s lilac');
+  assert.equal(valueOf(light, '--bl-splotch-b'), '245, 215, 230', 'its pink');
+  assert.equal(valueOf(light, '--bl-splotch-c'), '252, 219, 212', 'its peach');
+  const rule = ruleAt(`${LIGHT} body:has(#platform-tabs)`);
+  assert.ok(rule, 'one light-only rule lays the splotches over the shared washes');
+  assert.equal(ruleFor('--bl-splotch').length, 0, 'no selector names them');
+  assert.equal(lookRules().filter((r) => /var\(--bl-splotch-/.test(r.body)).length, 1,
+    'only that light rule reads them: dark keeps its washes round the navy');
+  const washes = valueOf(rule.body, '--look-washes');
+  assert.equal((washes.match(/radial-gradient\(circle at /g) || []).length, 6, 'six splotches');
+  for (const at of ['24% 14%', '96% 30%', '36% 58%', '86% 86%', '4% 84%', '72% 4%']) {
+    assert.ok(washes.includes(`circle at ${at}, rgba(var(--bl-splotch-`), `a splotch at ${at}`);
+  }
+  assert.match(washes, /rgba\(var\(--bl-splotch-a\), 0\.39\) 6\.44vmin, rgba\(var\(--bl-splotch-a\), 0\.195\) 17\.17vmin, rgba\(var\(--bl-splotch-a\), 0\) 27\.9vmin/,
+    'faint, half by the middle stop, gone at the edge');
+  assert.doesNotMatch(washes, /\d(px|vw|vh)\b/, 'sized in vmin, so a splotch keeps its size against the screen');
+  assert.ok(/var\(--bl-page\)$/.test(washes), 'on the cream');
+  // After the 640px rule in the sheet, so the one set holds at every width.
+  const block = lookBlock();
+  assert.ok(block.indexOf(`${LIGHT} body:has(#platform-tabs) {`) > block.indexOf('ellipse 34vw 28vh at 90% 32%'),
+    'the light rule follows the 640px washes');
+});
+
+test('Home takes Standard (WIP)\'s New project button and Needs you card, in the look\'s colours', () => {
+  const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
+  assert.match(island, /const brand = skin === 'brand';/);
+  assert.match(island, /\{\(wip \|\| brand\) && grid\.ready && grid\.create \? \(\s*<WipCta id="home-new-project-top"/);
+  assert.match(island, /<WipCard on=\{wip\}>/, 'Pinned apps keeps the look\'s own card, not WIP\'s');
+  const home = read('frontend', 'src', 'features', 'home', 'home.js');
+  const side = home.slice(home.indexOf('hasSideCard() {'), home.indexOf('_wireRowBudget() {'));
+  assert.match(side, /if \(skin !== 'brand'\) return false;\s*try \{ return !!window\.matchMedia\('\(min-width: 768px\)'\)\.matches; \}/,
+    'the grid drops its tile only where the search row shows the button');
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  const tokens = at(':is(#home-screen, #communities-screen)').body;
+  assert.equal(valueOf(tokens, '--wip-cta-from'), 'var(--bl-sun)', 'the filled action is the sun');
+  assert.equal(valueOf(tokens, '--wip-cta-ink'), 'var(--bl-on-sun)');
+  assert.equal(valueOf(tokens, '--wip-ink-action'), 'var(--bl-sky)', 'a link is the sky');
+  assert.equal(valueOf(tokens, '--wip-card-bg'), 'var(--bl-card)');
+  assert.match(at(':is(#home-screen, #communities-screen) .wip-cta').body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  assert.match(lookBlock(), /@media \(max-width: 767\.98px\) \{\s*html\[data-skin="brand"\][^{]*#home-new-project-top \{\s*display: none;/);
+  // The order: Pinned apps, Needs you, what a search finds of your communities, the rest, Challenges, Communities to join.
+  assert.match(at('#home-screen .home-main > *').body, /order:\s*4;/);
+  assert.match(at('#home-screen .home-row > .home-aside').body, /order:\s*1;/);
+  assert.match(at('#home-screen .home-main > #home-communities-section').body, /order:\s*2;/);
+  assert.match(at('#home-screen .home-row > #home-challenges-section').body, /order:\s*5;/);
+  assert.match(at('#home-screen .home-main > #home-join-section').body, /order:\s*6;/);
+});
+
+test('Recent threads stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
+  const block = lookBlock();
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  // Only while the card and the apps section are both drawn: otherwise Home is one column as it was.
+  const BOTH = '#home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden]))';
+  const wide = block.slice(block.indexOf('RECENT THREADS BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
+  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT THREADS BESIDE PINNED APPS')) > 0, 'from 1280px');
+  assert.match(at(`${BOTH} .home-body-fill`).body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 320px;/);
+  assert.match(at(`${BOTH} .home-main`).body, /display:\s*contents;/);
+  assert.match(at('#home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden])').body, /grid-column:\s*1;\s*grid-row:\s*1;/);
+  const beside = at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body;
+  assert.match(beside, /grid-column:\s*2;\s*grid-row:\s*1;/);
+  // Pinned apps alone sets the row's height: the column stretches to it and
+  // holds its rows to it, so the number of rows the card draws cannot change
+  // the box it was worked out from.
+  assert.match(beside, /contain:\s*size;/, 'the column adds no height of its own to the row');
+  assert.match(beside, /min-height:\s*200px;/, 'a floor of a heading and about two rows');
+  assert.match(beside, /overflow:\s*hidden;/);
+  // A short list ends after its last row instead of matching Pinned apps' height.
+  const card = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card').body;
+  const panel = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel').body;
+  assert.doesNotMatch(card, /flex:\s*1 1 auto;/, 'the card is its own height');
+  assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
+  assert.match(card, /flex:\s*none;/);
+  assert.match(panel, /flex:\s*none;/);
+  // The last row says how many more there are, in the action's colour.
+  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
+  const more = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more').body;
+  assert.match(more, /min-height:\s*3\.25rem;/);
+  assert.match(more, /font-size:\s*15px;\s*font-weight:\s*650;/);
+  assert.match(more, /color:\s*var\(--wip-ink-action\);/);
+  // The launcher grid is repainted, never moved: the card is the box around it.
+  assert.match(at('#home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list').body, /^\s*background-color:\s*transparent;\s*box-shadow:\s*none;\s*$/);
+  assert.match(wide, /> \.home-area-label \+ div \{[\s\S]*?background-color:\s*var\(--bl-card\);/);
+  // On a phone the list is a row that scrolls and snaps card by card.
+  const phone = block.slice(block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
+  assert.match(phone, /^[^{]*\*\/\s*@media \(max-width: 767\.98px\) \{/);
+  const rows = at('#home-needs-card .wip-rows').body;
+  assert.match(rows, /display:\s*flex;/);
+  assert.match(rows, /overflow-x:\s*auto;/);
+  assert.match(rows, /scroll-snap-type:\s*x mandatory;/);
+  assert.match(at('#home-needs-card .wip-rows > li').body, /flex:\s*0 0 78%;\s*scroll-snap-align:\s*start;/, 'the next card shows at the edge');
+});
+
+test('the Communities page wears the look: its button, its cards, and no count on its tab', () => {
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  // The kit's tokens are set on Home and on the page, for New community's button.
+  const tokens = at(':is(#home-screen, #communities-screen)').body;
+  assert.equal(valueOf(tokens, '--wip-cta-from'), 'var(--bl-sun)');
+  assert.match(at(':is(#home-screen, #communities-screen) .wip-cta').body, /box-shadow:\s*var\(--bl-pill-edge\);/);
+  const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
+  assert.match(page, /\{kit && offerCreate \? \(\s*<WipCta\s+id="communities-new-top"/, 'the filled button, in the looks that draw Home with the kit');
+  assert.match(at(':is(#home-create-tile, #communities-new-community) .home-create-glyph').body, /background:\s*var\(--bl-sun\);/, 'and the tile under 768px is the same sun');
+  assert.match(at('.communities-discover').body, /background:\s*var\(--bl-card\);/);
+  assert.match(at('#platform-tab-workshop :is(.platform-tab-votes, .platform-tab-badge)').body, /display:\s*none;/, 'Home\'s Needs you card says it');
+});
+
+test('a community\'s card says its members, what went live and who was there, read only where it is drawn', () => {
+  const src = read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx');
+  const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
+  assert.match(page, /const cards = brand && wide;/);
+  assert.match(page, /if \(cards && shown && state\.ready && listKey !== '\|'\) void loadHomePinsActivity\(\);/, 'only on the page, in the look, on a wide screen');
+  assert.match(page, /detail=\{cards \? activity\.bySlug\[pin\.slug\] : undefined\}/, 'the pinned ones');
+  assert.match(page, /detail=\{cards \? activity\.bySlug\[c\.slug\] : undefined\}/, 'and the joined ones');
+  assert.match(src, /<span className="hidden" data-home-community-detail="">/, 'hidden everywhere the look does not draw cards');
+  assert.match(src, /if \(!members && !live && !active\) return null;/, 'a zero says nothing');
+  const store = read('frontend', 'src', 'features', 'home', 'home-pins-store.ts');
+  assert.match(store, /readJson\('\/api\/me\/home-pins\/activity'\)/);
+  assert.match(ruleAt(`${EITHER} .communities-grid [data-home-community-detail]`).body, /display:\s*flex;/);
+  const home = JSON.parse(read('frontend', 'locales', 'en', 'home.json'));
+  assert.equal(home['communities.liveWeek_other'].text, '{{count}} changes went live');
+  assert.equal(home['communities.activeWeek_other'].text, '{{formatted}} active this week');
+  assert.equal(home['communities.members_other'].text, '{{formatted}} members');
 });

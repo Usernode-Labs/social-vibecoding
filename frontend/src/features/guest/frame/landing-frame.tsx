@@ -36,6 +36,7 @@
  * stays mounted, put away by app.css. Nothing here fetches or words
  * anything of its own.
  */
+import { useHomeSearchPlaceholder } from '../../home/search-hint';
 import { useEffect, useMemo, useState } from 'react';
 
 import { Btn, Card, CardNote, Icon, Lead, Note, PageBody, Pill, Row, Search, Sec, Tile, TileItem, Tiles, k } from '@/components/ui/kit';
@@ -79,6 +80,7 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
 }) {
   const t = useMessages('auth');
   const th = useMessages('home');
+  const searchPlaceholder = useHomeSearchPlaceholder();
   const [query, setQuery] = useState(initialQuery);
   // The project page replaces this one: the query stays on Home's history
   // entry, so Back restores this visit (../guest-discover.tsx).
@@ -123,7 +125,7 @@ export function LandingFrame({ apps, failed, onRetry, waitlist, waiting = null, 
   // is the room under it: the field's own margin on top of that made the one
   // double gap of the page (flush). At the tabs' place (an account in line)
   // it keeps its margin.
-  const search = <Search flush={!waiting} value={query} onChange={changeQuery} placeholder={th('home:search.placeholder')} label={th('home:search.label')} />;
+  const search = <Search flush={!waiting} value={query} onChange={changeQuery} placeholder={searchPlaceholder} label={th('home:search.label')} />;
 
   const side = waiting ? (
     <Sec label={t('auth:waiting.title')} data-guest-waitlist="">

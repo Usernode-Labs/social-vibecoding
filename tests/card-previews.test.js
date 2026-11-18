@@ -122,13 +122,15 @@ test('a card at rest carries an inert layer for its loop and no video; a card wi
   assert.doesNotMatch(without, /data-card-preview/);
   // The player's own attributes, when it mounts.
   const src = read('frontend/src/features/guest/card-preview.tsx');
-  for (const attr of ['muted', 'playsInline', 'preload="none"', 'loop={!once}', 'disablePictureInPicture']) {
+  for (const attr of ['muted', 'playsInline', 'preload="none"', 'loop\n', 'disablePictureInPicture']) {
     assert.ok(src.includes(attr), attr);
   }
   assert.match(src, /played\.catch\(\(\) => releasePreview\(id\)\)/, 'a refused play is answered, never an uncaught rejection');
   const lib = read('frontend/src/lib/card-previews.ts');
   assert.match(lib, /export const HOVER_DELAY_MS = 150;/);
-  assert.match(lib, /export const PHONE_MAX_SECONDS = 5;/);
+  // A phone never plays a card's preview on its own: no in-view pick can return.
+  assert.doesNotMatch(lib, /reportInView|IntersectionObserver/);
+  assert.doesNotMatch(src, /reportInView|IntersectionObserver/);
   assert.match(lib, /prefers-reduced-motion: reduce/);
   assert.match(lib, /saveData/);
 });

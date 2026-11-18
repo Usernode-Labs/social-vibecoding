@@ -2886,6 +2886,33 @@ test('a board reload during a draft joins the running poll chain instead of star
   assert.equal(calls, 3);
 });
 
+test('#6791: a pending regrouping with no poll running is checked at most once a minute', async () => {
+  // A regrouping whose chain has run out of steps leaves `pending` set and no
+  // timer. WS-driven reloads used to skip the minute's throttle in that state
+  // and re-read the endpoint (which rebuilds the server's input) on every one.
+  let calls = 0;
+  const AppView = makeAppView({
+    fetch: async () => { calls++; return { ok: true, json: async () => ({ themes: [], source: 'category', pending: false }) }; },
+  });
+  AppView._getViewMode = () => 'kanban';
+  AppView._repaintBoardSurface = () => {};
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }],
+    { pending: true, at: Date.now() - 59000 });
+  AppView._workshopPollTimer = null;
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 0, 'inside the minute: no fetch, pending or not');
+  // The broadcast that says it finished, and the board's own recovery, still
+  // read past it.
+  await AppView._loadWorkshopThemes('demo-app', 0, { force: true });
+  assert.equal(calls, 1, 'force still fetches');
+  // A minute after the last read the check runs again.
+  AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }],
+    { pending: true, at: Date.now() - 61000 });
+  AppView._workshopPollTimer = null;
+  await AppView._loadWorkshopThemes('demo-app', 0);
+  assert.equal(calls, 2, 'a stale pending cache is read again');
+});
+
 function AppView_pollTotal() {
   const m = APP_VIEW_SRC.match(/WORKSHOP_POLL_MS:\s*\[([^\]]+)\]/);
   assert.ok(m, 'WORKSHOP_POLL_MS is a literal array');

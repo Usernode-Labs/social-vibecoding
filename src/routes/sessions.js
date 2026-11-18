@@ -11,6 +11,7 @@ const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
 const previewClock = require('../services/preview-clock');
 const previewStart = require('../services/preview-start');
+const stagingDemoPreview = require('../services/staging-demo-preview');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
@@ -45,7 +46,11 @@ const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 // owner/shared visibility query has selected which rows the viewer may see.
 // The opened detail uses the same public projection for any visible change;
 // `all` is set only AFTER the per-session privacy gate, never on a board list.
-async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { all = false } = {}) {
+//
+// `results` (#6793) is the SELECT fragment for the check results: the stored
+// column by default, or a list's own form (list-test-results.js
+// resultsSelect), which Postgres trims before anything is sent.
+async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { all = false, results = 'cs.test_results' } = {}) {
   const list = Array.isArray(sessions) ? sessions : [];
   const ids = list
     .filter((s) => s && (all || (s.source === 'imported'
@@ -64,7 +69,7 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
             cs.external_agent,
             cs.merge_conflict_state, cs.behind_main, cs.conflict_files,
             cs.conflict_checked_at, cs.console_check_state, cs.console_errors,
-            cs.console_checked_at, cs.check_state, cs.test_results,
+            cs.console_checked_at, cs.check_state, ${results},
             cs.checks_checked_at, cs.checks_commit_sha, cs.checks_base_sha,
             cs.checks_base_verdict, cs.checks_base_behind_by,
             cs.mergeability, cs.mergeability_files,
@@ -95,6 +100,9 @@ async function enrichImportedUnderwaySessions(pool, sessions, viewerUserId, { al
         AND cs.status IN ('active', 'paused')))`,
     [ids, all]
   );
+  // The list form's fields; the unit suite's own row is the server's alone.
+  listTestResults.unpackListed(rows);
+  for (const row of rows) delete row.test_results_unit_row;
 
   const rowsByApp = new Map();
   for (const row of rows) {
@@ -709,15 +717,22 @@ function captureSpecOutput(raw) {
 // it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
 // publication passes required:true so the version and its receipt/card roll
 // back together instead of committing a partially replayable outcome.
-async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null } = {}) {
+//
+// `atLeastVersion` (18 Nov 2026): the lowest number this version may take.
+// Homeroom bot numbers its plans for a request across every session it
+// planned that request in (homeroom-bot-live.js publishSpec), so a request
+// planned again shows "Plan v2", not a second "Plan v1". Unset, it is the
+// session's own next number, as it always was.
+async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null, atLeastVersion = 1 } = {}) {
   try {
     // #3699: content_html is the version's HTML document when it was written
     // as one; content is then its markdown copy.
+    const floor = Number.isSafeInteger(Number(atLeastVersion)) && Number(atLeastVersion) > 1 ? Number(atLeastVersion) : 1;
     const { rows } = await pool.query(
       `INSERT INTO chat_session_specs (session_id, version, content, content_html)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3)
+       VALUES ($1, GREATEST(COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $4::int), $2, $3)
        RETURNING version`,
-      [sessionId, content, html || null]
+      [sessionId, content, html || null, floor]
     );
     return rows[0].version;
   } catch (err) {
@@ -744,6 +759,8 @@ async function persistScoutPublication({
   recovered = false,
   agentBackend = null,
   agentModel = null,
+  // The lowest number the version may take (snapshotSessionSpec).
+  atLeastVersion = 1,
 }) {
   const ccText = String(content || '').trim();
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
@@ -777,7 +794,7 @@ async function persistScoutPublication({
       client,
       sessionId,
       ccText,
-      { required: requiredSnapshot, html },
+      { required: requiredSnapshot, html, atLeastVersion },
     );
     const metadata = {
       specPreview: buildSpecPreview(ccText),
@@ -1358,7 +1375,16 @@ function sessionRoutes(config) {
                 cs.staging_url, cs.imported_pr_author, cs.imported_pr_head_repo,
                 cs.imported_pr_head_sha, cs.reviewed_head_sha, a.repo_url,
                 cs.check_state, cs.check_phase, cs.check_error_detail,
-                cs.test_results, cs.spec_md,
+                -- #6793: only what this list reads. The checks that did not
+                -- pass, and only for a failing run (summarizeFailingChecks);
+                -- the plan, only where sessionAwaitsInput would read it.
+                CASE WHEN cs.check_state = 'failing' AND jsonb_typeof(cs.test_results) = 'array'
+                     THEN (SELECT COALESCE(jsonb_agg(e.v ORDER BY e.n)
+                                    FILTER (WHERE (e.v->>'status' = 'pass') IS NOT TRUE), '[]'::jsonb)
+                             FROM jsonb_array_elements(cs.test_results) WITH ORDINALITY AS e(v, n))
+                     ELSE '[]'::jsonb END AS failing_results,
+                CASE WHEN lt.role = 'assistant' AND lt.asks IS NOT TRUE AND cs.pr_number IS NULL
+                     THEN cs.spec_md END AS spec_md,
                 cs.agent_backend, cs.agent_model, cs.external_agent, cs.build_venue,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 lt.role AS last_turn_role, lt.asks AS last_turn_asks,
@@ -1427,7 +1453,9 @@ function sessionRoutes(config) {
             : {}),
         };
       });
-      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user.id);
+      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user.id, {
+        results: listTestResults.resultsSelect(req, 'cs'),
+      });
       // #6042: a merging or merged row holds no slot — the caps count work
       // that can be paused or withdrawn, and a merged change is neither —
       // so the reduce names them explicitly instead of letting the `else`
@@ -1514,7 +1542,10 @@ function sessionRoutes(config) {
       // so this summary could be built, so it goes back off the wire.
       for (const row of sessions) {
         if (!row) continue;
-        const summary = summarizeFailingChecks(row.check_state, row.test_results);
+        // #6793: summarised from the failing rows the query kept (with their
+        // excerpts), which then go back off the wire.
+        const summary = summarizeFailingChecks(row.check_state, row.failing_results);
+        delete row.failing_results;
         if (row.source !== 'imported') delete row.test_results;
         if (summary.total) row.failing_checks = summary;
       }
@@ -1857,7 +1888,9 @@ function sessionRoutes(config) {
         ...s,
         busy: workedOn === true || isSessionBusy(s.id),
       }));
-      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user?.id || null);
+      sessions = await enrichImportedUnderwaySessions(pool, sessions, req.user?.id || null, {
+        results: listTestResults.resultsSelect(req, 'cs'),
+      });
 
       // Staging-only demo rows (?demo=1): read-only visual states a boot
       // seed can't hold live (busy spinner, Preview pill). Fake ids in the
@@ -1889,13 +1922,15 @@ function sessionRoutes(config) {
         [id, req.params.slug],
       );
       if (!rows.length) return res.status(404).json({ error: 'Change not found' });
-      const out = await require('../services/homeroom-bot-retry-grants')
-        .grant(pool, { sessionId: id, user: req.user });
+      const grants = require('../services/homeroom-bot-retry-grants');
+      const out = await grants.grant(pool, { sessionId: id, user: req.user });
       if (!out.ok) {
         if (out.why === 'not_allowed') return res.status(403).json({ error: 'not_allowed' });
-        return res.status(409).json({ error: out.why });
+        // #6776: the sentence says what is true: already queued and where,
+        // queued again, or why it cannot be.
+        return res.status(409).json({ error: grants.grantRefusalText(out.why, out), why: out.why });
       }
-      return res.json({ granted: true });
+      return res.json({ granted: true, requeued: !!out.requeued, said: grants.grantDoneText(out) });
     } catch (err) {
       log.error('sessions', 'Could not let the bot try again', { message: err.message });
       return res.status(500).json({ error: 'Could not let it try again' });
@@ -1925,6 +1960,7 @@ function sessionRoutes(config) {
                 cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
                 cs.shots_state, cs.shots_run_id,
                 cs.shots_detail, cs.shots_updated_at,
+                cs.close_reason,
                 cs.app_id, a.slug AS app_slug
            FROM chat_sessions cs
            JOIN apps a ON a.id = cs.app_id
@@ -3001,6 +3037,22 @@ function sessionRoutes(config) {
     }
   });
 
+  // The change a preview shows, as its header names it. Null fields when the
+  // session has no pull request yet (a dev session's preview).
+  function previewChangeAnswer(session) {
+    const number = Number(session && session.pr_number);
+    const title = String((session && (session.pr_title || session.proposed_pr_title)) || '').trim();
+    const hasNumber = Number.isInteger(number) && number > 0;
+    if (!hasNumber && !title) return {};
+    return {
+      change: {
+        number: hasNumber ? number : null,
+        title: title ? title.slice(0, 256) : null,
+        status: session && typeof session.status === 'string' ? session.status : null,
+      },
+    };
+  }
+
   async function loadPreviewSession(sessionId) {
     const { rows } = await pool.query(
       `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url
@@ -3088,6 +3140,15 @@ function sessionRoutes(config) {
       // the preview there instead of the first screen. Absent when neither
       // names one, so those answers stay byte-identical.
       ...previewStart.previewAnswer(session),
+      // A change declared for large screens only opens full width rather
+      // than in a column beside a thread (services/preview-start.js).
+      ...previewStart.wideAnswer(session),
+      // Which change this is, for the preview's header: its title, its pull
+      // request number and where it stands. Absent for a session with
+      // neither (a dev session's preview), so those answers stay as they
+      // were. The vote's tally is the page's own reading of the change
+      // (AppView.voteState / GET .../promoted).
+      ...previewChangeAnswer(session),
     };
   }
 
@@ -3129,6 +3190,23 @@ function sessionRoutes(config) {
       });
   }
 
+  // The page a staging demo change's Try it opens, inside the same
+  // sandboxed frame as any preview (services/staging-demo-preview.js): a
+  // fixed sample, served only on staging. Its address carries the frame's
+  // token, so no referrer leaves it. Anywhere else this address is not found.
+  router.get(stagingDemoPreview.SAMPLE_PATH, (req, res) => {
+    if (process.env.USERNODE_ENV !== 'staging') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    });
+    return res.send(stagingDemoPreview.sampleAppHtml());
+  });
+
   // Read-only twin of ensure-staging. A reviewer who cannot trigger a build
   // still gets the same health/revision/edge gate instead of opening the
   // last stored URL directly. It never repairs or rebuilds. It does wake a
@@ -3137,6 +3215,16 @@ function sessionRoutes(config) {
   router.get('/api/sessions/:id/preview-status', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      // A staging demo change opens a sample app as its preview
+      // (services/staging-demo-preview.js). Before the row lookup: a demo
+      // id has no chat_sessions row and would 404 on its way to the
+      // staging answer below.
+      if (stagingDemoPreview.isDemoEnv(req)) {
+        const demo = stagingDemoPreview.previewAnswer(
+          require('./votes').stagingMockProposalFor(sessionId, req.user)
+        );
+        if (demo) return res.set('Cache-Control', 'no-store').json(demo);
+      }
       const session = await loadPreviewSession(sessionId);
       if (!session || !mayOpenPreview(session, req.user.id)) {
         return res.status(404).json({ error: 'Session not found' });
@@ -3174,6 +3262,14 @@ function sessionRoutes(config) {
   router.post('/api/sessions/:id/ensure-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      // As in preview-status: a staging demo change's Try it opens the
+      // sample app, and never a rebuild (nothing here can build one).
+      if (stagingDemoPreview.isDemoEnv(req)) {
+        const demo = stagingDemoPreview.previewAnswer(
+          require('./votes').stagingMockProposalFor(sessionId, req.user)
+        );
+        if (demo) return res.set('Cache-Control', 'no-store').json(demo);
+      }
       const session = await loadPreviewSession(sessionId);
       if (!session) return res.status(404).json({ error: 'Session not found' });
 

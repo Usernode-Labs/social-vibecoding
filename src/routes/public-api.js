@@ -62,7 +62,7 @@ const {
   waitlistUrl,
 } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { listPublicApps, publicMonthActivity, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 const { loadProjectOverview } = require('../services/public-project');
 const { publicStillBytes } = require('../services/shots-public');
 const mediaStore = require('../services/media-store');
@@ -74,6 +74,17 @@ const OVERVIEW_CACHE_MAX = 500;
 // The public directory (GET /api/public/apps), kept as long: one answer for
 // everybody, from the heaviest query a page load makes.
 const DIRECTORY_TTL_MS = 30 * 1000;
+// #6796: past that, the copy still answers while ONE read refreshes it, so
+// the first visitor after a quiet half minute does not wait the 1.5 to 2
+// seconds the query takes. Bounded: a copy older than this is never
+// served, so a project that left the directory (made private, suspended)
+// leaves the list within this long at the latest.
+const DIRECTORY_STALE_MS = 2 * 60 * 1000;
+// And while people are asking for it, it is refreshed behind them: for this
+// long after the last request, a copy past its half minute is read again in
+// the background, so nobody in a busy stretch meets a cold one. With nobody
+// asking, nothing is read.
+const DIRECTORY_KEEP_WARM_MS = 10 * 60 * 1000;
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
@@ -139,7 +150,9 @@ function publicApiRoutes(config) {
   const pool = getPool(config);
 
   // GET /api/public/apps — every view-public, non-self-hosted app with its
-  // contributors embedded.
+  // contributors embedded, and beside the list `month`: the changes that
+  // went live across those apps in the last 30 days and the people who made
+  // them (publicMonthActivity), or null when that could not be read.
   //
   // Kept for a short while (#6591): the list is the same for everyone who
   // asks, its query aggregates every app's activity, members and changes
@@ -150,24 +163,86 @@ function publicApiRoutes(config) {
   function readDirectory(includeWallets) {
     const key = includeWallets ? 'wallets' : 'plain';
     const hit = directoryCache.get(key);
-    if (hit && (hit.pending || hit.expiresAt > Date.now())) return hit.read;
-    const entry = { pending: true, expiresAt: 0, read: null };
-    entry.read = listPublicApps(pool, { includeWallets }).then((apps) => {
+    const now = Date.now();
+    directoryAskedAt.set(key, now);
+    keepDirectoryWarm();
+    if (hit && (hit.pending || hit.expiresAt > now)) return hit.read;
+    // A copy that just expired answers this request, and whoever arrives
+    // while the refresh runs; the refresh replaces it when it lands.
+    if (hit && hit.value && now - hit.readAt < DIRECTORY_STALE_MS) {
+      refreshDirectory(key, hit);
+      return Promise.resolve(hit.value);
+    }
+    const entry = loadDirectory(key, includeWallets);
+    directoryCache.set(key, entry);
+    return entry.read;
+  }
+  // Read the directory again behind the copy that is kept, once at a time.
+  function refreshDirectory(key, hit) {
+    if (hit.refreshing) return;
+    hit.refreshing = true;
+    const fresh = loadDirectory(key, key === 'wallets');
+    fresh.read.then(() => { directoryCache.set(key, fresh); }, (err) => {
+      hit.refreshing = false;
+      log.warn('public-api', 'directory refresh failed; the kept copy still answers', { message: err.message });
+    });
+  }
+  // One timer for the router, started by the first request and stopped once
+  // nobody has asked for DIRECTORY_KEEP_WARM_MS. It holds no process open.
+  const directoryAskedAt = new Map();
+  let directoryTimer = null;
+  function keepDirectoryWarm() {
+    if (directoryTimer) return;
+    directoryTimer = setInterval(() => {
+      const now = Date.now();
+      let wanted = false;
+      for (const [key, askedAt] of directoryAskedAt) {
+        if (now - askedAt >= DIRECTORY_KEEP_WARM_MS) { directoryAskedAt.delete(key); continue; }
+        wanted = true;
+        const hit = directoryCache.get(key);
+        if (hit && hit.value && !hit.pending && hit.expiresAt <= now) refreshDirectory(key, hit);
+      }
+      if (!wanted) { clearInterval(directoryTimer); directoryTimer = null; }
+    }, DIRECTORY_TTL_MS);
+    if (typeof directoryTimer.unref === 'function') directoryTimer.unref();
+  }
+  // A web process reads the directory once as it starts (server.js), so the
+  // first visitor after a release does not wait on its query.
+  router.warmDirectory = () => readDirectory(false).then(() => true, (err) => {
+    log.warn('public-api', 'could not warm the directory', { message: err.message });
+    return false;
+  });
+  // One read of the directory. The entry is stored by the caller: at once
+  // for a first read (so requests that arrive meanwhile share it), and only
+  // when it lands for a refresh behind a kept copy.
+  function loadDirectory(key, includeWallets) {
+    const entry = { pending: true, expiresAt: 0, readAt: 0, value: null, refreshing: false, read: null };
+    entry.read = Promise.all([
+      listPublicApps(pool, { includeWallets }),
+      // The landing's "This month" figures, read with the list so they are
+      // kept as long as it is. They are an extra: a read of them that fails
+      // leaves them out and does not hold the directory back.
+      publicMonthActivity(pool).catch((err) => {
+        log.warn('public-api', 'month activity read failed', { message: err.message });
+        return null;
+      }),
+    ]).then(([apps, month]) => {
       entry.pending = false;
-      entry.expiresAt = Date.now() + DIRECTORY_TTL_MS;
-      return apps;
+      entry.readAt = Date.now();
+      entry.expiresAt = entry.readAt + DIRECTORY_TTL_MS;
+      entry.value = { apps, month };
+      return entry.value;
     }, (err) => {
       if (directoryCache.get(key) === entry) directoryCache.delete(key);
       throw err;
     });
-    directoryCache.set(key, entry);
-    return entry.read;
+    return entry;
   }
 
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
-      res.json({ apps: await readDirectory(includeWallets) });
+      res.json(await readDirectory(includeWallets));
     } catch (err) {
       log.error('public-api', 'apps list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

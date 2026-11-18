@@ -85,6 +85,17 @@ test('run five: the shapes a model sends for "a few lines" are forgiven; a missi
   assert.deepEqual([fvPlan.replyShape('sorry').why, fvPlan.replyShape('sorry').chars], ['no_json', 5]);
 });
 
+test('#6784: a plan from an idea thread keeps its points, and asks only what the thread left open', () => {
+  const prompt = fvPlan.planUserPrompt({ name: 'Saved Places Lists', brief: 'The plan agreed in the thread', fromThread: true });
+  assert.match(prompt, /THE THREAD IT CAME FROM:/);
+  assert.match(prompt, /This description holds a plan agreed with Homeroom bot in the creator's own thread/);
+  assert.match(prompt, /Keep its points as the plan lines, in its terms\./);
+  assert.match(prompt, /A question it says is still open\s+becomes one of the choices \(at most two; anything else it left open is an assumption\)\./);
+  assert.match(prompt, /Never ask a point the\s+plan or their answers already settled\./);
+  // A create from the screen alone is asked exactly as before.
+  assert.doesNotMatch(fvPlan.planUserPrompt({ name: 'Saved Places Lists', brief: 'A list app' }), /THE THREAD IT CAME FROM/);
+});
+
 test('the prompt: the description, its creator, its real people, a game starter and the language, with the triage\'s rules', () => {
   const prompt = fvPlan.planUserPrompt({
     name: 'Club Votes', brief: 'Polls for our running club', maker: { username: 'evan' }, locale: 'es',
@@ -174,7 +185,8 @@ test('started once, only for a first version the bot builds, and never without a
   // From the made screen's doors only (routes/apps.js MAKE_ORIGINS).
   const route = read('src/routes/apps.js');
   // 1 Nov 2026 (C2.4): a design's project has its plan from the design already.
-  assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign,/);
+  // #6784: a project made from an idea thread has its plan written from it.
+  assert.match(route, /homeroomBotDm\.startFirstVersion\(pool, config, \{\s+app: appRow, user: req\.user, brief: req\.body\.brief,[\s\S]*?earlyPlan: MAKE_ORIGINS\.has\(req\.body\.from\) \|\| !!fromDesign \|\| !!fromThread,/);
   assert.match(read('src/services/homeroom-bot-dm.js'),
     /if \(bot && earlyPlan\) await require\('\.\/first-version-plan'\)\.startEarlyPlan\(pool, \{ app, user, brief: text, config, bot \}\);/);
 });

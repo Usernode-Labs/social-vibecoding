@@ -26,6 +26,7 @@ const { Client, Pool } = require('pg');
 const { seedStagingShotsNoticed } = require('../src/db/migrate');
 const planContract = require('../src/services/visible-changes');
 const shotsState = require('../src/services/shots-state');
+const shotsDiagnosis = require('../src/services/shots-diagnosis');
 const gallery = require('../src/routes/gallery');
 const connectorData = require('../src/services/bench/connector-data');
 
@@ -177,6 +178,29 @@ test('the connector lists each change\'s result and counts the window\'s current
     const viaConnector = await connectorData.shotStats(pool, { app: APP, problem: 'root_only', days: '3' });
     assert.equal(viaConnector.stats.window.days, 3);
     assert.equal(viaConnector.stats.proposals, 4, 'the capture-problem filter does not narrow the stats');
+
+    // #6779: the diagnosis reads the row chat_sessions.shots_run_id points
+    // at, against the real schema. A verified run and one that never ran
+    // have none.
+    await pool.query(
+      `UPDATE shot_runs SET trace_summary = $2::jsonb WHERE session_id = $1`,
+      [900121, JSON.stringify({
+        agentActivity: {
+          firstAtMs: {}, toolCounts: {},
+          events: [{
+            atMs: 1300, kind: 'auth_bootstrap', side: 'base', persona: 'member',
+            outcome: 'error', failureCode: 'invalid_session_cookie', failureStage: 'exchange',
+            responseStatus: 200,
+          }],
+        },
+      })]
+    );
+    const diagnosis = await shotsDiagnosis.forSession(pool, 900121);
+    assert.equal(diagnosis.stoppedAt.kind, 'auth_bootstrap');
+    assert.equal(diagnosis.stoppedAt.failureCode, 'invalid_session_cookie');
+    assert.equal(diagnosis.failureCode, 'shots_agent_failed');
+    assert.equal(await shotsDiagnosis.forSession(pool, 900120), null, 'a verified run has no diagnosis');
+    assert.equal(await shotsDiagnosis.forSession(pool, 900122), null, 'a change with no run has none');
   } finally {
     if (pool) await pool.end().catch(() => {});
     await root.query(`DROP DATABASE IF EXISTS ${database} WITH (FORCE)`).catch(() => {});

@@ -96,7 +96,7 @@ export function lensBox(point: { x: number; y: number }, size: { w: number; h: n
   };
 }
 
-export function CompareSlider({ screen, pair, ground, width, height, marks, near = true, place: given = null, veil = null, onTouch }: {
+export function CompareSlider({ screen, pair, ground, width, height, marks, near = true, place: given = null, veil = null, onTouch, captions = null }: {
   screen: ReviewScreen | null;
   /** An older change's capture pair, with no regions: drawn whole. */
   pair?: { before: string | null; after: string | null } | null;
@@ -113,6 +113,8 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
   veil?: { cut: Box | null; on: boolean } | null;
   /** A touch on the picture or the switch (it ends the landing dim). */
   onTouch?: () => void;
+  /** The words printed on each side, where the page has its own (a change that is already live, or closed). */
+  captions?: { before: string; after: string } | null;
 }) {
   const t = useMessages('communities');
   const W = width;
@@ -372,7 +374,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
       {canCompare ? (
         <div className="rf-cap rf-cap-after" style={{ opacity: marks ? 1 : 0 }} aria-hidden="true">
           <span className="rf-cap-line">
-            <RichMessage id="communities:review.compare.captionAfter" components={[<span className="rf-cap-dim" />]} />
+            {captions ? captions.after : <RichMessage id="communities:review.compare.captionAfter" components={[<span className="rf-cap-dim" />]} />}
             <SparklesIcon width={13} height={13} strokeWidth="2" />
           </span>
         </div>
@@ -383,7 +385,7 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
           <div className="rf-cap rf-cap-before" style={{ opacity: marks ? 1 : 0 }}>
             <span className="rf-cap-line">
               <HistoryIcon width={13} height={13} strokeWidth="2.2" />
-              <RichMessage id="communities:review.compare.captionBefore" components={[<span className="rf-cap-dim" />]} />
+              {captions ? captions.before : <RichMessage id="communities:review.compare.captionBefore" components={[<span className="rf-cap-dim" />]} />}
             </span>
           </div>
         </div>

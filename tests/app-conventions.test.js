@@ -9,10 +9,25 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { getAppConventions } = require('../src/services/prompts.js');
+const { getAppConventions, getConventionSection } = require('../src/services/prompts.js');
 
 const ESCALATION_HEADING =
   'Platform-level problems & missing capabilities: escalate, don\'t file workarounds';
+
+// #6815: nothing visible means no before/after shots, so the author's diagram
+// is the only picture voters get. The guidance says so, with an example.
+test('conventions doc asks for a diagram after a change with nothing visible', () => {
+  const doc = getAppConventions().replace(/\s+/g, ' ');
+  // The offline excerpt is capped at 9 KB, so it carries the step and a valid
+  // example; the kinds and the size rule are spelled out below it.
+  assert.match(doc, /record `impact: "none"` with a specific rationale\. Then call `declare_diagram`: `\{"version":1,"kind":"flow","before":\["A"\],"after":\["B"\]\}`\./);
+  assert.match(doc, /declare a diagram of it: `flow`, `changes`, `numbers` or `rename`, plain words, 1-60 characters a text, e\.g\. `\{"version":1,"kind":"flow"/);
+  // Both examples are diagrams the platform accepts, not invented shapes.
+  const { parseDiagram } = require('../src/services/diagram.js');
+  for (const [, json] of doc.matchAll(/(\{"version":1,"kind":"flow",[^`]*\})/g)) {
+    assert.doesNotThrow(() => parseDiagram(JSON.parse(json), { impact: 'none' }), json);
+  }
+});
 
 test('conventions doc loads non-empty', () => {
   const doc = getAppConventions();
@@ -299,7 +314,7 @@ test('conventions doc says no shots persona is the app\'s creator or admin, and 
   const start = doc.indexOf('### Who the before & after shots see');
   assert.ok(start > 0, 'the section is there');
   const section = doc.slice(start, doc.indexOf('\n### ', start + 1)).replace(/\s+/g, ' ');
-  assert.match(section, /Five things it cannot do by itself/);
+  assert.match(section, /Six things it cannot do by itself/);
   assert.match(section, /\*\*No persona is your app's creator or one of its admins\.\*\*/);
   assert.match(section, /Homeroom tells your app who is signed in, never their role in it/);
   assert.match(section, /`read_only_admin` and `full_admin` are Homeroom's own administrators, which your app is not told/);
@@ -325,6 +340,10 @@ test('conventions doc says to seed a new state in the same proposal, within the 
   assert.match(section, /never seed a signal your code reads to decide something, so a seed never answers the question the change's own code asks/);
   assert.match(section, /A reply from an AI feature is seeded as the stored reply, never asked for/);
   assert.match(section, /A seed cannot help a change to a state that already existed, which both copies need/);
+  // What no seed or step reaches, and what to declare then (18 Nov 2026).
+  assert.match(section, /\*\*Some states cannot be staged at all\.\*\* A controlled failure covers one API GET, never a POST, PUT or DELETE; there is no native phone app/);
+  assert.match(section, /two requests cannot be made to race/);
+  assert.match(section, /declare `impact: "none"` with a reason that names what the copies cannot do, rather than claim a state they cannot reach/);
 
   // The seed rule points there, in the full text and in the offline excerpt.
   const visitor = doc.slice(doc.indexOf('**Never seed the visitor.**'), doc.indexOf('**Request-time seeding only'))
@@ -370,6 +389,46 @@ test('conventions doc says a game draws its play area on a canvas, with what tha
   assert.ok(require('../src/services/prompts.js').FIRST_VERSION_SPEC_DESIGN_BRIEF.includes(cite));
   const lines = require('../src/services/homeroom-bot-live.js').FIRST_VERSION_DESIGN_LINES.join(' ').replace(/\s+/g, ' ');
   assert.ok(lines.includes(cite), 'the build cites the section by its heading');
+});
+
+// #6766: rule 8's old headline ("don't call third-party APIs directly")
+// read as a ban on every outside API, so the bot told someone a real map
+// with place search could not be built, though Homeroom Maps does exactly
+// that. The rules now say what is allowed, and the data rule distinguishes a
+// library the app serves itself from a script on another origin. The group's
+// follow-up on the request gave the allowed list, the two bans and their
+// reasons, and the guidance worded as a preference.
+test('conventions allow outside data services and content, with two bans (#6766)', () => {
+  const doc = getAppConventions();
+  const excerpt = doc.slice(doc.indexOf('<!-- work-order:begin -->'), doc.indexOf('<!-- work-order:end -->')).replace(/\s+/g, ' ');
+  // The phrase the bot and two projects read as a platform limit is gone.
+  assert.doesNotMatch(excerpt, /don't call\s+third-party APIs directly/);
+  assert.match(excerpt, /\*\*AI goes through the platform's LLM proxy and uploads through its file storage\. Other outside services \(map tiles, place search, weather, public data APIs\) are fine\.\*\*/);
+  assert.match(excerpt, /declare any key in `dapp\.json` `secrets` \(rule 7\) for the owner to set in the Secrets UI/);
+  assert.match(excerpt, /Never ask the people using the app for an API key\./);
+  assert.match(excerpt, /keyless providers need no secret/);
+  // Rule 12 names what may come from another site.
+  assert.match(excerpt, /Everything else from other sites is fine: images, video and audio; map tiles and map styles; web fonts; data from public APIs, from the app's server or from the browser when the API allows it; and embedded players such as YouTube or Vimeo in an `<iframe>`\./);
+  // Ban 1: an outside script, with the governance reason, and npm instead.
+  assert.match(excerpt, /No trackers, analytics, ad SDKs, pixels or beacons in any form, including image pixels: a privacy promise to the people using the apps \(see also request #6048\)\. No `<script>` tag from another origin: the group votes on the code in the repository, and an outside script can change after the vote, so the app would run code nobody voted on and nobody can see in the repo\./);
+  assert.match(excerpt, /Install libraries from npm and serve them from the app's own origin, as Homeroom Maps does with MapLibre\./);
+  // Guidance is a preference, never a ban.
+  assert.match(excerpt, /Prefer fonts from npm \(`@fontsource\/\*`\) over Google Fonts, YouTube's `youtube-nocookie\.com` embed, and calls from the app's server rather than the browser so visitors' IP addresses are not sent too\./);
+
+  const data = getConventionSection('data-rules-what-no-app-may-collect-or-load');
+  assert.ok(data && data.content, 'the data rules section exists');
+  const section = data.content.replace(/\s+/g, ' ');
+  // The line that read as "the app's own code and Homeroom's assets only"
+  // is gone, replaced by the allowed list.
+  assert.doesNotMatch(section, /An app loads its own code and the centrally hosted Homeroom assets only/);
+  assert.match(section, /Everything else from other sites is fine: images, video and audio hosted elsewhere; map tiles and map styles; web fonts; public API data \(from the app's server, or the browser where the API allows it\); and embedded players such as YouTube or Vimeo in an `<iframe>`\./);
+  // Ban 1: an outside script, because the group voted on the repository.
+  assert.match(section, /No `<script>` tag from another origin either: the group votes on the code in the repository, and an outside script can change after the vote, so the app would run code nobody voted on and nobody can see in the repo\./);
+  assert.match(section, /Install libraries from npm and serve them from the app's own origin, as Homeroom Maps does with MapLibre\./);
+  // Ban 2: trackers and pixels in any form, a privacy promise (#6048).
+  assert.match(section, /No trackers, analytics, ads, pixels or beacons in any form, including image pixels: a privacy promise to the people using the apps \(see also request #6048\)\./);
+  // Calling from the app's server keeps IP addresses away, not the words.
+  assert.match(section, /A server-side call still sends what people type to the provider, so choose providers knowingly\./);
 });
 
 // 17 Nov 2026 (#6769): the data rules were written as whole-topic bans, so

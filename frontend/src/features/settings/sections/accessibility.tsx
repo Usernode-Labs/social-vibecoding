@@ -221,8 +221,8 @@ function ReduceMotionRow() {
 
 /**
  * "Play previews": a project card's short, silent loop plays when you point
- * at the card, or on a phone for the card you stop on
- * (../../../lib/card-previews.ts). On by default, kept on this device, and
+ * at the card (../../../lib/card-previews.ts). On by default, kept on this
+ * device, and
  * never playing anyway under reduced motion or Data Saver. Like the switch
  * above it, the first render is off and storage is read in an effect, so the
  * prerendered markup matches.

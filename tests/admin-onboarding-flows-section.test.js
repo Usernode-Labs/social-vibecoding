@@ -123,7 +123,43 @@ test('each column title says how many people reach that step', () => {
     'a pass-through and the waiting box are not people reaching a step');
   assert.match(engine, /txt=REL\?\(r\.k\+' of '\+REL\.n\+' selected'\):\(r\.n\+' \\u00b7 '\+pct\(r\.n,all\)\)/, 'of the selection while one is made');
   assert.match(engine, /function refreshLabels\(\)\{\s*if\(!cur\)return;\s*drawZones\(cur,1\);/, 'so a selection redraws them');
-  assert.match(engine, /tables\(id\); stepsTable\(L\); onboardingTables\(id\);/, 'and Notes has the same numbers');
+  assert.match(engine, /tables\(id\); stepsTable\(L\.full\|\|L\); onboardingTables\(id\);/,
+    'and Notes has the same numbers, read off the fully open chart whichever steps are folded');
+});
+
+test('the whole funnel folds into its steps, and an open step keeps its cards inside one bar', () => {
+  const engine = read(ENGINE);
+  // Six steps over the whole funnel's columns, each with who enters it and what became of them there.
+  for (const [id, cols] of [['came', '0,1,2'], ['getin', '3,4'], ['first', '5,6'], ['made', '7'], ['now', '8'], ['eng', '9,10,11,12']]) {
+    assert.match(engine, new RegExp(`\\{id:'${id}',t:'[^']+',cols:\\[${cols}\\],enter:`), `${id} covers columns ${cols}`);
+  }
+  assert.match(engine, /\{id:'getin',[^\n]*out:function\(p\)\{return isIn\(p\)\?'go':\(p\.got==='new'\?'early':'stop'\);\}/,
+    'too early to say is its own part of a bar, never a stop');
+  // A folded step is one narrow column of up to three bars; an open one is its own columns, marked as the step's.
+  assert.match(engine, /cols\.push\(\{t:st\.t,step:st,fold:true,cpad:0,cardMin:1,node:function\(p\)\{return st\.enter\(p\)\?'fold:'\+st\.id\+':'\+st\.out\(p\):null;\}/);
+  assert.match(engine, /cols\.push\(Object\.assign\(\{\},view\.cols\[ci\],\{step:st,cpad:3,cardMin:24\}\)\)/);
+  assert.match(engine, /function build\(id\)\{var v=stepView\(VBY\[id\]\),L=layout\(v,width\(v\)\);if\(v\.stepsOn\)L\.full=layout\(VBY\[id\],width\(VBY\[id\]\)\);return L;\}/,
+    'the open chart is laid out too, for Notes');
+  // Which steps are open is kept for the next visit, and a bar or a step's name opens and folds it.
+  assert.match(engine, /localStorage\.getItem\('admin\.onboardingFlows\.open'\)/);
+  assert.match(engine, /if\(n\.meta\.fold\)\{toggleStep\(n\.meta\.stepId\);return;\}/);
+  assert.match(engine, /head\.addEventListener\('click',function\(ev\)\{ev\.stopPropagation\(\);toggleStep\(st\.id\);\}\);/);
+  assert.match(engine, /'aria-expanded':fold\?'false':'true'/);
+  // A card in an open step is filled by what became of its people: carries on, too early, stopped.
+  assert.match(engine, /function partsOf\(n,cd\)\{ if\(!cd\.step\|\|n\.meta\.pass\|\|n\.meta\.phantom\)return null;/);
+  assert.match(engine, /\['go','early','stop'\]\.forEach\(function\(k\)\{box\.before\(s\('rect',\{'class':'part '\+k\}\)\);\}\);/);
+  // A folded bar is too narrow to hide threads changing places in it, so they keep one order through it.
+  assert.match(engine, /if\(view\.cols\[ci\]\.fold\)R\.forEach\(function\(pa,i\)\{pa\.slotL\[ci-pa\.start\]=i;\}\);/);
+  // Only the whole funnel has steps: the other views are drawn as before.
+  assert.equal((engine.match(/\.steps=\[/g) || []).length, 1);
+  assert.match(engine, /function stepView\(view\)\{\s*if\(!view\.steps\)return view;/);
+  const css = read('public/css/app.css');
+  for (const rule of [/#admin-onboarding-flows \.nodeg \.part\.go\{fill:var\(--go\)\}/, /#admin-onboarding-flows \.nodeg \.part\.early\{fill:var\(--early\)\}/,
+    /#admin-onboarding-flows \.nodeg \.part\.stop\{fill:var\(--drop\)\}/, /#admin-onboarding-flows \.stepbox\{/, /#admin-onboarding-flows \.stephead\{/,
+    /#admin-onboarding-flows \.of-flow\.dim \.nodeg:not\(\.hl\) \.part\{opacity:\.3\}/]) {
+    assert.match(css, rule);
+  }
+  assert.match(css, /html\.dark #admin-onboarding-flows \{[^}]*--go:[^}]*--early:/, 'with dark inks');
 });
 
 test('its styles are scoped to the section and use no untuned palette', () => {

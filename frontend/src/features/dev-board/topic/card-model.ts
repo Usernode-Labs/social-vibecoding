@@ -24,31 +24,82 @@ export interface GateLike {
   note: string[];
   facts?: { key: string; text: string; ask?: boolean }[];
   segments?: { weight: number; pct: number; state: string }[];
+  /** Testing only, on a change Homeroom bot built whose tests failed: where its own fix stands. */
+  botFix?: string | null;
 }
 
 export interface ChangeFootInput {
-  status: { key: string; label: string } | null;
+  status: { key: string; label: string; yes?: number; majority?: number } | null;
   votes: GateLike;
   testing: GateLike;
   merge?: GateLike | null;
 }
 
+/**
+ * Where a change stands, as ONE word the foot and the timeline both read
+ * (17 Nov 2026). They used to work it out separately, and disagreed: an
+ * approved change's foot was still a vote while its timeline step was titled
+ * "2 / 2"; a change going live had a foot about its tests; failed tests left
+ * the timeline standing on "Up for a vote".
+ *
+ *   live      merged and with everyone
+ *   closed    ended without going live
+ *   going     approved and on its way (merging, deploying)
+ *   stuck     its release is stalled or failed, or GitHub refuses the merge
+ *   failed    its tests failed: nothing goes live until they pass
+ *   testing   its tests are still running
+ *   approved  it has the yes it needs and its tests passed; the merge is next
+ *   vote      it is waiting for votes
+ */
+export type ChangePhase = 'live' | 'closed' | 'going' | 'stuck' | 'failed' | 'testing' | 'approved' | 'vote';
+
+const LIVE: ReadonlySet<string> = new Set(['merged', 'live', 'deployed', 'merged_reload', 'deployed_reload']);
+/** A live pill that already says more than "Live" (a Reload for a tab older than the change). */
+const LIVE_PLAIN: ReadonlySet<string> = new Set(['merged', 'live', 'deployed']);
+const ENDED: ReadonlySet<string> = new Set(['closed', 'archived']);
+const GOING: ReadonlySet<string> = new Set(['merging', 'deploying', 'delivery_pending']);
+const STUCK: ReadonlySet<string> = new Set(['deployment_stalled', 'delivery_failed']);
+/** Homeroom bot is no longer fixing the failed tests itself. */
+const FIX_STOPPED: ReadonlySet<string> = new Set(['stopped', 'handed_off']);
+const FIX_UNDERWAY: ReadonlySet<string> = new Set(['fixing', 'queued']);
+
+/** Pure: the one phase a change is in. Its order is the order of what decides what happens next. */
+export function changePhase(input: ChangeFootInput): ChangePhase {
+  const { status, votes, testing, merge } = input;
+  const key = status?.key || '';
+  if (LIVE.has(key)) return 'live';
+  if (ENDED.has(key)) return 'closed';
+  if (GOING.has(key)) return 'going';
+  if (STUCK.has(key)) return 'stuck';
+  if (testing.tone === 'bad') return 'failed';
+  if (!testing.done) return 'testing';
+  if (merge && merge.tone === 'bad') return 'stuck';
+  if (votes.done || merge) return 'approved';
+  return 'vote';
+}
+
+/** Pure: what a failed change is waiting on: Homeroom bot's fix, nothing (it stopped), or its author. */
+export function fixStanding(testing: GateLike): 'fixing' | 'stopped' | 'waiting' {
+  const fix = testing.botFix || '';
+  return FIX_UNDERWAY.has(fix) ? 'fixing' : FIX_STOPPED.has(fix) ? 'stopped' : 'waiting';
+}
+
 export interface ChangeFoot {
   gate: FootGate;
   /** For `data-thread-foot`: what the foot is saying. */
-  key: 'live' | 'closed' | 'failed' | 'testing' | 'merging' | 'vote';
+  key: 'live' | 'closed' | 'failed' | 'testing' | 'merging' | 'approved' | 'vote';
+  /** The headline in words the page already has (a card's name or figure, the pill). */
   headline: string;
+  /** Fixed words that replace `headline`: "Approved", "Live", "Tests failed". */
+  title: Phrase | null;
   /** Short facts that lead the line under the headline ("3 waiting", "about 6 min left"), joined with a dot. */
-  facts: string[];
+  facts: (string | Phrase)[];
   /** The rest of that line, as its sentences. */
   sub: string[];
   tone: FootTone;
   /** 0 to 1 while something is running; null otherwise. */
   progress: number | null;
 }
-
-const LIVE: ReadonlySet<string> = new Set(['merged', 'live']);
-const ENDED: ReadonlySet<string> = new Set(['closed', 'archived']);
 
 /** Pure: how far a card's bar has got, 0 to 1, weighted as the bar draws it. */
 export function barProgress(segments: GateLike['segments']): number | null {
@@ -64,71 +115,71 @@ export function barProgress(segments: GateLike['segments']): number | null {
 }
 
 /**
- * Pure: a change's foot. Live or closed says so; then a vote the viewer can
- * cast; then failed tests, since nothing else can happen until they pass;
- * then tests still running; then a merge under way; otherwise the vote.
+ * Pure: a change's foot, by its phase (`changePhase`). The headline is one
+ * plain word or figure; the line under it is short facts, then at most the
+ * card's own sentences. What explains the phase at length is the note under
+ * the timeline's current step (./rail-model.ts), not a paragraph here.
  */
 export function changeFoot(input: ChangeFootInput): ChangeFoot {
   const { status, votes, testing, merge } = input;
   const key = status?.key || '';
-  if (LIVE.has(key)) {
-    return { gate: 'votes', key: 'live', headline: status!.label, facts: [], sub: votes.note, tone: 'ok', progress: null };
+  const label = status?.label || '';
+  switch (changePhase(input)) {
+    case 'live':
+      return { gate: 'votes', key: 'live', headline: label, title: LIVE_PLAIN.has(key) ? { id: 'core:work.stage.live' } : null, facts: [], sub: votes.note, tone: 'ok', progress: null };
+    case 'closed':
+      return { gate: 'votes', key: 'closed', headline: label, title: null, facts: [], sub: votes.note, tone: 'muted', progress: null };
+    case 'going':
+      // Approved and on its way. What the merge waits on is one short fact;
+      // its account is the timeline's note.
+      return {
+        gate: merge ? 'merge' : 'votes', key: 'merging', headline: label, title: { id: 'core:work.stage.approved' },
+        facts: [{ id: 'core:work.stage.goingLive' }, ...(merge && merge.figure ? [merge.figure] : [])], sub: [], tone: 'ok', progress: null,
+      };
+    case 'stuck':
+      return merge && merge.tone === 'bad'
+        ? { gate: 'merge', key: 'merging', headline: merge.name, title: null, facts: [merge.figure].filter(Boolean), sub: merge.note, tone: 'bad', progress: null }
+        : { gate: 'votes', key: 'merging', headline: label, title: null, facts: [], sub: votes.note, tone: 'bad', progress: null };
+    case 'failed':
+      return {
+        gate: 'testing', key: 'failed', headline: testing.figure || testing.name,
+        title: { id: fixStanding(testing) === 'stopped' ? 'project:topic.card.foot.stoppedTests' : 'project:topic.rail.testsFailedPlain' },
+        facts: [testing.figure].filter(Boolean), sub: testing.note, tone: 'bad', progress: null,
+      };
+    case 'testing':
+      // Tests still running lead, as failed ones do: a vote can be cast
+      // meanwhile, and its button rides beside See progress.
+      // How far they are is the one fact; what they are doing is the note
+      // under the timeline's Testing step.
+      return { gate: 'testing', key: 'testing', headline: testing.name, title: null, facts: [testing.figure].filter(Boolean), sub: [], tone: null, progress: barProgress(testing.segments) };
+    case 'approved':
+      return {
+        gate: merge ? 'merge' : 'votes', key: 'approved', headline: votes.figure || votes.name, title: { id: 'core:work.stage.approved' },
+        facts: merge && merge.figure ? [merge.figure] : [], sub: merge ? [] : votes.note, tone: 'ok', progress: null,
+      };
+    default:
+      return voteFoot(votes, status);
   }
-  if (ENDED.has(key)) {
-    return { gate: 'votes', key: 'closed', headline: status!.label, facts: [], sub: votes.note, tone: 'muted', progress: null };
-  }
-  // A vote the viewer can cast leads: it is the one thing they can do here.
-  // What its tests say rides under it (`also`).
-  if (votes.tone === 'ask') return voteFoot(votes);
-  if (testing.tone === 'bad') {
-    return { gate: 'testing', key: 'failed', headline: testing.figure || testing.name, facts: [], sub: testing.note, tone: 'bad', progress: null };
-  }
-  if (!testing.done) {
-    return {
-      gate: 'testing',
-      key: 'testing',
-      headline: testing.name,
-      facts: [testing.figure].filter(Boolean),
-      sub: testing.note,
-      tone: null,
-      progress: barProgress(testing.segments),
-    };
-  }
-  if (merge) {
-    return {
-      gate: 'merge',
-      key: 'merging',
-      headline: merge.name,
-      facts: [merge.figure].filter(Boolean),
-      sub: merge.note,
-      tone: merge.tone === 'bad' ? 'bad' : null,
-      progress: null,
-    };
-  }
-  return voteFoot(votes);
 }
 
-function voteFoot(votes: GateLike): ChangeFoot {
-  const facts = (votes.facts || []).map((f) => f.text).filter(Boolean);
+function voteFoot(votes: GateLike, status: ChangeFootInput['status']): ChangeFoot {
+  const said = votes.facts || [];
+  const facts: (string | Phrase)[] = said.map((f) => f.text).filter(Boolean);
+  // "0 of 2" before the viewer's own line, unless the card already counts.
+  const needed = Number(status?.majority) || 0;
+  if (needed > 0 && !said.some((f) => f.key === 'tally')) {
+    facts.unshift({ id: 'project:topic.card.foot.tally', values: { yes: Math.max(0, Number(status?.yes) || 0), needed } });
+  }
   return {
     gate: 'votes',
     key: 'vote',
     headline: votes.figure || votes.name,
+    title: null,
     facts,
     sub: votes.note,
-    tone: votes.tone === 'bad' ? 'bad' : votes.done ? 'ok' : null,
+    tone: votes.tone === 'bad' ? 'bad' : null,
     progress: null,
   };
-}
-
-/**
- * Pure: under a vote's foot, what its tests say when they are not simply
- * passed: failed, or still running. Null when there is nothing to add.
- */
-export function alsoTests(foot: ChangeFoot, testing: GateLike): { bad: boolean; figure: string; lines: string[] } | null {
-  if (foot.key !== 'vote') return null;
-  if (testing.tone !== 'bad' && testing.done) return null;
-  return { bad: testing.tone === 'bad', figure: testing.figure || testing.name, lines: testing.note };
 }
 
 export interface RequestFoot {

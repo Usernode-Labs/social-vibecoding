@@ -421,8 +421,14 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   }
   // 11 Nov 2026: the stored row is the one source (statesFor makes it first
   // when it is missing); a thread with none to read is not listed.
-  const state = work;
+  let state = work;
   if (!state) return null;
+  // #6819: an update on its way is read live, as the change's own page reads
+  // it, so a stored row the sweep has not caught up with (still up for a
+  // vote) cannot make this list ask for a vote its page says is cleared.
+  if (status === 'promoted' && row.update_coming != null) {
+    state = { ...work, ...workState.withUpdate(work, { coming: row.update_coming }), voteOpen: false };
+  }
   const at = iso(state.since) || iso(row.request_at || row.created_at);
   // Its words travel with it (work-state.js phrasesOf): the tab draws them.
   const stored = {
@@ -451,8 +457,12 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // already voted and only wrote in it gets no row.
   const code = state.line?.code;
   // #6600: a takeover the bot is running on the change is an update under
-  // way, whether it is fixing its failing checks or revising it.
-  const updating = status === 'promoted' && (code === 'revising' || code === 'update_queued' || code === 'fixing');
+  // way, whether it is fixing its failing checks or revising it. #6807: and
+  // a change waiting on the bot's fix for a check that is not its own.
+  // #6819: the live record counts too, not only the stored line, so a turn
+  // that has just started leaves Needs you at once.
+  const updating = status === 'promoted' && (row.update_coming != null
+    || code === 'revising' || code === 'update_queued' || code === 'fixing' || code === 'fixing_check');
   // #6600: its last takeover attempt failed, and nothing has checked it since.
   const botFixFailed = row.update_failed != null || code === 'bot_fix_failed';
   // Owed only while its change is open for votes (work_states.vote_open).
@@ -487,7 +497,9 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   // One they only voted or wrote in is listed while no change of it is in
   // flight, as Waiting: it asks nothing of them, and nobody is building it.
   const place = updating
-    ? ((own || wouldVote) ? ((code === 'revising' || code === 'fixing') ? 'next' : 'waiting') : null)
+    ? ((own || wouldVote)
+      ? ((row.update_coming === 'running' || code === 'revising' || code === 'fixing' || code === 'fixing_check') ? 'next' : 'waiting')
+      : null)
     : workState.placeFor(state, { requester: decides, own, voteOwed }) || (!own && !inFlight(state) ? 'waiting' : null);
   if (!place) return null;
   const out = { group: place, work: stored, at };
@@ -780,9 +792,17 @@ async function yoursOn(pool, { user, appId }) {
  * (GET /api/ai/tracks). A project they can no longer view is left out,
  * whatever the records say. Never anybody else's: it takes only `user`.
  */
-async function tracksFor(pool, { user, limit = 100, deps = {} }) {
+async function tracksFor(pool, { user, limit = 100, also = [], deps = {} }) {
   const rows = (await workState.forRequester(pool, user.id, { limit }))
     .filter((r) => r.kind === 'request' && r.issueNumber > 0);
+  // 18 Nov 2026: requests a live card in their chat follows that are not
+  // their own (a request they asked the bot to start for somebody else),
+  // read the same way, for a project they may view.
+  // Kept apart (`watched`): they are not the viewer's requests, so nothing
+  // that lists theirs lists these.
+  const extra = await alsoRows(pool, also, rows);
+  const watchedKeys = new Set(extra.map((r) => `${r.appId}#${r.issueNumber}`));
+  rows.push(...extra);
   if (!rows.length) return { tracks: [] };
   const appIds = [...new Set(rows.map((r) => r.appId))];
   const { rows: apps } = await pool.query(
@@ -809,10 +829,42 @@ async function tracksFor(pool, { user, limit = 100, deps = {} }) {
   }
   tracks.sort((a, b) => (order.get(`${appIdOf(apps, a.appSlug)}#${a.issueNumber}`) ?? 0)
     - (order.get(`${appIdOf(apps, b.appSlug)}#${b.issueNumber}`) ?? 0));
-  return { tracks };
+  if (!watchedKeys.size) return { tracks };
+  const isWatched = (t) => watchedKeys.has(`${appIdOf(apps, t.appSlug)}#${t.issueNumber}`);
+  return { tracks: tracks.filter((t) => !isWatched(t)), watched: tracks.filter(isWatched) };
 }
 
 const appIdOf = (apps, slug) => Number(apps.find((a) => a.slug === slug)?.id) || 0;
+
+// The most requests one read follows beyond the viewer's own.
+const MAX_ALSO = 10;
+
+/**
+ * Pure (18 Nov 2026): the requests a tracks read was asked to follow too, as
+ * `slug:number` pairs, at most MAX_ALSO of them; anything else is left out.
+ */
+function parseAlso(value) {
+  const list = Array.isArray(value) ? value : String(value || '').split(',');
+  const out = [];
+  for (const raw of list) {
+    const m = /^([a-z0-9][a-z0-9-]{0,99}):([1-9][0-9]{0,8})$/.exec(String(raw || '').trim());
+    if (!m || out.some((o) => o.slug === m[1] && o.issueNumber === Number(m[2]))) continue;
+    out.push({ slug: m[1], issueNumber: Number(m[2]) });
+    if (out.length >= MAX_ALSO) break;
+  }
+  return out;
+}
+
+/** The rows a read follows beyond the viewer's own, as forRequester shapes them; access is checked with theirs. */
+async function alsoRows(pool, also, own) {
+  const wanted = parseAlso(also);
+  if (!wanted.length) return [];
+  const { rows: apps } = await pool.query('SELECT id, slug FROM apps WHERE slug = ANY($1::text[])', [[...new Set(wanted.map((w) => w.slug))]]);
+  const idOf = new Map(apps.map((a) => [a.slug, Number(a.id)]));
+  return wanted
+    .filter((w) => idOf.has(w.slug) && !own.some((r) => r.appId === idOf.get(w.slug) && r.issueNumber === w.issueNumber))
+    .map((w) => ({ kind: 'request', appId: idOf.get(w.slug), issueNumber: w.issueNumber }));
+}
 
 /**
  * The person's private threads with Homeroom bot, as the tab lists them,
@@ -955,12 +1007,30 @@ function listsOf(needs, work, { botUsername = null } = {}) {
   // A feed card names a change by its request, as the tab does (model.ts shownNumber).
   const needNumber = (item) => (item.kind === 'ballot' ? item.ballot?.number || item.number : item.number) || null;
   const shownNumber = (item) => (item.kind === 'proposal' && item.request?.number) || needNumber(item);
+  // A thread the feed already lists, by its request or its change, kept
+  // apart as model.ts keeps them (18 Nov 2026: on GitHub, PR 6792 is not
+  // request #6792, and a vote owed on #6792's change hid PR 6792).
+  const requestKey = (slug, n) => `${slug}#${Number(n)}`;
+  const changeKey = (slug, n) => `${slug}#change:${Number(n)}`;
   const owed = new Set();
   for (const item of items) {
-    for (const n of [needNumber(item), shownNumber(item)]) if (item.app && n) owed.add(`${item.app.slug}#${n}`);
+    if (!item.app) continue;
+    const request = item.kind === 'ballot' ? item.ballot?.number
+      : item.kind === 'proposal' ? item.request?.number
+        : item.kind === 'question' ? item.number : null;
+    const change = item.kind === 'proposal' || item.kind === 'ballot' ? item.number : null;
+    if (request) owed.add(requestKey(item.app.slug, request));
+    if (change) owed.add(changeKey(item.app.slug, change));
   }
-  const isOwed = (t) => !!t.app && ((!!t.number && owed.has(`${t.app.slug}#${t.number}`))
-    || (!!t.change?.number && owed.has(`${t.app.slug}#${t.change.number}`)));
+  // A change's own thread is numbered by its change, never by a request.
+  const threadRequest = (t) => (t.kind === 'change' ? null : t.number || null);
+  const isOwed = (t) => {
+    if (!t.app) return false;
+    const request = threadRequest(t);
+    const change = t.change?.number || (t.kind === 'change' ? t.number : null);
+    return (!!request && owed.has(requestKey(t.app.slug, request)))
+      || (!!change && owed.has(changeKey(t.app.slug, change)));
+  };
   const row = (app, number, title, says) => ({
     project: app?.slug || null,
     projectName: app?.name || app?.slug || null,
@@ -976,7 +1046,8 @@ function listsOf(needs, work, { botUsername = null } = {}) {
   // #6153: a private thread filed as a request whose request has a row is that row.
   const listed = new Set(owed);
   for (const t of [...(work?.needs || []), ...(work?.next || []), ...(work?.waiting || []), ...(work?.live || [])]) {
-    if (t.app && t.number) listed.add(`${t.app.slug}#${t.number}`);
+    const request = threadRequest(t);
+    if (t.app && request) listed.add(requestKey(t.app.slug, request));
   }
   const privates = unfiledPrivate(work?.private, listed);
   // #6271: a private thread marked done this week is Live this week's, under
@@ -1028,6 +1099,7 @@ async function pageLists(pool, { user, showSelfHosted = false, deps = {} }) {
 }
 
 module.exports = {
+  parseAlso,
   // Shared with services/ai-history.js, which reads the same threads once they are finished.
   appOf,
   hrefOf,

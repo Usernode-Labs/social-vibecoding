@@ -34,7 +34,7 @@ import { NO_PLAN_LAYOUT, asksWithQuestionsCard, isPlanMessage, planLayout } from
 import { botRequestNames, botThreadTitle, dotText, threadsAllowed } from './bot-shared';
 import { BotWorkSync, loadBotWork, newestBotMessageId, useBotWork, useWorkChanged } from './bot-work';
 import {
-  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadTitle, privateThreadWords, serverThreadName,
+  PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
 import { requestPageOf } from './request-page';
@@ -1811,7 +1811,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
         <JumpToLatestButton shown={unread.jump} dot={unread.arrived > 0} aria-label={jumpLabel(unread.arrived)} title={t('messages:thread.jumpToLatest')} onClick={jumpToLatest} />
       </TranscriptOverlay>
       <ChatStatusLine className="messages-typing">{typingLine(t, typing)}</ChatStatusLine>
-      <MessageComposer />
+      <MessageComposer scroller={scroller} />
       {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </section>
   );
@@ -2391,6 +2391,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
           <PrivateThreadDoors
             rootId={privateRoot}
             text={privateThreadWords(root, replies, meId)}
+            name={privateThreadName(root, replies)}
             where={privateWhere}
             botReplied={replies.some((message) => message.sender.bot)}
             invited={newProjectInvited(root, replies)}
@@ -2405,7 +2406,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
           hides while a thread is open. Under Jump to latest, as in every
           chat (1 Nov 2026). */}
       <ChatStatusLine className="messages-typing">{typingLine(t, threadTyping)}</ChatStatusLine>
-      <MessageComposer threadRootId={rootId} />
+      <MessageComposer threadRootId={rootId} scroller={scroller} />
       {drop.dragging ? <DropOverlay className="messages-drop-overlay" /> : null}
     </aside>
   );

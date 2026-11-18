@@ -5875,6 +5875,14 @@
     "text": "This proposal has no visual changes.",
     "description": "Sentence under \"No before & after needed\" on a proposal's screenshots card, and the whole line about screenshots on the change's page in that case."
   },
+  "shots.state.unstageable.label": {
+    "text": "Can't be shown on a copy",
+    "description": "Heading of the screenshots card on a proposal when the change it declares is about a screen the before and after copies already have, and no ready-made state on them could show it. Nobody needs to act."
+  },
+  "shots.state.unstageable.detail": {
+    "text": "{{reason}}. Homeroom has been told.",
+    "description": "Sentence under \"Can't be shown on a copy\" on a proposal's screenshots card. {{reason}} is the screenshots agent's own sentence on why the copies could not show the change."
+  },
   "shots.state.waived.label": {
     "text": "Screenshots waived",
     "description": "Heading of the screenshots card on a proposal when an administrator allowed review to go on without before/after screenshots."
@@ -6111,6 +6119,10 @@
     "text": "Screenshots ready",
     "description": "Badge on a proposal's screenshots card once its before/after screenshots are taken."
   },
+  "shots.card.previousBadge": {
+    "text": "Previous version",
+    "description": "Badge on a proposal's screenshots card over before/after screenshots taken of the proposal's previous version, shown after a new commit until screenshots of the new version are taken."
+  },
   "shots.card.beforeCommit": {
     "text": "before <0>{{commit}}</0>",
     "description": "Small print on a proposal's screenshots card naming the code revision the \"before\" screenshots were taken of. {{commit}} is that revision's short id; keep it inside the tags, which set it in code type."
@@ -6138,6 +6150,10 @@
   "shots.card.intro": {
     "text": "Taken on the exact before and after builds of this proposal. Look at the screenshots to decide whether they show the change.",
     "description": "Opening line of a proposal's screenshots card, above the before/after viewer, when it holds screenshots only."
+  },
+  "shots.card.previousIntro": {
+    "text": "Taken on the previous version of this proposal. Screenshots of this version replace them once they are taken.",
+    "description": "Opening line of a proposal's screenshots card, above the before/after viewer, when the screenshots shown were taken of the proposal's previous version: a new commit came in and its own screenshots are not ready."
   },
   "shots.card.introClips": {
     "text": "Taken on the exact before and after builds of this proposal. Look at the screenshots and clips to decide whether they show the change.",
@@ -7728,40 +7744,52 @@
     "description": "Text under \"Still waiting on the preview\". {{count}} is the seconds waited so far; \"s\" abbreviates seconds."
   },
   "frame.unavailable.title": {
-    "text": "Preview unavailable",
+    "text": "This preview can’t open right now",
     "description": "Title of the preview's loading screen when the preview cannot be opened; the reason is shown under it."
+  },
+  "frame.notRunning.title": {
+    "text": "This preview isn’t running right now",
+    "description": "Title of the preview's screen when the change's preview has been stopped (previews stop after a while nobody uses them). Its explanation and, where allowed, a button to start it again are under it."
+  },
+  "frame.notRunning.sub": {
+    "text": "It stops after a while unused. Starting it again takes about a minute.",
+    "description": "Text under \"This preview isn’t running right now\", above the \"Start the preview\" button, for somebody allowed to start it."
+  },
+  "frame.notRunning.start": {
+    "text": "Start the preview",
+    "description": "Button under \"This preview isn’t running right now\": starts (builds) the change's preview again and opens it when it is ready."
   },
   "frame.unavailable.notRebuilt": {
     "text": "This preview could not be rebuilt.",
-    "description": "Reason under \"Preview unavailable\" when the server refused to rebuild the preview and gave no reason of its own."
+    "description": "Reason under \"This preview can’t open right now\" when the server refused to rebuild the preview and gave no reason of its own."
   },
   "frame.unavailable.network": {
     "text": "Network error while rebuilding the preview. Try again in a moment.",
-    "description": "Reason under \"Preview unavailable\" when the request to open or rebuild the preview could not reach the server."
+    "description": "Reason under \"This preview can’t open right now\" when the request to open or rebuild the preview could not reach the server."
   },
   "frame.unavailable.demo": {
     "text": "Live previews can’t be rebuilt in this demo environment.",
-    "description": "Reason under \"Preview unavailable\" on a demonstration copy of Homeroom, where previews are not built."
+    "description": "Reason under \"This preview can’t open right now\" on a demonstration copy of Homeroom, where previews are not built."
   },
   "frame.unavailable.unhealthy": {
     "text": "The submitted preview is running but is not answering its health check. Try again in a moment.",
-    "description": "Reason under \"Preview unavailable\" when the preview's server is up but does not answer the platform's test request."
+    "description": "Reason under \"This preview can’t open right now\" when the preview's server is up but does not answer the platform's test request."
   },
   "frame.unavailable.edge": {
     "text": "The submitted preview is not reachable through its public address. Try again in a moment.",
-    "description": "Reason under \"Preview unavailable\" when the preview is running but cannot be reached at its web address."
+    "description": "Reason under \"This preview can’t open right now\" when the preview is running but cannot be reached at its web address."
   },
   "frame.unavailable.missingReader": {
-    "text": "This preview is no longer running. A collaborator can rebuild it.",
-    "description": "Reason under \"Preview unavailable\" for a viewer who may only read: the preview was shut down and only someone allowed to build can start it again."
+    "text": "It stops after a while unused. Somebody who works on this project can start it again.",
+    "description": "Text under \"This preview isn’t running right now\" for a viewer who may only look: the preview was stopped and only someone allowed to build on the project can start it again."
   },
   "frame.unavailable.notNow": {
     "text": "This preview isn’t available right now.",
-    "description": "Reason under \"Preview unavailable\" when the preview is not running and nothing more specific is known."
+    "description": "Reason under \"This preview can’t open right now\" when the preview is not running and nothing more specific is known."
   },
   "frame.unavailable.unexpected": {
     "text": "This preview returned an unexpected response.",
-    "description": "Reason under \"Preview unavailable\" when the server's answer about the preview could not be understood."
+    "description": "Reason under \"This preview can’t open right now\" when the server's answer about the preview could not be understood."
   },
   "frame.unavailable.rebuildFailedTitle": {
     "text": "Preview couldn’t be rebuilt",
@@ -7773,7 +7801,7 @@
   },
   "frame.unavailable.noAddress": {
     "text": "This preview did not provide a usable address.",
-    "description": "Reason under \"Preview unavailable\" when a rebuild finished without a web address for the preview."
+    "description": "Reason under \"This preview can’t open right now\" when a rebuild finished without a web address for the preview."
   },
   "frame.title.named": {
     "text": "{{app}} · Preview",
@@ -8867,6 +8895,10 @@
     "text": "Homeroom bot couldn’t fix this on its own. The person who asked for it, or any member of this project, can take it from here.",
     "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot (the change's author) gave up fixing what failed: who can take it over. \"It\" in the second sentence is the change."
   },
+  "page.testing.note.botFixingCheck": {
+    "text": "The check it fails on fails without the change too. Homeroom bot is getting that check fixed (request #{{number}}). This change's checks run again once that fix is in.",
+    "description": "Line under the Testing card of a change's page whose checks failed on a test that fails without the change too, while Homeroom bot gets that test itself fixed in another request. {{number}} is that request's number on Homeroom's own board. \"It\" is the change."
+  },
   "page.testing.note.botStopped_one": {
     "text": "Checks failing · Homeroom bot stopped after {{count}} try. You can let it try once more.",
     "description": "Line under the Testing card of a change's page whose checks failed, after Homeroom bot stopped at its own limit of fixes it may make by itself. Shown to the person who asked for it, or an admin, who may let it try again. {{count}} is the number of its tries."
@@ -9002,6 +9034,14 @@
   "page.shots.taking": {
     "text": "Taking the screenshots. They show up here when they are ready.",
     "description": "Line inside the Before and after card on a change's page while the before and after screenshots (\"screenshots\") are being taken."
+  },
+  "page.shots.previousTaking": {
+    "text": "These are from the previous version. New screenshots are being taken and will replace them.",
+    "description": "Line over the before and after screenshots on a change's page (its Before and after card) after a new commit: the pictures shown are still the ones taken of the change's previous version, while screenshots of the new version are being taken."
+  },
+  "page.shots.previous": {
+    "text": "These are from the previous version. This version has no screenshots yet.",
+    "description": "Line over the before and after screenshots on a change's page (its Before and after card) after a new commit, when taking screenshots of the new version failed, was skipped or did not start: the pictures shown are still the ones taken of the previous version. The reason for the new version follows it."
   },
   "shots.tiles.beforeNoRecording": {
     "text": "Before <0>· no recording</0>",

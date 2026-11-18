@@ -8,9 +8,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const flaky = require('../src/services/homeroom-bot-flaky-checks');
+
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
 const message = (card) => ({
   id: 7, conversationId: 3, content: 'x', createdAt: 'now', reactions: [], attachments: [], objects: [],
@@ -55,6 +59,17 @@ test('the checks card draws each step, and its fix to vote on while it works', (
   assert.deepEqual(checkSteps({ steps: [{ state: 'weird', what: 'x' }, { what: '' }, 'no', { state: 'done', what: 'y', request: { project: 'p', number: 'n' } }] }),
     [{ state: 'todo', what: 'x', request: null }, { state: 'done', what: 'y', request: null }]);
   assert.match(drawChecks({ type: 'checks_green' }), /data-checks-green="working"/);
+});
+
+test('the vote button opens the change the card is about, by its own id (#6718)', () => {
+  // The button hands the change's session id and number to the shared helper,
+  // which puts the id after the number so a shared number cannot open another
+  // change.
+  assert.match(read('frontend/src/features/messages/bot-cards/checks-green.tsx'),
+    /window\.location\.hash = changeHref\(fix\.project, fix\.sessionId, fix\.prNumber\)/);
+  const { changeHref } = loadTsx('frontend/src/lib/change-href.ts');
+  assert.equal(changeHref('usernode-2d5619', 5010, 6133),
+    '#app/usernode-2d5619/dev/changes/6133/5010');
 });
 
 const CONFIRM = {

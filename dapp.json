@@ -786,14 +786,6 @@
   "bootParams": ["shot", "details", "side-strip"],
   "routingBoundaries": [
     {
-      "route": "#app/*",
-      "reason": "A running app's App tab: on a desktop the side panel opens the pages about it beside the app (frontend/src/features/side-panel/controller.ts onNavigate), so the next address change is not drawn in the page."
-    },
-    {
-      "route": "#app/*/app",
-      "reason": "The App tab's long form, the same running app: the side panel takes the next address change the same way."
-    },
-    {
       "route": "#homeroom-bot",
       "reason": "The Homeroom bot tab's page (#ai, its old address, lands here): on a desktop the side panel opens a request, a change or a conversation beside it, in the place of the docked chat (frontend/src/features/side-panel/controller.ts canTake), so the next address change is not drawn in the page."
     },
@@ -828,7 +820,7 @@
       "name": "Guest back arrow returns to the app directory (#1028)",
       "path": "/?shot=anon-back#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden) #app-viewer.hidden[data-anon-back=\"done\"]",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "The app library anyone can edit",
       "allowConsoleErrors": true
     },
     {
@@ -1100,9 +1092,9 @@
       "expectSelector": "#dev-body .gc-vote-item > .flex-1:first-child > .dev-card-head + .dev-card-meta + .dev-card-badges.dev-card-status + .gc-card-actions"
     },
     {
-      "name": "#4455: a change’s page is a Messages thread: the Workshop chip above the sheet (the header draws no arrow), \"Change #N\" and its category over the ⋯ disc, the change as the root post (who, when, the title, its summary as a quote), the Votes card above the Testing card; the steps are in Details",
+      "name": "#4455: a change’s page is a Messages thread: the Workshop chip and one header pill (18 Nov 2026: the project's tile first, \"Change #N\", the project and its category, the ⋯ disc, then the panel-only open-as-page and close discs; the header draws no arrow), the change as the root post (who, when, the title, its summary as a quote), the Votes card above the Testing card; the steps are in Details",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": "body:has(#back-btn.hidden) .dev-change:has(#gc-thread-back .dev-topic-back):has(#gc-thread-bar .messages-thread-sub):has(#gc-thread-bar [data-card-menu]) [data-change-root=\"9000043\"][data-thread-card=\"change\"]:has(.dev-thread-kicker[data-thread-kicker=\"change\"]):has(.dev-thread-foot[data-thread-foot] .dev-thread-foot-head) [data-step-layer=\"gates\"] [data-change-gate=\"votes\"] + [data-change-gate=\"testing\"]",
+      "expectSelector": "body:has(#back-btn.hidden) .dev-change:has(#gc-thread-back .dev-topic-back):has(#gc-thread-bar .dev-thread-bar-tile + * .messages-thread-sub):has(#gc-thread-bar [data-card-menu] + [data-thread-exits] [data-thread-exit=\"close\"]) [data-change-root=\"9000043\"][data-thread-card=\"change\"]:has(.dev-thread-kicker[data-thread-kicker=\"change\"]):has(.dev-thread-foot[data-thread-foot] .dev-thread-foot-head) [data-step-layer=\"gates\"] [data-change-gate=\"votes\"] + [data-change-gate=\"testing\"]",
       "expectText": "Change #900143"
     },
     {
@@ -1465,21 +1457,21 @@
       "expectSelector": "#leaderboard-screen:not(.hidden):has(#standings-tabs [data-standings-tab=\"challenges\"] ~ [data-standings-tab=\"topochain\"]) #challenges-root:not(.hidden) #tc-se-grid"
     },
     {
-      "name": "New project is the last tile of Home's My apps again, and New community stays the last of Pinned communities (#6522; both were One Home's, #6361)",
+      "name": "New project is the last tile of Home's Pinned apps (#6522), and Home lists none of the viewer's communities until a search: they are the Communities tab's page",
       "path": "/?demo=1&shot=create-enabled",
-      "expectSelector": "#home-body #home-apps-section:not([hidden]):has(#home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]) ~ #home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"true\"]:last-child",
+      "expectSelector": "#home-body:has(#home-communities-section[hidden]) #home-apps-section:not([hidden]) #home-create-tile[data-panel-slot=\"create\"][data-create-enabled=\"true\"]",
+      "expectText": "New project"
+    },
+    {
+      "name": "The Communities page's New community tile is present but locked without app quota, the last of Joined",
+      "path": "/?demo=1&shot=create-disabled#communities",
+      "expectSelector": "#communities-screen:not(.hidden) #communities-joined-section:not([hidden]) #communities-new-community[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:last-child:not([disabled])",
       "expectText": "New community"
     },
     {
-      "name": "The New community tile is present but locked without app quota, still the last of Pinned communities (One Home, #6361)",
-      "path": "/?demo=1&shot=create-disabled",
-      "expectSelector": "#home-communities-section:not([hidden]) #home-new-community[data-panel-slot=\"create\"][data-create-enabled=\"false\"][aria-label^=\"New community. \"]:last-child:not([disabled])",
-      "expectText": "New community"
-    },
-    {
-      "name": "One Home (#6361): Home's last section is Communities to join, after Pinned apps and Pinned communities, and Home draws no Discover lane or continue card",
+      "name": "One Home (#6361): Home's last section is Communities to join, after Pinned apps, and Home draws no Discover lane, no continue card and no list of the viewer's communities",
       "path": "/?demo=1",
-      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-communities-section ~ #home-join-section:not([hidden]) > h2.home-area-label",
+      "expectSelector": "#home-body:not(:has(#home-discover-section)):not(:has(#home-continue-card)) #home-apps-section ~ #home-communities-section[hidden] ~ #home-join-section:not([hidden]) > h2.home-area-label",
       "expectText": "Communities to join"
     },
     {
@@ -1773,7 +1765,7 @@
       "name": "Landing tells the story and asks people to get started (first session)",
       "path": "/?shot=anon#landing",
       "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header [data-landing-sign-in]:not(.hidden)) [data-guest-discover] [data-landing-story] h1",
-      "expectText": "On Homeroom, communities make apps together.",
+      "expectText": "The app library anyone can edit",
       "allowConsoleErrors": true
     },
     {
@@ -1928,9 +1920,9 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Landing has Sign in and Sign up in its bar, and one button to make an account under the story (first session)",
+      "name": "Landing has Sign in and one filled button in its bar, and under the story Explore apps and no link (first session)",
       "path": "/?shot=anon#landing",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-join]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has(#landing-header button[data-landing-sign-up]):has([data-landing-story] button[data-landing-story-explore]):not(:has([data-landing-story] a)) #landing-header [data-landing-sign-in]:not(.hidden)",
       "expectText": "Sign in",
       "allowConsoleErrors": true
     },
@@ -2406,10 +2398,9 @@
       "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "A retired ?view=kanban link lands on the stage pane, and a tap on a row opens its page beside the board (#4486)",
+      "name": "A retired ?view=kanban link lands on the stage pane, and a tap on a row opens its page beside the board (#4486), its header pill ending in Open as a page and Close (18 Nov 2026)",
       "path": "/?demo=1&view=kanban&shot=board-open#app/usernode-2d5619/dev",
-      "expectSelector": "body:has(.dev-ws-side[data-ws-side] #dev-topic-thread) #dev-workshop [data-ws-stage] #dev-kanban .dev-ws-wrow[data-on] > .dev-ws-wrow-main > a.dev-ws-wrow-link[aria-current=\"true\"]",
-      "expectText": "Open as a page"
+      "expectSelector": "body:has(.dev-ws-side[data-ws-side] #dev-topic-thread [data-thread-exits] > [data-thread-exit=\"expand\"][aria-label=\"Open as a page\"] + [data-thread-exit=\"close\"]) #dev-workshop [data-ws-stage] #dev-kanban .dev-ws-wrow[data-on] > .dev-ws-wrow-main > a.dev-ws-wrow-link[aria-current=\"true\"]"
     },
     {
       "name": "The Workshop renders its themes in #dev-workshop; the deep link opens one, its items the board’s rows under stage lanes",
@@ -2944,9 +2935,9 @@
       "expectSelector": "#platform-header:not(:has(#messages-btn)):not(:has([data-look-picker])):not(:has([data-look-theme])):has(#platform-mark-btn) #notifications-btn"
     },
     {
-      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Recents (the pinned group, then the rest), then you (One Home, #6361; the Communities node stays in the markup, drawn on neither bar, for the routes that name it)",
+      "name": "The sidebar's destination order: Home, then Homeroom bot (AI) above Messages, then Communities, then Recents (the pinned group, then the rest), then you",
       "path": "/?shot=app-context&demo=1",
-      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-rail-pinned + #platform-rail-communities + #platform-tab-workshop + #platform-tab-me"
+      "expectSelector": "#platform-tabs #platform-tab-home + #platform-tab-ai[href=\"#homeroom-bot\"] + #platform-tab-messages + #platform-tab-workshop[href=\"#communities\"] + #platform-rail-pinned + #platform-rail-communities + #platform-tab-me"
     },
     {
       "name": "Messages is a tab on the bar, with a seat for its count (#2718)",
@@ -3075,9 +3066,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
-      "name": "The notifications strip reads Unread, All, and it opens on Unread (#2718 review, #5289)",
+      "name": "The notifications strip reads Unread, Recent threads, All, and it opens on Unread (#2718 review, #5289, #6785)",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-all:last-child"
+      "expectSelector": "#notifications-screen-tabs > #notifications-tab-unread:first-child[aria-selected=\"true\"] + #notifications-tab-threads + #notifications-tab-all:last-child"
     },
     {
       "name": "The Unread footer shows older notifications in place rather than jumping to All",
@@ -3165,9 +3156,9 @@
       "expectText": "Go to community"
     },
     {
-      "name": "#communities, the old Communities screen, opens Home: beside the sidebar's search glyph, Pinned communities offers Needs you with the votes waiting (One Home, #6361; #3051, D)",
+      "name": "#communities opens the Communities tab's page with its tab lit: Pinned leads with Needs you and the votes waiting, Joined ends on New community, and Discover leads to the ones to join",
       "path": "/?demo=1#communities",
-      "expectSelector": "body:has(#platform-rail-search) #home-screen:not(.hidden) #home-communities-section:not([hidden]) a#home-needs-tile[href=\"#needs\"][data-home-needs]",
+      "expectSelector": "body:has(#platform-tab-workshop[aria-current=\"page\"]) #communities-screen:not(.hidden):has(#communities-joined-section #communities-new-community[data-panel-slot=\"create\"]):has(#communities-discover-section #communities-discover-btn) #communities-pinned-section:not([hidden]) a#communities-needs-tile[href=\"#needs\"][data-home-needs]",
       "expectText": "Needs you"
     },
     {
@@ -3668,10 +3659,10 @@
       "expectText": "Preview building"
     },
     {
-      "name": "Imported proposal whose preview failed: the Testing card says so, with its retry in place of the Preview button (#866, #4455)",
+      "name": "Imported proposal whose preview failed: the card's foot says Tests failed and why, with See what failed and the retry as its one action (#866, #4455)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
       "expectText": "The preview didn’t start",
-      "expectSelector": ".dev-change-root:has([data-change-gate=\"testing\"][data-tone=\"bad\"] .dev-change-gate-figure) .dev-thread-foot:has(.dev-thread-foot-acts [data-act=\"swapToStagingForSession\"]) [data-thread-foot-also=\"bad\"]"
+      "expectSelector": ".dev-change-root:has([data-change-gate=\"testing\"][data-tone=\"bad\"] .dev-change-gate-figure) .dev-thread-foot[data-thread-foot=\"failed\"] .dev-thread-foot-acts:has([data-thread-foot-see=\"checks\"]) [data-thread-foot-next] [data-act=\"swapToStagingForSession\"]"
     },
     {
       "name": "Freshness (#1442): a conflicted proposal says so in one short line on its merge step, in Details (B10b)",
@@ -3708,10 +3699,10 @@
       "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > [data-check-unit]:has(.dev-ledger-unit-said) > .dev-ledger-why > .dev-ledger-why-body > .dev-ledger-why-details > li .dev-ledger-why-excerpt"
     },
     {
-      "name": "A change whose checks failed tells its author what went wrong in plain words, with Fix it beside a quieter Re-run checks",
+      "name": "A change whose checks failed says Tests failed in its foot, with See what failed and Fix it; the plain-words account is read for the layer",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000494",
-      "expectSelector": ".dev-change-root:has([data-change-gate=\"testing\"][data-tone=\"bad\"] > .dev-change-gate-why[data-change-gate-why=\"explained\"]) .dev-thread-foot:has(.dev-thread-foot-acts > .gc-vote-btn-accent[data-change-fix-checks] + .gc-vote-btn:not(.gc-vote-btn-accent)[data-act=\"castRecheck\"]) [data-thread-foot-also=\"bad\"]",
-      "expectText": "needs a Spanish version"
+      "expectSelector": ".dev-change-root:has(.dev-change-gate-why[data-change-gate-why=\"explained\"]) .dev-thread-foot[data-thread-foot=\"failed\"] .dev-thread-foot-acts:has(> [data-thread-foot-see=\"checks\"]) > [data-thread-foot-next] > .gc-vote-btn-accent[data-change-fix-checks]",
+      "expectText": "Tests failed"
     },
     {
       "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
@@ -4024,9 +4015,9 @@
       "expectSelector": "#admin-root.w-full:not([class*=\"max-w-\"]):not(.mx-auto)"
     },
     {
-      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
+      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816), under one header in the theme's colours that fills the window (Nov 2026)",
       "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
-      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",
+      "expectSelector": "#staging-overlay[data-placement=\"full\"]:not(.hidden):has(.staging-head #staging-back + .staging-tile) #staging-loader:not(.hidden) #staging-loader-title",
       "expectText": "Loading the preview…"
     },
     {
@@ -4641,12 +4632,12 @@
       "expectSelector": "body:has(#platform-tabs[aria-label=\"Sections\"]:not(.platform-tabs-folded)):not(:has(#platform-rail-peek)) #platform-header .platform-header-left > #sidebar-toggle[aria-controls=\"platform-tabs\"][aria-pressed=\"true\"]"
     },
     {
-      "name": "Side panel beside a running app: hidden and frameless after the app view, Expand and Close, no page pill (#6431)",
+      "name": "Side panel (the Homeroom bot page's column): hidden and frameless after the app view, with only the column's close and none of the old controls from beside a running app (#6431)",
       "path": "/?demo=1",
-      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden:not(:has(iframe,[data-side-panel-status])) > .side-panel-head > #side-panel-expand[aria-label=\"Open full width, leaving the app\"] + #side-panel-close[aria-label=\"Close panel\"]"
+      "expectSelector": "html:not([data-side-panel]) #app-view + #platform-side-panel.hidden[aria-label=\"Side panel\"]:not([data-thread-pill]):not(:has(iframe,[data-side-panel-status],#side-panel-expand,#side-panel-back)) > .side-panel-head > .side-panel-ai-close[aria-label=\"Close panel\"]"
     },
     {
-      "name": "#2886: the divider between a running app and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
+      "name": "#2886: the divider between the Homeroom bot page's list and its side panel is a focusable vertical separator on the panel's left edge, shipping with no width chosen",
       "path": "/?demo=1",
       "expectSelector": "#platform-side-panel.hidden > #side-panel-divider.side-panel-divider:first-child[role=\"separator\"][aria-orientation=\"vertical\"][aria-controls=\"platform-side-panel\"][aria-label=\"Resize panel\"][tabindex=\"0\"]:not([aria-valuenow]) + .side-panel-head"
     },
@@ -4661,9 +4652,9 @@
       "expectSelector": "#platform-tabs > #platform-rail-pinned.hidden[role=\"group\"][aria-labelledby=\"platform-rail-pinned-label\"] + #platform-rail-communities"
     },
     {
-      "name": "#2800: you are the sidebar's foot, with your Settings beside you (#6019; One Home #6361 draws no Communities row above you, its node kept for #communities)",
+      "name": "#2800: you are the sidebar's foot, after Recents, with your Settings beside you (#6019)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-tabs > #platform-tab-workshop + a#platform-tab-me + a#platform-rail-settings:last-child"
+      "expectSelector": "#platform-tabs > #platform-rail-communities + a#platform-tab-me + a#platform-rail-settings:last-child"
     },
     {
       "name": "#4417, v3: on a desktop a project's places are nested under its row in the sidebar, the place on show lit there (Needs you), with no column beside it",
@@ -4687,9 +4678,9 @@
       "expectSelector": "a#back-btn:not(.hidden)[aria-label=\"Back\"][href=\"#messages\"]"
     },
     {
-      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the Communities node names no community, D)",
+      "name": "On a desktop a running app keeps the sidebar beside it, and the header's corner is the sidebar toggle rather than a ✕; no left-edge hover strip over the app (#3138; the Communities tab names no community, D)",
       "path": "/#app/staging-demo-forkable",
-      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
+      "expectSelector": "body.rail-pinned:has(#app-view:not(.hidden)):has(#platform-tabs:not(.hidden) #platform-tab-workshop:not([aria-label*=\", on \"])):not(:has(#platform-rail-peek)) #platform-header .platform-header-left:has(> a#back-btn.hidden) > #sidebar-toggle[aria-pressed=\"true\"]"
     },
     {
       "name": "An agent chat's old address opens the Homeroom bot tab: the thread its history was moved under, or the tab's own page when it had none (agent chats retired, 15 Nov 2026)",
@@ -4856,11 +4847,11 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
+      "name": "Signed out, 3 loads: the landing shows its story or pitch, with its project cards led by Featured's row of large cards, with no Pin or Join on a card (#6433), a kind chip for every kind a project has incl. Money, Health & fitness and Food & drink (#6585), and not \"could not load\" (#6003, #6015)",
       "path": "/?shot=anon#landing",
       "repeat": 3,
       "persona": "guest",
-      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-featured] [data-guest-featured]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
+      "expectSelector": "#auth-landing-screen:not(.hidden):has([data-home-join-lead] [data-guest-lead]):has([data-home-join-kind=\"money\"]):has([data-home-join-kind=\"health\"]):has([data-home-join-kind=\"food\"]):not(:has([data-home-pin],[data-home-join],[data-guest-card-footer],[data-guest-suggested-app],[data-guest-retry])) :is([data-landing-story] h1, div:not(.hidden) > h1)",
       "allowConsoleErrors": true
     },
     {

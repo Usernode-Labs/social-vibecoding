@@ -64,15 +64,12 @@ const READY_STATES = Object.freeze([
   ['shots-demo-proposal-challenge-v1', 'a weekly challenge scored on sending a proposal, with its page',
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-member-remix-v1', 'a remix of yours that offers Suggest this back', ['member']],
-  ['shots-demo-member-bot-run-card-v1', 'your chat with Homeroom bot, with a working activity card', ['member']],
   ['shots-demo-member-request-awaiting-approval-v1', 'a request whose change (yours) waits for approval',
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-standings-activities-v1', 'standings players with recorded point activities',
     ['member', 'read_only_admin', 'full_admin']],
   ['shots-demo-standings-graded-v1', 'the grader\'s reason under a graded standings activity',
     ['member', 'read_only_admin', 'full_admin']],
-  ['shots-demo-member-bot-deciders-v1', 'Homeroom bot\'s "needs a person" message naming who decides on a project',
-    ['member']],
   ['shots-demo-member-first-version-thanks-v1', 'an answered first-version plan with Homeroom bot\'s thanks under it',
     ['member']],
   ['shots-demo-member-bot-close-offer-v1', 'your chat with Homeroom bot, ending in its offer to close a request',
@@ -92,6 +89,18 @@ const READY_STATES = Object.freeze([
   ['shots-demo-full-admin-allowance-low-v1', 'a weekly building allowance nearly spent (Settings says what is left, in red)',
     ['full_admin']],
   ['shots-demo-member-bot-rings-v1', 'Homeroom bot\'s needs-you rings in your bell', ['member']],
+  ['shots-demo-member-request-queued-v1', 'a request of yours whose build waits its turn, on Homeroom bot\'s tab',
+    ['member']],
+  ['shots-demo-member-request-not-moving-v1', 'a request of yours nobody picked up, under Not moving on the bot\'s tab',
+    ['member']],
+  ['shots-demo-member-approved-checks-running-v1', 'a change of yours whose votes are in while its checks still run',
+    ['member']],
+  // 18 Nov 2026 (#6822): the work-status family. Each is a change of the
+  // member's on a project they are in, whose rule is one yes.
+  ['shots-demo-member-vote-update-running-v1', 'a change you can vote on while Homeroom bot is updating it',
+    ['member']],
+  ['shots-demo-member-approved-syncing-v1', 'an approved change catching up with main', ['member']],
+  ['shots-demo-member-vote-after-update-v1', 'a change back up for a vote once its update has landed', ['member']],
 ].map(([id, name, personas]) => Object.freeze({ id, name, personas: Object.freeze(personas) })));
 
 // The states a declared change can need that a copy holds only when
@@ -131,7 +140,10 @@ const NEEDS = Object.freeze([
   {
     needs: 'a Homeroom bot hand-off that needs a person to decide',
     test: /\bneeds? a (?:person|human|decision)\b|\bwho decides\b/i,
-    states: ['shots-demo-member-bot-deciders-v1'],
+    // 18 Nov 2026: a request's hand-off is said on its page now, not in the
+    // chat with the bot, and the state that drew it in the chat is retired.
+    // Nothing ready-made holds it, so a change that needs it is told so.
+    states: [],
   },
   {
     // 16 Oct 2026: how the bot's rings read in the bell.
@@ -148,6 +160,36 @@ const NEEDS = Object.freeze([
     needs: 'a weekly allowance nearly spent',
     test: /\b(?:allowance|credits?|budget)(?: \w+){0,2} (?:is |are )?(?:almost|nearly|mostly) (?:spent|used up|used|gone)\b|\bcredits? pill\b[^.]{0,30}\bred\b|\blow[- ](?:credits?|balance|allowance)\b/i,
     states: ['shots-demo-full-admin-allowance-low-v1'],
+  },
+  {
+    // 18 Nov 2026: Main Chat is gone, and a request waiting its turn is a row
+    // of Homeroom bot's tab (Waiting & in progress), never a card in a chat.
+    needs: 'a request waiting its turn to be built',
+    test: /\bwait(?:s|ing)? (?:its|their|for its|for their) turn\b|\bqueued (?:request|build)s?\b|\b(?:number|no\.) \d+ in line\b|\bin line to (?:be )?buil[dt]\b|\bready to build\b/i,
+    states: ['shots-demo-member-request-queued-v1'],
+  },
+  {
+    needs: 'a request nobody has picked up (Not moving)',
+    test: /\bnot moving\b|\bnobody (?:has )?(?:picked|started) (?:it |them )?up\b|\bnot picked up\b/i,
+    states: ['shots-demo-member-request-not-moving-v1'],
+  },
+  {
+    needs: 'a change whose votes are in while its checks still run',
+    test: /\b(?:votes? (?:are |is )?(?:all )?in|approved)\b[^.]{0,60}\b(?:checks?|tests?) (?:are |is )?(?:still )?run(?:s|ning)?\b|\bapproved,? (?:and )?(?:still )?checking\b/i,
+    states: ['shots-demo-member-approved-checks-running-v1'],
+  },
+  {
+    // 18 Nov 2026 (#6822): PR #6819's change, whose shots found no change
+    // being updated on either copy.
+    needs: 'a Homeroom bot update running on a change (Updating)',
+    test: /\bupdat(?:e|es|ing)\b[^.]{0,60}\b(?:is |on its way|running|coming|in progress)\b|\bbeing updated\b|\bupdating\b/i,
+    states: ['shots-demo-member-vote-update-running-v1'],
+  },
+  {
+    // 18 Nov 2026 (#6822): an approved change catching up with main.
+    needs: 'a change syncing with main',
+    test: /\bsync(?:s|ed|ing)? (?:with|to) main\b|\bcatch(?:es|ing)? up with main\b|\bsyncing with main\b/i,
+    states: ['shots-demo-member-approved-syncing-v1'],
   },
   { needs: 'a friend request', test: /\bfriend requests?\b/i, states: ['shots-demo-member-friend-request-v1'] },
   { needs: 'a remix', test: /\b(?:remix(?:ed|es)?|suggest (?:this|it) back)\b/i, states: ['shots-demo-member-remix-v1'] },
@@ -213,7 +255,13 @@ const SEED_RULE = 'A seed is idempotent and obviously fake: rows for the shots\'
 // Which side a seed reaches, and so which proposal it belongs in.
 const SEED_SIDES = 'A seed this proposal adds reaches only the after copy, which is the side a state new in this '
   + 'proposal needs: seed such a state in this proposal. A change to a state that already existed needs it on both '
-  + 'copies, so its seed merges first, in its own proposal.';
+  + 'copies, so its seed merges first, in its own proposal. '
+  // 18 Nov 2026 (#6822): said outright, because the bot declared PR #6819's
+  // change for a state the copies had no data for though this answer had
+  // said where data comes from.
+  + 'A claim about a screen that already exists (a story whose baseState is "present") therefore needs a '
+  + 'ready-made state these copies already hold, from availableStates: declare it against one, and a seed in this '
+  + 'proposal cannot stand in for it.';
 
 /** Pure: a declared change's own words, as one line. */
 function wordsOf(story) {
@@ -262,7 +310,7 @@ function declarationAdvice(intent, { selfApp = false } = {}) {
     const lead = `${ids.join(', ')} ${ids.length > 1 ? 'seem' : 'seems'} to need ${need.needs}, and `;
     if (need.live) {
       return `${lead}nothing on these copies answers with a model: they have no model key, so the Homeroom bot `
-        + 'only says it cannot reach its model. Never make a step wait for a reply: start from '
+        + 'is switched off there and says only that. Never make a step wait for a reply: start from '
         + `${selfApp ? 'a ready-made state that already holds it (see availableStates)' : 'a reply the copies already hold'}, `
         + `or seed the reply in ${seeds} as the stored message. ${SEED_SIDES}`;
     }

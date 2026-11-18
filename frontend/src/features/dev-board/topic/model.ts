@@ -25,6 +25,7 @@
 
 import type { ActionSpec, StatusPillState } from '../card/model';
 import type { RequestSpecCard } from './request-model';
+import type { ReviewScreen } from '../../review-flow/model';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -728,7 +729,9 @@ export interface ChangeGateView {
    * #6234: Testing only, on a change Homeroom bot built whose checks failed:
    * where its own fix of them stands (services/homeroom-bot-progress.js
    * changeBotFix), carried on the card as `data-change-bot-fix`. The words
-   * are in `authorNote`.
+   * are in `authorNote`. #6807: `fixing` may carry the reason `flaky_check`,
+   * a failing check that is not the change's own whose own fix the bot is
+   * getting (the card still says Tests failed, and Re-run stays on offer).
    */
   botFix?: 'fixing' | 'queued' | 'platform' | 'handed_off' | 'stopped' | null;
   /**
@@ -790,12 +793,42 @@ export interface ChangeThreadView {
      * page, and the id of the viewer (`html`) its Expand opens.
      */
     thumbs?: { before: string | null; after: string | null; viewer: string } | null;
+    /**
+     * A verified run's screens, each a before and an after with the areas
+     * that differ (AppView._workshopVisuals), and what changed, numbered:
+     * the card's picture draws them with the Needs you page's slider.
+     */
+    screens?: ReviewScreen[];
+    changes?: { n: number; text: string }[];
+    /** The change the shots are of, for the detail column its Expand opens. */
+    changeId?: number | null;
+    /** The change this viewer may start its failed run again on, or null (AppView._canRetakeShots). */
+    retake?: number | null;
+    /**
+     * The shots shown are the previous version's (shots-view.js `previous`):
+     * this version's are being taken (`waiting`), or failed or were skipped
+     * (`detail` says why). `line` labels the picture as the previous
+     * version's. Absent when the shots are this version's own.
+     */
+    previous?: { state: string; waiting: boolean; line: string; detail: string | null } | null;
   } | null;
   /**
    * The change shows nothing a person can see, so no shots were asked for
    * (AppView._shotsNotNeeded): the card says so where the picture would be.
    */
   shotsNone?: boolean;
+  /**
+   * #4490: "What it touches" for the change's current head (the proposal
+   * read's `touches`, services/proposal-touches.js), which the change page
+   * shows in place of the empty "nothing you can see changes" box. Untyped
+   * here; workshop/touches.tsx reads it defensively. Null when it was not
+   * read for this head (yet).
+   */
+  touches?: unknown;
+  /** The last finished run of its tests: the counts and each failure by name (AppView._checksSummary). */
+  checks?: { passed: number; failed: number; fails: { key: string; name: string; reason: string | null; advisory: boolean }[] } | null;
+  /** When it went live (its merge, else its release), for "Since …" in the card's foot and the timeline's Live step. */
+  liveAt?: string | null;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
   /**

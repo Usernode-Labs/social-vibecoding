@@ -829,6 +829,7 @@ async function storyAppId(pool, metadata, root) {
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
   moment = undefined, threadRootId = undefined, hello = null, card = null, postKind = null, thread = null,
+  keepSuggestions = false,
 }) {
   if (!bot?.id || !userId) return null;
   // Step 4 (11 Nov 2026): this is the bot's posting function's transport for
@@ -1016,10 +1017,14 @@ async function sendDm(pool, {
   // transaction: afterInsert).
   if (toldOpen.length) await require('./project-opened').pushTold(pool, toldOpen);
   if (!result.duplicate) {
-    await retireSuggestions(pool, {
-      botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,
-      about: stored, kind: metadata?.kind || null,
-    });
+    // #6783: a card's own message follows the reply it belongs to, so it
+    // never closes that reply's suggestion buttons (`keepSuggestions`).
+    if (!keepSuggestions) {
+      await retireSuggestions(pool, {
+        botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,
+        about: stored, kind: metadata?.kind || null,
+      });
+    }
     try {
       await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root, actorUserId: bot.id });
     } catch (err) {
@@ -3320,6 +3325,35 @@ function offPlanWords(misses) {
 }
 
 /**
+ * Pure (18 Nov 2026): whether a plan is Homeroom bot's own, by its author's
+ * id or name. Its plan has nobody to tell it does not match: the bot wrote
+ * it, so the line goes to the person who asked for the change instead.
+ */
+function isBotsPlan(author, { authorId = null, bot = null } = {}) {
+  if (bot && authorId != null && Number(bot.id) === Number(authorId)) return true;
+  return typeof author === 'string' && author.toLowerCase() === BOT_USERNAME;
+}
+
+/**
+ * Pure (#6407, 18 Nov 2026): the line in the request's thread saying a
+ * change does not match its plan. A person's plan is theirs to hear about:
+ * "@ana, this change doesn't match your plan (version 3) yet: …". The bot's
+ * own plan (or one whose author is not known; `offPlan.author` null) is
+ * said to the person who asked for the change, with what they can do:
+ * Saved Places change #12 tagged @homeroom_bot instead, who could do
+ * nothing with it, and its requester was told nothing.
+ */
+function planMissText({ offPlan = null, requester = null } = {}) {
+  const misses = offPlanWords(offPlan?.misses);
+  if (!misses.length) return null;
+  const version = Number(offPlan?.version) > 0 ? ` (version ${Number(offPlan.version)})` : '';
+  if (offPlan?.author) return `@${offPlan.author}, this change doesn't match your plan${version} yet: ${misses.join(' ')}`;
+  const who = requester ? `@${requester}, this` : 'This';
+  return `${who} change is different from its plan${version}: ${misses.join(' ')} `
+    + `${requester ? 'You can' : 'Whoever asked for it can'} approve it as it is, or ask Homeroom bot here to make it match the plan.`;
+}
+
+/**
  * B4: one of the bot's changes is ready to try, for approval epoch `epoch`
  * (the bot's change machine decided it: src/workflow/bot-change/). Its
  * requester's card goes out once per epoch, saying what its shots show not
@@ -3358,31 +3392,34 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   // does not. The card says it in red, no approver is rung, and the person
   // who asked for it hears it on the request's own page.
   const misses = offPlanWords(offPlanMisses);
+  const bot = deps.bot || await botAccount(pool);
+  // B7: what its asker can do on the card, and who else must approve it.
+  const requester = await requesterOf(pool, run.id, Number(run.issue_number));
   let offPlan = null;
   if (misses.length) {
+    // 18 Nov 2026: the plan the check compared it with (plan-match.js
+    // comparedPlanOf: the one it was built from, or the newer version a
+    // revision of it wrote), so the line names the version it was held to.
     const { rows: [from] } = await pool.query(
-      `SELECT cs.built_from_version AS version, cs.reviewed_head_sha AS head, u.username AS author
-         FROM chat_sessions cs
-         LEFT JOIN chat_sessions ps ON ps.id = cs.built_from_session_id
-         LEFT JOIN users u ON u.id = ps.user_id
-        WHERE cs.id = $1`,
-      [id],
+      'SELECT cs.reviewed_head_sha AS head FROM chat_sessions cs WHERE cs.id = $1', [id],
     );
+    const compared = await require('./plan-match').comparedPlanOf(pool, id).catch(() => null);
+    // The bot's own plan is said to its requester, never to the bot.
+    const author = compared?.author && !isBotsPlan(compared.author, { authorId: compared.authorId, bot })
+      ? compared.author : null;
     offPlan = {
-      author: from?.author || null,
-      version: from?.version == null ? null : Number(from.version),
+      author,
+      version: compared?.version == null ? null : Number(compared.version),
       misses,
     };
     await notePlanMiss(pool, {
-      appId: run.id, issueNumber: Number(run.issue_number), head: from?.head || null, offPlan, deps,
+      appId: run.id, issueNumber: Number(run.issue_number), head: from?.head || null, offPlan,
+      requester: requester?.username || null, deps,
     });
   }
-  const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
   const domain = deps.domain || require('./caddy').USERNODE_DOMAIN;
   const link = require('./homeroom-bot-live').proposalLink(domain, run.slug, id);
-  // B7: what its asker can do on the card, and who else must approve it.
-  const requester = await requesterOf(pool, run.id, Number(run.issue_number));
   const approvalNow = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
   // #6407: a change built from a person's plan that misses it is not put
   // straight to the vote: its card says what the plan draws and it does
@@ -3453,11 +3490,12 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
 
 /**
  * #6407: one line in the request's own thread saying a change built from
- * its plan does not match that plan yet, tagging the person who posted the
- * plan. Written once per head, so a retry or a second look says nothing
- * twice. Never throws.
+ * its plan does not match that plan yet (planMissText): to the person who
+ * posted the plan, or, for the bot's own plan, to the person who asked for
+ * the change (`requester`, a username), never to the bot. Written once per
+ * head, so a retry or a second look says nothing twice. Never throws.
  */
-async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = null, deps = {} } = {}) {
+async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = null, requester = null, deps = {} } = {}) {
   const misses = offPlanWords(offPlan?.misses);
   if (!misses.length || !appId || !Number(issueNumber)) return null;
   try {
@@ -3468,9 +3506,9 @@ async function notePlanMiss(pool, { appId, issueNumber, head = null, offPlan = n
       [Number(appId), Number(issueNumber), String(head || '')],
     );
     if (rows[0]) return null;
-    const who = offPlan.author ? `@${offPlan.author}` : 'The person who asked';
-    const version = Number(offPlan.version) > 0 ? ` (version ${Number(offPlan.version)})` : '';
-    const said = `${who}, this change doesn't match your plan${version} yet: ${misses.join(' ')}`;
+    // Never the bot itself, whatever the caller passed.
+    const author = offPlan.author && !isBotsPlan(offPlan.author) ? offPlan.author : null;
+    const said = planMissText({ offPlan: { ...offPlan, author }, requester: requester && !isBotsPlan(requester) ? requester : null });
     const ws = deps.ws || require('./ws');
     return await ws.sendSystemMessage(
       pool, Number(appId), said, 'system', { planMiss: { head: String(head || '') } }, { type: 'issue', ref: Number(issueNumber) },
@@ -6212,6 +6250,169 @@ async function postFirstDesignPlan(pool, config, { row, issueNumber, deps = {} }
   }
 }
 
+// ── A project from an idea thread (#6784, 17 Nov 2026) ───────────────────
+//
+// New project in a private thread with Homeroom bot makes the project from
+// the plan agreed there, not from one line: the bot's newest plan reply, the
+// person's answers to its questions, and their own words. The project then
+// knows the thread (homeroom_bot_first_versions.idea_thread_id), the thread's
+// head says what it was made into, and the project's first-version thread
+// quotes the plan.
+
+/** Pure: a title for the thread, from its stored title or the first line of its root. */
+function threadTitleOf(row, root) {
+  const stored = row && typeof row.title === 'string' ? row.title.trim() : '';
+  if (stored) return clip(stored, 60);
+  const first = String(root?.content || '').split('\n').map((line) => line.trim()).find(Boolean) || '';
+  return clip(first, 60);
+}
+
+/**
+ * Pure: the brief a project made from an idea thread is built from, and the
+ * plan it was agreed on. `said` (what the create screen sent) comes first and
+ * wins; then the bot's newest reply that offered a New project (never an
+ * earlier one it took back), the answers to its questions, and the person's
+ * own messages. Cut to MAX_BRIEF_CHARS.
+ */
+function threadBrief({ said = null, messages = [], userId, botId }) {
+  const own = typeof said === 'string' ? said.replace(/\r\n?/g, '\n').trim().slice(0, 1600) : '';
+  const rows = Array.isArray(messages) ? messages : [];
+  const bot = Number(botId);
+  const mine = Number(userId);
+  const botSaid = rows.filter((m) => Number(m.sender_id) === bot && typeof m.content === 'string' && m.content.trim());
+  // Newest first, and the newest one that offered a New project wins: a limit
+  // the bot claimed and withdrew later is in an earlier reply, and left out.
+  const newest = [...botSaid].reverse();
+  const planRow = newest.find((m) => m.metadata?.homeroomBot?.newProject === true) || newest[0] || null;
+  const planText = planRow ? clip(planRow.content, 1800) : '';
+  const answers = [];
+  for (const m of rows) {
+    const card = m.metadata?.homeroomBot?.card;
+    if (Number(m.sender_id) !== bot || !card || card.type !== 'questions' || !Array.isArray(card.answered)) continue;
+    const asked = Array.isArray(card.questions) ? card.questions : [];
+    card.answered.forEach((answer, i) => {
+      if (typeof answer !== 'string' || !answer.trim()) return;
+      const question = asked[i] && typeof asked[i].question === 'string' ? asked[i].question.trim() : '';
+      answers.push(question ? `${question} ${answer.trim()}` : answer.trim());
+    });
+  }
+  const ownWords = [];
+  for (const m of [...rows].reverse()) {
+    if (Number(m.sender_id) !== mine || typeof m.content !== 'string' || !m.content.trim()) continue;
+    ownWords.push(`- ${clip(m.content, 300)}`);
+  }
+  const parts = [];
+  if (own) parts.push(`${own}\n\nWhat they wrote on the new project's screen comes first: where it differs from the rest, it wins.`);
+  if (planText) parts.push(`The plan agreed with Homeroom bot in their thread:\n${planText}`);
+  if (answers.length) parts.push(`Their answers:\n${clip(answers.map((a) => `- ${a}`).join('\n'), 400)}`);
+  if (ownWords.length) parts.push(`Their own words in the thread (newest first):\n${ownWords.join('\n')}`);
+  return { brief: parts.join('\n\n').slice(0, MAX_BRIEF_CHARS), planText };
+}
+
+/**
+ * The thread POST /api/apps is asked to make a project from ({ rootId }):
+ * one of the person's own private threads with Homeroom bot that has no
+ * project yet, and that made none before. Resolves { ok, thread: { rootId,
+ * privateThreadId, title }, brief, planText } or a refusal { ok: false,
+ * status, error }.
+ */
+async function threadForProject(pool, { user, thread: ref, brief = null, deps = {} }) {
+  if (!ref || typeof ref !== 'object' || Array.isArray(ref)) return { ok: false, status: 400, error: 'thread must be { rootId }' };
+  const rootId = Number(ref.rootId);
+  if (!Number.isSafeInteger(rootId) || rootId <= 0) return { ok: false, status: 400, error: 'thread must be { rootId }' };
+  if (!user?.id || user.isSynthetic) return { ok: false, status: 403, error: 'Not available for this account' };
+  const threads = deps.privateThreads || require('./private-threads');
+  const bot = await botAccount(pool);
+  const root = await threads.ownRoot(pool, { user, bot, rootId });
+  if (!root) return { ok: false, status: 404, error: 'No such thread' };
+  const { rows: [row] = [] } = await pool.query(
+    `SELECT p.id, p.kind, p.state, p.title,
+            EXISTS (SELECT 1 FROM design_threads d WHERE d.private_thread_id = p.id) AS design
+       FROM private_threads p
+      WHERE p.root_message_id = $1 AND p.user_id = $2`,
+    [rootId, user.id],
+  );
+  if (row) {
+    const { rows: [made] } = await pool.query(
+      `SELECT a.slug, a.name FROM homeroom_bot_first_versions f JOIN apps a ON a.id = f.app_id
+        WHERE f.idea_thread_id = $1 LIMIT 1`,
+      [row.id],
+    );
+    if (made) return { ok: false, status: 409, error: `This thread already made ${made.name || made.slug}.` };
+    // A draft, a design, or a thread that already went somewhere is not an
+    // idea to make a project from.
+    if (row.design || (row.kind !== 'idea' && row.kind !== 'ask') || row.state !== 'open') {
+      return { ok: false, status: 409, error: 'This thread cannot be made into a project.' };
+    }
+  }
+  const { rows: messages } = await pool.query(
+    `SELECT id, sender_id, content, metadata FROM conversation_messages
+      WHERE (id = $1 OR thread_root_id = $1) AND deleted_at IS NULL
+      ORDER BY id`,
+    [rootId],
+  );
+  const rootRow = messages.find((m) => Number(m.id) === rootId) || null;
+  const built = threadBrief({ said: brief, messages, userId: user.id, botId: bot?.id });
+  return {
+    ok: true,
+    thread: { rootId, privateThreadId: row ? Number(row.id) : null, title: threadTitleOf(row, rootRow) },
+    brief: built.brief,
+    planText: built.planText,
+  };
+}
+
+// In the create's transaction (`db`): the thread's row is the new project's
+// (kind 'idea' when it had none, kept when it had one), and the first version
+// remembers which thread its plan was agreed in.
+async function recordIdeaThread(db, { app, user, thread }) {
+  const rootId = Number(thread?.thread?.rootId);
+  if (!app?.id || !user?.id || !Number.isSafeInteger(rootId) || rootId <= 0) return;
+  const { rows: [row] } = await db.query(
+    `INSERT INTO private_threads (user_id, conversation_id, root_message_id, app_id, kind, state)
+     SELECT $1, m.conversation_id, m.id, $2, 'idea', 'filed'
+       FROM conversation_messages m
+      WHERE m.id = $3 AND m.deleted_at IS NULL
+     ON CONFLICT (root_message_id) DO UPDATE
+       SET app_id = EXCLUDED.app_id, state = 'filed', updated_at = NOW()
+     RETURNING id`,
+    [user.id, app.id, rootId],
+  );
+  if (row) await db.query('UPDATE homeroom_bot_first_versions SET idea_thread_id = $2 WHERE app_id = $1', [app.id, row.id]);
+}
+
+/**
+ * The project's first-version thread gets one more message: the thread the
+ * project came from, linked, with the plan agreed there as a quote. Never a
+ * reason the create fails. The bot's own thread, found by `firstVersion`.
+ */
+async function noteThreadSource(pool, config, { app, user, thread }) {
+  try {
+    if (!app?.id || !user?.id || !thread?.thread?.rootId) return null;
+    const settings = await settingsModule().readSettings(pool);
+    if (!(await botWorksFor(pool, settings, user))) return null;
+    const bot = await settingsModule().ensureBotUser(pool, config);
+    if (!bot) return null;
+    const rootId = Number(thread.thread.rootId);
+    const title = String(thread.thread.title || 'this thread').replace(/[[\]()]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    const plan = clip(thread.planText || '', 1500);
+    const quoted = plan ? `\n\n${plan.split('\n').map((line) => `> ${line}`.trimEnd()).join('\n')}` : '';
+    return await sendDm(pool, {
+      bot,
+      userId: user.id,
+      idempotencyKey: `hrbot-thread-source-${app.id}`,
+      content: `Made from your thread [${title}](#homeroom-bot/thread/${rootId}). The plan you agreed there:${quoted}`,
+      // `threadRootId` is sendDm's own (the thread it is said in), never this.
+      metadata: {
+        kind: 'first_version_source', firstVersion: true,
+        appSlug: app.slug, appName: app.name || app.slug,
+      },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Could not say which thread a project came from', { app: app?.slug, err: err.message });
+    return null;
+  }
+}
+
 async function startFirstVersion(pool, config, { app, user, brief, earlyPlan = false, fromDesign = false }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
@@ -6983,6 +7184,8 @@ module.exports = {
   changeReadiness,
   brokenWords,
   offPlanWords,
+  isBotsPlan,
+  planMissText,
   notePlanMiss,
   tellReady,
   noteChangeStopped,
@@ -6993,6 +7196,10 @@ module.exports = {
   designBrief,
   designForProject,
   postFirstDesignPlan,
+  threadBrief,
+  threadForProject,
+  recordIdeaThread,
+  noteThreadSource,
   MIN_BRIEF_CHARS,
   HELP_TEXT,
   NOT_ENABLED_TEXT,

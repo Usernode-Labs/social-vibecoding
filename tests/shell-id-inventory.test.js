@@ -430,6 +430,22 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── The change preview's redesign (Nov 2026) ───────────────────────
+  // features/staging/staging-overlay.tsx: one header in the theme's colours
+  // with the change's name, its vote and the Preview | Before & after switch,
+  // and one optional line under it. Every one ships in the prerender (hidden
+  // where it waits on state) and is toggled through refs.
+  'staging-facts': 'The line under a change preview\'s title: "Change #34 · Needs 1 more yes", read the way the chat\'s vote card reads it.',
+  'staging-view-switch': 'The change preview\'s Preview | Before & after switch, shown only when the change has verified before-and-after shots.',
+  'staging-view-preview': 'The Preview side of that switch: the running change.',
+  'staging-view-shots': 'The Before & after side of that switch: the change\'s shots viewer (AppView.shotsHtml), drawn over the preview frame, which keeps running.',
+  'staging-vote-btn': 'The platform\'s Vote button in the change preview\'s header (See the vote once voted), opening the change\'s Votes card as the chat\'s vote card does.',
+  'staging-comment-btn': 'Comment in the change preview\'s header: turns on comment mode over the preview; pins there go to the change\'s thread by default.',
+  'staging-size-btn': 'Full window, and back beside the page, for a change preview standing in a column or the side panel (features/staging/placement.ts).',
+  'staging-context': 'The one optional line under the change preview\'s header: the first-visit note, How to test and the shown-at moment.',
+  'staging-note': 'The first-visit note in that line (the preview keeps its own data), with Got it, which puts it away on the device.',
+  'staging-shots': 'The host of the change\'s before-and-after viewer inside the preview, over the frame.',
+  'staging-live-pill': 'The Live mark after the app\'s name in the shell header while a change preview stands in the side panel beside the running app.',
   // ── #6510: Reduce motion, Settings > Accessibility ─────────────────
   'settings-reduce-motion': 'The Reduce motion switch in Settings > Accessibility (features/settings/sections/accessibility.tsx): writes data-motion="reduce" on <html> through the head module (window.Display). Ships off in the prerender and reads the stored setting in an effect, like #settings-high-contrast beside it.',
   // ── Card preview loops: Settings > Accessibility ───────────────────
@@ -440,8 +456,16 @@ const ADDED_IDS = {
   // ── #6371: This week, the page the weekly digest opens ─────────────
   'weekly-digest-screen': 'This week (frontend/src/features/weekly-digest/index.tsx, #week): what each project did in the last seven days, which the Friday "Your weekly digest is ready" row opens. Ships hidden and empty; the read runs from its controller\'s open(), so the prerender and the first client render agree. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
   // ── One Home (#6361): Home's sections for communities ─────────────
-  'home-communities-section': 'Home\'s Pinned communities (features/home/pinned-communities.tsx), under Pinned apps: the communities you pinned, each a tile that opens its hub, then All communities and New community. Ships hidden: the pins load after mount. The tours and dapp.json\'s checks select it.',
+  'home-communities-section': 'Your communities that match Home\'s search (features/home/pinned-communities.tsx HomeCommunityMatches): hidden until something is typed in Home\'s field, then the pinned and joined communities whose names match, each a tile that opens its hub. It was Home\'s Pinned communities section until the Communities tab came back; the list is that tab\'s page now (#communities-screen). Ships hidden: the pins load after mount. dapp.json\'s checks select it.',
   'home-join-section': 'Home\'s Communities to join (features/home/home-join.tsx over communities-to-join.tsx), last on Home: the public directory\'s picture cards, each with Join, more as you scroll. Discover\'s lane went with it (#home-browse-btn, its See all, left this map with that lane). Ships hidden; signed out, the landing draws the same section without the id.',
+  // ── The Communities tab's page (`#communities`), back on 18 Nov 2026 ──
+  'communities-screen': 'The Communities tab\'s page (frontend/src/features/communities/index.tsx, #communities): the communities you pinned and the others you are in, then the way to the ones to join. One Home (#6361) had retired the screen and listed them on Home. Ships hidden with both groups hidden and empty: the pins and the joined list are read after mount. App.REACT_SCREEN_IDS lists it, as it lists #workshop-screen.',
+  'communities-body': 'The page\'s column inside #communities-screen, Home\'s own (.home-column): the search row, Pinned, Joined and Discover.',
+  'communities-search-input': 'The search field at the top of the Communities page, drawn from 768px: filters the Pinned and Joined groups by name. React-owned, and the page\'s own state, unlike Home\'s field.',
+  'communities-pinned-section': 'The Pinned group of the Communities page: the account\'s pinned communities (home_community_pins) as tiles that open their hubs, led by the Needs you tile in a look whose Home has no Needs you card. Ships hidden: the pins load after mount.',
+  'communities-joined-section': 'The Joined group of the Communities page: the communities the viewer is a member of and has not pinned, then the New community tile. Ships hidden: the list loads after mount.',
+  'communities-discover-section': 'The Discover card at the foot of the Communities page, which leads to Home\'s Communities to join.',
+  'communities-discover-btn': 'Discover communities, the button on that card: opens Home at Communities to join (Home.showCommunitiesToJoin).',
   // ── #6134, #6136: Settings > Connectors, one card per AI tool ───────
   'connector-tool-claude': 'The Claude.ai card in Settings > Connectors (features/settings/sections/connectors.tsx): its status word, its setup steps and its connections. The four cards replace one list of setup rows; #connectors-list stays as what holds them.',
   'connector-tool-chatgpt': 'The ChatGPT card, the same shape as #connector-tool-claude.',
@@ -1140,7 +1164,7 @@ const ADDED_IDS = {
   'notifications-sheet': 'The Notifications SHEET root. It was #notifications-screen, a screen root in App.SCREEN_IDS — but the bell is in the header on every route, so a full-screen view had to answer "back to where?" and answered "home", wrong every time it was opened from anywhere else. A sheet presents over the current screen and dismisses back to it.',
   'notifications-sheet-overlay': 'Its backdrop.',
   'notifications-sheet-close': 'Its close control — the desktop slide-over needs a visible dismiss, as the Apps sheet has.',
-  'notifications-screen-tabs': 'The sheet\'s sticky Unread | All tab row (#5289 took Messages out). Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
+  'notifications-screen-tabs': 'The sheet\'s sticky Unread | Recent threads | All tab row (#5289 took Messages out; #6785 put Recent threads in). Keeps the `-screen-` id it was born with: the declared checks select on it, and renaming a node that did not move would be churn. It no longer carries Mark-all-read — see #notifications-screen-mark-all below.',
   'notifications-tab-unread': 'The sheet\'s FIRST tab, and the one it opens on. All led for a round, which meant opening an inbox on everything you had already read: the bell is tapped because it has a count, and the count is the unread.',
   // (#notifications-see-older and #notifications-hide-older, the Unread
   // footer's reveal and collapse pair, are NOT here: they render only when
@@ -1150,6 +1174,7 @@ const ADDED_IDS = {
   // #notifications-load-older, the real pager, renders on All and under an
   // expanded Unread.)
   'notifications-tab-all': 'The whole archive, LAST: the count you came for, then the archive holding it, and it is the only tab that pages more rows in on its own cursor. The Unread footer\'s reveal stays on Unread (#4700).',
+  'notifications-tab-threads': '#6785: Recent threads, between Unread and All. Lists the threads the viewer took part in, newest activity first, from /api/me/recent-threads; its list (#notifications-threads-list) renders empty in the prerender, since the fetch runs from an effect once the tab is chosen.',
   // #notifications-tab-messages, the sheet's Messages filter, leaves this
   // map (it was never in the baseline). #5289: it repeated the Messages tab
   // in the bar, which lists the same conversations and the agents beside
@@ -1189,18 +1214,16 @@ const ADDED_IDS = {
   //       Workshop segment, and back as "Go to workshop" when the strip
   //       retired in turn (#2761) — so it is in the map above again.
 
-  // ── The side panel beside a running app (features/side-panel/) ──────
-  // On a desktop-width window, the app's Workshop, its discussion, messages,
-  // agent chats, proposals and issues open in a panel BESIDE the running app
-  // instead of replacing it. The panel is one React island, placed after the
-  // app view; it ships hidden and frameless, and its <iframe> (the platform
-  // itself at /?panel=1#<route>) exists only while a panel is open, so the
-  // frame's id is not in the static markup.
-  'platform-side-panel': 'The side panel\'s root — an <aside> named by its title, shown only while a panel page is open beside a running app on a desktop-width window. Its presence also sets html[data-side-panel], which narrows #app-view by the panel\'s width instead of hiding or moving the app\'s frame.',
-  'side-panel-back': 'The panel\'s Back: climbs the pages opened in the panel, then to the list the page belongs to (a discussion or a message to Messages; a proposal, an issue or a change to the app\'s Workshop). Ships hidden, because a freshly opened list has nowhere to climb to.',
-  'side-panel-title': 'The panel\'s title — the page\'s own header title as the panel\'s document reports it, and the aside\'s accessible name.',
-  'side-panel-expand': 'Expand ("Open full width, leaving the app"): the page the panel is showing, full width, as one ordinary navigation of the top window — which closes the app and parks it, so Resume brings it back.',
-  'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
+  // ── The side panel (features/side-panel/) ──────────────────────────
+  // The column beside the Homeroom bot tab's list: a request, a change or a
+  // conversation opened from it stands there, in the docked chat's place.
+  // (Until 18 Nov 2026 it stood beside a running app too, with its own Back,
+  // title, Expand and Close, which were never in the baseline and so leave
+  // this map rather than entering RETIRED_IDS.) The panel is one React
+  // island, placed after the app view; it ships hidden and frameless, and its
+  // <iframe> (the platform itself at /?panel=1#<route>) exists only while a
+  // panel is open, so the frame's id is not in the static markup.
+  'platform-side-panel': 'The side panel\'s root: an <aside> named "Side panel", the column beside the Homeroom bot tab\'s list, shown only while a page is open in it. Ships hidden.',
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
   // ── Discover's view switch, type row and Filters button ────────────
@@ -1209,7 +1232,7 @@ const ADDED_IDS = {
   // listed (the Semi design, 2026-10-16); #leaderboard/seasons lands on
   // Challenges. It was never in the baseline, so it leaves this map rather
   // than entering RETIRED_IDS.
-  'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
+  'side-panel-divider': '#2886: the divider between the Homeroom bot tab\'s list and the panel, as a handle on the panel\'s left edge: a vertical `separator` that drags (and takes the arrow keys) to share the window between them, and shows a grip under the pointer.',
   // The channels moved out of Messages onto their communities' hubs, so the
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.

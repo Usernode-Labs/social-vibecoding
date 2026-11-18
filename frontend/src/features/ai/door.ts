@@ -200,7 +200,8 @@ export function botDetailAt(hash: string | null | undefined): BotDetail | null {
 
 /**
  * Pure: the panel route an item is shown at, or null for an invalid item. A
- * change is `dev/changes/<pull request number>`.
+ * change is `dev/changes/<pull request number>`: an item names the number,
+ * not the session id (an address that has one keeps it, below).
  */
 export function botItemRoute(item: Partial<BotItem> | null | undefined): string | null {
   const clean = cleanItem(item);
@@ -215,7 +216,7 @@ export function botItemRoute(item: Partial<BotItem> | null | undefined): string 
  * of address, and keeps the plain tab's address.
  */
 export function botItemFromRoute(route: string | null | undefined): BotItem | null {
-  const match = /^app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(issues|changes|governance)\/(\d{1,10})\/?$/
+  const match = /^app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(issues|changes|governance)\/(\d{1,10})(?:\/\d{1,10})?\/?$/
     .exec(String(route || '').split('?')[0].replace(/^\/+/, ''));
   if (!match) return null;
   const kind: BotItemKind = match[2] === 'issues' ? 'request' : match[2] === 'changes' ? 'change' : 'decision';
@@ -229,10 +230,10 @@ export function botItemFromRoute(route: string | null | undefined): BotItem | nu
  * is. Null for any other page.
  */
 export function pageLinkFor(route: string | null | undefined): string | null {
-  const match = /^app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(issues|changes|proposals|sessions|shared|governance)\/(\d{1,10})\/?$/
+  const match = /^app\/([a-z0-9][a-z0-9-]{0,254})\/dev\/(issues|changes|proposals|sessions|shared|governance)\/(\d{1,10})(?:\/(\d{1,10}))?\/?$/
     .exec(String(route || '').split('?')[0].replace(/^\/+/, ''));
   if (!match) return null;
-  return `/app/${match[1]}/dev/${match[2]}/${match[3]}`;
+  return `/app/${match[1]}/dev/${match[2]}/${match[3]}${match[4] ? `/${match[4]}` : ''}`;
 }
 
 /**

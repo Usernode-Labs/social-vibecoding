@@ -28,12 +28,20 @@ import { createStore } from '../../lib/plain-store.js';
  * literal's own type (`null`, `never`) and every island that reads the field
  * fails to compile.
  *
+ * @typedef {{ yes: number | null, needed: number | null, needsOtherMember: boolean, myVote: 'yes' | 'no' | null, status: string }} PreviewVote
+ * @typedef {{ left: number, top: number, width: number, height: number }} PreviewRect
  * @typedef {{
  *   open: boolean, urlLabel: string, background: string, solo: boolean,
  *   clockLabel: string, clockAsNow: boolean,
  *   loaderVisible: boolean, loaderTitle: string | null, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string | null,
+ *   loaderShots: boolean,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
  *   testHtml: string,
+ *   changeTitle: string, changeNumber: number, changePending: boolean,
+ *   appName: string, appTile: string, appTileImage: string, selfHosted: boolean,
+ *   vote: PreviewVote | null, shotsHtml: string, view: 'preview' | 'shots',
+ *   placement: 'full' | 'column' | 'panel', rect: PreviewRect | null, expanded: boolean, wide: boolean,
+ *   beside: 'app' | null, liveSpot: { left: number, top: number } | null, noteSeen: boolean,
  * }} StagingState
  * @typedef {{ open: boolean, openedAt: number, label: string, bodyHtml: string }} VisualCompareState
  */
@@ -75,11 +83,68 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   /** #3413: "Retry preview" after a failed build; the shipped markup's text otherwise. */
   /** @type {string | null} */
   loaderRetryLabel: null,
+  /**
+   * The loader is a wait or a dead end (not running, a failure, a rebuild),
+   * where "See the before & after instead" is offered when the change has
+   * verified shots. False for the moment a preview opens, which is too short
+   * to offer anything.
+   */
+  loaderShots: false,
   testBtnHidden: true,
   testBtnTitle: '',
   testPanelHidden: true,
   /** Sanitized markdown from PlatformMarkdown.render, or escaped plain text. */
   testHtml: '',
+  /**
+   * The change the preview shows, for its header: its title and pull request
+   * number (the preview answer's `change`), and the project's tile (an emoji,
+   * or an image's address). '' / 0 until a preview says, which draws the
+   * plain "Preview" title the prerendered page carries.
+   */
+  changeTitle: '',
+  changeNumber: 0,
+  /**
+   * The change's name is still being looked up (the page held no row of it):
+   * the title is drawn as a placeholder rather than the project's name, which
+   * the change's own would replace a moment later.
+   */
+  changePending: false,
+  /** The project's name, which the line under the title carries in the whole window. */
+  appName: '',
+  appTile: '',
+  appTileImage: '',
+  /** Homeroom's own change: the previewed platform sits on a tinted mat. */
+  selfHosted: false,
+  /**
+   * The vote, as the chat's vote card reads it (GroupChat._voteView): null
+   * when the change is not up for a vote, which draws no Vote button.
+   */
+  vote: null,
+  /**
+   * The change's before and after viewer (AppView.shotsHtml's `thread`
+   * reading, escaped where it is built), or '' when it has no verified shots,
+   * which draws no Preview | Before & after switch.
+   */
+  shotsHtml: '',
+  /** Which side of that switch is showing. */
+  view: 'preview',
+  /**
+   * Where the preview stands (./placement.ts): the whole window, a column
+   * beside the thread, or the side panel's place. `rect` is the spot it
+   * covers when it is not the whole window; `expanded` is the person's
+   * Full window, which a column or a panel docks back from; `wide` says it
+   * opened full width because its change is for large screens.
+   */
+  placement: 'full',
+  rect: null,
+  expanded: false,
+  wide: false,
+  /** 'app' while it stands in the side panel beside a running app (the app is marked Live). */
+  beside: null,
+  /** Where the Live mark sits: after the app's name in the shell's header. */
+  liveSpot: null,
+  /** The first-visit line was put away on this device ("Got it"). */
+  noteSeen: false,
 }));
 
 /**
@@ -96,8 +161,8 @@ export const stagingRefs = { iframe: null };
 /**
  * Click handlers, re-pointed by app-view.js where it used to assign `.onclick`.
  *
- * @type {Record<'onBack' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle',
- *   ((ev?: Event) => void) | null>}
+ * @type {Record<'onBack' | 'onTest' | 'onTestingClose' | 'onRetry' | 'onClockToggle' | 'onVote' | 'onComment' | 'onSize' | 'onView' | 'onNoteSeen',
+ *   ((arg?: any) => void) | null>}
  */
 export const stagingHandlers = {
   onBack: null,
@@ -105,6 +170,16 @@ export const stagingHandlers = {
   onTestingClose: null,
   onRetry: null,
   onClockToggle: null,
+  /** Vote / See the vote: the change's Votes card. */
+  onVote: null,
+  /** Comment: comment mode over the preview. */
+  onComment: null,
+  /** Full window, and back to the column or the panel. */
+  onSize: null,
+  /** The Preview | Before & after switch, with the side picked. */
+  onView: null,
+  /** "Got it" on the first-visit line. */
+  onNoteSeen: null,
 };
 
 export const visualCompareStore = createStore(/** @type {VisualCompareState} */ ({

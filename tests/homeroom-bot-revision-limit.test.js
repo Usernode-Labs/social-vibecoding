@@ -98,7 +98,10 @@ test('the requester and an admin may grant; a voter or a stranger may not', asyn
 test('a refusal says who can, and that nothing was queued', () => {
   assert.match(grants.grantRefusalText('not_allowed'), /the person who asked for it or an admin can let me try again/);
   assert.match(grants.grantRefusalText('not_allowed'), /Nothing was queued/);
-  assert.match(grants.grantRefusalText('already'), /already waiting/);
+  // #6776: "already" says queued, and where.
+  assert.match(grants.grantRefusalText('already'), /already queued for this change/);
+  assert.match(grants.grantRefusalText('already', { place: 2 }), /2nd in line/);
+  assert.match(grants.grantRefusalText('already', { running: true }), /running now/);
 });
 
 // #6284: the change's Testing card and the Homeroom bot page read the stop
@@ -113,6 +116,11 @@ function fixPool({ limitStop = 'own_revisions', own = 3, usedGrants = 1, openGra
       if (/FROM chat_sessions cs\s+JOIN users u/.test(text)) {
         return { rows: [{ app_id: 9, status: 'promoted', check_state: 'failing', reviewed_head_sha: HEAD, linked_issues: [7], username: 'homeroom_bot' }] };
       }
+      // #6776: an open grant is queued only when its round really is.
+      if (/SELECT id, started_at FROM homeroom_bot_queue/.test(text)) {
+        return { rows: openGrant ? [{ id: 31, started_at: null }] : [] };
+      }
+      if (/SELECT q\.id FROM homeroom_bot_queue q JOIN apps a/.test(text)) return { rows: [{ id: 31 }] };
       if (/FROM homeroom_bot_queue/.test(text)) return { rows: [] };
       if (/FROM homeroom_bot_runs\s+WHERE proposal_session_id = \$1 AND LOWER\(checks_head_sha\)/.test(text)) {
         return { rows: [{ id: 1, limit_stop: limitStop }] };
@@ -145,9 +153,10 @@ test('a change stopped at its own limit says stopped, with tries and who may gra
 // one open grant per change, so pressing again while it waits queues nothing;
 // the round spends it (useGrant), and only then could another be made.
 function grantPool({ requesterId = 11 } = {}) {
-  const state = { open: null, inserted: [] };
+  const state = { open: null, inserted: [], pendingAsk: false };
   return {
     state,
+    deps: { homeroomBot: { queueChecksFix: async () => { state.pendingAsk = true; return { queued: true }; } } },
     query: async (sql) => {
       const text = String(sql);
       if (/linked_issues FROM chat_sessions WHERE id = \$1/.test(text)) return { rows: [{ id: 5, app_id: 9, linked_issues: [7] }] };
@@ -157,6 +166,13 @@ function grantPool({ requesterId = 11 } = {}) {
         return { rows: [{ app_id: 9, status: 'promoted', check_state: 'failing', reviewed_head_sha: 'a'.repeat(40), linked_issues: [7], username: 'homeroom_bot' }] };
       }
       if (/FROM homeroom_bot_queue/.test(text)) return { rows: [] };
+      // #6776: the grant's round is queued once queueChecksFix asked for it,
+      // so pressing again is answered "already".
+      if (/status, active_turn FROM chat_sessions WHERE id = \$1/.test(text)) {
+        return { rows: [{ app_id: 9, linked_issues: [7], status: 'promoted', active_turn: null }] };
+      }
+      if (/SELECT 1 FROM wf_work/.test(text)) return { rows: [] };
+      if (/SELECT 1 FROM wf_events/.test(text)) return { rows: state.pendingAsk ? [{ id: 1 }] : [] };
       if (/FROM homeroom_bot_runs\s+WHERE proposal_session_id = \$1 AND LOWER\(checks_head_sha\)/.test(text)) return { rows: [{ id: 1, limit_stop: 'own_revisions' }] };
       if (/COUNT\(\*\) FILTER \(WHERE NOT asked\)/.test(text)) return { rows: [{ own: 3, asked: 0 }] };
       if (/MAX\(id\) FILTER \(WHERE used_at IS NULL\)/.test(text)) return { rows: [{ used: 0, open: state.open }] };
@@ -177,13 +193,14 @@ function grantPool({ requesterId = 11 } = {}) {
 
 test('one grant buys exactly one open round, and the round spends it', async () => {
   const pool = grantPool();
-  const deps = { homeroomBot: { queueChecksFix: async () => ({ queued: true }) } };
+  const deps = pool.deps;
   const user = { id: 11 };
   assert.equal(await grants.mayGrant(pool, { sessionId: 5, user }), true);
   assert.deepEqual(await grants.grant(pool, { sessionId: 5, user, deps }), { ok: true, grantId: 7 });
   assert.equal(pool.state.inserted.length, 1, 'one grant stored');
-  assert.deepEqual(await grants.grant(pool, { sessionId: 5, user, deps }), { ok: false, why: 'already' },
-    'pressed again while it waits: nothing new');
+  assert.deepEqual(await grants.grant(pool, { sessionId: 5, user, deps }),
+    { ok: false, why: 'already', running: false, place: null },
+    'pressed again while the round it bought is queued: nothing new');
   assert.equal(pool.state.inserted.length, 1);
   assert.deepEqual(await grants.useGrant(pool, 5, 1), { id: 7, granted_by: null }, 'the round spends the grant');
   assert.equal(pool.state.open, null);

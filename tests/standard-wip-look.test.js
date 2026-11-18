@@ -80,7 +80,8 @@ test('every rule of its block is scoped to the look or is a component of its kit
 
 test('colours are written once, as tokens in the block\'s first rule', () => {
   const all = rules(wipBlock());
-  const tokens = all.filter((r) => /^html\[data-skin-wip\](\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
+  // The token rules: the look's own (the config called Current) and each other config's, in light and dark.
+  const tokens = all.filter((r) => /^html\[data-skin-wip\](\[data-wip-tokens="[a-z0-9]+"\])?(\.dark)?$/.test(r.selector) && /--wip-/.test(r.body));
   assert.ok(tokens.length >= 1, 'the block declares its tokens');
   const declared = new Set();
   for (const r of tokens) for (const m of r.body.matchAll(/(--wip-[a-z0-9-]+)\s*:/g)) declared.add(m[1]);
@@ -98,6 +99,8 @@ test('colours are written once, as tokens in the block\'s first rule', () => {
 test('nothing of the standard look is hidden under it but what WIP_HIDES lists', () => {
   const hidden = rules(wipBlock())
     .filter((r) => /display:\s*none|visibility:\s*hidden/.test(r.body))
+    // A kit component arranging its own parts (an icon stack a phone has no room for) hides nothing of Standard.
+    .filter((r) => !topLevel(r.selector).every((one) => /^\.wip-/.test(one)))
     .map((r) => r.selector);
   assert.deepEqual(hidden.sort(), [...WIP_HIDES].sort(),
     'a section the look stops displaying is a decision: add it to WIP_HIDES with its reason');
@@ -105,12 +108,12 @@ test('nothing of the standard look is hidden under it but what WIP_HIDES lists',
 
 test('Home places what it does not name last, so a new standard section is drawn', () => {
   const block = wipBlock();
-  assert.match(block, /html\[data-skin-wip\] #home-screen \.home-main > \* \{ order: 3; \}/);
+  assert.match(block, /html\[data-skin-wip\] #home-screen \.home-main > \* \{ order: 4; \}/);
 });
 
 test('its pieces come from the kit, not from classes spelled in place', () => {
   const kit = read('frontend', 'src', 'features', 'home', 'wip-kit.tsx');
-  for (const name of ['WipCard', 'WipCta', 'WIP_HEAD_LINK']) assert.match(kit, new RegExp(`export (function|const) ${name}\\b`));
+  for (const name of ['WipCard', 'WipCta', 'WipHeadMore']) assert.match(kit, new RegExp(`export (function|const) ${name}\\b`));
   const island = read('frontend', 'src', 'features', 'home', 'index.tsx');
   assert.match(island, /<WipCard on=\{wip\}>/);
   assert.match(island, /<WipCta id="home-new-project-top"/);

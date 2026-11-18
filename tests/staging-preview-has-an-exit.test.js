@@ -7,9 +7,12 @@
 // and handed the job to a control that was not rendered: nothing on screen
 // closed the preview.
 //
-// The dev chat and its strip are retired, and the preview only opens full
-// screen. So the guarantee is simpler and this test pins it: the overlay's
-// own Back is always rendered, wired, and never hidden by a stylesheet.
+// The dev chat and its strip are retired. Since Nov 2026 the preview stands
+// in a column beside a thread, in the side panel's place, or in the whole
+// window (features/staging/placement.ts), and in every one of them its own
+// round control is the way out: Back in the whole window, × docked. So the
+// guarantee is simpler and this test pins it: that control is always
+// rendered, wired, and never hidden by a stylesheet.
 //
 // Run with: node --test tests/staging-preview-has-an-exit.test.js
 

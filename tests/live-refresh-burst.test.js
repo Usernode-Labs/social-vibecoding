@@ -316,3 +316,142 @@ test('the burst settles only after the chat read lands', async () => {
   assert.equal(settled, true);
 });
 
+// ── #6791: a whole-board live reload waits out a gap ────────────────────
+//
+// An idle hub paid eleven reads per live event: every kind that was not a
+// vote or a check reloaded the whole board, with no gap. This runs
+// `refreshDevData` on the AppView's own members, over a clock the test drives.
+
+function boardHarness({ tab = 'dev', subTab = 'forum', slug = 'demo', ready = true } = {}) {
+  const timers = [];
+  const loads = [];
+  const shakes = [];
+  let now = 1_000_000;
+  const sandbox = {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms, id: timers.length + 1 }); return timers.length; },
+    clearTimeout: (id) => { const t = timers.find((x) => x.id === id); if (t) t.cleared = true; },
+    Date: { now: () => now },
+    Promise,
+    Set,
+    App: {
+      currentTab: tab,
+      currentSubTab: subTab,
+      _announceRefreshIntent: () => {},
+    },
+    AppView: {
+      appData: { slug },
+      _devDataReady: ready,
+      _whereHeld: () => 'promoted',
+      _loadDevData: (opts) => { loads.push(opts ? 'fresh' : 'plain'); return Promise.resolve(true); },
+      _loadDevFeed: () => { loads.push('feed'); return Promise.resolve(true); },
+      _refreshOpenChangeFromBoard: () => { shakes.push(1); },
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(`Object.assign(AppView, {\n${
+    [
+      sliceMember(APP_VIEW, 'refreshDevData(kind, live = null) {'),
+      'BOARD_FULL_MIN_GAP_MS: 5000,',
+      '_boardFullAt: 0,',
+      '_boardFullPending: null,',
+      sliceMember(APP_VIEW, '_liveFullBoard(opts) {'),
+      sliceMember(APP_VIEW, '_fullBoardLoad(opts) {'),
+      sliceMember(APP_VIEW, '_partsForLive(live) {'),
+    ].join('\n')
+  }});`, sandbox);
+  const runDue = () => {
+    const due = timers.splice(0).filter((t) => !t.cleared);
+    due.forEach((t) => t.fn());
+  };
+  return {
+    App: sandbox.App, AppView: sandbox.AppView, timers, loads, shakes,
+    advance: (ms) => { now += ms; },
+    now: () => now,
+    runDue,
+  };
+}
+
+test('#6791: two whole-board live reloads inside 5 s are one now and one after the gap', async () => {
+  const h = boardHarness();
+  const first = h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  assert.deepEqual(h.loads, ['feed'], 'nothing before it: the first runs at once');
+  await first;
+  assert.deepEqual(h.shakes, [1], 'and repaints once');
+
+  // A second burst 2 s later waits the rest of the gap out.
+  h.advance(2000);
+  let second = false;
+  const waiting = h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  waiting.then(() => { second = true; });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(h.loads.length, 1, 'inside the gap nothing loads');
+  assert.equal(second, false, 'and the burst stays open');
+  assert.equal(h.timers.length, 1, 'on one trailing timer');
+  assert.equal(h.timers[0].ms, 3000, 'the rest of the 5 s gap');
+
+  // A third burst joins that trailing run rather than adding a second.
+  h.advance(1000);
+  const third = h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  assert.equal(h.timers.length, 1, 'still one timer');
+  h.advance(2000);
+  h.runDue();
+  await waiting;
+  await third;
+  assert.deepEqual(h.loads, ['feed', 'feed'], 'one trailing load for both');
+  assert.equal(h.shakes.length, 2);
+  assert.equal(h.AppView._boardFullPending, null, 'and nothing left waiting');
+});
+
+test('#6791: a live burst marked fresh runs its trailing load past the write', async () => {
+  const h = boardHarness();
+  await h.AppView.refreshDevData('vote', { kinds: new Set(['vote']), ids: null });
+  h.advance(1000);
+  const waiting = h.AppView.refreshDevData('vote', { kinds: new Set(['vote']), ids: null });
+  h.advance(5000);
+  h.runDue();
+  await waiting;
+  assert.deepEqual(h.loads, ['fresh', 'feed', 'fresh', 'feed'],
+    'a vote reads past the write, now and when the gap is over');
+});
+
+test('#6791: a direct refresh runs at once and stands the waiting live run down', async () => {
+  const h = boardHarness();
+  await h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  h.advance(1000);
+  let liveSettled = false;
+  const live = h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  live.then(() => { liveSettled = true; });
+  assert.equal(h.timers.length, 1, 'the live burst waits');
+  // The viewer's own pull to refresh.
+  const direct = h.AppView.refreshDevData('all');
+  assert.deepEqual(h.loads, ['feed', 'feed'], 'it loads straight away');
+  assert.equal(h.timers[0].cleared, true, 'and the waiting run is cancelled');
+  h.runDue();
+  assert.deepEqual(h.loads, ['feed', 'feed'], 'the trailing timer does nothing more');
+  await direct;
+  await live;
+  assert.equal(liveSettled, true, 'the live burst hears the direct load landed');
+});
+
+test('#6791: a trailing run after the board is gone loads nothing', async () => {
+  const h = boardHarness();
+  await h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  h.advance(1000);
+  const waiting = h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  h.App.currentSubTab = 'topic';
+  h.advance(5000);
+  h.runDue();
+  assert.equal(await waiting, true, 'it settles without a read');
+  assert.deepEqual(h.loads, ['feed'], 'and loads nothing behind the page now on screen');
+});
+
+test('#6791: partial kinds never wait out the gap', async () => {
+  const h = boardHarness();
+  await h.AppView.refreshDevData('other', { kinds: new Set(['other']), ids: null });
+  h.advance(100);
+  h.AppView._loadDevFeed = () => { h.loads.push('partial'); return Promise.resolve(true); };
+  await h.AppView.refreshDevData('issue', { kinds: new Set(['issue']), ids: null });
+  assert.deepEqual(h.loads, ['feed', 'partial'], 'a narrowed burst reads at once');
+  assert.equal(h.timers.length, 0, 'and sets no timer');
+});
+

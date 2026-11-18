@@ -14,7 +14,7 @@
 
 import { createStore } from '../../../lib/plain-store.js';
 import { useStoreState } from '../../../lib/use-store-state';
-import type { RailOpen } from './rail-model';
+import type { ChangeRailInput, RailOpen } from './rail-model';
 
 export interface StepState {
   page: string | null;
@@ -51,4 +51,25 @@ export function closeStep(): void {
 export function useOpenStep(page: string): RailOpen | null {
   const state = useStoreState<StepState>(stepStore as any);
   return state.page === page ? state.open : null;
+}
+
+/**
+ * A request's one change, as its own timeline would read it. The change's
+ * section holds its votes and tests (./thread-changes.tsx) and the request's
+ * head draws the timeline (./request-head.tsx), so the section publishes
+ * what the timeline needs here. With it the request's last steps are the
+ * change's phase, the same one its foot reads, and the two agree.
+ */
+export const leadStore = createStore<{ page: string | null; lead: ChangeRailInput | null }>({ page: null, lead: null });
+
+export function publishLead(page: string, lead: ChangeRailInput | null): void {
+  const now = leadStore.get();
+  if (!lead && now.page !== page) return;
+  leadStore.set({ page: lead ? page : null, lead });
+}
+
+/** The one change published for `page`, or null. */
+export function useLead(page: string): ChangeRailInput | null {
+  const state = useStoreState<{ page: string | null; lead: ChangeRailInput | null }>(leadStore as any);
+  return state.page === page ? state.lead : null;
 }

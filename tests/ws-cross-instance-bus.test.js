@@ -20,6 +20,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const vm = require('node:vm');
 
 const bus = require('../src/services/ws-bus');
 
@@ -143,8 +144,86 @@ test('excludeWs is not published — it names a socket in one process', () => {
 
 test('the client answers the oversize nudge with its existing recovery path', () => {
   const APP = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(APP, /case 'resync_hint':\s*\n\s*App\.resyncCurrentView\(\);/,
+  assert.match(APP, /case 'resync_hint':\s*\n\s*App\._resyncFromHint\(\);/,
     'resync_hint reuses resyncCurrentView, the same repair a dropped socket runs');
+});
+
+// #6791: several nudges in a row are one sweep. A burst of writes over the
+// NOTIFY budget sends a hint apiece, and each used to run the whole catch-up.
+function hintHarness() {
+  const SRC = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const slice = (sig) => {
+    const start = SRC.indexOf(`\n  ${sig}`);
+    assert.ok(start >= 0, `${sig} is defined`);
+    const end = SRC.indexOf('\n  },', start);
+    return SRC.slice(start + 1, end + 5);
+  };
+  const timers = [];
+  const sweeps = [];
+  let now = 1_000_000;
+  const sandbox = {
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimeout: (id) => { const t = timers[id - 1]; if (t) t.cleared = true; },
+    Date: { now: () => now },
+    window: {
+      dispatchEvent: () => {},
+    },
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(`var App = {\n${
+    [
+      '_lastResyncAt: 0,',
+      'RESYNC_SETTLE_MS: 5000,',
+      '_resyncHintTimer: null,',
+      'currentApp: null,',
+      '_isScreenVisible: function () { return false; },',
+      '_syncViewer: function () {},',
+      'loadVersion: function () {},',
+      slice('_resyncFromHint() {'),
+      slice('resyncCurrentView() {'),
+    ].join('\n')
+  }\n};\nglobalThis.__App = App;`, sandbox);
+  // Count the sweeps from outside rather than in the source under test.
+  const App = sandbox.__App;
+  const realResync = App.resyncCurrentView;
+  App.resyncCurrentView = function resyncCurrentView() {
+    sweeps.push(Date.now());
+    return realResync.call(App);
+  };
+  return {
+    App, timers, sweeps,
+    advance: (ms) => { now += ms; },
+    runDue: () => timers.splice(0).filter((t) => !t.cleared).forEach((t) => t.fn()),
+  };
+}
+
+test('#6791: several resync hints in a row are one sweep, at the settle gap', () => {
+  const h = hintHarness();
+  h.App._resyncFromHint();
+  assert.equal(h.sweeps.length, 1, 'the first, well past the gap, sweeps at once');
+  h.advance(1000);
+  h.App._resyncFromHint();
+  h.App._resyncFromHint();
+  h.App._resyncFromHint();
+  assert.equal(h.sweeps.length, 1, 'hints inside the gap sweep nothing yet');
+  assert.equal(h.timers.length, 1, 'and share one trailing timer');
+  assert.equal(h.timers[0].ms, 4000, 'the rest of the 5 s gap');
+  h.runDue();
+  assert.equal(h.sweeps.length, 2, 'one sweep for all of them');
+  assert.equal(h.App._resyncHintTimer, null, 'and nothing left waiting');
+});
+
+test('#6791: a reconnect sweep absorbs a waiting hint', () => {
+  const h = hintHarness();
+  h.advance(10000);
+  h.App._resyncFromHint();
+  h.advance(1000);
+  h.App._resyncFromHint();
+  assert.equal(h.timers.length, 1, 'one waiting');
+  h.App.resyncCurrentView();
+  assert.equal(h.timers[0].cleared, true, 'the reconnect sweep clears it');
+  h.runDue();
+  assert.equal(h.sweeps.length, 2, 'the reconnect\'s own sweep, and no second one');
 });
 
 test('the payload budget sits under the NOTIFY hard cap', () => {

@@ -250,8 +250,9 @@ is no replay plan to write and nothing to verify locally.
   owns are **projects**. Use "project" in user-facing copy where the app is
   the thing being built; keep "app" where it is the thing being used (the
   App tab, Pinned apps).
-- **The phone's bar is Home · AI · Messages · You; the desktop sidebar is
-  Home, AI, Messages, then Recents and You** (#6019; One Home, #6361). AI is the Homeroom bot's chat, which is not a row of Messages
+- **The phone's bar is Home · Communities · AI · Messages · You; the desktop
+  sidebar is Home, AI, Messages, Communities, then Recents and You** (#6019;
+  One Home, #6361; the Communities tab came back on 18 Nov 2026). AI is the Homeroom bot's chat, which is not a row of Messages
   and is never drawn on the Messages screen: its page
   (`frontend/src/features/ai/`) is the lists, with **New chat**, a labelled
   button beside search, in its head, and from 768px a column beside them
@@ -314,32 +315,41 @@ is no replay plan to write and nothing to verify locally.
   card, "New chat about <project>" (`dev-board/workshop/your-work.tsx`), and
   for somebody who has made nothing there yet the three builders in Your
   work's place (`dev-board/workshop/first-change.tsx`).
-  **Home is the one page of apps and communities, signed in or out (One
-  Home, #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile
-  opens the app; hidden until the first pin), **Pinned communities**
-  (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`,
-  `features/home/pinned-communities.tsx`: a tile opens the hub; its All
-  communities tile shows the ones you are in but have not pinned, its Needs
-  you tile, drawn while a vote waits, opens Needs you, and New community
-  starts a project), Challenges as a sideways row, then **Communities to
-  join** (the public directory: **Featured**, what an admin featured, as
-  its first sideways row, then the rest, more as you scroll,
-  `features/home/communities-to-join.tsx`). The two pins are separate acts
+  **Home is the page of apps and of the communities to join (One Home,
+  #6361).** Its sections are **Pinned apps** (`app_favorites`: a tile opens
+  the app; hidden until the first pin), Challenges as a sideways row, then
+  **Communities to join** (the public directory: **Featured**, what an
+  admin featured, as its first sideways row, then the rest, more as you
+  scroll, `features/home/communities-to-join.tsx`). Home lists none of the
+  communities you are in; its search still finds them
+  (`#home-communities-section`, `HomeCommunityMatches` in
+  `features/home/pinned-communities.tsx`, hidden until something is typed).
+  **Your communities are the Communities tab's page** (`#communities`,
+  `#communities-screen`, `features/communities/index.tsx`,
+  `App.navigateToCommunities`; the tab's key is still `workshop`): **Pinned**
+  (`home_community_pins`, `services/home-pins.js`, `/api/me/home-pins`: a
+  tile opens the hub), then **Joined** (the ones you are in and have not
+  pinned; Edit lets each be pinned), New community, which starts a project,
+  and a Discover card whose button opens Home at Communities to join. Its
+  Needs you tile, drawn while a vote waits, opens Needs you, in a look whose
+  Home has no Needs you card (Standard (WIP) and the brand look have the
+  card on Home). The two pins are separate acts
   and neither joins: you may pin what you have not joined. Joining pins the
   community (`communities.join`); leaving unpins it and keeps the app's
-  pin. Signed out, the landing is the same Home, its pins kept on the
+  pin. Signed out, the landing is the guest's Home, its pins kept on the
   device (`features/guest/device-pins.ts`) and moved to the account at
   sign-in (`POST /api/me/home-pins/import`). Who hears about a project's
   votes and merges is `app_stakes` (members who pinned its app or its
-  community), not every favorite. Discover's screen and the Communities
-  screen's list are gone: their addresses are rewritten in place by the
-  router, `#apps` and `#communities` (or `#workshop`) to Home, `#apps/<slug>`
-  to that project's hub, and `#communities?ws=needs` to `#needs`. A Home
+  community), not every favorite. Discover's screen is gone: its addresses
+  are rewritten in place by the router, `#apps` to Home and `#apps/<slug>`
+  to that project's hub; `#workshop` is rewritten to `#communities`, and
+  `#communities?ws=needs` to `#needs`. A Home
   card's "Go to community" opens the hub (`Home.openHub`), and "All
-  communities" anywhere (the switcher, the sidebar's All row) is Home's
-  (`Home.showCommunities({ all: true })`). The Communities tab is drawn on
-  neither bar (app.css); its node stays, with its key `workshop`. The markup
-  is the rail's order, and app.css orders the phone's four cells.
+  communities" anywhere (the switcher, the lit tab's last step) is the
+  Communities page (`goToCommunity(null)`, `openCommunitiesPage` in
+  `features/workshop/community-scope.ts`). The tab is a plain door to that
+  page on both bars, lit there and on a community's own page. The markup
+  is the sidebar's order, and app.css orders the phone's five cells.
   **Needs you** (`#needs`, `features/workshop/index.tsx`, the
   `#workshop-screen` root) is a page under Home, its header's arrow up to
   it: every decision owed across your projects
@@ -414,9 +424,9 @@ is no replay plan to write and nothing to verify locally.
   goes through `AppView._landOnTab`, and the router takes that decision
   over the link's (`_takePlaceDecision`). A switch is not a door: the
   header's ⌄ menu opens the other community on the place you were on when
-  it has it, else its hub (`landKeepingPlace` in `place-store.ts`); Home's
-  community tiles are doors to the hub, and the Communities tab's code
-  still reopens the page you left on its place.
+  it has it, else its hub (`landKeepingPlace` in `place-store.ts`); the
+  Communities page's tiles are doors to the hub, and the Communities tab is
+  a door to that page, which resumes nothing.
   Back, Forward and a reload are not doors either: the page reopens on the
   place its history entry names, read fresh when it mounts. A request's
   "‹" chip names where its press goes: a step Back to the place the page
@@ -747,6 +757,25 @@ carry most of them.
   turned them on there (`window.Skin.tools()`), so an admin's header is
   everyone's by default. `?skin=<look>|standard` still pins a look for one
   load.
+
+- **The signed-out landing wears the website's look, not the shell's (13 Nov
+  2026).** The guest Discover (its short story and its list) is a visitor's
+  next click after onhomeroom.com, so it is drawn as that site is: clouds
+  with a white window in them, serif headlines (Young Serif, the stand-in
+  the new look already ships; the hero's headline and button are Source
+  Serif 4, `--site-display`, lighter and tighter), sun pills on an ink
+  outline and outlined cards. The hero is one frame (17 Nov 2026): the words
+  centred in the window, a pill under them, and the people on the window's
+  bottom edge; the pictures are in `public/brand/`, whose README says where
+  each came from. `public/css/app.css` ("THE WEBSITE'S LOOK ON THE
+  SIGNED-OUT PAGES") declares that look's variables on `#auth-landing-screen`
+  and moves them for the dark shell in one rule. The component drawn only
+  there (`features/auth/story.tsx`'s short story) spells every colour as one
+  of those variables and names no `dark:` class; the pieces shared with the
+  signed-in app (the bar's button, the search, the chips, the cards) keep
+  their classes and are repainted from that block by their own hooks.
+  Everything a member sees once signed in keeps the rules above.
+  `tests/guest-discover.test.js` holds it.
 
 Tests pin the literals where they live (`tests/section-heading-primitives`,
 `tests/nav-tab-bar`, `tests/workshop-screen`), so a change to one of these is

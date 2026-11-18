@@ -13,11 +13,12 @@
  *     over the card. It lies over the card's content and never changes the
  *     card's height; × on its right, Escape, or a press on the dimmed card
  *     closes it (./step-store.ts).
- *   - `PlanWords` and `ShotsWait`: a plan's text for the layer, and the well
- *     that holds the picture's place before there is one.
+ *   - `PlanWords`, `ShotsWait` and `NoPicture`: a plan's text for the layer,
+ *     the well that holds the picture's place before there is one, and what
+ *     that well says when there will be no picture.
  */
 
-import { createContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode , type CSSProperties } from 'react';
 
 import { SparklesIcon, XIcon } from '@/components/ui/icons';
 
@@ -27,13 +28,19 @@ import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import type { FootTone } from './card-model';
 import { dotLine } from './frame/topic-page';
 import type { RequestSpecCard } from './request-model';
+import { TouchesPicture, readTouches } from '../workshop/touches';
 
 /**
  * Whether the page draws the card (the standard look and the brand look), and
  * which page's layer a step opens (./step-store.ts). A request's page gives
  * it to the change sections under it (./thread-changes.tsx).
  */
-export const ThreadCardContext = createContext<{ card: boolean; page: string }>({ card: false, page: '' });
+export const ThreadCardContext = createContext<{
+  card: boolean;
+  page: string;
+  /** The card's own summary was written from the request and its change, so the change's is not said twice. */
+  covers?: boolean;
+}>({ card: false, page: '' });
 
 function appData(): { slug: string; name: string; icon_emoji: string | null; icon_url: string | null } | null {
   const data = typeof window === 'undefined' ? null : (window as any).AppView?.appData;
@@ -46,7 +53,31 @@ function appData(): { slug: string; name: string; icon_emoji: string | null; ico
   };
 }
 
-export function ThreadKicker({ kind, number }: { kind: 'request' | 'change'; number: number | null }): ReactNode {
+/**
+ * THE THREAD'S HEADER PILL (18 Nov 2026): the project's tile at the start of
+ * the sheet's header, which now says what the card's kicker said (the
+ * project, the number and the topic) on every surface that draws the thread.
+ */
+export function ThreadBarTile(): ReactNode {
+  const app = appData();
+  if (!app) return null;
+  return (
+    <span className="app-icon-tile dev-thread-bar-tile" data-icon={appIconKind(app as any)} aria-hidden="true">
+      <AppIconContent app={app as any} />
+    </span>
+  );
+}
+
+/** The project's name for the header pill's second line, or null outside a project. */
+export function threadProjectName(): string | null {
+  return appData()?.name || null;
+}
+
+export function ThreadKicker({ kind, number, category = null }: {
+  kind: 'request' | 'change'; number: number | null;
+  /** The topic it is filed under, which used to sit on a row of its own above the card. */
+  category?: string | null;
+}): ReactNode {
   const t = useMessages('project');
   const app = appData();
   const what = kind === 'request'
@@ -60,7 +91,7 @@ export function ThreadKicker({ kind, number }: { kind: 'request' | 'change'; num
         </span>
       ) : null}
       <span className="min-w-0">
-        {app ? dotLine([app.name, what]) : what}
+        {dotLine([app ? app.name : null, what, category])}
       </span>
     </p>
   );
@@ -170,7 +201,7 @@ export function StepLayer({ open, keep = false, name, title, sub = null, when = 
   const t = useMessages('project');
   const box = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
-  const [place, setPlace] = useState<{ top: number; max: number } | null>(null);
+  const [place, setPlace] = useState<{ top: number; max: number; floor: number } | null>(null);
   useLayoutEffect(() => {
     if (!open) { setPlace(null); return undefined; }
     const el = box.current;
@@ -193,14 +224,21 @@ export function StepLayer({ open, keep = false, name, title, sub = null, when = 
       const max = Math.round(Math.max(200, Math.min(left >= 320 ? left - 8 : 600, view.bottom - view.top - 24)));
       el.style.maxHeight = `${max}px`;
       const height = el.offsetHeight;
-      // Centred in what is seen when it fits there; else at its near edge.
-      const wanted = seen >= height ? from + (seen - height) / 2 : from > floor ? from + 8 : to - height - 8;
+      // Directly under the title, as the thread design drew it (17 Nov 2026:
+      // it used to be centred in the part of the card on screen, which left
+      // the card's words showing above it and ran it over the replies). A
+      // reader who has scrolled past the title gets it where they are.
+      const wanted = from > floor && seen >= height ? from + 8 : floor;
       const top = Math.round(Math.max(floor, Math.min(wanted, Math.max(floor, room - height - 8))));
-      setPlace((was) => (was && was.top === top && was.max === max ? was : { top, max }));
+      // The layer stays inside the card: a card shorter than the layer
+      // grows to hold it while it is open.
+      const need = top + height + 8;
+      card.style.minHeight = need > room ? `${need}px` : card.style.minHeight;
+      setPlace((was) => (was && was.top === top && was.max === max && was.floor === floor ? was : { top, max, floor }));
     };
     fit();
     window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
+    return () => { window.removeEventListener('resize', fit); card.style.minHeight = ''; };
   }, [open, children]);
   useEffect(() => {
     if (!open) return undefined;
@@ -225,7 +263,9 @@ export function StepLayer({ open, keep = false, name, title, sub = null, when = 
   }, [open]);
   if (!open && !keep) return null;
   return (
-    <div className="dev-step-layer" data-step-layer={name} data-open={open ? 'true' : 'false'} hidden={!open}>
+    <div className="dev-step-layer" data-step-layer={name} data-open={open ? 'true' : 'false'} hidden={!open}
+      // The scrim starts under the title, which stays as it was.
+      style={place ? ({ '--step-floor': `${Math.max(0, place.floor - 6)}px` } as CSSProperties) : undefined}>
       <button type="button" className="dev-step-scrim" tabIndex={-1} aria-label={t('project:topic.card.layer.close')} onClick={onClose} />
       <div
         ref={box}
@@ -304,6 +344,40 @@ export function PlanWords({ plan }: { plan: RequestSpecCard }): ReactNode {
       {state.failed ? t('project:topic.card.layer.planFailed') : t('project:topic.card.layer.planLoading')}
     </p>
   );
+}
+
+/**
+ * A change with no picture says why where the picture would be: nothing a
+ * person can see changes, its tests have not passed yet (the screenshots
+ * are taken after them), or this version never passed them. A change that
+ * is past its tests with no picture says nothing: there is no reason to give.
+ */
+export function NoPicture({ none, phase, stopped, touches, diagramLed = false }: {
+  none: boolean;
+  phase: string;
+  stopped: boolean;
+  /** #4490: "What it touches" for this head, if it was read for it. */
+  touches?: unknown;
+  /** The page already leads with the author's diagram, so it needs no box. */
+  diagramLed?: boolean;
+}): ReactNode {
+  const t = useMessages('project');
+  const touchesPicture = useMemo(() => readTouches(touches), [touches]);
+  if (none) {
+    // #4490: nothing on screen changes, so no shots were asked for. The
+    // picture of what did change ("What it touches") says it better than the
+    // box does, and its foot still says nothing on screen changes.
+    if (diagramLed) return null;
+    if (touchesPicture) return <TouchesPicture t={touchesPicture} nothingVisible />;
+    return <ShotsWait state="none" title={t('project:topic.card.shots.noneTitle')} text={t('project:topic.card.shots.noneText')} />;
+  }
+  if (phase === 'testing') return <ShotsWait state="waiting" title={t('project:topic.card.shots.notYetTitle')} text={t('project:topic.card.shots.notYetText')} />;
+  if (phase === 'failed') {
+    return stopped
+      ? <ShotsWait state="never" title={t('project:topic.card.shots.neverTitle')} text={t('project:topic.card.shots.neverText')} />
+      : <ShotsWait state="waiting" title={t('project:topic.card.shots.notYetTitle')} text={t('project:topic.card.shots.notYetText')} />;
+  }
+  return null;
 }
 
 /** Where the picture will be, before there is one: a well with one line saying why. */

@@ -17,7 +17,9 @@ import { mountFlows } from './onboarding-flows/engine.js';
 // next person in, and who drops off. The Who menu draws them over everyone,
 // a season, or the people let off the waitlist on one day. The chart fills
 // the section and is moved like a map (drag, two-finger scroll, pinch or
-// wheel to zoom); a box or a thread opens a pop-up with the people behind
+// wheel to zoom). The whole funnel folds into six steps, each a bar split by
+// who carries on, who is too early to say and who stopped there, and opens
+// into its cards inside the same bar; a box or a thread opens a pop-up with the people behind
 // it, each column title says how many people reach that step, and Notes
 // holds the counted findings, the tables and how each number is defined.
 //
@@ -113,7 +115,9 @@ const Frame = memo(function Frame({ demo, cut }: { demo: boolean; cut: boolean }
             <p className="hint">
               Drag or two-finger scroll to move the chart, pinch or use a mouse wheel to zoom, double-click an
               empty spot to zoom in. Point at a thread to see one person. Select a box to follow everyone who
-              passed through it, and select it again to clear. Selections carry across views.
+              passed through it, and select it again to clear. Selections carry across views. The whole funnel
+              folds into its steps: select a step's name or its bar to open it into its cards, and its name again
+              to fold it.
             </p>
           </section>
           <section className="card" aria-labelledby="admin-of-says-title">

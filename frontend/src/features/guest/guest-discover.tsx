@@ -50,10 +50,11 @@
  * Join, Vote, Ask), never as a wall.
  */
 
+import { useHomeSearchPlaceholder } from '../home/search-hint';
 import { guestSearchFrom, withGuestSearch } from './search-history';
-import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ArrowRightShortIcon, SearchIcon, UserIcon } from '@/components/ui/icons';
+import { ArrowRightShortIcon, SearchIcon, UserIcon, XIcon } from '@/components/ui/icons';
 import { cn } from '@/lib/utils';
 
 import { useMessages } from '../../lib/i18n/react';
@@ -169,19 +170,25 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
   const t = useMessages('auth');
   const color = useCommunityColor({ color: app.icon_color, iconUrl: app.icon_url, iconEmoji: app.icon_emoji, key: app.slug });
   const people = app.active_users || 0;
+  // A picture whose file is gone falls back to the icon on its colour, as a
+  // project with no picture shows, rather than leaving a broken image.
+  const [pictureFailed, setPictureFailed] = useState(false);
+  useEffect(() => { setPictureFailed(false); }, [app.illustration_url, app.illustration_dark_url]);
+  const picture = !!app.illustration_url && !pictureFailed;
   return (
     <span
       data-guest-card-cover=""
       className="relative flex aspect-[16/10] w-full items-center justify-center overflow-hidden bg-zinc-200 shadow-[inset_0_-1px_0_var(--app-sheet-line)] dark:bg-zinc-800"
-      style={app.illustration_url ? undefined : { background: color }}
+      style={picture ? undefined : { background: color }}
     >
-      {app.illustration_url ? (
+      {picture ? (
         <>
           <img
             src={app.illustration_url}
             alt=""
             loading={eager ? 'eager' : 'lazy'}
             draggable={false}
+            onError={() => setPictureFailed(true)}
             className={cn('absolute inset-0 h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100', app.illustration_dark_url ? 'dark:hidden' : '')}
           />
           {app.illustration_dark_url ? (
@@ -190,6 +197,7 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
               alt=""
               loading={eager ? 'eager' : 'lazy'}
               draggable={false}
+              onError={() => setPictureFailed(true)}
               className="absolute inset-0 hidden h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transition-none motion-reduce:group-hover:scale-100 dark:block"
             />
           ) : null}
@@ -245,17 +253,24 @@ function CardCover({ app, eager }: { app: GuestApp; eager: boolean }) {
  * tall (`py-3`) with `-my-3` taking the padding back out of the card, so a
  * finger has a real target while the card looks exactly as it did.
  */
-export function Card({ app, eager, featured = false }: {
+export function Card({ app, eager, featured = false, lead = false }: {
   app: GuestApp;
   eager: boolean;
   featured?: boolean;
+  /** One of the first featured communities on a visitor's landing: drawn large, with its members and changes. */
+  lead?: boolean;
 }) {
   const t = useMessages('auth');
+  const th = useMessages('home');
   const people = app.active_users || 0;
+  const members = app.member_count || 0;
+  const changes = app.merged_count || 0;
+  const stats = [members > 0 ? th('home:join.members', { count: members }) : null, changes > 0 ? t('auth:guest.card.changes', { count: changes }) : null].filter(Boolean).join(' · ');
   return (
     <article
       data-guest-card={featured ? undefined : app.slug}
       data-guest-featured={featured ? app.slug : undefined}
+      data-guest-lead={lead ? '' : undefined}
       className="group relative flex min-w-0 flex-col overflow-hidden rounded-[20px] bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_1px_2px_rgba(0,0,0,0.05),0_10px_22px_-12px_rgba(0,0,0,0.22)] transition-[transform,box-shadow] duration-150 ease-out hover:-translate-y-1 hover:shadow-[inset_0_0_0_1px_var(--app-sheet-line),0_2px_4px_rgba(0,0,0,0.05),0_22px_36px_-14px_rgba(0,0,0,0.34)] active:scale-[0.97] active:duration-75 has-[a:focus-visible]:outline has-[a:focus-visible]:outline-2 has-[a:focus-visible]:outline-offset-[3px] has-[a:focus-visible]:outline-violet-600 motion-reduce:transition-none motion-reduce:hover:translate-y-0 motion-reduce:active:scale-100 dark:bg-zinc-900 dark:has-[a:focus-visible]:outline-violet-400"
     >
       <CardCover app={app} eager={eager} />
@@ -277,6 +292,9 @@ export function Card({ app, eager, featured = false }: {
           <span data-guest-card-about="" className="mt-0.5 line-clamp-2 text-[13px] leading-[18px] text-zinc-500 dark:text-zinc-400">
             {app.description}
           </span>
+        ) : null}
+        {lead && stats ? (
+          <span data-guest-card-stats="" className="mt-auto pt-2 text-[13px] leading-[18px] font-medium text-zinc-600 dark:text-zinc-300">{stats}</span>
         ) : null}
       </span>
     </article>
@@ -341,6 +359,7 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   // All apps sections, their sort control and Show more went with it.
   const t = useMessages('auth');
   const th = useMessages('home');
+  const searchPlaceholder = useHomeSearchPlaceholder();
   const [query, setQuery] = useState('');
   // The project page replaces this component. Keep the query on the Home
   // history entry so Back restores this visit, independently of other tabs.
@@ -354,6 +373,26 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
     setQuery(value);
     try { window.history.replaceState(withGuestSearch(window.history.state, value), ''); } catch { /* History unavailable: search still works. */ }
   };
+  // THE SEARCH IS BEHIND A BUTTON (Evan, 13 Nov 2026): a full-width field
+  // between the story and the communities pushed the first cards down for
+  // something most first visits never use. The round button on the
+  // Communities heading shows the field, in the place it always had (over
+  // the pins, which it filters too), and puts the cursor in it; the field's
+  // × empties it and puts it away, and so does Escape. A search kept on the
+  // history entry (Back from a project's page) shows the field with it. The
+  // field stays in the document while it is put away, so the declared check
+  // that asks whether this Home can be searched still finds it.
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const focusSearch = useRef(false);
+  const searchShown = searchOpen || !!query;
+  useEffect(() => {
+    if (!searchShown || !focusSearch.current) return;
+    focusSearch.current = false;
+    searchRef.current?.focus();
+  }, [searchShown]);
+  const openSearch = () => { focusSearch.current = true; setSearchOpen(true); };
+  const closeSearch = () => { changeQuery(''); setSearchOpen(false); };
 
   const device = useStoreStateLocal();
   useEffect(() => { loadDevicePins(); }, []);
@@ -391,18 +430,33 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   return (
     <div data-guest-discover="" className="flex flex-col gap-5">
       {hero}
-      <div className="flex flex-col gap-2 px-4">
-        <label className="flex h-11 items-center gap-2 rounded-[14px] bg-white px-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500">
+      {/* Nothing in this stack while the search is put away and the device
+          has pinned nothing: then it is out of the page's rhythm too, so the
+          story is not followed by an empty gap. */}
+      <div className={searchShown || pinnedApps.length || pinnedCommunities.length ? 'flex flex-col gap-2 px-4' : 'hidden'}>
+        <label className={searchShown ? SEARCH_FIELD : `${SEARCH_FIELD} hidden`}>
           <SearchIcon className="h-[18px] w-[18px] shrink-0" />
           <input
+            ref={searchRef}
             type="search"
             data-guest-search=""
             value={query}
             onChange={(e) => changeQuery(e.target.value)}
-            placeholder={th('home:search.placeholder')}
+            onKeyDown={(e) => { if (e.key === 'Escape') closeSearch(); }}
+            placeholder={searchPlaceholder}
             aria-label={th('home:search.label')}
             className="h-11 min-w-0 flex-1 bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
           />
+          <button
+            type="button"
+            data-guest-search-close=""
+            aria-label={t('auth:guest.search.close')}
+            title={t('auth:guest.search.close')}
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            onClick={closeSearch}
+          >
+            <XIcon className="h-4 w-4" />
+          </button>
         </label>
 
         {pinnedApps.length ? (
@@ -451,6 +505,19 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             exclude={EMPTY}
             signedIn={false}
             query={q}
+            headingAction={searchShown ? null : (
+              <button
+                type="button"
+                data-guest-search-open=""
+                aria-expanded={false}
+                aria-label={t('auth:guest.search.open')}
+                title={t('auth:guest.search.open')}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white text-zinc-900 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                onClick={openSearch}
+              >
+                <SearchIcon className="h-5 w-5" />
+              </button>
+            )}
           />
         </div>
       )}
@@ -459,6 +526,10 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
 }
 
 const EMPTY: ReadonlySet<string> = new Set();
+
+// The search field's box. The × at its end is the field's own height, so the
+// box keeps less room after it than before the magnifying glass.
+const SEARCH_FIELD = 'flex h-11 items-center gap-2 rounded-[14px] bg-white ps-3.5 text-zinc-400 shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900 dark:text-zinc-500';
 
 function useStoreStateLocal() {
   return useStoreState(devicePinsStore);

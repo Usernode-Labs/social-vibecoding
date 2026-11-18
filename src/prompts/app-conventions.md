@@ -94,7 +94,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    `declare_visible_changes` with the change, real steps, focus,
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
    before/after shots of it on the exact builds. For a non-visual change,
-   record `impact: "none"` with a specific rationale.
+   record `impact: "none"` with a specific rationale. Then call `declare_diagram`:
+   `{"version":1,"kind":"flow","before":["A"],"after":["B"]}`.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
@@ -109,9 +110,16 @@ Ordered by how badly an agent working offline gets each one wrong.
    `required` + `private` key must commit a `staging_default`.
    `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`, `PORT`
    and `USERNODE_ENV` are reserved and injected for you.
-8. **The platform provides an LLM proxy and file storage — don't call
-   third-party APIs directly and never ask users for API keys.** AI goes
-   through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
+8. **AI goes through the platform's LLM proxy and uploads through its file
+   storage. Other outside services (map tiles, place search, weather,
+   public data APIs) are fine.** Call them from the app's server where you
+   can: people's IP addresses stay with the app, though what they type
+   into a search still goes to the provider, so choose providers knowingly.
+   Keep to the provider's terms of use, and declare any key in `dapp.json`
+   `secrets` (rule 7) for the owner to set in the Secrets UI; keyless
+   providers need no secret. Never ask the people using the app for an API
+   key.
+   AI goes through `USERNODE_LLM_PROXY_URL` with the app token plus the user's
    forwarded iframe token, billed to their own budget under a consent
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
@@ -135,15 +143,27 @@ Ordered by how badly an agent working offline gets each one wrong.
     for app AI features must tell the model to decline the forbidden topics.
     Decline a forbidden request and offer a compliant version. When unsure,
     it is allowed. Full text: "Content rules" section.
-12. **Data rules.** No trackers, analytics or ad SDKs and no scripts from
-    another origin. People sign in only through Homeroom: no login or
-    signup form and no "Sign in with X", though connecting an outside
-    account for its data is fine. Never ask for
-    account passwords or card data (codes the app makes are fine), and
-    no payments through any provider. Nothing for children under 13. No
-    profiling people by health, religion, sexuality, ethnicity, politics
-    or biometrics: a club, a topic or a person's own note is fine. Full
-    text: "Data rules" section.
+12. **Data rules.** No trackers, analytics, ad SDKs, pixels or beacons in
+    any form, including image pixels: a privacy promise to the people using
+    the apps (see also request #6048). No `<script>` tag from another
+    origin: the group votes on the code in the repository, and an outside
+    script can change after the vote, so the app would run code nobody
+    voted on and nobody can see in the repo. Install libraries from npm and
+    serve them from the app's own origin, as Homeroom Maps does with
+    MapLibre. Everything else from other sites is fine: images, video and
+    audio; map tiles and map styles; web fonts; data from public APIs, from
+    the app's server or from the browser when the API allows it; and
+    embedded players such as YouTube or Vimeo in an `<iframe>`. Prefer
+    fonts from npm (`@fontsource/*`) over Google Fonts, YouTube's
+    `youtube-nocookie.com` embed, and calls from the app's server rather
+    than the browser so visitors' IP addresses are not sent too. People
+    sign in only through Homeroom: no login or signup form and no "Sign in
+    with X", though connecting an outside account for its data is fine.
+    Never ask for account passwords or card data (codes the app makes are
+    fine), and no payments through any provider. Nothing for children
+    under 13. No profiling people by health, religion, sexuality,
+    ethnicity, politics or biometrics: a club, a topic or a person's own
+    note is fine. Full text: "Data rules" section.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -786,7 +806,7 @@ Two related notes on `path:` form:
 ### Who the before & after shots see
 
 The shots agent signs in as the persona each declared change names, on
-throwaway copies of the app. Five things it cannot do by itself, which
+throwaway copies of the app. Six things it cannot do by itself, which
 account for most changes that end up with no shots:
 
 - **It finds only the data the copies hold.** Each copy is a fresh
@@ -841,6 +861,16 @@ account for most changes that end up with no shots:
   shoots each side's home-screen tile from that side's `dapp.json`. A change
   to the app's `icon`, `name` or colour is a visible change: declare it
   with impact `ui` and a claim naming the home-screen tile, not `none`.
+- **Some states cannot be staged at all.** A controlled failure covers one
+  API GET, never a POST, PUT or DELETE; there is no native phone app, so
+  anything only its bridge shows cannot be shown; two requests cannot be
+  made to race; and nothing answers with a model. Check each state against
+  these before you declare it. When one stands in the way and no seed can
+  hold the state, declare `impact: "none"` with a reason that names what the
+  copies cannot do, rather than claim a state they cannot reach, and then
+  declare a diagram of it: `flow`, `changes`, `numbers` or `rename`, plain
+  words, 1-60 characters a text, e.g.
+  `{"version":1,"kind":"flow","before":["Won't mount"],"after":["Moved machine"]}`.
 
 ### Testing `path:` for the hybrid-routed self-app
 
@@ -1961,8 +1991,13 @@ and `id` (to delete later) in your own tables:
 ```json
 { "id": "<32-hex>", "url": "https://<platform>/app-files/<32-hex>",
   "filename": "dish.jpg", "contentType": "image/jpeg",
-  "sizeBytes": 812345, "visibility": "public" }
+  "sizeBytes": 812345, "visibility": "public",
+  "owner": "user", "sha256": "<64-hex>", "createdAt": "<ISO time>" }
 ```
+
+`owner` is `user` for a person's upload and `app` for a file the app
+keeps for itself (see "Files the app keeps for itself" below);
+`sha256` is the digest of the stored bytes, for checking a copy.
 
 Limits and rules (both paths):
 
@@ -1980,9 +2015,8 @@ Limits and rules (both paths):
 - **Video**: MP4 (H.264/AAC, `.mp4` or `.m4v`) and WebM (`.webm`) —
   sniffed from the bytes; QuickTime and Matroska files are refused.
   Max **100 MB** per file. Render it inline with
-  `<video src="${url}" controls>`. Files are served whole with no
-  range support, so it plays from the start in Chrome and Firefox;
-  Safari on iPhone usually wants pieces and may not play it.
+  `<video src="${url}" controls>`. Byte ranges are served, so it
+  seeks, and Safari on iPhone plays it.
 - **Text and data**: plain text (`.txt`), CSV (`.csv`), JSON
   (`.json`) and calendar (`.ics`) — 5 MB each. They must be valid
   UTF-8 with no NUL bytes, a `.json` must parse, and an `.ics` must
@@ -1991,9 +2025,12 @@ Limits and rules (both paths):
 - **Never accepted**: HTML, SVG, JavaScript and XML under any name.
   An upload is checked by its bytes, so a web page renamed
   `menu.pdf` is refused.
-- **Quotas**: 10 GB per app, 1 GB per user per app, shared by every
-  kind above (staging-preview uploads: 100 MB per app, auto-deleted
-  after 7 days — one large video can use most of a preview's space).
+- **Quotas**: 10 GB per app unless Homeroom's admins gave the app its
+  own allowance, and 1 GB per user per app for what people upload,
+  shared by every kind above. Files the app keeps for itself count
+  against the app's allowance only. (Staging-preview uploads: 100 MB
+  per app, auto-deleted after 7 days — one large video can use most of
+  a preview's space.)
   Structured error codes on rejection:
   `file_too_large`, `invalid_image`, `invalid_audio`, `invalid_file`,
   `app_quota_exceeded`, `user_quota_exceeded`,
@@ -2004,8 +2041,9 @@ Limits and rules (both paths):
   requires a platform user token at view time: render those as
   `<img src="${url}?token=${theIframeToken}">` (or
   `<audio ...>`/`<video ...>` with the same `?token=` for narration
-  and clips). Files
-  are served whole; there is no range/skip-ahead support.
+  and clips). A `Range` header is answered with that part of the file
+  (206), so `<audio>` and `<video>` seek without your server keeping a
+  copy.
 - **Files are immutable** — there is no overwrite; upload a new file
   and update your stored URL. Deleting makes the URL 404 for fresh
   fetches immediately.
@@ -2076,6 +2114,51 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
 //   app's files (the takedown/moderation path), same two headers.
 // GET `${USERNODE_STORAGE_URL}/usage`          — quota meter, same headers.
 ```
+
+### Files the app keeps for itself (no signed-in person)
+
+Narration your server generates, chapter text, computed data: files
+that belong to the app rather than to whoever happened to be signed
+in. Upload them with the app token **alone** and `owner=app`. They
+count against the app's allowance, never a person's; no user token is
+needed, so a background job can store them the moment they are made,
+and they are not removed when someone deletes their account. Never
+keep such a file on the container's disk waiting for a token: the
+disk is gone at the next restart.
+
+```js
+const base = process.env.USERNODE_STORAGE_URL;
+const app = { 'x-usernode-app-token': process.env.USERNODE_STORAGE_TOKEN };
+
+// Store: same body and query params as above, plus owner=app.
+const res = await fetch(`${base}/files?filename=chapter-3.mp3&visibility=public&owner=app`, {
+  method: 'POST',
+  headers: { ...app, 'content-type': 'application/octet-stream' },
+  body: mp3Buffer,
+});
+const file = await res.json(); // { ok, id, url, sizeBytes, sha256, owner: 'app', ... }
+
+// List your files a page at a time, each with its size and sha256:
+//   GET `${base}/files?owner=app&after=<last id>&limit=1000`
+//   → { ok, files: [...], next }   (next: the id to pass as `after`, or null)
+// Read one back (private ones too; a Range header reads part of it):
+//   GET `${base}/files/<id>`
+// Delete and usage take the app token alone as well:
+//   DELETE `${base}/files/<id>`, GET `${base}/usage`
+//   (usage adds `appOwnedBytes`; `userBytes` is null without a user token)
+```
+
+- Moving data you kept in your own database into storage: copy it in
+  a resumable job (record each file's id and `sha256` beside its row
+  as it is stored), check the copy against the list (counts and
+  digests), switch your reads to the stored files, and only then
+  clear the database copy. Run that check once the copy has stopped
+  storing: ids are random, so a file stored while you page through the
+  list can land before your cursor and be missed.
+- App-owned uploads are rate-limited per app (300 a minute) rather
+  than per person; `rate_limited` (429) means wait a minute and go on.
+- A user token sent with `owner=app` is ignored for ownership; a
+  person's upload (no `owner`, or `owner=user`) still needs one.
 
 ### Staging notes
 
@@ -4110,11 +4193,24 @@ cannot override them.
 
 **Never build, add or ship:**
 
-- **Third-party trackers or external scripts.** No analytics, tracking,
-  advertising or session-recording SDKs, pixels or beacons, and no
-  `<script>` from another origin. An app loads its own code and the
-  centrally hosted Homeroom assets only. A legacy `cdn.tailwindcss.com`
-  tag (rule 1) is tolerated; new code adds none.
+- **Third-party trackers or external scripts.** No trackers, analytics,
+  ads, pixels or beacons in any form, including image pixels: a privacy
+  promise to the people using the apps (see also request #6048). No
+  `<script>` tag from another origin either: the group votes on the code in
+  the repository, and an outside script can change after the vote, so the
+  app would run code nobody voted on and nobody can see in the repo.
+  Install libraries from npm and serve them from the app's own origin, as
+  Homeroom Maps does with MapLibre. A legacy `cdn.tailwindcss.com` tag
+  (rule 1) is tolerated; new code adds none.
+
+  Everything else from other sites is fine: images, video and audio hosted
+  elsewhere; map tiles and map styles; web fonts; public API data (from the
+  app's server, or the browser where the API allows it); and embedded
+  players such as YouTube or Vimeo in an `<iframe>`. Prefer fonts from npm
+  (`@fontsource/*`) over Google Fonts, YouTube's `youtube-nocookie.com`
+  embed, and calls from the app's server rather than the browser so
+  visitors' IP addresses are not sent too. A server-side call still sends
+  what people type to the provider, so choose providers knowingly.
 - **Profiling people by sensitive traits.** Don't build an app whose
   purpose is to collect or infer health, religious beliefs, sexual
   orientation, racial or ethnic origin, political opinions, trade-union

@@ -42,7 +42,7 @@ function homeStubs({ pins = [], joined = [], owed = {}, apps = [], grid = {}, mo
       scrollParent: () => null,
     },
     '../add-apps-sheet': { openAddAppsSheet() {} },
-    '../use-home-query': { useHomeQuery: () => query, matchesQuery },
+    '../use-home-query': { useHomeQuery: () => query, useSettledHomeQuery: () => query, matchesQuery },
     '../panels-store': { panelsStore: fixedStore({ painted: true, challenges }) },
     '../../app-frame/live-apps': { useLiveAppSlugs: () => live, liveAppLabel: () => 'Still open' },
     '../../workshop/community-scope': { communityScopeStore: fixedStore({ slug: null, list: [], badgeNeeds: needs }) },
@@ -86,7 +86,7 @@ test('the page is the kit\'s: the head with one fixed sentence, the search field
   const html = render({}, homeStubs({ apps: [app('a', 'Alpha')], challenges: CHALLENGES }));
   assert.match(html, /^<div class="fr" data-home-frame=""><div class="fr-inner"><div class="fr-head"><div class="fr-tx"><h1 class="fr-title">Home<\/h1><p class="fr-purpose">Your apps and your communities\.<\/p><\/div><\/div><div data-home-frame-search=""><div class="fr-search">/);
   assert.doesNotMatch(html, /class="fr-acts"/, 'no button in the head: New project is Pinned apps\' own');
-  assert.match(html, /<input type="search" class="fr-v" placeholder="Search apps and communities… \(Ctrl\+K\)" aria-label="Search apps and communities" value=""\/>/, 'the standard field\'s own words');
+  assert.match(html, /<input type="search" class="fr-v" placeholder="Search apps and communities…" aria-label="Search apps and communities" value=""\/>/, 'the standard field\'s own words (the first render names no shortcut: the device is not known yet)');
   assert.match(html, /<div class="fr-cols fr-mix"><div class="fr-stack">/, 'the tour\'s 720 and 320, not the wide Home of 10 Nov');
   // The directory is the work column's tail: on a phone, and in a window too
   // narrow for two columns, the challenges come before it, as on the
@@ -124,14 +124,17 @@ test('what the first tour invented is gone: no Needs you rows, Live this week, Y
 
 test('the search field drives Home\'s own search, and the shortcut finds it', () => {
   assert.match(SRC, /own\.value = next;\s*own\.dispatchEvent\(new Event\('input', \{ bubbles: true \}\)\);/, 'each change is written into #home-search-input with the event home.js and use-home-query listen for');
-  assert.match(SRC, /const query = useHomeQuery\(\);/, 'the communities read the same words');
+  assert.match(SRC, /const query = useSettledHomeQuery\(\);/, 'the communities read the same words as the apps');
   assert.match(SRC, /setAttribute\('aria-keyshortcuts', HOME_SEARCH_SHORTCUT_KEYS\)/);
   assert.match(SRC, /if \(event\.key !== 'Escape' \|\| !words\) return;/, 'Escape clears it, as on the standard field');
   const home = read('frontend', 'src', 'features', 'home', 'home.js');
   assert.match(home, /_searchField\(\) \{\s*return document\.querySelector\('\[data-home-frame-search\] input'\) \|\| document\.getElementById\('home-search-input'\);/);
   assert.match(home, /const input = Home\._searchField\(\);/, 'Home.focusSearch (the bar\'s search, the sidebar\'s) lands in it');
   assert.match(home, /if \(!showing \|\| Home\._searchField\(\) !== input\) \{ Home\.focusSearch\(\); return; \}/, 'and so do Ctrl+K and /');
-  assert.match(home, /document\.getElementById\('home-frame-communities'\) \|\| document\.getElementById\('home-communities-section'\)/, 'Home.showCommunities scrolls to the kit section under a look');
+  // Your communities are the Communities tab's page in every look, a look
+  // of the frame included: Home.showCommunities opens it and scrolls nothing.
+  assert.match(home, /showCommunities\(\) \{\s*if \(location\.hash !== '#communities'\) location\.hash = '#communities';\s*\},/, 'Home.showCommunities opens the Communities page, under a look too');
+  assert.match(home, /document\.getElementById\('home-frame-to-join'\) \|\| document\.getElementById\('home-join-section'\)/, 'Home.showCommunitiesToJoin still scrolls to the kit section under a look');
 });
 
 test('Pinned apps: the launcher\'s tiles, Edit, and the row that unfolds the grid', () => {
@@ -218,7 +221,7 @@ test('Pinned communities are tiles: the pins with what is owed, then Needs you, 
   assert.ok(g.indexOf('home-frame-needs-tile') < g.indexOf('home-frame-all-communities') && g.indexOf('home-frame-all-communities') < g.indexOf('home-frame-new-community'), 'in the standard order');
   const quiet = group(render({}, homeStubs({ pins: [pin('a', 'Alpha')], joined: [joined('a', 'Alpha')] })), 'home-frame-communities');
   assert.doesNotMatch(quiet, /home-frame-needs-tile|home-frame-all-communities/, 'a zero says nothing, and with every community pinned there is no All tile');
-  assert.match(SRC, /document\.addEventListener\('home:show-all-communities', open\)/, 'All communities anywhere else opens the section\'s');
+  assert.doesNotMatch(SRC, /home:show-all-communities/, 'All communities anywhere else is the Communities tab\'s page now; only the tile opens the section\'s');
   assert.match(SRC, /lit=\{showAll\}\s*pressed=\{showAll\}/);
   assert.match(SRC, /\{\(showAll \|\| query\) && !editing \? unpinned\.map/, 'while it is on, or while searching, the unpinned ones follow');
   assert.match(SRC, /void setHomePin\(\{ \.\.\.c, member: true \} as HomePin, true, say\(c\.name\)\)/, 'a + pins one');
@@ -227,7 +230,7 @@ test('Pinned communities are tiles: the pins with what is owed, then Needs you, 
 
 test('a search finds a community you have not pinned, faded, with a + to pin it', () => {
   const g = group(render({}, homeStubs({ query: 'oth', pins: [pin('a', 'Alpha')], joined: [joined('a', 'Alpha'), joined('other', 'Other One')], needs: 3 })), 'home-frame-communities');
-  assert.match(g, /<div class="fr-at fr-dim fr-ring" style="--fr-cr:#[0-9a-f]{6}"><a class="fr-atl" href="\/app\/other\/workshop\?ws=status">.*?<span class="fr-nm">Other One<\/span><\/a><button type="button" class="fr-corner" aria-label="Pin Other One to Home">/s);
+  assert.match(g, /<div class="fr-at fr-dim fr-ring" style="--fr-cr:#[0-9a-f]{6}"><a class="fr-atl" href="\/app\/other\/workshop\?ws=status">.*?<span class="fr-nm">Other One<\/span><\/a><button type="button" class="fr-corner" aria-label="Pin Other One">/s);
   assert.doesNotMatch(g, /Alpha|home-frame-needs-tile|home-frame-new-community|>Edit</, 'only what matches; the section\'s own tiles and Edit wait for the search to end');
 });
 

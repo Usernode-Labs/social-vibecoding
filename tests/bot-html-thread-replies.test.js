@@ -77,7 +77,12 @@ test('the copy goes only beside the words exactly as the reply wrote them, and n
   assert.match(src, /ctx\.checkedProblems = await claims\.checkReply\(pool, ctx, replyHtml\.withHtmlWords\(again\?\.text \?\? finalText, again\?\.html\)\);/);
   // The words before anything changes them, and the copy is decided from them.
   assert.match(src, /const asWritten = finalReply\?\.text \? text : null;/);
-  assert.match(src, /const html = threadReplyHtml\(\{ finalReply, text, asWritten, checkedProblems: ctx\.checkedProblems, offer: ctx\.offer \}\);/);
+  assert.match(src, /const ownHtml = threadReplyHtml\(\{ finalReply, text, asWritten, checkedProblems: ctx\.checkedProblems, offer: ctx\.offer \}\);/);
+  // 18 Nov 2026: words changed after it was written keep the copy only
+  // while it still says them; anything else is laid out from the final
+  // words (tests/bot-reply-layout.test.js).
+  assert.equal(voice.threadReplyHtml({ finalReply, text: `Got it, ${text}`, asWritten: text }), null,
+    'a short reply\'s copy no longer covers the words');
   assert.equal(replyHtml.withHtmlWords('Words.', '<p>I\'ve filed it.</p>'), 'Words.\n\nI\'ve filed it.');
   assert.equal(replyHtml.withHtmlWords('Words.', null), 'Words.');
 });

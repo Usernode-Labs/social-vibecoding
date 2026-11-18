@@ -57,11 +57,39 @@ declare global {
       setTools?(on: boolean): void;
       /** The look a device with nothing stored is drawn in. */
       DEFAULT?: Skin;
+      /** Standard (WIP)'s token config (head.html): 'current', or another set's name. */
+      getTokens?(): string;
+      setTokens?(name: string): void;
     };
   }
 }
 
 const SKINS: readonly Skin[] = ['standard', ...MENU_SKINS];
+
+/**
+ * The token configs of Standard (WIP), in the menu's order: the values that
+ * draw it. 'current' is the look as it is drawn; the head's TOKEN_SETS is
+ * the rest. Offered by the look picker beside the bell, to admins, while
+ * that look is on.
+ */
+export const WIP_TOKEN_SETS = ['current', 'brand', 'brand2'] as const;
+export type WipTokens = typeof WIP_TOKEN_SETS[number];
+
+/** The device's token config for Standard (WIP); 'current' when the head module is absent. */
+export function currentWipTokens(): WipTokens {
+  if (typeof window === 'undefined') return 'current';
+  try {
+    const got = window.Skin?.getTokens?.();
+    return (WIP_TOKEN_SETS as readonly string[]).includes(got as string) ? got as WipTokens : 'current';
+  } catch {
+    return 'current';
+  }
+}
+
+/** The token config, followed live as the look is (one listener, shared). */
+export function useLiveWipTokens(): WipTokens {
+  return useSyncExternalStore(subscribeSkin, currentWipTokens, () => 'current');
+}
 
 /** The device's look right now; 'standard' when the head module is absent. */
 export function currentSkin(): Skin {

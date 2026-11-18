@@ -120,6 +120,21 @@ test('the prompt names each failing check and what it said, as data, and offers 
   assert.match(long, /- and 8 more, not listed here/);
 });
 
+test('#6777: a triage prompt size failure sends the fix turn to trim that part first', () => {
+  const failing = [{
+    name: 'runTriage: the request comes first',
+    reason: 'triage prompt part "ready" (src/prompts/homeroom-bot-triage.md) is 4,120 chars, 170 over its budget of 3,950',
+  }];
+  const prompt = followup.checksFixPrompt({ seed: 'S', failing, total: 1 });
+  assert.match(prompt, /it names the part that went over its budget/);
+  assert.match(prompt, /Trim the text in that part that this change grew/);
+  assert.match(prompt, /Raise only that part's own budget on its marker/);
+  const unrelated = followup.checksFixPrompt({
+    seed: 'S', failing: [{ name: 'loads', reason: 'TypeError: x is undefined' }], total: 1,
+  });
+  assert.doesNotMatch(unrelated, /it names the part that went over its budget/);
+});
+
 test('what it says has no em dashes, and the hand-off says a person takes it', () => {
   const texts = [
     followup.checksRevisedText({ failing: [{ name: 'The settings button reads "Text size"', path: 'tests/settings.test.js' }] }),
@@ -192,6 +207,185 @@ test('the fix round\'s note says what was fixed from what failed, with no code a
   const bot = read('src/services/homeroom-bot.js');
   assert.match(bot, /await note\('checks_revise', \{ runId, text: followup\.checksRevisedText\(\{ failing, broken, skipped \}\) \}\);/);
   assert.doesNotMatch(bot, /checksRevisedText\(\{[^}]*link/);
+});
+
+// ── #6778: what main and the other open changes did to the same files ────
+//
+// Run 6100/6102 on PR 6748: the bot spent its three tries fixing what main
+// had just changed under it, because nothing told it main had moved. A fix
+// turn now reads main's history and the project's other open changes.
+
+const TIP = 'e'.repeat(40);
+const BASE = 'f'.repeat(40);
+const OVERLAP_SESSION = {
+  id: 5001, branch_name: 'dev/homeroom_bot-5001', pr_number: 82,
+  created_at: '2026-11-17T14:00:00Z', linked_issues: [50],
+};
+
+// The rows fixOverlapContext reads: the previous fix try, the change's own
+// start, the other open changes and their titles.
+function overlapPool({ previousTry = '2026-11-17T15:00:00Z', startedAt = OVERLAP_SESSION.created_at, others = [], titles = {} } = {}) {
+  return {
+    async query(sql, params) {
+      const s = String(sql);
+      if (/FROM homeroom_bot_runs/.test(s)) return { rows: previousTry ? [{ created_at: previousTry }] : [] };
+      if (/SELECT id, COALESCE\(NULLIF\(pr_title/.test(s)) {
+        return { rows: (params[0] || []).map((id) => ({ id, title: titles[id] || null })) };
+      }
+      if (/SELECT created_at FROM chat_sessions WHERE id = \$1/.test(s)) return { rows: [{ created_at: startedAt }] };
+      if (/FROM chat_sessions/.test(s)) {
+        return {
+          rows: others.map((o) => ({
+            linked_issues: [], created_from_issue_number: null,
+            waits_for_session_id: null, rebuilt_from_session_id: null, ...o,
+          })),
+        };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+function overlapMirror({ files = [], log = [] } = {}) {
+  return {
+    calls: [],
+    async ensureMirror(owner, repo) { this.calls.push({ owner, repo }); return '/tmp/overlap-mirror'; },
+    async defaultBranchSha() { return TIP; },
+    async mergeBase() { return BASE; },
+    async changedPaths() { return files; },
+    async mainLogSince(dir, tip, since) { this.calls.push({ dir, tip, since }); return log; },
+  };
+}
+
+// A merged change whose title and number are the squash-merge form main's
+// history writes, and one without a number at all.
+const MERGED = {
+  sha: 'c'.repeat(40),
+  mergedAt: '2026-11-17T15:32:11+00:00',
+  subject: 'Offer to move a request to the project it is really about (#6757)',
+  files: ['src/prompts/triage.md', 'tests/homeroom-bot-triage.test.js'],
+};
+const MERGED_ELSEWHERE = {
+  sha: 'd'.repeat(40), mergedAt: '2026-11-17T15:40:00+00:00',
+  subject: 'Something else entirely (#6761)', files: ['frontend/src/other.tsx'],
+};
+const OVERLAP_FAILING = [{
+  name: 'the triage prompt stays small',
+  path: '/',
+  reason: 'the triage prompt stays small: 31640 chars, over the cap tests/homeroom-bot-triage.test.js pins',
+}];
+
+test('#6778: a fix turn is told which merged change touched its failing test\'s file', async () => {
+  const mirror = overlapMirror({ files: ['src/prompts/triage.md'], log: [MERGED_ELSEWHERE, MERGED] });
+  const context = await bot.fixOverlapContext(overlapPool(), {
+    app: APP, session: OVERLAP_SESSION, head: HEAD, failing: OVERLAP_FAILING,
+    deps: { repoMirror: mirror, github: { isEnabled: () => true } },
+  });
+  assert.equal(context.firstTry, false, 'it has a previous try, so the window starts there');
+  assert.deepEqual(mirror.calls.at(-1), { dir: '/tmp/overlap-mirror', tip: TIP, since: '2026-11-17T15:00:00Z' });
+  assert.deepEqual(context.mainChanges.map((c) => [c.prNumber, c.title]), [
+    [6757, 'Offer to move a request to the project it is really about'],
+  ], 'the merged change sharing a file, and not the one that shares none');
+  assert.deepEqual(context.mainChanges[0].files, ['src/prompts/triage.md', 'tests/homeroom-bot-triage.test.js'],
+    'both the file this change edits and the failing test\'s file, from its own reason');
+  const prompt = followup.checksFixPrompt({
+    seed: 'SEED', failing: OVERLAP_FAILING, total: 1, ...context,
+  });
+  assert.match(prompt, /^Changed on main since your last try: changes merged to main that touch this change's files or the failing test's file\./m);
+  assert.match(prompt, /- PR #6757 "Offer to move a request to the project it is really about", merged 2026-11-17T15:32Z: src\/prompts\/triage\.md, tests\/homeroom-bot-triage\.test\.js/);
+  assert.doesNotMatch(prompt, /6761|Something else entirely/);
+  assert.match(prompt, /When the failing line or file is one that main or another open change also edits, say so in your reply and summary\. Prefer a fix that does not edit that shared line, for example trimming what this change added instead of raising a shared limit\./);
+});
+
+test('#6778: a first try counts from when the change started, and its own merged change is not main', async () => {
+  const mirror = overlapMirror({
+    files: ['src/prompts/triage.md'],
+    log: [
+      { sha: 'a'.repeat(40), mergedAt: '2026-11-17T15:10:00+00:00', subject: 'Its own change (#82)', files: ['src/prompts/triage.md'] },
+      { sha: 'b'.repeat(40), mergedAt: '2026-11-17T15:20:00+00:00', subject: 'A fix with no number', files: ['src/prompts/triage.md'] },
+    ],
+  });
+  const context = await bot.fixOverlapContext(overlapPool({ previousTry: null }), {
+    app: APP, session: OVERLAP_SESSION, head: HEAD, failing: OVERLAP_FAILING,
+    deps: { repoMirror: mirror, github: { isEnabled: () => true } },
+  });
+  assert.equal(context.firstTry, true);
+  assert.equal(mirror.calls.at(-1).since, OVERLAP_SESSION.created_at, 'the change\'s own start');
+  assert.deepEqual(context.mainChanges.map((c) => c.prNumber), [null], 'its own pull request is skipped; one without a number is kept');
+  const prompt = followup.checksFixPrompt({ seed: 'SEED', failing: OVERLAP_FAILING, total: 1, ...context });
+  assert.match(prompt, /^Changed on main since this change was started: changes merged to main/m);
+  assert.match(prompt, /- bbbbbbb "A fix with no number", merged 2026-11-17T15:20Z: src\/prompts\/triage\.md/, 'named by its short commit id');
+});
+
+test('#6778: another open change sharing a file is listed with its number and the file; one sharing nothing is not', async () => {
+  const others = [
+    { id: 6001, status: 'promoted', branch_name: 'dev/other-6001', pr_number: 6760, linked_issues: [60], created_from_issue_number: 60 },
+    { id: 6002, status: 'active', branch_name: 'dev/other-6002', pr_number: 6761, linked_issues: [61], created_from_issue_number: 61 },
+    { id: 5001, status: 'active', branch_name: 'dev/homeroom_bot-5001', pr_number: 82, linked_issues: [50] },
+  ];
+  const github = {
+    isEnabled: () => true,
+    async listChangedFiles(owner, repo, range) {
+      if (range === 'main...dev/other-6001') return ['src/prompts/triage.md', 'README.md'];
+      if (range === 'main...dev/other-6002') return ['frontend/src/unrelated.tsx'];
+      return ['src/prompts/triage.md'];
+    },
+  };
+  const context = await bot.fixOverlapContext(overlapPool({
+    others, titles: { 6001: 'Shorten the triage prompt', 5001: 'The bot\'s own change' },
+  }), {
+    app: APP, session: OVERLAP_SESSION, head: HEAD, failing: OVERLAP_FAILING,
+    deps: { repoMirror: overlapMirror({ files: ['src/prompts/triage.md'] }), github },
+  });
+  assert.deepEqual(context.openOverlaps, [{
+    prNumber: 6760, title: 'Shorten the triage prompt', status: 'promoted', issueNumber: 60, files: ['src/prompts/triage.md'],
+  }], 'one sharing a file, with its own session and the one sharing nothing left out');
+  const prompt = followup.checksFixPrompt({ seed: 'SEED', failing: OVERLAP_FAILING, total: 1, ...context });
+  assert.match(prompt, /^Other open changes touching these files:\n- PR #6760 "Shorten the triage prompt", up for a vote: src\/prompts\/triage\.md$/m);
+  assert.doesNotMatch(prompt, /6761|The bot's own change/);
+});
+
+test('#6778: at most 8 of each are shown, then how many more there are', () => {
+  const mainChanges = Array.from({ length: 11 }, (_, i) => ({
+    prNumber: 7000 + i, title: `Merged ${i}`, mergedAt: '2026-11-17T15:00:00Z', files: ['a.js'],
+  }));
+  const openOverlaps = Array.from({ length: 11 }, (_, i) => ({
+    prNumber: 7100 + i, title: `Open ${i}`, status: 'active', files: ['a.js'],
+  }));
+  const prompt = followup.checksFixPrompt({
+    seed: 'S', failing: [{ name: 'x', reason: 'y' }], total: 1, mainChanges, openOverlaps,
+  });
+  assert.equal((prompt.match(/- PR #70\d\d /g) || []).length, followup.MAX_OVERLAP_SHOWN, '8 merged changes');
+  assert.equal((prompt.match(/- PR #71\d\d /g) || []).length, followup.MAX_OVERLAP_SHOWN, '8 open changes');
+  assert.equal((prompt.match(/- and 3 more, not listed here/g) || []).length, 2, 'one count per block');
+  assert.ok(!prompt.includes('Merged 10') && !prompt.includes('Open 10'), 'the rest are not listed');
+  assert.ok(!/\+\+\+|^@@|diff --git/m.test(prompt), 'names only, never a diff');
+});
+
+test('#6778: with nothing in common neither block nor the rule line is added', async () => {
+  const failing = [{ name: 'the button says Aa', path: '/#cook', reason: 'expected "Text size"' }];
+  const plain = followup.checksFixPrompt({ seed: 'SEED', failing, total: 1 });
+  assert.equal(followup.checksFixPrompt({ seed: 'SEED', failing, total: 1, mainChanges: [], openOverlaps: [] }), plain);
+  assert.equal(followup.checksFixPrompt({ seed: 'SEED', failing, total: 1, mainChanges: [], openOverlaps: [], firstTry: true }), plain);
+  assert.doesNotMatch(plain, /Changed on main|Other open changes|shared line/);
+  const context = await bot.fixOverlapContext(overlapPool(), {
+    app: APP, session: OVERLAP_SESSION, head: HEAD, failing,
+    deps: {
+      repoMirror: overlapMirror({ files: ['src/buttons.js'], log: [MERGED_ELSEWHERE] }),
+      github: { isEnabled: () => true, async listChangedFiles() { return ['src/buttons.js']; } },
+    },
+  });
+  assert.deepEqual(context, { mainChanges: [], openOverlaps: [], firstTry: false });
+  assert.equal(followup.checksFixPrompt({ seed: 'SEED', failing, total: 1, ...context }), plain, 'an ordinary fix prompt, byte for byte');
+});
+
+test('#6778: the two blocks are kept in the run snapshot beside what failed', () => {
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /const overlap = await fixOverlapContext\(pool, \{ app, session, head, failing, deps \}\)/);
+  assert.match(src, /\.catch\(\(\) => \(\{ mainChanges: \[\], openOverlaps: \[\], firstTry: false \}\)\)/,
+    'a read that fails costs the turn its two blocks, not the turn');
+  assert.match(src, /\.\.\.\(overlap\.mainChanges\.length \? \{ main_changes: JSON\.stringify\(overlap\.mainChanges\) \} : \{\}\)/);
+  assert.match(src, /\.\.\.\(overlap\.openOverlaps\.length \? \{ open_overlaps: JSON\.stringify\(overlap\.openOverlaps\) \} : \{\}\)/);
 });
 
 // ── runTriage, down the checks path ──────────────────────────────────────
@@ -268,6 +462,16 @@ function harness({
     sessionLifecycle: {},
     domain: 'app.onhomeroom.com',
     votes: { async reconcileNativeReviewedHead(args) { calls.reconciled.push(args); return { enforced: true }; } },
+    // #6778: the fix turn reads main's log and this change's files from the
+    // repository mirror. A level, silent mirror keeps these tests offline;
+    // the overlap tests below stub their own.
+    repoMirror: {
+      async ensureMirror() { return '/tmp/test-overlap-mirror'; },
+      async defaultBranchSha() { return NEW_HEAD; },
+      async mergeBase() { return null; },
+      async changedPaths() { return []; },
+      async mainLogSince() { return []; },
+    },
     // Before its fix turn (#5220) and before a hand-off
     // (fixed-check-sync.js syncBeforeHandOff): level with main unless a test
     // says otherwise, so nothing is synced.

@@ -56,7 +56,12 @@ function collect() {
 // A page whose sub-route renders `renderAfterMs` after a hash switch reaches
 // it (`renderOnHash`), or only when the document is loaded at it, `coldRenderMs`
 // into that load. `errorAfterMs` logs a console error that long after a switch.
-function makePage({ renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0, errorAfterMs = null } = {}) {
+// `loadError` ({ hash, afterMs, text }) logs one that long after a load at
+// `hash`, through the same probe path as a switch's late error (see below).
+function makePage({
+  renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0,
+  errorAfterMs = null, loadError = null,
+} = {}) {
   const handlers = new Map();
   const timers = [];
   // A switch's late error is handed to the listeners by the page's own clock,
@@ -87,7 +92,15 @@ function makePage({ renderOnHash = false, renderAfterMs = 0, coldRenderMs = 0, e
       page.gotos.push(u);
       const i = String(u).indexOf('#');
       page.loaded = i === -1 ? '' : String(u).slice(i);
-      page.readyAt = performance.now() + coldRenderMs;
+      const now = performance.now();
+      page.readyAt = now + coldRenderMs;
+      // A boot error goes through the presence probe for the same reason as a
+      // switch's: a timer of its own can be delivered after the probe that
+      // answers "present", and the console is then frozen without it.
+      if (loadError && String(u).endsWith(loadError.hash)) {
+        errorAt = now + loadError.afterMs;
+        errorText = loadError.text;
+      }
       return { status: () => 200 };
     },
     async waitForNetworkIdle() {},
@@ -199,14 +212,14 @@ test('a coldLoad check is judged on a load of its address: no switch, the full w
       return {
         async newPage() {
           // A screen drawn only by a load at it, 0.3s in; a load at #/y also
-          // logs an error at 0.25s, while its screen is still coming.
-          const p = makePage({ coldRenderMs: 300 });
-          const goto = p.goto;
-          p.goto = async (u) => {
-            const r = await goto(u);
-            if (String(u).endsWith('#/y')) p.later(() => p.emitError('boot script error'), 250);
-            return r;
-          };
+          // logs an error at 0.25s, while its screen is still coming. The
+          // error is the page's own clock, not a timer: it is emitted by the
+          // same probe that can answer "present", so a stalled event loop
+          // cannot deliver the screen's poll before a due error.
+          const p = makePage({
+            coldRenderMs: 300,
+            loadError: { hash: '#/y', afterMs: 250, text: 'boot script error' },
+          });
           pages.push(p);
           return p;
         },
@@ -588,8 +601,10 @@ test('Homeroom declares its boot parameters and its routing boundary, and no che
     '`?flow=` is not one: #5280 made it work on a conversation already open');
   // 1 Nov 2026: the Homeroom bot tab's page is its chat's too: Main Chat and a
   // thread in its column, and the demo chat's Messages address, which lands there.
+  // 18 Nov 2026: a running app's App tab is not one any more (the side panel
+  // no longer stands beside an app).
   assert.deepEqual(dapp.routingBoundaries.map((b) => b.route),
-    ['#app/*', '#app/*/app', '#homeroom-bot', '#homeroom-bot/main', '#homeroom-bot/thread/*', '#messages/910005']);
+    ['#homeroom-bot', '#homeroom-bot/main', '#homeroom-bot/thread/*', '#messages/910005']);
   const marked = dapp.tests.filter((t) => Object.prototype.hasOwnProperty.call(t, 'coldLoad'));
   assert.deepEqual(marked.map((t) => t.name), [],
     'per-check "coldLoad" is retired and ignored: declare the app\'s "bootParams" or "routingBoundaries" (src/prompts/app-conventions.md)');
@@ -622,50 +637,36 @@ test('every check #5280 and #5317 marked still gets what its mark gave it', () =
   // when the same list is grouped without it.
   const leads = (gs) => gs.flatMap((g) => cohortsOf(g)[0].tests.map((t) => t.index)).sort((a, b) => a - b);
   assert.deepEqual(leads(groups), leads(groupTests(tests.map(({ endsGroup, ...t }) => t), {})));
-  // #5317's one: the running app's desktop check. It leads its chunk in plain
-  // grouping, so it keeps that load, alone, and nothing follows it.
+  // #5317's one, the running app's desktop check, ended its group because
+  // the side panel took the next address beside the app. The panel no
+  // longer stands beside an app (18 Nov 2026), so the check is grouped like
+  // any other address.
   const app = tests.find((t) => t.path === '/#app/staging-demo-forkable');
-  assert.equal(app.endsGroup, true);
-  const cs = cohortsOf(groupOf(app));
-  assert.equal(cs[cs.length - 1].hash, '#app/staging-demo-forkable');
+  assert.ok(app && !app.endsGroup);
 });
 
-test('a running app never hands its page to the next check: the side panel takes it, by design', () => {
-  // With an app on screen on a desktop, `location.hash = '#messages/…'` is
-  // caught by the side panel's Navigation API chokepoint and opened beside
-  // the app: the screen the next check asserts on is never drawn in the
-  // page itself (#5317: `#app/staging-demo-forkable` then
-  // `#messages/agent/990801`, a fallback on every run).
+test('the Homeroom bot page never hands its page to the next check: the side panel takes it, by design', () => {
+  // With the bot's page on screen on a desktop, `location.hash = '#messages/…'`
+  // is caught by the side panel's Navigation API chokepoint and opened in its
+  // column: the screen the next check asserts on is never drawn in the page
+  // itself. A running app's App tab did the same until 18 Nov 2026, when the
+  // panel stopped standing beside an app: its link opens the page itself now,
+  // so the App tab is no routing boundary (#5317's `#app/*` entries are gone).
   const { loadTsx } = require('./lib/render-tsx');
   const R = loadTsx('frontend/src/features/side-panel/routes.ts');
   assert.equal(R.isPanelRoute('app/staging-demo-forkable'), false, 'the App tab: the app itself');
-  assert.equal(R.isPanelRoute('messages/910003'), true, 'a conversation opens beside a running app');
+  assert.equal(R.isPanelRoute('messages/910003'), true, 'a conversation opens in the bot page\'s column');
   const controller = require('node:fs').readFileSync(require.resolve('../frontend/src/features/side-panel/controller.ts'), 'utf8');
   assert.match(controller, /export function onNavigate\(e: NavigateEventLike\): void \{[\s\S]*?if \(!panelTakes\(route\) \|\| !canTake\(\)\) return;\s+e\.preventDefault\(\);\s+open\(route, null\);/);
   // 1 Nov 2026: a panel page, but never the chat with Homeroom bot, which only its tab draws.
   assert.match(controller, /function panelTakes\(route: string\): boolean \{\s+return isPanelRoute\(route\) && !isBotChatRoute\(route\);\s+\}/);
-  assert.match(controller, /const besideApp = !!A\.currentApp && A\.currentTab === 'app' && seen\('app-view'\);/, 'on the App tab');
-  // …and beside the AI tab's page, where the panel takes the docked chat's place.
-  assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);
-  assert.match(controller, /if \(!besideApp && !besideAi\) return false;/);
+  // Only beside the AI tab's page, where the panel takes the docked chat's place.
+  assert.match(controller, /if \(typeof A\._isScreenVisible !== 'function' \|\| !A\._isScreenVisible\('ai-screen'\)\) return false;/);
+  assert.doesNotMatch(controller, /besideApp|currentTab === 'app'/, 'no longer beside a running app');
+  assert.ok(!manifest.readLoadRules(require('../dapp.json')).routingBoundaries.some((b) => /^#app\//.test(b.route)),
+    'an App tab is no routing boundary');
 
-  // The App tab is what the route table makes of `app/<slug>` and
-  // `app/<slug>/app`: not a panel page. Homeroom's own App tab is not a
-  // running app (the platform does not run itself in a frame).
-  const SELF = 'usernode-2d5619';
-  const appTab = (url) => {
-    const route = R.routeFromUrl(url);
-    const parts = route.split('/');
-    return parts[0] === 'app' && !!parts[1] && parts[1] !== SELF
-      && (parts.length === 2 || (parts.length === 3 && parts[2] === 'app'))
-      && R.panelPage(route) === null;
-  };
-  // A future App-tab check, with a query in its fragment, is held by the same rule.
-  const future = { name: 'future running app', path: '/#app/future-running?path=/x', expectSelector: '#app-view' };
-  assert.ok(appTab('https://s/#app/future-running?path=/x'));
-  assert.ok(!appTab(`https://s/#app/${SELF}`), 'Homeroom\'s own App tab');
-  assert.ok(appTab(`https://s/#app/${SELF}-fork`), 'the own slug, by exact match only');
-  // The Homeroom bot tab's page takes the same addresses on a desktop, with
+  // The Homeroom bot tab's page takes those addresses on a desktop, with
   // Main Chat or a thread in its column (1 Nov 2026: `#homeroom-bot/main` is
   // no longer the Messages screen's), and the demo chat's Messages address
   // lands there.
@@ -674,18 +675,14 @@ test('a running app never hands its page to the next check: the side panel takes
   assert.ok(aiPage('https://s/#homeroom-bot/main'));
   assert.ok(aiPage('https://s/?demo=1#messages/910005'));
   assert.ok(!aiPage('https://s/#messages/910003'), 'any other chat is the Messages screen\'s');
-  for (const tests of [homeroomTests(), homeroomTests([future])]) {
-    // In a fragment it ends its group. A clean `/app/<slug>` path is a
-    // document of its own, and the loop below still holds it to the rule.
-    for (const t of tests) if (appTab(t.url) && t.url.includes('#')) assert.equal(t.endsGroup, true, `${t.path} ends its group`);
-    for (const t of tests) if (aiPage(t.url)) assert.equal(t.endsGroup, true, `${t.path} ends its group`);
-    assert.ok(tests.some((t) => aiPage(t.url)), 'the AI tab has checks of its own');
-    for (const g of groupTests(tests, {})) {
-      const cohorts = cohortsOf(g);
-      for (let i = 0; i + 1 < cohorts.length; i += 1) {
-        const url = cohorts[i].tests[0].url;
-        assert.ok(!appTab(url) && !aiPage(url), `${cohorts[i].hash} hands its page to ${cohorts[i + 1].hash}`);
-      }
+  const tests = homeroomTests();
+  for (const t of tests) if (aiPage(t.url)) assert.equal(t.endsGroup, true, `${t.path} ends its group`);
+  assert.ok(tests.some((t) => aiPage(t.url)), 'the AI tab has checks of its own');
+  for (const g of groupTests(tests, {})) {
+    const cohorts = cohortsOf(g);
+    for (let i = 0; i + 1 < cohorts.length; i += 1) {
+      const url = cohorts[i].tests[0].url;
+      assert.ok(!aiPage(url), `${cohorts[i].hash} hands its page to ${cohorts[i + 1].hash}`);
     }
   }
 });

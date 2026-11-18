@@ -26,16 +26,23 @@ function changeWebPath(origin, appSlug, sessionId) {
   return appWebPath(origin, appSlug, `dev/proposals/${sessionId}`);
 }
 
-// #4367: the in-app link to a change. One with a pull request is addressed by
-// its number (`dev/changes/<N>`, its "Change #N"); one without — a draft, a
-// plan — by its session id. The page redirects an old session-id link of a
+// #4367/#6718: the in-app link to a change. One with a pull request is
+// addressed by its number, followed by its own session id when the caller
+// knows it (`dev/changes/<N>/<sessionId>`, its "Change #N"), because several
+// changes can share one number; a caller with only the number gets
+// `dev/changes/<N>`. One without a pull request — a draft, a plan — is
+// addressed by its session id. The page redirects an old session-id link of a
 // change with a pull request to the same form.
 function changeHref(appSlug, sessionId, prNumber) {
   const slug = encodeURIComponent(String(appSlug || ''));
   const pr = Number(prNumber);
-  return Number.isInteger(pr) && pr > 0
-    ? `#app/${slug}/dev/changes/${pr}`
-    : `#app/${slug}/dev/proposals/${Number(sessionId)}`;
+  if (Number.isInteger(pr) && pr > 0) {
+    const id = Number(sessionId);
+    return Number.isInteger(id) && id > 0
+      ? `#app/${slug}/dev/changes/${pr}/${id}`
+      : `#app/${slug}/dev/changes/${pr}`;
+  }
+  return `#app/${slug}/dev/proposals/${Number(sessionId)}`;
 }
 
 // The link to give a PERSON for a change: changeHref's page, as an address,

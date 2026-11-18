@@ -106,6 +106,11 @@ export interface PrivateThreadState {
    * newest version: New project makes the project from it (./bot-make.tsx).
    */
   design?: { title: string | null; version: number } | null;
+  /**
+   * #6784 (17 Nov 2026): a project was made from this idea thread. Its head
+   * says "Made into {project}." with a link, and New project is gone.
+   */
+  made?: boolean;
 }
 
 export type Door = 'new';
@@ -136,12 +141,14 @@ interface ThreadMessage {
   sender: { id: number; bot?: boolean };
   metadata?: {
     homeroomBot?: {
-      kind?: string; designTitle?: string; projectIdea?: string; draftTitle?: string;
+      kind?: string; designTitle?: string; projectIdea?: string; projectName?: string; draftTitle?: string;
       aboutKind?: 'request' | 'change'; aboutNumber?: number; aboutTitle?: string;
       /** #6523: the kind of thread the bot opened here; 'project' for a new one. */
       changeKind?: string;
       /** #6523: Homeroom bot offered to make this idea a project in this reply. */
       newProject?: boolean;
+      /** #6783: the offer came as its own card under the reply, with what it will do. */
+      makeProject?: { brief?: string };
     } | null;
   } | null;
 }
@@ -150,9 +157,18 @@ interface ThreadMessage {
  * Pure (#6523): whether Homeroom bot invited a new project in this thread.
  * True when its newest reply carries `newProject`, or when the root is the
  * line it opened for a new project (start_project_thread). An earlier
- * offer alone does not count: only its latest reply.
+ * offer alone does not count: only its latest reply. #6783: false once the
+ * offer came as its own card under the reply, which is the door itself.
  */
 export function newProjectInvited(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[]): boolean {
+  // #6783: the offer is a card under the reply now, so the foot shows no
+  // second door: the card is the one way to make it. Older replies that
+  // carry `newProject` without a card keep the pill.
+  for (const message of replies) {
+    if (!message.sender.bot) continue;
+    const card = message.metadata?.homeroomBot;
+    if (card?.kind === 'make_offer' && card.makeProject?.brief) return false;
+  }
   const meta = root?.sender.bot ? root.metadata?.homeroomBot || null : null;
   if (meta?.kind === 'opened_thread' && meta.changeKind === 'project') return true;
   for (let i = replies.length - 1; i >= 0; i -= 1) {
@@ -222,17 +238,54 @@ export function privateThreadTitle(root: ThreadMessage | null | undefined, repli
 }
 
 /**
- * Pure: the words File it and Post it start from: the root's, when it is
- * the viewer's own message; else (1 Nov 2026: a thread off a line of the
- * bot's) their first message in it, as the server takes them.
+ * Pure: the words File it and Post it start from: the brief Homeroom bot
+ * wrote when it offered New project (17 Nov 2026, #6781: the project as
+ * agreed, with their answers folded in); else (1 Nov 2026: a thread off a
+ * line of the bot's) the idea it opened for; else everything the viewer
+ * wrote in the thread, in order, not only their first message.
  */
 export function privateThreadWords(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string {
-  if (root && !root.sender.bot && root.sender.id === meId) return root.content || '';
+  // #6781: the newest offer's brief wins, over the root's words and theirs.
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const message = replies[i];
+    if (!message.sender.bot) continue;
+    const brief = message.metadata?.homeroomBot?.projectIdea;
+    if (brief && brief.trim()) return brief;
+  }
   // B04 (audit 2 Nov 2026): a new project's thread starts from its idea,
   // not from whatever they answered the bot with first.
   const idea = root?.sender.bot && root.metadata?.homeroomBot?.kind === 'opened_thread' ? root.metadata.homeroomBot.projectIdea : null;
   if (idea) return idea;
-  return firstOwn(replies, meId)?.content || '';
+  return ownWords(root, replies, meId);
+}
+
+/**
+ * Pure (#6781): every message the viewer wrote in the thread, in order, a
+ * blank line between them, cut at 4000 characters (BRIEF_MAX): the make
+ * screen's start when no brief was offered.
+ */
+function ownWords(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[], meId: number): string {
+  const mine: string[] = [];
+  if (root && !root.sender.bot && !!meId && root.sender.id === meId) mine.push(String(root.content || ''));
+  for (const message of replies) {
+    if (message.sender.bot || !meId || message.sender.id !== meId) continue;
+    mine.push(String(message.content || ''));
+  }
+  return mine.map((part) => part.trim()).filter(Boolean).join('\n\n').slice(0, 4000);
+}
+
+/**
+ * Pure (#6781): the name Homeroom bot suggested with its newest offer, for
+ * the make screen's "What should we call it?"; '' when it named none.
+ */
+export function privateThreadName(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[]): string {
+  for (let i = replies.length - 1; i >= 0; i -= 1) {
+    const message = replies[i];
+    if (!message.sender.bot) continue;
+    const name = message.metadata?.homeroomBot?.projectName;
+    if (name && name.trim()) return name;
+  }
+  return '';
 }
 
 // ── A thread the server names (14 Nov 2026) ─────────────────────────────
@@ -367,6 +420,17 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
     );
   }
   if (filed && track) return <RequestTrackStrip track={track} number={filed.number} href={filed.href} />;
+  // #6784: an idea thread made into a project says so, and links it, ahead
+  // of the filed line (which is for a request, and this thread has none).
+  if (where.made && where.app?.slug) {
+    return (
+      <div className="messages-bot-note px-4 py-2" data-private-thread="made">
+        {t('messages:privateThread.made', { project: where.app.name || where.app.slug })}
+        {' · '}
+        <a href={`#app/${encodeURIComponent(where.app.slug)}`}>{t('messages:privateThread.open')}</a>
+      </div>
+    );
+  }
   if (where.state === 'filed' || where.state === 'posted') {
     const id = where.state === 'filed' ? 'messages:privateThread.filed' : 'messages:privateThread.posted';
     return (
@@ -380,9 +444,11 @@ export function PrivateThreadNote({ where, rootId = null, onChanged }: {
 }
 
 /** The thread's foot: New project, when Homeroom bot offers one, and who it is for. */
-export function PrivateThreadDoors({ rootId, text, where, botReplied, invited = false, working = false }: {
+export function PrivateThreadDoors({ rootId, text, name = '', where, botReplied, invited = false, working = false }: {
   rootId: number;
   text: string;
+  /** #6781: the name Homeroom bot suggested with its offer, when it did. */
+  name?: string;
   where: PrivateThreadState | null;
   /** Homeroom bot has answered in the thread. */
   botReplied: boolean;
@@ -417,7 +483,7 @@ export function PrivateThreadDoors({ rootId, text, where, botReplied, invited = 
 
   const startProject = (audience: Audience) => {
     const app = typeof window !== 'undefined' ? (window as any).App : null;
-    app?.showCreateModal?.({ idea: text, audience });
+    app?.showCreateModal?.({ idea: text, name, audience, threadRootId: rootId });
   };
   return (
     <div className="px-4 py-2" data-private-doors={doors.join(' ')}>

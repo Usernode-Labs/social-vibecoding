@@ -160,6 +160,44 @@ test('changedPaths scopes a resolution, and hasCommit gates every read', async (
   } finally { r.cleanup(); }
 });
 
+// #6778: what merged to main since a moment, with the files each change
+// touched. A fix turn reads this to see that main moved the line it fails on.
+test('mainLogSince lists the commits merged since a moment, newest first, with their files', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'usernode-mirror-log-'));
+  const commitAt = (when, message, edit) => {
+    edit(dir);
+    git(dir, 'add', '-A');
+    execFileSync('git', ['-C', dir, 'commit', '-qm', message], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_AUTHOR_DATE: when, GIT_COMMITTER_DATE: when },
+    });
+    return git(dir, 'rev-parse', 'HEAD');
+  };
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+    git(dir, 'config', 'user.email', 'test@usernode.invalid');
+    git(dir, 'config', 'user.name', 'Homeroom Test');
+    git(dir, 'config', 'commit.gpgsign', 'false');
+    const first = commitAt('2026-11-17T15:32:11Z', 'Offer to move a request to the project it is really about (#6757)',
+      (d) => fs.writeFileSync(path.join(d, 'a.txt'), 'a\nmore\n'));
+    const second = commitAt('2026-11-17T15:40:00Z', 'No number here',
+      (d) => fs.writeFileSync(path.join(d, 'b.txt'), 'b\n'));
+    const log = await mirror.mainLogSince(dir, git(dir, 'rev-parse', 'HEAD'), '2026-11-17T15:20:00Z');
+    assert.deepEqual(log.map((c) => c.sha), [second, first], 'newest first, and nothing from before the window');
+    assert.deepEqual(log[1], {
+      sha: first,
+      mergedAt: '2026-11-17T15:32:11Z',
+      subject: 'Offer to move a request to the project it is really about (#6757)',
+      files: ['a.txt'],
+    });
+    assert.deepEqual(log[0].files, ['b.txt'], 'each commit carries its own files, not its neighbours\'');
+    assert.equal(await mirror.mainLogSince(dir, git(dir, 'rev-parse', 'HEAD'), 'not a date'), null,
+      'an unusable date is no log at all');
+    assert.equal(await mirror.mainLogSince(dir, '0'.repeat(40), '2026-11-17T15:20:00Z'), null,
+      'an unknown tip is no log at all');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('a committish that is not a sha is refused before it reaches git', () => {
   assert.throws(() => mirror._safeSha('--upload-pack=evil'), /Not a usable/);
   assert.throws(() => mirror._safeSha('main'), /Not a usable/);

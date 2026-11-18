@@ -661,6 +661,27 @@ export const SIGNING_IN_MAX_MS = 20_000;
 export const APPS_ATTEMPTS = 3;
 export const APPS_RETRY_MS = 1000;
 
+/** The directory's `month` (src/services/public-app-directory.js publicMonthActivity). */
+export interface MonthActivity {
+  changes: number;
+  contributors: number;
+}
+
+/**
+ * The two figures off a directory payload, or null when it carries none or
+ * they are not numbers. A month with no change in it is null too: "0
+ * changes" under the headline says the wrong thing about the place, and a
+ * zero says nothing (AGENTS.md, "let zero say nothing").
+ */
+export function monthActivityOf(data: unknown): MonthActivity | null {
+  const month = data && typeof data === 'object' ? (data as { month?: unknown }).month : null;
+  if (!month || typeof month !== 'object') return null;
+  const changes = Number((month as { changes?: unknown }).changes);
+  const contributors = Number((month as { contributors?: unknown }).contributors);
+  if (!Number.isFinite(changes) || !Number.isFinite(contributors) || changes < 1 || contributors < 1) return null;
+  return { changes: Math.floor(changes), contributors: Math.floor(contributors) };
+}
+
 /**
  * The read of the public directory, GET /api/public/apps, made for the
  * landing (loadLandingApps below). `show` is told when an attempt starts
@@ -671,7 +692,7 @@ export const APPS_RETRY_MS = 1000;
  * real session guard.
  */
 export function createAppsReader(
-  show: { failed(failed: boolean): void; apps(list: PublicApp[]): void },
+  show: { failed(failed: boolean): void; apps(list: PublicApp[]): void; month?(month: MonthActivity | null): void },
   wait: (ms: number) => Promise<unknown> = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 ): () => Promise<void> {
   let inFlight: Promise<void> | null = null;
@@ -709,6 +730,9 @@ export function createAppsReader(
           //   * it IS the guest Discover (features/guest/guest-discover.tsx):
           //     every card there is a row of it.
           show.apps(list);
+          // The short story's two figures ride beside the list (./story.tsx,
+          // "This month"); null when the server could not read them.
+          show.month?.(monthActivityOf(data));
           show.failed(false);
           return;
         } catch {
@@ -991,6 +1015,8 @@ export function LandingScreen() {
   // it could not be.
   const [apps, setApps] = useState<GuestApp[] | null>(null);
   const [appsFailed, setAppsFailed] = useState(false);
+  // The short story's "This month" figures, which come with that read.
+  const [month, setMonth] = useState<MonthActivity | null>(null);
   // What a visitor tried to do on a project's page (Join, Vote, Ask, the
   // chat, an app that needs an account): the sign-in sheet titled for it.
   const [intent, setIntent] = useState<GuestIntent | null>(null);
@@ -1000,7 +1026,7 @@ export function LandingScreen() {
   // interior's first commit identical to the empty root the prerender ships
   // (a hydration mismatch is a console error, and a console error on any
   // route fails the proposal checks).
-  const waitlistPayload = useWaitlistOptions();
+  const waitlistPayload = useWaitlistOptions(mounted);
   // Whether a new account waits (#6633): the waitlist's words until the
   // options arrive, and after that unless an admin switched it off.
   const accountsWait = newAccountsWait(waitlistPayload);
@@ -1351,6 +1377,7 @@ export function LandingScreen() {
       st.appsList = list;
       setApps(list as GuestApp[]);
     },
+    month: setMonth,
   }), [st]);
   const loadLandingApps = useCallback(() => readApps(), [readApps]);
 
@@ -1833,7 +1860,11 @@ export function LandingScreen() {
             className={guestTop ? 'un-touch-target items-center justify-center -my-2 min-h-11 px-3.5 text-[15px] font-semibold' : 'un-touch-target items-center justify-center hidden md:inline-flex -my-2 min-h-11 px-3.5 text-[15px] font-semibold'}
             onClick={() => { noteSignUpFrom('header_sign_up'); setSheet('start'); }}
           >
-            {t('auth:guest.header.signUp')}
+            {/* While new accounts wait the button says what pressing it does
+                (13 Nov 2026): the short story's own "Join the waitlist"
+                button is gone, and "Sign up" over a waiting room was the
+                other half of two names for one thing. */}
+            {accountsWait ? t('auth:guest.hero.joinWaitlist') : t('auth:guest.header.signUp')}
           </Button>
         </div>
       </header>
@@ -2323,7 +2354,7 @@ export function LandingScreen() {
                   compact
                   primaryClass={PRIMARY_PILL}
                   welcomeEmail={releaseEmail}
-                  waitlist={accountsWait}
+                  month={month}
                   onStart={() => setSheet('start')}
                   onSignIn={() => setSheet('signin')}
                 />

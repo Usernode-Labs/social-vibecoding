@@ -519,6 +519,39 @@
         if (known(want)) pinned = want;
       } catch {}
 
+      // Standard (WIP)'s token config: which set of --wip-* values draws it.
+      // 'current' is the look as it is drawn (nothing stored, no attribute);
+      // 'brand' is Homeroom's brand kit (cream, yellow, blue, Geist). Kept on
+      // the device like the look, and `?tokens=` pins one for this load.
+      const TOKENS_KEY = 'homeroom:wip-tokens';
+      const TOKEN_SETS = ['brand', 'brand2'];
+      let pinnedTokens = null;
+      let chosenTokens = null;
+      try {
+        const wantTokens = new URLSearchParams(window.location.search).get('tokens');
+        if (wantTokens === 'current' || TOKEN_SETS.includes(wantTokens)) pinnedTokens = wantTokens;
+      } catch {}
+      function getTokens() {
+        if (pinnedTokens) return pinnedTokens;
+        if (chosenTokens) return chosenTokens;
+        try {
+          const val = window.localStorage.getItem(TOKENS_KEY);
+          return TOKEN_SETS.includes(val) ? val : 'current';
+        } catch {
+          return 'current';
+        }
+      }
+      function setTokens(name) {
+        pinnedTokens = null;
+        chosenTokens = TOKEN_SETS.includes(name) ? name : 'current';
+        try {
+          if (TOKEN_SETS.includes(name)) window.localStorage.setItem(TOKENS_KEY, name);
+          else window.localStorage.removeItem(TOKENS_KEY);
+        } catch { /* unwritable storage: the pick still holds in memory */ }
+        apply();
+        _listeners.forEach(function (fn) { try { fn(); } catch {} });
+      }
+
       function get() {
         if (pinned) return pinned;
         if (chosen) return chosen;
@@ -538,6 +571,9 @@
         const skin = get();
         if (skin === 'wip') root.setAttribute('data-skin-wip', '');
         else root.removeAttribute('data-skin-wip');
+        const tokens = skin === 'wip' ? getTokens() : 'current';
+        if (tokens !== 'current') root.setAttribute('data-wip-tokens', tokens);
+        else root.removeAttribute('data-wip-tokens');
         if (skin !== 'standard' && skin !== 'wip') {
           root.setAttribute('data-skin', skin);
         } else {
@@ -606,8 +642,9 @@
           toolsChosen = null;
           _listeners.forEach(function (fn) { try { fn(); } catch {} });
         }
-        if (e.key === SKIN_KEY) {
-          chosen = null;
+        if (e.key === SKIN_KEY || e.key === TOKENS_KEY) {
+          if (e.key === SKIN_KEY) chosen = null;
+          else chosenTokens = null;
           apply();
           _listeners.forEach(function (fn) { try { fn(); } catch {} });
         }
@@ -616,7 +653,7 @@
       // Apply before first paint: the no-flash guard.
       apply();
 
-      return { get, set, apply, onChange, tools, setTools, DEFAULT: DEFAULT_SKIN };
+      return { get, set, apply, onChange, tools, setTools, DEFAULT: DEFAULT_SKIN, getTokens, setTokens };
     }());
   </script>
   <script>

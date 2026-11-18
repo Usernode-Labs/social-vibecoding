@@ -11,6 +11,11 @@
  * menu laid over a glyph, unseen: nothing to build, position or translate
  * twice, and it works by keyboard and on a phone as any menu does.
  *
+ * UNDER STANDARD (WIP), A SECOND DISC PICKS ITS TOKEN CONFIG: which set of
+ * design tokens draws that look (lib/skin.ts WIP_TOKEN_SETS; the head keeps
+ * the choice on the device, window.Skin.setTokens). It is here and nowhere
+ * else, Settings included: the look first, then the values that draw it.
+ *
  * BESIDE IT, ONE PRESS FLIPS LIGHT AND DARK: a look is judged in both. It
  * is the theme's own switch (window.Theme, as Settings > Theme sets it),
  * and shows the moon while the screen is light and the sun while it is
@@ -33,7 +38,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Icon } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { MENU_SKINS, useLiveSkin, useLookTools, type Skin } from '../../lib/skin';
+import { MENU_SKINS, WIP_TOKEN_SETS, useLiveSkin, useLiveWipTokens, useLookTools, type Skin, type WipTokens } from '../../lib/skin';
 
 // Whole literals, so the catalog inventory can see each id asked for.
 const NAME: Record<'standard' | (typeof MENU_SKINS)[number], string> = {
@@ -47,6 +52,12 @@ const NAME: Record<'standard' | (typeof MENU_SKINS)[number], string> = {
   sunrise: 'settings:experimental.look.sunrise',
 };
 const CHOICES = ['standard', ...MENU_SKINS] as const;
+// Standard (WIP)'s token configs, by name. Whole literals again.
+const TOKENS_NAME: Record<WipTokens, string> = {
+  current: 'settings:experimental.wipTokens.current',
+  brand: 'settings:experimental.wipTokens.brand',
+  brand2: 'settings:experimental.wipTokens.brand2',
+};
 
 // The platform header's own disc, as its bell wears it (#2798: no fill at rest).
 const SHELL = 'relative w-7 h-7 flex items-center justify-center rounded-full un-touch-target border border-transparent text-[color:var(--brand-ink)] transition-colors hover:bg-[color:var(--brand-tint)] hover:border-[color:var(--brand-line)] cursor-pointer';
@@ -70,7 +81,7 @@ function subscribeTheme(onChange: () => void): () => void {
 /** What is on screen now: with the theme on "System" that is the device's own. */
 const isDark = () => document.documentElement.classList.contains('dark');
 
-export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
+export function LookPickerView({ variant, skin, onPick, dark, onDark, tokens, onTokens }: {
   /** 'frame': in the kit's bar, under a look. 'shell': in the platform's header. */
   variant: 'frame' | 'shell';
   skin: Skin;
@@ -78,9 +89,17 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
   /** The screen is dark now; with `onDark`, the toggle beside the look. */
   dark?: boolean;
   onDark?: () => void;
+  /**
+   * Standard (WIP)'s token config and its setter. With both, and that look
+   * on, a second disc beside the look's offers the configs: pick the look,
+   * then the values that draw it.
+   */
+  tokens?: WipTokens;
+  onTokens?: (next: WipTokens) => void;
 }) {
   const t = useMessages('settings');
   const label = t('settings:experimental.look.label');
+  const tokensLabel = t('settings:experimental.wipTokens.label');
   const darkName = t('settings:theme.mode.dark');
   // Every look is one of this menu's; anything else reads as Standard here.
   const value = (CHOICES as readonly string[]).includes(skin) ? skin : 'standard';
@@ -103,6 +122,19 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark }: {
         {CHOICES.map((choice) => <option key={choice} value={choice}>{t(NAME[choice])}</option>)}
       </select>
     </label>
+    {skin === 'wip' && onTokens ? (
+      <label className={frame ? 'fr-ib fr-look' : SHELL_LOOK} title={tokensLabel} data-look-tokens={variant}>
+        <Icon name="sliders" size={20} />
+        <select
+          aria-label={tokensLabel}
+          className={frame ? undefined : 'absolute left-1/2 top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer opacity-0'}
+          value={tokens || 'current'}
+          onChange={(event) => onTokens(event.target.value as WipTokens)}
+        >
+          {WIP_TOKEN_SETS.map((name) => <option key={name} value={name}>{t(TOKENS_NAME[name])}</option>)}
+        </select>
+      </label>
+    ) : null}
     {onDark ? (
       <button type="button" className={frame ? 'fr-ib fr-d' : SHELL} aria-pressed={!!dark} aria-label={darkName} title={darkName} data-look-theme={variant} onClick={onDark}>
         <Icon name={dark ? 'sun' : 'moon'} size={20} />
@@ -154,6 +186,7 @@ function LookFold({ value, onPick, dark, onDark }: { value: Skin; onPick: (next:
 
 export function LookPicker({ variant }: { variant: 'frame' | 'shell' }) {
   const skin = useLiveSkin();
+  const tokens = useLiveWipTokens();
   const [admin, setAdmin] = useState(false);
   useEffect(() => whenPlatformViewer(() => setAdmin((window as any).App?._realIsAdmin === true)), []);
   const dark = useSyncExternalStore(subscribeTheme, isDark, () => false);
@@ -172,6 +205,8 @@ export function LookPicker({ variant }: { variant: 'frame' | 'shell' }) {
       }}
       dark={dark}
       onDark={() => { window.Theme?.set?.(dark ? 'light' : 'dark'); }}
+      tokens={tokens}
+      onTokens={(next) => { window.Skin?.setTokens?.(next); }}
     />
   );
 }

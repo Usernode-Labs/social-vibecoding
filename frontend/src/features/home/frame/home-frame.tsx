@@ -51,6 +51,7 @@
  * click lands on the place through AppView, a cmd-click or middle-click
  * keeps the href.
  */
+import { useHomeSearchPlaceholder } from '../search-hint';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Btn, Card, CapSub, ChallengeArt, Count, GroupLink, HCard, Icon, Lead, Mut, Note, PageBody, Pill, Row, RowArrow, Search, Sec, SecNote, ShowAll, Sub, Tile, k } from '@/components/ui/kit';
@@ -69,7 +70,7 @@ import { gridStore, type HomeAppView, type IconView } from '../grid-store';
 import { homePinsStore, setHomePin, type HomePin } from '../home-pins-store';
 import { panelsStore, type HomePanelsState } from '../panels-store';
 import { HOME_SEARCH_SHORTCUT_KEYS } from '../search-shortcut';
-import { matchesQuery, useHomeQuery } from '../use-home-query';
+import { matchesQuery, useSettledHomeQuery } from '../use-home-query';
 import { ToJoinView } from './to-join';
 
 /** A tile's picture in the grids of this page. */
@@ -363,13 +364,6 @@ function PinnedCommunities({ query }: { query: string }) {
   const needs = Math.max(0, Number(badgeNeeds) || 0);
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  // "All communities" anywhere else (the sidebar's row, the switcher) opens
-  // this section's (Home.showCommunities).
-  useEffect(() => {
-    const open = () => setShowAll(true);
-    document.addEventListener('home:show-all-communities', open);
-    return () => document.removeEventListener('home:show-all-communities', open);
-  }, []);
   useEffect(() => { if (query) setEditing(false); }, [query]);
 
   const pinned = useMemo(() => state.pins.filter((p) => matchesQuery(query, p.name, p.slug)), [state.pins, query]);
@@ -614,6 +608,7 @@ function Challenges({ challenges }: { challenges: NonNullable<HomePanelsState['c
  */
 function HomeSearch() {
   const t = useMessages('home');
+  const searchPlaceholder = useHomeSearchPlaceholder();
   const [words, setWords] = useState('');
   const host = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -645,7 +640,7 @@ function HomeSearch() {
         type('');
       }}
     >
-      <Search value={words} onChange={type} placeholder={t('home:search.placeholder')} label={t('home:search.label')} />
+      <Search value={words} onChange={type} placeholder={searchPlaceholder} label={t('home:search.label')} />
     </div>
   );
 }
@@ -660,7 +655,7 @@ export function HomeFrame({ initialDirectory = null, grid, widgets, waitlist, ve
   verify?: React.ReactNode;
 }) {
   const t = useMessages('home');
-  const query = useHomeQuery();
+  const query = useSettledHomeQuery();
   const { challenges } = useStoreState(panelsStore) as HomePanelsState;
   const side = challenges && (challenges.rows.length > 0 || challenges.note) ? <Challenges challenges={challenges} /> : null;
   return (

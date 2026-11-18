@@ -38,7 +38,12 @@ import { t } from '../../lib/i18n/runtime';
 import { KUDOS_PARKED } from '../leaderboard/kudos-parked';
 import { noteFor } from './pin-data';
 
-export type Target = 'app' | 'platform';
+/**
+ * Where a comment goes: a request on the running app, a request on Homeroom,
+ * or (Nov 2026) the CHANGE whose preview it was pinned in, as a message in
+ * that change's own thread, where its builder and its voters read it.
+ */
+export type Target = 'app' | 'platform' | 'change';
 
 /** A comment's pin on a picture: fractions of its width and height, its number when there are several, its words. */
 export interface ShotPin { x: number; y: number; n?: number | null; note: string }
@@ -63,6 +68,8 @@ export interface CommentPost {
   bounty?: boolean;
   /** The change the comment was pinned in, as a link for whoever picks it up; '' when there is none. */
   change: string;
+  /** The change's session id, for `target: 'change'`: the thread the comment goes into. */
+  sessionId?: number | null;
 }
 
 export interface BountyOutcome { placed: boolean; remaining?: number; error?: string }
@@ -140,8 +147,109 @@ async function upload(blob: Blob): Promise<string | null | 'handover'> {
   return res.ok && typeof data.id === 'string' ? data.id : null;
 }
 
+/** The chat's attachment cap (src/routes/chat.js: at most four per message). */
+export const MAX_THREAD_PICTURES = 4;
+
+/**
+ * A picture with its pins drawn on it. A request carries its pins beside its
+ * pictures and the server writes them onto each link (./pin-data.ts); a
+ * message in a change's thread is just its words and its pictures, so the
+ * pins are drawn in: a numbered marker at each one, in the accent.
+ */
+async function withPins(picture: { blob: Blob; pins: ShotPin[] }): Promise<Blob> {
+  if (!picture.pins.length || typeof createImageBitmap !== 'function' || typeof document === 'undefined') return picture.blob;
+  try {
+    const bitmap = await createImageBitmap(picture.blob);
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return picture.blob;
+    ctx.drawImage(bitmap, 0, 0);
+    const r = Math.max(11, Math.round(Math.min(canvas.width, canvas.height) * 0.018));
+    picture.pins.forEach((pin, i) => {
+      const x = pin.x * canvas.width;
+      const y = pin.y * canvas.height;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#0a6ee0';
+      ctx.fill();
+      ctx.lineWidth = Math.max(2, r / 5);
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `700 ${Math.round(r * 1.1)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(String(pin.n || i + 1), x, y + 1);
+    });
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
+    return blob || picture.blob;
+  } catch {
+    return picture.blob;
+  }
+}
+
+/**
+ * Comments pinned in a change's preview, posted into that change's thread
+ * (`target: 'change'`): the pictures go up as the chat's own attachments
+ * (POST /api/apps/:slug/chat-attachments), then one message carries the
+ * words and them (POST /api/apps/:slug/messages, thread `session`). A
+ * project the person has not joined answers 403 `join_required`, which the
+ * shell's fetch wrapper turns into a Join prompt, as for a request.
+ */
+export async function postToChange(post: CommentPost): Promise<PostOutcome> {
+  const slug = post.appSlug;
+  const sessionId = Number(post.sessionId);
+  if (!slug || !Number.isInteger(sessionId) || sessionId <= 0) {
+    return { ok: false, handover: false, error: t('devchat:commentPin.postFailed') };
+  }
+  const offered: Array<{ blob: Blob; pins: ShotPin[] }> = [
+    ...(post.shots || []),
+    ...(post.images || []).map((blob) => ({ blob, pins: [] })),
+  ].filter((p) => !!p.blob);
+  const ids: string[] = [];
+  for (const picture of offered.slice(0, MAX_THREAD_PICTURES)) {
+    try {
+      const blob = await withPins(picture);
+      const name = `comment-${ids.length + 1}.${blob.type === 'image/jpeg' ? 'jpg' : 'png'}`;
+      const res = await window.fetch(`/api/apps/${encodeURIComponent(slug)}/chat-attachments?filename=${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: blob,
+      });
+      const data = await readJson(res);
+      if (res.ok && typeof data.id === 'string') ids.push(data.id);
+    } catch {
+      /* that picture stays behind; the words go */
+    }
+  }
+  let res: Response;
+  try {
+    res = await window.fetch(`/api/apps/${encodeURIComponent(slug)}/messages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content: post.text,
+        thread_type: 'session',
+        thread_ref: sessionId,
+        ...(ids.length ? { attachment_ids: ids } : {}),
+      }),
+    });
+  } catch {
+    return { ok: false, handover: false, error: t('devchat:commentPin.postFailed') };
+  }
+  const data = await readJson(res);
+  if (res.ok) {
+    return { ok: true, botWillBuild: false, url: '', title: '', bounty: null, droppedPictures: offered.length - ids.length };
+  }
+  const reason = typeof data.error === 'string' && data.error ? data.error : t('devchat:commentPin.postFailed');
+  return { ok: false, handover: false, error: reason };
+}
+
 export async function postComment(post: CommentPost): Promise<PostOutcome> {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return { ok: false, handover: true };
+  if (post.target === 'change') return postToChange(post);
 
   const ids: string[] = [];
   const pins: Array<ShotPin & { id: string }> = [];

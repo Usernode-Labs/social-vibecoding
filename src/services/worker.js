@@ -2413,6 +2413,23 @@ function _getPoolSafe() {
   }
 }
 
+// #6819: a turn that updates a change changes what its stored work state
+// (services/work-state.js) says: while it runs the change is Building with a
+// revision on its way, not up for a vote, and when it ends the row is read
+// again. Only a route's own writes used to refresh that row, so a follow-up
+// turn left it saying "up for a vote" while the change's page said an update
+// was coming. Refreshed at the turn's start and end here. A shots turn is no
+// update (it holds the vote its own way), and `touched` never throws: best
+// effort, and the sweep corrects anything this missed.
+async function _refreshTurnWorkState(pool, sessionId, mode) {
+  if (!pool || mode === 'shots') return;
+  try {
+    await require('./work-state').touched(pool, [{ sessionId }]);
+  } catch {
+    // Best effort: the sweep reads the row again on its next pass.
+  }
+}
+
 // Resolves { ok: true } or { ok: false, code }: the code says why the record
 // could not be written (#4575), so execInWorker can tell a session another
 // turn already owns (session_busy, which a caller may wait out) from a
@@ -2457,6 +2474,10 @@ async function _persistActiveTurn(sessionId, turn) {
       await require('./turn-publication').captureTarget(db, sessionId, turn.turnId, turn.branchName, turn.journal);
       await db.query('COMMIT');
     }
+    // #6819: a turn that updates a change changes what its stored work state
+    // says: read it again now, so no list asks for a vote its page says is
+    // coming back.
+    await _refreshTurnWorkState(pool, sessionId, turn.mode);
     return { ok: true };
   } catch (err) {
     if (transaction) await db.query('ROLLBACK').catch(() => {});
@@ -2524,6 +2545,8 @@ async function clearActiveTurn(sessionId, { turnId = null, journal = null } = {}
     }
     await turnLifecycle.markCleanupPending(pool, { sessionId, turnId, journal });
     await turnLifecycle.clearCleanupPending(pool, { sessionId, turnId, journal });
+    // #6819: the turn ended, so the change's stored work state is read again.
+    await _refreshTurnWorkState(pool, sessionId, current?.mode || null);
     return true;
   } catch (err) {
     log.warn('worker', 'Failed to clear active_turn', { sessionId, err: err.message });
@@ -2644,9 +2667,11 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
   let ownsCleanup = false;
   let cleanupTurnId = null;
   let cleanupJournal = null;
+  let turnMode = null;
   try {
     const current = await turnLifecycle.loadActiveTurn(pool, sessionId);
     if (current) {
+      turnMode = current.mode || null;
       // Never infer ownership from the record currently occupying the
       // session. A stale caller may be looking at a replacement turn; only
       // the identity it carried (or execInWorker remembered for it) can clear.
@@ -2718,6 +2743,8 @@ async function finishTurn(sessionId, { journal = null, turnId = null } = {}) {
     }
   }
   _registryUpsert(sessionId, { finishedJournal: null, finishedTurnId: null });
+  // #6819: the turn ended, so the change's stored work state is read again.
+  await _refreshTurnWorkState(pool, sessionId, turnMode);
   return true;
 }
 
@@ -2900,8 +2927,37 @@ function _messageHasPrefix(err, prefixes) {
   return prefixes.some((prefix) => msg.startsWith(prefix));
 }
 
+// Also a failure the setup already dealt with so that another attempt can
+// get past it (`bootstrapRetryable`): a state volume that never held
+// anything, deleted so the next attempt claims a fresh one on another node
+// (worker-volume-heal.js).
 function isRetryableBootstrapError(err) {
-  return _messageHasPrefix(err, BOOTSTRAP_RETRYABLE_PREFIXES);
+  return _messageHasPrefix(err, BOOTSTRAP_RETRYABLE_PREFIXES) || err?.bootstrapRetryable === true;
+}
+
+// Why a worker could not start, in words for the person whose change it is
+// (a shots card, a sync's status line), or null for an error that is not a
+// worker failing to start. The Kubernetes reason stays in the logged message.
+const WORKER_START_TEXT = Object.freeze({
+  ...require('./kubernetes-worker-bootstrap').VOLUME_FAILURE_TEXT_BY_REASON,
+  image_unavailable: 'This change’s worker couldn’t start: its software couldn’t be downloaded.',
+  config_error: 'This change’s worker couldn’t start: its settings were refused.',
+  unschedulable: 'This change’s worker couldn’t start: no machine had room for it.',
+});
+const WORKER_START_TIMEOUT_TEXT = 'This change’s worker didn’t finish starting in time.';
+const WORKER_CLONE_TEXT = 'This change’s worker couldn’t start: it couldn’t download the project’s code from GitHub.';
+
+function workerStartReason(err) {
+  if (!err || typeof err !== 'object') return null;
+  if (WORKER_START_TEXT[err.bootstrapReason]) return WORKER_START_TEXT[err.bootstrapReason];
+  if (err.code === 'worker_start_timeout' || _messageHasPrefix(err, ['warm-ready timeout'])) return WORKER_START_TIMEOUT_TEXT;
+  if (_messageHasPrefix(err, ['clone failed'])) return WORKER_CLONE_TEXT;
+  return null;
+}
+
+// A worker that could not start: the platform's fault, never the change's.
+function isWorkerStartFailure(err) {
+  return workerStartReason(err) != null;
 }
 
 // #6598: before a worker starts, Homeroom asks GitHub whether the repository
@@ -3088,10 +3144,14 @@ async function _bootstrapWarmContainer(sessionId, {
     // transient failures. A Pod the kubelet cannot even start (no image, no
     // node, broken config) fails fast with a typed reason and is not retried.
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    // Nodes a fresh claim must keep off: each one a state volume of this
+    // worker's failed on, and that was deleted for it (worker-volume-heal.js).
+    const avoidNodes = [];
     for (let attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
       try {
         const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
           sessionId, env: safeEnv, onProgress, temporary, memory,
+          ...(avoidNodes.length ? { avoidNodes: avoidNodes.slice() } : {}),
           timeoutMs: attempt === 1 ? WARM_READY_TIMEOUT_MS : Math.round(WARM_READY_TIMEOUT_MS / 2),
           retryAttempt: attempt === 1 ? null : attempt,
           reclaimVolumes: async () => {
@@ -3108,11 +3168,30 @@ async function _bootstrapWarmContainer(sessionId, {
         return containerName;
       } catch (err) {
         Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+        // Its state volume could not be made or mounted: a claim that never
+        // held anything is deleted so the next attempt claims a fresh one,
+        // off the node it failed on; one that may hold state is kept, and
+        // the setup stops (the same claim would fail the same way).
+        let heal = null;
+        if (err.volumeFailure && !temporary) {
+          heal = await require('./worker-volume-heal').handleVolumeFailure({
+            sessionId, failure: err.volumeFailure,
+            deps: { config: kubernetesWorkerConfig(), pool: _getPoolSafe() },
+          });
+          Object.defineProperty(err, 'volumeHeal', { value: heal, configurable: true, writable: true });
+          if (heal.healed) {
+            Object.defineProperty(err, 'bootstrapRetryable', { value: true, configurable: true, writable: true });
+            if (heal.node && !avoidNodes.includes(heal.node)) avoidNodes.push(heal.node);
+          }
+        }
         const retryable = isRetryableBootstrapError(err);
         const willRetry = retryable && attempt < BOOTSTRAP_MAX_ATTEMPTS;
         log.error('worker', 'Bootstrap failed', { sessionId, containerName,
           attempt, maxAttempts: BOOTSTRAP_MAX_ATTEMPTS, retryable, willRetry,
           phase: err.bootstrapPhase || null, reason: err.bootstrapReason || null,
+          ...(err.volumeFailure ? { node: err.volumeFailure.node || null, claim: err.volumeFailure.claim || null,
+            volumeHeal: heal ? `${heal.action}:${heal.why}` : null } : {}),
+          ...(avoidNodes.length ? { avoidNodes } : {}),
           message: log.redactString(err.message),
           logTail: err.bootstrapLog?.join('\n') || null });
         if (!willRetry) throw attachBootstrapContext(err, { containerName, attempts: attempt });
@@ -6267,8 +6346,13 @@ module.exports = {
   ensureWorker,
   isRetryableBootstrapError,
   isTransientStartError,
+  isWorkerStartFailure,
+  workerStartReason,
   _setGithubStartRetryDelaysForTests,
   execInWorker,
+  // #6819: the turn record's own start, which refreshes a change's stored
+  // work state; exported so a test can drive it without docker.
+  _persistActiveTurn,
   stopTurn,
   stopTurnByJournal,
   stopOwnedTurn,
