@@ -44,7 +44,7 @@ function writeWidth(px: number): void {
  * for a plan alone, so Expand on a request's page put a shots entry into the
  * store and drew nothing.
  */
-const DRAWN: ReadonlySet<DetailKind> = new Set<DetailKind>(['design', 'plan', 'shots']);
+const DRAWN: ReadonlySet<DetailKind> = new Set<DetailKind>(['design', 'plan', 'shots', 'preview']);
 
 /** Pure: whether the slot opens for this entry. Nothing open means nothing drawn. */
 export function slotOpens(entry: Pick<DetailEntry, 'kind'> | null | undefined): boolean {
