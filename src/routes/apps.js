@@ -4489,6 +4489,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           preset: described ? described.preset : null,
           rules: described ? described.rules : null,
           groups: described ? described.groups : [],
+          // #6811: the groups the project's app keeps, so the sheet lists the
+          // ones no rule names yet and matches a hand-typed name.
+          appGroups: described ? (described.appGroups || []) : [],
           creator,
           // #6281: the creator's account is gone (apps.created_by is
           // ON DELETE SET NULL), so the sheet says that rather than
