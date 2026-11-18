@@ -993,19 +993,23 @@
   },
   "communities.liveWeek_one": {
     "text": "{{count}} change went live",
-    "description": "Small pill on a community's card on the Communities page (wide screens, in the brand look): how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one."
+    "description": "Line at the foot of a community's card on the Communities page (wide screens, in the brand look), after a check mark: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one."
   },
   "communities.liveWeek_other": {
     "text": "{{count}} changes went live",
-    "description": "Small pill on a community's card on the Communities page (wide screens, in the brand look): how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one."
+    "description": "Line at the foot of a community's card on the Communities page (wide screens, in the brand look), after a check mark: how many changes to the community's project were voted in and went live in the last seven days. Shown only when there is at least one."
   },
   "communities.activeWeek_one": {
     "text": "{{formatted}} active this week",
-    "description": "Last line of a community's card on the Communities page (wide screens, in the brand look), beside the faces of a few of them: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "Line at the foot of a community's card on the Communities page (wide screens, in the brand look), beside the faces of a few of them: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
   },
   "communities.activeWeek_other": {
     "text": "{{formatted}} active this week",
-    "description": "Last line of a community's card on the Communities page (wide screens, in the brand look), beside the faces of a few of them: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+    "description": "Line at the foot of a community's card on the Communities page (wide screens, in the brand look), beside the faces of a few of them: how many people took part in the community in the last seven days (talked in its channel, started a change or voted). {{formatted}} is the number with digit grouping; {{count}} selects the plural form."
+  },
+  "communities.quietWeek": {
+    "text": "Quiet this week",
+    "description": "Line at the foot of a community's card on the Communities page (wide screens, in the brand look), in place of how many were active and how many changes went live, when in the last seven days nobody took part in the community and no change went live."
   },
   "join.heading": {
     "text": "Communities to join",
