@@ -457,14 +457,18 @@ export function installApiCacheIdentity(win: any = typeof window !== 'undefined'
     const permitted = !!before.scope && !auth && !tokenRequest && req.credentials !== 'omit'
       && verifiedNativeEpoch === before.nativeEpoch;
     if (permitted) headers.set(API_SCOPE_HEADER, before.scope!);
-    // Revalidate the browser's HTTP copy too. Permitted offline fallbacks
-    // still work in the worker; private reads skip its sub-second deadlines
-    // and get the saved copy only from a network silent for seconds.
+    // Revalidate the browser's HTTP copy too: 'no-cache' always asks the
+    // server, with If-None-Match, so an unchanged read costs a 304 and no
+    // body (#6790; 'reload' asked for the whole body every time). The copy
+    // is private and varies on the cookie, so it is never another session's.
+    // Permitted offline fallbacks still work in the worker; private reads
+    // skip its sub-second deadlines and get the saved copy only from a
+    // network silent for seconds.
     const boundaryBefore = boundary, expectedViewer = currentViewer();
     const confirmsNative = identityRead && !tokenRequest && req.credentials !== 'omit'
       && verifiedNativeEpoch !== before.nativeEpoch;
     const res = await send(new Request(req, { headers,
-      cache: permitted && req.cache !== 'no-store' ? 'reload' : 'no-store' }));
+      cache: permitted && req.cache !== 'no-store' ? 'no-cache' : 'no-store' }));
     // A read whose answer is the same for anyone (PUBLIC_READS_FOR_ANYONE)
     // is never fenced: no session boundary can have changed it.
     if (forAnyone) return res;

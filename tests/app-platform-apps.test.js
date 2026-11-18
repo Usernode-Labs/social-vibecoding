@@ -142,7 +142,12 @@ test('v1, legacy, and public routes return the same directory projection', async
 
   assert.equal(versioned.status, 200);
   assert.deepEqual(legacy.body, versioned.body);
-  assert.deepEqual(publicResult.body, versioned.body);
+  // The same rows. The public route also carries `month` beside them, the
+  // signed-out landing's two figures (tests/public-api.test.js), which no
+  // app is given.
+  assert.deepEqual(publicResult.body.apps, versioned.body.apps);
+  assert.deepEqual(Object.keys(publicResult.body).sort(), ['apps', 'month']);
+  assert.deepEqual(Object.keys(versioned.body), ['apps']);
 
   const open = versioned.body.apps.find((app) => app.slug === 'open-app');
   assert.equal(open.url, 'https://open-app.onhomeroom.test');

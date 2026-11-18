@@ -135,7 +135,7 @@ test('admitted native recovery verifies the rotated cookie and immediately resto
   assert.equal(me.scope, null);
   assert.equal(jar.get(SCOPE_COOKIE), sessionCacheScope(secondToken));
   assert.equal(requests.at(-1).scope, sessionCacheScope(secondToken));
-  assert.equal(requests.at(-1).cache, 'reload');
+  assert.equal(requests.at(-1).cache, 'no-cache');
   await h.drain();
   offline = true;
   for (const response of await Promise.all([read(), read()])) {
