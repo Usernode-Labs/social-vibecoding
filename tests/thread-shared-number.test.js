@@ -49,3 +49,20 @@ test('the AI tab names a change\'s own numberless thread by the change', () => {
   assert.equal(waiting[0].href, '#app/usernode-2d5619/dev/changes/6002');
   assert.equal(waiting[0].title, 'SEC-09');
 });
+
+// #6718: a change and another change share a pull request number. A link
+// that carries the change's own session id after the number names it, so the
+// page never looks the (possibly shared) number up.
+test('a change address that carries its own id skips the lookup by the shared number', () => {
+  const app = read('public/js/app.js');
+  assert.match(app, /id: App\._changeNumber\(parts\[5\]\)/,
+    'the router reads the id after the number');
+  assert.match(app, /`\/dev\/changes\/\$\{norm\.ref\.pr\}\/\$\{id\}`/,
+    'and serializes it back, so a reload keeps it');
+  const view = read('public/js/app-view.js');
+  const start = view.indexOf('async _renderTopicSubView(content, ref) {');
+  const lookup = view.slice(start, view.indexOf('AppView._devTopic = ref.pr', start));
+  assert.match(lookup, /ref\.kind === 'proposal' && !ref\.id && ref\.pr/,
+    'the number lookup runs only for an address with no id of its own');
+  assert.match(lookup, /_sessionIdForChange\(ref\.pr\)/);
+});

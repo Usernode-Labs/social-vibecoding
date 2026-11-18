@@ -358,7 +358,7 @@ test('the status card asks the bot no more once its change waits for approval', 
   assert.equal(built.lead, 'Up for a vote.');
   assert.equal(built.note, null);
   assert.equal(built.action.label, 'See the change');
-  assert.equal(built.action.href, '#app/example/dev/changes/12');
+  assert.equal(built.action.href, '#app/example/dev/changes/12/9');
   assert.equal(built.action.act, undefined);
 });
 

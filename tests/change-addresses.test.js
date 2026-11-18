@@ -78,13 +78,14 @@ function loadApp(initial = {}) {
   return { App: window.App, AppView, calls, location };
 }
 
-test('a change with a pull request serializes as dev/changes/<N>; without one, by session id', () => {
+test('a change with a pull request serializes as dev/changes/<N>/<id>; a number alone, or a draft, keeps its form', () => {
   const { App } = loadApp({ search: '?demo=1' });
   assert.equal(App._appUrl('notes', 'dev', { kind: 'proposal', id: 7296, pr: 4509 }, 'topic'),
-    '/app/notes/dev/changes/4509?demo=1');
+    '/app/notes/dev/changes/4509/7296?demo=1');
   assert.equal(App._appUrl('notes', 'dev', { kind: 'proposal', id: 7296 }, 'topic'),
     '/app/notes/dev/proposals/7296?demo=1', 'a draft keeps its session-id address');
-  // Before the page has looked the session up, the ref is the number alone.
+  // A caller that knows only the number (or before the page looked the
+  // session up) gets the number alone.
   assert.equal(App._appUrl('notes', 'dev', { kind: 'proposal', id: null, pr: 4509 }, 'topic'),
     '/app/notes/dev/changes/4509?demo=1');
   // Only a proposal carries the number: an issue's address is its own.
@@ -106,7 +107,7 @@ test('the PR number is digits only, never a guess', () => {
   assert.equal(bare.subTab, 'forum', 'an unreadable number is the card list');
 });
 
-test('restoreFromHash reads dev/changes/<N> as a change by its PR number', () => {
+test('restoreFromHash reads dev/changes/<N> as a change by its PR number, and a 6th segment as its own id', () => {
   for (const initial of [
     { pathname: '/app/notes/dev/changes/4509' },
     { hash: '#app/notes/dev/changes/4509' },
@@ -124,6 +125,31 @@ test('restoreFromHash reads dev/changes/<N> as a change by its PR number', () =>
     assert.deepEqual(JSON.parse(JSON.stringify(seen[0].ref)), { kind: 'proposal', id: null, pr: 4509 });
     assert.equal(location.pathname, '/app/notes/dev/changes/4509', 'the clean form is the address');
   }
+  // #6718: two changes can share one pull request number, so the address
+  // carries the change's own session id after it.
+  for (const initial of [
+    { pathname: '/app/notes/dev/changes/4509/7296' },
+    { hash: '#app/notes/dev/changes/4509/7296' },
+  ]) {
+    const { App, location } = loadApp(initial);
+    const seen = [];
+    App.currentApp = 'notes';
+    App.currentTab = 'dev';
+    App.currentSubTab = 'forum';
+    App.switchTab = (tab, ref, subTab) => { seen.push({ tab, ref, subTab }); };
+    App.restoreFromHash();
+    assert.deepEqual(JSON.parse(JSON.stringify(seen[0].ref)), { kind: 'proposal', id: 7296, pr: 4509 });
+    assert.equal(location.pathname, '/app/notes/dev/changes/4509/7296', 'the id survives the canonical write');
+  }
+  // A 6th segment that is not a number is no id: the number alone still opens.
+  const bad = loadApp({ pathname: '/app/notes/dev/changes/4509/x' });
+  const seen = [];
+  bad.App.currentApp = 'notes';
+  bad.App.currentTab = 'dev';
+  bad.App.currentSubTab = 'forum';
+  bad.App.switchTab = (tab, ref, subTab) => { seen.push({ tab, ref, subTab }); };
+  bad.App.restoreFromHash();
+  assert.deepEqual(JSON.parse(JSON.stringify(seen[0].ref)), { kind: 'proposal', id: null, pr: 4509 });
 });
 
 test('dev/proposals/<id> still reads as a session id', () => {
@@ -143,10 +169,10 @@ test('moving between the two spellings of a change page replaces, never pushes',
   App.currentTab = 'dev';
   App.currentSubTab = 'topic';
   App.updateHash({ ref: { kind: 'proposal', id: 7296, pr: 4509 } });
-  assert.deepEqual(calls, [['replace', '/app/notes/dev/changes/4509']]);
+  assert.deepEqual(calls, [['replace', '/app/notes/dev/changes/4509/7296']]);
 });
 
-test('a later address write keeps the PR number the page found (switchTab writes after render)', () => {
+test('a later address write keeps the PR number and the id the page found (switchTab writes after render)', () => {
   // The redirect lands while the page renders; switchTab then writes the
   // address from the ref it was given, which has no number. It must not put
   // dev/proposals/<id> back.
@@ -156,9 +182,12 @@ test('a later address write keeps the PR number the page found (switchTab writes
   App.currentSubTab = 'topic';
   AppView._devTopic = { kind: 'proposal', id: 7296, pr: 4509 };
   App.updateHash({ replace: false, ref: { kind: 'proposal', id: 7296 } });
-  assert.deepEqual(calls, [], 'the address already names the change');
+  assert.deepEqual(calls, [['replace', '/app/notes/dev/changes/4509/7296']],
+    'the number-only address gains the change id');
+  App.updateHash({ replace: false, ref: { kind: 'proposal', id: 7296 } });
+  assert.equal(calls.length, 1, 'the address already names the change');
   App.updateHash({ ref: { kind: 'proposal', id: 7300 } });
-  assert.deepEqual(calls, [['replace', '/app/notes/dev/proposals/7300']], 'another change is its own');
+  assert.deepEqual(calls[1], ['replace', '/app/notes/dev/proposals/7300'], 'another change is its own');
 });
 
 // ── The topic page (public/js/app-view.js) ──────────────────────────────
@@ -175,7 +204,9 @@ function loadAppView({ pathname = '/app/notes/dev/proposals/7296', fetchAnswer =
     console,
     App: {
       currentApp: 'notes', currentTab: 'dev', currentSubTab: 'topic', embeddedPanel: false,
-      _appUrl: (slug, tab, ref) => (ref.pr ? `/app/${slug}/dev/changes/${ref.pr}` : `/app/${slug}/dev/proposals/${ref.id}`),
+      _appUrl: (slug, tab, ref) => (ref.pr
+        ? `/app/${slug}/dev/changes/${ref.pr}${Number(ref.id) > 0 ? `/${ref.id}` : ''}`
+        : `/app/${slug}/dev/proposals/${ref.id}`),
       _noteWorkshopView(url) { calls.push(['note', url]); },
       switchTab(...args) { calls.push(['switchTab', ...args]); },
     },
@@ -199,13 +230,28 @@ function loadAppView({ pathname = '/app/notes/dev/proposals/7296', fetchAnswer =
   return { av: c.av, calls, fetched, location };
 }
 
-test('an old proposals/<id> address of a change with a PR becomes changes/<N>, replaced', () => {
+test('two changes share a pull request number: the address’s id names the change, so no number lookup runs', () => {
+  const { App } = loadApp({ pathname: '/app/notes/dev/changes/4509/7300' });
+  App.currentApp = 'notes';
+  App.currentTab = 'dev';
+  App.currentSubTab = 'forum';
+  const seen = [];
+  App.switchTab = (tab, ref, subTab) => { seen.push({ tab, ref, subTab }); };
+  App.restoreFromHash();
+  assert.deepEqual(JSON.parse(JSON.stringify(seen[0].ref)),
+    { kind: 'proposal', id: 7300, pr: 4509 },
+    'the id comes from the address, not from looking the shared number up');
+  // The page looks a number up only for a ref with no id of its own.
+  assert.match(read('public/js/app-view.js'), /ref\.kind === 'proposal' && !ref\.id && ref\.pr/);
+});
+
+test('an old proposals/<id> address of a change with a PR becomes changes/<N>/<id>, replaced', () => {
   const { av, calls, location } = loadAppView();
   av._devTopic = { kind: 'proposal', id: 7296 };
   assert.equal(av._canonicalizeChangeAddress({ id: 7296, pr_number: 4509 }), true);
-  assert.deepEqual(calls[0], ['replace', '/app/notes/dev/changes/4509']);
+  assert.deepEqual(calls[0], ['replace', '/app/notes/dev/changes/4509/7296']);
   assert.ok(!calls.some(([kind]) => kind === 'push'), 'no Back entry');
-  assert.equal(location.pathname, '/app/notes/dev/changes/4509');
+  assert.equal(location.pathname, '/app/notes/dev/changes/4509/7296');
   assert.equal(av._devTopic.pr, 4509, 'later address writes keep the number');
 });
 
@@ -258,21 +304,25 @@ test('opening a change from a card goes straight to its PR-number address', () =
 
 // ── The link builders ───────────────────────────────────────────────────
 
-test('the shared builders pick the PR number when there is one', () => {
+test('the shared builders pick the PR number and the session id when both are known', () => {
   const { changeHref } = require('../src/services/change-destination');
-  assert.equal(changeHref('notes', 7296, 4509), '#app/notes/dev/changes/4509');
+  assert.equal(changeHref('notes', 7296, 4509), '#app/notes/dev/changes/4509/7296');
+  assert.equal(changeHref('notes', null, 4509), '#app/notes/dev/changes/4509',
+    'a caller with only the number keeps the number-only form');
   assert.equal(changeHref('notes', 7296, null), '#app/notes/dev/proposals/7296');
   assert.equal(changeHref('notes', 7296, 0), '#app/notes/dev/proposals/7296');
   const fe = loadTsx('frontend/src/lib/change-href.ts');
-  assert.equal(fe.changeHref('notes', 7296, 4509), '#app/notes/dev/changes/4509');
+  assert.equal(fe.changeHref('notes', 7296, 4509), '#app/notes/dev/changes/4509/7296');
+  assert.equal(fe.changeHref('notes', null, 4509), '#app/notes/dev/changes/4509');
   assert.equal(fe.changeHref('notes', 7296), '#app/notes/dev/proposals/7296');
 });
 
-test('builders that know the PR number use it', () => {
+test('builders that know the PR number carry the session id after it', () => {
   // Request and change pages: "Addressed by" and "Went live as part of".
   const view = read('public/js/app-view.js');
-  assert.match(view, /href: n \? `#app\/\$\{slug\}\/dev\/changes\/\$\{n\}` : `#app\/\$\{slug\}\/dev\/proposals\/\$\{ref\.sessionId\}`/);
-  assert.match(view, /href: n \? `#app\/\$\{slug\}\/dev\/changes\/\$\{n\}` : `#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
+  assert.match(view, /href: n \? `#app\/\$\{slug\}\/dev\/changes\/\$\{n\}\/\$\{ref\.sessionId\}` : `#app\/\$\{slug\}\/dev\/proposals\/\$\{ref\.sessionId\}`/);
+  assert.match(view, /href: n \? `#app\/\$\{slug\}\/dev\/changes\/\$\{n\}\/\$\{id\}` : `#app\/\$\{slug\}\/dev\/proposals\/\$\{id\}`/);
+  assert.match(view, /href: w\.number \? `#app\/\$\{slug\}\/dev\/changes\/\$\{w\.number\}\/\$\{w\.id\}` : `#app\/\$\{slug\}\/dev\/proposals\/\$\{w\.id\}`/);
   // Notifications open a change by its number.
   const notif = read('frontend/src/features/notifications/notifications.js');
   assert.match(notif, /_changeRef\(item\.sessionId, item\.prNumber\)/);

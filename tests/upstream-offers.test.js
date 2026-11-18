@@ -1016,7 +1016,7 @@ test('GET /upstream: the version\'s side, every field present', async () => {
     assert.equal(r.body.offer.state, 'open');
     assert.deepEqual(Object.keys(r.body.offer).sort(),
       ['brings', 'conflicts', 'facts', 'fromSha', 'href', 'keeps', 'sessionId', 'state']);
-    assert.equal(r.body.offer.href, `#app/${fx.ver}/dev/changes/7`);
+    assert.equal(r.body.offer.href, `#app/${fx.ver}/dev/changes/7/900`);
     assert.equal(r.body.offer.fromSha, fx.fromSha);
     assert.deepEqual(Object.keys(r.body.offer.facts).sort(),
       ['ai', 'destructive', 'hostsAdded', 'secretsAdded', 'storage', 'tablesAdded']);

@@ -60,6 +60,7 @@ import type { MouseEvent as ReactMouseEvent, ReactNode, RefObject } from 'react'
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { i18n, t as translate } from '../../../lib/i18n/runtime';
 import { projectChangesOnGithub } from '../../../lib/change-ref';
+import { changeHref } from '../../../lib/change-href';
 import { reload as reloadTab } from '../../../lib/tab-build';
 import { detailDrawn, detailEntry, markShotsArrival, takeShotsArrival } from '../../ai/detail';
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
@@ -471,7 +472,7 @@ function ShotsPair({ id, number, s }: {
     // #6315: two frames for the column to open where this page has one; if
     // nothing drew it, go to the change's page, where the arrival opens it.
     const slug = pageSlug();
-    const target = number && slug ? `app/${encodeURIComponent(slug)}/dev/changes/${number}` : '';
+    const target = number && slug ? changeHref(slug, id, number).replace(/^#/, '') : '';
     const after = () => {
       if (detailDrawn() || !target) return;
       if (window.location.hash.replace(/^#/, '') === target) return;
