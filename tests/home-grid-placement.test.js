@@ -1483,6 +1483,41 @@ test('a stored canvas with room still writes a newly added app', async () => {
   assert.ok(writes[0].body.items.some((i) => i.slug === 'e'));
 });
 
+// ── Unpinning an app closes the grid (#6836) ──────────────────────────
+//
+// The tile menu's remove and edit mode's minus both end in
+// Home._menuToggleFavorite(app, false) → toggleAdded → render(), whose
+// currentLayout() repairs against the apps still pinned and persists the
+// result. So this drives the real path a person's press takes.
+
+test('unpinning a middle app closes the hole and persists the packed grid', async () => {
+  const { Home, fetchCalls } = makeHome();
+  Home._apps = ['a', 'b', 'c', 'd', 'e'].map((s) => app(s));
+  Home._layouts = {
+    4: [
+      { type: 'app', slug: 'a', col: 0, row: 0 },
+      { type: 'app', slug: 'b', col: 1, row: 0 },
+      { type: 'app', slug: 'c', col: 2, row: 0 },
+      { type: 'app', slug: 'd', col: 3, row: 0 },
+      { type: 'app', slug: 'e', col: 0, row: 1 },
+    ],
+  };
+  Home._layoutFetchedAt = Date.now();
+
+  const b = Home._apps.find((a) => a.slug === 'b');
+  await Home._menuToggleFavorite(b, false);
+  await flush();
+
+  const writes = fetchCalls.filter((c) => c.method === 'PUT' && c.url === '/api/home-layout');
+  assert.equal(writes.length, 1, 'the removal rewrites the arrangement once');
+  const cells = writes[0].body.items
+    .map((i) => [i.slug, i.col, i.row])
+    .sort((x, y) => (x[2] - y[2]) || (x[1] - y[1]));
+  assert.deepEqual(cells,
+    [['a', 0, 0], ['c', 1, 0], ['d', 2, 0], ['e', 3, 0]],
+    'the tiles after b move back in reading order, leaving no hole');
+});
+
 
 // ── The drag-time overlay lives INSIDE a React-owned host ─────────────
 //

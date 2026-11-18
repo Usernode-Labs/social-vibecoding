@@ -1071,6 +1071,14 @@
     "text": "closed {{requests}}",
     "description": "One fact in the line under a live change's title in a project's lists of work: the requests this change settled when it went live. A past-tense verb; the change closed them. {{requests}} is the list of their numbers, for example \"#4455 and #4452\". {{count}} is how many requests there are and only picks the plural form."
   },
+  "workRow.code.request": {
+    "text": "R#{{number}}",
+    "description": "A request's number as a short code at the end of the line over a card's title on a project's board, under the Standard (WIP) look, for example \"snait · 29 Oct · R#6465\". R stands for request. {{number}} is the request's number."
+  },
+  "workRow.code.change": {
+    "text": "PR#{{number}}",
+    "description": "A change's number as a short code at the end of the line over a card's title on a project's board, under the Standard (WIP) look, for example \"snait · 29 Oct · PR#5990\". PR is the usual short name for a proposed change. {{number}} is the change's number."
+  },
   "workRow.facts.pair": {
     "text": "{{first}} · {{second}}",
     "description": "Joins the short independent facts of the line under a row's title in a project's lists of work (the Workshop tab's lists and All items' board), for example \"PR 4456 · evan · for #4455 · 4m ago\". {{first}} is everything said so far and {{second}} the next fact. Only the separator between them is translated."

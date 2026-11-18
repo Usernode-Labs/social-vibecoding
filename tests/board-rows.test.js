@@ -27,7 +27,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml, workshopHtml } = require('./lib/dev-card-html');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
-const { englishPlatformI18n } = require('./lib/platform-i18n');
+const { englishPlatformI18n, message } = require('./lib/platform-i18n');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -165,6 +165,27 @@ test('#6075: a live row with no counted votes shows no tally', () => {
   assert.match(done, /dev-ws-wrow-live">✓ Live<\/span><\/span>/,
     'the live pill is the tags line’s only state');
   assert.ok(!done.includes('dev-ws-wrow-tally'), 'no counted votes, no tally');
+});
+
+test('#6835: a deploying row in Done says "Going live" once', () => {
+  const AppView = makeAppView();
+  // Merged, and production not yet known to run it: the pill is the deploying
+  // one, and the brief's settled tag said the same words a second time.
+  AppView._merged = [{
+    id: 80, pr_number: 1573, pr_title: 'Draw the board as Home and the hub are drawn', status: 'merged',
+    username: 'alice', created_at: at(2), merged_at: at(2), last_message_at: at(2), row_type: 'pr',
+    linked_issues: [6834], deployment_state: 'deploying', live_at: null,
+  }];
+  const done = column(kanbanHtml(AppView), 'done');
+  const from = done.indexOf('data-ws-kind="live"');
+  assert.ok(from > 0, 'the live row is drawn');
+  const next = done.indexOf('class="dev-ws-wrow dev-ws-brow"', from);
+  const row = done.slice(from, next > 0 ? next : done.length);
+  const goingLive = message('changes:badge.pill.goingLive');
+  assert.match(row, /<span class="dev-ws-row-state dev-ws-row-state-progress dev-ws-wrow-live" title="[^"]+">/,
+    'the deploying pill leads the row, with its release sentence as its hover text');
+  assert.equal(row.split(goingLive).length - 1, 1, 'it is said once on the row');
+  assert.ok(!/class="dev-ws-tag" data-tone="run"/.test(row), 'and no second, spinning Going live tag');
 });
 
 test('the row’s parts: its source', () => {

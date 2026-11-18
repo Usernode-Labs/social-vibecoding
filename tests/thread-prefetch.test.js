@@ -1,9 +1,10 @@
 // #6604: the reads a thread page starts when it OPENS, rather than after its
 // root post has painted.
 //
-//   - prefetchThread(slug, n) starts `/threads/<n>` at once, once per path;
-//   - its answer starts each listed change's own row read
-//     (`/proposals/<id>`) before any of them renders;
+//   - prefetchThread(slug, n) starts `/threads/<n>?with=changes` at once,
+//     once per path;
+//   - its answer carries each listed change's own row (#6827), so no card
+//     is read one by one before it renders;
 //   - peekThread answers with the settled payload, so the page's first render
 //     has the data;
 //   - readChangeDetail joins an in-flight read of the same row, and starts
@@ -51,7 +52,9 @@ function withGlobals(fetchImpl, fn) {
 test('a prefetched thread is read once, and its changes start reading at once', async () => {
   await withGlobals(
     (url) => {
-      if (/\/threads\/41$/.test(url)) {
+      // #6827: the thread's read also answers its changes' rows, so no
+      // second read per card is sent.
+      if (/\/threads\/41\?with=changes$/.test(url)) {
         return Promise.resolve({
           ok: true,
           json: async () => ({
@@ -60,11 +63,9 @@ test('a prefetched thread is read once, and its changes start reading at once', 
               { type: 'request', number: 41, id: 41 },
               { type: 'change', id: 501, status: 'promoted', number: 12 },
             ],
+            changes: { 501: { id: 501, status: 'promoted' } },
           }),
         });
-      }
-      if (/\/proposals\/501/.test(url)) {
-        return Promise.resolve({ ok: true, json: async () => ({ proposal: { id: 501, status: 'promoted' } }) });
       }
       return Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
     },
@@ -76,12 +77,10 @@ test('a prefetched thread is read once, and its changes start reading at once', 
       assert.equal(first, again, 'the same path joins the read already in flight');
       const payload = await first;
       assert.equal(payload.thread.id, 3);
-      // Its changes were read from the ids it lists, not after a render.
+      // #6827: the thread's answer carries its changes' rows, so its cards
+      // are not read one by one after it.
       await new Promise((resolve) => setImmediate(resolve));
-      assert.deepEqual(calls.map((c) => c.url), [
-        '/api/apps/demo/threads/41',
-        '/api/apps/demo/proposals/501?results=failing',
-      ]);
+      assert.deepEqual(calls.map((c) => c.url), ['/api/apps/demo/threads/41?with=changes']);
       assert.equal(peekThread(threadPath('demo', 41)), payload, 'the page\'s first render can take it');
     },
   );
