@@ -2148,7 +2148,9 @@ const file = await res.json(); // { ok, id, url, sizeBytes, sha256, owner: 'app'
   a resumable job (record each file's id and `sha256` beside its row
   as it is stored), check the copy against the list (counts and
   digests), switch your reads to the stored files, and only then
-  clear the database copy.
+  clear the database copy. Run that check once the copy has stopped
+  storing: ids are random, so a file stored while you page through the
+  list can land before your cursor and be missed.
 - App-owned uploads are rate-limited per app (300 a minute) rather
   than per person; `rate_limited` (429) means wait a minute and go on.
 - A user token sent with `owner=app` is ignored for ownership; a

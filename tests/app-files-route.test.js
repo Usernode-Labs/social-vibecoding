@@ -91,7 +91,7 @@ test('serves a public file: streamed bytes, stored type, immutable cache', async
     const res = await fetch(`http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'image/png');
-    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable');
+    assert.equal(res.headers.get('cache-control'), 'public, max-age=31536000, immutable, no-transform');
     assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
     assert.match(res.headers.get('content-disposition'), /^inline; filename="dish.png"/);
     const body = Buffer.from(await res.arrayBuffer());
@@ -154,7 +154,7 @@ test('private file: 404 without a token, served with a valid one, short private 
     });
     const res = await fetch(`${base}?token=${good}`);
     assert.equal(res.status, 200);
-    assert.equal(res.headers.get('cache-control'), 'private, max-age=3600');
+    assert.equal(res.headers.get('cache-control'), 'private, max-age=3600, no-transform');
   } finally {
     server.close();
   }
@@ -224,7 +224,7 @@ test('shell upload stores the file and returns the stored shape', async () => {
     assert.match(j.id, /^[a-f0-9]{32}$/);
     assert.equal(j.contentType, 'image/png');
     assert.equal(j.visibility, 'public');
-    // INSERT params: [id, appId, userId, filename, contentType, size, visibility, staging]
+    // INSERT params: [id, appId, userId, owner, filename, contentType, size, visibility, staging, sha256]
     assert.equal(handler.inserts.length, 1);
     assert.equal(handler.inserts[0][8], false);
   } finally {
@@ -516,6 +516,67 @@ test('a Range request gets 206 with only those bytes; an impossible one 416', as
 
     // The store was asked for the range itself, never the whole file to slice.
     assert.deepEqual(asked, [null, { start: 3, end: 6 }, { start: AUDIO.length - 2, end: AUDIO.length - 1 }]);
+  } finally {
+    server.close();
+  }
+});
+
+test('a store error after the headers ends the response at once instead of leaving it waiting', async () => {
+  poolQueryHandler = async () => ({
+    rows: [{
+      id: GOOD_ID, app_id: 7, filename: 'chapter.mp3', content_type: 'audio/mpeg', visibility: 'public',
+      size_bytes: 1000, sha256: null,
+    }],
+  });
+  const server = await startServeServer(fakeStore({
+    async getFileStream() {
+      // Ten of the promised 1000 bytes, then the object store fails.
+      return new Readable({
+        read() {
+          if (this.sent) { this.destroy(new Error('connection reset by object store')); return; }
+          this.sent = true;
+          this.push(Buffer.alloc(10, 1));
+        },
+      });
+    },
+  }));
+  try {
+    const started = Date.now();
+    // The connection is cut: before the headers arrive, or partway through
+    // the body. Either way the client learns at once.
+    await assert.rejects((async () => {
+      const res = await fetch(`http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`);
+      await res.arrayBuffer();
+    })());
+    assert.ok(Date.now() - started < 3000, 'the body fails fast rather than waiting for the socket timeout');
+  } finally {
+    server.close();
+  }
+});
+
+test('a client that goes away destroys the object-store stream', async () => {
+  poolQueryHandler = async () => ({
+    rows: [{
+      id: GOOD_ID, app_id: 7, filename: 'chapter.mp3', content_type: 'audio/mpeg', visibility: 'public',
+      size_bytes: 10 * 1024 * 1024, sha256: null,
+    }],
+  });
+  let source;
+  const destroyed = new Promise((resolve) => {
+    source = new Readable({ read() { this.push(Buffer.alloc(64 * 1024, 2)); } });
+    source.on('close', resolve);
+  });
+  const server = await startServeServer(fakeStore({ async getFileStream() { return source; } }));
+  try {
+    const controller = new AbortController();
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/app-files/${GOOD_ID}`, { signal: controller.signal });
+    const reader = res.body.getReader();
+    await reader.read();
+    controller.abort();
+    await Promise.race([
+      destroyed,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('source never destroyed')), 3000)),
+    ]);
   } finally {
     server.close();
   }

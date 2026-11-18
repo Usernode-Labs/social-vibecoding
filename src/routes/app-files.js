@@ -1,6 +1,7 @@
 'use strict';
 
 const express = require('express');
+const { pipeline } = require('stream');
 const { Router } = require('express');
 const { currentAppBridge } = require('../middleware/app-bridge');
 const { getPool } = require('../db/pool');
@@ -64,7 +65,9 @@ async function sendAppFile(req, res, store, file, cacheControl) {
     'Content-Type': file.content_type || 'application/octet-stream',
     'X-Content-Type-Options': 'nosniff',
     'Content-Disposition': `${disposition}; filename="${safeName}"`,
-    'Cache-Control': cacheControl,
+    // no-transform: a compressed body would no longer match the byte
+    // offsets of Content-Range, nor the stored bytes' digest in the ETag.
+    'Cache-Control': `${cacheControl}, no-transform`,
     'Accept-Ranges': 'bytes',
   });
   if (file.sha256) res.set('ETag', `"${file.sha256}"`);
@@ -92,12 +95,16 @@ async function sendAppFile(req, res, store, file, cacheControl) {
   } else if (Number.isSafeInteger(size) && size > 0) {
     res.set('Content-Length', String(size));
   }
-  stream.on('error', (err) => {
+  // pipeline, not pipe: a client that goes away (every seek abandons a
+  // range) destroys the object-store stream too, and a store error after
+  // the headers destroys the response, so the client is not left waiting
+  // for the rest of a Content-Length that will never come.
+  pipeline(stream, res, (err) => {
+    if (!err || err.code === 'ERR_STREAM_PREMATURE_CLOSE') return;
     log.warn('app-files', 'Stream error while serving', { id: file.id, err: err.message });
-    if (!res.headersSent) res.status(404);
-    res.end();
+    if (!res.headersSent) res.status(404).end();
+    else res.destroy(err);
   });
-  stream.pipe(res);
   return undefined;
 }
 
