@@ -243,6 +243,17 @@ test('#6599: a built draft of yours puts itself up for a vote from its card', ()
   assert.ok(!building.includes('data-thread-change-propose'), 'still being built: nothing to put up');
   assert.ok(building.includes(message('project:topic.thread.page.underway')));
 
+  // Its checks ran and failed: it may still go up (the promote route takes
+  // no verdict), and the line under the button says it merges only once
+  // they pass.
+  const failing = signedIn(false, () => draw({ ...underway, ready: false, promotable: true, mine: true }));
+  assert.match(failing, /data-thread-change-propose="91"/, 'checks failed: it can still go up for a vote');
+  assert.ok(failing.includes('data-thread-change-waiting="failing"'));
+  assert.ok(failing.includes(message('project:topic.thread.page.failingMine').replace(/'/g, '&#x27;')), 'says it merges only once they pass');
+  assert.ok(!failing.includes(message('project:topic.thread.page.readyMine')), 'not said to pass');
+  const stillBuilding = signedIn(false, () => draw({ ...underway, ready: false, promotable: false, mine: true }));
+  assert.ok(!stillBuilding.includes('data-thread-change-propose'), 'not promotable: nothing to put up');
+
   const promoted = signedIn(false, () => draw({ ...review(91, 6581), mine: true }));
   assert.ok(!promoted.includes('data-thread-change-propose'), 'up for a vote: its Vote card, not the button');
 

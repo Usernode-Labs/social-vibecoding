@@ -135,7 +135,7 @@ async function hostRefusal(pool, session, err) {
   if (err.code === 'branch_moved') {
     return {
       status: 409, error: 'branch_moved',
-      message: 'The proposal branch changed. Fetch its current head and rebase the local commit before retrying.',
+      message: 'The proposal branch changed. If you pushed to it with git, submit the branch\'s head with proposal_submit_build instead of uploading it; otherwise fetch its current head and rebase the local commit before retrying.',
     };
   }
   if (err.code === 'tree_mismatch') {
