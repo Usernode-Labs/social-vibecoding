@@ -665,3 +665,41 @@ test('#6807: a change the bot is getting its failing check fixed for says Tests 
   assert.equal(foot.key, 'failed');
   assert.equal(words(foot.title), 'Tests failed', 'not "Stopped: its tests still fail"');
 });
+
+// #6821: the foot says where the change stands in the stored status's words
+// (the row every list draws), so the page and the Homeroom bot tab cannot
+// disagree: an approved change catching up with main reads "Syncing with
+// main", never "Up for a vote", and the viewer's own yes is their line.
+test('#6821: a change’s foot words its headline from the stored status', () => {
+  const { changeFoot } = loadTsx(MODEL);
+  const input = {
+    // The live gates still say a vote is open: its yes votes are in and its
+    // page used to draw that, while the lists read the stored row.
+    status: { key: 'needs_vote', label: 'Vote · 1/2', yes: 1, majority: 2 },
+    votes: votes({ tone: 'ask' }),
+    testing: testing(),
+    work: standing({ stage: 'checking', line: { code: 'syncing' }, myVote: 'yes' }),
+  };
+  const foot = changeFoot(input);
+  assert.equal(foot.key, 'vote', 'its buttons stay on the live gates');
+  assert.equal(words(foot.title), 'Syncing with main', 'the headline is the stored stage');
+  assert.deepEqual(foot.facts.map(words), ['You said yes.'], 'and the line under it is the viewer’s own yes');
+  assert.deepEqual(foot.sub, []);
+
+  // Still up for a vote: the vote’s own foot, tally and words.
+  const voting = changeFoot({ ...input, work: standing({ stage: 'up_for_vote' }) });
+  assert.equal(voting.title, null);
+  assert.equal(voting.headline, 'Needs 2 more yes');
+
+  // A stored row with no words this build knows still says its stage.
+  const plain = changeFoot({ ...input, work: { stage: 'going_live' } });
+  assert.equal(words(plain.title), 'Going live');
+  assert.deepEqual(plain.facts, []);
+
+  // No stored row: today’s foot, from the live gates.
+  const live = changeFoot({ ...input, work: null });
+  assert.equal(live.title, null);
+  assert.equal(live.headline, 'Needs 2 more yes');
+  const sayNo = changeFoot({ ...input, work: standing({ stage: 'checking', line: { code: 'syncing' }, myVote: 'no' }) });
+  assert.deepEqual(sayNo.facts.map(words), ['You voted no.']);
+});

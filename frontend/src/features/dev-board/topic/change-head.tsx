@@ -946,7 +946,7 @@ export function ChangeFoot({ id, card, v, page, ballot = false, tail = null }: {
   tail?: ReactNode;
 }): ReactNode {
   const t = useMessages('project');
-  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null, votes: v.votes, testing: v.testing, merge: v.merge || null });
+  const foot = changeFoot({ status: v.status ? { key: v.status.key, label: v.status.label, yes: v.status.yes, majority: v.status.majority } : null, votes: v.votes, testing: v.testing, merge: v.merge || null, work: v.work || null });
   const { voteAction, testAction, testingActions } = gateActions(card, v);
   const now = useReleaseNow(v.votes.release);
   const release = v.votes.release ? releaseSentence(v.votes.release, now) : null;

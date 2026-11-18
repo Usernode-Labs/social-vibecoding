@@ -497,7 +497,11 @@ function standing(row, viewerId, now = new Date(), botId = null, work = null, vi
   }
   // Somebody pressed Claim, or is building a change of their own for it: you, or someone.
   if (state.line?.code === 'claimed') out.by = row.claimed_mine === true || theirs ? 'you' : 'someone';
-  if (state.stage === 'up_for_vote' && (row.my_vote === 'yes' || row.my_vote === 'no')) out.myVote = row.my_vote;
+  // #6821: their own yes (or no) is the viewer's fact at any stage, not only
+  // while the vote is open: an approved change catches up with main as
+  // "Syncing with main · You said yes", the same words its page draws, and a
+  // push that retired their yes (another approval epoch) has none to show.
+  if (row.my_vote === 'yes' || row.my_vote === 'no') out.myVote = row.my_vote;
   // #6282: what was asked for, on an update on its way.
   if ((state.line?.code === 'revising' || state.line?.code === 'update_queued') && row.update_ask) out.ask = clip(row.update_ask);
   // A request nobody has started on for a week says how long.

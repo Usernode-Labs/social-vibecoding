@@ -430,6 +430,11 @@
       "id": "app-owned-files",
       "sha256": "8eb7b1a1db5a3ae080db15b1d34b94aab669d076845023a0d7c41b3d2b7caa44",
       "schemaSha256": "cf82a338d78ea866385758e2a6442c619c534d845c15cf81cfca572f039e3414"
+    },
+    {
+      "id": "work-state-marks-all-inputs",
+      "sha256": "328b57233da7143333baed827e8f6ad166d8dbc736c6052be07a63a1d2df4f56",
+      "schemaSha256": "81f790fb41e55e603556f57f93b35a688afecda64dcc1191eea6e5f5d62f311c"
     }
   ]
 }
