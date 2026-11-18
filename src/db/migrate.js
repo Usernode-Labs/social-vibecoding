@@ -6462,66 +6462,91 @@ async function seedStagingNewProjectOfferThread(pool) {
       'SELECT id FROM conversation_messages WHERE conversation_id = $1 AND sender_id = $2 AND idempotency_key = $3',
       [conversationId, member.id, key],
     );
+    const idea = 'A garden planner for my street: it shows which plants need water this week and who is watering '
+      + 'them. Neighbours join with an invite link and see the shared list, while each household keeps its own '
+      + 'notes private, and everyone can tick off a watering and see who is next.';
     // 17 Nov 2026 (#6781): the offer now carries the brief and the name the
     // make screen opens with. A copy seeded before them gets both here.
     const brief = {
       homeroomBot: {
         kind: 'chat', newProject: true,
-        projectIdea: 'A garden planner for my street: it shows which plants need water this week and who is watering '
-          + 'them. Neighbours join with an invite link and see the shared list, while each household keeps its own '
-          + 'notes private, and everyone can tick off a watering and see who is next.',
+        projectIdea: idea,
         projectName: 'Street Garden',
         looked: { items: [{ what: 'how a new project starts' }], ms: 7000 },
       },
     };
+    // #6783: the offer is a card under the reply, so the reply points at it
+    // rather than at a button at the foot of the thread. The reply keeps
+    // `newProject` as the fallback an older reply has.
+    const reply = 'Staging demo: here is the plan from your answers. It shows this week\'s plants and who waters '
+      + 'them, and each person can tick theirs off. Check the name and what it will do below, then Make it.';
+    let rootId;
     if (had.rows[0]) {
+      rootId = had.rows[0].id;
       await pool.query(
         `UPDATE conversation_messages
-            SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb
+            SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb, content = $4
           WHERE conversation_id = $2 AND sender_id = $3 AND metadata->'homeroomBot'->>'newProject' = 'true'`,
-        [JSON.stringify(brief), conversationId, bot.id],
+        [JSON.stringify(brief), conversationId, bot.id, reply],
       );
-      return;
+    } else {
+      const root = await pool.query(
+        `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
+         VALUES ($1, $2, 'Staging demo: I want to work on a new app, can you help me do that?', $3,
+                 NOW() - INTERVAL '10 minutes')
+         RETURNING id`,
+        [conversationId, member.id, key],
+      );
+      rootId = root.rows[0].id;
+      // The plan comes first, as the prompt now says: the bot asks what the app
+      // should do, the person answers, and its plan carries the offer.
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '9 minutes')`,
+        [
+          conversationId, bot.id,
+          'I can help. What should the app do, and who is it for? I will put a plan here for you before anything gets '
+            + 'built.',
+          rootId,
+        ],
+      );
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, thread_root_id, created_at)
+         VALUES ($1, $2, 'Staging demo: a garden planner for my street: which plants need water this week, and who is '
+                          || 'watering them.', $3, NOW() - INTERVAL '5 minutes')`,
+        [conversationId, member.id, rootId],
+      );
+      await pool.query(
+        `INSERT INTO conversation_messages
+           (conversation_id, sender_id, content, thread_root_id, metadata, created_at)
+         VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - INTERVAL '2 minutes')`,
+        [conversationId, bot.id, reply, rootId, JSON.stringify(brief)],
+      );
     }
-    const root = await pool.query(
-      `INSERT INTO conversation_messages (conversation_id, sender_id, content, idempotency_key, created_at)
-       VALUES ($1, $2, 'Staging demo: I want to work on a new app, can you help me do that?', $3,
-               NOW() - INTERVAL '10 minutes')
-       RETURNING id`,
-      [conversationId, member.id, key],
-    );
-    const rootId = root.rows[0].id;
-    // The plan comes first, as the prompt now says: the bot asks what the app
-    // should do, the person answers, and its plan carries the offer.
+    // #6783: the card itself, the newest message in the thread: the name the
+    // bot suggested and what it will do. A copy seeded before it gets it once.
+    const cardKey = 'staging-demo-new-project-card';
     await pool.query(
       `INSERT INTO conversation_messages
-         (conversation_id, sender_id, content, thread_root_id, created_at)
-       VALUES ($1, $2, $3, $4, NOW() - INTERVAL '9 minutes')`,
+         (conversation_id, sender_id, content, thread_root_id, metadata, idempotency_key, created_at)
+       SELECT $1, $2, '**Street Garden** · a new project', $3, $4::jsonb, $5::text, NOW() - INTERVAL '1 minute'
+        WHERE NOT EXISTS (
+          SELECT 1 FROM conversation_messages WHERE conversation_id = $1 AND idempotency_key = $5::text
+        )`,
       [
-        conversationId, bot.id,
-        'I can help. What should the app do, and who is it for? I will put a plan here for you before anything gets '
-          + 'built.',
-        rootId,
-      ],
-    );
-    await pool.query(
-      `INSERT INTO conversation_messages
-         (conversation_id, sender_id, content, thread_root_id, created_at)
-       VALUES ($1, $2, 'Staging demo: a garden planner for my street: which plants need water this week, and who is '
-                        || 'watering them.', $3, NOW() - INTERVAL '5 minutes')`,
-      [conversationId, member.id, rootId],
-    );
-    await pool.query(
-      `INSERT INTO conversation_messages
-         (conversation_id, sender_id, content, thread_root_id, metadata, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - INTERVAL '2 minutes')`,
-      [
-        conversationId, bot.id,
-        'Staging demo: here is the plan from your answers. It shows this week\'s plants and who waters them, and each '
-          + 'person can tick theirs off. New project is under this reply, carrying your answers, when you want to '
-          + 'start it.',
-        rootId,
-        JSON.stringify(brief),
+        conversationId, bot.id, rootId,
+        JSON.stringify({
+          homeroomBot: {
+            kind: 'make_offer', question: 'Make Street Garden?',
+            makeProject: { name: 'Street Garden', rootId, version: null, brief: idea },
+            projectIdea: idea, projectName: 'Street Garden',
+            actions: [{ id: 'make', label: 'Make it', style: 'primary', type: 'make' }],
+            status: 'open', mirrors: false,
+          },
+        }),
+        cardKey,
       ],
     );
     const platform = await pool.query('SELECT id FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');

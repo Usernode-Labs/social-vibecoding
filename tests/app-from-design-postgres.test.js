@@ -158,6 +158,50 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
     assert.deepEqual([meta.status, meta.chosen, meta.madeSlug], ['answered', 'make', made.slug], 'the card says what it made');
   });
 
+  await t.test('#6783: a project made from the bot\'s New project card settles that card in the person\'s own thread', async () => {
+    // New people: the create limiter's bucket is per person, and the tests
+    // above have spent theirs.
+    const maker = await person('ad_ada2');
+    const other = await person('ad_sam2');
+    // A private thread where Homeroom bot offered a new project, as its card
+    // carries it (#6783): the name, who it is for, and what it will do.
+    const line = await dm.sendDm(pool, { bot, userId: maker.id, content: 'I want an app for chores.', moment: null, thread: { kind: 'idea' } });
+    const card = await dm.sendDm(pool, {
+      bot, userId: maker.id, content: '**Chore Chart** · a new project', threadRootId: line.messageId, moment: null,
+      metadata: {
+        kind: 'make_offer', question: 'Make Chore Chart?',
+        makeProject: { name: 'Chore Chart', rootId: line.messageId, version: null, brief: 'A weekly chore chart for our flat' },
+        actions: [{ id: 'make', label: 'Make it', style: 'primary', type: 'make' }], status: 'open',
+      },
+    });
+    // Somebody else's thread, with a card of its own: never touched.
+    const otherLine = await dm.sendDm(pool, { bot, userId: other.id, content: 'An app for swaps.', moment: null, thread: { kind: 'idea' } });
+    const otherCard = await dm.sendDm(pool, {
+      bot, userId: other.id, content: '**Seed Swap** · a new project', threadRootId: otherLine.messageId, moment: null,
+      metadata: {
+        kind: 'make_offer', question: 'Make Seed Swap?',
+        makeProject: { name: 'Seed Swap', rootId: otherLine.messageId, version: null, brief: 'A seed calendar' },
+        actions: [{ id: 'make', label: 'Make it', style: 'primary', type: 'make' }], status: 'open',
+      },
+    });
+    const cardMeta = async (id) => (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [id])).rows[0].metadata.homeroomBot;
+    assert.equal((await cardMeta(card.messageId)).status, 'open', 'open until something is made from it');
+
+    const res = await post({ name: 'Chore Chart', audience: 'solo', brief: 'A weekly chore chart for our flat', thread: { rootId: line.messageId } }, maker);
+    assert.equal(res.status, 201, JSON.stringify(res.data));
+    const meta = await cardMeta(card.messageId);
+    assert.deepEqual([meta.status, meta.chosen, meta.madeSlug], ['answered', 'make', res.data.app.slug], 'the card says what it made');
+    assert.equal((await cardMeta(otherCard.messageId)).status, 'open', 'nobody else\'s thread is settled');
+
+    // A thread that is not { rootId: a positive integer } is refused, as
+    // #6784 defined it (threadForProject), and settles no card: only a card
+    // in the person's own thread is answered, by the create that succeeds.
+    const plain = await post({ name: 'Chore Chart two', audience: 'solo', brief: 'Another chore chart', thread: { rootId: 'x' } }, maker);
+    assert.equal(plain.status, 400, JSON.stringify(plain.data));
+    assert.match(plain.data.error, /thread must be \{ rootId \}/);
+    assert.equal((await cardMeta(otherCard.messageId)).status, 'open');
+  });
+
   await t.test('its first request is filed with the design as its plan, as its maker', async () => {
     await pool.query(`UPDATE apps SET repo_url = $2, status = 'running' WHERE id = $1`, [made.id, `https://github.com/usernode-bot/${made.slug}`]);
     const filed = new Map();

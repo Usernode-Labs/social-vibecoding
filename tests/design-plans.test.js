@@ -152,7 +152,7 @@ test('a new project\'s thread: its turns know what it is for, and a new one is t
   assert.equal(mayor.projectThreadLine, undefined);
   assert.ok(mayor.TOOLS.some((t) => t.function.name === 'offer_new_project'));
   const fresh = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'any', state: 'open' } } });
-  assert.match(fresh, /call\n  offer_new_project so New project shows under your reply/);
+  assert.match(fresh, /call\n  offer_new_project so a card with the name and what it will do shows under your reply/);
   assert.match(fresh, /call draw_screen: it is drawn here, in this thread/);
   // A thread opened for one before keeps its own words.
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project', state: 'open' } } });

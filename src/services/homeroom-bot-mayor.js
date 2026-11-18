@@ -526,8 +526,8 @@ function otherThreadLines(thread) {
       '- It is the private thread you opened for a NEW project, which does not exist yet. Help them shape what it is',
       '  for, then draw its first screen with draw_screen and design it with them here; from a design they like, you',
       '  offer to make the project. Nothing is made, filed or posted until they tap.',
-      // #6523: its foot already has the door, so the flag is not needed here.
-      '- New project is already at the foot of this thread, so do not call offer_new_project here.',
+      // #6523: the thread already offers the project, so the flag is not needed here.
+      '- A new project is already offered in this thread, so do not call offer_new_project here.',
     );
   } else if (d?.kind === 'first_version') {
     // 14 Nov 2026: a project's first version has one thread, opened by
@@ -553,8 +553,8 @@ function otherThreadLines(thread) {
       '  enough to build, offer it as a request with offer_request. When this thread is an idea for a project of its',
       '  own with no project yet, or they plainly ask to make or work on a new app even before they say what it is',
       '  (New project\'s screen asks what it should do), call',
-      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
-      '  project that exists. Never tell them to tap New project unless you called it this turn.',
+      '  offer_new_project so a card with the name and what it will do shows under your reply. Never for a question, a',
+      '  report, or a request about a project that exists. Never tell them to tap New project unless you called it this turn.',
       // #6781: the make screen opens from what it passes here, so the brief
       // says what they want, not only the first thing they typed.
       '  Pass its idea (the project as you agreed it, with their answers folded in, at most 4000 characters) and a',
@@ -578,7 +578,8 @@ function otherThreadLines(thread) {
       '  When this thread is an idea for a project of its own with no project yet, or they plainly ask to make or work',
       '  on a new app even before they say what it is (New project\'s screen asks what it should do), shape it here',
       '  first: ask what it should do and put the plan here for them. Once the plan is here, call',
-      '  offer_new_project so New project shows under your reply, carrying their answers. Never offer it before the',
+      '  offer_new_project so a card with the name and what it will do shows under your reply, carrying their answers.',
+      '  Never offer it before the',
       '  plan, never for a question, a report, or a request about a project that exists, and never tell them to tap New',
       '  project unless you called it this turn.',
       // #6781: the make screen opens from what it passes here, so the brief
@@ -594,8 +595,8 @@ function otherThreadLines(thread) {
       // #6523, #6763: New project is offered, never guessed from the kind of thread.
       '  When this thread is an idea for a project of its own with no project yet, or they plainly ask to make or work',
       '  on a new app even before they say what it is (New project\'s screen asks what it should do), call',
-      '  offer_new_project so New project shows under your reply. Never for a question, a report, or a request about a',
-      '  project that exists. Never tell them to tap New project unless you called it this turn.',
+      '  offer_new_project so a card with the name and what it will do shows under your reply. Never for a question, a',
+      '  report, or a request about a project that exists. Never tell them to tap New project unless you called it this turn.',
       // #6781: the make screen opens from what it passes here, so the brief
       // says what they want, not only the first thing they typed.
       '  Pass its idea (the project as you agreed it, with their answers folded in, at most 4000 characters) and a',
@@ -1152,9 +1153,9 @@ const TOOLS = [
     function: {
       name: 'offer_new_project',
       description: 'In a private thread that is an idea for a NEW project of its own (an app that does not exist yet), '
-        + 'or a plain ask to make or work on a new app before they have said what it is (New project asks for the '
-        + 'idea), and not a question, a report, or a change to a project that exists: put the New project button under '
-        + 'your reply. One per turn.',
+        + 'or a plain ask to make or work on a new app before they have said what it is (the New project card asks for '
+        + 'the idea), and not a question, a report, or a change to a project that exists: send a card under your reply '
+        + 'with its name and what it will do, and Make it. One per turn.',
       // #6781: the brief and the name the make screen opens with.
       parameters: {
         type: 'object',
@@ -3260,7 +3261,11 @@ async function runTool(pool, ctx, name, args) {
         const idea = typeof args.idea === 'string' ? args.idea.trim().slice(0, 4000) : '';
         const name = typeof args.name === 'string' ? args.name.trim().slice(0, 60) : '';
         ctx.newProjectBrief = { ...(idea ? { idea } : {}), ...(name ? { name } : {}) };
-        return { ok: true, note: 'New project shows under your reply.' };
+        return {
+          ok: true,
+          note: 'A card with the name and what it will do shows under your reply, with Make it. Point at it there: '
+            + '"Check the name and what it will do below, then Make it." Never mention Build it or a screen that comes later.',
+        };
       }
       case 'my_projects': return await myProjects(pool, { user, settings, deps });
       case 'list_source':
@@ -4205,6 +4210,22 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     ...(ctx.newProjectBrief?.idea ? { projectIdea: ctx.newProjectBrief.idea } : {}),
     ...(ctx.newProjectBrief?.name ? { projectName: ctx.newProjectBrief.name } : {}),
   };
+  // #6783: a New project offer that carried a brief is its own card under the
+  // reply, sent once the reply is in (both below). A card that cannot be sent
+  // never costs the reply: the reply's own `newProject` keeps the foot's door.
+  const sendOfferCard = async () => {
+    if (!ctx.newProjectOffer || !ctx.newProjectBrief?.idea || !deps?.threadRootId) return;
+    try {
+      await sendProjectOffer(pool, {
+        bot, user, message, brief: ctx.newProjectBrief,
+        key: `${answerKey(message.id, deps.deferAttempt || 0)}-project`, deps,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot-mayor', 'Could not put the New project card under the reply', {
+        userId: user.id, err: err.message,
+      });
+    }
+  };
   // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
   // offers follow it as cards of their own (MAX_OFFERS), each said once.
   if (ctx.offer) {
@@ -4212,6 +4233,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     for (const [i, more] of (ctx.moreOffers || []).slice(0, MAX_OFFERS - 1).entries()) {
       await offer(pool, { bot, user, conversationId, message, text: null, offer: more, deps, keySuffix: `-${i + 2}` });
     }
+    await sendOfferCard();
     return sent;
   }
   // A card that cannot be read never costs the answer. #4097: the model's
@@ -4243,6 +4265,10 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // Task 2020: the answer laid out, drawn in place of the words.
       ...(html ? { html } : {}),
     },
+  }).then(async (said) => {
+    // #6783: the New project card goes under the reply, never before it.
+    await sendOfferCard();
+    return said;
   });
 }
 
@@ -4845,6 +4871,33 @@ function cardSentence(text, { issueNumber = null, fallback = '', plan = null } =
     .join('\n\n')
     .trim();
   return kept || fallback;
+}
+
+/**
+ * #6783: the New project offer as its own card under the reply, in the
+ * thread, the same shape a design's Make the project card has
+ * (sendDesignOffer): the name the bot suggested and the brief it wrote, so
+ * what will be made is on the card rather than on a screen after a tap.
+ * Sent after the reply, never instead of it. Resolves what was sent.
+ */
+async function sendProjectOffer(pool, { bot, user, message, key, brief, deps = {} }) {
+  const dm = dmModule(deps);
+  const rootId = Number(deps?.threadRootId);
+  const idea = String(brief?.idea || '').trim();
+  const name = String(brief?.name || '').trim();
+  if (!Number.isInteger(rootId) || rootId <= 0 || !idea) return null;
+  return dm.sendDm(pool, {
+    bot, userId: user.id, idempotencyKey: key, replyToId: message.id, moment: 'reply', keepSuggestions: true,
+    content: name ? `**${name}** · a new project` : 'A new project',
+    metadata: {
+      kind: 'make_offer', question: name ? `Make ${name}?` : 'Make this project?',
+      makeProject: { name, rootId, version: null, brief: idea },
+      projectIdea: idea,
+      ...(name ? { projectName: name } : {}),
+      actions: [{ id: 'make', label: 'Make it', style: 'primary', type: 'make' }],
+      status: 'open', mirrors: false,
+    },
+  });
 }
 
 /**

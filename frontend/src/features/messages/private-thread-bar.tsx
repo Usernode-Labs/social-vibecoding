@@ -147,6 +147,8 @@ interface ThreadMessage {
       changeKind?: string;
       /** #6523: Homeroom bot offered to make this idea a project in this reply. */
       newProject?: boolean;
+      /** #6783: the offer came as its own card under the reply, with what it will do. */
+      makeProject?: { brief?: string };
     } | null;
   } | null;
 }
@@ -155,9 +157,18 @@ interface ThreadMessage {
  * Pure (#6523): whether Homeroom bot invited a new project in this thread.
  * True when its newest reply carries `newProject`, or when the root is the
  * line it opened for a new project (start_project_thread). An earlier
- * offer alone does not count: only its latest reply.
+ * offer alone does not count: only its latest reply. #6783: false once the
+ * offer came as its own card under the reply, which is the door itself.
  */
 export function newProjectInvited(root: ThreadMessage | null | undefined, replies: readonly ThreadMessage[]): boolean {
+  // #6783: the offer is a card under the reply now, so the foot shows no
+  // second door: the card is the one way to make it. Older replies that
+  // carry `newProject` without a card keep the pill.
+  for (const message of replies) {
+    if (!message.sender.bot) continue;
+    const card = message.metadata?.homeroomBot;
+    if (card?.kind === 'make_offer' && card.makeProject?.brief) return false;
+  }
   const meta = root?.sender.bot ? root.metadata?.homeroomBot || null : null;
   if (meta?.kind === 'opened_thread' && meta.changeKind === 'project') return true;
   for (let i = replies.length - 1; i >= 0; i -= 1) {

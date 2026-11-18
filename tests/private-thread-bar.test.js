@@ -92,6 +92,15 @@ test('#6523: New project is invited by the bot\'s newest reply, or by the thread
   const person = { content: 'Yes please', sender: { id: 7 } };
   const root = { content: 'New thread, for a new project.', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread', changeKind: 'project' } } };
   const other = { content: 'A question', sender: { id: 2, bot: true }, metadata: { homeroomBot: { kind: 'opened_thread', changeKind: 'any' } } };
+  // #6783: the offer is a card under the reply now, so the foot keeps no pill.
+  const card = bot({
+    kind: 'make_offer', question: 'Make Seed Swap?',
+    makeProject: { name: 'Seed Swap', rootId: 9, version: null, brief: 'A seed calendar with swaps and reminders' },
+    actions: [{ id: 'make', label: 'Make it', style: 'primary', type: 'make' }], status: 'open',
+  });
+  assert.equal(newProjectInvited(null, [bot({ newProject: true }), card]), false, 'the card is the door itself');
+  assert.equal(newProjectInvited(root, [card]), false, 'not even in a thread it opened for a new project');
+  assert.equal(newProjectInvited(null, [card, person]), false, 'their answer after it does not bring the pill back');
   // Its newest reply is the one that counts.
   assert.equal(newProjectInvited(null, [person, bot({ newProject: true })]), true);
   assert.equal(newProjectInvited(null, [bot({ newProject: true }), person]), true, 'their answer after it does not take it away');
@@ -214,6 +223,20 @@ test('whose thread it is, its name and the words to take public, for a root of t
   };
   assert.equal(privateThreadWords(plus, [older, ...replies, offered], ME), 'A seed calendar with swaps and reminders');
   assert.equal(privateThreadName(plus, [older, ...replies, offered]), 'Seed Swap');
+  // #6783: a card in the thread carries the brief and the name too, so the
+  // create screen still starts from them.
+  const cardOffer = {
+    content: '**Seed Swap** · a new project', sender: { id: 2, bot: true },
+    metadata: {
+      homeroomBot: {
+        kind: 'make_offer', status: 'open',
+        makeProject: { name: 'Seed Swap', rootId: 5, version: null, brief: 'A seed calendar with swaps and reminders' },
+        projectIdea: 'A seed calendar with swaps and reminders', projectName: 'Seed Swap',
+      },
+    },
+  };
+  assert.equal(privateThreadWords(plus, [...replies, cardOffer], ME), 'A seed calendar with swaps and reminders');
+  assert.equal(privateThreadName(plus, [...replies, cardOffer]), 'Seed Swap');
   // No brief: everything they wrote, cut at 4000 characters, keeping the start.
   const long = { content: `start ${'x'.repeat(5000)}`, sender: { id: ME } };
   assert.equal(privateThreadWords(plus, [long], ME).length, 4000);

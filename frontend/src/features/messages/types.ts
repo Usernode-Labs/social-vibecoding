@@ -187,9 +187,11 @@ export interface HomeroomBotMeta {
   /**
    * 1 Nov 2026 (C2.4): the new project a design's card offers to make (kind
    * `make_offer`): its name, the design's thread and version. Once made, the
-   * project it made (`madeSlug`, `madeName`).
+   * project it made (`madeSlug`, `madeName`). #6783: a private thread's New
+   * project card carries its `brief` instead of a design, and may have no
+   * name yet.
    */
-  makeProject?: { name: string; rootId: number; version: number | null };
+  makeProject?: { name: string; rootId: number; version: number | null; brief?: string };
   madeSlug?: string;
   madeName?: string;
   /**

@@ -269,8 +269,14 @@ export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta
   const makeRow = record(pick(bot, 'makeProject'));
   const makeRoot = strictId(pick(makeRow, 'rootId'));
   const makeName = text(pick(makeRow, 'name')).slice(0, 60);
-  const makeProject = makeRoot && makeName
-    ? { name: makeName, rootId: makeRoot, version: strictId(pick(makeRow, 'version')) } : null;
+  // #6783: a New project card carries what it will do, and needs no design
+  // (nor a name: the sheet's own box asks for it then).
+  const makeBrief = text(pick(makeRow, 'brief')).slice(0, 4000);
+  const makeProject = makeRoot && (makeName || makeBrief)
+    ? {
+      name: makeName, rootId: makeRoot, version: strictId(pick(makeRow, 'version')),
+      ...(makeBrief ? { brief: makeBrief } : {}),
+    } : null;
   return {
     homeroomBot: {
       kind,

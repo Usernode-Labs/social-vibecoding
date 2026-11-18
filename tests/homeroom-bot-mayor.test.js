@@ -279,7 +279,8 @@ test('#3707: everything the DM model sends answers one of her messages, and quot
   // under the message it answers (`replyToId`), in that message's thread;
   // the line that opens a thread names the thread it opens instead
   // (`thread`). The new project's line in Main is gone with Main.
-  assert.equal(sends.length, 8, 'a turn\'s answer, a draft\'s line, its offer, a many-project offer, the answer to a tap, a tap whose act failed for good, and a design\'s plan and project cards');
+  // #6783: and a New project card, under the reply it belongs to.
+  assert.equal(sends.length, 9, 'a turn\'s answer, a draft\'s line, its offer, a many-project offer, the answer to a tap, a tap whose act failed for good, a design\'s plan and project cards, and a New project card');
   // B3: the answer to a tap (settleOffer) quotes what was typed or quoted
   // when there was one; a button's tap has no message of hers to quote.
   // One story: a tap with nothing typed is answered where its offer is (the
@@ -1203,16 +1204,29 @@ test('#6523: offer_new_project is the bot\'s to offer, in a private thread, and 
     : { content: '', calls: [callOf(`o${i}`, 'reply', { text: 'That sounds like a project of its own. Want to start it?' })] }));
   const inThread = chatTurn(offering, { extra: { threadRootId: 5 }, message: { content: 'I want an app where my flatmates and I split chores each week' } });
   await inThread.run;
-  assert.equal(inThread.sent.length, 1);
-  assert.equal(inThread.sent[0].metadata.newProject, true, 'New project shows under the reply');
+  assert.equal(inThread.sent.length, 2, 'the reply, then its card');
+  assert.equal(inThread.sent[0].metadata.newProject, true, 'the reply keeps the flag as the foot\'s fallback');
   assert.equal(inThread.sent[0].metadata.projectIdea, 'A weekly chore chart for our flat', 'the make screen opens with it');
   assert.equal(inThread.sent[0].metadata.projectName, 'Chore Chart');
+  // #6783: the offer is its own card under the reply, with what it will do.
+  const card = inThread.sent[1];
+  assert.equal(card.metadata.kind, 'make_offer');
+  assert.deepEqual(card.metadata.makeProject, {
+    name: 'Chore Chart', rootId: 5, version: null, brief: 'A weekly chore chart for our flat',
+  });
+  assert.deepEqual(card.metadata.actions, [{ id: 'make', label: 'Make it', style: 'primary', type: 'make' }]);
+  assert.equal(card.metadata.status, 'open');
+  assert.match(card.content, /^\*\*Chore Chart\*\* · a new project$/);
+  assert.equal(card.replyToId, 70, 'under the reply it belongs to');
+  assert.equal(card.keepSuggestions, true, 'the card does not close the reply\'s suggestions');
+  assert.match(card.idempotencyKey, /-project$/, 'the reply\'s own key, plus -project');
   // Called with no brief (an older habit): New project is offered, nothing else.
   const bare = saying((i) => (i === 0
     ? { content: '', calls: [callOf('b0', 'offer_new_project', {})] }
     : { content: '', calls: [callOf(`b${i}`, 'reply', { text: 'New project is under this reply.' })] }));
   const bareThread = chatTurn(bare, { extra: { threadRootId: 5 }, message: { content: 'I want an app for swaps' } });
   await bareThread.run;
+  assert.equal(bareThread.sent.length, 1, 'no brief, no card');
   assert.equal(bareThread.sent[0].metadata.newProject, true);
   assert.equal('projectIdea' in bareThread.sent[0].metadata, false, 'no brief, no key');
   assert.equal('projectName' in bareThread.sent[0].metadata, false, 'no name, no key');
@@ -1225,7 +1239,7 @@ test('#6523: offer_new_project is the bot\'s to offer, in a private thread, and 
   assert.equal(inMain.sent[0].metadata.newProject, undefined, 'never with no thread to put it under');
   // The private prompt tells it when to offer one, and never for a question or a report.
   const plus = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'fix', appSlug: 'notes', appName: 'Notes' } } });
-  assert.match(plus, /shape it here\n  first: ask what it should do and put the plan here for them\. Once the plan is here, call\n  offer_new_project so New project shows under your reply, carrying their answers\./);
+  assert.match(plus, /shape it here\n  first: ask what it should do and put the plan here for them\. Once the plan is here, call\n  offer_new_project so a card with the name and what it will do shows under your reply, carrying their answers\./);
   assert.match(plus, /Never offer it before the\n  plan, never for a question, a report, or a request about a project that exists, and never tell them to tap New\n  project unless you called it this turn\./);
   // #6781: the prompt says what the brief is, and never repeats a limit it claimed.
   assert.match(plus, /Pass its idea \(the project as you agreed it here, with their answers folded in, at most 4000 characters\) and a\n  short name: the make screen opens with both\. Write the idea from their own words and answers, and leave out\n  any limit you said was not possible\./);
@@ -1233,11 +1247,12 @@ test('#6523: offer_new_project is the bot\'s to offer, in a private thread, and 
   assert.match(idea, /or they plainly ask to make or work\n  on a new app even before they say what it is/, 'a plain ask is enough, before the idea is named');
   assert.match(idea, /Pass its idea \(the project as you agreed it, with their answers folded in, at most 4000 characters\) and a\n  short name/);
   const earlier = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'earlier' } } });
-  assert.match(earlier, /or they plainly ask to make or work on a new app even before they say what it is\n  \(New project's screen asks what it should do\), call\n  offer_new_project so New project shows under your reply\./);
+  assert.match(earlier, /or they plainly ask to make or work on a new app even before they say what it is\n  \(New project's screen asks what it should do\), call\n  offer_new_project so a card with the name and what it will do shows under your reply\./);
   assert.match(earlier, /Pass its idea \(the project as you agreed it, with their answers folded in, at most 4000 characters\)/);
-  assert.match(tool.description, /or a plain ask to make or work on a new app before they have said what it is \(New project asks for the idea\)/);
+  assert.match(tool.description, /or a plain ask to make or work on a new app before they have said what it is \(the New project card asks for the idea\)/);
+  assert.match(tool.description, /send a card under your reply with its name and what it will do, and Make it/);
   const project = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project' } } });
-  assert.match(project, /New project is already at the foot of this thread, so do not call offer_new_project here\./);
+  assert.match(project, /A new project is already offered in this thread, so do not call offer_new_project here\./);
 });
 
 test('#6346: an offer on the chat\'s last round is the answer, with no fallback', async () => {

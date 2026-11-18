@@ -829,6 +829,7 @@ async function storyAppId(pool, metadata, root) {
 async function sendDm(pool, {
   bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null, withoutCards = null,
   moment = undefined, threadRootId = undefined, hello = null, card = null, postKind = null, thread = null,
+  keepSuggestions = false,
 }) {
   if (!bot?.id || !userId) return null;
   // Step 4 (11 Nov 2026): this is the bot's posting function's transport for
@@ -1016,10 +1017,14 @@ async function sendDm(pool, {
   // transaction: afterInsert).
   if (toldOpen.length) await require('./project-opened').pushTold(pool, toldOpen);
   if (!result.duplicate) {
-    await retireSuggestions(pool, {
-      botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,
-      about: stored, kind: metadata?.kind || null,
-    });
+    // #6783: a card's own message follows the reply it belongs to, so it
+    // never closes that reply's suggestion buttons (`keepSuggestions`).
+    if (!keepSuggestions) {
+      await retireSuggestions(pool, {
+        botId: bot.id, conversationId: opened.conversationId, keepMessageId: messageId, userId,
+        about: stored, kind: metadata?.kind || null,
+      });
+    }
     try {
       await pushLive(pool, result, opened.conversationId, { opened: opened.created, threadRootId: root, actorUserId: bot.id });
     } catch (err) {

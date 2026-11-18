@@ -1349,6 +1349,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
         req.body = { ...req.body, brief: fromDesign.brief };
       }
+      // #6783: a project made from the bot's New project card (its Make it)
+      // names the private thread that card is in, so the card can say what it
+      // made, on every device. The card's own brief is what it was made from.
+      const threadRoot = fromDesign == null && Number(req.body?.thread?.rootId) > 0
+        ? Number(req.body.thread.rootId) : null;
 
       // #6784 (17 Nov 2026): a project made from an idea thread in one of the
       // person's private threads with Homeroom bot (New project in the
@@ -1554,6 +1559,15 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         throw err;
       } finally {
         db.release();
+      }
+
+      // #6783: the New project card that made this one gives way to what it
+      // made, in the person's own thread, on every device. Never a reason the
+      // create fails (noteProjectMade never throws).
+      if (threadRoot) {
+        await require('../services/homeroom-bot-mayor').noteProjectMade(pool, {
+          userId: req.user.id, rootId: threadRoot, app: appRow,
+        });
       }
 
       // A Group's invites go out now, each the same invite (and the same
