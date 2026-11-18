@@ -89,6 +89,7 @@ import {
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { pressLitTab } from '../workshop/tab-ladder';
+import { botTabAddress } from '../ai/filter-address';
 import { navStore } from './nav-store.js';
 import { runningAppStore } from './parked-store.js';
 import { SideApps } from './side-apps';
@@ -836,6 +837,19 @@ function goToTab(key: string, href: string): void {
 }
 
 /**
+ * Where a tab press goes (#6714). The AI tab pressed from a project's page
+ * carries that project into its address (`botTabAddress`), so the project's
+ * filter offers it and starts on it; All stays one tap away. From anywhere
+ * else, and for every other tab, the rendered href is what it has always
+ * been.
+ */
+function tabHref(key: string, href: string): string {
+  if (key !== 'ai' || navStore.get().screen !== 'app-view') return href;
+  const slug = (window as unknown as { App?: { currentApp?: string | null } }).App?.currentApp;
+  return botTabAddress(slug || null);
+}
+
+/**
  * The Communities destination that always lands (#5730): the All communities
  * page, at `#communities`.
  *
@@ -1069,8 +1083,23 @@ export function PlatformTabs() {
     const fallback = key === 'workshop'
       ? () => { if (navStore.get().screen === left) openCommunitiesPage(); }
       : undefined;
+    // WHERE THIS PRESS GOES (#6714). Usually the tab's own href, but the AI
+    // tab pressed from a project's page names that project, so its filter
+    // offers it and starts on it. The anchor keeps the bare tab as its href
+    // (a modified click opens the tab unfiltered, and the prerender is
+    // untouched); `ask` is that rendered address, kept to tell the two apart
+    // where no pill can slide.
+    const ask = href;
+    href = tabHref(key, href);
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href), fallback)) {
       event.preventDefault();
+      return;
+    }
+    // No pill to slide (a phone's bar, or motion reduced): the press navigates
+    // at once, and to the addressed destination rather than the bare tab.
+    if (href !== ask) {
+      event.preventDefault();
+      window.location.assign(href);
       return;
     }
     const now = key === 'home' ? onHomeClick : key === 'workshop' ? onWorkshopClick : undefined;

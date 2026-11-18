@@ -1029,6 +1029,28 @@ test('a plain press on another tab lights it and slides first; the router answer
   assert.match(src, /if \(!pending\.current \|\| pending\.current\.key !== tab\) return;\s*pending\.current\.cancel\(\);\s*pending\.current = null;\s*setPressed\(null\);/);
 });
 
+// #6714: a press on the AI tab from a project's page carries that project
+// into the tab's address, so its filter offers it and starts on it.
+test('#6714: the AI tab pressed from a project carries the project, and nothing else does', () => {
+  const src = read('frontend/src/features/nav/tab-bar.tsx');
+  const at = src.indexOf('function tabHref(');
+  const href = src.slice(at, src.indexOf('/**', at));
+  assert.match(href, /if \(key !== 'ai' \|\| navStore\.get\(\)\.screen !== 'app-view'\) return href;/,
+    'only the AI tab, and only on a project');
+  assert.match(href, /\.App\?\.currentApp;/, 'the project on screen');
+  assert.match(href, /return botTabAddress\(slug \|\| null\);/, 'its chip, chosen');
+  const click = src.slice(src.indexOf('const onTabClick = '), src.indexOf('return (', src.indexOf('const onTabClick = ')));
+  assert.match(click, /const ask = href;\s*href = tabHref\(key, href\);/,
+    'the press resolves its destination, the rendered href kept to tell them apart');
+  assert.match(click, /press\(event\.currentTarget, key, \(\) => goToTab\(key, href\), fallback\)/,
+    'the press navigates to the addressed destination');
+  assert.match(click, /if \(href !== ask\) \{\s*event\.preventDefault\(\);\s*window\.location\.assign\(href\);\s*return;\s*\}/,
+    'a press the pill cannot slide takes the addressed destination');
+  // The rendered href stays the bare tab: the prerender and a modified click
+  // (a new tab) are unchanged.
+  assert.match(src, /\{ key: 'ai' as const, label: 'core:tabs\.ai', href: '#homeroom-bot', Icon: HomeroomBotIcon \},/);
+});
+
 // ── #5730: a Communities press from Me or Messages lands on Communities ──
 //
 // Pressed from Me (#profile) or Discover (#apps, retired with One Home,
