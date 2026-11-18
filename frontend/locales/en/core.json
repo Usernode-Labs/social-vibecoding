@@ -45,7 +45,7 @@
   },
   "tabs.communities": {
     "text": "Communities",
-    "description": "Tab in the main navigation: opens the communities the person belongs to. A community is a group that owns projects."
+    "description": "Tab in the main navigation: opens the Communities page, which lists the communities the person pinned and the others they belong to. A community is a group that owns projects."
   },
   "tabs.me": {
     "text": "You",
@@ -55,25 +55,13 @@
     "text": "You, {{username}}",
     "description": "Accessible name of the profile tab when signed in. The tab shows only the word for You; this adds whose account it is. {{username}} is the person's username. Keep the word for You first."
   },
-  "tabs.communitiesOn": {
-    "text": "Communities, on {{community}}",
-    "description": "Accessible name of the Communities tab while it is showing one community. {{community}} is that community's name. Keep the word for Communities first."
-  },
   "tabs.communitiesVotes_one": {
     "text": "Communities, {{count}} vote waiting on you",
-    "description": "Accessible name of the Communities tab on All communities while votes are waiting: the tab's word, then what its blue number counts. Keep the word for Communities first."
+    "description": "Accessible name of the Communities tab while votes are waiting: the tab's word, then what its blue number counts. Keep the word for Communities first."
   },
   "tabs.communitiesVotes_other": {
     "text": "Communities, {{count}} votes waiting on you",
-    "description": "Accessible name of the Communities tab on All communities while votes are waiting: the tab's word, then what its blue number counts. Keep the word for Communities first."
-  },
-  "tabs.communitiesOnVotes_one": {
-    "text": "Communities, on {{community}}, {{count}} vote waiting on you",
-    "description": "Accessible name of the Communities tab while it is showing one community and votes are waiting there. {{community}} is that community's name; the count is its blue number. Keep the word for Communities first."
-  },
-  "tabs.communitiesOnVotes_other": {
-    "text": "Communities, on {{community}}, {{count}} votes waiting on you",
-    "description": "Accessible name of the Communities tab while it is showing one community and votes are waiting there. {{community}} is that community's name; the count is its blue number. Keep the word for Communities first."
+    "description": "Accessible name of the Communities tab while votes are waiting: the tab's word, then what its blue number counts. Keep the word for Communities first."
   },
   "tabs.votesWaiting_one": {
     "text": "{{count}} vote waiting on you",
@@ -111,17 +99,9 @@
     "text": "Search your communities",
     "description": "Accessible name and tooltip of the small search button beside the Communities heading in the desktop sidebar: opens the list of all the person's communities with its search box ready to type in."
   },
-  "rail.all_one": {
-    "text": "All {{count}} community",
-    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in, shown only when they are in more than the five the sidebar lists. {{count}} is how many there are (here 1)."
-  },
-  "rail.all_other": {
-    "text": "All {{count}} communities",
-    "description": "Row under the person's communities in the desktop sidebar, opening the list of every community they are in, shown only when they are in more than the five the sidebar lists. {{count}} is how many there are."
-  },
   "rail.allPlain": {
     "text": "All communities",
-    "description": "Row under the person's communities in the desktop sidebar, before their communities have loaded or when the sidebar already lists every one of them: opens the list of every community they are in."
+    "description": "Row under the person's communities in the sidebar of a look of the frame: opens the list of every community they are in."
   },
   "rail.hideSidebar": {
     "text": "Hide sidebar",

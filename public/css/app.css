@@ -3893,7 +3893,7 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    these lists and was on none of them: the page kept the gray body and the
    bar its zinc-200 surface. Every list here that names #workshop-screen,
    its React-owned sibling, names it as well. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -3931,7 +3931,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -3971,7 +3971,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -3985,7 +3985,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -4028,7 +4028,7 @@ html:root body:has(#app-view:not(.hidden):not([data-app-surface="platform"])),
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -4057,7 +4057,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #set
    surface below tucks 8px up into, so a line drawn across it would cut the
    notch in half. The frost IS the edge here. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -4085,7 +4085,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    the surfaces below tuck into keeps its shape. Nothing inside the header
    reaches past its box, so the clip cuts nothing. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
@@ -4102,7 +4102,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    layer covers it whole (its washes end on the ground colour), so nothing
    on the bar changes; only the strip does. */
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: var(--dc-sheet-solid);
@@ -4131,7 +4131,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]) body:has(#app-view:not
    (`overflow: hidden`, 100dvh), scrolls, and nothing scrolls it, so the
    bar stays where it sits in the flow; and it is already `relative z-10`,
    so it was a stacking context and a containing block before. */
-html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
+html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(:is(#messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header,
 html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scroller]) body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   position: sticky;
@@ -4337,7 +4337,7 @@ html.un-ios.web-browser-chrome:not([data-community-tint]):not([data-browser-scro
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #profile-proposals-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -6453,8 +6453,10 @@ html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-
   background-color: var(--wip-skeleton);
 }
 /* WHAT THE LOOK LEAVES OUT (rule 3 above; the test's WIP_HIDES names each).
-   Pinned communities: the section stays mounted, since it loads the pins
-   other parts of Home read, and is not displayed. */
+   Your communities on Home (the ones a search finds; they were Pinned
+   communities, which are the Communities tab's page now): the section stays
+   mounted, since it loads the pins other parts of Home read, and is not
+   displayed. */
 html[data-skin-wip] #home-communities-section { display: none; }
 
 
@@ -6464,6 +6466,71 @@ html[data-skin-wip] #home-communities-section { display: none; }
    shrink, so a long line is cut and never widens the page. */
 .home-main {
   min-width: 0;
+}
+
+/* THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx, `#communities`).
+   The communities you pinned and the others you are in, as the tiles Home's
+   Pinned communities drew, in Home's own column (`.home-column`) and under
+   Home's own section labels, then the card that leads to the ones to join.
+   It has no heading of its own: the header names the page.
+   Every look draws it from these rules; the brand look's own are in its
+   block, at the foot of this file. */
+.communities-page {
+  padding-bottom: 2rem;
+}
+/* The search row is the desktop's: a phone has the two groups and no field. */
+.communities-top {
+  display: none;
+}
+@media (min-width: 768px) {
+  .communities-top {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1.25rem 0.75rem 0;
+  }
+  .communities-search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  /* Where the look draws New community as the filled button on that row, the
+     button stands for the tile from 768px; under it the tile is the way. */
+  #communities-new-community[data-has-top] {
+    display: none;
+  }
+}
+.communities-note {
+  margin: 0;
+  padding: 1rem 0.75rem 0;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+/* Discover: a card in the shell's own terms (the plane colour, 20px, one
+   hairline), its words and then the one filled button. */
+.communities-discover {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.25rem;
+  border-radius: 20px;
+  background: var(--dc-sheet-solid);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.communities-discover-text {
+  flex: 1 1 15rem;
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+.communities-discover-text > b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 1rem;
+  font-weight: 650;
+  color: var(--text-primary);
 }
 
 /* THE PARKED SEARCH BAR IS TRANSPARENT (QA 2026-09-24 Q30c). Parking the
@@ -18508,11 +18575,10 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
 .community-switcher-menu .community-switcher-tile { width: 34px; height: 34px; border-radius: 9px; font-size: 17px; }
 .community-switcher-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
 /* An emoji tile's glyph at the tile's own size, not the launcher's. */
-.community-switcher-tile > span, .platform-tab-tile > span { font-size: inherit; line-height: 1; }
-.platform-tab-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
-/* ALL COMMUNITIES WEARS THE TAB'S FACE (#3663): the people glyph in a square
-   ring, in the row's own ink, as `.platform-tab-ring-all` draws it on the
-   phone's bar. It was a filled near-black tile, which in the same list as
+.community-switcher-tile > span { font-size: inherit; line-height: 1; }
+/* ALL COMMUNITIES WEARS THE PEOPLE GLYPH (#3663), the Communities tab's
+   own, in a square ring, in the row's own ink. It was a filled near-black
+   tile, which in the same list as
    Homeroom's own (a cream H on near-black) read as a second Homeroom. The
    ring is the tab's 2px at the tile's size, and the glyph is the tab's
    share of it (18px in 28px) with the tab's 1.8 stroke. */
@@ -20925,7 +20991,7 @@ html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek)):
 .platform-tabs::before,
 .platform-parked::before,
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen,
-             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #ai-screen,
+             #settings-screen, #messages-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen,
              #profile-proposals-screen):not(.hidden)) #platform-header::before,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
 html[data-browser-scroller] #landing-header::before {
@@ -21198,13 +21264,12 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
    bot's a little more, and the pill now clears the bot's name by about 9px
    at 375 and 12 at 360. */
 @media (max-width: 767.98px) {
-  /* Communities' seat, the second (#6019), and Homeroom bot's, the third,
-     are a little wider than the other three: they hold the longest words,
-     and the bar's other labels (Home, Messages, and your name last, which
-     ellipsizes) have room to spare in theirs. */
-  /* ONE HOME (#6361): four seats, Home · Homeroom bot · Messages · You. The
-     bot's holds the longest word, so it is a little wider. */
-  #platform-tabs { grid-template-columns: 1fr 1.4fr 1.15fr 1fr; }
+  /* FIVE SEATS: Home · Communities · Homeroom bot · Messages · You (the
+     Communities tab is back, 18 Nov 2026; One Home, #6361, had drawn four).
+     Communities' seat, the second, and Homeroom bot's, the third, are a
+     little wider than the others: they hold the longest words, and the
+     bar's other labels (Home, Messages, and You) have room to spare. */
+  #platform-tabs { grid-template-columns: 1fr 1.25fr 1.4fr 1.15fr 1fr; }
   :is(#platform-tab-workshop, #platform-tab-ai) { overflow: visible; }
   :is(#platform-tab-workshop, #platform-tab-ai) .platform-tab-label {
     letter-spacing: -.02em;
@@ -21215,28 +21280,30 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
 @media (max-width: 374.98px) {
   /* The smallest phones: every label drops half a point and tightens, the
      cells lose their 2px sides, and the two wide seats widen a little less. */
-  #platform-tabs { grid-template-columns: 1fr 1.35fr 1.15fr 1fr; }
+  #platform-tabs { grid-template-columns: 1fr 1.2fr 1.35fr 1.15fr 1fr; }
   .platform-tab { padding: 0; }
   .platform-tab .platform-tab-label { font-size: 10.5px; letter-spacing: -.02em; }
 }
 
 /* TWO ORDERS, ONE MARKUP (Evan, 29 Oct 2026). The tabs' markup is the
-   desktop rail's order, Home, AI, Messages, Communities, then you, so a
+   desktop sidebar's order, Home, AI, Messages, Communities, then you, so a
    keyboard on a desktop moves through them in the order it sees
-   (features/nav/tab-bar.tsx TABS). The phone's bar is four cells since One
-   Home (#6361), Home · AI · Messages · You, which `order` lays out. The
-   orders are below zero so the side strip's own (`order: 1` for the app you
-   left, `2` for you, further down) still come after the three. You keeps
-   the default, last in the markup. */
+   (features/nav/tab-bar.tsx TABS). The phone's bar is five cells, Home ·
+   Communities · AI · Messages · You, which `order` lays out: Communities,
+   fourth in the markup, is second on the bar, next to Home. The orders are
+   below zero so the side strip's own (`order: 1` for the app you left, `2`
+   for you, further down) still come after the four. You keeps the default,
+   last in the markup.
+
+   THE COMMUNITIES TAB IS DRAWN AGAIN (18 Nov 2026), on both bars. One Home
+   (#6361) had hidden it here and kept your communities on Home; they are
+   its page's now (`#communities`, features/communities/). */
 @media (max-width: 767.98px) {
-  #platform-tab-home { order: -4; }
+  #platform-tab-home { order: -5; }
+  #platform-tab-workshop { order: -4; }
   #platform-tab-ai { order: -3; }
   #platform-tab-messages { order: -2; }
 }
-/* ONE HOME (#6361): the Communities tab is drawn on neither bar: Home holds
-   your communities and the ones to join. Its node stays, for the route and
-   links that still name it. */
-#platform-tab-workshop { display: none !important; }
 
 /* A QUIET GREY DISC, NOT THE BELL'S RED (#2912). This used to be the same
    red disc as #notifications-badge, on the argument that two counts on one
@@ -21274,40 +21341,11 @@ html.un-android.in-native-webview:not(.web-browser-chrome) {
   justify-content: center;
 }
 
-/* THE COMMUNITIES TAB'S FACE (tab-bar.tsx CommunityTabFace). On the phone's
-   bar, a square ring, an app tile's own shape, around the community the tab
-   is on (in its colour) or, on All communities, the tab's own people glyph
-   (in the tab's ink, so it lights with the tab). The ring is what says the
-   tab switches. The desktop rail draws no ring: its row goes back to All
-   communities, and the header's name is the switcher there. */
-.platform-tab-ring {
-  width: 28px; height: 28px; box-sizing: border-box; flex: none;
-  display: inline-grid; place-items: center;
-  border-radius: 9px;
-  box-shadow: inset 0 0 0 2px var(--ring, currentColor);
-  /* THE RING TAKES A GLYPH'S PLACE, NOT MORE (audit N02, 1 Nov 2026). It is
-     28px against the other tabs' 22px glyphs, and laid out at 28 it pushed
-     "Communities" about 3px below Home, Homeroom bot, Messages and You, and
-     made its lit pill the tallest. The ring overhangs by 3px above and
-     below instead: the label sits on the bar's one baseline, and the
-     marker (measured off `.platform-tab-mark`, which stays 22px) matches
-     its neighbours. The marker's own padding (5px over, 3px under) covers
-     the overhang. */
-  margin-block: -3px;
-}
-.platform-tab-ring-all .platform-tab-glyph { width: 18px; height: 18px; }
-.platform-tab-tile {
-  width: 20px; height: 20px; border-radius: 6px; overflow: hidden;
-  display: grid; place-items: center;
-  font-size: 12px; font-weight: 700; line-height: 1;
-}
-@media (min-width: 768px) {
-  .platform-tab-ring { width: auto; height: auto; border-radius: 0; box-shadow: none; margin-block: 0; }
-  .platform-tab-ring-all .platform-tab-glyph { width: 22px; height: 22px; }
-  .platform-tab-tile { width: 22px; height: 22px; }
-}
-/* THE VOTES IT IS WAITING ON YOU FOR: the accent, because it asks for you.
-   The quiet unread-channels count gives way to it on the same glyph. */
+/* THE COMMUNITIES TAB'S COUNT: every vote waiting on you, in the accent,
+   because it asks for you. The quiet unread-channels count gives way to it
+   on the same glyph. The tab's face is the people glyph, as every tab's is
+   its own: the ring that named the community it was on went when the tab
+   became a plain door to its page (18 Nov 2026). */
 .platform-tab-votes {
   position: absolute; top: -4px; inset-inline-start: calc(100% - 8px);
   min-width: 1.1rem; height: 1.1rem; padding: 0 4px; box-sizing: border-box;
@@ -21606,16 +21644,13 @@ html[data-side-strip="left"] #notifications-sheet {
   }
   /* The place you are on is the pill inside the capsule, filled from the
      bar's own lit tokens with their hairline, exactly as the phone's marker
-     and the rail's lit row are. On a community's page no drawn place is lit
-     (its own, Communities, is not on the bar) and Home stands for it, as the
-     brand block does. */
-  html[data-side-strip] .platform-tab[aria-current="page"],
-  html[data-side-strip] #platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
+     and the rail's lit row are. A community's page lights Communities, which
+     is on the bar again (18 Nov 2026). */
+  html[data-side-strip] .platform-tab[aria-current="page"] {
     background: var(--lit-tint);
     box-shadow: inset 0 0 0 1px var(--lit-line);
   }
-  html[data-side-strip] .platform-tab[aria-current="page"] .platform-tab-mark,
-  html[data-side-strip] #platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home .platform-tab-mark {
+  html[data-side-strip] .platform-tab[aria-current="page"] .platform-tab-mark {
     color: var(--lit-ink);
   }
   /* The words are not drawn (the system's own side tabs have none), but the
@@ -22584,7 +22619,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
      #profile-proposals-screen is listed (#3498): Your requests and Your votes
      centred in the whole window, so from a laptop width down their cards
      began under the rail. */
-  :is(#home-screen, #workshop-screen, #weekly-digest-screen, #ai-screen, #leaderboard-screen,
+  :is(#home-screen, #workshop-screen, #weekly-digest-screen, #communities-screen, #ai-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
       #profile-proposals-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
@@ -22816,10 +22851,10 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
 
 /* ── D: THE SIDEBAR OF ROWS, ON EVERY DESKTOP WINDOW (18 Oct 2026) ───────
    features/nav/sidebar-rows.ts carries the argument. From 768px the rail
-   is one 212px sidebar for the whole platform: Home, Discover and Messages
-   as rows, then COMMUNITIES (features/nav/rail-communities.tsx: the five you
-   opened last, then the Communities tab drawn as "All 13 communities"),
-   then PINNED (only while you have pins) and RECENT APPS (./strip-apps.tsx),
+   is one 212px sidebar for the whole platform: Home, Homeroom bot, Messages
+   and Communities as rows, then RECENTS (features/nav/rail-pinned.tsx, the
+   communities you pinned to it, and ./rail-communities.tsx, the five you
+   opened last),
    and you at the foot with Settings beside you, a community's places and
    the inbox's latest conversations nested under their rows (v3). It began
    at 1024px with the 76px strip and its 264px column below that, 340px
@@ -22831,9 +22866,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
    The parts only the sidebar draws are in the markup at every width and
    drawn only here. */
 .platform-rail-communities,
-.platform-tab-all-glyph,
-.platform-tab-all-label,
-.platform-tab-all-votes,
 .platform-rail-pinned {
   display: none;
 }
@@ -22893,8 +22925,7 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
     text-overflow: ellipsis;
   }
   .platform-tab-badge,
-  .platform-tab-votes,
-  .platform-tab-all-votes {
+  .platform-tab-votes {
     position: static;
     order: 2;
     flex: none;
@@ -22904,49 +22935,13 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
     font-size: 11px;
   }
 
-  /* THE COMMUNITIES TAB IS THE SECTION'S ALL ROW: the grid and "All 13
-     communities" in place of the ring and the word, and on it every vote
-     waiting on you (`.platform-tab-all-votes`, the tab's own figure: #18 of
-     the 19 Oct polish board; it used to be only the votes in the rows not
-     listed, which read as a total and was not one). The grey count of
-     unread channels stays until a vote takes its seat, as on the strip:
-     one number per row. */
-  #platform-tab-workshop .platform-tab-ring,
-  #platform-tab-workshop .platform-tab-label,
-  #platform-tab-workshop .platform-tab-votes {
-    display: none;
-  }
-  #platform-tab-workshop .platform-tab-all-glyph {
-    display: block;
-  }
-  #platform-tab-workshop .platform-tab-all-label {
-    display: block;
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  #platform-tab-workshop .platform-tab-all-votes {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    box-sizing: border-box;
-    border-radius: 999px;
-    background: var(--accent);
-    color: #fff;
-    font-weight: 700;
-    line-height: 1;
-  }
-  #platform-tab-workshop .platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities:not(.hidden) {
-    display: inline-flex;
-  }
-  /* As heavy as the rule above, and after it, so it wins (#18): it was
-     (2,1,0) against (2,3,0), and the All row drew a grey 1 beside a blue 28. */
-  #platform-tab-workshop:has(.platform-tab-all-votes) .platform-tab-mark > #platform-tabs-badge-communities:not(.hidden) {
-    display: none;
-  }
-  /* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT ALL. The tab keeps
+  /* THE COMMUNITIES TAB IS A ROW LIKE THE OTHERS (18 Nov 2026): its glyph,
+     its word and, at the row's end, every vote waiting on you
+     (`.platform-tab-votes`, the row's one number: the grey count of unread
+     channels gives way to it, by the rule beside the badge's own). It was
+     the Recents section's "All 13 communities" row, under the list, while
+     its own page was Home's. */
+  /* ON A COMMUNITY'S PAGE ITS OWN ROW IS LIT, NOT COMMUNITIES. The tab keeps
      `aria-current` (the router lights Communities there, and the declared
      checks read it); only its fill gives way to the row that says which. */
   .platform-tabs:has(.platform-rail-community[aria-current="page"]) #platform-tab-workshop[aria-current="page"] {
@@ -23009,7 +23004,6 @@ html.un-android #back-btn > #back-icon-arrow:not(.hidden) + .back-icon-android {
     stroke-width: 2;
   }
   .platform-rail-communities:hover .platform-rail-search,
-  .platform-rail-communities:has(+ #platform-tab-workshop:hover) .platform-rail-search,
   .platform-rail-search:focus-visible {
     opacity: 1;
   }
@@ -29663,7 +29657,7 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   }
   /* A count that asks for you: white, with ink figures. A channel's unread
      count stays the quiet one. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-rail-votes, .platform-tab-all-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .dev-ws-place-count, .platform-rail-sub-count) {
     background: #ffffff;
     color: #121a0e;
     font-variant-numeric: tabular-nums;
@@ -29710,12 +29704,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs .platform-tab:not([aria-current="page"]) {
     color: rgba(255, 255, 255, 0.92);
   }
-  /* A community's page lights no drawn tab (its own, Communities, is not
-     on the bar) and the marker rests under Home, as in the standard look:
-     Home is read on the marker there. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
-    color: var(--bl-on-sun);
-  }
   /* THE DUO'S SIDE STRIP IS NOT THAT BAR: its capsule is the page's own
      plane, not the blue, so the white words chosen to read on the blue go
      with it, and the glyphs read the page's own ink again. The lit pill
@@ -29728,9 +29716,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] .platform-tab:not([aria-current="page"]) {
     color: var(--text-muted);
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] #platform-tabs:has(#platform-tab-workshop[aria-current="page"]) #platform-tab-home {
-    color: var(--text-primary);
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"]))[data-side-strip] .platform-side-app[aria-current="page"] {
     color: var(--text-primary);
@@ -29760,7 +29745,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 /* A count that asks for you, off the sidebar: deep sky, white figures. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-votes,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-tab-all-votes,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .platform-rail-votes,
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-foryou-pill:not([data-ws-channel-unread]) {
   background: var(--bl-count);
@@ -29874,51 +29858,65 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-discover-card {
   border-color: var(--bl-edge);
 }
-/* HOME. The pinned apps and the pinned communities each sit on a card, as
-   the content of every other page does, under the label that stays on the
-   page. Paint and a radius only on the launcher grid: its box and its
-   padding are what its drag overlay mirrors and what a dropped tile is
-   measured against (Home._rectForCell), so neither moves. The communities'
-   grid has no such overlay and takes a card's own padding. */
+/* HOME, AND THE COMMUNITIES PAGE. The pinned apps sit on a card, as the
+   content of every other page does, under the label that stays on the page,
+   and so do your communities: each group of the Communities tab's page
+   (features/communities/, `.communities-grid`), and on Home the ones a
+   search finds (`#home-communities-section`). Paint and a radius only on the
+   launcher grid: its box and its padding are what its drag overlay mirrors
+   and what a dropped tile is measured against (Home._rectForCell), so
+   neither moves. The communities' grids have no such overlay and take a
+   card's own padding. */
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #app-list,
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(#home-communities-section > .grid, .communities-grid) {
   background-color: var(--bl-card);
   border-radius: 20px;
   box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(#home-communities-section > .grid, .communities-grid) {
   padding: 16px 8px 14px;
 }
-/* HOME'S TWO ACTIONS wear the look's one button (Drea's review of #6699):
-   New project's tile, where Pinned apps ends with it, is the sun pill's
-   square, and Needs you's tile takes the same outline and foot on its pale
-   sun. Nothing else on Home does, so the two stay the loud ones. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-create-tile .home-create-glyph {
+/* THE PAGE'S ONE ACTION wears the look's one button (Drea's review of
+   #6699): New project's tile, where Pinned apps ends with it, is the sun
+   pill's square, and so is New community's, where Joined ends with it on
+   the Communities page. Nothing else on either page does, so they stay the
+   loud ones. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(#home-create-tile, #communities-new-community) .home-create-glyph {
+  border-color: transparent;
   background: var(--bl-sun);
   color: var(--bl-on-sun);
   box-shadow: var(--bl-pill-edge);
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-create-tile .home-create-label {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-create-tile .home-create-label,
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #communities-new-community > span:last-child {
   color: var(--text-primary);
   font-weight: 700;
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-tile > span:first-child > span:first-child {
-  box-shadow: var(--bl-pill-edge);
+/* The Communities page's Discover card is the look's card, lifted as Home's
+   are. Its button is the sun pill by the look's own rule for a filled one. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-discover {
+  background: var(--bl-card);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+}
+/* The Communities tab carries no count here: Home's Needs you card says
+   what waits on you, in this look, and a second number beside it would be
+   the same news twice. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #platform-tab-workshop :is(.platform-tab-votes, .platform-tab-badge) {
+  display: none;
 }
 
 /* HOME'S ACTIONS AND ITS ORDER (Drea's review of #6699). The look takes two
    of Standard (WIP)'s pieces (features/home/index.tsx, wip-kit.tsx) in its
    own colours: New project as a button on the search row, from 768px where
    that row is on screen (a phone keeps the grid's tile, Home.hasSideCard),
-   and the Needs you card in a row of its own under Pinned apps, its tile
-   among the communities gone while the card says the same thing. The kit
-   reads every value from `--wip-*` tokens, which Standard (WIP) sets on its
-   own flag only; this look sets them on Home from its tokens, so a link and
-   a count are the sky, a card is the look's card and the filled action is
-   the sun button. Then the page is: Pinned apps, Needs you, Pinned
-   communities, what this rule does not name, Challenges, Communities to
-   join. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen {
+   and the Needs you card. The kit reads every value from `--wip-*` tokens,
+   which Standard (WIP) sets on its own flag only; this look sets them on
+   Home, and on the Communities page for New community's button, from its
+   tokens, so a link and a count are the sky, a card is the look's card and
+   the filled action is the sun button. Then Home is: Pinned apps, with
+   Needs you beside it on a wide screen and under it on a narrower one, what
+   this rule does not name, Challenges, Communities to join. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(#home-screen, #communities-screen) {
   --wip-page-bg: transparent;
   --wip-font: inherit;
   --wip-gutter: 12px;
@@ -29966,13 +29964,13 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen { --wip-cols: 1; }
 @media (min-width: 640px) { html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen { --wip-cols: 2; } }
 @media (min-width: 1024px) { html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen { --wip-cols: 3; } }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen .wip-cta {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(#home-screen, #communities-screen) .wip-cta {
   background: var(--bl-sun);
   color: var(--bl-on-sun);
   font-weight: 700;
   box-shadow: var(--bl-pill-edge);
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen .wip-cta:active {
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(#home-screen, #communities-screen) .wip-cta:active {
   box-shadow: var(--bl-pill-edge-down);
   transform: translateY(2px);
 }
@@ -30019,23 +30017,18 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen .home-main > #home-join-section {
   order: 6;
 }
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card) #home-needs-tile {
-  display: none;
-}
-
 @media (min-width: 1280px) {
-  /* PINNED COMMUNITIES AS PEOPLE PLACES. From 1280px each community you
-     pinned is a small card on the section's card, with what
+  /* COMMUNITIES AS PEOPLE PLACES. From 1280px each community on the
+     Communities page is a small card on its group's card, with what
      pinned-communities.tsx gives it under its name (data-home-community-detail,
      hidden everywhere else): how many members, what went live this week,
-     and the faces of the people who were there this week. All communities
-     and New community become two small buttons after them. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section > .grid {
+     and the faces of the people who were there this week. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid {
     grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
     gap: 12px;
     padding: 12px;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section [data-home-community] {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] {
     align-items: flex-start;
     gap: 6px;
     padding: 14px 12px;
@@ -30043,14 +30036,14 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     text-align: start;
     box-shadow: inset 0 0 0 1px var(--bl-edge);
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section [data-home-community] > .line-clamp-2 {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > .line-clamp-2 {
     margin-top: 2px;
     font-size: 15px;
     font-weight: 650;
     line-height: 19px;
     color: var(--text-primary);
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section [data-home-community-detail] {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-detail] {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
@@ -30058,25 +30051,122 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     gap: 8px;
     min-width: 0;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) {
-    flex-direction: row;
-    align-self: start;
+
+  /* NEEDS YOU BESIDE PINNED APPS. From 1280px, while something waits on
+     you, the card is a column at Pinned apps' side rather than a row under
+     it: the two start and end on the same lines, the column lists the first
+     five and its heading opens the rest. Home's column is wider for it. The
+     launcher grid keeps its own box (the note on `#app-list` above): the
+     card it sat on is drawn by the box around it, which is what stretches,
+     and the grid rides its middle. Without a vote waiting, or with no apps
+     section, nothing here applies and Home is one column as it was. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-column {
+    max-width: 82.5rem;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-body-fill {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 320px;
+    column-gap: 20px;
+    align-content: start;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-main {
+    display: contents;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-main > *,
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden])) .home-row > #home-challenges-section {
+    grid-column: 1 / -1;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden]) {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) > .home-area-label,
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .home-area-label {
+    box-sizing: border-box;
+    flex: none;
+    height: 40px;
+    margin: 0;
+    padding-top: 16px;
+    padding-bottom: 6px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) > .home-area-label + div {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    /* A tile's name ends well short of its cell, so the grid reads high in
+       its box: this much above it puts the icons' top and the names' foot
+       about the same distance from the card's edges. */
+    padding-top: 14px;
+    background-color: var(--bl-card);
+    border-radius: 20px;
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list {
+    background-color: transparent;
+    box-shadow: none;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card) {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    padding-inline-end: 12px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card {
+    --wip-cols: 1;
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel {
+    flex: 1 1 auto;
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows {
+    margin-top: 0;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows > li:nth-child(n + 6) {
+    display: none;
+  }
+}
+/* ON A PHONE NEEDS YOU IS A ROW OF CARDS that scrolls sideways, as Next
+   challenges is: each decision a card of its own, the next one showing at
+   the edge, and the row snaps card by card. A list of eight was a screen
+   and a half to scroll past before Challenges. The row runs to both edges
+   of the screen; the heading over it still opens all of Needs you. */
+@media (max-width: 767.98px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card > .wip-panel {
+    padding: 0;
+    border-radius: 0;
+    background: none;
+    box-shadow: none;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-rows {
+    display: flex;
     gap: 10px;
-    padding: 8px 12px;
-    border-radius: 14px;
-    box-shadow: inset 0 0 0 1.5px var(--bl-edge);
+    margin: 0 -12px;
+    padding: 2px 12px 18px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-padding-inline: 12px;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) > span:first-child {
-    width: 36px;
-    height: 36px;
-    border-radius: 12px;
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-rows::-webkit-scrollbar {
+    display: none;
   }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) svg {
-    width: 18px;
-    height: 18px;
-  }
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-communities-section :is(#home-all-communities, #home-new-community) > span:last-child {
-    font-size: 14px;
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #home-needs-card .wip-rows > li {
+    flex: 0 0 78%;
+    scroll-snap-align: start;
+    padding: 6px 10px;
+    border-radius: 16px;
+    background: var(--bl-card);
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
   }
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-line {

@@ -2028,12 +2028,14 @@ test('a plan opened from a request in the side panel is a third column, not a sh
 test('the tab says Homeroom bot: a wide seat on a phone, two lines in the Duo column', () => {
   assert.equal(message('core:tabs.ai'), 'Homeroom bot');
   const css = read('public/css/app.css');
-  // One Home (#6361): four seats, Home · Homeroom bot · Messages · You. The
-  // bot's holds the longest word, so it is the widest; Messages next, so a
-  // lit Messages pill still clears the bot's name (overnight audit M01).
-  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.4fr 1\.15fr 1fr; \}/,
-    'Homeroom bot, second, takes the wide seat');
-  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.35fr 1\.15fr 1fr; \}/, 'a little less on the smallest phones');
+  // Five seats, Home · Communities · Homeroom bot · Messages · You (the
+  // Communities tab is back; One Home, #6361, had drawn four). The bot's
+  // holds the longest word, so it is the widest; Communities next, then
+  // Messages, so a lit Messages pill still clears the bot's name (overnight
+  // audit M01).
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.25fr 1\.4fr 1\.15fr 1fr; \}/,
+    'Homeroom bot, third, takes the wide seat');
+  assert.match(css, /#platform-tabs \{ grid-template-columns: 1fr 1\.2fr 1\.35fr 1\.15fr 1fr; \}/, 'a little less on the smallest phones');
   assert.match(css, /:is\(#platform-tab-workshop, #platform-tab-ai\) \.platform-tab-label \{\s+letter-spacing: -\.02em;\s+overflow: visible;\s+text-overflow: clip;\s+\}/,
     'tightened and let out of the cell rather than cut');
   // The Duo column draws icons only (18 Nov 2026), so the bot's name is not
