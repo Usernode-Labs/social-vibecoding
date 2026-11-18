@@ -683,8 +683,27 @@ test('Needs you stands beside Pinned apps on a wide screen, and is a sideways ro
   assert.match(at(`${BOTH} .home-body-fill`).body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 320px;/);
   assert.match(at(`${BOTH} .home-main`).body, /display:\s*contents;/);
   assert.match(at('#home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden])').body, /grid-column:\s*1;\s*grid-row:\s*1;/);
-  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body, /grid-column:\s*2;\s*grid-row:\s*1;/);
-  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows > li:nth-child(n + 6)').body, /display:\s*none;/, 'the first five; the heading opens the rest');
+  const beside = at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body;
+  assert.match(beside, /grid-column:\s*2;\s*grid-row:\s*1;/);
+  // Pinned apps alone sets the row's height: the column stretches to it and
+  // holds its rows to it, so the number of rows the card draws cannot change
+  // the box it was worked out from.
+  assert.match(beside, /contain:\s*size;/, 'the column adds no height of its own to the row');
+  assert.match(beside, /min-height:\s*200px;/, 'a floor of a heading and about two rows');
+  assert.match(beside, /overflow:\s*hidden;/);
+  // A short list ends after its last row instead of matching Pinned apps' height.
+  const card = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card').body;
+  const panel = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel').body;
+  assert.doesNotMatch(card, /flex:\s*1 1 auto;/, 'the card is its own height');
+  assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
+  assert.match(card, /flex:\s*none;/);
+  assert.match(panel, /flex:\s*none;/);
+  // The last row says how many more wait, in the action's colour.
+  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
+  const more = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more').body;
+  assert.match(more, /min-height:\s*3\.25rem;/);
+  assert.match(more, /font-size:\s*15px;\s*font-weight:\s*650;/);
+  assert.match(more, /color:\s*var\(--wip-ink-action\);/);
   // The launcher grid is repainted, never moved: the card is the box around it.
   assert.match(at('#home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list').body, /^\s*background-color:\s*transparent;\s*box-shadow:\s*none;\s*$/);
   assert.match(wide, /> \.home-area-label \+ div \{[\s\S]*?background-color:\s*var\(--bl-card\);/);

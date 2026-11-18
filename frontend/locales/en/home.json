@@ -159,6 +159,38 @@
     "text": "{{count}} decisions waiting for your vote",
     "description": "Line under \"Needs you\" on Home's Needs you card: how many decisions wait on the viewer. Plural."
   },
+  "needsCard.more_one": {
+    "text": "{{count}} more",
+    "description": "Last row of Home's Needs you card, beside Pinned apps, when one more decision waits than the column had room to list. Pressing it opens Needs you."
+  },
+  "needsCard.more_other": {
+    "text": "{{count}} more",
+    "description": "Last row of Home's Needs you card, beside Pinned apps, when more decisions wait than the column had room to list. Pressing it opens Needs you."
+  },
+  "needsCard.kind.change": {
+    "text": "Change #{{number}}",
+    "description": "First, small line of a row on Home's Needs you card: the waiting decision is a change to a project. {{number}} is its number, like 6800."
+  },
+  "needsCard.kind.changeBare": {
+    "text": "Change",
+    "description": "First, small line of a row on Home's Needs you card, for a change with no number yet: the waiting decision is a change to a project."
+  },
+  "needsCard.kind.request": {
+    "text": "Request #{{number}}",
+    "description": "First, small line of a row on Home's Needs you card: the waiting decision is a request, or changes competing to answer one. {{number}} is its number, like 6790."
+  },
+  "needsCard.kind.requestBare": {
+    "text": "Request",
+    "description": "First, small line of a row on Home's Needs you card, for a request with no number yet: the waiting decision is a request filed on a project."
+  },
+  "needsCard.kind.decision": {
+    "text": "Decision",
+    "description": "First, small line of a row on Home's Needs you card: the waiting decision is a vote on how a project is run. It has no number."
+  },
+  "needsCard.meta": {
+    "text": "{{project}} · <0>{{when}}</0>",
+    "description": "Last, small line of a row on Home's Needs you card: the project the decision is about, then how long it has waited. Keep the <0></0> tags around the time. {{project}} is a project's name, like Plant Pal; {{when}} is a time, like 2h ago."
+  },
   "create.lockedTip": {
     "text": "New project. View app quota. {{hint}}",
     "description": "Tooltip and accessible name of the + tile at the end of Home's grid when the viewer cannot create another app right now — and of the small New project button beside \"Show all N apps\" that stands in for it there, in the same state. {{hint}} is one whole sentence saying what pressing it does (\"View your app allowance or request more slots.\")."

@@ -47,11 +47,11 @@ test('it is a section as Pinned projects is: its label line on the page, then on
   const src = read(CARD);
   assert.match(src, /const \{ badgeNeeds \} = useStoreState\(communityScopeStore\)/);
   assert.match(src, /if \(!summary\) return null;/);
-  assert.match(src, /<section id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-needs=\{String\(summary\.total\)\}>/);
+  assert.match(src, /<section ref=\{sectionRef\} id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-needs=\{String\(summary\.total\)\}>/);
   // The label, the count and a chevron are one link to all of Needs you, right after one another.
   assert.match(src, /<SectionHeading>\s*<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+href="#needs"/);
   assert.match(src, /<span id="home-needs-card-title" className="wip-head-words">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<span className="wip-count" aria-hidden="true">\{summary\.total\}<\/span>\s*<\/WipHeadMore>/);
-  assert.match(src, /label=\{more > 0 \? t\('home:needsCard\.seeAllCount', \{ count: summary\.total \}\) : t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
+  assert.match(src, /label=\{leftOut > 0 \? t\('home:needsCard\.seeAllCount', \{ count: summary\.total \}\) : t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
   assert.equal(message('home:needsCard.eyebrow'), 'Needs you');
   assert.equal(message('home:needsCard.seeAll'), 'See all');
   assert.equal(message('home:needsCard.seeAllCount_other'), 'See all {{count}}');
@@ -60,7 +60,7 @@ test('it is a section as Pinned projects is: its label line on the page, then on
   assert.equal(message('home:needsCard.waiting_one'), '{{count}} decision waiting for your vote');
   assert.equal(message('home:needsCard.waiting_other'), '{{count}} decisions waiting for your vote');
   // The card holds the list alone.
-  assert.match(src, /<WipCard className="wip-panel" data-tone="ask">\s*<ul className="wip-rows wip-rows-cols"/);
+  assert.match(src, /<WipCard className="wip-panel" data-tone="ask">\s*<ul ref=\{listRef\} className="wip-rows wip-rows-cols"/);
 });
 
 test('the feed is read at every width, and again when the count moves', () => {
@@ -100,6 +100,60 @@ test('the numbers: the count until the feed is read, then the feed\'s own split'
   assert.equal(decides(feed[2]), false, 'a vote recorded but not counted');
 });
 
+test('beside Pinned apps it lists as many as fit, and its last row says how many more wait', () => {
+  const { needsLayout, NEEDS_ROWS } = loadTsx(CARD);
+  const feed = Array.from({ length: 16 }, (_, i) => item(i + 1, 'a'));
+  assert.equal(NEEDS_ROWS, 8, 'where the column cannot be measured it lists two lines of four');
+  assert.deepEqual(needsLayout(feed, null), { rows: feed.slice(0, NEEDS_ROWS), more: 0 }, 'no measurement: as it always listed');
+  const { rows, more } = needsLayout(feed, 7);
+  assert.equal(rows.length, 6, 'one row of the space goes to the "more" row');
+  assert.equal(more, 10);
+  assert.equal(rows.length + more, feed.length, 'the rows shown plus "N more" are the count in the heading');
+  const two = feed.slice(0, 2);
+  assert.deepEqual(needsLayout(two, 7), { rows: two, more: 0 }, 'a short list lists all of itself and ends there');
+  assert.deepEqual(needsLayout(feed, 16), { rows: feed, more: 0 }, 'everything fits: no "more" row');
+  // With only room for one decision, that one and the "more" row are the column.
+  const tight = needsLayout(feed, 2);
+  assert.deepEqual(tight.rows, feed.slice(0, 1));
+  assert.equal(tight.more, 15);
+  const src = read(CARD);
+  // It measures the column beside Pinned apps only: the page's grid puts the aside in column 2.
+  assert.match(src, /getComputedStyle\(aside\)\.gridColumnStart !== '2'/);
+  assert.match(src, /new ResizeObserver\(measure\);/);
+  assert.match(src, /aside\.clientHeight - \(heading\?\.offsetHeight \|\| 0\) - padding/);
+  // The last row opens all of Needs you and carries the count.
+  assert.match(src, /<a className="wip-row wip-row-more" href="#needs" data-needs-more="">\s*\{t\('home:needsCard\.more', \{ count: more \}\)\}/);
+  assert.equal(message('home:needsCard.more_other'), '{{count}} more');
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /#home-needs-card \.wip-rows > li:nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth');
+});
+
+test('a row reads like a Recent threads row: the project\'s tile, what it is, its title, the project and how long it has waited', () => {
+  const src = read(CARD);
+  const { kindId } = loadTsx(CARD);
+  assert.equal(kindId({ kind: 'proposal', id: 1, title: 't', number: 6800 }), 'home:needsCard.kind.change');
+  assert.equal(kindId({ kind: 'proposal', id: 1, title: 't', number: null }), 'home:needsCard.kind.changeBare');
+  assert.equal(kindId({ kind: 'governance', id: 1, title: 't', number: null }), 'home:needsCard.kind.decision');
+  assert.equal(kindId({ kind: 'ballot', id: 1, title: 't', number: 6790 }), 'home:needsCard.kind.request');
+  assert.equal(kindId({ kind: 'question', id: 1, title: 't', number: 6790 }), 'home:needsCard.kind.request');
+  assert.equal(kindId({ kind: 'question', id: 1, title: 't', number: null }), 'home:needsCard.kind.requestBare');
+  assert.equal(message('home:needsCard.kind.change'), 'Change #{{number}}');
+  assert.equal(message('home:needsCard.kind.request'), 'Request #{{number}}');
+  assert.equal(message('home:needsCard.kind.decision'), 'Decision');
+  assert.equal(message('home:needsCard.meta'), '{{project}} · <0>{{when}}</0>');
+  // The same app tile the notifications sheet draws, from the same two pieces.
+  assert.match(src, /from '\.\.\/apps\/app-card-view'/);
+  assert.match(src, /data-icon=\{appIconKind\(app\)\}\s*className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"\s*>\s*<AppIconContent app=\{app\} \/>/);
+  // Three lines in the text column, the title on one line.
+  assert.match(src, /<span className="wip-item-kind block text-xs text-zinc-500 dark:text-zinc-400 truncate">\s*\{t\(kindId\(item\)/);
+  assert.match(src, /<b className="wip-item-title block text-\[15px\] font-\[650\] truncate">\{item\.title\}<\/b>/);
+  assert.match(src, /<RichMessage\s+id="home:needsCard\.meta"\s+values=\{\{ project: app\.name, when \}\}\s+components=\{\[<time title=\{whenTitle\} \/>\]\}\s*\/>/);
+  // No waiting time: the project's name alone.
+  assert.match(src, /\) : \(\s*<span className="wip-item-meta block text-\[13px\][^"]*">\{app\.name\}<\/span>/);
+  // One pill a row, the card's own.
+  assert.match(src, /className=\{decides\(item\) \? 'wip-pill wip-pill-action' : 'wip-pill'\}/);
+});
+
 test('the icons are the communities that wait: once each, in order, four at most', () => {
   const { waitingApps } = loadTsx(CARD);
   const feed = [item(1, 'a'), item(2, 'a'), item(3, 'b'), { kind: 'question', id: 4, title: 'q', app: null },
@@ -112,7 +166,7 @@ test('what waits is a list in the look\'s columns, each row opening its project\
   const src = read(CARD);
   const { NEEDS_ROWS } = loadTsx(CARD);
   assert.equal(NEEDS_ROWS, 8, 'two lines of four on a wide screen; See all has the rest');
-  assert.match(src, /<ul className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">/);
+  assert.match(src, /<ul ref=\{listRef\} className="wip-rows wip-rows-cols" aria-labelledby="home-needs-card-title">/);
   assert.match(src, /href=\{slug \? placeHref\(slug, 'needs'\) : '#needs'\}/, 'a row is a link a new tab can open');
   assert.match(src, /win\.AppView\?\._landOnTab\?\.\(slug, 'needs'\);[\s\S]*?win\.App\?\.navigateToApp\?\.\(slug, 'dev'\);/, 'and a plain tap lands on that place');
   // One pill a row: filled when the viewer's vote decides, plain when it is advisory.
