@@ -581,23 +581,54 @@ function whereLine(app: AiApp | null, number: number | null | undefined): Phrase
     : { id: 'messages:ai.row.project', values: where(app, null) };
 }
 
-/** Pure: what the feed's cards are about, as `slug#number`, so a thread already owed there is not listed twice. */
+/**
+ * Pure: a request's key, `slug#number`, and a change's, `slug#change:number`.
+ * 18 Nov 2026: on a project still on GitHub a change's number is GitHub's
+ * and a request's is Homeroom's, two counters that meet. With one key for
+ * both, PR 6792 read as request #6792: while its author owed a vote on the
+ * change built for #6792, PR 6792 was on none of these lists.
+ */
+const requestKey = (slug: string, number: number) => `${slug}#${Number(number)}`;
+const changeKey = (slug: string, number: number) => `${slug}#change:${Number(number)}`;
+
+/** Pure: the request a Needs you card is about: a vote on its change, a pick between its changes, the bot's question. */
+function needRequest(item: NeedItem): number | null {
+  if (item.kind === 'ballot') return item.ballot?.number || null;
+  if (item.kind === 'proposal') return item.request?.number || null;
+  if (item.kind === 'question') return item.number || null;
+  return null;
+}
+
+/** Pure: the change a Needs you card is about, by its number (a ballot's is its first change's). */
+function needChange(item: NeedItem): number | null {
+  return item.kind === 'proposal' || item.kind === 'ballot' ? item.number || null : null;
+}
+
+/** Pure: what the feed's cards are about, by request and by change, so a thread already owed there is not listed twice. */
 export function owedKeys(needs: NeedItem[] | null): Set<string> {
   const owed = new Set<string>();
   for (const item of needs || []) {
     if (!item.app) continue;
-    for (const number of [needNumber(item), shownNumber(item)]) {
-      if (number) owed.add(`${item.app.slug}#${number}`);
-    }
+    const request = needRequest(item);
+    const change = needChange(item);
+    if (request) owed.add(requestKey(item.app.slug, request));
+    if (change) owed.add(changeKey(item.app.slug, change));
   }
   return owed;
+}
+
+/** Pure: the request a thread's row is numbered by, or null for a change's own thread, which is numbered by its change. */
+function threadRequest(t: AiThread): number | null {
+  return t.kind === 'change' ? null : t.number || null;
 }
 
 /** Pure: whether a thread is one the feed already lists, by its request's number or its change's. */
 function isOwed(owed: Set<string>, t: AiThread): boolean {
   if (!t.app) return false;
-  return (!!t.number && owed.has(`${t.app.slug}#${t.number}`))
-    || (!!t.change?.number && owed.has(`${t.app.slug}#${t.change.number}`));
+  const request = threadRequest(t);
+  const change = t.change?.number || (t.kind === 'change' ? t.number : null);
+  return (!!request && owed.has(requestKey(t.app.slug, request)))
+    || (!!change && owed.has(changeKey(t.app.slug, change)));
 }
 
 /**
@@ -606,7 +637,7 @@ function isOwed(owed: Set<string>, t: AiThread): boolean {
  */
 export function filedKey(p: AiPrivate): string | null {
   if ((p.state !== 'filed' && p.state !== 'posted') || !p.app || !(Number(p.resultRef) > 0)) return null;
-  return `${p.app.slug}#${Number(p.resultRef)}`;
+  return requestKey(p.app.slug, Number(p.resultRef));
 }
 
 /**
@@ -625,15 +656,17 @@ function filedThreads(work: AiWork | null): Map<string, number> {
 
 /** Pure (#6153): a request's row, carrying the private thread it was filed from, which it opens. */
 function withThread(filed: Map<string, number>, t: AiThread): AiThread {
-  const rootId = t.app && t.number ? filed.get(`${t.app.slug}#${t.number}`) : undefined;
+  const request = threadRequest(t);
+  const rootId = t.app && request ? filed.get(requestKey(t.app.slug, request)) : undefined;
   return rootId ? { ...t, rootId } : t;
 }
 
-/** Pure (#6153): every request with a row in any list, as `slug#number`. */
+/** Pure (#6153): every request with a row in any list, as `slug#number` (a change's own row is no request's). */
 function listedKeys(needs: NeedItem[] | null, work: AiWork | null): Set<string> {
   const listed = owedKeys(needs);
   for (const t of [...(work?.needs || []), ...(work?.next || []), ...(work?.waiting || []), ...(work?.live || [])]) {
-    if (t.app && t.number) listed.add(`${t.app.slug}#${t.number}`);
+    const request = threadRequest(t);
+    if (t.app && request) listed.add(requestKey(t.app.slug, request));
   }
   return listed;
 }

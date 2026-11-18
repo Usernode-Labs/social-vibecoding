@@ -661,7 +661,8 @@ test('In progress and Waiting each leave out a thread the feed lists, by its req
   const work = {
     private: [],
     next: [thread(1, 6036, 'fixing', { group: 'next', change: { id: 9, number: 6025 } }), thread(2, 6040, 'building', { group: 'next', by: 'bot' })],
-    waiting: [thread(3, 6025, 'vote'), thread(4, 6038, 'held', { heldBy: 'approvals' })],
+    // Its own thread: a change for no request is numbered by the change.
+    waiting: [thread(3, 6025, 'vote', { kind: 'change', change: { id: 10, number: 6025 } }), thread(4, 6038, 'held', { heldBy: 'approvals' })],
     live: [],
   };
   assert.deepEqual(inProgress(needs, work).map((t) => t.threadId), [2], 'its change #6025 is owed: once, in Needs you');
@@ -680,7 +681,8 @@ test('a vote on a change for a request names the request\'s number, and opens on
   const [row] = needsYou(needs, null);
   assert.equal(words(row.sub), 'Garden club · #6038');
   assert.equal(row.href, '#app/garden/dev/issues/6038');
-  assert.deepEqual([...owedKeys(needs)].sort(), ['garden#6032', 'garden#6038']);
+  // 18 Nov 2026: by the request's number and, apart, the change's (tests/thread-shared-number.test.js).
+  assert.deepEqual([...owedKeys(needs)].sort(), ['garden#6038', 'garden#change:6032']);
   const work = { private: [], next: [], waiting: [thread(3, 6038, 'vote', { change: { id: 9, number: 6032 } })], live: [] };
   assert.deepEqual(upNext(needs, work), [], 'once, in Needs you');
   const [plain] = needsYou([{ kind: 'proposal', id: 2, number: 6050, title: 'No request', app }], null);
