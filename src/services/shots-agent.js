@@ -534,6 +534,21 @@ async function dispatch(config, options, injected = {}) {
   return dispatchClaude(config, options, deps);
 }
 
+// The change's worker, started before the agent's turn and its clock
+// (shots-orchestrator.js dispatchAgent): dispatch then finds it running.
+// Throws what the worker's setup failed with.
+async function prepareWorker(session, { onProgress = null, onShotsDiagnostic = null } = {}, injected = {}) {
+  const options = { onShotsDiagnostic };
+  reportDiagnostic(options, { kind: 'worker_prepare_start' });
+  try {
+    await ensureShotsWorker(session, { onProgress, workerService: injected.workerService || worker });
+  } catch (error) {
+    reportDiagnostic(options, { kind: 'worker_prepare_end', outcome: 'error' });
+    throw error;
+  }
+  reportDiagnostic(options, { kind: 'worker_prepare_end', outcome: 'ok' });
+}
+
 module.exports = {
   ShotsAgentError,
   DEFAULT_AGENT_MODEL,
@@ -545,6 +560,7 @@ module.exports = {
   turnUsage,
   resultThreadId,
   ensureShotsWorker,
+  prepareWorker,
   temporaryShotsWorker,
   withDispatchTimeout,
   dispatch,

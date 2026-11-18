@@ -86,9 +86,18 @@ function platformFault(error, { now = Date.now() } = {}) {
   // once, a few minutes on, by the recovery sweep.
   if (error.code === 'github_unavailable') return { kind: 'github_unavailable', retryAt: now + 5 * 60_000 };
   if (state.PLATFORM_FAULT_KINDS.has(error.shotsPlatformFault)) return { kind: error.shotsPlatformFault };
-  if (worker.isRetryableBootstrapError(error)) return { kind: 'worker_bootstrap' };
+  // The change's worker could not start (its volume, its image, no room on
+  // any node, a setup that never finished): the platform's, never the
+  // change's, so the run is taken again once.
+  if (worker.isRetryableBootstrapError(error) || worker.isWorkerStartFailure(error)) return { kind: 'worker_bootstrap' };
   return null;
 }
+
+// How long the shots wait for the change's worker to start before they say
+// it did not. Off the agent's own clock (its turn starts once the worker is
+// up), and short enough that the agent's whole budget still fits inside the
+// machine's deadline for the step (machine.ts AGENT_OVERDUE_MS, 15 minutes).
+const WORKER_PREPARE_MAX_MS = 6 * 60_000;
 
 const DIFF_CONTEXT_CHARS = 8_000;
 const MAX_AGENT_EVENTS = 128;
@@ -1271,10 +1280,15 @@ async function buildCopies(config, pool, {
 // failed.
 function agentErrorOf(error) {
   if (!error) return null;
-  const code = errorCode(error);
+  // A worker that never started says so, in words, not as the agent's
+  // failure or its running out of time (18 Nov 2026: "The shots agent ran
+  // out of time." for a worker whose disk volume could not be mounted).
+  const workerStart = worker.workerStartReason(error);
+  const code = workerStart ? 'shots_worker_failed' : errorCode(error);
   return {
     code,
-    message: visibleError(error),
+    message: workerStart || visibleError(error),
+    ...(workerStart ? { workerStart: true } : {}),
     busy: agentBusyRetryable(error),
     died: agentDiedRetryable(error),
     timedOut: code === 'shots_agent_timeout',
@@ -1380,9 +1394,44 @@ async function dispatchAgent(config, pool, {
     }
   };
   await stopIfEnded();
+  // The change's worker is started before the agent's clock (durable-turn
+  // `prepare`): a worker that takes long to start, or never does, is not
+  // the agent running out of time. Bounded on its own (WORKER_PREPARE_MAX_MS);
+  // what it failed with is the dispatch's answer.
+  let prepared = null;
+  const prepare = typeof deps.shotsAgent.prepareWorker !== 'function' ? null : async () => {
+    await stopIfEnded();
+    const startedMs = Date.now();
+    let timer;
+    try {
+      await Promise.race([
+        deps.shotsAgent.prepareWorker(session, { onProgress: onProgress ? (line) => onProgress(`Shots agent: ${line}`) : null, onShotsDiagnostic },
+          injected.agentDependencies || {}),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(Object.assign(new Error('The worker did not finish starting in time.'), { code: 'worker_start_timeout' })),
+            injected.workerPrepareMaxMs ?? WORKER_PREPARE_MAX_MS);
+        }),
+      ]);
+      prepared = { ok: true };
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      prepared = { error };
+    } finally {
+      clearTimeout(timer);
+      dispatchTrace.workerPrepareMs = Date.now() - startedMs;
+    }
+    // The agent's clock starts now, and so does the run's control plane's.
+    if (prepared.ok) await shotsControl.extend(pool, runId, Date.now() + budgetMs + CONTROL_SLACK_MS);
+  };
   const dispatch = async (extra = {}, { budgetMs: left = budgetMs } = {}) => {
     await stopIfEnded();
     dispatchTrace.timeoutMs = left;
+    if (prepared?.error) {
+      const agentError = agentErrorOf(prepared.error);
+      dispatchTrace.outcome = 'failed';
+      dispatchTrace.code = agentError.code;
+      return { result: null, agentError };
+    }
     try {
       const dispatched = await deps.shotsAgent.dispatch(config, {
         pool, session, runId,
@@ -1415,7 +1464,7 @@ async function dispatchAgent(config, pool, {
     }
   };
   const turn = await deps.durableTurn.runTurn(steps || deps.durableSteps.none(), key, {
-    pool, session, mode: 'shots', budgetMs, dispatch, owner,
+    pool, session, mode: 'shots', budgetMs, dispatch, owner, prepare,
     // Its own clock ends only its own turn (by its record).
     stop: () => require('./durable-turn').clockStop(deps.worker, pool, sessionId, owner),
     onProgress,
@@ -1427,7 +1476,8 @@ async function dispatchAgent(config, pool, {
   let error = routed.agentError || null;
   if (!error && typeof routed.error === 'string') error = { code: 'shots_agent_failed', message: routed.error, busy: false, died: false };
   if (!error && turn.followed) error = followedErrorOf(routed.result);
-  if (turn.stopped && !error?.busy) error = { ...(error || {}), code: 'shots_agent_timeout', message: 'The shots agent ran out of time.', timedOut: true };
+  // A worker that never started never ran the agent: its clock is not why.
+  if (turn.stopped && !error?.busy && !error?.workerStart) error = { ...(error || {}), code: 'shots_agent_timeout', message: 'The shots agent ran out of time.', timedOut: true };
   const finalResponse = agentFinalResponseSummary(routed.result || null, authTokens, a.origins, a.phoneTestCode);
   if (finalResponse) metrics.agentFinalResponses.push({ dispatch: 1, ...finalResponse });
   metrics.timingsMs.agentExploration = Math.max(0, Date.now() - metrics.startedAtMs);
