@@ -193,3 +193,17 @@ test('the directory is read at start, refreshed behind its readers, and left alo
     'warmed where a web process warms its other caches');
   assert.match(read('src/routes/public-api.js'), /const DIRECTORY_KEEP_WARM_MS = 10 \* 60 \* 1000;/);
 });
+
+// ── The conversations list reads a few conversations at a time ─────────
+
+test('the conversations list reads four at a time, in order, and never more', () => {
+  const src = read('src/services/conversations.js');
+  const fn = src.slice(src.indexOf('async function listConversations(pool, user) {'), src.indexOf('const LIST_READS_AT_ONCE = 4;'));
+  assert.ok(fn.length > 0 && fn.length < 2500, 'the list and its bound sit together');
+  assert.match(fn, /for \(let at = 0; at < rows\.length; at \+= LIST_READS_AT_ONCE\) \{/);
+  assert.match(fn, /rows\.slice\(at, at \+ LIST_READS_AT_ONCE\)\.map\(\(row\) => getConversation\(pool, user, row\.id\)\)/);
+  assert.match(fn, /for \(const conversation of group\) if \(conversation\) out\.push\(conversation\);/,
+    'each group lands whole and in the list\'s order');
+  assert.doesNotMatch(fn, /for \(const row of rows\) \{\s*const conversation = await getConversation/,
+    'not one conversation after another');
+});
