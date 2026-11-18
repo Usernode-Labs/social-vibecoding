@@ -416,20 +416,22 @@ Do not run git commands. I will commit and push for you after you finish editing
         sync_abort_conflict "CC left conflict markers; aborting merge"
       fi
 
-      # #6536: the tree the model resolved must at least parse. A dropped
-      # comment opener once shipped that way: the build then failed with
+      # #6536/#6829: the tree the model resolved must at least parse, define no
+      # JSON key twice, and leave the language catalogs valid. A dropped
+      # comment opener once shipped that way, and a sync that kept both sides
+      # of en/home.json defined six keys twice; each time the build failed with
       # nothing saying the sync had broken it. The model gets one more turn
-      # with the errors; if the files still do not parse, nothing is pushed
-      # and the same conflict result names them.
+      # with the errors; if the tree is still unusable, nothing is pushed and
+      # the same conflict result names the files.
       echo "__USERNODE_PHASE__ sync_parse_check"
       if ! sync_parse_run; then
         SYNC_PARSE_FILES=$(sync_parse_files_from_output "$SYNC_PARSE_OUT")
         echo "__USERNODE_PHASE__ sync_parse_fix_cc"
-        SYNC_FIX_PROMPT="Your conflict resolution left files that do not parse. The tree cannot be built as it stands.
+        SYNC_FIX_PROMPT="Your conflict resolution left files that do not parse, define a JSON key more than once, or break the language catalogs. The tree cannot be built as it stands.
 
 $SYNC_PARSE_OUT
 
-Fix only what stopped each file parsing, preserving the intent of both sides of the conflict. Do not run git commands. I will commit and push for you after you finish editing files."
+Where a key is defined more than once, leave exactly one definition, keeping the side that matches main's code where they differ. Otherwise fix only what the errors name, preserving the intent of both sides of the conflict. Do not run git commands. I will commit and push for you after you finish editing files."
 
         claude --print --dangerously-skip-permissions --verbose \
           --model "$MODEL" --output-format stream-json -p "$SYNC_FIX_PROMPT"
@@ -453,7 +455,18 @@ Fix only what stopped each file parsing, preserving the intent of both sides of 
     # and commit. Resolved either way: a tree nobody has tested, whose
     # checks run before it can merge.
     git add -A
-    if ! git commit -m "$COMMIT_MESSAGE" 2>&1; then
+    # #6829: name the files whose conflicts this merge resolved, so the author
+    # and Homeroom bot's fix step can see what it decided. The list is the one
+    # captured when the merge stopped, so the subject stays the same.
+    if [ -n "$CONFLICT_FILES_CSV" ]; then
+      RESOLVED_LIST=$(printf '%s' "$CONFLICT_FILES_CSV" | sed 's/,/, /g')
+      git commit -m "$COMMIT_MESSAGE" -m "Resolved: $RESOLVED_LIST" 2>&1
+      SYNC_COMMIT_STATUS=$?
+    else
+      git commit -m "$COMMIT_MESSAGE" 2>&1
+      SYNC_COMMIT_STATUS=$?
+    fi
+    if [ "$SYNC_COMMIT_STATUS" -ne 0 ]; then
       echo "__USERNODE_WARN__ commit failed after conflict resolution"
       git merge --abort 2>&1 || true
       echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=$BEHIND_NOW sha= push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"

@@ -1634,6 +1634,13 @@
       "preview": "`SELECT cs.id, ${listedResultsSql('cs')} FROM chat_sessions cs WHERE cs.id = ANY($1::int[])`"
     },
     {
+      "source": "src/services/live-drafts.js",
+      "kind": "structural-template",
+      "fingerprint": "945f6b282591a7a10a8f",
+      "count": 1,
+      "preview": "`SELECT ${access.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
+    },
+    {
       "source": "src/services/llm-telemetry.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "a4952cce9e8871368ba2",

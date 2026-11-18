@@ -3588,6 +3588,13 @@ const App = {
             // store applies member-scoped events without a legacy DOM write.
             window.UsernodeReact?.messages?.handleEvent?.(data);
             break;
+          case 'live_draft_changed':
+            // A live draft of this person's moved (services/live-drafts.js):
+            // opened, an edit saved and its preview restarted, proposed or
+            // closed. The draft's bar in its thread hears it
+            // (features/messages/live-draft-bar.tsx); nothing here writes the DOM.
+            window.dispatchEvent(new CustomEvent('live-draft-changed', { detail: data }));
+            break;
           case 'homeroom_bot_work_changed':
           case 'work_state':
             // #3692: the Homeroom bot started or finished work for this

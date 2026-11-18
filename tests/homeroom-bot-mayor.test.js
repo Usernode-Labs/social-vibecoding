@@ -119,7 +119,7 @@ test('the tools: sixteen lookups and actions and a reply, every one closed to ex
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
     ['progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'answer_question', 'revise_proposal',
       'comment_on_request', 'start_request', 'offer_request', 'offer_move_request', 'offer_copy_request', 'offer_close_request', 'withdraw_proposal',
-      'draw_screen', 'close_thread', 'report_problem', 'offer_new_project', 'reply']);
+      'draw_screen', 'open_app_preview', 'close_thread', 'report_problem', 'offer_new_project', 'reply']);
   // 14 Nov 2026: Main Chat is gone, and with it the one tool that existed
   // only to open a thread from Main (start_project_thread). A new project
   // starts in the thread the person is in: offer_new_project and draw_screen.
@@ -1032,7 +1032,7 @@ test('#6251: the filed body carries the pictures, Done when, Related and Where, 
 const realDm = require('../src/services/homeroom-bot-dm');
 
 const callOf = (id, name, args = {}) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
-const ENDING = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+const ENDING = (name) => name === 'reply' || name === 'draw_screen' || name === 'open_app_preview' || name.startsWith('offer_');
 
 function chatTurn(chat, { extra = {}, message = {} } = {}) {
   const sent = [];
