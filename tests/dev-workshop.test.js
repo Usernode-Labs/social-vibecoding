@@ -1023,7 +1023,9 @@ test('#3293: the weeks go back, one at a time, to the project’s start', async 
   assert.match(html, /data-ws-weeks-more=""><svg[\s\S]*?<\/svg>Earlier weeks<\/button>/, 'live while there is more');
   assert.ok(!html.includes('data-ws-week-start'), 'with no floor drawn mid-list');
   // THE BEGINNING, SAID, once the list is walked to its end, and only then.
-  assert.match(WORKSHOP, /\) : firstWeek && pastWeeks\.length \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{t\('project:since\.projectStarted', \{ date: weekDate\(firstWeek\) \}\)\}/);
+  // #6826: the note is also held back while the Done list is pending, since
+  // the weeks it closes are counted from it.
+  assert.match(WORKSHOP, /\) : !v\.mergedPending && firstWeek && pastWeeks\.length \? \(\s*<p className="dev-ws-week-note" data-ws-week-start="">\s*\{t\('project:since\.projectStarted', \{ date: weekDate\(firstWeek\) \}\)\}/);
   assert.equal(message('project:since.projectStarted', { date: 'Aug 25' }), 'This project started the week of Aug 25.');
 
   // A cache written before the counts existed carries none, and the week

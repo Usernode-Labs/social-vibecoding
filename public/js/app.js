@@ -2861,11 +2861,20 @@ const App = {
   // The worker only posts when it actually served stale bytes AND they
   // actually changed, so on a healthy connection none of this ever runs.
   _apiUpdateTimer: null,
+  // #6826: which reads the corrections in this burst moved, so the board can
+  // re-read those parts instead of all seven. Null when the burst named none
+  // (or a screen that does not narrow has taken them).
+  _apiUpdateUrls: null,
 
-  _onApiUpdated() {
+  _onApiUpdated(event) {
     // Coalesce: one slow load can correct several endpoints a few ms apart,
     // and the screen's loader re-pulls all of them anyway.
     clearTimeout(App._apiUpdateTimer);
+    const url = event && event.detail && event.detail.url;
+    if (url) {
+      if (!App._apiUpdateUrls) App._apiUpdateUrls = new Set();
+      App._apiUpdateUrls.add(url);
+    }
     App._apiUpdateTimer = setTimeout(App.refreshActiveScreen, 250);
   },
 
@@ -2886,6 +2895,11 @@ const App = {
       // every visible Workshop re-pulled its whole board about once a second
       // until Chrome refused new requests (net::ERR_INSUFFICIENT_RESOURCES).
       App._announceRefreshIntent();
+
+      // #6826: the reads this correction is about (App._onApiUpdated). Taken
+      // and cleared here, so a burst never leaks into a later refresh.
+      const urls = App._apiUpdateUrls;
+      App._apiUpdateUrls = null;
 
       const visible = (id) => {
         const el = document.getElementById(id);
@@ -2928,7 +2942,9 @@ const App = {
 
       if (App.currentApp && App.currentTab === 'dev'
           && window.AppView && AppView.refreshDevData) {
-        AppView.refreshDevData('api-update');
+        // #6826: `urls` is the burst's own reads, so the board re-reads only
+        // those (taken and cleared at the top of this method).
+        AppView.refreshDevData('api-update', urls ? { urls } : null);
         return;
       }
       if (visible('leaderboard-screen')) { App._refreshLeaderboard(); return; }

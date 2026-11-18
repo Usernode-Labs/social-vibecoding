@@ -128,7 +128,10 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   // before the first paint, so a hub with none yet holds its skeleton
   // (communityPending, onboarding run two).
   assert.match(src, /const data = useCommunity\(slug\);/);
-  assert.match(src, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;\s+void reloadCommunity\(slug\);/);
+  // #6826: and a mount within COMMUNITY_FRESH_MS of an answered read shares
+  // it, so the page's later parts (its rows, the hero, the channel card, the
+  // sidebar's row) mount onto one GET /community rather than three.
+  assert.match(src, /useLayoutEffect\(\(\) => \{\s+if \(!slug \|\| inflight\.has\(slug\)\) return;[\s\S]{0,400}?void reloadCommunity\(slug\);/);
 });
 
 test('the channel is a hub card at its old address; Join asks under its button and joins through offerJoin', () => {
