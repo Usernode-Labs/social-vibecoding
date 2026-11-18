@@ -27,13 +27,14 @@ const profiles = require('../src/services/bot-profiles');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('every thread kind has its profile, and every place its kind', () => {
-  assert.deepEqual(profiles.KINDS, ['private', 'design', 'request', 'change', 'channel', 'reply']);
+  assert.deepEqual(profiles.KINDS, ['private', 'design', 'draft', 'request', 'change', 'channel', 'reply']);
   assert.ok(!('main' in profiles.PROFILES), 'Main Chat\'s profile is retired');
   for (const kind of profiles.KINDS) {
     const p = profiles.profileOf(kind);
     assert.equal(p.kind, kind);
-    assert.ok(['chat', 'design', 'thread'].includes(p.surface), kind);
-    assert.ok(['main', 'design', 'thread'].includes(p.scope), kind);
+    assert.ok(['chat', 'design', 'draft', 'thread'].includes(p.surface), kind);
+    // A draft's tools are its own (live-draft-bot.js TOOLS), none of src/services/bot-tools/.
+    assert.ok(['main', 'design', 'thread', 'draft'].includes(p.scope), kind);
     assert.ok(p.tools.length && p.limits && p.prompt, kind);
   }
   for (const [type, kind] of Object.entries({ issue: 'request', session: 'change', chat: 'channel', category: 'channel', message: 'reply' })) {
@@ -45,6 +46,8 @@ test('every thread kind has its profile, and every place its kind', () => {
   assert.equal(profiles.kindInChat({ threadRootId: 9 }), 'private');
   assert.equal(profiles.kindInChat({ threadRequest: { appId: 1, issueNumber: 2 } }), 'private', 'a request card\'s thread from before');
   assert.equal(profiles.kindInChat({ design: { rootId: 9 } }), 'design');
+  assert.equal(profiles.kindInChat({ draft: { id: 3 } }), 'draft');
+  assert.equal(profiles.kindInChat({ draft: { id: 3 }, design: { rootId: 9 } }), 'draft', 'an open draft holds its thread');
   assert.throws(() => profiles.profileOf('elsewhere'), /no thread kind elsewhere/);
 });
 
@@ -69,6 +72,10 @@ test('no surface offers a tool its profile does not list, and every rule named i
   assert.ok(!mayorTools.includes('start_project_thread') && !chat.includes('start_project_thread'));
   const design = profiles.profileOf('design').tools;
   for (const t of require('../src/services/design-bot').TOOLS) assert.ok(design.includes(t.function.name), `design: ${t.function.name}`);
+  const draft = profiles.profileOf('draft').tools;
+  const draftTools = require('../src/services/live-draft-bot').TOOLS.map((t) => t.function.name);
+  for (const name of draftTools) assert.ok(draft.includes(name), `draft: ${name}`);
+  for (const name of draft) assert.ok(draftTools.includes(name), `draft lists ${name}, which its bot offers`);
   for (const kind of ['request', 'change', 'channel', 'reply']) {
     const speaks = profiles.profileOf(kind).speaks;
     assert.deepEqual(speaks.slice(0, profiles.THREAD_CHECKS.length), profiles.THREAD_CHECKS, `${kind}: the common checks first`);
@@ -125,7 +132,7 @@ test('the surfaces\' limits are their profiles\'', () => {
   assert.equal(voice.MAX_ROUNDS, profiles.THREAD_LIMITS.rounds);
   for (const [file, name] of [
     ['src/services/homeroom-bot-mayor.js', 'CHAT_LIMITS'], ['src/services/homeroom-bot-voice.js', 'THREAD_LIMITS'],
-    ['src/services/design-bot.js', 'DESIGN_LIMITS'],
+    ['src/services/design-bot.js', 'DESIGN_LIMITS'], ['src/services/live-draft-bot.js', 'DRAFT_LIMITS'],
   ]) {
     assert.match(read(file), new RegExp(`const MAX_ROUNDS = ${name}\\.rounds;`), file);
   }
@@ -158,14 +165,16 @@ test('the one entry runs each kind on its surface, and the callers use it', asyn
   const deps = {
     mayor: { runDmTurn: async (_p, _c, args) => { ran.push(['chat', args.conversationId]); return 'chat'; } },
     designBot: { answer: async (_p, _c, args) => { ran.push(['design', args.design.rootId]); return 'design'; } },
+    draftBot: { answer: async (_p, _c, args) => { ran.push(['draft', args.draft.id]); return 'draft'; } },
     voice: { runTurn: async (_p, _c, args) => { ran.push(['thread', args.place.type]); return 'thread'; } },
   };
   await assert.rejects(threadBot.answer({}, {}, { kind: 'main', conversationId: 5, deps }), /no thread kind main/);
   assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 5, deps }), 'chat');
   assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 6, deps }), 'chat');
   assert.equal(await threadBot.answer({}, {}, { kind: 'design', design: { rootId: 9 }, deps }), 'design');
+  assert.equal(await threadBot.answer({}, {}, { kind: 'draft', draft: { id: 3 }, deps }), 'draft');
   assert.equal(await threadBot.answer({}, {}, { kind: 'request', place: { type: 'issue', ref: 4 }, deps }), 'thread');
-  assert.deepEqual(ran, [['chat', 5], ['chat', 6], ['design', 9], ['thread', 'issue']]);
+  assert.deepEqual(ran, [['chat', 5], ['chat', 6], ['design', 9], ['draft', 3], ['thread', 'issue']]);
   await assert.rejects(threadBot.answer({}, {}, { kind: 'nowhere', deps }), /no thread kind/);
   const dm = read('src/services/homeroom-bot-dm.js');
   assert.match(dm, /require\('\.\/thread-bot'\)\.answer\(pool, config, \{ kind: 'design',/);

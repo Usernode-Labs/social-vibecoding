@@ -418,10 +418,21 @@ const earlyOf = (a: Attempt): WorkRef => ({ kind: WORK.unitEarly, key: unitEarly
 const pendingWrite = (d: Data, head: string, phase: 'building' | 'testing', trigger: string | null): DomainWrite =>
   ({ type: 'pending', sessionId: d.sessionId, head, phase, trigger });
 
+// The machine's data without the no-checks mark (begin, on a proposal's revision).
+function withoutPreviewOnly(d: Data): Data {
+  const { previewOnly: _cleared, ...rest } = d;
+  return rest as Data;
+}
+
 // Prepare attempt n+1 of `head`. What serves keeps serving until it is ready.
 function begin(s: Live, head: string, trigger: string | null, ctx: TransitionContext, deps: Deps,
   only = false): Outcome<PState> {
-  const d0 = s.data;
+  // A session previewed with no checks while it was a live draft
+  // (services/live-drafts.js) is checked like any other change once it goes
+  // up for a vote: the vote's own revision clears the mark. Nothing else
+  // that is previewed with no checks (the App bench) is ever proposed.
+  const proposed = trigger === 'promote-kick' && !!s.data.previewOnly && !only;
+  const d0: Data = proposed ? withoutPreviewOnly(s.data) : s.data;
   const previewOnly = only || !!d0.previewOnly;
   const old = obsolete(d0, ctx, deps);
   const n = d0.last + 1;

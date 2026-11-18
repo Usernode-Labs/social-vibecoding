@@ -430,6 +430,11 @@
       "id": "app-owned-files",
       "sha256": "8eb7b1a1db5a3ae080db15b1d34b94aab669d076845023a0d7c41b3d2b7caa44",
       "schemaSha256": "cf82a338d78ea866385758e2a6442c619c534d845c15cf81cfca572f039e3414"
+    },
+    {
+      "id": "live-drafts",
+      "sha256": "ebc3eddb83712a37716e0526d95bfde7222a43efd6998e0cb603167d25b87c23",
+      "schemaSha256": "9ec333d548944fc1db66de84e8cf54b3882767ea86c4368b8ffd9642d875ca4a"
     }
   ]
 }

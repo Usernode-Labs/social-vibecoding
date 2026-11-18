@@ -569,6 +569,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       app, sessionId: session.id, commitHash,
     });
 
+    // A live draft's preview (services/live-drafts.js) starts the draft's
+    // supervisor instead of the app's own command, with the draft's secret:
+    // the draft bot's edits are then written into it and the app restarts
+    // in place. Null for every other preview, which deploys as it always did.
+    const live = await require('./live-drafts').runtimeFor(config, { session, build, head: resolvedRevision || commitHash });
+
     const healthStartedAt = Date.now();
     reportBuildStep(config, session, 'health', timings, healthStartedAt);
     const deployed = await applicationRuntime.deploy(config, {
@@ -582,7 +588,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
         ...platformEnv,
         ...stagingMerge.env,
         ...previewProjectsEnv,
+        ...(live ? live.env : {}),
       },
+      ...(live ? { command: live.command } : {}),
       port: 3000,
       // #816: state the preview's resourcing rather than inheriting the
       // production-app defaults by omission. See docker.STAGING_CPUS for
@@ -600,6 +608,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, { at
       attempt: attempt.n, servingAttempt: attempt.servingN ?? null, claim: attempt.claim || 0,
     });
     timings.healthMs = Date.now() - healthStartedAt;
+    if (live) await require('./live-drafts').noteDeployed(config, { sessionId: session.id });
     const { hostname, url: stagingUrl } = deployed;
 
     // NOTE: the edge verification intentionally does NOT happen here. The

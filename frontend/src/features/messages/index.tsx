@@ -37,6 +37,7 @@ import {
   PrivateThreadDoors, PrivateThreadNote, isOwnPrivateThread, newProjectInvited, privateThreadName, privateThreadTitle, privateThreadWords, serverThreadName,
   usePrivateThread,
 } from './private-thread-bar';
+import { LiveDraftBar } from './live-draft-bar';
 import { requestPageOf } from './request-page';
 import { RequestTag, stripGroups, summaryParts } from './bot-strip';
 import { useTrackOf } from './bot-track';
@@ -2330,6 +2331,12 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       {privateMine && !(alone && privateWhere?.state === 'open') ? (
         <PrivateThreadNote where={privateWhere} rootId={privateRoot}
           onChanged={(state) => { if (privateWhere) setPrivateWhere({ ...privateWhere, state }); }} />
+      ) : null}
+      {/* A thread about a project can open a live draft of it: a preview
+          beside the chat that Homeroom bot changes as they talk
+          (./live-draft-bar.tsx, services/live-drafts.js). */}
+      {privateMine && privateRoot && privateWhere?.app?.slug && privateWhere.state === 'open' ? (
+        <LiveDraftBar rootId={privateRoot} app={privateWhere.app} />
       ) : null}
       <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll chat-transcript" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its

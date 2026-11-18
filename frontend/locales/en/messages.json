@@ -5906,5 +5906,69 @@
   "bot.offer.refused.failed": {
     "text": "That didn’t work just now. Try again in a moment.",
     "description": "The line under the buttons of an offer from Homeroom bot in a chat with it, when pressing one could not be sent or the server gave no reason of its own."
+  },
+  "liveDraft.intro": {
+    "text": "Change {{project}} here and watch it update as you talk.",
+    "description": "Line on the bar under the head of a private thread with Homeroom bot that is about a project, beside the Open app preview button. {{project}} is the project's name."
+  },
+  "liveDraft.open": {
+    "text": "Open app preview",
+    "description": "A button on a private thread about a project: starts a live draft of the project, with a preview of it beside the chat that Homeroom bot changes as the person asks."
+  },
+  "liveDraft.opening": {
+    "text": "Opening…",
+    "description": "The Open app preview button's words while the draft is being made."
+  },
+  "liveDraft.starting": {
+    "text": "Starting the preview. The first one takes a minute or two.",
+    "description": "Status line on a thread's live draft bar while its preview is first being built."
+  },
+  "liveDraft.liveNone": {
+    "text": "Live preview. Tell Homeroom bot what to change.",
+    "description": "Status line on a thread's live draft bar once its preview runs and nothing has been changed yet."
+  },
+  "liveDraft.live_one": {
+    "text": "Live preview · {{count}} change",
+    "description": "Status line on a thread's live draft bar once its preview runs, with one change saved. {{count}} is that number."
+  },
+  "liveDraft.live_other": {
+    "text": "Live preview · {{count}} changes",
+    "description": "Status line on a thread's live draft bar once its preview runs, with the number of changes Homeroom bot saved in the draft. {{count}} is that number."
+  },
+  "liveDraft.rebuilding": {
+    "text": "Building the preview again for that change. This takes a minute or two.",
+    "description": "Status line on a thread's live draft bar when a change needs the preview built again (for example, it added a package)."
+  },
+  "liveDraft.failed": {
+    "text": "The preview didn't start.",
+    "description": "Status line on a thread's live draft bar when its preview could not be started."
+  },
+  "liveDraft.show": {
+    "text": "Show preview",
+    "description": "A button on a thread's live draft bar: opens the draft's running preview beside the chat."
+  },
+  "liveDraft.propose": {
+    "text": "Propose",
+    "description": "A button on a thread's live draft bar: puts the draft's changes up for the project's vote, as the person's own change."
+  },
+  "liveDraft.proposing": {
+    "text": "Proposing…",
+    "description": "The Propose button's words on a thread's live draft bar while the draft is being put up for a vote."
+  },
+  "liveDraft.close": {
+    "text": "Close draft",
+    "description": "A button on a thread's live draft bar: puts the draft away without proposing it."
+  },
+  "liveDraft.proposed": {
+    "text": "Put up for a vote.",
+    "description": "Line on a thread's live draft bar right after the person proposed the draft."
+  },
+  "liveDraft.openChange": {
+    "text": "Open change #{{number}}",
+    "description": "Link on a thread's live draft bar after it was proposed: opens the change people now vote on. {{number}} is its number."
+  },
+  "liveDraft.error": {
+    "text": "That didn't work. Try again in a moment.",
+    "description": "Line on a thread's live draft bar when opening, proposing or closing the draft failed for a reason the server did not say."
   }
 }

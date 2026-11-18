@@ -5235,6 +5235,14 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   // versions. Everything else is answered by the chat's turn here, with all
   // its usual tools, told which design the thread holds (threadDesign), and
   // its draw_screen still hands drawing work to the designer.
+  // A thread whose live draft is open (services/live-drafts.js): every
+  // message there is the draft bot's (live-draft-bot.js), which changes the
+  // draft's code while its preview runs beside the chat. Proposed, closed,
+  // or with drafts switched off, the thread is answered as any other.
+  const draft = await (deps.liveDrafts || require('./live-drafts')).threadOf(pool, { userId: user.id, conversationId, message });
+  if (draft) {
+    return require('./thread-bot').answer(pool, config, { kind: 'draft', bot, user, settings, conversationId, message, draft, deps });
+  }
   const design = await (deps.designThreads || require('./design-threads')).threadOf(pool, { userId: user.id, conversationId, message });
   if (design && designDirect(message, design)) {
     return require('./thread-bot').answer(pool, config, { kind: 'design', bot, user, settings, conversationId, message, design, deps });
