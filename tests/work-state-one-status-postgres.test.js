@@ -19,7 +19,8 @@
 // What this pins, after each drainDirty: the stage and line the proposal
 // route serves as `work` (forChanges + forViewer) are the ones the bot tab's
 // lists give the same change (services/ai-work.js), through yes → syncing →
-// merging and through a follow-up turn starting and ending; never
+// merging, through a follow-up turn starting and ending, and through a
+// before & after shots run publishing and failing (Evan's follow-up); never
 // up_for_vote once the yes votes are in, and the viewer's own yes is theirs
 // at every stage.
 //
@@ -155,9 +156,14 @@ test('one status on the change page and in the lists', { timeout: 180000 }, asyn
   });
 
   await t.test('a follow-up turn starting and ending: both follow it within a drain', async () => {
+    // A turn is "running" for six hours of wall clock (UPDATE_TURN_HOURS),
+    // so the start is relative to now: a fixed 10:00 would stop counting
+    // once the clock passed it.
     await pool.query(
-      `UPDATE chat_sessions SET active_turn = '{"mode":"fix","startedAt":"2026-11-18T10:00:00Z"}'::jsonb WHERE id = $1`,
-      [change.id]);
+      `UPDATE chat_sessions
+          SET active_turn = jsonb_build_object('mode', 'fix', 'startedAt',
+                to_char(NOW() AT TIME ZONE 'UTC' - interval '5 minutes', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+        WHERE id = $1`, [change.id]);
     const started = await everywhere();
     sameAsList(started, 'building', 'revising');
     assert.equal(started.page.myVote, 'yes', 'still their yes while it is fixed');
@@ -166,6 +172,72 @@ test('one status on the change page and in the lists', { timeout: 180000 }, asyn
     await pool.query(`UPDATE chat_sessions SET active_turn = NULL WHERE id = $1`, [change.id]);
     const ended = await everywhere();
     sameAsList(ended, 'checking', 'syncing');
+  });
+
+  await t.test('a shots run publishing or failing: both stop saying Taking screenshots at once (Evan)', async () => {
+    // Checks passed on the head, the votes are in, it merges cleanly: only
+    // its before & after shots are left, and they are being taken. The
+    // shot machine writes the run's row and the slot it shows; either write
+    // marks the change (chat_sessions, and shot_runs by migration
+    // work-state-marks-shots), so the lists follow within the drain, not
+    // the next sweep.
+    const runId = crypto.randomBytes(16).toString('hex');
+    const head = 'd'.repeat(40);
+    await pool.query(
+      `UPDATE chat_sessions
+          SET integration_merges_clean = TRUE, integration_block_reasons = '[]'::jsonb,
+              check_phase = NULL, merge_conflict_state = NULL,
+              shots_state = 'exploring', shots_run_id = $2,
+              shots_detail = jsonb_build_object('headSha', 'h1', 'intent', jsonb_build_object('stories', '[]'::jsonb)),
+              shots_updated_at = NOW(), checks_checked_at = NOW()
+        WHERE id = $1`, [change.id, runId]);
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, started_at)
+       VALUES ($1, $2, $3, $4, '{"impact":"ui"}'::jsonb, 'exploring', NOW())`,
+      [runId, change.id, 'e'.repeat(40), head]);
+
+    const taking = await everywhere();
+    sameAsList(taking, 'checking', 'shots');
+    assert.equal(workState.stageSays(taking.page), 'Taking screenshots');
+    assert.equal(workState.stageSays(taking.list), 'Taking screenshots');
+
+    // The run publishes: the slot it shows moves to verified in the same
+    // transaction (shots/machine.ts showRun).
+    await pool.query(
+      `UPDATE shot_runs SET state = 'verified', plan_hash = $2, hard_verdict = '{}'::jsonb, completed_at = NOW()
+        WHERE id = $1`, [runId, 'f'.repeat(64)]);
+    await pool.query(
+      `UPDATE chat_sessions SET shots_state = 'verified', shots_updated_at = NOW()
+        WHERE id = $1 AND shots_run_id = $2`, [change.id, runId]);
+    const published = await everywhere();
+    sameAsList(published, 'going_live', null);
+    assert.equal(published.page.myVote, 'yes');
+    assert.equal(published.listed.myVote, 'yes');
+
+    // A retry that fails: the run that went stale, then a new run failing.
+    await pool.query(`UPDATE shot_runs SET state = 'stale' WHERE id = $1`, [runId]);
+    const retry = crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `UPDATE chat_sessions
+          SET shots_state = 'provisioning', shots_run_id = $2, shots_updated_at = NOW(), checks_checked_at = NOW()
+        WHERE id = $1`, [change.id, retry]);
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state)
+       VALUES ($1, $2, $3, $4, '{"impact":"ui"}'::jsonb, 'provisioning')`,
+      [retry, change.id, 'e'.repeat(40), head]);
+    const retrying = await everywhere();
+    sameAsList(retrying, 'checking', 'shots');
+
+    await pool.query(
+      `UPDATE shot_runs SET state = 'failed', failure_code = 'shots_agent_timeout', completed_at = NOW()
+        WHERE id = $1`, [retry]);
+    await pool.query(
+      `UPDATE chat_sessions SET shots_state = 'failed', shots_updated_at = NOW()
+        WHERE id = $1 AND shots_run_id = $2`, [change.id, retry]);
+    const failed = await everywhere();
+    sameAsList(failed, 'going_live', null);
+    assert.equal(failed.page.myVote, 'yes', 'their yes is still theirs after a failed run');
+    assert.equal(failed.listed.myVote, 'yes');
   });
 
   await t.test('merging: Going live on both, never a vote', async () => {

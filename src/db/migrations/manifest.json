@@ -440,6 +440,11 @@
       "id": "work-state-marks-all-inputs",
       "sha256": "328b57233da7143333baed827e8f6ad166d8dbc736c6052be07a63a1d2df4f56",
       "schemaSha256": "b66affb6bb116fa7244b59de154c6266cf42db7fdfb1dbb1067b46002252ab15"
+    },
+    {
+      "id": "work-state-marks-shots",
+      "sha256": "b497831d6ed7bb3d5ba4fb95579753abe8630e66e475e8b629a92f5d4eec5e0f",
+      "schemaSha256": "f974fd23a77665f83f43f9ac698af8072785e13444ca45b4002d1b7614d3f143"
     }
   ]
 }

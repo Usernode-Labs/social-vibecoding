@@ -17,8 +17,11 @@
 //      its merge, its shots, its verdict, the request it was opened from.
 //   2. A vote marks it, as do an ask of Homeroom bot (however it moves), a
 //      takeover look and a wait on a fix for a check that is not its own.
-//   3. A heartbeat on a turn, and anything about a headless session, marks
-//      nothing.
+//   3. A before & after shots run moving (Evan's follow-up) marks it: a run
+//      that publishes or fails refreshes the change's row even when the slot
+//      on chat_sessions is not the one it updates.
+//   4. A heartbeat on a turn, and anything about a headless session (its
+//      shots runs included), marks nothing.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/work-state-marks-postgres.test.js
 
@@ -171,6 +174,42 @@ test('every input of a change\'s work state marks it', { timeout: 120000 }, asyn
     await clear();
   });
 
+  await t.test('a before & after shots run moving marks it', async () => {
+    // The shot machine writes the run's row and the slot it shows (a marked
+    // chat_sessions write too). A run that ends after the slot moved on to
+    // another head's run would otherwise wait for the sweep, so the run's
+    // own state marks the change (migration work-state-marks-shots).
+    const runId = crypto.randomBytes(16).toString('hex');
+    const base = 'a'.repeat(40);
+    const head = 'b'.repeat(40);
+    await clear();
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state, started_at)
+       VALUES ($1, $2, $3, $4, '{"impact":"ui"}'::jsonb, 'exploring', NOW())`,
+      [runId, change.id, base, head]);
+    assert.deepEqual(await marks(), [Number(change.id)], 'a run that starts');
+    await clear();
+    await pool.query(
+      `UPDATE shot_runs SET state = 'verified', plan_hash = $2, hard_verdict = '{}'::jsonb, completed_at = NOW()
+        WHERE id = $1`, [runId, 'c'.repeat(64)]);
+    assert.deepEqual(await marks(), [Number(change.id)], 'a run that publishes');
+    await clear();
+    // A second run on the same head (the first one went stale), which fails.
+    await pool.query(`UPDATE shot_runs SET state = 'stale' WHERE id = $1`, [runId]);
+    await clear();
+    const retry = crypto.randomBytes(16).toString('hex');
+    await pool.query(
+      `INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state)
+       VALUES ($1, $2, $3, $4, '{"impact":"ui"}'::jsonb, 'provisioning')`,
+      [retry, change.id, base, head]);
+    await clear();
+    await pool.query(
+      `UPDATE shot_runs SET state = 'failed', failure_code = 'shots_agent_timeout', completed_at = NOW()
+        WHERE id = $1`, [retry]);
+    assert.deepEqual(await marks(), [Number(change.id)], 'a run that fails');
+    await clear();
+  });
+
   await t.test('a headless session marks nothing', async () => {
     assert.deepEqual(
       await marks_(`UPDATE chat_sessions SET status = 'promoted', test_results = '[]'::jsonb, shots_state = 'done'
@@ -181,5 +220,12 @@ test('every input of a change\'s work state marks it', { timeout: 120000 }, asyn
                     VALUES ($1, $2, 'active', TRUE, '{"mode":"build"}'::jsonb)`, [app.id, ada.id]),
       [],
       'a headless session is nobody\'s work item');
+    const runId = crypto.randomBytes(16).toString('hex');
+    assert.deepEqual(
+      await marks_(`INSERT INTO shot_runs (id, session_id, base_sha, head_sha, intent, state)
+                    VALUES ($1, $2, $3, $4, '{"impact":"ui"}'::jsonb, 'exploring')`,
+      [runId, headless.id, 'a'.repeat(40), 'b'.repeat(40)]),
+      [],
+      'nor a shots run of a headless session');
   });
 });
