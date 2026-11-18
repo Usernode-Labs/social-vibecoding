@@ -137,6 +137,12 @@ export interface AiThread {
    * reads as 0.
    */
   unread?: number;
+  /**
+   * 18 Nov 2026: it came into In progress or Waiting, or changed its list or
+   * its stage there, while the page was up (movedSince). Its row is not
+   * folded away. Set by the page, never by the server.
+   */
+  moved?: boolean;
 }
 
 export interface AiWork {
@@ -344,15 +350,21 @@ export function holdOrder<T extends { key: string }>(rows: T[], drawn: readonly 
  * #6408: Live this week calls it with `liftFresh` false. There, new only
  * means a change went live since the viewer last looked, which is most of the
  * list on a busy day, so it folds after its first few whatever is new.
+ *
+ * 18 Nov 2026: nor is a row that moved while the page was up (`moved`,
+ * movedSince). PR 6792 was promoted with the tab open, went from In progress
+ * to Waiting under three changes going live, and was folded behind Show more
+ * until its checks failed: a change of yours that just moved read as gone.
  */
-export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
+export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: boolean }>(items: T[], first: number, open: boolean, liftFresh = true): { items: T[]; shown: number; hidden: number } {
   const litAt = open ? -1 : items.findIndex((row) => row.lit);
-  // Which rows past the first few must still be shown: the fresh ones and
-  // the one you are on. They keep their order; the rest folds away.
+  // Which rows past the first few must still be shown: the fresh ones, the
+  // ones that just moved and the one you are on. They keep their order; the
+  // rest folds away.
   const lifted = new Set<number>();
   if (!open) {
     if (litAt >= first) lifted.add(litAt);
-    if (liftFresh) items.forEach((row, i) => { if (row.fresh && i >= first) lifted.add(i); });
+    if (liftFresh) items.forEach((row, i) => { if ((row.fresh || row.moved) && i >= first) lifted.add(i); });
   }
   const rest = items.slice(first);
   const drawn = open
@@ -360,6 +372,33 @@ export function groupRows<T extends { lit?: boolean; fresh?: boolean }>(items: T
     : [...items.slice(0, first), ...rest.filter((_, k) => lifted.has(first + k)), ...rest.filter((_, k) => !lifted.has(first + k))];
   const shown = open ? first : first + lifted.size;
   return { items: drawn, shown, hidden: Math.max(0, drawn.length - shown) };
+}
+
+/**
+ * Pure (18 Nov 2026): where each thread of In progress and Waiting stands,
+ * its list and its stage, by thread. A new line (a few minutes left) is not
+ * a move.
+ */
+export function standingsOf(threads: readonly AiThread[]): Map<number, string> {
+  return new Map(threads.map((t) => [t.threadId, `${t.group}:${t.work.stage}`]));
+}
+
+/**
+ * Pure (18 Nov 2026): the threads, each marked `moved` when it was not there
+ * when `seen` was taken (standingsOf) or stands elsewhere now. With nothing
+ * seen yet (the page's first read) none has moved. Hands back the same
+ * threads when none moved.
+ */
+export function movedSince(seen: ReadonlyMap<number, string> | null, threads: AiThread[]): AiThread[] {
+  if (!seen) return threads;
+  const now = standingsOf(threads);
+  let any = false;
+  const out = threads.map((t) => {
+    if (seen.get(t.threadId) === now.get(t.threadId)) return t;
+    any = true;
+    return { ...t, moved: true };
+  });
+  return any ? out : threads;
 }
 
 // ── #6262: what is new in a thread ───────────────────────────────────────

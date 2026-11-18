@@ -933,45 +933,57 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // #788: one query for every app this viewer is a per-app admin
       // of, so accessFlags below can resolve can_manage per row without
       // a round-trip each.
-      const adminAppIds = await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
+      // #6796: this read and the six after it need only the rows above, not
+      // each other, so they run together, in two groups: seven round trips'
+      // wait is two. Never more than four at once, whatever the list's size:
+      // the web's pool is small, and this list once held all of it
+      // (tests/app-first-version-postgres.test.js).
+      const adminAppIdsRead = appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
 
       // How many people BUILT each app, for the Discover cards on the
       // launcher. One round trip for the whole page over the shared
       // contributor definition (services/contributors.js), rather than the
       // per-app fetch the directory's detail view makes: the cards show the
       // number and never the names, so the ranked list would be all cost.
-      const contributorCounts = await contributors.loadContributorCounts(
+      const contributorCountsRead = contributors.loadContributorCounts(
         pool, rows.map((a) => a.id)
       );
       // #5823: which of these apps THIS viewer helps build — the same
       // three-source set the Contributors list draws from (services/
       // contributors.js). Carried per row for clients that ask. An
       // empty Set when nobody is signed in, with no query.
-      const contributed = await contributors.loadContributedAppIds(
+      const contributedRead = contributors.loadContributedAppIds(
         pool, rows.map((a) => a.id), userId
       );
       // #4405: the live custom domain of each app, one round trip, so the
       // Share dialog can offer it without a per-app read.
-      const liveDomains = await liveDomainsFor(pool, rows.map((a) => a.id));
+      const liveDomainsRead = liveDomainsFor(pool, rows.map((a) => a.id));
       // #4053: where each first version Homeroom bot is making stands, for
       // its Home tile, in the build line this viewer reads.
       const firstVersionPhases = new Map();
-      const firstVersionLines = await firstVersionLinesFor(
+      const readFirstVersionLines = () => firstVersionLinesFor(
         pool, rows.filter((a) => !a.self_hosted && !stagingApps.isSample(a)), req.user?.id ?? null, firstVersionPhases
       );
       // The viewer's live invite links, for the Communities list's "Invite
       // link out" (inviteLinkOut): one query for every project they are in.
       // Best-effort: a read that fails says nothing on any row.
-      let linksOut = new Map();
-      if (userId) {
-        try {
-          linksOut = await communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId);
-        } catch (err) {
-          log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
-        }
-      }
+      const readLinksOut = () => (userId
+        ? Promise.resolve()
+          .then(() => communityInvites.linksOutFor(pool, rows.filter((a) => a.is_member).map((a) => a.id), userId))
+          .catch((err) => {
+            log.warn('apps', 'Could not read the invite links for the list', { message: err.message });
+            return new Map();
+          })
+        : Promise.resolve(new Map()));
 
-      const storedSecrets = await storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+      const readStoredSecrets = () => storedSecretKeysFor(pool, rows.filter((a) => !a.self_hosted && declaresRequiredSecret(a)));
+
+      const [adminAppIds, contributorCounts, contributed, liveDomains] = await Promise.all([
+        adminAppIdsRead, contributorCountsRead, contributedRead, liveDomainsRead,
+      ]);
+      const [firstVersionLines, linksOut, storedSecrets] = await Promise.all([
+        readFirstVersionLines(), readLinksOut(), readStoredSecrets(),
+      ]);
 
       let apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. One query for every tile
