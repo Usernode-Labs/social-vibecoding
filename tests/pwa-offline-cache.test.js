@@ -774,7 +774,7 @@ test('a slow endpoint that differs every time is re-pulled from the network, not
 //
 // Offline findings, 2 Nov 2026: on a link that connects but passes nothing,
 // a cold launch sat on Home's skeleton for over a minute while the saved apps
-// sat in the API cache. Every page read is a fresh one (`reload`, from the
+// sat in the API cache. Every page read is a fresh one (`no-cache`, from the
 // identity wrapper), and a fresh read used to fall back only when the fetch
 // REJECTED, which such a link never does. These drive the real worker
 // (tests/lib/private-cache-worker.js) with deadlines fired on demand.

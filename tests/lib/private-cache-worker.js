@@ -72,7 +72,7 @@ function worker({ source = fs.readFileSync(require.resolve('../../public/sw.js')
     async get(scope = A, path = '/api/private-fixture', init = {}) {
       const headers = new Headers(init.headers);
       if (scope) headers.set(SCOPE_HEADER, scope);
-      const request = new Request(new URL(path, ORIGIN), { cache: 'reload', ...init, headers });
+      const request = new Request(new URL(path, ORIGIN), { cache: 'no-cache', ...init, headers });
       let result;
       handlers.fetch({ request, waitUntil, respondWith(promise) { result = promise; } });
       return result === undefined ? fetch(request) : result;
