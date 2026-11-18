@@ -29372,9 +29372,17 @@ const AppView = {
       // reclaimed/stale preview. Read-only reviewers use its GET twin: it
       // performs the same revision, health and edge verification but never
       // repairs or rebuilds. Neither path trusts a stored URL on its own.
+      // The staging demo data rides along (`?demo=1`), so a demo change's
+      // Try it can be answered with its sample preview
+      // (services/staging-demo-preview.js); outside that demo it is ''.
+      // Guarded like session-state.js's own read of the flag: a shell that
+      // hands AppView a location with no URL (a test shell, an embed) has no
+      // demo flag to forward, and must still open the preview it asked for.
+      let demo = '';
+      try { demo = AppView._demoQS(); } catch { demo = ''; }
       const endpoint = readOnly
-        ? `/api/sessions/${sessionId}/preview-status`
-        : `/api/sessions/${sessionId}/ensure-staging`;
+        ? `/api/sessions/${sessionId}/preview-status${demo}`
+        : `/api/sessions/${sessionId}/ensure-staging${demo}`;
       const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       // Reopened from its address, by somebody the page could not yet say
@@ -29419,7 +29427,15 @@ const AppView = {
       // `checksRunning` says the post-build screenshot/checks pass is still
       // hitting the same container, which is the one honest reason a live
       // preview's first load can be slow.
-      return AppView.swapToStaging(data.url || fallbackUrl, testing, {
+      // A staging demo change answers with a page on this host
+      // (services/staging-demo-preview.js). swapToStaging opens a URL it can
+      // resolve, same-origin, so a path becomes one here; a real preview's
+      // absolute URL is passed through untouched.
+      let readyUrl = data.url || fallbackUrl;
+      if (typeof readyUrl === 'string' && readyUrl.startsWith('/') && !readyUrl.startsWith('//')) {
+        try { readyUrl = new URL(readyUrl, location.origin).href; } catch { /* keep it as it came */ }
+      }
+      return AppView.swapToStaging(readyUrl, testing, {
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
         telemetryAttempt,

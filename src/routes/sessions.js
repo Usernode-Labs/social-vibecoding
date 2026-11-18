@@ -11,6 +11,7 @@ const proposalUpdate = require('../services/proposal-update');
 const prMetadata = require('../services/pr-metadata');
 const previewClock = require('../services/preview-clock');
 const previewStart = require('../services/preview-start');
+const stagingDemoPreview = require('../services/staging-demo-preview');
 const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
@@ -3180,6 +3181,23 @@ function sessionRoutes(config) {
       });
   }
 
+  // The page a staging demo change's Try it opens, inside the same
+  // sandboxed frame as any preview (services/staging-demo-preview.js): a
+  // fixed sample, served only on staging. Its address carries the frame's
+  // token, so no referrer leaves it. Anywhere else this address is not found.
+  router.get(stagingDemoPreview.SAMPLE_PATH, (req, res) => {
+    if (process.env.USERNODE_ENV !== 'staging') {
+      return res.status(404).json({ error: 'Not found' });
+    }
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'self'",
+    });
+    return res.send(stagingDemoPreview.sampleAppHtml());
+  });
+
   // Read-only twin of ensure-staging. A reviewer who cannot trigger a build
   // still gets the same health/revision/edge gate instead of opening the
   // last stored URL directly. It never repairs or rebuilds. It does wake a
@@ -3188,6 +3206,16 @@ function sessionRoutes(config) {
   router.get('/api/sessions/:id/preview-status', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      // A staging demo change opens a sample app as its preview
+      // (services/staging-demo-preview.js). Before the row lookup: a demo
+      // id has no chat_sessions row and would 404 on its way to the
+      // staging answer below.
+      if (stagingDemoPreview.isDemoEnv(req)) {
+        const demo = stagingDemoPreview.previewAnswer(
+          require('./votes').stagingMockProposalFor(sessionId, req.user)
+        );
+        if (demo) return res.set('Cache-Control', 'no-store').json(demo);
+      }
       const session = await loadPreviewSession(sessionId);
       if (!session || !mayOpenPreview(session, req.user.id)) {
         return res.status(404).json({ error: 'Session not found' });
@@ -3225,6 +3253,14 @@ function sessionRoutes(config) {
   router.post('/api/sessions/:id/ensure-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      // As in preview-status: a staging demo change's Try it opens the
+      // sample app, and never a rebuild (nothing here can build one).
+      if (stagingDemoPreview.isDemoEnv(req)) {
+        const demo = stagingDemoPreview.previewAnswer(
+          require('./votes').stagingMockProposalFor(sessionId, req.user)
+        );
+        if (demo) return res.set('Cache-Control', 'no-store').json(demo);
+      }
       const session = await loadPreviewSession(sessionId);
       if (!session) return res.status(404).json({ error: 'Session not found' });
 
