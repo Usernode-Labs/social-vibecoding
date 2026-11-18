@@ -26,6 +26,7 @@
 import type { ActionSpec, StatusPillState } from '../card/model';
 import type { RequestSpecCard } from './request-model';
 import type { ReviewScreen } from '../../review-flow/model';
+import type { Standing } from '../../../lib/work-state';
 
 
 /** The four tints a note box comes in. Resolved to classes by the component. */
@@ -829,6 +830,13 @@ export interface ChangeThreadView {
   checks?: { passed: number; failed: number; fails: { key: string; name: string; reason: string | null; advisory: boolean }[] } | null;
   /** When it went live (its merge, else its release), for "Since …" in the card's foot and the timeline's Live step. */
   liveAt?: string | null;
+  /**
+   * #6821: the change's stored work state (the proposal read's `work`), the
+   * row every list draws, with this viewer's own vote. The foot words its
+   * headline and line from it, so the page and the lists agree
+   * (./card-model.ts storedFoot).
+   */
+  work?: Standing | null;
   /** Whether the Addresses row carries "👏 Thank <author>". */
   thanks: boolean;
   /**

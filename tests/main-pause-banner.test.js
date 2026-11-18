@@ -127,8 +127,14 @@ test('the store is published from the promoted list on the server\'s admin rule'
   // mount.ts exposes the setter; AppView publishes from `mainCheck` on the
   // same load, at the same moment.
   assert.match(MOUNT_SRC, /publishMainPause\(state\) \{\s*mainPauseStore\.set\(state\);/);
-  assert.match(APP_VIEW_SRC, /return;\n\s*\}\n\s*AppView\._renderMainPauseNotice\(\);/,
+  // #6826: the paint after a load is `_paintDevBoardEarly` now — the one
+  // function the load's end and its first phase both go through — and it
+  // renders the notice.
+  assert.match(APP_VIEW_SRC, /return;\n\s*\}\n\s*AppView\._paintDevBoardEarly\(\);/,
     'published on every promoted-list load');
+  const paint = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('_paintDevBoardEarly() {'));
+  assert.match(paint.slice(0, paint.indexOf('\n  },')), /AppView\._renderMainPauseNotice\(\);/,
+    'and that paint is where the notice is rendered');
   const fn = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('_renderMainPauseNotice() {'));
   const body = fn.slice(0, fn.indexOf('\n  },'));
   assert.match(body, /publishMainPause\?\.\(\{/);

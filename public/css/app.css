@@ -5715,6 +5715,56 @@ html[data-skin-wip] {
      shell; another config may name its own. */
   --wip-page-bg: transparent;
   --wip-font: inherit;
+  /* A project's hub: its own icon (a Home tile's, a size up), its name and its head card's padding. */
+  --wip-hub-icon: 2.75rem;
+  --wip-hub-name: 1.625rem;
+  --wip-hub-name-font: inherit;
+  --wip-hub-name-weight: 800;
+  --wip-hub-pad: 1.25rem;
+  /* The hub's head is a hero: taller, with more room round it, and its
+     ground starts in the community's own colour and fades to the card's. */
+  --wip-ghost: color-mix(in srgb, var(--wip-ink) 8%, transparent); /* under a quiet icon button the pointer is on */
+  --wip-face-ink: #ffffff;   /* an initial on a member's colour */
+  --wip-menu-shadow: 0 18px 40px -16px rgb(0 0 0 / 0.28), 0 4px 10px -6px rgb(0 0 0 / 0.14); /* a menu's drop */
+  /* A door's tile (the hub's Needs you, Workshop, Discussion): the look's own mark colours, the count's. */
+  --wip-door-tile-bg: var(--wip-count-bg);
+  --wip-door-tile-ink: var(--wip-count-ink);
+  /* Three marks a set of icons takes turns in, so a row of tiles is not one
+     colour: the accent, the "going well" green and the "look here" amber of
+     the shell here; a config names its own three. */
+  --wip-mark-1-bg: var(--accent-tint);
+  --wip-mark-1-ink: var(--accent-tint-ink);
+  --wip-mark-2-bg: var(--state-ok-bg);
+  --wip-mark-2-ink: var(--state-ok);
+  --wip-mark-3-bg: var(--state-attention-bg);
+  --wip-mark-3-ink: var(--state-attention);
+  --wip-thumb: 6rem;          /* a change's picture in a list: a thumbnail at its side */
+  --wip-hero-pad: 1.25rem;
+  --wip-hero-min: 0;        /* a poster's height, whatever it says */
+  --wip-hero-art: 4.5rem;       /* the icon at its side */
+  /* The hero wears the community's colour softly: its HUE, at a lightness
+     and strength the look chooses, so a navy or a charcoal project gets as
+     airy a card as an orange one. A pale ground, three drifting washes of
+     the hue and its two neighbours, and the action in the hue itself. */
+  --wip-hero-tint: var(--community-tint, #3b5bdb);
+  --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 60% 60%) 5%, var(--wip-card-bg));
+  --wip-hero-wash-a: hsl(from var(--wip-hero-tint) h 70% 80% / 0.38);
+  --wip-hero-wash-b: hsl(from var(--wip-hero-tint) calc(h + 40) 70% 84% / 0.3);
+  --wip-hero-wash-c: hsl(from var(--wip-hero-tint) calc(h - 30) 70% 86% / 0.28);
+  --wip-hero-line: var(--wip-card-line);
+  --wip-hero-ink: var(--wip-ink);
+  --wip-hero-ink-soft: var(--wip-ink-soft);
+  --wip-hero-ink-muted: var(--wip-ink-muted);
+  --wip-hero-glass: var(--wip-card-bg);    /* a quiet control on the card */
+  --wip-hero-glass-line: var(--wip-card-line);
+  --wip-hero-ring: hsl(from var(--wip-hero-tint) h 40% 50% / 0.1);
+  --wip-hero-dot: hsl(from var(--wip-hero-tint) h 30% 40% / 0.1);
+  --wip-hero-shadow: var(--wip-card-shadow);
+  --wip-hero-art-shadow: 0 18px 34px -18px rgb(0 0 0 / 0.3), 0 0 0 1px var(--wip-card-line);
+  --wip-hero-dots-mask: linear-gradient(90deg, transparent 30%, #000000 75%);   /* the dots thin out toward the words */
+  --wip-hero-rings-mask: radial-gradient(closest-side, #000000 30%, transparent); /* the rings fade as they spread */
+  --wip-hero-drift: 28s;        /* one slow turn of the washes */
+  --wip-hero-float: 7s;         /* the picture's rise and fall */
   /* A section's label under a token config: its face, size, case, spacing,
      weight and ink. These are the shell's own label's values, so a config
      that does not name them draws the label as it is. */
@@ -5839,6 +5889,15 @@ html[data-skin-wip] {
    Geist, the kit's typeface for interface text; its serif is for headlines,
    and Home has none. */
 html[data-skin-wip][data-wip-tokens="brand"] {
+  /* The kit's three colours as the marks icons take turns in: each a pale
+     wash of the colour (a quarter of it, or less, over the card) with the
+     glyph in a deep tone of the same colour. */
+  --wip-mark-1-bg: rgb(255 238 111 / 0.24);
+  --wip-mark-1-ink: #7a6a00;
+  --wip-mark-2-bg: rgb(48 144 225 / 0.09);
+  --wip-mark-2-ink: #1c64a8;
+  --wip-mark-3-bg: rgb(169 207 151 / 0.22);
+  --wip-mark-3-ink: #2f6b1e;
   --wip-page-bg: #fffeea;
   --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --wip-card-bg: #ffffff;
@@ -5869,6 +5928,12 @@ html[data-skin-wip][data-wip-tokens="brand"] {
 }
 /* In the dark it is the kit's other pairing, cream on black. */
 html[data-skin-wip][data-wip-tokens="brand"].dark {
+  --wip-mark-1-bg: rgb(255 238 111 / 0.16);
+  --wip-mark-1-ink: #ffee6f;
+  --wip-mark-2-bg: rgb(48 144 225 / 0.2);
+  --wip-mark-2-ink: #8cc4ff;
+  --wip-mark-3-bg: rgb(169 207 151 / 0.18);
+  --wip-mark-3-ink: #a9cf97;
   --wip-page-bg: #0b0b0c; /* the shell's own dark ground, so the page and its frame are one black */
   --wip-card-bg: #171715;
   --wip-card-line: rgb(255 254 234 / 0.14);
@@ -5909,6 +5974,15 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
    own page), sentence case, in the ink. The filled action is Cream + Black.
    Interface text is Geist. */
 html[data-skin-wip][data-wip-tokens="brand2"] {
+  /* The kit's three colours as the marks icons take turns in: each a pale
+     wash of the colour (a quarter of it, or less, over the card) with the
+     glyph in a deep tone of the same colour. */
+  --wip-mark-1-bg: rgb(255 238 111 / 0.24);
+  --wip-mark-1-ink: #7a6a00;
+  --wip-mark-2-bg: rgb(48 144 225 / 0.09);
+  --wip-mark-2-ink: #1c64a8;
+  --wip-mark-3-bg: rgb(169 207 151 / 0.22);
+  --wip-mark-3-ink: #2f6b1e;
   --wip-page-bg: #fffeea;
   --wip-font: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --wip-label-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
@@ -5917,6 +5991,8 @@ html[data-skin-wip][data-wip-tokens="brand2"] {
   --wip-label-track: -0.01em;
   --wip-label-weight: 400;
   --wip-label-ink: #000000;
+  --wip-hub-name-font: 'Young Serif', 'Source Serif 4', Georgia, serif;
+  --wip-hub-name-weight: 400;
   --wip-card-bg: #ffffff;
   --wip-card-line: rgb(0 0 0 / 0.07);
   --wip-card-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 14px 28px -18px rgb(0 0 0 / 0.28);
@@ -5947,6 +6023,12 @@ html[data-skin-wip][data-wip-tokens="brand2"] {
 /* In the dark: cream on black, lifted by an edge and not a shadow, with the
    same small marks. */
 html[data-skin-wip][data-wip-tokens="brand2"].dark {
+  --wip-mark-1-bg: rgb(255 238 111 / 0.16);
+  --wip-mark-1-ink: #ffee6f;
+  --wip-mark-2-bg: rgb(48 144 225 / 0.2);
+  --wip-mark-2-ink: #8cc4ff;
+  --wip-mark-3-bg: rgb(169 207 151 / 0.18);
+  --wip-mark-3-ink: #a9cf97;
   --wip-page-bg: #0b0b0c;
   --wip-label-ink: #fffeea;
   --wip-card-bg: #171715;
@@ -6428,7 +6510,8 @@ html[data-skin-wip] #home-screen {
 /* While Home is the screen on show, a config that names a page colour gives
    it to the frame too (the header and the sidebar are clear over the body),
    so the page and its frame are one ground with no seam. */
-html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)) {
+html[data-skin-wip][data-wip-tokens] body:has(#home-screen:not(.hidden)),
+html[data-skin-wip][data-wip-tokens] body:has(#dev-workshop > .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) {
   background-color: var(--wip-page-bg);
   background-image: none;
 }
@@ -6582,7 +6665,805 @@ html[data-skin-wip] #home-challenges-section.home-section-pending > .home-panel-
 html[data-skin-wip] #home-communities-section { display: none; }
 
 
+/* ── A project's hub ────────────────────────────────────────── */
+/* The hub is drawn as Home is, from the same tokens and nothing of its own:
+   the page's whole width on the config's ground and typeface, every section
+   a label outside a card, every card the look's card. Its head is one card
+   too: what the project is, as a project's row on Home is (the icon on the
+   kit's shadow, the name, who it is for, its line), and what you can do
+   with it at the far end, Invite as the look's filled action, the way New
+   project sits across from Home's search. The hero and the Invite card keep
+   their markup and are still two sections; the look joins them where they
+   are neighbours. */
+html[data-skin-wip] body #dev-workshop:has(> .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) {
+  max-width: none;
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody { row-gap: var(--wip-row-gap); column-gap: var(--wip-col-gap); }
+/* The hub sits on the page itself, as Home does: the project page's own
+   sheet (a tinted, shadowed panel with round top corners behind everything)
+   is cleared while the hub is the place on show, so its cards are the only
+   cards. */
+html[data-skin-wip] body #app-content :has(> #dev-forum-scroll):has(.dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"])) {
+  border-radius: 0;
+  border-color: transparent;
+  background-color: var(--wip-page-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+}
+/* The hub has no Topics card under the look: a topic's channel is reached by its own address. */
+html[data-skin-wip] #dev-workshop [data-ws-hub-topics] { display: none; }
+/* A section's label, outside its card: Home's label, from the same tokens. */
+html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > h2,
+html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws-hub-section > :first-child h2 {
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+  text-decoration-line: underline;
+  text-decoration-color: var(--wip-label-mark);
+  text-decoration-thickness: 0.42em;
+  text-underline-offset: -0.16em;
+  text-decoration-skip-ink: none;
+}
+/* A section's card is the look's card. */
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] .dev-ws-strip {
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* The head: one card. */
+html[data-skin-wip].dark {
+  --wip-hero-bg: color-mix(in srgb, hsl(from var(--wip-hero-tint) h 60% 50%) 6%, var(--wip-card-bg));
+  --wip-hero-wash-a: hsl(from var(--wip-hero-tint) h 70% 45% / 0.22);
+  --wip-hero-wash-b: hsl(from var(--wip-hero-tint) calc(h + 40) 70% 42% / 0.18);
+  --wip-hero-wash-c: hsl(from var(--wip-hero-tint) calc(h - 30) 70% 40% / 0.16);
+  --wip-hero-ring: rgb(255 255 255 / 0.07);
+  --wip-hero-dot: rgb(255 255 255 / 0.08);
+  --wip-hero-art-shadow: 0 18px 34px -18px rgb(0 0 0 / 0.7), 0 0 0 1px var(--wip-card-line);
+}
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary {
+  position: relative;
+  isolation: isolate;
+  align-content: center;
+  row-gap: 0.5rem;
+  min-height: var(--wip-hero-min);
+  padding: var(--wip-hero-pad);
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-hero-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-hero-line), var(--wip-hero-shadow);
+  color: var(--wip-hero-ink);
+}
+/* THE HERO'S SCENERY, all in one layer behind its words, for show only. It
+   is clipped to the card on its own, so the card itself clips nothing (its
+   ⋯ menu hangs out of it). Three soft washes of the hue drift slowly round
+   each other; a field of dots thins out toward the words; rings spread from
+   where the picture is; and the picture floats: the project's own
+   illustration, tilted, with its icon in front, or the icon alone. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > :is(.wip-hero-art, .wip-hero-wash) { grid-column: auto; grid-row: auto; }
+.wip-hero-art {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+  background-image: radial-gradient(var(--wip-hero-dot) 1px, transparent 1.5px);
+  background-size: 20px 20px;
+  -webkit-mask-image: var(--wip-hero-dots-mask);
+  mask-image: var(--wip-hero-dots-mask);
+}
+.wip-hero-wash {
+  position: absolute;
+  z-index: -2;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.wip-hero-wash::before {
+  content: "";
+  position: absolute;
+  inset: -40%;
+  background-image:
+    radial-gradient(closest-side, var(--wip-hero-wash-a), transparent) ,
+    radial-gradient(closest-side, var(--wip-hero-wash-b), transparent),
+    radial-gradient(closest-side, var(--wip-hero-wash-c), transparent);
+  background-size: 52% 62%, 46% 58%, 44% 54%;
+  background-position: 8% 20%, 96% 30%, 62% 96%;
+  background-repeat: no-repeat;
+  filter: blur(40px);
+  animation: wip-hero-drift var(--wip-hero-drift) ease-in-out infinite alternate;
+}
+.wip-hero-rings {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: 14%;
+  width: 44rem;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  translate: 50% -50%;
+  background-image: repeating-radial-gradient(circle, transparent 0 3rem, var(--wip-hero-ring) 3rem calc(3rem + 1px));
+  -webkit-mask-image: var(--wip-hero-rings-mask);
+  mask-image: var(--wip-hero-rings-mask);
+}
+.wip-hero-stage {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: min(30%, 20rem);
+  display: none;
+  place-items: center;
+  animation: wip-hero-float var(--wip-hero-float) ease-in-out infinite alternate;
+}
+.wip-hero-art-pic {
+  position: absolute;
+  inset-inline-end: 14%;
+  width: 44%;
+  aspect-ratio: 16 / 10;
+  object-fit: cover;
+  border-radius: var(--wip-radius-card);
+  box-shadow: var(--wip-hero-art-shadow);
+  transform: rotate(-5deg) translateY(-4%);
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.wip-hero-art-icon {
+  position: relative;
+  width: var(--wip-hero-art);
+  height: var(--wip-hero-art);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: calc(var(--wip-hero-art) * 0.24);
+  font-size: calc(var(--wip-hero-art) / 2);
+  box-shadow: var(--wip-hero-art-shadow);
+  transform: rotate(8deg);
+  transition: transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.wip-hero-art-icon > img { width: 100%; height: 100%; object-fit: cover; }
+.wip-hero-art-pic + .wip-hero-art-icon { --wip-hero-art: 3.25rem; align-self: end; justify-self: start; margin: 0 0 0.75rem 22%; }
+/* The pointer on the card straightens the picture a little, as if picked up. */
+html[data-skin-wip] .dev-ws-hero-summary:hover .wip-hero-art-pic { transform: rotate(-2deg) translateY(-7%) scale(1.03); }
+html[data-skin-wip] .dev-ws-hero-summary:hover .wip-hero-art-icon { transform: rotate(3deg) scale(1.05); }
+@media (min-width: 900px) {
+  .wip-hero-stage { display: grid; }
+  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero-summary { padding-inline-end: min(30%, 20rem); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] .wip-hero-wash::before { animation: none; }
+  html[data-skin-wip] .wip-hero-stage { animation: none; }
+  html[data-skin-wip] .wip-hero-art-pic { transition: none; }
+  html[data-skin-wip] .wip-hero-art-icon { transition: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-wash::before { animation: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-stage { animation: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-art-pic { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-hero-art-icon { transition: none; }
+/* WHO IT IS FOR AND WHO IS IN IT, under the name, as two things: the kind
+   of community with its own mark (a lit dot on one anybody may join, the
+   lock or the person otherwise), then a few members' faces and how many
+   there are. No tag round them. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id-sub { margin-top: 0.25rem; }
+.wip-hub-meta { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.875rem; }
+.wip-hub-meta-kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: var(--wip-link-size);
+  font-weight: 650;
+  color: var(--wip-ink-soft);
+}
+.wip-hub-meta-kind .dev-ws-hero-audience { color: inherit; font-size: inherit; }
+.wip-hub-meta-kind[data-audience="open"] > svg { display: none; }
+.wip-hub-meta-kind[data-audience="open"]::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background-color: var(--wip-ok);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--wip-ok) 22%, transparent);
+}
+.wip-hub-meta-people {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: var(--wip-link-size);
+  color: var(--wip-ink-muted);
+}
+.wip-hub-meta-people .dev-ws-hero-faces { display: inline-flex; }
+.wip-hub-meta-people .dev-ws-hero-face {
+  width: 1.375rem;
+  height: 1.375rem;
+  margin-inline-end: -0.4375rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 0.625rem;
+  font-weight: 700;
+  color: var(--wip-face-ink);
+  box-shadow: 0 0 0 2px var(--wip-card-bg);
+}
+.wip-hub-meta-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
+/* "Make it public", beside the main action: the same height, a plain pill. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions [data-ws-community-audience-change] { height: 2.75rem; padding-inline: 1.125rem; font-size: 0.9375rem; font-weight: 600; }
+/* THE QUESTION "Make it public" asks hangs under its button, which is at
+   the hero's start here: so it opens from the button's own start edge and
+   runs toward the page (hung from its end, as on the standard hub where the
+   button is at the far side, it ran off the page's edge and was cut). It is
+   the look's card, and its two answers are the look's: the filled action,
+   and a plain "Not now". */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-join-anchor { margin-inline-start: 0; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop {
+  inset-inline: 0 auto;
+  width: min(20rem, var(--platform-float-w));
+  border: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
+  transform-origin: 2rem 0;
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop::before {
+  inset-inline: 1.75rem auto;
+  border-color: var(--wip-card-line);
+  background-color: var(--wip-card-bg);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-ask-q { color: var(--wip-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-sub { color: var(--wip-ink-muted); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-answer-btn {
+  height: 2.75rem;
+  border-radius: var(--wip-radius-pill);
+  background-color: transparent;
+  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
+  color: var(--wip-cta-ink);
+  box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions .dev-ws-join-pop .dev-ws-vote-later {
+  align-self: center;
+  background-color: transparent;
+  color: var(--wip-ink-muted);
+  box-shadow: none;
+}
+/* INVITE ends the line about who is here: after the faces and the count,
+   an open seat (a dashed disc, a person and a plus) and the word. It reads
+   as the next thing in that sentence, "…234 members, invite". The pointer
+   fills the seat with the look's action colours. */
+.wip-hub-meta-invite {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 1.75rem;
+  padding: 0 0.625rem 0 0.1875rem;
+  border-radius: var(--wip-radius-pill);
+  font-size: var(--wip-link-size);
+  font-weight: 650;
+  color: var(--wip-ink-action);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+  background-color: var(--wip-card-bg);
+  cursor: pointer;
+}
+/* The arrow before it: one brush stroke that swells from nothing at its tail
+   to a sharp head, from the people to the seat. It leans a little, and nudges toward the seat when the pointer
+   is on the line. Not on a phone, where the line has no room for it. */
+.wip-hub-meta-arrow {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  margin-block: -0.75rem;
+  margin-inline: -0.125rem -0.25rem;
+  color: var(--wip-ink);
+  transform: rotate(-4deg);
+  transition: transform 0.25s ease;
+}
+.wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg) translateX(3px); }
+html[data-skin-wip][dir="rtl"] .wip-hub-meta-arrow { transform: scaleX(-1) rotate(-4deg); }
+@media (max-width: 639.98px) {
+  .wip-hub-meta-arrow { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] .wip-hub-meta-arrow { transition: none; }
+  html[data-skin-wip] .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-hub-meta-arrow { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-hub-meta:hover > .wip-hub-meta-arrow { transform: rotate(-4deg); }
+.wip-hub-meta-seat {
+  flex: none;
+  width: 1.375rem;
+  height: 1.375rem;
+  display: grid;
+  place-items: center;
+  border: 1.5px dashed var(--wip-ink-muted);
+  border-radius: 50%;
+  color: var(--wip-ink-muted);
+}
+.wip-invite-glyph { width: 0.8125rem; height: 0.8125rem; }
+.wip-hub-meta-invite:is(:hover, :focus-visible) { box-shadow: inset 0 0 0 1px var(--wip-ink-muted); }
+.wip-hub-meta-invite:is(:hover, :focus-visible) > .wip-hub-meta-seat {
+  border-color: transparent;
+  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
+  color: var(--wip-cta-ink);
+}
+/* With nothing on the hero's last line but the ⋯ (which is in the corner,
+   out of the line), the line takes no room: no empty band under the words. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row:not(:has(> .dev-ws-hero-member, > .dev-ws-hero-actions > :not(.dev-ws-plus))) {
+  height: 0;
+  min-height: 0;
+  margin-block: calc(-1 * 0.5rem) 0; /* and gives back the row gap above it */
+}
+/* THE ⋯ is the card's corner: a small round button on the card's own
+   ground, with its edge and the kit's soft shadow, so it is seen over the
+   hero's picture; its edge darkens under the pointer or while its menu is
+   open. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions > .dev-ws-plus {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-end: 0.5rem;
+  margin: 0;
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  min-width: 0;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 50%;
+  background-color: var(--wip-card-bg);
+  color: var(--wip-ink);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-icon-shadow);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-icon-shadow);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions #dev-plus-btn .dev-ws-plus-glyph { width: 1.25rem; height: 1.25rem; stroke-width: 2.2; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-id { gap: 1rem; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-tile {
+  width: var(--wip-hub-icon);
+  height: var(--wip-hub-icon);
+  border-radius: var(--wip-icon-radius);
+  font-size: calc(var(--wip-hub-icon) / 2);
+  box-shadow: var(--wip-icon-shadow);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-name {
+  font-family: var(--wip-hub-name-font);
+  font-size: var(--wip-hub-name);
+  font-weight: var(--wip-hub-name-weight);
+  line-height: 1.1;
+  letter-spacing: -0.035em;
+  color: var(--wip-hero-ink);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-id-sub, .dev-ws-hero-audience, .dev-ws-hero-lineage, .dev-ws-hero-active-names, .dev-ws-hero-member) { font-size: 0.875rem; color: var(--wip-hero-ink-muted); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(.dev-ws-hero-active-n, .dev-ws-hero-lineage-link, .dev-ws-hero-line) { color: var(--wip-hero-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-desc { max-width: 40rem; font-size: 0.9375rem; line-height: 1.45; color: var(--wip-hero-ink-soft); }
+/* What you can do is the hero's last line, under its words: the main
+   action first, then the quiet ones, and the ⋯ at the far end. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary > .dev-ws-hero-row { grid-column: 1 / -1; order: 9; margin-top: 0.75rem; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions { flex: 1; gap: 0.625rem; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-actions :is(button, a) {
+  border-color: var(--wip-hero-glass-line);
+  background-color: var(--wip-hero-glass);
+  background-image: none;
+  color: var(--wip-hero-ink);
+  box-shadow: inset 0 0 0 1px var(--wip-hero-glass-line);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]) {
+  position: relative;
+  overflow: hidden;
+  height: 2.75rem;
+  border-color: transparent;
+  padding-inline: 1.25rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 700;
+  background-color: transparent;
+  background-image: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 55%, var(--wip-cta-to));
+  color: var(--wip-cta-ink);
+  box-shadow: 0 8px 18px -8px var(--wip-cta-glow);
+}
+/* The hero's buttons are the look's own on every project, from its tokens:
+   the filled action (Home's New project), and plain pills on the card's
+   ground. A sheen crosses the filled one when the pointer comes to it. */
+@media (hover: hover) {
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after {
+    content: "";
+    position: absolute;
+    inset-block: 0;
+    inset-inline-start: 0;
+    width: 40%;
+    background-image: linear-gradient(100deg, transparent, var(--wip-sheen), transparent);
+    transform: translateX(-140%) skewX(-12deg);
+  }
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join]):hover::after {
+    transform: translateX(380%) skewX(-12deg);
+    transition: transform 0.7s ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary .dev-ws-hero-row :is(button, a):is([data-ws-community-open-app], [data-ws-community-join])::after { content: none; }
+/* A phone has no room for the hero's sizes. */
+@media (max-width: 639.98px) {
+  html[data-skin-wip] { --wip-hub-icon: 3rem; --wip-hub-name: 1.75rem; --wip-hero-pad: 1.25rem; --wip-hero-min: 0; }
+}
+/* THE HUB'S ORDER, AND ITS PARTS AS CARDS OF THEIR OWN. The hub answers
+   three things in turn: what this is and how to use it (the head, with its
+   actions at the far end: Open app or Join as the look's filled action,
+   then Invite and the ⋯; there is no Invite card under this look,
+   workshop.tsx), whether anything waits on you (For you's vote line),
+   whether it is alive (Recently live), and then the ways in (the
+   discussion's last line, and the Workshop). For you's card is one card of
+   three doors in the markup; here its parts are the page's own items
+   (`display: contents`), so they can be placed apart, each on the look's
+   card. Everything else the page may draw between (a first version, an
+   update, Share it) keeps its place under the head. */
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you],
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-for-you] > .dev-ws-foryou { display: contents; }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { order: 1; }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hero { order: 0; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > :first-child { order: 2; margin-bottom: calc(0.5rem - var(--wip-row-gap)); /* a label sits on its card, not a row away */ }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]) { order: 3; }
+/* Its label heads the vote line alone here, so with no vote line (a project nobody else is in) there is no label. */
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child { display: none; }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > [data-ws-hub-recent] { order: 4; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { order: 3; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * {
+  border-top: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+/* FOR YOU IS ONE ROW, right under the hero: what waits on you, the
+   Workshop and the discussion, three cards side by side from 768px (the
+   page is three columns there, and everything else takes all three), each
+   as tall as the tallest; stacked on a phone. */
+/* Its three cards are one shape: a tile in the look's own tile colours, a
+   title over one muted line, and (on the two that open a place) a chevron.
+   The same padding, the same height, the same sizes as a row on Home. A
+   card that opens a place answers the pointer: its edge darkens and it
+   lifts a little. */
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { display: flex; align-items: center; min-height: 4.5rem; margin: 0; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > :is(.wip-hub-door, .dev-ws-foryou-row),
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] > .dev-ws-foryou-row {
+  gap: var(--wip-tile-gap);
+  width: 100%;
+  padding: 0.875rem 1rem;
+  text-align: start;
+}
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { padding: 0; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou :is(.wip-hub-door, .dev-ws-foryou-row) > :first-child {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-mark-1-bg);
+  color: var(--wip-mark-1-ink);
+}
+/* Each door its own mark: what waits on you, the Workshop, the discussion. */
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-workshop-row] > :first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou [data-ws-channel] > :first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :first-child,
+.wip-hub-door-title { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; color: var(--wip-ink); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-tx > :last-child:not(:first-child),
+.wip-hub-door-sub { font-size: var(--wip-link-size); line-height: 1.4; color: var(--wip-ink-muted); }
+.wip-hub-door-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.wip-hub-door-sub { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wip-hub-door-sub .dev-ws-link { font: inherit; font-weight: 650; color: var(--wip-ink-action); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { color: var(--wip-ink-muted); transition: transform 0.18s ease; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row,
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: box-shadow 0.18s ease, transform 0.18s ease; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover,
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: translateX(2px); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
+}
+
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row .ui-lrow-go { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs] { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > .dev-ws-foryou-row:hover { transform: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > [data-ws-hub-needs]:hover { transform: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou .dev-ws-foryou-row:hover .ui-lrow-go { transform: none; }
+/* On a phone the vote line may take two lines, so its link is not cut off. */
+@media (max-width: 767.98px) {
+  html[data-skin-wip] #dev-workshop .wip-hub-door-sub { white-space: normal; }
+}
+/* Stacked (a phone), the three are one group: a card's gap between them, not
+   the room the page leaves between its sections. */
+@media (max-width: 767.98px) {
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * + * { margin-top: calc(0.5rem - var(--wip-row-gap)); }
+}
+@media (min-width: 768px) {
+  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    column-gap: var(--wip-card-gap);
+    align-content: start;
+    align-items: start;
+  }
+  html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > *,
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > :first-child { grid-column: 1 / -1; }
+  html[data-skin-wip] #dev-workshop [data-ws-hub-for-you] > .dev-ws-foryou > * { grid-column: auto; align-self: stretch; }
+}
+/* RECENTLY LIVE, as a list and not a wall of pictures. Each change is a row
+   of Home's own kind: a small picture at its side (a thumbnail, not a
+   poster), then its title over who shipped it and when. Three across from
+   768px, on the same column gap and inner padding as every list of the
+   look; one under another on a phone. The "N more live this month" door is
+   the card's quiet foot. */
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent { padding: 0.5rem; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.25rem var(--wip-col-gap);
+  padding: 0;
+  overflow: visible;
+}
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card {
+  display: grid;
+  grid-template-columns: var(--wip-thumb) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  column-gap: var(--wip-tile-gap);
+  row-gap: 0.1875rem;
+  align-items: start;
+  padding: 0.5rem var(--wip-cell-pad);
+  border-radius: var(--wip-radius-inner);
+  transition: background-color 0.15s ease;
+}
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card:hover { background-color: var(--wip-ghost); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic {
+  grid-row: 1 / -1;
+  align-self: center;
+  border-radius: var(--wip-radius-small);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line);
+}
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-pic .dev-ws-recent-app { width: 1.75rem; height: 1.75rem; border-radius: var(--wip-radius-small); font-size: 0.875rem; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-title {
+  align-self: end;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  font-size: var(--wip-title-size);
+  font-weight: var(--wip-title-weight);
+  line-height: 1.3;
+  color: var(--wip-ink);
+}
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-meta.dev-ws-recent-going { color: var(--wip-ink-action); font-weight: 600; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more {
+  min-height: 2.75rem;
+  margin: 0.5rem -0.5rem -0.5rem;
+  width: auto;
+  padding: 0.375rem calc(var(--wip-cell-pad) + 0.5rem);
+  border-radius: 0 0 var(--wip-card-radius) var(--wip-card-radius);
+  box-shadow: inset 0 1px 0 var(--wip-card-line);
+  color: var(--wip-ink);
+}
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-n { min-width: 0; height: 1.5rem; padding: 0 0.5rem; border-radius: var(--wip-radius-pill); background-color: var(--wip-count-bg); color: var(--wip-count-ink); font-size: 0.75rem; }
+html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-more-words { font-size: var(--wip-link-size); font-weight: 600; }
+@media (min-width: 768px) {
+  html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-list { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop [data-ws-hub-recent] .dev-ws-recent-card { transition: none; }
+/* THE ⋯'S MENU, drawn as the hub's own cards are. It is the look's card
+   (its corners, ground and edge, one soft drop), and each row in it is a
+   door of the same shape as For you's: a small tile in the look's mark
+   colours holding the glyph, a title, and its one muted line. No rules
+   between rows: the menu's padding and the rows' own gaps part them. The
+   pointer or the keyboard puts the look's soft ground under a row and
+   nudges it; the row the menu marks (Build it now) wears that soft ground
+   at rest. It opens with a short rise. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) {
+  width: 19rem;
+  padding: 0.5rem;
+  border: 0;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
+  font-family: var(--wip-font);
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: wip-menu-rise 0.16s ease-out; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) * { border-top-width: 0; border-bottom-width: 0; }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) {
+  align-items: center;
+  box-shadow: none; /* not the hero's own buttons' edge: these are rows */
+  color: var(--wip-ink);
+  gap: 0.75rem;
+  margin-block: 1px;
+  padding: 0.4375rem 0.5rem;
+  border: 0;
+  border-radius: var(--wip-radius-inner);
+  background-color: transparent;
+  transition: background-color 0.12s ease, transform 0.12s ease;
+}
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { background-color: var(--wip-ghost); transform: translateX(2px); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a).bg-violet-50 { background-color: var(--wip-ghost); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:first-child {
+  box-sizing: content-box;
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  padding: 0.4375rem;
+  border-radius: var(--wip-radius-small);
+  background-color: var(--wip-mark-1-bg);
+  color: var(--wip-mark-1-ink);
+}
+/* The rows take the three marks in turn. */
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n + 2) > svg:first-child { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):nth-of-type(3n) > svg:first-child { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) > svg:not(:first-child) { color: var(--wip-ink-muted); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:first-child { font-size: var(--wip-link-size); font-weight: 650; line-height: 1.3; color: var(--wip-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) span > span:last-child:not(:first-child) { font-size: 0.75rem; line-height: 1.35; color: var(--wip-ink-muted); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+  html[data-skin-wip] #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu):not(.hidden) { animation: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a) { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) #dev-workshop .dev-ws-hero-summary :is(#dev-plus-menu) :is(button, a):is(:hover, :focus-visible) { transform: none; }
+/* A PROJECT'S NEEDS YOU is laid out as its hub is (review-flow.tsx): the
+   page's whole width on the page's own ground, its name a label of the
+   look, what waits as rows of Home's kind in the look's card, in the look's
+   columns, and under it the ways on into the project as three doors in a
+   row. With nothing waiting, the good news stands where the rows would: a
+   tick in the "going well" colour, a heading and its line. */
+html[data-skin-wip][data-wip-tokens] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) .dev-ws-place-title {
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+  text-decoration-line: underline;
+  text-decoration-color: var(--wip-label-mark);
+  text-decoration-thickness: 0.42em;
+  text-underline-offset: -0.16em;
+  text-decoration-skip-ink: none;
+}
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] :is(.rf-run, .wip-needs) { display: flex; flex-direction: column; gap: 0.5rem; max-width: none; margin: 0; padding: 0; }
+/* The place's own name bar spans the page too (on the hub as well), so the name starts where the cards do. */
+html[data-skin-wip] #dev-workshop .dev-ws:is([data-ws-tab="status"], [data-ws-tab="needs"]) > .dev-ws-placebar { max-width: none; margin-inline: 0; }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] .rf-run > .rf-feed-note { padding: 0; text-align: start; font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-pages-list] {
+  display: grid;
+  grid-template-columns: repeat(var(--wip-cols, 1), minmax(0, 1fr));
+  gap: 0.25rem var(--wip-col-gap);
+  margin: 0;
+  padding: 0.5rem;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] {
+  gap: var(--wip-tile-gap);
+  padding: 0.5rem var(--wip-cell-pad);
+  border: 0;
+  border-radius: var(--wip-radius-inner);
+  box-shadow: none;
+}
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row]:hover { background-color: var(--wip-ghost); }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .workshop-reel-tile { border-radius: var(--wip-item-icon-radius); }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :first-child { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); color: var(--wip-ink); }
+html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="needs"] [data-needs-page-row] .ui-lrow-tx > :last-child:not(:first-child) { font-size: var(--wip-link-size); color: var(--wip-ink-muted); }
+.wip-ways { margin-top: var(--wip-row-gap); display: flex; flex-direction: column; gap: 0.5rem; }
+.wip-ways-label {
+  margin: 0;
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+}
+.wip-ways-label > .wip-head-words {
+  text-decoration-line: underline;
+  text-decoration-color: var(--wip-label-mark);
+  text-decoration-thickness: 0.42em;
+  text-underline-offset: -0.16em;
+  text-decoration-skip-ink: none;
+}
+.wip-caught {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.5rem 1rem;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  text-align: center;
+  font-family: var(--wip-font);
+}
+.wip-caught-mark {
+  width: 4rem;
+  height: 4rem;
+  margin-bottom: 0.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background-color: var(--wip-mark-3-bg);
+  color: var(--wip-mark-3-ink);
+  box-shadow: 0 0 0 0.5rem color-mix(in srgb, var(--wip-mark-3-bg) 45%, transparent);
+}
+.wip-caught-glyph { width: 1.75rem; height: 1.75rem; }
+.wip-caught-title {
+  margin: 0;
+  font-family: var(--wip-hub-name-font);
+  font-size: 1.625rem;
+  font-weight: var(--wip-hub-name-weight);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: var(--wip-ink);
+}
+.wip-caught-text { margin: 0; font-size: 0.9375rem; line-height: 1.5; color: var(--wip-ink-muted); }
+.wip-caught-doors { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.5rem var(--wip-card-gap); }
+@media (min-width: 768px) {
+  .wip-caught-doors { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+.wip-caught-door {
+  display: flex;
+  align-items: center;
+  gap: var(--wip-tile-gap);
+  width: 100%;
+  padding: 0.875rem 1rem;
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+  text-align: start;
+  cursor: pointer;
+  transition: box-shadow 0.18s ease, transform 0.18s ease;
+}
+.wip-caught-door:is(:hover, :focus-visible) { transform: translateY(-1px); box-shadow: inset 0 0 0 1px var(--wip-ink-muted), var(--wip-card-shadow); }
+.wip-caught-door-tile {
+  flex: none;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-mark-1-bg);
+  color: var(--wip-mark-1-ink);
+}
+.wip-caught-door[data-mark="2"] > .wip-caught-door-tile { background-color: var(--wip-mark-2-bg); color: var(--wip-mark-2-ink); }
+.wip-caught-door[data-mark="3"] > .wip-caught-door-tile { background-color: var(--wip-mark-3-bg); color: var(--wip-mark-3-ink); }
+.wip-caught-door-glyph { width: 1.25rem; height: 1.25rem; }
+.wip-caught-door-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.wip-caught-door-title { font-size: var(--wip-title-size); font-weight: var(--wip-title-weight); line-height: 1.3; color: var(--wip-ink); }
+.wip-caught-door-sub { font-size: var(--wip-link-size); line-height: 1.4; color: var(--wip-ink-muted); }
+.wip-caught-door-go { flex: none; width: 1.25rem; height: 1.25rem; color: var(--wip-ink-muted); }
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] .wip-caught-door { transition: none; }
+  html[data-skin-wip] .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-caught-door { transition: none; }
+html[data-skin-wip]:where([data-motion="reduce"]) .wip-caught-door:is(:hover, :focus-visible) { transform: none; }
 /* END OF STANDARD (WIP). */
+/* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */
+@keyframes wip-hero-drift {
+  from { transform: rotate(0deg) scale(1); }
+  to { transform: rotate(14deg) scale(1.12); }
+}
+@keyframes wip-menu-rise {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes wip-hero-float {
+  from { transform: translateY(-5px); }
+  to { transform: translateY(7px); }
+}
+
 
 /* Home's lists (features/home/index.tsx `.home-main`): a flex child that may
    shrink, so a long line is cut and never widens the page. */
@@ -24570,9 +25451,14 @@ html.in-side-panel body {
    on a change up for a vote, its votes. The title is a link stretched over
    the row; the Vote button sits above it. */
 .dev-ws-wlist { display: flex; flex-direction: column; margin-top: 4px; }
+/* A row is square at rest and rounded only while it is lit (hovered, open
+   beside the board, focused): the hairline between rows is the row's top
+   border, and a 12px corner bent each end of that line down, so every row
+   read as the top of a card of its own. Lit, the row's own line goes
+   clear too, as the next row's does, since its fill says where it is. */
 .dev-ws-wrow {
   position: relative; display: flex; align-items: flex-start; gap: 12px;
-  padding: 12px 2px; min-width: 0; border-radius: 12px;
+  padding: 12px 2px; min-width: 0; border-radius: 0;
 }
 .dev-ws-wrow + .dev-ws-wrow,
 .dev-ws-week + .dev-ws-week { border-top: 1px solid var(--app-sheet-line); }
@@ -24581,6 +25467,7 @@ html.in-side-panel body {
 .dev-ws-wrow[data-on] + .dev-ws-wrow,
 .dev-ws-wrow:hover + .dev-ws-wrow { border-top-color: transparent; }
 .dev-ws-wrow:hover, .dev-ws-wrow[data-on] { margin: 0 -8px; padding-inline-start: 10px; padding-inline-end: 10px; }
+.dev-ws-wrow:is(:hover, [data-on], :has(> .dev-ws-wrow-main > .dev-ws-wrow-link:focus-visible)) { border-radius: 12px; border-top-color: transparent; }
 .dev-ws-wrow-tile {
   flex: none; width: 34px; height: 34px; margin-top: 1px; border-radius: 10px;
   display: inline-flex; align-items: center; justify-content: center;
@@ -24968,8 +25855,10 @@ body {
    Vote takes its own click. */
 .dev-ws-brow { flex-wrap: wrap; column-gap: 8px; row-gap: 0; }
 .dev-ws-brow > .dev-ws-wrow-main { flex: 1 1 0; gap: 1px; }
-.dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; }
-.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; }
+.dev-ws-brow .dev-ws-wrow-link { -webkit-line-clamp: 3; text-wrap: pretty; }
+/* `pretty`: a wrapped line in words ends on more than "ago" or "now"
+   (a browser without it wraps as it did). */
+.dev-ws-brow .dev-ws-wrow-sub { white-space: normal; overflow: visible; text-wrap: pretty; }
 .dev-ws-brow .dev-ws-wrow-status { margin-top: 6px; gap: 5px; }
 .dev-ws-brow > .dev-ws-row-band {
   position: relative; z-index: 1; flex: 1 0 100%; min-width: 0; margin-top: 8px; pointer-events: none;
@@ -28119,6 +29008,81 @@ html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:h
    (a sticky box is placed inside it), so its own `top: 0` stays. */
 html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-rail { max-height: calc(100% - var(--pill-under)) !important; }
 
+/* THE VOTE FOLDS INTO THE HEADER (18 Nov 2026, thread-card.tsx `FootFloat`).
+   While a change waits on the reader's vote and its foot has gone up behind
+   the header pill, the foot's headline, its short facts and its buttons fold
+   into the header as a second row: the pill becomes one card, the change on
+   top and what it needs from the reader under a hairline, the way the card
+   carries its own foot band. The row lies in the bar, over the scroller, so
+   nothing in the page moves when it comes or goes. It slides out from under
+   the header (which stands above it) while the header's lower corners ease
+   square, and they ease round again when the row goes. The header gives up
+   its drop shadow while the row is there, so no shadow falls across the
+   card; the row's shadow is the card's. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar .messages-thread-header {
+  position: relative;
+  z-index: 1;
+  /* The pill's round ends, as a length its corners can ease from. */
+  border-radius: calc(var(--pill-h) / 2);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-bar:has(> .dev-thread-float) .messages-thread-header {
+  border-end-start-radius: 0;
+  border-end-end-radius: 0;
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-request-bar > .messages-thread-header { transition: border-radius 180ms ease; }
+.dev-thread-float {
+  pointer-events: auto;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 64px;
+  padding: 10px 10px 10px 20px;
+  border-radius: 0 0 calc(var(--pill-h, 56px) / 2) calc(var(--pill-h, 56px) / 2);
+  background-color: var(--thread-card-solid, var(--dc-sheet-solid));
+  background-image: linear-gradient(var(--thread-foot, transparent), var(--thread-foot, transparent));
+  box-shadow: var(--thread-card-edge, inset 0 0 0 1px var(--app-sheet-line)), 0 8px 24px rgba(17, 24, 39, 0.08);
+  animation: dev-thread-float-in 180ms ease-out both;
+}
+.dev-thread-float-st { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.dev-thread-float-head,
+.dev-thread-float-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-thread-float-head { font-size: 15px; line-height: 20px; font-weight: 700; color: var(--text-primary); }
+.dev-thread-float[data-thread-float-tone="bad"] .dev-thread-float-head { color: var(--state-blocked); }
+.dev-thread-float-sub { font-size: 13px; line-height: 18px; color: var(--text-secondary); }
+.dev-thread-float-acts { flex: none; display: flex; align-items: center; gap: 8px; }
+.dev-thread-float-acts :is(button, a) {
+  height: 40px; min-height: 40px; padding-block: 0; padding-inline: 18px; border-radius: 999px;
+  font-size: 15px; font-weight: 650; line-height: 1;
+}
+.dev-thread-float-acts .dev-vote-caret { display: none; }
+@keyframes dev-thread-float-in { from { opacity: 0; transform: translateY(-12px); } }
+/* On a wide page "How it got here" stands beside the card under the header,
+   so while the row is folded in, the timeline steps down by the row's height
+   and eases back when it goes; the replies beside it do not move. */
+.dev-request-rail { transition: top 180ms ease, max-height 180ms ease; }
+@media (min-width: 1180px) {
+  html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)):has(.dev-thread-float) .dev-request-rail {
+    top: 64px;
+    max-height: calc(100% - var(--pill-under) - 64px) !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dev-thread-float { animation: none; }
+  .dev-request-bar > .messages-thread-header { transition: none; }
+  .dev-request-rail { transition: none; }
+}
+/* Reduce motion setting (#6510): the same, when Settings asks for it. */
+:where(html[data-motion="reduce"]) .dev-thread-float { animation: none; }
+:where(html[data-motion="reduce"]) .dev-request-bar > .messages-thread-header { transition: none; }
+:where(html[data-motion="reduce"]) .dev-request-rail { transition: none; }
+@media (max-width: 520px) {
+  .dev-thread-float { gap: 8px; padding-inline-start: 16px; }
+  .dev-thread-float-acts { gap: 6px; }
+  .dev-thread-float-acts :is(button, a) { padding-inline: 14px; }
+}
+
 /* THE PAGE'S WAY BACK, AT THE PILL'S START. Its chip ("‹ Workshop", or
    "‹ Homeroom bot") is the page's, in its own host above the sheet; it is
    drawn as a disc inside the pill, its words kept for its accessible name.
@@ -28579,6 +29543,7 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   .dev-thread-foot-acts > :has(> .dev-vote-btn) { flex: 1 1 auto; }
   .dev-thread-foot-acts > :has(> .dev-vote-btn) > .dev-vote-btn { width: 100%; }
 }
+
 
 /* Where the picture will be, before there is one. */
 .dev-thread-wait,
@@ -30041,6 +31006,9 @@ html[data-skin="brand"]:not(.dark):not([data-app-tone="dark"]) {
   --bl-on-solid: #ffffff;
   --bl-tint-sun: #fff6ac;
   --bl-tint-sky: #e3eefb;
+  /* The row open beside the board: a breath of warmth, and its edge. */
+  --bl-row-on: #f9f7ea;
+  --bl-row-on-edge: rgba(18, 26, 14, 0.28);
   /* The line round a message's bubble, and round your own on sky. */
   --bl-bubble-line: rgba(18, 26, 14, 0.14);
   --bl-bubble-line-own: rgba(26, 99, 196, 0.24);
@@ -30140,6 +31108,8 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-on-solid: #0d1421;
   --bl-tint-sun: rgba(255, 238, 111, 0.18);
   --bl-tint-sky: rgba(127, 188, 247, 0.18);
+  --bl-row-on: rgba(220, 230, 248, 0.04);
+  --bl-row-on-edge: rgba(220, 230, 248, 0.38);
   --bl-bubble-line: rgba(220, 230, 248, 0.2);
   --bl-bubble-line-own: rgba(127, 188, 247, 0.42);
   --bl-card-line: rgba(220, 230, 248, 0.26);
@@ -30519,6 +31489,73 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   background-color: var(--bl-sun);
   color: var(--bl-on-sun);
 }
+/* THE BOARD, CALM. All items' columns (and the Workshop's rows) carry the
+   same marks as in the standard look, yet read as more crowded here, for
+   three repaints the look gave them by the way, each fixed in its own
+   colours:
+   - Vote was the ink (the shell's --accent here): the darkest thing on the
+     page, once a row. It is the sky, white words, as a count that asks for
+     you is. The one Vote at a change's own foot stays the sun pill (the
+     thread rules, below, are more specific), the page's one action.
+   - Something still running (checks, screenshots, a build) wore the lit
+     tint, a pale sun: on a column of them the sun stopped meaning "you are
+     here" and "do this". It is the sky's pale tint, with the sky's ink.
+   - The progress state (a vote under way: "Vote · 1/2", "0 of 1
+     approval") was the standard's purple, a third family beside the look's
+     two. It is the sky as well, so a vote's bar and its button are one
+     blue, as they are in the standard look. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) {
+  --state-progress: var(--bl-sky);
+  --state-progress-bg: var(--bl-tint-sky);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior) {
+  background: var(--bl-count);
+  color: var(--bl-on-count);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-vote-btn:not(.dev-vote-btn-yes, .dev-vote-btn-no, .dev-vote-btn-prior):hover {
+  background: color-mix(in srgb, var(--bl-count) 86%, #000000);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-tag[data-tone="run"] {
+  color: var(--bl-sky);
+  background: var(--bl-tint-sky);
+}
+/* The row open beside the board (`data-on`) was the lit tint, a block of
+   pale sun the row's own pills sat on. It is an outline: a thin edge in the
+   ink (a light one in dark) round a fill only a breath off the card, so the
+   row reads as the open one and its pills keep their own colours. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-ws-wrow[data-on] {
+  background: var(--bl-row-on);
+  box-shadow: inset 0 0 0 1.5px var(--bl-row-on-edge);
+}
+/* NEEDS YOU'S CARD (features/review-flow/). From 768px a change waiting on
+   you is a card in the middle of the page, and it was drawn in the page's
+   own ground (--rf-page is --home-ground, the cream here): a cream card on
+   the cream page, its edge a 7% hairline, with the picture's well and the
+   Yes, No and Skip buttons a warm grey on it. It is the look's card: white
+   (one step off the page in dark) with Home's lift, and what sits on it is
+   the page's cream, as a well and as the buttons' fill, so they read as
+   the page showing through. The filter chips on its bar (All, Votes that
+   decide, Advisory) were white, which is the card now: the ones not chosen
+   take the look's raised edge, as its other plain buttons do (a cream fill
+   would sit too near the chosen one's sun). A phone, where the run is the
+   whole screen and no card, keeps the page's ground. */
+@media (min-width: 768px) {
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) :is(.rf-run, .rf-page-wrap) {
+    --rf-page: var(--bl-card);
+    --rf-sheet: var(--bl-card);
+    --rf-fill: var(--bl-page);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .rf-page {
+    box-shadow: 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .rf-bar [aria-pressed="false"] {
+    background-color: var(--bl-raise);
+    box-shadow: var(--bl-raise-edge);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .rf-bar [aria-pressed="false"]:hover {
+    background-color: var(--bl-page);
+  }
+}
 
 /* WARM GREYS. The zinc ramp is a cool grey; on the cream page its common
    fills, words and lines take a warm one. */
@@ -30754,37 +31791,159 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 @media (min-width: 1280px) {
   /* COMMUNITIES AS PEOPLE PLACES. From 1280px each community on the
-     Communities page is a small card on its group's card, with what
-     pinned-communities.tsx gives it under its name (data-home-community-detail,
-     hidden everywhere else): how many members, what went live this week,
-     and the faces of the people who were there this week. */
-  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid {
-    grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
-    gap: 12px;
-    padding: 12px;
+     Communities page is a card of its own on the page, with what
+     pinned-communities.tsx gives it (CommunityDetail; hidden everywhere
+     else). Its head is the icon with the name beside it over how many
+     members (data-home-community-meta), a list row's 15 over 13. Its foot,
+     under a hairline and held to the card's bottom edge so the feet of a
+     row of cards line up, is this week (data-home-community-detail): the
+     faces and how many were active, then how many changes went live, one
+     line each in the same 13px words. A quiet week has no foot.
+     The group's card the tiles sat on is not drawn here: a card on a card
+     was two edges round every community. The cards are the look's own,
+     white on the cream with its lift, and four to a row in Home's column so
+     a foot's words fit on one line beside its faces. (The page's id: the
+     rule that paints the groups' card names one too.) */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) #communities-screen .communities-grid {
+    grid-template-columns: repeat(auto-fill, minmax(212px, 1fr));
+    gap: 14px;
+    padding: 6px 0 4px;
+    background-color: transparent;
+    box-shadow: none;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] {
-    align-items: flex-start;
-    gap: 6px;
-    padding: 14px 12px;
-    border-radius: 16px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto 1fr;
+    column-gap: 14px;
+    row-gap: 2px;
+    align-items: start;
+    padding: 14px;
+    border-radius: 18px;
     text-align: start;
-    box-shadow: inset 0 0 0 1px var(--bl-edge);
+    background-color: var(--bl-card);
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift);
+    transition: box-shadow 150ms ease;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community]:hover {
+    box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
+  }
+  /* The icon, a size down, beside the two lines of the head. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > :first-child {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > :first-child > span:first-child {
+    border-radius: 17px;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] .app-icon-tile {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+    font-size: 20px;
+  }
+  /* The votes waiting sit on the icon's corner, clear of the name beside it
+     (a wider count grows over the icon, not toward the words). */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-votes] {
+    top: -7px;
+    inset-inline-end: -5px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 5px;
+    font-size: 11px;
   }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community] > .line-clamp-2 {
-    margin-top: 2px;
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
     font-size: 15px;
     font-weight: 650;
     line-height: 19px;
     color: var(--text-primary);
   }
+  /* With no members line the name is the head's one line, centred on the icon. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-meta] {
+    display: block;
+    grid-column: 2;
+    grid-row: 2;
+    align-self: start;
+    min-width: 0;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid [data-home-community-detail] {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    align-self: stretch;
+    gap: 6px;
+    grid-column: 1 / -1;
+    grid-row: 3;
+    align-self: end;
+    min-width: 0;
+    margin-top: 12px;
+    padding-top: 11px;
+    border-top: 1px solid var(--app-sheet-line);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
+    display: flex;
+    align-items: center;
     gap: 8px;
     min-width: 0;
+    min-height: 22px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-words {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* A glyph leads a line that has no faces, in a 22px box so the words of
+     both lines start on the same edge as the faces' line would. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-glyph {
+    flex: none;
+    width: 22px;
+    height: 15px;
+    color: var(--text-muted);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news {
+    font-weight: 600;
+    color: var(--bl-sky);
+  }
+  /* A quiet week: the same foot, in the muted ink. */
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-quiet {
+    color: var(--text-muted);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-news > .home-community-glyph {
+    color: var(--bl-sky);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face {
+    width: 22px;
+    height: 22px;
+    margin-inline-end: -6px;
+    overflow: hidden;
+    font-size: 10px;
+    box-shadow: 0 0 0 2px var(--bl-card);
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face:last-child {
+    margin-inline-end: 0;
+  }
+  html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .communities-grid .home-community-people .dev-ws-hero-face > img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
   }
 
   /* RECENT THREADS BESIDE PINNED APPS. From 1280px, while there are recent
@@ -30926,56 +32085,6 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
     background: var(--bl-card);
     box-shadow: inset 0 0 0 1px var(--app-sheet-line), var(--bl-lift-home);
   }
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-line {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 13px;
-  line-height: 18px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-news {
-  display: inline-flex;
-  align-items: center;
-  max-width: 100%;
-  height: 24px;
-  padding: 0 9px;
-  border-radius: 9999px;
-  background: var(--bl-tint-sky);
-  color: var(--bl-sky);
-  font-size: 12.5px;
-  font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* The words drop under the faces when a narrow card has no room beside them. */
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 6px;
-  align-self: stretch;
-  min-width: 0;
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face {
-  margin-inline-end: -8px;
-  overflow: hidden;
-  box-shadow: 0 0 0 2px var(--bl-card);
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face:last-child {
-  margin-inline-end: 0;
-}
-html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .home-community-people .dev-ws-hero-face > img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 /* A REPLY BOX on its sheet. The standard interface draws it white on a
    half-clear sheet, so the tinted page shows round it; here the sheet is
@@ -31157,6 +32266,18 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
 }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
 html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-foot-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary, .dev-change-gate-link) {
+  background: var(--bl-raise);
+  color: var(--text-primary);
+  box-shadow: var(--bl-raise-edge);
+}
+/* The vote row folded into the header wears the foot's buttons. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary) {
+  background: var(--bl-sun);
+  color: var(--bl-on-sun);
+  box-shadow: var(--bl-pill-edge);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(.dev-vote-btn:not(.dev-vote-btn-yes), .dev-request-primary):hover { background: var(--bl-sun-lit); }
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .dev-thread-float-acts :is(button, a):not(.dev-vote-btn, .dev-request-primary) {
   background: var(--bl-raise);
   color: var(--text-primary);
   box-shadow: var(--bl-raise-edge);

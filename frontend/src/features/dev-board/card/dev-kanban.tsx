@@ -123,7 +123,8 @@ function Step({ col, active, loading, last }: { col: KanbanColView; active: bool
     >
       <span className="dev-kanban-step-tile" data-kind={col.key} aria-hidden="true"><Icon aria-hidden="true" /></span>
       <span className="dev-kanban-step-name">{col.title}</span>
-      <span className="dev-kanban-step-n">{loading ? <CountSkeleton /> : countWords(col.count)}</span>
+      {/* #6826: Done's count comes from the Done list, so it waits alone. */}
+      <span className="dev-kanban-step-n">{loading || col.pending ? <CountSkeleton /> : countWords(col.count)}</span>
       {last ? null : <ChevronRightIcon className="dev-kanban-step-arrow" aria-hidden="true" />}
     </button>
   );
@@ -231,7 +232,9 @@ function Column(
   // republishes and this column stops being deferred.
   if (deferred) {
     cards = null;
-  } else if (loading) {
+  } else if (loading || col.pending) {
+    // #6826: `col.pending` is the Done column while the Done list is still
+    // on its way, which is the one column drawn from it. The others draw.
     cards = <CardSkeleton n={2} label={t('project:kanban.column.loading', { column: col.title })} />;
   } else if (col.empty) {
     cards = <div className="dev-kanban-empty">{col.empty}</div>;
@@ -271,7 +274,7 @@ function Column(
         {sortLabel}
       </button>
     </div>
-  ) : (!loading && col.status ? (
+  ) : (!loading && !col.pending && col.status ? (
     <p
       data-kanban-col-status={col.key}
       className={`dev-kanban-lead dev-kanban-status ${statusTone}`}

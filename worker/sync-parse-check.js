@@ -19,7 +19,14 @@
 //   .ts .tsx .jsx   esbuild.transformSync (the frontend's own esbuild first,
 //                   then the worker image's esbuild binary, run as a command:
 //                   worker/Dockerfile builds it from source with a patched Go)
-//   .json           JSON.parse
+//   .json           JSON.parse, then a walk that refuses a key defined twice
+//
+// When the merge touched a language catalog (frontend/locales/), the English
+// catalogs are also read through scripts/language-packs.js `collectCatalogs`,
+// the same check the shell build runs, because JSON.parse cannot see the
+// duplicate keys it refuses. On 18 Nov 2026 a sync kept both sides of
+// en/home.json, defining six keys twice; the file parsed, so it was pushed,
+// and every preview build then failed with nothing saying the sync had done it.
 //
 // A TypeScript or JSX file is checked by a transform, not a type check:
 // types are the checks' business, and this gate exists to stop a tree that
@@ -147,10 +154,48 @@ function positionOf(source, index) {
   return { line: parts.length, column: parts[parts.length - 1].length + 1 };
 }
 
+// The first key a document defines twice, as `{ index, key }`, or null.
+// `JSON.parse` keeps the last definition and says nothing about the first,
+// so the text is walked instead. Every `{` pushes a frame with its own set of
+// keys; `[` pushes a frame that has none; `}` and `]` pop. A string in key
+// position (right after `{` or after a `,` in an object) is decoded with
+// `JSON.parse`, escapes included, and checked against that frame's set. The
+// file has already parsed, so the text is well-formed and an escaped quote is
+// skipped by taking the backslash and the character after it together.
+function duplicateKey(source) {
+  const stack = [];
+  let i = 0;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < source.length && source[j] !== '"') j += source[j] === '\\' ? 2 : 1;
+      const frame = stack[stack.length - 1];
+      if (frame && frame.expectKey) {
+        const key = JSON.parse(source.slice(i, j + 1));
+        frame.expectKey = false;
+        if (frame.keys.has(key)) return { index: i, key };
+        frame.keys.add(key);
+      }
+      i = j + 1;
+      continue;
+    }
+    if (c === '{' || c === '[') {
+      stack.push({ keys: c === '{' ? new Set() : null, expectKey: c === '{' });
+    } else if (c === '}' || c === ']') {
+      stack.pop();
+    } else if (c === ',') {
+      const frame = stack[stack.length - 1];
+      if (frame && frame.keys) frame.expectKey = true;
+    }
+    i += 1;
+  }
+  return null;
+}
+
 function jsonCheck(file, source) {
   try {
     JSON.parse(source);
-    return null;
   } catch (err) {
     const text = String(err.message || 'does not parse');
     let line = 1;
@@ -159,6 +204,12 @@ function jsonCheck(file, source) {
     if (at) ({ line, column } = positionOf(source, Number(at[1])));
     return `${file}:${line}:${column}: ${text}`;
   }
+  const repeated = duplicateKey(source);
+  if (repeated) {
+    const { line, column } = positionOf(source, repeated.index);
+    return `${file}:${line}:${column}: key "${repeated.key}" defined more than once`;
+  }
+  return null;
 }
 
 function transformCheck(file, source) {
@@ -206,11 +257,48 @@ function checkFile(file) {
   return transformCheck(file, source);
 }
 
+// A path as the merge wrote it, relative to the checkout, with `/` separators
+// so the locales prefix matches however the caller spelled it.
+function relativeToCwd(file) {
+  return path.relative(process.cwd(), path.resolve(process.cwd(), file)).split(path.sep).join('/');
+}
+
+// The language catalogs, read the way the shell build reads them, when the
+// merge touched them. Only the platform's own repository has the script, so
+// another app's sync skips this silently. Each error becomes a
+// `frontend/locales/...:1:1:` line, the shape the hand-back names files by.
+function catalogFailures(files) {
+  if (!files.some((file) => relativeToCwd(file).startsWith('frontend/locales/'))) return [];
+  const script = path.join(process.cwd(), 'scripts', 'language-packs.js');
+  if (!fs.existsSync(script)) return [];
+  let collectCatalogs;
+  try {
+    ({ collectCatalogs } = require(script));
+  } catch (err) {
+    return [`frontend/locales:1:1: ${err.message}`];
+  }
+  try {
+    collectCatalogs(process.cwd());
+    return [];
+  } catch (err) {
+    const lines = String(err.message || '').split('\n');
+    const list = lines.slice(1).filter((line) => line.trim());
+    if (!list.length) return [`frontend/locales:1:1: ${lines[0] || err.message}`];
+    return list.map((line) => {
+      if (!line.startsWith('en/')) return `frontend/locales:1:1: ${line}`;
+      const namespace = line.slice(3).split(/[:/]/)[0].replace(/\.json$/, '');
+      return `frontend/locales/en/${namespace}.json:1:1: ${line}`;
+    });
+  }
+}
+
+const files = process.argv.slice(2);
 const failures = [];
-for (const file of process.argv.slice(2)) {
+for (const file of files) {
   const failure = checkFile(file);
   if (failure) failures.push(failure);
 }
+failures.push(...catalogFailures(files));
 if (failures.length) {
   process.stdout.write(`${failures.join('\n')}\n`);
   process.exit(1);

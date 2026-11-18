@@ -51,6 +51,7 @@
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { reducedMotion } from '../../lib/reduced-motion';
+import { ProjectNeedsEmpty, ProjectWaysIn } from './project-needs';
 
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ChatIcon, CheckIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlayIcon, SparklesIcon } from '@/components/ui/icons';
@@ -545,7 +546,7 @@ function ChangeBody({ item, width, pageH, arrive, still = null, onView, onMore, 
 
 /* ── The run ──────────────────────────────────────────────────────────── */
 
-export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, header = 'communities', project, grows = false }: {
+export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered, onRetracted, onSettled, slug, header = 'communities', project, grows = false }: {
   items: NeedsFeedItem[] | null;
   error: boolean;
   capped: boolean;
@@ -558,6 +559,8 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
    * own page does.
    */
   project?: string;
+  /** That project's slug: under Standard (WIP) its empty page offers the project's other places. */
+  slug?: string;
   /**
    * The run takes in what a later read of `items` adds (a project's own
    * Needs you, which reads again when a change's state moves): see the
@@ -976,10 +979,16 @@ export function ReviewFlow({ items, error, capped, onDone, doneLabel, onAnswered
               />
             ))}
           </GroupedList>
+          <ProjectWaysIn slug={slug} project={project} />
         </div>
       );
     }
-    return <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{project ? t('communities:reel.emptyProject', { project }) : t('communities:reel.empty')}</p>;
+    // One look draws this as good news with the ways on under it (./project-needs.tsx); every other, this line.
+    return (
+      <ProjectNeedsEmpty slug={slug} project={project} anchorRef={anchorRef}>
+        <p ref={anchorRef as never} className="rf-feed-note px-4 pt-3 text-sm text-zinc-500 dark:text-zinc-400" data-needs-empty="" data-review-flow="">{project ? t('communities:reel.emptyProject', { project }) : t('communities:reel.empty')}</p>
+      </ProjectNeedsEmpty>
+    );
   }
 
   const page = open ? (
@@ -1174,6 +1183,7 @@ export function ProjectReviewFlow({ slug, onDone, project }: { slug: string; onD
         onDone={onDone}
         doneLabel={t('communities:review.end.backToProject')}
         header="project"
+        slug={slug}
         project={project}
         grows
       />

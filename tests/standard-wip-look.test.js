@@ -23,6 +23,10 @@ const WIP_HIDES = [
   'html[data-skin-wip] #home-communities-section',
   // Under 1024px a project's tile is its icon and name alone.
   'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people)',
+  // A project's hub has no Topics card under the look (asked 18 Nov 2026).
+  'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
+  // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
+  'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
 ];
 
 function wipBlock() {

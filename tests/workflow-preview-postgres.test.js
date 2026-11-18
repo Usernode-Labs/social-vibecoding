@@ -603,6 +603,28 @@ test('preview machine against the full PostgreSQL schema', { timeout: 120000 }, 
     work.answer.set(WORK.prepare, prepareOk);
   });
 
+  await t.test('P24b a live draft previewed with no checks is checked once it goes up for a vote', async () => {
+    // services/live-drafts.js: the draft's preview is a preview-only one
+    // while it is edited; the vote's own revision (promote-kick) builds the
+    // same head again, with checks, and the mark is gone for good.
+    const s = await proposal(await app(), { status: 'paused' });
+    await send(s, 'PreviewRequested', { sessionId: s.id, head: SHA('5'), reason: 'preview' }, { kind: 'route' });
+    await settle();
+    let i = await instance(s);
+    assert.deepEqual([i.state, i.data.previewOnly], ['settled', true]);
+    assert.deepEqual(await workOf(s, WORK.run), [], 'no checks while it is a draft');
+    await pool.query("UPDATE chat_sessions SET status = 'promoted', reviewed_head_sha = $2 WHERE id = $1", [s.id, SHA('5')]);
+    const kick = await submit(s, SHA('5'), { trigger: 'promote-kick' });
+    await settle();
+    assert.equal((await outcome(kick)).result, 'accepted');
+    i = await instance(s);
+    assert.equal(i.data.previewOnly, undefined, 'the no-checks mark is gone');
+    assert.equal((await workOf(s, WORK.run)).length, 1, 'its checks ran');
+    const r = await row(s.id);
+    assert.equal(r.checks_commit_sha, SHA('5'));
+    assert.notEqual(r.check_state, null);
+  });
+
   await t.test('P25 a release retries a platform fault at once; a proposal\'s own failure waits for its timer', async () => {
     const s = await proposal(await app(), { pin: SHA('9') });
     work.answer.set(WORK.prepare, () => ({ ok: false, detail: 'The preview database server refused', platformFault: true }));

@@ -173,7 +173,10 @@ test('every hand-written copy of the governance kinds still agrees with the cons
   // And the client's, which is what the lander's "Needs your vote" deck is
   // actually built from. A kind missing there is a proposal nobody is asked
   // to vote on, however right the server's count is.
-  const clientFilter = /_govProposals = [\s\S]*?\.filter\(\(i\) =>([\s\S]*?)\);/.exec(appViewJs);
+  // Anchored on the load's own assignment: `_govProposals` is also copied
+  // back from a project's remembered board (#6826), and a bare
+  // `_govProposals =` would match that copy instead of the filter.
+  const clientFilter = /_govProposals = \(issuesData\.issues \|\| \[\]\)[\s\S]*?\.filter\(\(i\) =>([\s\S]*?)\);/.exec(appViewJs);
   assert.ok(clientFilter, 'the client still filters `_govProposals` by kind');
   assert.deepEqual(quoted(clientFilter[1]), expected);
 });
