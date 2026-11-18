@@ -404,13 +404,28 @@ test('Featured is the first strip of Communities to join, signed in or out: the 
   // communities. Signed in, Featured keeps the grid above.
   const visitor = draw({ signedIn: false });
   assert.deepEqual(featuredOf(visitor), ['todo-list', 'game-corner'], 'the same communities in the same order');
-  assert.match(visitor, /<div role="list" aria-labelledby="guest-join-featured-label" data-home-join-lead="2" class="flex snap-x snap-mandatory gap-3\.5 overflow-x-auto [^"]*">/);
+  // #6804: both rows scroll on the kit's FadeRail (the kind chips above are
+  // on it too), which fades an edge only where more cards are hidden. The
+  // rail never measured a row that fits, so the first render fades nothing.
+  const leadRow = visitor.match(/<div[^>]*data-home-join-lead="2"[^>]*>/)[0];
+  assert.match(leadRow, /role="list"/);
+  assert.match(leadRow, /aria-labelledby="guest-join-featured-label"/);
+  const leadClasses = leadRow.match(/class="([^"]*)"/)[1].split(' ');
+  // `scroll-px-1` makes the first card's snap point sit past the row's own
+  // left padding, so a row at rest is at scrollLeft 0 and its left edge
+  // does not fade before anyone has scrolled it.
+  for (const cls of ['snap-x', 'snap-mandatory', 'scroll-px-1', 'overflow-x-auto', 'gap-3.5', 'px-1', 'pt-0', 'pb-3.5', '[scrollbar-width:none]']) {
+    assert.ok(leadClasses.includes(cls), `the large row keeps ${cls}`);
+  }
+  assert.doesNotMatch(leadRow, /mask-image/, 'a row that fits, or is not measured yet, fades nothing');
+  assert.match(read(JOIN), /<FadeRail\s+role="list"\s+aria-labelledby="guest-join-featured-label"\s+data-home-join-lead=\{lead\.length\}/, 'the large row is the fading rail');
   assert.equal([...visitor.matchAll(/<article data-guest-featured="[^"]+" data-guest-lead=""/g)].length, 2, 'both are in the large row: there are fewer than four');
   assert.doesNotMatch(visitor, /data-home-join-featured-rest/, 'and no second row with nothing left for it');
   const join = read(JOIN);
   assert.match(join, /const LEAD_FEATURED = 4;/);
   assert.match(join, /const lead = useMemo\(\(\) => \(signedIn \? \[\] : featured\.slice\(0, LEAD_FEATURED\)\), \[signedIn, featured\]\);/);
-  assert.match(join, /: 'flex snap-x snap-mandatory gap-3 overflow-x-auto overscroll-x-contain px-1 pb-1 /, 'the rest of a visitor\'s Featured scrolls sideways too');
+  assert.match(join, /className="snap-x snap-mandatory scroll-px-1 gap-3 overscroll-x-contain px-1 pt-0 pb-1"/, 'the rest of a visitor\'s Featured scrolls sideways too');
+  assert.match(join, /<FadeRail\s+role="list"\s+aria-labelledby="guest-join-featured-label"\s+data-home-join-featured-rest=""/, 'and on the same fading rail as the large row');
   assert.equal(message('auth:guest.card.changes', { count: 34 }), '34 changes');
   assert.equal(message('auth:guest.card.changes', { count: 1 }), '1 change');
   assert.equal(message('home:join.featured'), 'Featured');
