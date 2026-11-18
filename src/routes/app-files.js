@@ -52,8 +52,9 @@ function verifyUserToken(raw, appId, staging) {
 // Sends one stored file: whole, or the single byte range a `Range`
 // header asks for (audio and video seek; Safari asks for pieces). The
 // object store reads only that range. `file` is its app_files row; access
-// is the caller's to check first.
-async function sendAppFile(req, res, store, file, cacheControl) {
+// is the caller's to check first. `onMissing` answers a row whose object is
+// gone (a bare 404 unless the caller speaks JSON).
+async function sendAppFile(req, res, store, file, cacheControl, { onMissing = null } = {}) {
   const size = Number(file.size_bytes);
   const range = Number.isSafeInteger(size) && size > 0 ? parseRange(req.headers.range, size) : null;
   const safeName = String(file.filename || 'file').replace(/["\\\r\n]/g, '_');
@@ -83,8 +84,10 @@ async function sendAppFile(req, res, store, file, cacheControl) {
     // Row-without-object (partial restore, failed delete retry):
     // degrade to 404 for fresh fetchers, loudly in the log.
     log.warn('app-files', 'Object missing for metadata row', { id: file.id, err: err.message });
-    for (const header of ['Cache-Control', 'ETag', 'Content-Disposition', 'Accept-Ranges']) res.removeHeader(header);
-    return res.status(404).end();
+    for (const header of ['Content-Type', 'Cache-Control', 'ETag', 'Content-Disposition', 'Accept-Ranges']) {
+      res.removeHeader(header);
+    }
+    return onMissing ? onMissing() : res.status(404).end();
   }
   if (range) {
     res.status(206);

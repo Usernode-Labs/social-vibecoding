@@ -263,3 +263,14 @@ test('usage without a user token reports the app and no person', async () => {
     assert.equal(usage.userCapBytes, null);
   });
 });
+
+test('a file whose object is gone reads back as the route\'s JSON 404', async () => {
+  await withServer(async (base) => {
+    const stored = await (await upload(base, { query: 'filename=c.json&owner=app', body: JSON_BYTES })).json();
+    objects.delete(`11/${stored.id}`);
+    const res = await fetch(`${base}/files/${stored.id}`, { headers: appHeaders() });
+    assert.equal(res.status, 404);
+    assert.match(res.headers.get('content-type'), /application\/json/);
+    assert.deepEqual(await res.json(), { ok: false, code: 'not_found', error: 'File not found' });
+  });
+});

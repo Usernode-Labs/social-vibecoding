@@ -163,7 +163,9 @@ function appStorageRoutes(config, deps = {}) {
       if (!store) {
         return res.status(503).json({ ok: false, code: 'storage_unavailable', error: 'File storage is unavailable right now' });
       }
-      return await sendAppFile(req, res, store, file, 'private, no-store');
+      return await sendAppFile(req, res, store, file, 'private, no-store', {
+        onMissing: () => res.status(404).json({ ok: false, code: 'not_found', error: 'File not found' }),
+      });
     } catch (err) {
       log.error('app-storage', 'Read failed', { appId: req.appStorage?.appId, err: err.message });
       if (res.headersSent) return res.destroy();
