@@ -21,7 +21,11 @@ function sessionId(value) {
   return Number.isSafeInteger(id) && id > 0 && id <= 2147483647 ? id : null;
 }
 
-async function loadContext(pool, slug, id, user, level = 'view') {
+// `columns` is what a route reads off the change. An image or a picture
+// reads only that it exists in this app (#6793): each one used to read the
+// change's whole row, plan and check results included.
+const CONTEXT_ONLY = 'cs.id, cs.app_id';
+async function loadContext(pool, slug, id, user, level = 'view', columns = 'cs.*') {
   const app = await appAccess.getAppForUser(
     pool,
     slug,
@@ -31,10 +35,20 @@ async function loadContext(pool, slug, id, user, level = 'view') {
   );
   if (!app) return null;
   const { rows } = await pool.query(
-    `SELECT cs.* FROM chat_sessions cs WHERE cs.id = $1 AND cs.app_id = $2`,
+    `SELECT ${columns} FROM chat_sessions cs WHERE cs.id = $1 AND cs.app_id = $2`,
     [id, app.id]
   );
   return rows[0] ? { app, session: { ...rows[0], app_slug: app.slug } } : null;
+}
+
+// Does an If-None-Match header name this image? Tags are compared weakly
+// (a `W/` prefix is ignored), and `*` matches whatever is stored.
+function matchesEtag(header, sha256) {
+  if (typeof header !== 'string' || !header.trim() || !sha256) return false;
+  return header.split(',').some((part) => {
+    const tag = part.trim().replace(/^W\//, '');
+    return tag === '*' || tag === `"${sha256}"`;
+  });
 }
 
 function sendError(res, err) {
@@ -247,7 +261,7 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Picture not found' });
     try {
-      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view', CONTEXT_ONLY);
       if (!ctx) return res.status(404).json({ error: 'Picture not found' });
       const pictures = require('../services/change-pictures');
       const row = await pictures.pictureForSession(pool, { sessionId: id, appId: ctx.app.id, pictureId: req.params.pictureId });
@@ -272,7 +286,7 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
       return res.status(404).json({ error: 'Shots artifact not found' });
     }
     try {
-      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view');
+      const ctx = await loadContext(pool, req.params.slug, id, req.user, 'view', CONTEXT_ONLY);
       if (!ctx) return res.status(404).json({ error: 'Shots artifact not found' });
       // A dense still (services/shots-density.js) at its own address, for an
       // account in the New Needs you experiment; anyone else asking for it
@@ -312,6 +326,17 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
       // A close-up (services/shots-closeups.js) is only ever shown to an
       // account in the experiment, at its own address.
       if (!artifact || (artifact.variant === 'closeup' && !dense)) return res.status(404).json({ error: 'Shots artifact not found' });
+      // #6793: the browser already has this exact image. Answered only after
+      // the lookup above, so a stale or hidden one is still a 404, and
+      // before the media store is opened.
+      if (matchesEtag(req.headers['if-none-match'], artifact.sha256)) {
+        res.set({
+          'Cache-Control': 'private, max-age=31536000, immutable',
+          ETag: `"${artifact.sha256}"`,
+          Vary: 'Cookie, Authorization',
+        });
+        return res.status(304).end();
+      }
       const size = Number(artifact.bytes);
       const range = parseRange(req.headers.range, size);
       res.set({
