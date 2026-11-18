@@ -18,11 +18,11 @@ const ESCALATION_HEADING =
 // is the only picture voters get. The guidance says so, with an example.
 test('conventions doc asks for a diagram after a change with nothing visible', () => {
   const doc = getAppConventions().replace(/\s+/g, ' ');
-  // The offline excerpt is capped at 9 KB, so it carries the step and a valid
-  // example; the kinds and the size rule are spelled out below it.
+  // The offline excerpt is capped at 9 KB, so it carries the step compactly;
+  // the kinds and the size rule are spelled out below it.
   // #6832: a change nobody sees needs one of its three pictures, chosen in
   // this order, and one with no picture counts as incomplete.
-  const at = doc.indexOf('record `impact: "none"` with a specific rationale, then call `declare_diagram` with one of its three pictures');
+  const at = doc.indexOf('record `impact: "none"` with a specific rationale, then call `declare_diagram`: `seen`, `moment` or `steps`; none counts as incomplete.');
   assert.ok(at > 0, 'the step names the three pictures');
   const step = doc.slice(at, at + 900);
   assert.ok(step.indexOf('`seen`') < step.indexOf('`moment`') && step.indexOf('`moment`') < step.indexOf('`steps`'),

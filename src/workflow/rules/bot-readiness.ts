@@ -6,11 +6,6 @@
 // is one copy. Pure: every input is the session row as chat_sessions stores
 // it, and the time is the caller's (a transition's ctx.now).
 
-// The diagram record's validator (a CommonJS service, so it carries no TS
-// declaration). #6832: readiness reads a stored diagram's kind from it.
-// @ts-ignore TS7016
-import * as diagramContract from '../../services/diagram.js';
-
 type Row = Record<string, any>;
 
 // ── Heads ───────────────────────────────────────────────────────────────
@@ -204,15 +199,17 @@ export const NONE_PICTURE_KINDS: ReadonlySet<string> = new Set(['seen', 'moment'
 
 export interface Due { head: string; failing: Failing[]; total: number; broken?: Claim[]; skipped?: Claim[]; noPicture?: true }
 
-/** The kind of a change's stored diagram, or null when it has none this version reads. */
+/**
+ * The kind of a change's stored diagram, or null when it has none this
+ * version reads. A record is stored only after
+ * src/services/diagram.js validated it on write, so the rule reads its
+ * version and kind here and nothing else: this file is a rule, and a rule
+ * does no I/O and borrows nothing from the services.
+ */
 function storedDiagramKind(value: unknown): string | null {
-  if (!value || typeof value !== 'object') return null;
-  try {
-    const rec = diagramContract.storedDiagram(value);
-    return rec ? rec.kind : null;
-  } catch {
-    return null;
-  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const rec = value as Record<string, unknown>;
+  return rec.version === 1 && typeof rec.kind === 'string' ? rec.kind : null;
 }
 
 function declaredImpact(row: Row | null | undefined): string | null {

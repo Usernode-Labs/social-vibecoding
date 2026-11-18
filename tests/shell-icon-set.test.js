@@ -145,25 +145,34 @@ test('the glyphs live in the module, not inline beside it', () => {
   // sections to .tsx; the inline-path-data rule above still covers them, which
   // is the half that actually catches a glyph.
   //
-  // One shell file may draw an <svg> of its own, and it is not a glyph
-  // either: the review flow's drawn pictures (one outlined object per
-  // benefit or group decision, on a card's ground). They are scenes on a
-  // 200-unit board at card and hero size, with a fill, a sage highlight and a
-  // hard shadow filter, and nothing in icons.tsx draws on that board or could
-  // stand in for one. The allowance is pinned to what makes it safe: exactly
-  // ONE <svg>, hidden from assistive tech (the picture's label is on its
-  // wrapper), no literal path data, and nothing borrowed from the glyph set.
-  // A second file here, or a second <svg> in this one, is a glyph escaping.
+  // Two shell files may draw an <svg> of their own, and neither is a glyph:
+  //
+  //   - the review flow's drawn pictures (one outlined object per benefit or
+  //     group decision, on a card's ground). They are scenes on a 200-unit
+  //     board at card and hero size, with a fill, a sage highlight and a hard
+  //     shadow filter, and nothing in icons.tsx draws on that board or could
+  //     stand in for one;
+  //   - the change page's "how it works" pictures (#6832): twelve line
+  //     drawings on a 48-unit board, one per step of a change nobody sees on
+  //     screen (scene.tsx). They are chosen by name from the server's fixed
+  //     set, drawn in currentColor plus the one accent, and a glyph on the
+  //     24 grid could not stand in for one.
+  //
+  // Each allowance is pinned to what makes it safe: exactly ONE <svg>, hidden
+  // from assistive tech (the picture's label is on its wrapper), no literal
+  // path data, and nothing borrowed from the glyph set. A third file here, or
+  // a second <svg> in either one, is a glyph escaping.
   const PICTURES = 'frontend/src/features/review-flow/illustrations.tsx';
-  {
-    const src = read(PICTURES);
+  const SCENES = 'frontend/src/lib/diagram/scene.tsx';
+  for (const file of [PICTURES, SCENES]) {
+    const src = read(file);
     const tags = svgTags(src);
-    assert.equal(tags.length, 1, `${PICTURES} draws its pictures in exactly one <svg>`);
+    assert.equal(tags.length, 1, `${file} draws its pictures in exactly one <svg>`);
     assert.match(tags[0], /aria-hidden="true"/, 'the drawing is hidden; its label is on the wrapper');
-    assert.ok(!/\sd="/.test(src), `${PICTURES} carries no literal path attribute`);
-    assert.ok(!/from '@\/components\/ui\/icons'/.test(src), `${PICTURES} draws scenes, not glyphs from the set`);
+    assert.ok(!/\sd="/.test(src), `${file} carries no literal path attribute`);
+    assert.ok(!/from '@\/components\/ui\/icons'/.test(src), `${file} draws scenes, not glyphs from the set`);
   }
-  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/') && f !== PICTURES);
+  const shellFiles = featureFiles().filter((f) => !f.startsWith('frontend/src/features/admin/') && f !== PICTURES && f !== SCENES);
   assert.deepEqual(shellFiles.filter((f) => svgTags(read(f)).length > 0), [],
     'a raw <svg> in a feature file is a glyph that escaped the module');
 });

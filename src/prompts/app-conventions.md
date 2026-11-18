@@ -95,14 +95,7 @@ Ordered by how badly an agent working offline gets each one wrong.
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
    before/after shots of it on the exact builds. For a non-visual change,
    record `impact: "none"` with a specific rationale, then call
-   `declare_diagram` with one of its three pictures, chosen in this order:
-   `seen` when anything a person could notice changes (a status, a message, a
-   notice or a count), with the change's real words before and after;
-   otherwise `moment` when the request reports a real incident, using only its
-   own dates, references and durations; otherwise `steps`, a before row and an
-   after row of at most five drawings from the fixed set, each with a caption
-   of one to three words. A non-visual change with no picture counts as
-   incomplete.
+   `declare_diagram`: `seen`, `moment` or `steps`; none counts as incomplete.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,

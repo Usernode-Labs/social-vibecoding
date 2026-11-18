@@ -142,10 +142,17 @@ function stagingDemoNeedsProposal(id, slug) {
     chat_count: 0, last_message_at: null, votes_required: 1,
     priority: null, assignee: null, category: null,
     // #6814: its own page draws the card's own picture, so a demo change that
-    // says nothing on screen changes shows "What it touches" there too.
+    // says nothing on screen changes shows that picture there too.
     ...(card.diagram ? { diagram: card.diagram, diagram_source: card.diagram_source || 'author' } : {}),
     ...(card.touches ? { touches: card.touches } : {}),
     ...(card.shots_detail ? { shots_detail: card.shots_detail } : {}),
+    // #6832: a demo change declared as changing nothing on screen has a shots
+    // run that needs none, as a real one does (services/shots-view.js), so
+    // its own page draws the change's picture (the diagram, or "What it
+    // touches" before #6832) where the empty box would be.
+    ...(card.shots_detail && card.shots_detail.intent && card.shots_detail.intent.impact === 'none'
+      ? { shots: { state: 'not_required', rationale: card.shots_detail.intent.rationale || null } }
+      : {}),
   };
 }
 

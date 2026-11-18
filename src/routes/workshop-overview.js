@@ -1187,7 +1187,7 @@ function withDemoCounts(counts) {
 
 // The rows behind DEMO_COUNTS, for ?demo=1 on staging (#3051): the same
 // reason the counts have a mock, and the same slugs. `staging-demo-your-app`
-// carries exactly its counts' 2 and 3, so the tab and the row beside it agree
+// carries exactly its counts' 2 and 6, so the tab and the row beside it agree
 // in the preview. Titles only; nothing reads these back. The ids are
 // negative so a tap can never open a real proposal by accident.
 const DEMO_ITEMS = {
@@ -1200,6 +1200,12 @@ const DEMO_ITEMS = {
       { kind: 'proposal', id: -103, title: 'Sort recipes by rating', status: 'promoted', at: '2026-09-24T12:00:00Z' },
       { kind: 'proposal', id: -104, title: 'Let members share a shopping list', status: 'promoted', at: '2026-09-22T10:00:00Z' },
       { kind: 'governance', id: -105, title: 'Rename the app to Recipe Box', status: 'rename', at: '2026-09-21T08:00:00Z' },
+      // #6832: the three changes that show nothing on screen, one per plain
+      // picture (a status, a real moment, and one with no picture yet), so
+      // the rows and the counts tell one story on ?demo=1.
+      { kind: 'proposal', id: -107, title: 'Say plainly when a catch-up with main overlaps your edit', status: 'promoted', at: '2026-09-19T11:00:00Z' },
+      { kind: 'proposal', id: -108, title: 'Catch a catch-up that keeps the same text twice', status: 'promoted', at: '2026-09-18T09:00:00Z' },
+      { kind: 'proposal', id: -109, title: 'Keep a small note of each catch-up', status: 'promoted', at: '2026-09-17T15:00:00Z' },
     ],
   },
 };

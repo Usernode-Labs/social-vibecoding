@@ -18749,7 +18749,7 @@ button.dev-ws-recent-card {
 .dev-ws-diagram-seen-side[data-seen-look="count"] .dev-ws-diagram-seen-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
 .dev-ws-diagram-seen-side[data-seen-look="count"] .dev-ws-diagram-seen-line { font-size: 13px; color: var(--text-muted); }
 
-.dev-ws-diagram-moment-events { margin: 0; padding-left: 18px; font-size: 15px; font-weight: 650; line-height: 1.5; }
+.dev-ws-diagram-moment-events { margin: 0; padding-inline-start: 18px; font-size: 15px; font-weight: 650; line-height: 1.5; }
 .dev-ws-diagram-moment-now { font-size: 13px; color: var(--accent); }
 .dev-ws-diagram-moment-after { color: var(--accent); }
 
@@ -18759,7 +18759,7 @@ button.dev-ws-recent-card {
 .dev-ws-diagram-step-pic > svg { display: block; margin: 0 auto; color: var(--text-primary); }
 .dev-ws-diagram-steps-row[data-steps-side="after"] .dev-ws-diagram-step-pic > svg { color: var(--accent); }
 .dev-ws-diagram-step-caption { font-size: 13px; font-weight: 650; line-height: 1.3; }
-.dev-ws-diagram-step-retry { margin-left: 4px; color: var(--text-muted); font-weight: 600; }
+.dev-ws-diagram-step-retry { margin-inline-start: 4px; color: var(--text-muted); font-weight: 600; }
 .dev-ws-diagram-step-note { margin-top: 4px; font-size: 12px; font-weight: 400; line-height: 1.35; color: var(--text-muted); text-align: start; }
 /* On a 390px phone a five-step row at 88px would clip or scroll sideways
    inside the card: drop to 56px columns with a 12px gap and 32px drawings,
