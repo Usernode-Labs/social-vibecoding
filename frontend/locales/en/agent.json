@@ -535,14 +535,6 @@
     "text": "Privacy",
     "description": "Small link at the foot of the app menu (the sheet opened from the app's name in the header), before \"Report app\": opens Homeroom's privacy notice in a new tab."
   },
-  "sidePanel.expandLabel": {
-    "text": "Open full width, leaving the app",
-    "description": "Accessible name of the expand button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): shows the panel's page on the whole screen instead of beside the app. \"Open\" is a verb."
-  },
-  "sidePanel.expand": {
-    "text": "Open full width",
-    "description": "Tooltip of the expand button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page). \"Open\" is a verb."
-  },
   "sidePanel.close": {
     "text": "Close panel",
     "description": "Tooltip and accessible name of the ✕ button in the header of the side panel (the pane docked beside an app on a wide screen, showing a conversation or a Workshop page): a verb, closes the panel. It is also the ✕ that closes a request, a change or a decision opened in the Homeroom bot page's column."

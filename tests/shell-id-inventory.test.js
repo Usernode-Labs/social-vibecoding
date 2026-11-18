@@ -1213,18 +1213,16 @@ const ADDED_IDS = {
   //       Workshop segment, and back as "Go to workshop" when the strip
   //       retired in turn (#2761) — so it is in the map above again.
 
-  // ── The side panel beside a running app (features/side-panel/) ──────
-  // On a desktop-width window, the app's Workshop, its discussion, messages,
-  // agent chats, proposals and issues open in a panel BESIDE the running app
-  // instead of replacing it. The panel is one React island, placed after the
-  // app view; it ships hidden and frameless, and its <iframe> (the platform
-  // itself at /?panel=1#<route>) exists only while a panel is open, so the
-  // frame's id is not in the static markup.
-  'platform-side-panel': 'The side panel\'s root — an <aside> named by its title, shown only while a panel page is open beside a running app on a desktop-width window. Its presence also sets html[data-side-panel], which narrows #app-view by the panel\'s width instead of hiding or moving the app\'s frame.',
-  'side-panel-back': 'The panel\'s Back: climbs the pages opened in the panel, then to the list the page belongs to (a discussion or a message to Messages; a proposal, an issue or a change to the app\'s Workshop). Ships hidden, because a freshly opened list has nowhere to climb to.',
-  'side-panel-title': 'The panel\'s title — the page\'s own header title as the panel\'s document reports it, and the aside\'s accessible name.',
-  'side-panel-expand': 'Expand ("Open full width, leaving the app"): the page the panel is showing, full width, as one ordinary navigation of the top window — which closes the app and parks it, so Resume brings it back.',
-  'side-panel-close': 'Close ("Close panel"): closes only the panel; the app keeps running beside where it was.',
+  // ── The side panel (features/side-panel/) ──────────────────────────
+  // The column beside the Homeroom bot tab's list: a request, a change or a
+  // conversation opened from it stands there, in the docked chat's place.
+  // (Until 18 Nov 2026 it stood beside a running app too, with its own Back,
+  // title, Expand and Close, which were never in the baseline and so leave
+  // this map rather than entering RETIRED_IDS.) The panel is one React
+  // island, placed after the app view; it ships hidden and frameless, and its
+  // <iframe> (the platform itself at /?panel=1#<route>) exists only while a
+  // panel is open, so the frame's id is not in the static markup.
+  'platform-side-panel': 'The side panel\'s root: an <aside> named "Side panel", the column beside the Homeroom bot tab\'s list, shown only while a page is open in it. Ships hidden.',
   'side-panel-body': 'The panel\'s body: the one <iframe> of the panel\'s document (#side-panel-frame, rendered only while open, so absent here) and the loading spinner after it.',
   'side-panel-loading': 'The spinner shown over the panel\'s body until its document has booted and drawn its first page. Ships hidden.',
   // ── Discover's view switch, type row and Filters button ────────────
@@ -1233,7 +1231,7 @@ const ADDED_IDS = {
   // listed (the Semi design, 2026-10-16); #leaderboard/seasons lands on
   // Challenges. It was never in the baseline, so it leaves this map rather
   // than entering RETIRED_IDS.
-  'side-panel-divider': '#2886: the divider between the running app and the panel, as a handle on the panel\'s left edge — a vertical `separator` that drags (or takes the arrow keys, Home and End) to share the window differently, keeping at least 320px of panel and 480px of app, remembers the chosen width on this device, and resets to the default on a double-click. Ships with no value: the width is read in an effect, never in the first render.',
+  'side-panel-divider': '#2886: the divider between the Homeroom bot tab\'s list and the panel, as a handle on the panel\'s left edge: a vertical `separator` that drags (and takes the arrow keys) to share the window between them, and shows a grip under the pointer.',
   // The channels moved out of Messages onto their communities' hubs, so the
   // Channels filter (#2783, added above as messages-filter-channels) is gone
   // with the section it narrowed to; it was never in the baseline.

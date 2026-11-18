@@ -22,12 +22,6 @@
  * body's first child and the spinner the second, so the spinner coming and
  * going can never move it.
  *
- * ── The header row ─────────────────────────────────────────────────────
- *
- * Back, the page's title, Expand, Close — the shell's own Button primitive
- * and glyphs, in the header's disc style (the app header's ✕ is the same
- * disc), so the row reads as the platform's rather than as the page's.
- *
  * ── Beside the AI tab's page: that page's own column (29 Oct 2026) ─────
  *
  * There the panel is in Main's place, the chat docked beside the list, and
@@ -39,13 +33,18 @@
  * BESIDE_AI_CLASS). Closing it gives the lists back, or a private thread
  * when one was open behind it (6 Nov 2026, #6425: the × replaced a back
  * chip).
- * Both rows are always rendered and app.css shows the one that applies
- * (`body:has(#ai-screen:not(.hidden))`), so the prerender is one markup.
+ *
+ * It is the panel's only place now (18 Nov 2026). It used to stand beside a
+ * running app too, with a row of its own there (Back, the page's title,
+ * Expand, Close); a link from a running app now opens the page itself, so
+ * that row is gone. A request's or a change's page draws its own header
+ * pill with ↗ and × (../dev-board/topic/thread-exits.tsx), and the row
+ * steps aside for it (`data-thread-pill`, app.css).
  *
  * ── The divider (#2886) ────────────────────────────────────────────────
  *
  * The panel's left edge is a handle: drag it (or focus it and use the arrow
- * keys) to share the window differently between the app and the panel, and
+ * keys) to share the window differently between the list and the panel, and
  * double-click it to go back to the default. ./resize.ts carries the width's
  * rules. Its first render is the prerender too — no width, no value — and
  * the stored width is read in an effect, never in render.
@@ -63,7 +62,7 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon, EllipsisHorizontalIcon, ExpandIcon, XIcon } from '@/components/ui/icons';
+import { EllipsisHorizontalIcon, XIcon } from '@/components/ui/icons';
 
 import { RichMessage, useMessages } from '../../lib/i18n/react';
 import { useHiddenClass } from '../../lib/legacy-dom';
@@ -103,19 +102,8 @@ const DISC_BOX = 'items-center justify-center w-7 h-7 shrink-0 rounded-full'
   + ' border border-[color:var(--brand-line)] bg-[color:var(--brand-tint)]'
   + ' text-[color:var(--brand-ink)] un-touch-target';
 
-/** Expand and Close: always there. */
+/** The column's ×. */
 const DISC = `inline-flex ${DISC_BOX}`;
-
-/**
- * Back: SHIPS HIDDEN, and `hidden` cannot share a className with
- * `inline-flex` here — the Button primitive merges its classes with
- * tailwind-merge, which keeps only the last display utility and would drop
- * `hidden` from the prerender. So Back carries no display utility at all:
- * `hidden` while there is nowhere to go (toggled through its ref), and
- * app.css's `.side-panel-head > #side-panel-back:not(.hidden)` supplies the
- * inline-flex the other two spell out.
- */
-const BACK = `hidden ${DISC_BOX}`;
 
 export function SidePanel(): ReactNode {
   const t = useMessages('agent');
@@ -125,11 +113,9 @@ export function SidePanel(): ReactNode {
   // divider keeps its own defaults.
   const edge = useStoreState(panelEdgeStore).slot;
   const rootRef = useRef<HTMLElement | null>(null);
-  const backRef = useRef<HTMLButtonElement | null>(null);
   const loadingRef = useRef<HTMLDivElement | null>(null);
 
   useHiddenClass(rootRef, !(s.open && !!s.frameSrc));
-  useHiddenClass(backRef, !s.canBack);
   useHiddenClass(loadingRef, !s.loading);
 
   // React detaches the old frame's ref before it attaches a new one, so this
@@ -138,12 +124,19 @@ export function SidePanel(): ReactNode {
     sidePanelRefs.frame = el;
   }, []);
 
+  // 18 Nov 2026: a request's or a change's page draws its own header pill,
+  // with ↗ and × at its end (../dev-board/topic/thread-exits.tsx), so beside
+  // the bot's list app.css puts this header row away for those two. Undefined
+  // at hydration (no route yet), so the prerender's markup is unchanged.
+  // A decision's page keeps this row: its bar is not a pill yet.
+  const ownPill = s.route && /\/dev\/(issues|changes|proposals|sessions)\/\d+/.test(s.route) ? '' : undefined;
   return (
     <aside
       id="platform-side-panel"
       ref={rootRef}
       className="side-panel hidden"
-      aria-labelledby="side-panel-title"
+      aria-label={t('agent:sidePanel.frameTitle')}
+      data-thread-pill={ownPill}
     >
       <SidePanelDivider
         panelRef={rootRef}
@@ -153,60 +146,13 @@ export function SidePanel(): ReactNode {
         watch={edge?.watch}
       />
       <div className="side-panel-head flex items-center gap-2 shrink-0">
-        <Button
-          id="side-panel-back"
-          ref={backRef}
-          type="button"
-          variant="unstyled"
-          size="icon"
-          ink="none"
-          className={BACK}
-          aria-label={t('core:common.back')}
-          title={t('core:common.back')}
-          onClick={() => controller.back()}
-        >
-          <ChevronLeftIcon className="w-5 h-5" aria-hidden="true" />
-        </Button>
-        <h2
-          id="side-panel-title"
-          className="flex-1 min-w-0 truncate text-[15px] font-semibold text-zinc-900 dark:text-zinc-100"
-        >
-          {s.title}
-        </h2>
-        <Button
-          id="side-panel-expand"
-          type="button"
-          variant="unstyled"
-          size="icon"
-          ink="none"
-          className={DISC}
-          aria-label={t('agent:sidePanel.expandLabel')}
-          title={t('agent:sidePanel.expand')}
-          onClick={() => controller.expand()}
-        >
-          <ExpandIcon className="w-4 h-4" aria-hidden="true" />
-        </Button>
-        <Button
-          id="side-panel-close"
-          type="button"
-          variant="unstyled"
-          size="icon"
-          ink="none"
-          className={DISC}
-          aria-label={t('agent:sidePanel.close')}
-          title={t('agent:sidePanel.close')}
-          onClick={() => controller.close()}
-        >
-          <XIcon className="w-4 h-4" aria-hidden="true" />
-        </Button>
-        {/* Beside the AI tab's page only (app.css): the column's heading as
-            Main's own reads, the project's tile, what is open, and its
-            project and number (30 Oct 2026). */}
+        {/* The column's heading as Main's own reads: the project's tile,
+            what is open, and its project and number (30 Oct 2026). */}
         <PanelHeading route={s.route} place={s.place} reported={s.reported} label={s.label} head={s.head} />
         <PanelMore route={s.route} />
         {/* 6 Nov 2026 (#6425): the × that closes the page, in a back chip's
             place: the lists alone behind it, or a thread when one was open
-            there. The round disc the panel's own Close draws. */}
+            there. */}
         <Button
           type="button"
           variant="unstyled"

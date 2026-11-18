@@ -215,20 +215,18 @@ test('an address\'s route: the fragment wins, a clean app path counts, a fragmen
 
 // ── 2. The island ────────────────────────────────────────────────────────
 
-test('the host ships in every document, hidden, frameless, with Back hidden and the row named', () => {
+test('the host ships in every document, hidden, frameless, named, with only the column\'s own row', () => {
   const at = HTML.indexOf('<aside id="platform-side-panel"');
   assert.ok(at > 0, 'the panel host is part of the shipped shell');
   const el = HTML.slice(at, HTML.indexOf('</aside>', at) + 8);
-  assert.match(el, /^<aside id="platform-side-panel" class="side-panel hidden"/,
+  assert.match(el, /^<aside id="platform-side-panel" class="side-panel hidden" aria-label="Side panel"/,
     'hidden, with the class a CONSTANT so the hydrating render agrees');
   assert.doesNotMatch(el, /<iframe/, 'no frame until a panel is opened');
-  assert.match(el, /<button id="side-panel-back" type="button" aria-label="Back" title="Back" class="hidden /,
-    'Back ships hidden (there is nowhere to go yet)');
-  assert.match(el, /<h2 id="side-panel-title"[^>]*><\/h2>/, 'the title ships empty');
-  assert.match(el, /id="side-panel-expand"[^>]*aria-label="Open full width, leaving the app"[^>]*title="Open full width"/);
-  assert.match(el, /id="side-panel-close"[^>]*aria-label="Close panel"/);
-  assert.match(el, /d="M14 4h6v6"[\s\S]*d="M20 4l-7 7"[\s\S]*d="M10 20H4v-6"[\s\S]*d="M4 20l7-7"/,
-    'Expand wears the outward arrows');
+  assert.doesNotMatch(el, /data-thread-pill/, 'no page yet, so no pill of its own to step aside for');
+  // 18 Nov 2026: the row the panel drew beside a running app (Back, the
+  // page's title, Expand, Close) went with that panel.
+  assert.doesNotMatch(el, /id="side-panel-(back|title|expand|close)"/);
+  assert.match(el, /<button type="button" aria-label="Close panel" title="Close panel" class="side-panel-ai-close /);
   // The first client render is the prerender.
   api._resetForTests();
   const first = renderToHtml(createElement(api.SidePanelIsland, {}));
@@ -244,7 +242,6 @@ test('an open panel renders ONE frame, at a constant address, with the spinner a
   const loading = renderToHtml(createElement(api.SidePanelIsland, {}));
   assert.match(loading, /<iframe id="side-panel-frame" title="Side panel" src="\/\?panel=1#messages\/4" class="side-panel-frame" data-un-keyboard-relay=""><\/iframe><div id="side-panel-loading"/,
     'the frame is the body\'s first child, transparent while its document boots');
-  assert.match(loading, />Design review<\/h2>/);
   api.sidePanelStore.set({ loading: false, route: 'app/x/dev/proposals/1', title: 'Proposal' });
   const ready = renderToHtml(createElement(api.SidePanelIsland, {}));
   assert.match(ready, /src="\/\?panel=1#messages\/4" class="side-panel-frame side-panel-frame-ready"/,
@@ -266,15 +263,19 @@ test('the island is wrapped and placed beside the app view; its seams mount at t
     '<html> is not React-owned: the layout\'s attribute is written directly, from the store');
   const SRC = read('frontend/src/features/side-panel/side-panel.tsx');
   assert.match(SRC, /useHiddenClass\(rootRef, !\(s\.open && !!s\.frameSrc\)\)/);
-  assert.match(SRC, /useHiddenClass\(backRef, !s\.canBack\)/);
+  assert.doesNotMatch(SRC, /backRef|side-panel-back/, 'no Back of its own: the bot page\'s column has a ×');
   assert.match(SRC, /key=\{s\.frameKey\}/, 'one element per frame, keyed by its generation alone');
   assert.doesNotMatch(SRC, /gray-|indigo-/);
 });
 
 // ── 3 & 4. The controller, driven ────────────────────────────────────────
 
+// The top window as the controller sees it. By default the Homeroom bot
+// tab's page is up, the one place the panel stands since 18 Nov 2026 (it no
+// longer opens beside a running app); `app`, `tab` and `visible` say what the
+// app view holds, which no longer decides anything.
 function topWindow({ width = 1280, app = 'notes-ab12', tab = 'app', chromeless = false,
-  visible = true, user = { id: 1 }, native = false, embedded = false, screen = null } = {}) {
+  visible = true, user = { id: 1 }, native = false, embedded = false, screen = 'ai-screen' } = {}) {
   const pushed = [];
   const routed = [];
   const opened = [];
@@ -320,28 +321,23 @@ function cleanup() {
   delete globalThis.document;
 }
 
-test('the panel takes a navigation only beside a running app or the AI tab\'s page, at desktop width, in the top document', () => {
-  const ai = { app: null, visible: false, screen: 'ai-screen' };
+test('the panel takes a navigation only beside the AI tab\'s page, from 768px, in the top document', () => {
+  const app = { screen: null };
   const cases = [
-    [{}, true, 'an app on its App tab, 1280 wide'],
-    [ai, true, 'the AI tab\'s page, where it takes the place of the chat docked beside the list'],
+    [{}, true, 'the AI tab\'s page, where it takes the place of the chat docked beside the list'],
     // 1 Nov 2026: the AI tab docks its column from 768px, so the panel takes its place there too.
-    [{ ...ai, width: 1023 }, true, 'the AI tab from 768px, where its column is docked'],
-    [{ ...ai, width: 767 }, false, 'the AI tab on a phone, where nothing is docked'],
-    [{ ...ai, chromeless: true }, false, 'the AI tab, chromeless'],
-    [{ app: null, visible: false, screen: 'messages-screen' }, false, 'any other platform screen'],
-    [{ width: 1023 }, false, 'below the breakpoint'],
-    [{ width: 390 }, false, 'a phone'],
-    [{ tab: 'dev' }, false, 'the app\'s own Workshop is on screen, not the app'],
-    [{ app: null }, false, 'no app at all'],
-    [{ chromeless: true }, false, 'chromeless'],
-    [{ visible: false }, false, 'the app view is not on screen'],
+    [{ width: 1023 }, true, 'the AI tab from 768px, where its column is docked'],
+    [{ width: 767 }, false, 'the AI tab on a phone, where nothing is docked'],
+    [{ chromeless: true }, false, 'the AI tab, chromeless'],
+    [{ screen: 'messages-screen' }, false, 'any other platform screen'],
+    // 18 Nov 2026: never beside a running app any more; its link opens the page itself.
+    [app, false, 'an app on its App tab, 1280 wide'],
+    [{ ...app, width: 390 }, false, 'an app on a phone'],
     [{ user: null }, false, 'signed out'],
-    [{ native: true }, false, 'the native app\'s WebView, beside an app'],
     // 1 Nov 2026: iPhone Duo unfolded and held sideways docks the AI tab's
     // column, and a request from its list belongs in Main's place there too.
-    [{ ...ai, native: true, width: 951 }, true, 'the native app\'s WebView, beside the AI tab\'s page'],
-    [{ ...ai, native: true, width: 669 }, false, 'the native app on a phone-width screen, where nothing is docked'],
+    [{ native: true, width: 951 }, true, 'the native app\'s WebView, beside the AI tab\'s page'],
+    [{ native: true, width: 669 }, false, 'the native app on a phone-width screen, where nothing is docked'],
     [{ embedded: true }, false, 'inside the panel itself'],
   ];
   for (const [opts, expected, why] of cases) {
@@ -352,7 +348,7 @@ test('the panel takes a navigation only beside a running app or the AI tab\'s pa
   }
   topWindow();
   assert.equal(api.take('messages'), false, 'the inbox itself is the Messages tab, never the panel');
-  assert.equal(api.take('app/notes-ab12/workshop'), false, 'nor is a community: it replaces the app, full screen');
+  assert.equal(api.take('app/notes-ab12/workshop'), false, 'nor is a community: it leaves the page, full screen');
   assert.equal(api.take('messages/app/notes-ab12'), false, 'by its old discussion address too');
   assert.equal(api.take('profile/dana'), false);
   assert.equal(api.sidePanelStore.get().frameSrc, null);
@@ -542,7 +538,7 @@ test('the page the panel shows is in the top window\'s address, so a reload brin
 });
 
 test('a panel that cannot open where the address asks gives up and cleans the address', () => {
-  const { win, flush } = topWindow({ width: 800 });
+  const { win, flush } = topWindow({ width: 700 });
   win.location = new URL('https://homeroom.test/app/notes-ab12?demo=1&side=messages/4242');
   api.appPresence(true);
   for (let i = 0; i < 25; i += 1) flush();
@@ -568,7 +564,7 @@ test('a panel link in the top document is refused before the browser follows it'
   };
   assert.equal(click('#messages'), false, 'a tab root is followed');
   // A community, from the sidebar or any link: followed, full screen.
-  assert.equal(click('#app/notes-ab12/workshop'), false, 'a community replaces the app');
+  assert.equal(click('#app/notes-ab12/workshop'), false, 'a community leaves the page, full screen');
   assert.equal(click('/app/notes-ab12/dev/c/onboarding'), false, 'its channels too');
   assert.equal(click('#app/notes-ab12/dev/proposals/12', { meta: true }), false, 'a new-tab click is the browser\'s');
   assert.equal(click('#app/notes-ab12/dev/proposals/12', { target: '_blank' }), false);
@@ -577,8 +573,11 @@ test('a panel link in the top document is refused before the browser follows it'
   assert.equal(api.sidePanelStore.get().route, 'app/notes-ab12/dev/proposals/12');
   assert.equal(click('https://github.com/x/y'), false, 'another site is not ours');
   cleanup();
-  topWindow({ width: 800 });
+  topWindow({ width: 700 });
   assert.equal(click('#app/notes-ab12/dev/proposals/12'), false, 'below the breakpoint the link is followed');
+  cleanup();
+  topWindow({ screen: null });
+  assert.equal(click('#app/notes-ab12/dev/proposals/12'), false, 'from a running app the link is followed: it opens the page');
   cleanup();
 });
 
@@ -628,14 +627,14 @@ test('a script\'s location.hash to a panel page is refused (Navigation API); a t
   cleanup();
 });
 
-test('the panel never runs an app: the running one is asked for nothing, another replaces it', () => {
+test('the panel never runs an app: it asks the top window, which opens it and leaves the bot\'s page', () => {
   const { opened, flush } = topWindow();
   api.embeddedApi.openApp('notes-ab12');
   flush();
-  assert.deepEqual(opened, [], 'the app beside the panel is already running');
+  assert.deepEqual(opened, [['notes-ab12', 'app']], 'no app stands beside the panel any more (18 Nov 2026)');
   api.embeddedApi.openApp('other-app');
   flush();
-  assert.deepEqual(opened, [['other-app', 'app']]);
+  assert.deepEqual(opened, [['notes-ab12', 'app'], ['other-app', 'app']]);
   cleanup();
 });
 
@@ -1018,20 +1017,18 @@ test('when the panel declines, openAppTab navigates exactly as before', async ()
   assert.equal(App.currentSubTab, 'topic');
 });
 
-test('the running app\'s presence reaches the panel from the one place that decides it', async () => {
+test('the bot page\'s presence reaches the panel from the one place that decides it, and an app never keeps it', async () => {
+  // 18 Nov 2026: the panel no longer stands beside a running app, so an app
+  // coming on screen takes it away like any other screen does.
   const { App, calls } = router();
   await App.navigateToApp('notes-ab12', 'app');
-  assert.deepEqual(calls.filter((c) => c[0] === 'presence').at(-1), ['presence', true]);
-  App.navigateHome();
   assert.deepEqual(calls.filter((c) => c[0] === 'presence').at(-1), ['presence', false],
-    'the header\'s close takes the panel with the app');
-  await App.navigateToApp('notes-ab12', 'app');
+    'an app on its App tab drops the panel');
   App.navigateToMessages();
   assert.deepEqual(calls.filter((c) => c[0] === 'presence').at(-1), ['presence', false], 'so does a tab');
-  await App.navigateToApp('notes-ab12', 'app');
-  await App.switchTab('dev', null, 'forum');
-  assert.deepEqual(calls.filter((c) => c[0] === 'presence').at(-1), ['presence', false],
-    'and so does the app\'s own Workshop taking the screen (Expand, on a narrow window)');
+  assert.match(read('public/js/app.js'),
+    /window\.UsernodeReact\?\.sidePanel\?\.appPresence\?\.\(screen === 'ai-screen' && !App\.chromeless\);/,
+    'only the Homeroom bot tab\'s page keeps it');
 });
 
 test('in the panel\'s document the router never runs, parks or polls, and forwards what is not its own', async () => {
@@ -1125,9 +1122,10 @@ test('embedded mode needs panel=1 AND a same-origin parent, including inside Pre
   assert.match(block, /before the first\s*(?:\/\/\s*)?paint/i, 'decided before the first paint');
 });
 
-test('the layout: the app narrows by a margin, above the breakpoint, while the panel is up', () => {
-  const desk = CSS.slice(CSS.indexOf('@media (min-width: 1024px) {\n  html[data-side-panel] #app-view {'));
-  assert.match(desk, /html\[data-side-panel\] #app-view \{\s*margin-inline-end: var\(--side-panel-w\);\s*min-width: 480px;/);
+test('the layout: no app makes room for the panel; it is drawn beside the bot\'s page from 768px', () => {
+  // 18 Nov 2026: #app-view no longer narrows by the panel's width, since the
+  // panel no longer stands beside a running app.
+  assert.doesNotMatch(CSS, /html\[data-side-panel\] #app-view \{/);
   assert.match(CSS, /--side-panel-w: clamp\(360px, 36vw, 560px\);/);
   // 1 Nov 2026: beside the AI tab's page it is drawn from 768px (its column).
   assert.match(CSS, /@media \(max-width: 1023\.98px\) \{[\s\S]{0,400}body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s*display: none;/);
@@ -1135,8 +1133,8 @@ test('the layout: the app narrows by a margin, above the breakpoint, while the p
   // Never display:none, never re-parented: nothing in the panel's CSS touches the frame.
   const panelCss = CSS.slice(CSS.indexOf('/* ── #platform-side-panel'));
   assert.doesNotMatch(panelCss, /#app-iframe|#app-frame-host \{[^}]*display/);
-  assert.equal(DESKTOP_QUERY_MATCHES(), true);
-  function DESKTOP_QUERY_MATCHES() { return api.DESKTOP_QUERY === '(min-width: 1024px)'; }
+  assert.equal(api.BESIDE_AI_QUERY, '(min-width: 768px)');
+  assert.doesNotMatch(read('frontend/src/features/side-panel/controller.ts'), /DESKTOP_QUERY/, 'the beside-an-app breakpoint is gone');
 });
 
 test('the panel\'s document draws no chrome and reserves no room for it', () => {
@@ -1327,8 +1325,7 @@ test('a list floor written in rem is read in pixels, against the root font size 
 test('the width\'s rules: 320px of panel and 480px of app at the least, whatever the window', () => {
   const { bounds, clampWidth, MIN_PANEL_W, MIN_APP_W } = api.resize;
   assert.equal(MIN_PANEL_W, 320);
-  assert.equal(MIN_APP_W, 480, 'the floor app.css already holds #app-view to beside the panel');
-  assert.match(CSS, /html\[data-side-panel\] #app-view \{\s*margin-inline-end: var\(--side-panel-w\);\s*min-width: 480px;/);
+  assert.equal(MIN_APP_W, 480, 'the floor kept for whatever stands left of the panel');
   // A 1440px window with the app flush left: up to 960px of panel.
   assert.deepEqual({ ...bounds({ innerWidth: 1440, appLeft: 0 }) }, { min: 320, max: 960 });
   // A rail to the left of the app comes out of the panel's room, not the app's.
@@ -1465,57 +1462,6 @@ test('the divider drags, takes the keys, resets on a double-click, and lets the 
   assert.match(block, /cursor: col-resize;/);
   assert.match(block, /touch-action: none;/);
   assert.match(block, /html\.side-panel-resizing iframe \{\s*pointer-events: none;/);
-});
-
-test('pend plants ?side= for a page the app is about to open beside, and drop takes it back', () => {
-  api._resetForTests();
-  globalThis.window = {
-    location: { search: '', pathname: '/', hash: '', origin: 'https://homeroom.test', href: 'https://homeroom.test/' },
-    history: { state: null, replaceState: (_s, _u, url) => {
-      const next = new URL(url, 'https://homeroom.test');
-      globalThis.window.location.href = next.href;
-      globalThis.window.location.search = next.search;
-      globalThis.window.location.pathname = next.pathname;
-      globalThis.window.location.hash = next.hash;
-    } },
-    matchMedia: () => ({ matches: true }),
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  };
-  globalThis.document = { documentElement: { classList: { contains: () => false } } };
-  try {
-    // A panel page the app the viewer is heading to can stand beside.
-    assert.equal(api.SidePanel.pend('app/notes-ab12/dev/proposals/12'), true);
-    const search = new URL(globalThis.window.location.href, 'https://homeroom.test').search;
-    assert.equal(api.sideRouteFrom(search), 'app/notes-ab12/dev/proposals/12', 'the route is in ?side=');
-    // In place: no history entry (replaceState is the only call a fake
-    // history that only carries replaceState can answer).
-    assert.equal(api.SidePanel.pend('messages/4242'), true, 'another page overwrites, not appends');
-    const again = new URL(globalThis.window.location.href, 'https://homeroom.test').search;
-    assert.equal(api.sideRouteFrom(again), 'messages/4242');
-    assert.ok(!again.includes('proposals'), 'the earlier page did not survive as a second value');
-
-    // Not a panel page: refused, nothing written.
-    api._resetForTests();
-    globalThis.window.location.href = 'https://homeroom.test/';
-    assert.equal(api.SidePanel.pend('profile/dana'), false);
-    assert.equal(api.sideRouteFrom(new URL(globalThis.window.location.href, 'https://homeroom.test').search), null);
-
-    // A navigation that never landed clears the parameter with the caller's
-    // clearPending — drop() itself stays untouched for the boot-past-no-app
-    // path, which keeps the note until the give-up in restoreFromAddress.
-    api._resetForTests();
-    globalThis.window.location.href = 'https://homeroom.test/';
-    api.SidePanel.pend('messages/4243');
-    assert.equal(api.sideRouteFrom(new URL(globalThis.window.location.href, 'https://homeroom.test').search), 'messages/4243');
-    api.SidePanel.clearPending();
-    assert.equal(api.sideRouteFrom(new URL(globalThis.window.location.href, 'https://homeroom.test').search), null,
-      'the address is clean for the app to open on');
-  } finally {
-    delete globalThis.window;
-    delete globalThis.document;
-    api._resetForTests();
-  }
 });
 
 test('on a touch screen the divider is a handle you can see and hit', () => {
