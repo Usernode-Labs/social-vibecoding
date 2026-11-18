@@ -82,6 +82,15 @@ export async function takeWorkshopPanelItem(slug: string | null | undefined): Pr
 
 /** #4367: the session a change's pull request number names on this app. */
 async function sessionIdForChange(slug: string, pr: number): Promise<number | null> {
+  // #6827: a change page's own read already answered this, if it was started.
+  try {
+    const bridge = (window as unknown as {
+      UsernodeReact?: { devBoard?: { peekChangePage?: (s: string, n: number) => { sessionId?: number } | null } };
+    }).UsernodeReact?.devBoard;
+    const page = bridge?.peekChangePage?.(slug, Number(pr));
+    const id = page ? positive(page.sessionId) : null;
+    if (id) return id;
+  } catch { /* the read below answers */ }
   try {
     const A = (window as unknown as { AppView?: { _demoQS?: () => string } }).AppView;
     const demo = typeof A?._demoQS === 'function' ? A._demoQS() : '';

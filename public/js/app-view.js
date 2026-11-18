@@ -5891,6 +5891,12 @@ const AppView = {
   async _sessionIdForChange(pr) {
     const slug = App.currentApp || AppView.appData?.slug;
     if (!slug || !pr) return null;
+    // #6827: a change page's own read (started when the route named the
+    // change) already answered this, so the address costs no second read.
+    try {
+      const page = window.UsernodeReact?.devBoard?.peekChangePage?.(slug, Number(pr));
+      if (page && page.sessionId) return page.sessionId;
+    } catch (_) { /* the read below answers */ }
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
       if (!res.ok) return null;
@@ -6144,6 +6150,25 @@ const AppView = {
   async _fetchProposalById(id) {
     if (!AppView.appData || !id) return null;
     const slug = AppView.appData.slug;
+    // #6827: the change page's own read already carried this row.
+    try {
+      const carried = window.UsernodeReact?.devBoard?.peekChangeProposal?.(slug, Number(id));
+      if (carried && carried.proposal) {
+        const row = carried.proposal;
+        AppView._overlayPendingVote(row);
+        AppView._topicProposal = row;
+        AppView._putCachedRow('proposal', row);
+        AppView._applyVoteContext(carried.context);
+        if (AppView.voteState && AppView.voteState.bySession) {
+          AppView.voteState.bySession[String(row.id)] = row;
+          if (row.pr_number != null) AppView.voteState.byPrNumber[String(row.pr_number)] = row;
+          if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+            GroupChat.refreshVoteControls();
+          }
+        }
+        return row;
+      }
+    } catch (_) { /* the read below answers */ }
     try {
       const res = await fetch(`/api/apps/${slug}/proposals/${id}${AppView._demoQS()}`);
       if (!res.ok) return null;
@@ -10276,6 +10301,14 @@ const AppView = {
     // panel has always painted from without a read.
     const slugForReads = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const known = AppView._findItem(kind, id);
+    // #6827: a change's one page read starts with the panel's own, exactly
+    // as a change's address starts it with the page's.
+    if ((kind === 'proposal' || kind === 'session') && slugForReads && known) {
+      const pr = Number(known.pr_number);
+      if (Number.isInteger(pr) && pr > 0) {
+        try { window.UsernodeReact?.devBoard?.prefetchChangePage?.(slugForReads, pr); } catch (_) { /* the page reads */ }
+      }
+    }
     AppView._topicProposal = null;
     AppView._topicGov = null;
     AppView._topicIssue = null;

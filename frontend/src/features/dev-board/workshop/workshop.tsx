@@ -126,6 +126,7 @@ import { slotCounts, useBotSlots } from './bot-slots';
 import { weekName, weekRange } from './week-pages';
 import { liveSinceLine } from './hub-cards';
 import { offerJoin } from '../../../lib/join-required';
+import { watchBoardLinks } from './board-links';
 import { isFrameSkin, useLiveSkin } from '../../../lib/skin';
 import { deskLine, deskWords, useDesk } from '../../ai/desk';
 import { projectTabAddress } from '../../ai/filter-address';
@@ -3156,6 +3157,8 @@ export function DevWorkshop(): ReactNode {
   // has since left. The first render is the loading skeleton either way, so
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
+  // Standard (WIP) folds Invite into the hero's row (no Invite card), and its Workshop door opens the board (below).
+  const wipLook = useLiveSkin() === 'wip';
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
@@ -3278,6 +3281,38 @@ export function DevWorkshop(): ReactNode {
     tabSlug.current = v.slug;
     if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
+  // STANDARD (WIP): THE WORKSHOP'S DOOR OPENS ITS BOARD. Under that look a
+  // way into the Workshop (the places list, the hub's card, a
+  // `?ws=workshop` link) lands on All items, the board, and not on the
+  // Workshop's overview. One rule after every way in, so none of them
+  // changes: when the place becomes the Workshop, it is moved on to All
+  // items, before paint. The overview is still there one step up: All
+  // items' own way back opens it (a step from All items or the bot's slots
+  // is left alone), and so does Back or Forward onto an entry that was the
+  // overview (the router marks those `traversal`).
+  const cameFrom = useRef<TabKey | null>(null);
+  const traversed = useRef(false);
+  useEffect(() => {
+    const onDoor = (event: Event) => {
+      const door = (event as CustomEvent<{ tab: TabKey; traversal?: boolean } | null>).detail;
+      traversed.current = !!(door && door.traversal && door.tab === 'workshop');
+    };
+    window.addEventListener('usernode:workshop-tab', onDoor, true);
+    return () => window.removeEventListener('usernode:workshop-tab', onDoor, true);
+  }, []);
+  // Standard (WIP), on the board: resting on a card draws what it is tied to
+  // (./board-links.ts). Its layer is its own; nothing is written to the board.
+  useEffect(() => (wipLook && tab === 'all' ? watchBoardLinks() : undefined), [wipLook, tab]);
+  useLayoutEffect(() => {
+    const was = cameFrom.current;
+    cameFrom.current = tab;
+    if (!wipLook || tab !== 'workshop') return;
+    if (was === 'all' || was === 'bot') return;
+    if (traversed.current) { traversed.current = false; return; }
+    cameFrom.current = 'all';
+    setTab('all');
+    callAppView('_setWorkshopTab', 'all');
+  }, [tab, wipLook]);
   // (#5164) THE HUB'S QUIET REFRESH, while one of its own places is up
   // (Hub, Needs you, the Workshop): every HUB_REFRESH_MS, and again the
   // moment the browser tab comes back to the front — the moment a stale
@@ -3309,6 +3344,12 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
+  // Standard (WIP): the board is by stage alone (its By category / By stage
+  // switch is not drawn there, app.css), so a board left on By category is
+  // put on By stage, through the same setter the switch uses.
+  useEffect(() => {
+    if (wipLook && group !== 'stage') callAppView('_setWorkshopGroup', 'stage');
+  }, [wipLook, group]);
   // From 700px the pane head pins under the strip at an offset only a
   // measurement knows (`useStripInsets`), and app.css draws a band behind
   // the strip while it is pinned (QA 2026-09-24 Q7). Whether it is pinned,
@@ -3500,8 +3541,6 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
-  // Standard (WIP) folds Invite into the hero's row: no Invite card.
-  const wipLook = useLiveSkin() === 'wip';
   // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
   const sidebarRows = useSidebarRows();
   const { apps: pins } = useStoreState(pinnedAppsStore);
