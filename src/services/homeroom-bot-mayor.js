@@ -121,7 +121,7 @@ const SOURCE_READ_TOOLS = Object.freeze(['list_source', 'read_source']);
 // offer alone is the turn's answer, as it is today.
 // #6523: offer_new_project sets a flag for the reply rather than ending the
 // turn, so it is never one of the last round's ending tools.
-const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen'
+const CHAT_LAST_ROUND = (name) => name === 'reply' || name === 'draw_screen' || name === 'open_app_preview'
   || (name.startsWith('offer_') && name !== 'offer_new_project');
 const CHAT_LAST_ROUND_NOTE = lastRoundNote('offer the draft they asked for');
 const CHAT_STAND_IN_NOTE = standInNote('offer the draft they asked for');
@@ -1127,6 +1127,20 @@ const TOOLS = [
           project: { type: 'string', description: 'The project it is for, by name or slug, when they named one. Leave it out for a new project, or when they have not said.' },
         },
         required: ['what', 'title'],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'open_app_preview',
+      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to change it live"). Only in a private thread, for a project they can change, never Homeroom itself. Call it alone, and do not reply: the draft answers them, and makes the change they asked for, if they asked for one.',
+      parameters: {
+        type: 'object',
+        properties: {
+          project: { type: 'string', description: 'The project, by name or slug, when this thread is not about one yet.' },
+        },
         additionalProperties: false,
       },
     },
@@ -3058,6 +3072,47 @@ async function drawScreen(pool, ctx, args = {}) {
   return { ok: true, note: 'Your designer draws it now and answers them itself. Call nothing else, and do not reply.' };
 }
 
+// ── A live app preview (services/live-drafts.js) ──────────────────────────
+//
+// open_app_preview opens a live draft of the project this private thread is
+// about (naming the project first when the thread has none yet), and hands
+// the turn to the draft (live-draft-bot.js opened), as draw_screen hands one
+// to the designer: from then on, what they say in this thread is the draft's.
+
+async function openAppPreview(pool, ctx, args = {}) {
+  const rootId = Number(ctx.deps?.threadRootId) || null;
+  if (!rootId) {
+    return { ok: false, error: 'A live preview opens in a private thread of theirs about the project: tell them to start a New chat set to the project and ask there.' };
+  }
+  if (ctx.deps?.threadKind === 'first_version') {
+    return { ok: false, error: 'No live preview opens in a first version\'s thread while it is being built. Tell them to start a New chat set to the project once it is live.' };
+  }
+  const { rows: [thread] } = await pool.query(
+    'SELECT id, app_id FROM private_threads WHERE root_message_id = $1 AND user_id = $2', [rootId, ctx.user.id]);
+  if (!thread) return { ok: false, error: 'This is not one of their private threads.' };
+  if (!thread.app_id) {
+    const named = typeof args.project === 'string' ? args.project.trim() : '';
+    if (!named) return { ok: false, error: 'This thread is not about a project yet: ask which project, then call open_app_preview with it.' };
+    const app = await findApp(pool, named);
+    if (!app || !(await canView(pool, app, ctx.user))) {
+      return { ok: false, error: `There is no project called ${clip(named, 80)} that they can see. Ask which one.` };
+    }
+    await pool.query(
+      'UPDATE private_threads SET app_id = $3, updated_at = NOW() WHERE id = $1 AND user_id = $2 AND app_id IS NULL',
+      [thread.id, ctx.user.id, app.id]);
+  }
+  const drafts = ctx.deps?.liveDrafts || require('./live-drafts');
+  const out = await drafts.open(pool, ctx.config, { user: ctx.user, rootId });
+  if (out.status !== 200 || !out.body?.draft?.id) {
+    if (out.body?.error === 'join_required' || out.body?.code === 'join_required') {
+      return { ok: false, error: 'They have not joined that project: tell them to join it from its page, then ask again.' };
+    }
+    return { ok: false, error: clip(out.body?.message || 'The preview could not be opened just now. Say so, and to ask again in a minute.', 300) };
+  }
+  ctx.openPreview = { draftId: Number(out.body.draft.id) };
+  return { ok: true, note: 'The live preview opens beside the chat now, and the draft answers them itself. Call nothing else, and do not reply.' };
+}
+
 // ── What a draft request carries besides its words (#6251) ────────────────
 //
 // offer_request's extras: the person's pictures that belong with the
@@ -3345,6 +3400,7 @@ async function runTool(pool, ctx, name, args) {
       }
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
       case 'draw_screen': return await drawScreen(pool, ctx, args);
+      case 'open_app_preview': return await openAppPreview(pool, ctx, args);
       case 'close_thread': return await closeThread(pool, ctx);
       case 'start_request': return await startRequest(pool, ctx, args);
       case 'offer_new_project': {
@@ -4084,7 +4140,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         signal: t.signal,
         where: (n) => `r${n}`,
         // The turn ends with its reply, or with a screen handed to the designer.
-        done: () => !!ctx.reply || !!ctx.drawScreen,
+        done: () => !!ctx.reply || !!ctx.drawScreen || !!ctx.openPreview,
         onRound: ({ rounds }) => { state.rounds = rounds; },
         // P1: room for this round's calls and the next request, or this
         // round replies (the transport's limit on messages).
@@ -4184,7 +4240,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       // whatever still is, is cut before it is sent (answer()).
       const said = checkedWords(ctx, finalText);
       // A screen handed to the designer is answered by it, not checked here.
-      const problems = said && !ctx.drawScreen && !ctx.gaveUp ? await claims.checkReply(pool, ctx, said) : [];
+      const problems = said && !ctx.drawScreen && !ctx.openPreview && !ctx.gaveUp ? await claims.checkReply(pool, ctx, said) : [];
       if (problems.length) {
         t.failures.push(`claims:${problems.map((p) => p.kind).join('+')}`.slice(0, 80));
         log.info('homeroom-bot-mayor', 'A DM reply claimed what this turn did not do; asking again', {
@@ -4254,7 +4310,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   let cards = [];
   let fallback = null;
   let defer = false;
-  if (!text && !ctx.offer && !ctx.drawScreen) {
+  if (!text && !ctx.offer && !ctx.drawScreen && !ctx.openPreview) {
     // The model gave no answer. Why is recorded; what can still be said is.
     // A turn that gave up on its stand-in says so, never the stand-in word.
     // An answer whose every sentence was shown false is not a model that
@@ -4271,7 +4327,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   // model's own did not survive them. Never for an offer (its words are one
   // line over its draft), a screen handed to the designer, or a fallback.
   const laid = await answerHtml(t, ctx, {
-    text, html: ownHtml, laysOut: !fallback && !ctx.offer && !ctx.drawScreen, deps,
+    text, html: ownHtml, laysOut: !fallback && !ctx.offer && !ctx.drawScreen && !ctx.openPreview, deps,
     check: async (made) => !(await claims.checkReply(pool, ctx, replyHtml.htmlWords(made))).length,
   });
   const html = laid.html;
@@ -4299,6 +4355,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   if (ctx.drawScreen) {
     return (deps.designBot || require('./design-bot')).draw(pool, config, {
       bot, user, settings, conversationId, message, ask: ctx.drawScreen, deps,
+    });
+  }
+  // A live app preview opened for this message (open_app_preview): the
+  // draft answers it, and makes the change it asked for (live-draft-bot.js opened).
+  if (ctx.openPreview) {
+    return (deps.draftBot || require('./live-draft-bot')).opened(pool, config, {
+      bot, user, settings, conversationId, message, draftId: ctx.openPreview.draftId, deps,
     });
   }
   if (fallback) return say(text, { objects: cards, metadata: { kind: 'chat' } });
@@ -7288,6 +7351,8 @@ module.exports = {
   FILE_IT,
   NOT_NOW,
   drawScreen,
+  // Live app drafts: the chat's tool that opens one (services/live-drafts.js).
+  openAppPreview,
   WITHDRAW_IT,
   KEEP_IT,
   OFFER_ANSWERS,

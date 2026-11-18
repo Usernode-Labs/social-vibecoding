@@ -169,7 +169,7 @@ test('a turn that looks things up for sixteen rounds never sends more than 100 m
   assert.equal(last.toolChoice, 'required', 'the last round picks a turn-ending tool');
   assert.ok(last.messages.some((m) => m.role === 'user' && /This is your last round\./.test(String(m.content))),
     'the last round is warned');
-  const ending = (name) => name === 'reply' || name === 'draw_screen' || name.startsWith('offer_');
+  const ending = (name) => name === 'reply' || name === 'draw_screen' || name === 'open_app_preview' || name.startsWith('offer_');
   assert.ok(last.tools.every((tl) => ending(tl.function.name)), 'only turn-ending tools are offered');
   assert.ok(last.tools.some((tl) => tl.function.name === 'reply'), 'it can still answer');
   assert.equal(turn.sent.length, 1);

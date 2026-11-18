@@ -193,6 +193,75 @@ function AppLimitCard({ canWrite }: { canWrite: boolean }) {
   );
 }
 
+// Live app drafts (services/live-drafts.js): a project changed with Homeroom
+// bot while its preview runs beside the chat. Open to everyone; this is the
+// one switch that turns them off for everyone at once, with no deploy.
+function LiveDraftsCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/live-drafts');
+      if (alive.current && next && typeof next === 'object') setData(next);
+    })();
+  }, []);
+
+  const flip = async () => {
+    if (!data) return;
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/live-drafts', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: !data.enabled }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      setData(next);
+      setStatus({ text: next.enabled ? 'On. It applies within ten seconds.' : 'Off. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const usage = !data ? 'Loading…' : `${data.open} open now`;
+  const who = data && data.updatedBy ? ` by @${data.updatedBy}` : '';
+  const when = data && data.updatedAt ? ` on ${String(data.updatedAt).slice(0, 10)}` : '';
+  return (
+    <div id="admin-live-drafts" className={`${AdminUI.card} p-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>App previews in chats</h2>
+        <span id="admin-live-drafts-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        In a Homeroom bot thread about a project, anyone who can change it may open a live preview of a draft:
+        the bot edits the draft and the preview restarts with each edit, until they propose it. Each open
+        draft is a running preview (two at most per person). Switched off, no new draft opens, no edit runs,
+        and the drafts already open wait.
+      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-live-drafts-source" className="text-xs text-zinc-500 dark:text-zinc-400">
+          {!data ? '' : `${data.enabled ? 'On' : 'Off'}${who || when ? `: set${who}${when}.` : ' (the default is on).'}`}
+        </p>
+        {canWrite ? (
+          <button id="admin-live-drafts-btn" type="button" className={data && data.enabled ? AdminUI.btn.outline : AdminUI.btn.primary}
+            disabled={saving || !data} onClick={flip}>{data && !data.enabled ? 'Turn on' : 'Turn off'}</button>
+        ) : null}
+      </div>
+      <StatusLine id="admin-live-drafts-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
 // The platform-wide session limit (services/session-limit.js), the app
 // limit's twin: the admin's setting, else the deploy's MAX_GLOBAL_SESSIONS,
 // which on the Kubernetes deploy lives in the infra repository's chart. The
@@ -931,6 +1000,8 @@ function LimitsSection() {
       <PreviewProjectsCard canWrite={canWrite} />
 
       <VersionsCard canWrite={canWrite} />
+
+      <LiveDraftsCard canWrite={canWrite} />
 
       <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">

@@ -843,6 +843,9 @@ app.use(require('./src/routes/private-requests').privateRequestRoutes(config));
 app.use(notificationsRoutes(config));
 // #6019: a thread's Notify me and Mute, and (stage 3) the thread page's read.
 app.use(require('./src/routes/threads').threadsRoutes(config));
+// Live app drafts: a project changed with Homeroom bot while its preview
+// runs beside the chat (services/live-drafts.js).
+app.use(require('./src/routes/live-drafts').liveDraftRoutes(config));
 // #6019 follow-up: the AI tab's main view (Your work, Up next, Live this week).
 app.use(require('./src/routes/ai-work').aiWorkRoutes(config));
 app.use(collaboratorRoutes(config));

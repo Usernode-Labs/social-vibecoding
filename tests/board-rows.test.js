@@ -281,3 +281,17 @@ test('By stage in the Workshop: the head is one row, the strip pins with it, and
     'the strip is in the pinned head, the board in the body');
   assert.ok(!html.includes('data-ws-pagebar'), 'no back bar of its own above the pane');
 });
+
+test('a row is square at rest, so the hairline between rows runs straight', () => {
+  // The hairline is the row's top border: a corner on the row bent both ends
+  // of it down, and every row read as the top of a card of its own.
+  assert.match(CSS, /\.dev-ws-wrow \{\s*position: relative; display: flex; align-items: flex-start; gap: 12px;\s*padding: 12px 2px; min-width: 0; border-radius: 0;\s*\}/);
+  assert.match(CSS, /\.dev-ws-wrow \+ \.dev-ws-wrow,\s*\.dev-ws-week \+ \.dev-ws-week \{ border-top: 1px solid var\(--app-sheet-line\); \}/);
+  // Lit (hovered, open beside the board, focused) it takes its corners, and
+  // its own line goes clear as the next row's does.
+  assert.match(CSS, /\.dev-ws-wrow:is\(:hover, \[data-on\], :has\(> \.dev-ws-wrow-main > \.dev-ws-wrow-link:focus-visible\)\) \{ border-radius: 12px; border-top-color: transparent; \}/);
+  // A board row's title and its line in words wrap without leaving one word
+  // ("ago", "now") on a line of its own.
+  assert.match(CSS, /\.dev-ws-brow \.dev-ws-wrow-link \{ -webkit-line-clamp: 3; text-wrap: pretty; \}/);
+  assert.match(CSS, /\.dev-ws-brow \.dev-ws-wrow-sub \{ white-space: normal; overflow: visible; text-wrap: pretty; \}/);
+});
