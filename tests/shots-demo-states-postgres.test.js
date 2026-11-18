@@ -950,7 +950,10 @@ test('both copies hold the same demo-state rows, every time in them from the pai
   const { rows: defaulted } = await base.pool.query(
     `SELECT table_name || '.' || column_name AS name FROM information_schema.columns
       WHERE table_schema = current_schema() AND column_default ILIKE '%now()%'`);
-  const stampedByPostgres = new Set(defaulted.map((row) => row.name));
+  // A trigger's NOW() is Postgres's own stamp too: a thread closes when its
+  // last open item does (threads_refresh_state), as a state's merged change
+  // closes its thread on each side's clock.
+  const stampedByPostgres = new Set([...defaulted.map((row) => row.name), 'threads.closed_at']);
   const nearNow = (value) => typeof value === 'string' && /^\d{4}-\d\d-\d\dT/.test(value)
     && Math.abs(Date.parse(value) - Date.now()) < 3600000;
   let compared = 0;
