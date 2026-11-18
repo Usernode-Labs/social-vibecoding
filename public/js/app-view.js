@@ -29341,9 +29341,14 @@ const AppView = {
       // The staging demo data rides along (`?demo=1`), so a demo change's
       // Try it can be answered with its sample preview
       // (services/staging-demo-preview.js); outside that demo it is ''.
+      // Guarded like session-state.js's own read of the flag: a shell that
+      // hands AppView a location with no URL (a test shell, an embed) has no
+      // demo flag to forward, and must still open the preview it asked for.
+      let demo = '';
+      try { demo = AppView._demoQS(); } catch { demo = ''; }
       const endpoint = readOnly
-        ? `/api/sessions/${sessionId}/preview-status${AppView._demoQS()}`
-        : `/api/sessions/${sessionId}/ensure-staging${AppView._demoQS()}`;
+        ? `/api/sessions/${sessionId}/preview-status${demo}`
+        : `/api/sessions/${sessionId}/ensure-staging${demo}`;
       const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
