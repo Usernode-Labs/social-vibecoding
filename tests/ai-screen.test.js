@@ -1033,8 +1033,10 @@ test('the server: a row\'s list is its stored work state, read for the viewer', 
     { group: 'waiting', work: work('up_for_vote'), at, myVote: 'yes' }, 'a vote you have given waits on others');
   assert.equal(aiWork.standing({ ...promoted, voted: false }, ME, now, null, ws('up_for_vote')), null,
     'a vote still owed is the Needs you feed\'s');
+  // #6821: their yes is the viewer's fact at any stage, so a change still
+  // checking carries it too; that did not change what #6060 holds it under.
   assert.deepEqual(aiWork.standing(promoted, ME, now, null, ws('checking', { line: { code: 'checks_failing', failing: 2 } })),
-    { group: 'waiting', work: work('checking', { line: { code: 'checks_failing', failing: 2 } }), at },
+    { group: 'waiting', work: work('checking', { line: { code: 'checks_failing', failing: 2 } }), at, myVote: 'yes' },
     '#6060: checks that have not passed hold it, and say so');
   const mine = (stage, extra = {}) => aiWork.standing(open, ME, now, null, ws(stage, { requesterId: ME, ...extra }));
   assert.deepEqual(mine('waiting_for_you', { why: 'plan' }), { group: 'needs', work: work('waiting_for_you', { why: 'plan' }), at },

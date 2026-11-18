@@ -437,9 +437,19 @@
       "schemaSha256": "b85d99e22b8d8c6c9edf572b445988a072e927b224584f293f1788effc5a631f"
     },
     {
+      "id": "work-state-marks-all-inputs",
+      "sha256": "328b57233da7143333baed827e8f6ad166d8dbc736c6052be07a63a1d2df4f56",
+      "schemaSha256": "b66affb6bb116fa7244b59de154c6266cf42db7fdfb1dbb1067b46002252ab15"
+    },
+    {
+      "id": "work-state-marks-shots",
+      "sha256": "b497831d6ed7bb3d5ba4fb95579753abe8630e66e475e8b629a92f5d4eec5e0f",
+      "schemaSha256": "f974fd23a77665f83f43f9ac698af8072785e13444ca45b4002d1b7614d3f143"
+    },
+    {
       "id": "live-drafts",
       "sha256": "ebc3eddb83712a37716e0526d95bfde7222a43efd6998e0cb603167d25b87c23",
-      "schemaSha256": "9a2951df869d3e824d576064fbec00673827d516ff0ea8fafabc0a225b95f82b"
+      "schemaSha256": "b9d342b60862e2d992be6fde657197983e33427a8d02e865133d7ce9d44dbebe"
     }
   ]
 }
