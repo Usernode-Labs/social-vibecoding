@@ -341,6 +341,26 @@ test('Kubernetes workflow retains queued releases, publishes the tip, and never 
   }
 });
 
+test('Kubernetes workflow retries the chart push before it fails a release (#6657)', () => {
+  // GHCR sometimes answers a push it has just stored with `failed to perform
+  // "Tag" on destination: sha256:…: not found` (3 of about 200 releases on
+  // 13 and 15 Nov 2026). Each one left the stalled-release banner up, because
+  // services/release-watch.js reads this run's conclusion. The same chart
+  // version pushed again is idempotent, so the step tries again first.
+  const workflow = read('.github/workflows/build-kubernetes-images.yml');
+  const release = workflow.slice(workflow.indexOf('\n  release:\n'));
+  const start = release.indexOf('- name: Publish OCI Helm release');
+  assert.ok(start > 0, 'the release job publishes the chart');
+  const step = release.slice(start, release.indexOf('\n      - name: ', start + 1));
+  assert.match(step, /attempts=4\n\s+for attempt in \$\(seq 1 "\$attempts"\); do\n\s+if helm push "\$chart" "\$destination"; then\n\s+exit 0/,
+    'each try is a full push, and the first one that succeeds ends the step');
+  assert.match(step, /if \[ "\$attempt" -eq "\$attempts" \]; then\n\s+echo "::error::[^"]*"\n\s+exit 1/,
+    'the last failed try still fails the release: a chart that never arrived is a stalled release');
+  assert.match(step, /delay=\$\(\( attempt \* 15 \)\)/, 'tries are 15, 30 and 45 seconds apart');
+  assert.match(step, /echo "::warning::helm push failed/, 'every retried push is visible on the run');
+  assert.equal((step.match(/helm push "/g) || []).length, 1, 'one push command, inside the loop');
+});
+
 test('Kubernetes workflow asks Argo CD to refresh on publish, and can never fail the release doing so', () => {
   // The step exists to remove Argo's up-to-three-minute reconcile wait from
   // the merge-to-running gap (#2545). Its safety properties matter more than
