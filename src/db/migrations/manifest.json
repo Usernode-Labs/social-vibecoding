@@ -445,6 +445,11 @@
       "id": "work-state-marks-shots",
       "sha256": "b497831d6ed7bb3d5ba4fb95579753abe8630e66e475e8b629a92f5d4eec5e0f",
       "schemaSha256": "f974fd23a77665f83f43f9ac698af8072785e13444ca45b4002d1b7614d3f143"
+    },
+    {
+      "id": "activation-code-links",
+      "sha256": "0d7cc779eb97c44a8cc0711711578c22a44d5768dce3816f4972f1cf880ea335",
+      "schemaSha256": "bd9e59fb2a96d77f1ee1e9539693cb4f72fb3eaa14523bb8119ec76e52a2bf54"
     }
   ]
 }
