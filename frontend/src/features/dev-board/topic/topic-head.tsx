@@ -800,9 +800,7 @@ export function changeDetailPath(item: any): string {
  */
 export const CHANGE_ROW_TTL_MS = 10_000;
 
-// #6827: a read is kept for its 10 s after it settles too, so the page's
-// own read and the row a page's answer already carries cost one request.
-const changeReads = new Map<string, { at: number; promise: Promise<any> }>();
+const changeReads = new Map<string, Promise<any>>();
 const prefetchedChanges = new Map<string, { at: number; promise: Promise<any> }>();
 
 /**
@@ -876,30 +874,17 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   // #6604: an answer another surface already started — the thread's prefetch
   // — is this page's read, and one read in flight answers every caller.
   let read = !fresh ? takePrefetchedChange(url) : null;
-  if (!read) {
-    // #6827: a read that settled less than 10 s ago answers this ask too, so
-    // opening a change asks the server once. A fresh ask never does.
-    const held = !fresh ? changeReads.get(key) : null;
-    if (held && Date.now() - held.at < CHANGE_ROW_TTL_MS) read = held.promise;
-  }
+  if (!read) read = changeReads.get(key) || null;
   if (!read) {
     read = readChangeRow(item, review, signal, fresh);
-    const entry = { at: Date.now(), promise: read };
-    changeReads.set(key, entry);
-    // A failed read is asked again next time; a good one is kept its 10 s.
-    read.then(() => {}, () => {
-      if (changeReads.get(key) === entry) changeReads.delete(key);
-    });
+    changeReads.set(key, read);
+    read.catch(() => {}).then(() => { if (changeReads.get(key) === read) changeReads.delete(key); });
     if (review) {
       // The roster is read ALONGSIDE the row, not after it: it is a second
       // endpoint the Votes card waits on.
       if (owner || fresh) av._invalidateVoteRoster(id);
       Promise.resolve(av._loadVoteRoster(id, { fresh })).catch(() => {});
     }
-  } else if (!changeReads.has(key)) {
-    // A prefetched row is this page's read, and the rest of the page's asks
-    // share it for its 10 s as a read of its own would be.
-    changeReads.set(key, { at: Date.now(), promise: read });
   }
   const session = await read;
   if (signal.aborted) throw new Error(translate('project:topic.change.refreshFailed'));

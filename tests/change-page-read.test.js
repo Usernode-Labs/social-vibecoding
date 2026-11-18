@@ -157,12 +157,15 @@ test('C4: a change\'s read that already answered is the page\'s read, not anothe
     const row = await readChangeDetail({ id: 7, status: 'promoted' }, false, signal);
     assert.equal(row.id, 7);
     assert.equal(fetched.length, 0, 'no /proposals read for a row the page already carried');
-    // #6827: a read that settled is shared for its 10 s too.
+    // The page's answer is taken ONCE. A later ask is a read of its own, as
+    // it always was: a page told to re-read (a vote, a move in its life)
+    // must reach the server, and tests/unified-change-detail.test.js holds
+    // that each refresh asks.
     await readChangeDetail({ id: 7, status: 'promoted' }, false, signal);
-    assert.equal(fetched.length, 0);
-    // A fresh read (after a gap or a vote) still goes to the server.
+    assert.equal(fetched.length, 1, 'a second ask reads the server');
+    // A fresh read (after a gap or a vote) goes to the server too.
     await readChangeDetail({ id: 7, status: 'promoted' }, false, signal, { fresh: true });
-    assert.equal(fetched.length, 1);
+    assert.equal(fetched.length, 2);
   });
 });
 
