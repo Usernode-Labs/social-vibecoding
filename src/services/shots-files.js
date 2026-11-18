@@ -286,10 +286,11 @@ function cleanConditions(value) {
 // a run taken at device density (services/shots-density.js): its original,
 // `{ density, data, width, height, bytes, sha256 }`. `buffer` and `info` are
 // then its 1x copy, what everyone outside the experiment is shown.
-// `sized` (#6825, services/shots-sized.js): the still's smaller WebP copies
-// and its blurred preview, `{ thumb, screen, placeholder }`, made once as it
-// is saved. Null for a clip and for a close-up.
-function stored(target, buffer, info, dense = null, sized = null) {
+// A still's smaller copies and its blurred preview (#6825,
+// services/shots-sized.js, `{ thumb, screen, placeholder }`) are made once as
+// it is saved, in shots-control.js's `persist`, and kept beside it in
+// shot_run_files. They are not part of this record.
+function stored(target, buffer, info, dense = null) {
   return {
     ...target,
     contentType: target.media === 'webm' ? 'video/webm' : 'image/png',
@@ -300,7 +301,6 @@ function stored(target, buffer, info, dense = null, sized = null) {
     sha256: info.sha256,
     density: dense ? dense.density : 1,
     dense: dense ? { data: dense.data, width: dense.width, height: dense.height, bytes: dense.bytes, sha256: dense.sha256 } : null,
-    sized: target.media === 'png' ? sized : null,
     focusRect: null,
     stageLabels: null,
   };
@@ -316,7 +316,7 @@ function storedCloseup({ storyId, viewport, part, rect, scale }, buffer, info) {
     storyId, viewport, side: 'head', variant: 'closeup', media: 'png', theme: 'light', part,
     contentType: 'image/png', data: buffer,
     width: info.width, height: info.height, bytes: info.bytes, sha256: info.sha256,
-    density: 1, dense: null, sized: null, scale, focusRect: { ...rect }, stageLabels: null,
+    density: 1, dense: null, scale, focusRect: { ...rect }, stageLabels: null,
   };
 }
 

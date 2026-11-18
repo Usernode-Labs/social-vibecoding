@@ -564,7 +564,8 @@ async function persist(db, control, store) {
   // the run has one, so a copy is never made from the averaged-down 1x. A
   // failure leaves the still saved, exactly as it loaded before.
   for (const file of dirty) {
-    if (file.sized) continue;
+    // A file loaded from its row already knows what copies it has.
+    if (file.sized !== undefined) continue;
     file.sized = file.media === 'png' && (file.variant === 'context' || file.variant === 'focus')
       ? await shotsSized.sizedCopies(file.dense?.data || file.data) : null;
   }
@@ -614,14 +615,13 @@ async function persist(db, control, store) {
              dense_width = EXCLUDED.dense_width, dense_height = EXCLUDED.dense_height,
              dense_bytes = EXCLUDED.dense_bytes, dense_sha256 = EXCLUDED.dense_sha256,
              part = EXCLUDED.part, scale = EXCLUDED.scale, focus_rect = EXCLUDED.focus_rect,
-             public_safe = EXCLUDED.public_safe,
              thumb_object_key = EXCLUDED.thumb_object_key, thumb_width = EXCLUDED.thumb_width,
              thumb_height = EXCLUDED.thumb_height, thumb_bytes = EXCLUDED.thumb_bytes,
              thumb_sha256 = EXCLUDED.thumb_sha256,
              screen_object_key = EXCLUDED.screen_object_key, screen_width = EXCLUDED.screen_width,
              screen_height = EXCLUDED.screen_height, screen_bytes = EXCLUDED.screen_bytes,
              screen_sha256 = EXCLUDED.screen_sha256, placeholder = EXCLUDED.placeholder,
-             saved_at = NOW()`,
+             public_safe = EXCLUDED.public_safe, saved_at = NOW()`,
       [control.runId, slot, f.storyId, f.viewport, f.side, f.variant, f.media, f.theme || 'light', f.contentType,
         f.width, f.height, f.bytes, f.sha256, f.density > 1 ? f.density : 1,
         f.dense?.width || null, f.dense?.height || null, f.dense?.bytes ?? null, f.dense?.sha256 || null,

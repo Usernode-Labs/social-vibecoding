@@ -13668,13 +13668,26 @@ const AppView = {
           && Number(a.density) > 1 && box(a.rect && [a.rect.x, a.rect.y, a.rect.w, a.rect.h], 4)
           && a.rect.w > 0 && a.rect.h > 0
         )).map((a) => ({ url: a.url, rect: { x: a.rect.x, y: a.rect.y, w: a.rect.w, h: a.rect.h }, density: Number(a.density) }));
+        // #6825: a still with smaller copies carries their `srcSet` and the
+        // `placeholder` it draws until one arrives; one saved before them
+        // carries neither, exactly as it always did.
+        const side = (artifact, height) => {
+          const srcSet = AppView._shotSrcSet(artifact);
+          const placeholder = AppView._shotPlaceholder(artifact);
+          return {
+            url: artifact.url,
+            height,
+            ...(srcSet ? { srcSet } : {}),
+            ...(placeholder ? { placeholder } : {}),
+          };
+        };
         return {
           viewport: screen.viewport,
           width,
           density,
           closeups,
-          before: { url: base.url, height: heightBefore, srcSet: AppView._shotSrcSet(base), placeholder: AppView._shotPlaceholder(base) },
-          after: { url: head.url, height: heightAfter, srcSet: AppView._shotSrcSet(head), placeholder: AppView._shotPlaceholder(head) },
+          before: side(base, heightBefore),
+          after: side(head, heightAfter),
           regions,
           changes,
         };
@@ -27344,7 +27357,9 @@ const AppView = {
           const set = AppView._shotSrcSet(artifact);
           const preview = AppView._shotPlaceholder(artifact);
           const style = preview ? ` style="${attr(`background-image:url("${preview}");background-size:cover;background-position:center`)}"` : '';
-          const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) 100vw, 640px"` : '';
+          // The slot's width, from the usable box (#THE USABLE BOX): the page
+          // less its own margins, up to the stage's 640 px.
+          const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) calc(var(--platform-usable-w) - 32px), 640px"` : '';
           // The preview is this box's own background, so the box is fixed
           // before a byte arrives: its width and height are the still's
           // pixels, and the decoded picture covers the preview in place. If
