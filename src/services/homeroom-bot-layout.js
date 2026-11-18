@@ -146,10 +146,8 @@ async function layOutInTime(options, { waitMs = WAIT_MS, sleep = null } = {}) {
   let timer = null;
   const waited = sleep
     ? sleep(waitMs).then(() => null)
-    : new Promise((resolve) => {
-      timer = setTimeout(() => resolve(null), waitMs);
-      if (typeof timer?.unref === 'function') timer.unref();
-    });
+    // Not unref'd: a few seconds at most, and the reply waits on it.
+    : new Promise((resolve) => { timer = setTimeout(() => resolve(null), waitMs); });
   const first = await Promise.race([later, waited]);
   if (timer) clearTimeout(timer);
   return { now: first, later };
