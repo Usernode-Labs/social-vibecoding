@@ -28082,6 +28082,9 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
 .dev-thread-tiles-count { margin: 0 0 2px; font-size: 13px; line-height: 18px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-tiles-legend { display: block; }
 @media (max-width: 520px) { .dev-thread-tiles { flex-wrap: wrap; } .dev-thread-tiles-cap { flex-basis: 100%; } }
+/* #6814: "What it touches" takes the empty box's place on a change's page,
+   so it keeps the box's distance from the summary above it. */
+.dev-thread-card .dev-ws-touches { margin-top: 14px; }
 .dev-thread-wait > b { font-size: 14.5px; line-height: 20px; font-weight: 650; color: var(--text-primary); }
 .dev-thread-wait > span { max-width: 46ch; font-size: 13.5px; line-height: 20px; }
 
