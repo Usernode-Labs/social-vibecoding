@@ -10797,6 +10797,22 @@ const AppView = {
     if (typeof App === 'undefined' || App.currentTab !== 'dev' || App.currentSubTab !== 'topic') return;
     AppView._renderTopicHead();
   },
+  // The card pictures are picked by the page's mode (_workshopVisuals), so a
+  // mode switch repaints what shows them: the open topic (its ThreadPicture
+  // and change cards, through _renderTopicHead) and the Workshop's recently
+  // live list. Registered on Theme.onChange, which fires after the new
+  // theme is on <html>.
+  _repaintShotsForTheme() {
+    try {
+      if (typeof App !== 'undefined' && App.currentTab === 'dev' && App.currentSubTab === 'topic'
+        && AppView._devTopic) {
+        AppView._renderTopicHead();
+      }
+    } catch {}
+    try {
+      if (document.getElementById('dev-workshop')) AppView._rerenderWorkshop();
+    } catch {}
+  },
   patchTopicProposal(sessionId, patch) {
     if (!patch) return false;
     // A change's page merges its own read of the row OVER the cached one, so
@@ -13265,10 +13281,24 @@ const AppView = {
       // that may have nothing to do with the claim.
       if (shots.state !== 'verified') return null;
       const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
-      const find = (claimValue, viewportName, side, variant) => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
+      // The picture follows the page's mode, as the full viewer does: a
+      // light page takes a light shot (a run from before modes recorded
+      // counts as light) and never a dark one; a dark page takes the dark
+      // shot where the run took one and the light one otherwise. A run
+      // lists its dark shots before its light ones, so without this the
+      // first match was nearly always dark (#6820).
+      const mode = AppView.resolvedTheme();
+      const find = (claimValue, viewportName, side, variant, theme = 'light') => (Array.isArray(shots.artifacts) ? shots.artifacts : []).find((a) => (
         a && a.storyId === claimValue?.id && a.viewport === viewportName
-        && a.side === side && a.variant === variant && a.media === 'png' && urlOk(a.url)
+        && a.side === side && a.variant === variant && a.media === 'png' && (a.theme || 'light') === theme && urlOk(a.url)
       ));
+      // Each side is chosen on its own, so a run with dark shots for the
+      // after only shows light before, dark after.
+      const context = (claimValue, viewportName, side) => (
+        mode === 'dark'
+          ? (find(claimValue, viewportName, side, 'context', 'dark') || find(claimValue, viewportName, side, 'context', 'light'))
+          : find(claimValue, viewportName, side, 'context', 'light')
+      );
       // The first claim that has images: a capture-mode run can publish a
       // later claim while an earlier one is blocked. A focus crop is optional
       // there, so fall back to the viewport capture.
@@ -13281,7 +13311,8 @@ const AppView = {
           ? String(candidate.viewports[0]) : 'desktop';
         const cropsLead = AppView._shotsCropReadable(find(candidate, name, 'base', 'focus'))
           && AppView._shotsCropReadable(find(candidate, name, 'head', 'focus'));
-        const pick = (side) => (cropsLead && find(candidate, name, side, 'focus')) || find(candidate, name, side, 'context');
+        // Close-ups are only ever taken light, and still lead.
+        const pick = (side) => (cropsLead && find(candidate, name, side, 'focus')) || context(candidate, name, side);
         const beforeCandidate = pick('base');
         const afterCandidate = pick('head');
         if (beforeCandidate || afterCandidate) {
@@ -13300,8 +13331,8 @@ const AppView = {
         && value.every((x) => Number.isFinite(x) && x >= 0) ? value.slice() : null);
       const screens = (Array.isArray(shots.screens) ? shots.screens : []).map((screen) => {
         if (!screen || typeof screen.viewport !== 'string') return null;
-        const base = find({ id: screen.shot }, screen.viewport, 'base', 'context');
-        const head = find({ id: screen.shot }, screen.viewport, 'head', 'context');
+        const base = context({ id: screen.shot }, screen.viewport, 'base');
+        const head = context({ id: screen.shot }, screen.viewport, 'head');
         const width = Number(screen.width);
         const heightBefore = Number(screen.heightBefore);
         const heightAfter = Number(screen.heightAfter);
@@ -32274,6 +32305,8 @@ if (typeof window !== 'undefined') {
   // drawer's segments, an OS flip in System mode and another tab's write.
   if (window.Theme && typeof window.Theme.onChange === 'function') {
     window.Theme.onChange(() => AppView.broadcastTheme());
+    // The before & after pictures on cards follow the page's mode too.
+    window.Theme.onChange(() => AppView._repaintShotsForTheme());
   }
 
   // #970: anything that can change a frame's rect relative to the page's

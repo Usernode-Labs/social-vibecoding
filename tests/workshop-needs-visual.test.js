@@ -97,6 +97,100 @@ test('the feed picture carries the run\'s own screens, numbered as the changes a
   assert.equal(AppView._workshopVisuals(null, shots({ state: 'failed' })), null);
 });
 
+/** Run `fn` with the page drawn in `mode` ('light' or 'dark'). */
+function asPage(mode, fn) {
+  const had = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  globalThis.document = {
+    documentElement: { classList: { contains: (name) => mode === 'dark' && name === 'dark' } },
+  };
+  try {
+    return fn();
+  } finally {
+    if (had) Object.defineProperty(globalThis, 'document', had);
+    else delete globalThis.document;
+  }
+}
+
+test('the picture follows the page\'s mode, whatever order the artifacts are in', () => {
+  const darkShot = (storyId, viewport, side, char, width, height) => ({
+    ...context(storyId, viewport, side, char, width, height), theme: 'dark',
+  });
+  // A run that took its dark shots in place lists them BEFORE the light
+  // ones (PR #6792), which is what a plain `find` used to pick.
+  const both = shots({
+    artifacts: [
+      darkShot('well', 'desktop', 'base', '5', 1280, 800), darkShot('well', 'desktop', 'head', '6', 1280, 800),
+      darkShot('well', 'phone', 'base', '7', 390, 844), darkShot('well', 'phone', 'head', '8', 390, 844),
+      context('well', 'desktop', 'base', '1', 1280, 800), context('well', 'desktop', 'head', '2', 1280, 800),
+      context('well', 'phone', 'base', '3', 390, 844), context('well', 'phone', 'head', '4', 390, 844),
+    ],
+  });
+  const light = asPage('light', () => AppView._workshopVisuals(null, both));
+  assert.equal(light.before, url('1'), 'a light page takes the light shot');
+  assert.equal(light.after, url('2'));
+  assert.deepEqual(light.screens.map((s) => [s.before.url, s.after.url]), [
+    [url('1'), url('2')], [url('3'), url('4')],
+  ]);
+  const dark = asPage('dark', () => AppView._workshopVisuals(null, both));
+  assert.equal(dark.before, url('5'), 'a dark page takes the dark shot');
+  assert.equal(dark.after, url('6'));
+  assert.deepEqual(dark.screens.map((s) => [s.before.url, s.after.url]), [
+    [url('5'), url('6')], [url('7'), url('8')],
+  ]);
+  // Only the image changes: the screen's geometry is the one record it was.
+  assert.deepEqual(dark.screens, light.screens.map((s, k) => ({
+    ...s,
+    before: { ...s.before, url: dark.screens[k].before.url },
+    after: { ...s.after, url: dark.screens[k].after.url },
+  })));
+  // A run from before modes were recorded counts as light, in either mode.
+  assert.equal(asPage('light', () => AppView._workshopVisuals(null, shots())).after, url('2'));
+  assert.equal(asPage('dark', () => AppView._workshopVisuals(null, shots())).after, url('2'));
+  // One side's dark shot without the other's: each side falls back alone.
+  const halfDark = shots({
+    artifacts: [
+      darkShot('well', 'desktop', 'head', '6', 1280, 800),
+      context('well', 'desktop', 'base', '1', 1280, 800), context('well', 'desktop', 'head', '2', 1280, 800),
+      context('well', 'phone', 'base', '3', 390, 844), context('well', 'phone', 'head', '4', 390, 844),
+    ],
+  });
+  const half = asPage('dark', () => AppView._workshopVisuals(null, halfDark));
+  assert.equal(half.before, url('1'));
+  assert.equal(half.after, url('6'));
+  // A light page never shows a dark shot: with none light, the side is absent.
+  const darkOnly = shots({
+    artifacts: [darkShot('well', 'desktop', 'base', '5', 1280, 800), darkShot('well', 'desktop', 'head', '6', 1280, 800)],
+  });
+  assert.equal(asPage('light', () => AppView._workshopVisuals(null, darkOnly)), null);
+  assert.equal(asPage('dark', () => AppView._workshopVisuals(null, darkOnly)).after, url('6'));
+  // Close-ups are taken light only and still lead the pair, in either mode.
+  const crop = (side, char) => ({ ...context('well', 'desktop', side, char, 382, 48), variant: 'focus' });
+  const cropped = shots({
+    artifacts: [
+      darkShot('well', 'desktop', 'base', '5', 1280, 800), darkShot('well', 'desktop', 'head', '6', 1280, 800),
+      crop('base', '9'), crop('head', 'a'),
+      context('well', 'desktop', 'base', '1', 1280, 800), context('well', 'desktop', 'head', '2', 1280, 800),
+    ],
+  });
+  assert.equal(asPage('light', () => AppView._workshopVisuals(null, cropped)).before, url('9'));
+  assert.equal(asPage('dark', () => AppView._workshopVisuals(null, cropped)).before, url('9'));
+});
+
+test('a mode switch repaints the open page and the Workshop, and re-shapes the review run', () => {
+  // The theme module's change (which fires after the new theme is on <html>)
+  // repaints what draws a card picture.
+  assert.match(APP_VIEW, /window\.Theme\.onChange\(\(\) => AppView\._repaintShotsForTheme\(\)\);/);
+  const repaint = body(APP_VIEW, '_repaintShotsForTheme() {', '\n  },\n');
+  assert.match(repaint, /App\.currentTab === 'dev' && App\.currentSubTab === 'topic'/);
+  assert.match(repaint, /AppView\._renderTopicHead\(\);/);
+  assert.match(repaint, /document\.getElementById\('dev-workshop'\)\) AppView\._rerenderWorkshop\(\);/);
+  // React re-shapes the run it already holds in the new mode.
+  const reviewFlow = read('frontend/src/features/review-flow/review-flow.tsx');
+  assert.match(reviewFlow, /const dark = usePageDark\(\);/);
+  assert.match(reviewFlow, /toReviewItems\(items, shape\)\) : null\), \[items, dark\]\);/);
+  assert.match(reviewFlow, /const fresh = new Map\(toReviewItems\(items, shape\)/);
+});
+
 test('each owed row carries its description, rendered where the page renders it', () => {
   assert.match(APP_VIEW, /descriptionHtml: x\.kind === 'proposal' \? AppView\._proposalSummaryHtml\(x\.item\) : '',/);
   // Requests are not in the feed, so neither is an issue's body.

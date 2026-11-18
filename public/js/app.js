@@ -6660,15 +6660,14 @@ const App = {
         ? (App._isBotTopic() ? 'ai' : 'workshop')
         : null,
     );
-    // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
-    // from the same answer. It stands beside the running app and goes when
-    // the app goes, by any route: the header's close, a tab, the peeked rail,
-    // Back, Expand — and chromeless, which has no layout to stand beside.
-    // Switching straight to another app keeps `inApp` true, and the panel.
-    // The AI tab's page has it too, in the place of the chat docked beside
-    // its list (features/ai/).
+    // …AND THE SIDE PANEL BESIDE THE HOMEROOM BOT TAB'S PAGE (features/
+    // side-panel/), from the same answer: the panel is that page's column, in
+    // the place of the chat docked beside its list (features/ai/), and it goes
+    // when the page goes, by any route, chromeless included. It no longer
+    // stands beside a running app (18 Nov 2026): a panel opened on the bot's
+    // page closes as an app comes on screen rather than following it there.
     if (!App.embeddedPanel) {
-      window.UsernodeReact?.sidePanel?.appPresence?.((inApp || screen === 'ai-screen') && !App.chromeless);
+      window.UsernodeReact?.sidePanel?.appPresence?.(screen === 'ai-screen' && !App.chromeless);
     }
     // …AND THE PARKED APP, from the same answer (#2762). The running app
     // going off screen is what parks it, and this is the one place that says
@@ -9448,13 +9447,12 @@ const App = {
   // THE SIDE PANEL, asked by openAppTab before it navigates
   // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
   // exactly as before; anything else is what openAppTab returns.
-  //   - In the TOP document, while an app runs on its App tab, a piece of
-  //     an app's work — a proposal, an issue, a change — that a
-  //     notification, a desktop alert or any other caller opens goes to a
-  //     panel BESIDE the app instead of replacing it (true). `take` says no
-  //     whenever that is not the moment: a phone-width window, no app on
-  //     screen, chromeless — and to a community's page at any moment
-  //     (side-panel/routes.ts): it replaces the app, full screen.
+  //   - In the TOP document, while the Homeroom bot tab's page is up, a
+  //     piece of an app's work — a proposal, an issue, a change — that a
+  //     notification or any other caller opens goes to that page's column
+  //     (true). `take` says no whenever that is not the moment: a phone-width
+  //     window, any other screen (a running app included), chromeless — and
+  //     to a community's page at any moment (side-panel/routes.ts).
   //   - In the panel's OWN document a piece of work opens right here, a
   //     community's page goes to the top window (full screen, leaving the
   //     app), and an App tab is the running app's, beside the panel (false).

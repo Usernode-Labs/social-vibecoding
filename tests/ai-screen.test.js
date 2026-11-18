@@ -1697,7 +1697,7 @@ test('the column from 768px: one thread, or a new chat, alone under its own head
   // The panel takes a page beside this page from 768px too.
   const controller = read('frontend/src/features/side-panel/controller.ts');
   assert.match(controller, /export const BESIDE_AI_QUERY = '\(min-width: 768px\)';/);
-  assert.match(controller, /return window\.matchMedia\(besideApp \? DESKTOP_QUERY : BESIDE_AI_QUERY\)\.matches;/);
+  assert.match(controller, /return window\.matchMedia\(BESIDE_AI_QUERY\)\.matches;/);
   const css = read('public/css/app.css');
   assert.match(css, /@media \(max-width: 1023\.98px\) \{[^}]*?\*\/\s+body:not\(:has\(#ai-screen:not\(\.hidden\)\)\) #platform-side-panel \{\s+display: none;\s+\}\s+\}\s+@media \(max-width: 767\.98px\) \{\s+#platform-side-panel \{\s+display: none;\s+\}\s+\}/);
   assert.match(css, /@media \(max-width: 1023\.98px\) \{\s+body:has\(#ai-screen:not\(\.hidden\)\) \{ --ai-list-min: 280px; \}\s+\}/);
@@ -1748,8 +1748,9 @@ test('a thread opens on this page: beside the list in its column, or on its page
   assert.match(src, /const openRow = \(row: WorkRow\) => \{\s+markThreadRead\(row\.threadId, row\.app, row\.rootId\);\s+if \(row\.rootId\) \{\s+openPrivate\(row\.rootId\);\s+return;\s+\}/);
   // The panel may stand beside the AI tab's page, and stays while it is up.
   const controller = read('frontend/src/features/side-panel/controller.ts');
-  assert.match(controller, /const besideAi = typeof A\._isScreenVisible === 'function' && A\._isScreenVisible\('ai-screen'\);/);
-  assert.match(read('public/js/app.js'), /appPresence\?\.\(\(inApp \|\| screen === 'ai-screen'\) && !App\.chromeless\)/);
+  // 18 Nov 2026: only there; it no longer stands beside a running app.
+  assert.match(controller, /if \(typeof A\._isScreenVisible !== 'function' \|\| !A\._isScreenVisible\('ai-screen'\)\) return false;/);
+  assert.match(read('public/js/app.js'), /appPresence\?\.\(screen === 'ai-screen' && !App\.chromeless\)/);
   // Opened from here on its page, it is still this tab's.
   const app = read('public/js/app.js');
   assert.match(app, /_isBotTopic\(\) \{\s+if \(!\(App\.currentTab === 'dev' && App\.currentSubTab === 'topic'\)\) return false;\s+const origin = window\.Improve\?\.topicOrigin\?\.\(\);/);
@@ -1856,10 +1857,13 @@ test('beside this page the panel is the page\'s own column: its × and the proje
   assert.match(controller, /classList\.toggle\(BESIDE_AI_CLASS, isBesideAi\(\)\)/);
   assert.match(controller, /const \{ place = null, label = null \} = given \|\| \{\};/, 'the project and the title are this document\'s to draw');
   const css = read('public/css/app.css');
-  assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(#side-panel-back, #side-panel-title, #side-panel-expand, #side-panel-close\) \{\s+display: none;\s+\}/,
-    'the panel\'s controls go, but not its left edge, the handle Main\'s edge is too');
+  // 18 Nov 2026: the panel's own controls from beside a running app (Back,
+  // the title, Expand, Close) are gone with that panel, not just hidden here;
+  // its left edge stays, the handle Main's edge is too.
+  assert.doesNotMatch(css, /#side-panel-(back|title|expand|close)\b/);
+  assert.match(read('frontend/src/features/side-panel/side-panel.tsx'), /<SidePanelDivider/);
   assert.match(css, /body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: inline-flex; \}/);
-  assert.match(css, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/, 'and beside an app, as it was');
+  assert.match(css, /\.side-panel-head > :is\(\.side-panel-ai-close, \.side-panel-place, \.side-panel-more\) \{ display: none; \}/, 'and nowhere else');
   assert.match(css, /html\.in-side-panel\.side-panel-beside-ai :is\(\.dev-topic-backs, \.dev-topic-back\) \{ display: none; \}/,
     'and the page in it leaves out its own "‹ Workshop"');
 });

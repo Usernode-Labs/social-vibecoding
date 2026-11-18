@@ -17,14 +17,12 @@ export {
   back,
   expand,
   openInWorkshop,
-  pend,
-  clearPending,
   appPresence,
   onClickCapture,
   onNavigate,
   embeddedApi,
   sideRouteFrom,
-  DESKTOP_QUERY,
+  BESIDE_AI_QUERY,
   _resetForTests,
 } from '../../frontend/src/features/side-panel/controller';
 export { installEmbeddedRuntime } from '../../frontend/src/features/side-panel/embedded';
