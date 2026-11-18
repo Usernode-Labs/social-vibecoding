@@ -316,7 +316,8 @@ function aiWorkRoutes(config = {}) {
     try {
       if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
       if (IS_STAGING && req.query.demo === '1') return res.json({ tracks: [] });
-      return res.json(await aiWork.tracksFor(pool, { user: req.user }));
+      // 18 Nov 2026: ?also=slug:number,… the live cards in their chat follow (aiWork.parseAlso).
+      return res.json(await aiWork.tracksFor(pool, { user: req.user, also: typeof req.query.also === 'string' ? req.query.also : '' }));
     } catch (err) {
       log.error('ai-work', 'Failed to read the viewer\'s tracks', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });

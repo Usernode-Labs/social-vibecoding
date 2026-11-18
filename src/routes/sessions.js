@@ -716,15 +716,22 @@ function captureSpecOutput(raw) {
 // it uses MAX(version)+1. Ordinary callers remain best-effort; durable scout
 // publication passes required:true so the version and its receipt/card roll
 // back together instead of committing a partially replayable outcome.
-async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null } = {}) {
+//
+// `atLeastVersion` (18 Nov 2026): the lowest number this version may take.
+// Homeroom bot numbers its plans for a request across every session it
+// planned that request in (homeroom-bot-live.js publishSpec), so a request
+// planned again shows "Plan v2", not a second "Plan v1". Unset, it is the
+// session's own next number, as it always was.
+async function snapshotSessionSpec(pool, sessionId, content, { required = false, html = null, atLeastVersion = 1 } = {}) {
   try {
     // #3699: content_html is the version's HTML document when it was written
     // as one; content is then its markdown copy.
+    const floor = Number.isSafeInteger(Number(atLeastVersion)) && Number(atLeastVersion) > 1 ? Number(atLeastVersion) : 1;
     const { rows } = await pool.query(
       `INSERT INTO chat_session_specs (session_id, version, content, content_html)
-       VALUES ($1, COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $2, $3)
+       VALUES ($1, GREATEST(COALESCE((SELECT MAX(version) FROM chat_session_specs WHERE session_id = $1), 0) + 1, $4::int), $2, $3)
        RETURNING version`,
-      [sessionId, content, html || null]
+      [sessionId, content, html || null, floor]
     );
     return rows[0].version;
   } catch (err) {
@@ -751,6 +758,8 @@ async function persistScoutPublication({
   recovered = false,
   agentBackend = null,
   agentModel = null,
+  // The lowest number the version may take (snapshotSessionSpec).
+  atLeastVersion = 1,
 }) {
   const ccText = String(content || '').trim();
   if (!ccText) throw new Error('persistScoutPublication: spec content required');
@@ -784,7 +793,7 @@ async function persistScoutPublication({
       client,
       sessionId,
       ccText,
-      { required: requiredSnapshot, html },
+      { required: requiredSnapshot, html, atLeastVersion },
     );
     const metadata = {
       specPreview: buildSpecPreview(ccText),

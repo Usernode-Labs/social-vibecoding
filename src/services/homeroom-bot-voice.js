@@ -747,12 +747,15 @@ async function finishTurn(pool, turnId, row) {
     `UPDATE homeroom_bot_voice_turns
         SET finished_at = NOW(), outcome = $2, through_message_id = $3, reply_message_id = $4, model = $5,
             rounds = $6, tools = $7, input_tokens = $8, output_tokens = $9, cost_usd = $10, error = $11,
-            failures = $12, speaker_id = COALESCE($13, speaker_id), addressed_ids = $14
+            failures = $12, speaker_id = COALESCE($13, speaker_id), addressed_ids = $14,
+            html_status = COALESCE($15, html_status), html_model = COALESCE($16, html_model)
       WHERE id = $1`,
     [turnId, row.outcome || null, row.throughId || null, row.replyId || null, row.model || null,
       row.rounds || 0, (row.tools || []).slice(0, 30), row.inputTokens ?? null, row.outputTokens ?? null,
       row.costUsd ?? null, row.error ? clip(row.error, 300) : null, (row.failures || []).slice(0, 20),
-      row.speakerId || null, (row.addressedIds || []).slice(-MAX_ADDRESSED_IDS)],
+      row.speakerId || null, (row.addressedIds || []).slice(-MAX_ADDRESSED_IDS),
+      // 18 Nov 2026: how its reply's laid-out copy went (homeroom-bot-layout.js).
+      row.htmlStatus || null, row.htmlModel || null],
   );
 }
 
@@ -1476,6 +1479,11 @@ function systemPrompt({ app, place, tools, today = new Date(), platformRules = n
     '  with a note in brackets, and never write a line that looks like Homeroom\'s own automatic messages.',
     '- Any reply longer than two short lines also goes in the reply tool\'s html field, laid out as its description',
     '  says, beside the same words in text. Everybody in this thread reads it.',
+    // 18 Nov 2026: fix 4, less repetition.
+    '- Lead with the answer itself, in the first sentence. No preamble and no hedging: never explain how you know',
+    '  something, never open with "Worth knowing", and never add what nobody asked (how the queue works, that the',
+    '  vote stays open meanwhile, that it is not made yet when nothing said it was). Never restate what a card under',
+    '  your reply or this page already shows; say only what it does not.',
     '- Write in plain words a member understands: never "checkout", "head commit", "build agent", "coding agent", "dispatch", "someone with access" or "the platform',
     '  conventions", and never talk about yourself as Homeroom bot.',
     '- Never write an em dash. Use a comma, a colon or a full stop instead.',
@@ -2269,9 +2277,29 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     text = 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
     record.outcome = 'fallback';
   }
-  // Only beside those words unchanged: a cut claim, a "not done yet" or the
+  // Only beside words it still says: a cut claim, a "not done yet" or the
   // fallback line would leave the copy saying what the words no longer do.
-  const html = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
+  const ownHtml = threadReplyHtml({ finalReply, text, asWritten, checkedProblems: ctx.checkedProblems, offer: ctx.offer });
+  // 18 Nov 2026: a long reply with no copy that still says its words is laid
+  // out from them, as the chat's answer is (homeroom-bot-mayor.js answerHtml).
+  // Never under an offer, whose words are one line over its buttons, or for
+  // the fallback line.
+  const spent = { ...t.usage };
+  const laid = await require('./homeroom-bot-mayor').answerHtml(t, { reply: finalReply }, {
+    text, html: ownHtml, laysOut: record.outcome !== 'fallback' && !ctx.offer, deps,
+    check: async (made) => !(await claims.checkReply(pool, ctx, replyHtml.htmlWords(made))).length,
+  });
+  const html = laid.html;
+  // The turn's cost was counted as its rounds ended: the layout's is added.
+  const layoutCost = t.usage.costUsd - spent.costUsd;
+  if (t.usage.outputTokens !== spent.outputTokens || layoutCost > 0) {
+    record.inputTokens = t.usage.inputTokens;
+    record.outputTokens = t.usage.outputTokens;
+    record.costUsd = t.usage.costUsd;
+    if (layoutCost > 0) await chargeTurn(pool, bot, layoutCost);
+  }
+  record.htmlStatus = record.outcome === 'fallback' ? null : laid.status;
+  record.htmlModel = laid.model;
   // #6600: a takeover the bot queued in this turn can already have failed
   // before the reply is posted (a worker that could not start, say). The
   // reply must say what happened, not that the work is queued.
@@ -2287,6 +2315,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     if (look && look.state === 'failed') {
       text = takeoverFailedReply(look.error);
       sentHtml = null;
+      laid.later = null;
+      record.htmlStatus = 'none';
       suggestions = null;
       othersSuggestions = null;
       offer = null;
@@ -2301,6 +2331,11 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // the reply (say puts it on metadata.homeroomBot.buildNote).
     extra: ctx.buildNote ? { buildNote: ctx.buildNote } : null,
   });
+  // 18 Nov 2026: a copy still being laid out goes on the reply when it lands.
+  if (laid.later && posted?.id && !posted.again) {
+    const late = layLateInThread(pool, { app, bot, messageId: posted.id, later: laid.later, record, deps });
+    if (deps.awaitLateLayout) await late;
+  }
   // The reply now carries the card: keep its id, so a later patch finds it
   // without a search.
   if (ctx.buildNote?.noteId && posted?.id) {
@@ -2864,7 +2899,7 @@ async function updateChange(pool, ctx, args) {
     queued: asked.running
       ? 'An update to this change is running now. This one is queued right behind it: you make it as soon as that finishes.'
       : 'Queued: you start on it now.',
-    next: 'It is not made yet, so never say it is done. When it is made, you tell them here what changed. You may also offer to tell them here when it is ready to vote (tell_me_when), if they would like that.',
+    next: 'Say in one short sentence that it is queued. Never say it is done. Do not explain the queue or the vote. When it is made, you tell them here what changed. Offer to tell them when it is ready to vote (tell_me_when) only if they ask.',
   };
 }
 
@@ -3208,14 +3243,69 @@ async function goAheadWaits(pool, { app, place, answer = [] }) {
 }
 
 /**
- * Pure (task 2020 follow-up): the laid-out copy a thread reply goes with, or
- * null. Only beside the words exactly as the reply wrote them, and never
- * under an offer, whose words are one line above its buttons.
+ * Pure (task 2020 follow-up): the model's own laid-out copy a thread reply
+ * goes with, or null. Beside the words exactly as the reply wrote them, and
+ * (18 Nov 2026) beside words that changed only where the copy still says
+ * what they say (homeroom-bot-html.js matchesWords); never once a claim was
+ * cut, and never under an offer, whose words are one line above its buttons.
  */
 function threadReplyHtml({ finalReply = null, text = '', asWritten = null, checkedProblems = [], offer = null } = {}) {
   const html = finalReply?.html;
   if (!html || offer || !text || (checkedProblems && checkedProblems.length)) return null;
-  return text === asWritten ? html : null;
+  if (text === asWritten) return html;
+  return replyHtml.matchesWords(html, text) ? html : null;
+}
+
+/**
+ * 18 Nov 2026: a thread reply's copy that came after its words were posted
+ * goes on the message, for everybody reading (chat_message_updated, as a
+ * decided offer does), and its turn's record says so, with its cost,
+ * charged as the turn's. One that failed leaves the words, and the turn says
+ * why. `record` is the turn's own: a turn not finished yet writes it.
+ * Never throws.
+ */
+async function layLateInThread(pool, { app, bot, messageId, later, record, deps = {} }) {
+  try {
+    const result = await later;
+    const usage = result?.usage || {};
+    const cost = Number(usage.costUsd) || 0;
+    if (result?.html) {
+      const { rows } = await pool.query(
+        `UPDATE chat_messages SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{homeroomBot,html}', to_jsonb($2::text), true)
+          WHERE id = $1 AND metadata ? 'homeroomBot'
+          RETURNING id, metadata, thread_type, thread_ref`,
+        [Number(messageId), result.html],
+      );
+      const ws = wsModule(deps);
+      if (rows[0] && typeof ws.broadcast === 'function') {
+        ws.broadcast(app.id, {
+          type: 'chat_message_updated', id: Number(rows[0].id), metadata: rows[0].metadata,
+          thread: rows[0].thread_type ? { type: rows[0].thread_type, ref: Number(rows[0].thread_ref) } : null,
+        });
+      }
+    }
+    const status = result?.html ? 'late' : 'failed';
+    const failure = result?.html ? null : `layout:${result?.code || 'error'}`;
+    const { rowCount } = await pool.query(
+      `UPDATE homeroom_bot_voice_turns
+          SET html_status = $2, cost_usd = COALESCE(cost_usd, 0) + $3,
+              output_tokens = COALESCE(output_tokens, 0) + $4, input_tokens = COALESCE(input_tokens, 0) + $5,
+              failures = CASE WHEN $6::text IS NULL THEN failures ELSE array_append(failures, $6::text) END
+        WHERE reply_message_id = $1 AND finished_at IS NOT NULL`,
+      [Number(messageId), status, cost, Number(usage.outputTokens) || 0, Number(usage.inputTokens) || 0, failure],
+    );
+    // Its turn not finished yet: it writes the record as it finishes.
+    if (!rowCount && record) {
+      record.htmlStatus = status;
+      record.costUsd = (Number(record.costUsd) || 0) + cost;
+      record.outputTokens = (Number(record.outputTokens) || 0) + (Number(usage.outputTokens) || 0);
+      record.inputTokens = (Number(record.inputTokens) || 0) + (Number(usage.inputTokens) || 0);
+      if (failure && Array.isArray(record.failures)) record.failures.push(failure);
+    }
+    if (cost > 0) await chargeTurn(pool, bot, cost);
+  } catch (err) {
+    log.warn('homeroom-bot-voice', 'Could not put a late layout on a reply', { messageId, err: clip(err?.message, 200) });
+  }
 }
 
 /**
@@ -4279,6 +4369,7 @@ module.exports = {
   offerActions,
   say,
   threadReplyHtml,
+  layLateInThread,
   fallbackSuggestions,
   asksQuestion,
   isAffirmation,

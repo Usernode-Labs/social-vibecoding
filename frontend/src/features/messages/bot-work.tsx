@@ -55,10 +55,33 @@ export function useBotWork(): BotWorkState {
 // Only the newest read may land: an older one finishing late is dropped.
 let seq = 0;
 
+// 18 Nov 2026: the requests a live card on screen follows (./bot-live-card.tsx),
+// as `slug:number`: every read asks for them too, so a request that is not
+// the viewer's own still moves on its card.
+const watched = new Map<string, number>();
+
+/**
+ * Follow one request's track while its live card is on screen. A request
+ * the store has not read yet is read soon. Returns the stop.
+ */
+export function watchTrack(appSlug: string, issueNumber: number): () => void {
+  const key = `${appSlug}:${issueNumber}`;
+  const first = !watched.has(key);
+  watched.set(key, (watched.get(key) || 0) + 1);
+  const known = (list: readonly { appSlug: string | null; issueNumber: number | null }[] | undefined) => (list || [])
+    .some((track) => track.appSlug === appSlug && track.issueNumber === issueNumber);
+  // A read already made (or still on its way) may not have asked for it.
+  if (first && !(state.work && (known(state.work.tracks) || known(state.work.watched)))) loadSoon();
+  return () => {
+    const left = (watched.get(key) || 1) - 1;
+    if (left > 0) watched.set(key, left); else watched.delete(key);
+  };
+}
+
 /** Read the tracks again. `fresh` (every read but the first): past the worker's offline copy. */
 export function loadBotWork({ fresh = true }: { fresh?: boolean } = {}): void {
   const mine = ++seq;
-  api.getHomeroomBotWork({ fresh }).then((work) => {
+  api.getHomeroomBotWork({ fresh, also: [...watched.keys()] }).then((work) => {
     if (mine === seq) publish({ work, failed: false });
   }).catch(() => {
     if (mine === seq) publish({ failed: true });

@@ -119,6 +119,8 @@ test('a follow-up\'s reply, summary, name and answers have no em dash', () => {
     reply: `Done ${EM} the In button is green now.`,
     summary: `Made the In button green ${EM} and the Out button grey.`,
     title: `Green In button ${EM} grey Out button`,
+    // 18 Nov 2026: a title is taken only with what the change is for changed.
+    title_why: 'purpose_changed',
   }));
   assert.equal(revised.reply, 'Done: the In button is green now.');
   assert.equal(revised.summary, 'Made the In button green, and the Out button grey.');

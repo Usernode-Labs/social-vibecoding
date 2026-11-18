@@ -1,3 +1,5 @@
+import { useState, type ReactNode } from 'react';
+
 import { useMessages } from '../../lib/i18n/react';
 import { openDraftPreview, type PreviewDraftCopy } from '../ai/preview';
 import { appTabSlug, newsIcon } from './bot-shared';
@@ -5,6 +7,7 @@ import { useBotWork } from './bot-work';
 import { MessageMarkdown, ObjectCard } from './format';
 import { pageOf, sameItem, type HomeroomLink } from './homeroom-links';
 import { useLinkCards } from './link-cards';
+import { plainText } from './plain-text';
 import type { HomeroomBotMeta, SharedObjectCard } from './types';
 
 /*
@@ -73,6 +76,8 @@ export interface BotHead {
   hidden: boolean;
   /** The project's emoji icon, when the message carries it (`appEmoji`). */
   appEmoji?: string;
+  /** 18 Nov 2026: the line is an offer's (a draft, or the request a draft became): its words after it fold away. */
+  offer?: boolean;
 }
 
 // requestLine's shapes, and the offers'. The name is matched against the
@@ -140,7 +145,60 @@ export function botHead(content: string, meta: HomeroomBotMeta | null): BotHead 
     hidden: parsed.kind === 'project' && !!slug
       && (meta.actions || []).some((action) => action.type === 'open' && appTabSlug(action.target) === slug),
     ...(parsed.kind === 'project' && meta.appEmoji ? { appEmoji: meta.appEmoji } : {}),
+    ...(meta.kind === 'confirm' ? { offer: true } : {}),
   };
+}
+
+// 18 Nov 2026: an offer's words after its card longer than this fold away
+// under a gist. Production, 11 to 18 Nov: an offer's message ran to a median
+// of 1,969 characters, the draft's own words repeating the reply over it.
+export const DRAFT_FOLD_CHARS = 240;
+const GIST_CHARS = 140;
+
+/**
+ * Pure (18 Nov 2026): a draft's gist, the line its card shows while the rest
+ * is folded away: its first sentence in plain words, cut at a word under
+ * GIST_CHARS. '' for no words.
+ */
+export function draftGist(rest: string): string {
+  const first = plainText(String(rest || '').split(/\n{2,}/).find((p) => p.trim()) || '').replace(/\s+/g, ' ').trim();
+  if (!first) return '';
+  const sentence = /^(.+?[.!?])(?:\s|$)/.exec(first)?.[1] || first;
+  if (sentence.length <= GIST_CHARS) return sentence;
+  const cut = sentence.slice(0, GIST_CHARS);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > GIST_CHARS / 2 ? cut.slice(0, at) : cut).replace(/[\s,;:]+$/, '')}…`;
+}
+
+/** Whether an offer's words after its card fold away. */
+export function foldsDraft(head: BotHead): boolean {
+  return !!head.offer && head.rest.length > DRAFT_FOLD_CHARS;
+}
+
+/**
+ * 18 Nov 2026: the draft under an offer's card, folded: its gist, and a
+ * button that shows the whole of it. Drawn closed, so the first render is
+ * the same everywhere.
+ */
+function DraftFold({ rest, children }: { rest: string; children: ReactNode }) {
+  const t = useMessages('messages');
+  const [open, setOpen] = useState(false);
+  const gist = draftGist(rest);
+  return (
+    <div className="mt-0.5 max-w-[480px]" data-bot-draft-fold={open ? 'open' : 'closed'}>
+      {!open && gist ? <p className="m-0 text-[0.8125rem] leading-[1.125rem] text-zinc-600 dark:text-zinc-300" data-bot-draft-gist="">{gist}</p> : null}
+      {open ? children : null}
+      <button
+        type="button"
+        className="mt-1 text-[0.8125rem] font-semibold text-zinc-500 hover:text-zinc-900 hover:underline dark:text-zinc-400 dark:hover:text-zinc-100"
+        aria-expanded={open}
+        onClick={() => setOpen((was) => !was)}
+        data-bot-draft-toggle=""
+      >
+        {open ? t('messages:bot.draft.hide') : t('messages:bot.draft.show')}
+      </button>
+    </div>
+  );
 }
 
 /** Whether a card on the message is the one `head` draws, so it is not drawn twice. */
@@ -253,7 +311,7 @@ export function BotHeadWords({ head, objects, channels, draft = null, marks = nu
     <>
       {words(head.before)}
       <BotHeadCard head={head} objects={objects} draft={draft} />
-      {words(head.rest)}
+      {foldsDraft(head) ? <DraftFold rest={head.rest}>{words(head.rest)}</DraftFold> : words(head.rest)}
     </>
   );
 }
