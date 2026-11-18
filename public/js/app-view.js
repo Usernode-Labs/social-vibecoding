@@ -29333,6 +29333,10 @@ const AppView = {
     if (typeof staging.place === 'function') staging.place({ sessionId, wide: false, settle: !!(opts && opts.settle) });
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
+    // The change's name, vote and before-and-after are this OPEN's: they
+    // answer after swapToStaging has taken a load id of its own (#6077), so
+    // they are matched to the open, not to the load id.
+    AppView._stagingOpenSeq = loadId;
     const changeLoad = AppView._loadStagingChange(sessionId, slug, loadId);
     staging.clearSrc();
     AppView._pendingStagingPreview = null;
@@ -29855,6 +29859,9 @@ const AppView = {
     const selfHosted = same ? !!open.self_hosted : !!(app && app.self_hosted);
     const known = AppView._stagingKnownChange(sessionId, app, opts);
     const id = Number(sessionId);
+    // Reopened from its address before its project's record arrived, the
+    // tile is filled in once it has (_loadStagingChange).
+    AppView._stagingTileKnown = !!(emoji || image);
     staging.setUrlLabel(AppView._stagingTitle(app, name));
     staging.setAudience(AppView._stagingAudience(app));
     staging.setChange({
@@ -29930,18 +29937,30 @@ const AppView = {
   // The change's name has been looked up both ways (the ensure answer and
   // the change's row): whatever was found is shown, and a title still
   // waiting gives way to the project's name.
-  _settleStagingChange(loadId, changeLoad) {
+  _settleStagingChange(openSeq, changeLoad) {
     Promise.resolve(changeLoad).catch(() => {}).then(() => {
-      if (loadId !== AppView._stagingLoadId) return;
+      if (openSeq !== AppView._stagingOpenSeq) return;
       AppView._staging().setChange({ pending: false });
     });
   },
 
-  // The server's word on which change it is (`change`: { title, number }).
+  // The open the change's lookups belong to (ensureStaging's load id at the
+  // open), 0 once it closes. Not moved by swapToStaging's own load id.
+  _stagingOpenSeq: 0,
+  _stagingTileKnown: false,
+
+  // The server's word on which change it is (`change`: { title, number }),
+  // and the project's name when the page did not know it (a preview reopened
+  // from its address before its project's record arrived).
   _stagingAnswerChange(data) {
+    const staging = AppView._staging();
+    const appName = data && typeof data.appName === 'string' ? data.appName.trim() : '';
+    if (appName && typeof staging.setChange === 'function' && AppView._stagingPreview && !AppView._stagingPreview.name) {
+      AppView._stagingPreview.name = appName;
+      staging.setChange({ appName });
+    }
     const change = data && data.change;
     if (!change || typeof change !== 'object') return;
-    const staging = AppView._staging();
     const pv = AppView._stagingPreview;
     const title = typeof change.title === 'string' ? change.title : '';
     const number = Number(change.number) || null;
@@ -29975,8 +29994,14 @@ const AppView = {
         row = null;
       }
     }
-    if (!row || loadId !== AppView._stagingLoadId) return;
+    if (loadId !== AppView._stagingOpenSeq) return;
     const staging = AppView._staging();
+    const open = AppView.appData;
+    if (!AppView._stagingTileKnown && open && open.slug === slug && (open.icon_emoji || open.icon_url)) {
+      AppView._stagingTileKnown = true;
+      staging.setChange({ tile: open.icon_emoji || '', tileImage: open.icon_url || '' });
+    }
+    if (!row) return;
     let vote = null;
     try {
       vote = typeof GroupChat !== 'undefined' && typeof GroupChat._voteView === 'function' ? GroupChat._voteView(row) : null;
@@ -30534,8 +30559,10 @@ const AppView = {
     const staging = AppView._staging();
     const iframe = staging.frame();
     AppView._stagingPreview = null;
-    // The page's own address comes back, in place.
+    // The page's own address comes back, in place, and a lookup still out
+    // for the change it showed writes nothing.
     AppView._writePreviewAddress(null);
+    AppView._stagingOpenSeq = 0;
     // Stop following its column or panel, and give the column back.
     if (typeof staging.unplace === 'function') staging.unplace();
     // Invalidate any in-flight readiness poll and hide the loader.

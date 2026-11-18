@@ -182,7 +182,10 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
   }
 
   const placement = choosePlacement({ phone, wide, besideApp, panelOpen: open, columnWidth });
-  const waitForColumn = !!input.settle && placement === 'full' && columnWidth == null
+  // Reopened from its address with no column drawn yet: it stands where the
+  // rules put it meanwhile (the panel's place, or the whole window) and
+  // moves into the column once the page draws it.
+  const waitForColumn = !!input.settle && columnWidth == null
     && !phone && !wide && !besideApp && detailEntry()?.kind === 'preview';
   if (placement !== 'column' && !waitForColumn && detailEntry()?.kind === 'preview') closeColumn();
 
@@ -215,6 +218,10 @@ function settleIntoColumn(mine: number): void {
     if (detailEntry()?.kind !== 'preview') return;
     const rect = rectOf(slotEl());
     if (rect && rect.width >= MIN_COLUMN) {
+      // Stop following the spot it stood in meanwhile (the panel's place).
+      for (const undo of cleanup.splice(0)) {
+        try { undo(); } catch { /* a watcher that is already gone */ }
+      }
       stagingStore.set({ placement: 'column', rect, beside: null, liveSpot: null, expanded: false });
       watch(slotEl, 'column');
       return;

@@ -10141,13 +10141,22 @@ html.un-kb .un-modal {
     "tile titles tools exit"
     "switch switch gap vote";
 }
-.staging-exit { grid-area: exit; }
+/* The last column is as wide as Vote under it: its discs sit at its end. */
+.staging-exit { grid-area: exit; justify-self: end; }
 .staging-tile { grid-area: tile; }
 .staging-titles { grid-area: titles; min-width: 0; display: flex; flex-direction: column; }
 .staging-switch { grid-area: switch; justify-self: start; margin-top: 10px; }
 .staging-gap { grid-area: gap; }
 .staging-vote { grid-area: vote; justify-self: end; margin-top: 10px; }
-.staging-tools { grid-area: tools; display: flex; align-items: center; gap: 6px; }
+.staging-tools { grid-area: tools; justify-self: end; display: flex; align-items: center; gap: 6px; }
+/* The second row's switch and Vote also span the titles' column, so the
+   Vote's width does not size the first row's last column and squeeze the
+   change's name and its line (a grid item that spans a flexible column does
+   not size the fixed ones). They sit at its two ends. */
+#staging-overlay[data-placement="full"] .staging-switch { grid-column: 1 / 4; }
+#staging-overlay[data-placement="full"] .staging-vote { grid-column: 3 / 6; }
+#staging-overlay:not([data-placement="full"]) .staging-switch { grid-column: 1 / 3; }
+#staging-overlay:not([data-placement="full"]) .staging-vote { grid-column: 2 / 5; }
 @media (min-width: 768px) {
   /* The whole window on a wide screen: one row. */
   #staging-overlay[data-placement="full"] .staging-head {
@@ -10155,6 +10164,8 @@ html.un-kb .un-modal {
     grid-template-columns: auto auto minmax(0, 1fr) auto auto auto;
     grid-template-areas: "exit tile titles switch vote tools";
   }
+  #staging-overlay[data-placement="full"] .staging-switch { grid-column: switch; }
+  #staging-overlay[data-placement="full"] .staging-vote { grid-column: vote; }
   #staging-overlay[data-placement="full"] .staging-gap { display: none; }
   #staging-overlay[data-placement="full"] .staging-switch,
   #staging-overlay[data-placement="full"] .staging-vote { margin-top: 0; }
@@ -10241,6 +10252,8 @@ html.un-kb .un-modal {
   content: "·";
   position: absolute;
   inset-inline-start: 0.3em;
+  font-weight: 400;
+  color: color-mix(in srgb, var(--text-primary) 58%, transparent);
 }
 /* On a phone the project's name gives way to the vote's line. */
 @media (max-width: 767px) {
