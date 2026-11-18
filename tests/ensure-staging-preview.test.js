@@ -82,7 +82,7 @@ function makeAppView(fetchImpl, { stubSwap = true, uiTelemetry = null } = {}) {
     // can't hold the test process open after its case has passed.
     setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
     clearTimeout, setInterval, clearInterval,
-    AbortController, URL, URLSearchParams,
+    AbortController, URL,
     // The real swapToStaging normalises the url through dev-host.js and
     // composes the iframe src with the URL API.
     resolveDevHost: (u) => u,
@@ -926,10 +926,20 @@ test('#6077 with no way back the stuck page keeps the old advice: a reader, and 
 // flag and turns that path into a same-origin URL before opening the frame,
 // through the same swap and token as any preview.
 
+// A demo page (`?demo=1`). A browser's window has URLSearchParams, which
+// AppView._demoQS() reads the flag through; the stub context above does not
+// hand one in, and nothing outside the demo needs it, so it arrives with the
+// demo exactly as it would in a browser.
 function asDemo(app, sandbox) {
   sandbox.location.search = '?demo=1';
+  sandbox.URLSearchParams = URLSearchParams;
   return app;
 }
+
+// The preview's own requests, in order. A demo page also reads the change's
+// row for the header (AppView._loadStagingChange, the preview's own
+// before-and-after), which is not what these cases pin.
+const sessionCalls = (endpoints) => endpoints.filter((url) => String(url).startsWith('/api/sessions/'));
 
 test('#6817 on a demo page the ensure call carries the demo flag', async () => {
   const endpoints = [];
@@ -940,7 +950,7 @@ test('#6817 on a demo page the ensure call carries the demo flag', async () => {
   asDemo(AppView, sandbox);
   await AppView.ensureStaging(7, null, null, {});
   await AppView.ensureStaging(7, null, null, { readOnly: true });
-  assert.deepEqual(endpoints, [
+  assert.deepEqual(sessionCalls(endpoints), [
     '/api/sessions/7/ensure-staging?demo=1',
     '/api/sessions/7/preview-status?demo=1',
   ]);
@@ -973,6 +983,6 @@ test('#6817 outside the demo the endpoint and the URL are untouched', async () =
     return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
   });
   await AppView.ensureStaging(7, null, null, {});
-  assert.deepEqual(endpoints, ['/api/sessions/7/ensure-staging']);
+  assert.deepEqual(sessionCalls(endpoints), ['/api/sessions/7/ensure-staging']);
   assert.equal(swaps[0].url, 'https://live.example', 'an absolute URL is passed through');
 });
