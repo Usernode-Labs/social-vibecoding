@@ -797,7 +797,8 @@ app.use(kudosRoutes(config));
 // Public read-only apps + contributors API. Mounted after authMiddleware
 // like kudosRoutes; reachable anonymously via the `/api/public/` prefix in
 // PUBLIC_PATHS (src/middleware/auth.js).
-app.use(publicApiRoutes(config));
+const publicApi = publicApiRoutes(config);
+app.use(publicApi);
 // Public-profile reads use the anonymous /api/public prefix; owner controls,
 // reports and moderation share this router but remain behind authMiddleware.
 app.use(publicProfileRoutes(config));
@@ -1385,6 +1386,11 @@ async function start() {
     // (services/language-cache.js), so warming it here leaves the first
     // request reading memory.
     require('./src/services/language-cache').live(getPool(config)).catch(() => {});
+    // And the public directory every page load reads (routes/public-api.js):
+    // its query takes 1.5 to 2.5 seconds, which the first visitor after a
+    // release used to wait on, with every other read of that page load
+    // queued behind it.
+    publicApi.warmDirectory();
   }
   // Every process writes its own server-error counts to the database once a
   // minute (services/server-error-counts.js), on an unref'd timer; a minute

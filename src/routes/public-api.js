@@ -80,6 +80,11 @@ const DIRECTORY_TTL_MS = 30 * 1000;
 // served, so a project that left the directory (made private, suspended)
 // leaves the list within this long at the latest.
 const DIRECTORY_STALE_MS = 2 * 60 * 1000;
+// And while people are asking for it, it is refreshed behind them: for this
+// long after the last request, a copy past its half minute is read again in
+// the background, so nobody in a busy stretch meets a cold one. With nobody
+// asking, nothing is read.
+const DIRECTORY_KEEP_WARM_MS = 10 * 60 * 1000;
 const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
@@ -159,24 +164,54 @@ function publicApiRoutes(config) {
     const key = includeWallets ? 'wallets' : 'plain';
     const hit = directoryCache.get(key);
     const now = Date.now();
+    directoryAskedAt.set(key, now);
+    keepDirectoryWarm();
     if (hit && (hit.pending || hit.expiresAt > now)) return hit.read;
     // A copy that just expired answers this request, and whoever arrives
     // while the refresh runs; the refresh replaces it when it lands.
     if (hit && hit.value && now - hit.readAt < DIRECTORY_STALE_MS) {
-      if (!hit.refreshing) {
-        hit.refreshing = true;
-        const fresh = loadDirectory(key, includeWallets);
-        fresh.read.then(() => { directoryCache.set(key, fresh); }, (err) => {
-          hit.refreshing = false;
-          log.warn('public-api', 'directory refresh failed; the kept copy still answers', { message: err.message });
-        });
-      }
+      refreshDirectory(key, hit);
       return Promise.resolve(hit.value);
     }
     const entry = loadDirectory(key, includeWallets);
     directoryCache.set(key, entry);
     return entry.read;
   }
+  // Read the directory again behind the copy that is kept, once at a time.
+  function refreshDirectory(key, hit) {
+    if (hit.refreshing) return;
+    hit.refreshing = true;
+    const fresh = loadDirectory(key, key === 'wallets');
+    fresh.read.then(() => { directoryCache.set(key, fresh); }, (err) => {
+      hit.refreshing = false;
+      log.warn('public-api', 'directory refresh failed; the kept copy still answers', { message: err.message });
+    });
+  }
+  // One timer for the router, started by the first request and stopped once
+  // nobody has asked for DIRECTORY_KEEP_WARM_MS. It holds no process open.
+  const directoryAskedAt = new Map();
+  let directoryTimer = null;
+  function keepDirectoryWarm() {
+    if (directoryTimer) return;
+    directoryTimer = setInterval(() => {
+      const now = Date.now();
+      let wanted = false;
+      for (const [key, askedAt] of directoryAskedAt) {
+        if (now - askedAt >= DIRECTORY_KEEP_WARM_MS) { directoryAskedAt.delete(key); continue; }
+        wanted = true;
+        const hit = directoryCache.get(key);
+        if (hit && hit.value && !hit.pending && hit.expiresAt <= now) refreshDirectory(key, hit);
+      }
+      if (!wanted) { clearInterval(directoryTimer); directoryTimer = null; }
+    }, DIRECTORY_TTL_MS);
+    if (typeof directoryTimer.unref === 'function') directoryTimer.unref();
+  }
+  // A web process reads the directory once as it starts (server.js), so the
+  // first visitor after a release does not wait on its query.
+  router.warmDirectory = () => readDirectory(false).then(() => true, (err) => {
+    log.warn('public-api', 'could not warm the directory', { message: err.message });
+    return false;
+  });
   // One read of the directory. The entry is stored by the caller: at once
   // for a first read (so requests that arrive meanwhile share it), and only
   // when it lands for a refresh behind a kept copy.
