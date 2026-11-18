@@ -144,6 +144,10 @@ test('Waiting & in progress, with Not moving folded as its last row; Live this w
   assert.match(went, /data-ai-line="live"><span class="fr-ei" aria-hidden="true">/);
   const src = read(LIST);
   assert.match(src, /\{stillShown \? <Groups lines=\{stillLines\}/, 'Not moving opens its rows in place');
+  // #6802: the person's tap is authoritative, so a second tap folds it.
+  assert.match(src, /const stillShown = stillFoldShown\(stillOpen, stillLines\.some\(\(line\) => line\.lit\)\);/, 'a lit row opens it until the person taps');
+  assert.match(src, /onClick=\{\(\) => setStillOpen\(!stillShown\)\}/, 'and each press sets the opposite of what is shown');
+  assert.doesNotMatch(src, /stillOpen \|\|/);
   assert.match(src, /data-ai-older-tab=""/, '#6233: the reload note under Live this week');
 });
 

@@ -30,7 +30,7 @@ import { HISTORY_KINDS, type HistoryKind } from './filter-address';
 import { monthName, type HistoryRow, type HistoryState } from './history';
 import { Marked, followFound } from './found';
 import { dayHeading, useAiLines, type FoundLine, type Glyph, type Line } from './lines';
-import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
+import { GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, stillFoldShown, type AiApp, type AiThread, type Phrase, type WorkRow } from './model';
 import { usePhone } from './phone-drawer';
 import { ProjectPicker } from './project-picker';
 import type { Found } from './search';
@@ -293,13 +293,14 @@ export function AiFrameList({
     owedShown, heads, noMatches, noneWords, foundLines, foundMore, foundFailed,
   } = useAiLines({ query, lit, ready, rows, owed, progress, waiting, live, openRow, openThread, onDone, picked: pickedIn, onPick, appFor, history, openHistory, found });
   const [more, setMore] = useState<DOMRect | null>(null);
-  const [stillOpen, setStillOpen] = useState(false);
+  const [stillOpen, setStillOpen] = useState<boolean | null>(null);
   const phone = usePhone();
   // Needs you draws what is new first, then lifts each project by its newest
   // activity (#6672), then holds the order under the pointer.
   const needs = useHeld(recentGroupsFirst(freshFirst(needLines)));
-  // A row in the folded part that is where you are opens it.
-  const stillShown = stillOpen || stillLines.some((line) => line.lit);
+  // #6802: until the person taps, a row in the folded part that is where you
+  // are opens it; after that their tap decides, so a second tap folds it.
+  const stillShown = stillFoldShown(stillOpen, stillLines.some((line) => line.lit));
   const first = (n: number) => (searching ? Infinity : n);
   const kindWord = (kind: HistoryKind | null) => (kind === 'change' ? t('messages:ai.history.kind.change')
     : kind === 'request' ? t('messages:ai.history.kind.request')
@@ -420,7 +421,7 @@ export function AiFrameList({
                   {/* #6158: the rows nobody is moving, folded at the list's end. */}
                   {stillLines.length ? (
                     <div data-ai-still-part="">
-                      <MoreRow open={stillShown} onClick={() => setStillOpen((o) => !o)} data-ai-still="">
+                      <MoreRow open={stillShown} onClick={() => setStillOpen(!stillShown)} data-ai-still="">
                         {t('messages:ai.up.stillCount', { count: stillLines.length })}
                       </MoreRow>
                       {stillShown ? <Groups lines={stillLines} heads={heads} first={stillLines.length} dayHeads /> : null}

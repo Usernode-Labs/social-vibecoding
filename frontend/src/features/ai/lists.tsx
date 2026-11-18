@@ -68,7 +68,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst,
+  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst, stillFoldShown,
   type AiApp, type AiThread, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -508,7 +508,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   foldFresh?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
-  const [stillOpen, setStillOpen] = useState(false);
+  const [stillOpen, setStillOpen] = useState<boolean | null>(null);
   // #6245: while the pointer is over Needs you or a row in it has keyboard
   // focus, keep the order it was drawn in, so a live refresh cannot slide a
   // row out from under the one being pressed. Rows that arrived meanwhile
@@ -538,8 +538,9 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
   const within = (node: EventTarget | null) => !!holdRef.current && node instanceof Node && holdRef.current.contains(node);
   if (!lines.length && !still?.lines.length && !empty && !note && !keep) return null;
   const label = owe ? 'text-violet-700 dark:text-violet-300' : '';
-  // A row in the folded part that is where you are opens it.
-  const stillShown = stillOpen || !!still?.lines.some((l) => l.lit);
+  // #6802: until the person taps, a row in the folded part that is where you
+  // are opens it; after that their tap decides, so a second tap folds it.
+  const stillShown = stillFoldShown(stillOpen, !!still?.lines.some((l) => l.lit));
   const body = (
     <>
       {note}
@@ -550,7 +551,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
           <button
             type="button"
             className="flex w-full min-h-[44px] md:min-h-0 items-center justify-start gap-1 py-2 text-[13px] font-semibold text-violet-700 hover:text-violet-800 dark:text-violet-300 dark:hover:text-violet-200"
-            onClick={() => setStillOpen((o) => !o)}
+            onClick={() => setStillOpen(!stillShown)}
             aria-expanded={stillShown}
             data-ai-still=""
           >

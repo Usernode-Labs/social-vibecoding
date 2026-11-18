@@ -1031,6 +1031,14 @@ export function heroWords(needs: number, next: number, fresh = 0): Phrase | null
 }
 
 /**
+ * Pure: whether the "Not moving" fold shows its rows. Until the person taps,
+ * a row in it that is where they are opens it; after that their tap decides.
+ */
+export function stillFoldShown(open: boolean | null, lit: boolean): boolean {
+  return open ?? lit;
+}
+
+/**
  * Pure: whether `href` opens a topic page (a request, a change, a decision),
  * whose back chip can name this page as where it was opened from
  * (Improve.enterTopicFrom). A Workshop address is not one: the origin would

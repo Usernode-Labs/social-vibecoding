@@ -888,8 +888,22 @@ test('#6158: a Waiting row says what it waits on, and the rows nobody is moving 
   assert.match(html, /Waiting &amp; in progress · 3/, 'the card\'s head still counts every row');
   assert.match(html, /Number 2 in line/, 'the moving rows lead the list');
   const src = read('frontend/src/features/ai/lists.tsx');
-  assert.match(src, /const stillShown = stillOpen \|\| !!still\?\.lines\.some\(\(l\) => l\.lit\);/, 'a row where you are opens it');
-  assert.match(src, /onClick=\{\(\) => setStillOpen\(\(o\) => !o\)\}/, 'and a press toggles it');
+  assert.match(src, /const stillShown = stillFoldShown\(stillOpen, !!still\?\.lines\.some\(\(l\) => l\.lit\)\);/, 'a row where you are opens it until you tap');
+  assert.match(src, /onClick=\{\(\) => setStillOpen\(!stillShown\)\}/, 'and each press sets the opposite of what is shown');
+  assert.doesNotMatch(src, /stillOpen \|\|/, '#6802: a lit row never holds it open against a tap');
+});
+
+test('#6802: a second tap folds Not moving even while a row in it is where you are', () => {
+  const { stillFoldShown } = loadTsx(MODEL);
+  assert.equal(stillFoldShown(null, false), false, 'nothing lit: folded until pressed');
+  assert.equal(stillFoldShown(null, true), true, 'a row where you are still opens it by itself');
+  // The press sets the opposite of what is shown, exactly as the button does.
+  let open = null;
+  const tap = (lit) => { open = !stillFoldShown(open, lit); return open; };
+  assert.equal(tap(true), false, 'the first press folds it, though the row is still lit');
+  assert.equal(tap(true), true, 'the next press opens it again');
+  assert.equal(stillFoldShown(false, true), false, 'once tapped, a lit row no longer reopens it');
+  assert.equal(stillFoldShown(true, false), true, 'and the tap opens it with no lit row');
 });
 
 test('a change waiting only on its before & after screenshots reads "Taking screenshots", with a camera', () => {
