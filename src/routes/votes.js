@@ -2694,6 +2694,30 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
   };
 }
 
+/**
+ * #6821: each row's stored work state (`work`), so a change's page draws its
+ * foot from the same row every list reads (services/work-state.js). Its words
+ * travel with it (forViewer), and so does the viewer's own vote when they
+ * cast one this round: "You said yes" at any stage. Best effort: a page
+ * without it keeps drawing its live gates.
+ */
+async function attachWork(db, rows, userId) {
+  const list = (rows || []).filter((r) => r && Number(r.id) > 0);
+  if (!list.length) return;
+  const workState = require('../services/work-state');
+  let stored;
+  try {
+    stored = await workState.forChanges(db, list.map((r) => r.id));
+  } catch (err) {
+    log.warn('votes', 'Could not read the stored work state', { message: err.message });
+    return;
+  }
+  for (const r of list) {
+    const row = stored.get(Number(r.id));
+    r.work = row ? workState.forViewer(row, { viewerId: userId, myVote: r.my_vote }) : null;
+  }
+}
+
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
 // proposal row. Used by BOTH `GET /api/apps/:slug/merged` (the paginated
 // Completed list) and `GET /api/apps/:slug/proposals/:id` (single-row
@@ -3276,6 +3300,8 @@ async function readProposalRow(ctx, req, gatedApp, id) {
     // Best-effort: the page still draws from the proposal row.
     log.warn('votes', 'Could not read the vote context', { message: err.message });
   }
+  // #6821: where it stands, from the one stored row every list reads.
+  await attachWork(pool, proposal ? [proposal] : [], userId);
   return { proposal: listTestResults.forItem(req, proposal), context };
 }
 
@@ -5159,6 +5185,7 @@ function voteRoutes(config) {
       // #4479 / polish board #14: the plan each change was built from, so its
       // page draws the plan card with everything else (sessions.js).
       await require('./sessions').attachChangePlans(pool, rows, userId);
+      await attachWork(pool, rows, userId);
       res.json({
         // `?results=failing`: the shell's list form (services/list-test-results.js).
         promoted: listTestResults.forListing(req, rows, { slim: true }),

@@ -132,6 +132,12 @@ export interface Standing extends WorkState {
   sessionId?: number | null;
   mine?: boolean;
   voteOwed?: boolean;
+  /**
+   * #6821: the viewer's own vote on its change this round (pr_votes at the
+   * change's approval epoch), at any stage: an approved change catching up
+   * with main still says "You said yes".
+   */
+  myVote?: 'yes' | 'no' | null;
 }
 
 export const STAGES: readonly Stage[] = Object.freeze([

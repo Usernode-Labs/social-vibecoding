@@ -8085,6 +8085,10 @@ const AppView = {
       // When it went live, for "Since …" in the card's foot and the
       // timeline's Live step (frontend topic/card-model.ts, rail-model.ts).
       liveAt: item.status === 'merged' ? (item.live_at || item.merged_at || null) : null,
+      // #6821: where it stands, from the one stored row every list reads
+      // (src/services/work-state.js). The foot words its headline and line
+      // from it, so this page and the Homeroom bot tab cannot disagree.
+      work: item && item.work && typeof item.work === 'object' ? item.work : null,
       // The last run's counts and its failures by name, for the layer See
       // what failed opens over the card (change-head.tsx ChecksSummary).
       checks: AppView._checksSummary(item),
@@ -11220,7 +11224,11 @@ const AppView = {
       || (Number(push.appId) > 0 && Number(push.appId) === Number(app.id)));
   },
   _applyWorkStatePush(push) {
-    if (!push || push.type !== 'work_state' || !push.item || push.item.kind !== 'request') return false;
+    if (!push || push.type !== 'work_state' || !push.item) return false;
+    // #6821: a change's own stored row moved: the change open on screen (or
+    // held in a list) takes its `work`, and the page repaints.
+    if (push.item.kind === 'change') return AppView._applyChangeWorkState(push);
+    if (push.item.kind !== 'request') return false;
     if (!push.state || typeof push.state !== 'object' || typeof push.state.stage !== 'string') return false;
     const app = AppView.appData || {};
     const sameApp = (!!push.appSlug && push.appSlug === app.slug)
@@ -11248,6 +11256,32 @@ const AppView = {
     }
     const topic = AppView._devTopic;
     if (topic && topic.kind === 'issue' && Number(topic.id) === n) AppView._renderTopicHead();
+    return true;
+  },
+
+  // #6821: the same for a change's own row (`item.kind === 'change'`). The
+  // push carries the row as anybody but its requester reads it; the viewer's
+  // own vote is theirs, so what the held row already says of it stays.
+  _applyChangeWorkState(push) {
+    if (!push.state || typeof push.state !== 'object' || typeof push.state.stage !== 'string') return false;
+    const app = AppView.appData || {};
+    const sameApp = (!!push.appSlug && push.appSlug === app.slug)
+      || (Number(push.appId) > 0 && Number(push.appId) === Number(app.id));
+    const id = Number(push.item.sessionId != null ? push.item.sessionId : push.item.ref);
+    if (!sameApp || !Number.isInteger(id) || id <= 0) return false;
+    const lists = [AppView._proposals, AppView._merged, AppView._sharedSessions, AppView._mySessions];
+    const rows = [
+      AppView._changeItems.get(id),
+      AppView._topicProposal && Number(AppView._topicProposal.id) === id ? AppView._topicProposal : null,
+      ...lists.flatMap((l) => (Array.isArray(l) ? l : [])),
+    ].filter((row) => row && Number(row.id) === id);
+    if (!rows.length) return false;
+    for (const row of rows) {
+      const before = row.work && typeof row.work === 'object' ? row.work : {};
+      row.work = { ...push.state, ...(before.myVote ? { myVote: before.myVote } : {}) };
+    }
+    const t = AppView._devTopic;
+    if (t && Number(t.id) === id && (t.kind === 'proposal' || t.kind === 'session')) AppView._renderTopicHead();
     return true;
   },
 
@@ -26293,7 +26327,13 @@ const AppView = {
       cancelled: [t('changes:shots.state.cancelled.label'), e.failureReason || t('changes:shots.state.cancelled.detail')],
       // The author's reasoning is for the reviewers of the declaration, not
       // for someone reading the proposal: it says only that nothing shows.
-      not_required: [t('changes:shots.state.notRequired.label'), t('changes:shots.state.notRequired.detail')],
+      // #6822: a claim about a screen both copies already have that no
+      // ready-made state could show says so, with the shots agent's reason,
+      // instead of failing.
+      not_required: e.unstageable && e.unstageable.reason
+        ? [t('changes:shots.state.unstageable.label'),
+          t('changes:shots.state.unstageable.detail', { reason: String(e.unstageable.reason).replace(/\.\s*$/, '') })]
+        : [t('changes:shots.state.notRequired.label'), t('changes:shots.state.notRequired.detail')],
       overridden: [t('changes:shots.state.waived.label'), e.overrideReason || t('changes:shots.state.waived.detail')],
     };
   },

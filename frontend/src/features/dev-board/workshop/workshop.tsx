@@ -3501,6 +3501,8 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
+  // Standard (WIP) folds Invite into the hero's row: no Invite card.
+  const wipLook = useLiveSkin() === 'wip';
   // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
   const sidebarRows = useSidebarRows();
   const { apps: pins } = useStoreState(pinnedAppsStore);
@@ -4129,8 +4131,9 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
-          // Invite is the card after this hero (InviteHeroCard).
-          inviteCard
+          // Invite is the card after this hero (InviteHeroCard), except
+          // under Standard (WIP), where it stays the row's own button.
+          inviteCard={!wipLook}
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4198,7 +4201,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
           under it on a phone. See ./community-card.tsx InviteHeroCard. */}
-      {slug ? <InviteHeroCard slug={slug} data={community} /> : null}
+      {slug && !wipLook ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
