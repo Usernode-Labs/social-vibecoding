@@ -49,7 +49,7 @@ import {
   homePinsActivityStore, homePinsStore, importDevicePins, loadHomePins, loadHomePinsActivity, loadHomePinsForSession,
   setHomePin, wireHomePins, type HomePin, type PinActivity,
 } from './home-pins-store';
-import { matchesQuery, useHomeQuery } from './use-home-query';
+import { matchesQuery, useSettledHomeQuery } from './use-home-query';
 
 const HEAD_ACTION = 'shrink-0 flex items-center text-[14px] font-semibold text-[color:var(--accent)] hover:underline whitespace-nowrap un-touch-target';
 const TILE = 'flex min-w-0 flex-col items-center gap-1.5 rounded-2xl py-1 text-center no-underline un-touch-target';
@@ -257,7 +257,7 @@ function ActionTile({ label, icon, onClick, dashed = false, muted = false, press
 export function PinnedCommunities() {
   const t = useMessages('home');
   const state = useStoreState(homePinsStore);
-  const query = useHomeQuery();
+  const query = useSettledHomeQuery();
   const [editing, setEditing] = useState(false);
   const [showAll, setShowAll] = useState(false);
   // "All communities" elsewhere (the switcher, the tour's last step) opens
