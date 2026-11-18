@@ -6982,5 +6982,65 @@
   "topic.card.shots.screenOf": {
     "text": "{{index}} of {{total}} screens",
     "description": "Small line beside the row of screen pictures under a change's before and after picture: which screen the picture above is showing. {{total}} is 2 or more."
+  },
+  "diagram.kind.seen": {
+    "text": "What you’d see",
+    "description": "Small-caps label over a picture for a change that changes nothing on screen, when the picture shows one element (a status line, a message, a notice or a count) before the change and after it."
+  },
+  "diagram.kind.moment": {
+    "text": "What happened",
+    "description": "Small-caps label over a picture for a change that changes nothing on screen, when the picture tells a short timeline of a real incident from the request: its date, the change it happened to, and how long it lasted."
+  },
+  "diagram.kind.steps": {
+    "text": "How it works",
+    "description": "Small-caps label over a picture for a change that changes nothing on screen, when the picture shows a before row and an after row of small drawings, each with a short caption."
+  },
+  "diagram.seen.before": {
+    "text": "Before",
+    "description": "Label over the left side of a “What you’d see” picture: the element as it is now, before the change."
+  },
+  "diagram.seen.after": {
+    "text": "After",
+    "description": "Label over the right side of a “What you’d see” picture: the element as it is once the change is in. Also labels the second row of a “How it works” picture."
+  },
+  "diagram.moment.now": {
+    "text": "Now",
+    "description": "Label over the second part of a “What happened” picture: what happens now, after the change."
+  },
+  "diagram.moment.head": {
+    "text": "{{date}} · {{ref}} · {{lasted}}",
+    "description": "The head line of a “What happened” picture: when the incident happened, the change it happened to, and how long it lasted. {{date}} is a date such as “18 Nov 2026”; {{ref}} names a change or request such as “PR #6699”; {{lasted}} is a duration such as “about 25 minutes”. Keep the middle dots and the spaces around them."
+  },
+  "diagram.moment.headNoLasted": {
+    "text": "{{date}} · {{ref}}",
+    "description": "The head line of a “What happened” picture when the author did not say how long it lasted: when it happened and the change it happened to. {{date}} is a date such as “18 Nov 2026”, {{ref}} names a change or request such as “PR #6699”. Keep the middle dot."
+  },
+  "diagram.steps.retry": {
+    "text": "Tried again",
+    "description": "Words a screen reader hears beside a step of a “How it works” picture that was tried again, drawn with a small retry mark."
+  },
+  "diagram.text.seen": {
+    "text": "{{where}}. Before: {{before}}. After: {{after}}.",
+    "description": "A “What you’d see” picture said in words, for a screen reader. {{where}} names the element the picture shows; {{before}} and {{after}} are its words on each side."
+  },
+  "diagram.text.moment": {
+    "text": "{{date}}, {{ref}}. {{events}}. Now: {{now}}.",
+    "description": "A “What happened” picture said in words, for a screen reader (the picture's label is read before it, so it is not repeated here). {{date}} is when it happened, {{ref}} the change it happened to, {{events}} what happened then, and {{now}} what happens now, each already joined into a list."
+  },
+  "diagram.text.steps": {
+    "text": "Before: {{before}}. After: {{after}}.",
+    "description": "A “How it works” picture said in words, for a screen reader (the picture's label is read before it, so it is not repeated here). {{before}} and {{after}} are each that row's captions in order."
+  },
+  "topic.card.shots.noPictureTitle": {
+    "text": "No picture yet",
+    "description": "Heading in the box where a change's picture would be, on a change that changes nothing on screen and has no picture of what it does yet."
+  },
+  "topic.card.shots.noPictureText": {
+    "text": "Nothing on screen changes, and this change has no picture of what it does yet. Homeroom bot is adding one.",
+    "description": "Sentence under “No picture yet” in the box where a change's picture would be."
+  },
+  "topic.details.touches": {
+    "text": "What it touches",
+    "description": "Sub-heading in the Details sheet of a change, over the picture of which parts of the project the change edits: screens, server, database and tests, with a count of files."
   }
 }

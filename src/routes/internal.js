@@ -25,11 +25,15 @@ const shotsState = require('../services/shots-state');
 const shotsIdentities = require('../services/shots-identities');
 const shotsReadyStates = require('../services/shots-ready-states');
 
-// #6815: what a build is told after it declares that nothing visible changes
-// and has sent no diagram: with no before/after shots, the diagram (#4490) is
-// the only picture voters get. Advisory — the declaration always stands.
-const IMPACT_NONE_DIAGRAM_NUDGE = 'Nothing visible changes, so the diagram is the only picture voters get. '
-  + 'Call declare_diagram with a flow, changes, numbers or rename (or mermaid if none fits).';
+// #6832: what a build is told after it declares that nothing visible changes
+// and has sent no picture of what the change does. With no before/after shots,
+// one of the three pictures is the only thing a voter who is not a developer
+// can read. Advisory — the declaration always stands, and the follow-up adds
+// one if the build does not.
+const IMPACT_NONE_DIAGRAM_NUDGE = 'Nothing visible changes, so this change needs a picture voters can read without the code. '
+  + 'Call declare_diagram with kind "seen" when anything a person could notice changes (a status, message, notice or count), '
+  + 'with the change\'s real words; "moment" when the request reports a real incident, using only its own dates, refs and '
+  + 'durations; or "steps" (a before row and an after row of at most five drawings from the fixed set) otherwise.';
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's

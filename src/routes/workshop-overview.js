@@ -1239,14 +1239,27 @@ const DEMO_NEEDS_FEED = [
     // #5365: the demo card for an advisory vote, so the feed's label and the
     // deciding-first order can be seen on ?demo=1 without a governed project.
     advisory: true,
-    // #4490: no diagram, so its picture is "What it touches".
-    // #6814: its author declared that nothing on screen changes, so the same
-    // picture stands where its own page would show the empty box.
+    // #6832: its author declared that nothing on screen changes, so its card
+    // carries one of the three plain pictures — here a "steps" one — and
+    // "What it touches" is kept for the change's Technical details.
     shots_detail: {
       intent: {
         version: 1, impact: 'none', rationale: 'A shared list is added; nothing on screen changes yet.', stories: [],
       },
     },
+    diagram: {
+      version: 1, kind: 'steps',
+      before: [
+        { pic: 'person', caption: 'One list' },
+        { pic: 'card', caption: 'Saved here' },
+      ],
+      after: [
+        { pic: 'person', caption: 'One list' },
+        { pic: 'card', caption: 'Shared list' },
+        { pic: 'bell', caption: 'Members told' },
+      ],
+    },
+    diagram_source: 'author',
     touches: {
       version: 1, files: 3,
       areas: [

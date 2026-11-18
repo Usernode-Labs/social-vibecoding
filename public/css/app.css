@@ -18723,6 +18723,45 @@ button.dev-ws-recent-card {
   .dev-ws-touches > .dev-ws-diagram-rows { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; }
   .dev-ws-touches-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
 }
+/* #6832: the three pictures a change that changes nothing on screen gets in
+   place of "What it touches" — what you'd see, what happened, and how it
+   works. The same sheet, label and foot; the after side in the accent, the
+   old words muted. The small drawings are currentColor plus the one accent,
+   so they follow the page's theme with no branch of their own. */
+.dev-ws-diagram-seen, .dev-ws-diagram-moment, .dev-ws-diagram-steps-two { display: flex; flex-direction: column; gap: 12px; }
+.dev-ws-diagram-seen-where, .dev-ws-diagram-moment-when { font-size: 13px; color: var(--text-muted); }
+.dev-ws-diagram-seen-sides { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+@media (max-width: 419px) { .dev-ws-diagram-seen-sides { grid-template-columns: minmax(0, 1fr); } }
+.dev-ws-diagram-seen-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.dev-ws-diagram-seen-label, .dev-ws-diagram-steps-label { font-size: 13px; color: var(--text-muted); }
+.dev-ws-diagram-seen-col:last-child > .dev-ws-diagram-seen-label,
+.dev-ws-diagram-steps-row[data-steps-side="after"] > .dev-ws-diagram-steps-label { color: var(--accent); }
+.dev-ws-diagram-seen-side {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px; border-radius: 14px;
+  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line); overflow-wrap: anywhere;
+}
+.dev-ws-diagram-seen-side[data-side="after"] { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
+.dev-ws-diagram-seen-title { font-size: 15px; font-weight: 650; line-height: 1.3; }
+.dev-ws-diagram-seen-side[data-seen-look="status"] .dev-ws-diagram-seen-line,
+.dev-ws-diagram-seen-side[data-seen-look="notice"] .dev-ws-diagram-seen-line { font-size: 13px; color: var(--text-muted); }
+.dev-ws-diagram-seen-side[data-seen-look="notice"] { border-inline-start: 3px solid var(--accent); }
+.dev-ws-diagram-seen-side[data-seen-look="message"] { border-end-start-radius: 14px; border-end-end-radius: 4px; }
+.dev-ws-diagram-seen-side[data-seen-look="count"] .dev-ws-diagram-seen-title { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.dev-ws-diagram-seen-side[data-seen-look="count"] .dev-ws-diagram-seen-line { font-size: 13px; color: var(--text-muted); }
+
+.dev-ws-diagram-moment-events { margin: 0; padding-left: 18px; font-size: 15px; font-weight: 650; line-height: 1.5; }
+.dev-ws-diagram-moment-now { font-size: 13px; color: var(--accent); }
+.dev-ws-diagram-moment-after { color: var(--accent); }
+
+.dev-ws-diagram-steps-row { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-diagram-steps { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+.dev-ws-diagram-step-pic { width: 88px; flex: none; text-align: center; }
+.dev-ws-diagram-step-pic > svg { display: block; margin: 0 auto; color: var(--text-primary); }
+.dev-ws-diagram-steps-row[data-steps-side="after"] .dev-ws-diagram-step-pic > svg { color: var(--accent); }
+.dev-ws-diagram-step-caption { font-size: 13px; font-weight: 650; line-height: 1.3; }
+.dev-ws-diagram-step-retry { margin-left: 4px; color: var(--text-muted); font-weight: 600; }
+.dev-ws-diagram-step-note { margin-top: 4px; font-size: 12px; font-weight: 400; line-height: 1.35; color: var(--text-muted); text-align: start; }
+
 /* Mermaid: the library's SVG, scaled to the sheet. */
 .dev-ws-diagram-svg { display: flex; justify-content: center; min-height: 0; }
 .dev-ws-diagram-svg > svg { display: block; max-width: 100%; height: auto; max-height: 360px; }

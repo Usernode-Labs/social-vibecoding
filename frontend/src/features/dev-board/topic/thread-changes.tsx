@@ -782,7 +782,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request, tail = n
         ? <ShotsCard s={view.v.shots} single status={view.v.status?.key || null} />
         : <ShotsPair id={item.id} number={item.number ?? null} s={view.v.shots} />)
         : lone && view && item.state !== 'underway' && hasCards(item)
-          ? <NoPicture none={!!view.v.shotsNone} phase={phaseOf(view.v)} stopped={fixStanding(view.v.testing) === 'stopped'} touches={view.v.touches} /> : null}
+          ? <NoPicture none={!!view.v.shotsNone} phase={phaseOf(view.v)} stopped={fixStanding(view.v.testing) === 'stopped'} diagram={view.body.diagram} /> : null}
       {/* On its own under the request's card, its foot says where it stands;
           the pair below is then the content of the layer the timeline's
           steps open (change-head.tsx ChangeGates). */}

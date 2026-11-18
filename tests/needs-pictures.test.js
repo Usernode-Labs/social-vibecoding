@@ -2,7 +2,8 @@
 
 // #4490: a picture on every Needs-you card. The card's fallback order
 // (shots, then the author's or a group decision's diagram, then a legacy
-// capture pair, then "What it touches", then the spacer), the shared renderer
+// capture pair, then the spacer; #6832 moved "What it touches" to the
+// change's Technical details), the shared renderer
 // in frontend/src/lib/diagram/, the Mermaid kind's strict, on-demand loading,
 // and the Communities feed carrying the same pictures as a project's own.
 
@@ -20,22 +21,25 @@ const route = require('../src/routes/workshop-overview');
 
 const RENAME = { version: 1, kind: 'rename', from: 'spec', to: 'plan', places: ['Chat cards', 'Buttons'], note: 'Only the words change.' };
 
-test('the card shows shots first, then the diagram, the legacy pair, "What it touches" and the spacer', () => {
+test('the card shows shots first, then the diagram, the legacy pair and the spacer', () => {
   const src = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const at = src.indexOf('{shots && row.visuals ? <ShotsPicture');
   assert.ok(at > 0, 'the picture slot');
   const slot = src.slice(at, src.indexOf('<span className="dev-ws-item-scrim" aria-hidden="true" />', at));
-  const order = ['<ShotsPicture', "picture.kind === 'diagram'", '<BeforeAfter', "picture.kind === 'touches'", 'dev-ws-item-spacer'];
+  const order = ['<ShotsPicture', "picture.kind === 'diagram'", '<BeforeAfter', 'dev-ws-item-spacer'];
   let last = -1;
   for (const mark of order) {
     const i = slot.indexOf(mark);
     assert.ok(i > last, `${mark} comes after the one before it`);
     last = i;
   }
+  // #6832: "What it touches" is in the change's Technical details now, so the
+  // card has no touches branch at all.
+  assert.doesNotMatch(slot, /touches/);
   // Shots always win: usePicture says nothing when the row has screens.
   assert.match(src, /function usePicture\(row: QueueRow, shots: boolean\): Picture \{[\s\S]*?if \(shots\) return \{ kind: 'none' \};/);
-  // A Mermaid diagram that cannot be drawn drops to "What it touches".
-  assert.match(src, /if \(d && !failed\) return \{ kind: 'diagram'[\s\S]*?return touches \? \{ kind: 'touches', t: touches \} : \{ kind: 'none' \};/);
+  // A diagram that cannot be drawn drops to no picture, never a half one.
+  assert.match(src, /if \(d && !failed\) return \{ kind: 'diagram'[\s\S]*?return \{ kind: 'none' \};/);
   // The picture fills the card, and the summary is the caption's over it,
   // two lines whatever the picture is.
   assert.ok(src.indexOf('<span className="dev-ws-item-scrim"', at) < src.indexOf('<div className="dev-ws-item-caption">', at), 'the caption follows the picture');

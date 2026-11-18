@@ -118,6 +118,11 @@ server.registerTool('declare_visible_changes', {
 // Needs-you card when it has no before & after shots. Data, never markup:
 // src/services/diagram.js validates it, as it does submit_work's `diagram`.
 const short = z.string().min(1).max(60);
+// #6832: the fixed picture set a "steps" row draws its drawings from.
+const PICTURES = ['two-edits', 'text-twice', 'text-once', 'merged', 'checked', 'retry', 'builds', 'cant-build', 'handed-back', 'person', 'bell', 'card', 'vote'];
+const step = z.object({ pic: z.enum(PICTURES), caption: z.string().min(1).max(24), note: short.optional(), retry: z.boolean().optional() }).strict();
+const side = z.object({ title: short, lines: z.array(short).max(2).optional() }).strict();
+const events = z.array(short).min(1).max(4);
 const diagramSchema = {
   diagram: z.union([
     z.object({ version: z.literal(1), kind: z.literal('rename'), from: short, to: short,
@@ -129,7 +134,14 @@ const diagramSchema = {
     z.object({ version: z.literal(1), kind: z.literal('numbers'), unit: z.string().min(1).max(12).optional(),
       rows: z.array(z.object({ label: short, before: z.number(), after: z.number() }).strict()).min(1).max(6) }).strict(),
     z.object({ version: z.literal(1), kind: z.literal('mermaid'), source: z.string().min(1).max(2000) }).strict(),
-  ]).describe('One of the four fixed kinds (rename, flow, changes, numbers), or mermaid only for a change you declared with impact "none".'),
+    z.object({ version: z.literal(1), kind: z.literal('seen'), where: short,
+      look: z.enum(['status', 'notice', 'message', 'count']), before: side, after: side }).strict(),
+    z.object({ version: z.literal(1), kind: z.literal('moment'),
+      before: z.object({ date: z.string().min(1).max(10), ref: z.string().min(1).max(24), lasted: short.optional(), events }).strict(),
+      after: z.object({ events }).strict() }).strict(),
+    z.object({ version: z.literal(1), kind: z.literal('steps'),
+      before: z.array(step).min(1).max(5), after: z.array(step).min(1).max(5) }).strict(),
+  ]).describe('seen, moment or steps for a change you declared with impact "none" (see declare_diagram), or one of the four fixed kinds (rename, flow, changes, numbers); mermaid only for a change declared with impact "none".'),
 };
 
 async function recordDiagram(diagram) {
@@ -151,7 +163,7 @@ async function recordDiagram(diagram) {
 }
 
 server.registerTool('declare_diagram', {
-  description: 'Expected for every change you declared with declare_visible_changes impact "none", and recommended for a visible change that is a rename, a changed flow, a data or settings change, or a measured improvement. Declare a small diagram of the change, drawn by Homeroom on its Needs-you card when it has no before & after shots, and written into the pull request as text. Use it when the change is a rename (kind rename: from, to, the places it shows), a changed flow (kind flow: the old steps and the new), a data or settings change (kind changes: rows of added/changed/removed, each in plain words), or a measured improvement (kind numbers: before/after figures). Every text 1-60 characters. Only for a change you declared with declare_visible_changes impact "none", and only when none of the four fits, send kind mermaid with Mermaid source (at most 2000 characters and 40 lines, opening with flowchart, graph, sequenceDiagram, stateDiagram-v2, classDiagram or erDiagram; no %%{ directives, click, href, callback, or < > outside arrows). Call declare_visible_changes first. Calling again replaces the diagram.',
+  description: 'Required for every change you declared with declare_visible_changes impact "none": it is the only picture voters get. For such a change prefer, in this order: kind seen when anything a person could notice changes (a status, a message, a notice, a count), with the change\'s real words, a where line, a look (status, notice, message or count) and a before and after of {title, up to 2 lines}; kind moment when the request reports a real incident, taken only from its own evidence, as before {date YYYY-MM-DD, ref such as "PR #6699", lasted, 1-4 events} and after {1-4 events}; or kind steps otherwise, a before row and an after row of at most 5 drawings from the fixed set (two-edits, text-twice, text-once, merged, checked, retry, builds, cant-build, handed-back, person, bell, card, vote), each with a caption of 1-3 words, at most one note a row and retry true where a step was tried again. Every text 1-60 characters. Also recommended for a visible change that is a rename, a changed flow, a data or settings change, or a measured improvement: kind rename (from, to, the places it shows), kind flow (the old steps and the new), kind changes (rows of added/changed/removed, each in plain words), or kind numbers (before/after figures). Only for a change you declared with declare_visible_changes impact "none", and only when none of these fits, send kind mermaid with Mermaid source (at most 2000 characters and 40 lines, opening with flowchart, graph, sequenceDiagram, stateDiagram-v2, classDiagram or erDiagram; no %%{ directives, click, href, callback, or < > outside arrows). Call declare_visible_changes first. Calling again replaces the diagram.',
   inputSchema: diagramSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, async ({ diagram }) => {
