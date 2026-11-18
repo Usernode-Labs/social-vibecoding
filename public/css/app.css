@@ -18761,6 +18761,15 @@ button.dev-ws-recent-card {
 .dev-ws-diagram-step-caption { font-size: 13px; font-weight: 650; line-height: 1.3; }
 .dev-ws-diagram-step-retry { margin-left: 4px; color: var(--text-muted); font-weight: 600; }
 .dev-ws-diagram-step-note { margin-top: 4px; font-size: 12px; font-weight: 400; line-height: 1.35; color: var(--text-muted); text-align: start; }
+/* On a 390px phone a five-step row at 88px would clip or scroll sideways
+   inside the card: drop to 56px columns with a 12px gap and 32px drawings,
+   and let a caption run to two lines. Five fit inside the card's gutters. */
+@media (max-width: 419px) {
+  .dev-ws-diagram-steps { gap: 12px; }
+  .dev-ws-diagram-step-pic { width: 56px; }
+  .dev-ws-diagram-step-pic > svg { width: 32px; height: 32px; }
+  .dev-ws-diagram-step-caption { font-size: 12px; line-height: 1.25; }
+}
 
 /* Mermaid: the library's SVG, scaled to the sheet. */
 .dev-ws-diagram-svg { display: flex; justify-content: center; min-height: 0; }

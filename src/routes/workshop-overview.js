@@ -112,7 +112,9 @@ const DEMO_COUNTS = {
   // `owed` names DEMO_NEEDS_FEED's cards, below, so a vote swiped past in
   // the demo feed takes its count off the row, as a real one does (#3526).
   'staging-demo-your-app': {
-    working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
+    // #6832: -107, -108 and -109 are the three pictures (seen, moment, none).
+    working: 2, needs: 6,
+    owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105', 'proposal:-107@0', 'proposal:-108@0', 'proposal:-109@0'],
   },
   // #4313: its one demo card, the Just-you change that asks for approval.
   'staging-demo-emoji-icon': { working: 0, needs: 5, owed: ['proposal:-106@0'] },
@@ -1279,6 +1281,66 @@ const DEMO_NEEDS_FEED = [
     author: 'staging-demo-partner', number: null, epoch: null, at: '2026-09-21T08:00:00Z', yes: null, no: null,
     // #4490: a group decision's diagram is drawn from its own facts.
     decision: { kind: 'rename', newName: 'Recipe Box', fromName: 'Staging demo app' },
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  // #6832: the three plain pictures a change with nothing new on screen can
+  // carry, one card each, so a preview shows all three drawn (and the empty
+  // box when there is none) without a real impact-none change to hand.
+  {
+    kind: 'proposal', id: -107, title: 'Say plainly when a catch-up with main overlaps your edit',
+    summary: 'A catch-up that meets an edit changing the same text is caught, explained in plain words and tried again.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-19T11:00:00Z', yes: 1, no: 0,
+    staging_url: null,
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A message changes; no screen is added.', stories: [] } },
+    // PR #6830's own words: the status a stuck change shows, before and after.
+    diagram: {
+      version: 1, kind: 'seen', where: 'A stuck change’s status', look: 'status',
+      before: { title: 'Tests failed', lines: ['#22 ERROR: build-shell.mjs exited with code 1'] },
+      after: {
+        title: 'Needs a catch-up with main',
+        lines: ['Your edit and a newer one changed the same text.', 'Homeroom left your change as it was.'],
+      },
+    },
+    diagram_source: 'author',
+    touches: {
+      version: 1, files: 3,
+      areas: [
+        { key: 'screens', label: 'Screens', files: 0, lines: 0 },
+        { key: 'server', label: 'Server', files: 2, lines: 74 },
+        { key: 'database', label: 'Database', files: 0, lines: 0 },
+        { key: 'tests', label: 'Tests', files: 1, lines: 38 },
+        { key: 'docs', label: 'Docs', files: 0, lines: 0 },
+        { key: 'other', label: 'Other', files: 0, lines: 0 },
+      ],
+    },
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  {
+    kind: 'proposal', id: -108, title: 'Catch a catch-up that keeps the same text twice',
+    summary: 'A resolved catch-up is checked for the same text kept twice, and tried again rather than pushed.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-18T09:00:00Z', yes: 2, no: 0,
+    staging_url: null,
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A check runs; nothing on screen changes.', stories: [] } },
+    // A real incident: the request that asked for this change reported it.
+    diagram: {
+      version: 1, kind: 'moment',
+      before: {
+        date: '2026-11-18', ref: 'PR #6699', lasted: 'about 25 minutes',
+        events: ['Caught up with main', 'The same text was kept twice', 'Couldn’t be previewed', 'Fixed by hand'],
+      },
+      after: { events: ['The same catch-up is caught in seconds', 'Tried again', 'Pushed, or handed back with a reason'] },
+    },
+    diagram_source: 'author',
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  {
+    kind: 'proposal', id: -109, title: 'Keep a small note of each catch-up',
+    summary: 'A note of each catch-up is kept, so a hand-back can say what happened.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-17T15:00:00Z', yes: 0, no: 0,
+    staging_url: null,
+    // #6832: nothing on screen changes and this one has no picture yet: its
+    // card says so (the follow-up would add one).
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A record is kept; nothing on screen changes.', stories: [] } },
     app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
   },
   // #4313: a change on a Just-you project, which asks for your approval
