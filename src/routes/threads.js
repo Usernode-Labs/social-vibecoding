@@ -78,9 +78,32 @@ function threadsRoutes() {
       });
       // Stage 6: a merge or split waiting on this thread. #6421: a change's
       // consent question is drawn for the asker who may answer it.
-      return res.json({ ...page, moves: await threadMoves.openMoves(pool, {
+      const out = { ...page, moves: await threadMoves.openMoves(pool, {
         threadId: thread.id, viewerId: req.user ? req.user.id : null,
-      }) });
+      }) };
+      // #6827: `?with=changes` — the rows of the changes this thread lists,
+      // in the same shape `/proposals/:id?results=failing` answers, so a
+      // request's page reads its cards with its thread instead of one read
+      // per card. Best-effort: a failed part answers null and the card
+      // reads itself. Never for a thread with no changes listed.
+      if (req.query.with === 'changes' && Array.isArray(page.items)) {
+        const ids = [];
+        for (const item of page.items) {
+          const id = item && item.type === 'change' ? Number(item.id) : null;
+          if (Number.isInteger(id) && id > 0 && !ids.includes(id)) ids.push(id);
+        }
+        if (ids.length) {
+          const { readProposalRow } = require('./votes');
+          const reqFailing = { ...req, query: { ...req.query, results: 'failing' } };
+          const rows = await Promise.all(ids.map((id) => readProposalRow(
+            { pool }, reqFailing, found.app, id
+          ).then((row) => [id, row ? row.proposal : null]).catch(() => [id, null])));
+          out.changes = Object.fromEntries(rows);
+        } else {
+          out.changes = {};
+        }
+      }
+      return res.json(out);
     } catch (err) {
       log.error('threads', 'thread read failed', { message: err.message });
       return res.status(500).json({ error: 'Internal server error' });

@@ -8721,6 +8721,22 @@ const App = {
     // `!!tab` is load-bearing: without an explicit tab, `initialRoute.tab`
     // came from the launcher's cached record above, and a stale record must
     // never be what decides that an App-tab render can skip its token.
+    // #6827: the page's own read starts HERE, beside the app's, so a change
+    // or request page's title and body arrive with the app's own answer
+    // instead of after a chain of reads. The page takes these answers as its
+    // own when it mounts (`prefetchChangePage` / `prefetchThread`).
+    if (initialRoute.tab === 'dev') {
+      const pre = initialRoute.ref;
+      try {
+        if (pre && pre.kind === 'proposal' && pre.pr) {
+          window.UsernodeReact?.devBoard?.prefetchChangePage?.(slug, Number(pre.pr));
+        } else if (pre && pre.kind === 'issue' && pre.id) {
+          // The request's own row and its thread, both beside the app's read.
+          window.UsernodeReact?.devBoard?.prefetchThread?.(slug, Number(pre.id));
+          AppView._fetchIssueByNumber?.(Number(pre.id));
+        }
+      } catch (_) { /* the page reads itself */ }
+    }
     const load = {
       slug,
       promise: AppView.open(slug, { needsToken: !(tab && initialRoute.tab === 'dev') }),
