@@ -8,9 +8,12 @@
 // Every item is 1x1. The `type` survives because it is the wire format the
 // server validates and thousands of stored rows carry it.
 //
-// HOLES ARE THE POINT. Nothing here re-packs a layout to remove gaps except
-// the overflow region (which is dense by definition). A drop leaves every
-// other tile exactly where it was.
+// HOLES ARE THE POINT, EXCEPT AFTER A REMOVAL. A drop leaves every other tile
+// exactly where it was: a gap the viewer made on purpose by dragging stays a
+// cell, and nothing but the overflow region (dense by definition) packs. The
+// one thing that DOES close the grid is taking an app off Home: repair() drops
+// the gone tile and re-packs what is left into reading order, the way a phone's
+// home screen closes up (#6836).
 //
 // ── What THE UI OVERHAUL removed, and why the model got simpler ────────
 //
@@ -297,8 +300,12 @@ const HomeLayout = {
   //     layout stored before THE UI OVERHAUL is migrated: the three widgets
   //     are fixed sections below the grid now, so a saved cell for one is a
   //     hole to reclaim rather than a tile to keep,
+  //   * RE-PACK when an APP was dropped: the tiles that remain move up and
+  //     left into reading order, closing the gap the removal left. Only a
+  //     removal does this — a dropped widget, a dropped duplicate and a
+  //     viewer's own drag-made hole all keep their cells (#6836),
   //   * ADD anything present but unplaced (a newly added app) at the first
-  //     free cell,
+  //     free cell, after the packed tiles,
   //   * pull anything OUT OF BOUNDS back onto the canvas. This is the other
   //     half of the migration: the grid was five columns wide on desktop and
   //     is four everywhere now, so a stored arrangement can carry tiles in a
@@ -315,6 +322,10 @@ const HomeLayout = {
     const seen = new Set();
     const out = [];
     let changed = false;
+    // Set ONLY where an app that was on the grid is no longer pinned. A
+    // dropped widget item or a dropped duplicate must not close the grid: the
+    // widget migration's own test pins that the surviving tile holds still.
+    let removedApp = false;
 
     for (const item of HomeLayout.readingOrder(layout)) {
       // A stored widget item is from before the overhaul. Dropping it here
@@ -323,7 +334,8 @@ const HomeLayout = {
       // who never opens the home screen never pays for a rewrite.
       if (item && item.type === 'widget') { changed = true; continue; }
       const id = HomeLayout.idOf(item);
-      if (!wanted.has(id) || seen.has(id)) { changed = true; continue; }
+      if (!wanted.has(id)) { changed = true; removedApp = true; continue; }
+      if (seen.has(id)) { changed = true; continue; }
       seen.add(id);
       const size = HomeLayout.sizeOf(item, cols);
       const taken = HomeLayout.occupancy(out, cols);
@@ -341,6 +353,35 @@ const HomeLayout = {
         ? { ...item, col: spot.col, row: spot.row }
         : { ...item, col: 0, row: HomeLayout.MAX_ROWS });
       changed = true;
+    }
+
+    // A REMOVAL CLOSES THE GRID. Walk what survived in reading order — canvas
+    // items first, overflow items after them — and put each in the first free
+    // cell, so the tiles after the removed app move up and left one cell at a
+    // time. An overflow app can therefore come back onto the canvas once a
+    // removal opens space for it.
+    //
+    // This runs BEFORE the new-app loop below, so an app added in the same
+    // repair lands after the packed tiles rather than in the hole a drag left.
+    if (removedApp) {
+      const surviving = new Map(out.map((item) => [HomeLayout.idOf(item), item]));
+      const packed = [];
+      // STORED reading order, not `out`'s: the first loop may already have
+      // pulled an overflow item into the hole the removal left, and packing
+      // by where it landed would let it jump ahead of the tiles stored after
+      // it. Reading the stored order keeps every app in the order it had,
+      // canvas items first and overflow items last.
+      for (const id of HomeLayout.readingOrder(layout || []).map(HomeLayout.idOf)) {
+        const item = surviving.get(id);
+        if (!item) continue; // dropped above as gone, a widget, or a duplicate
+        surviving.delete(id);
+        const size = HomeLayout.sizeOf(item, cols);
+        const spot = HomeLayout.firstFreeCell(packed, size, cols);
+        packed.push(spot
+          ? { ...item, col: spot.col, row: spot.row }
+          : { ...item, col: 0, row: HomeLayout.MAX_ROWS });
+      }
+      out.splice(0, out.length, ...packed);
     }
 
     // Anything present but never placed — a newly added app, or one whose
