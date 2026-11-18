@@ -255,6 +255,38 @@
     "text": "Nothing is waiting on your vote in {{project}}.",
     "description": "Shown on one project's own Needs you page when nothing in that project is waiting for this person: no proposal, competing change, question or group decision. {{project}} is the project's name. Other projects may still have votes waiting, so it speaks for this project only."
   },
+  "reel.caughtUp.title": {
+    "text": "You're all caught up",
+    "description": "Heading of a project's own Needs you page when nothing in that project waits for this person (the Standard (WIP) look). Good news, said plainly."
+  },
+  "reel.caughtUp.next": {
+    "text": "While you're here",
+    "description": "Small line under the caught-up heading on a project's empty Needs you page (the Standard (WIP) look), over three ways on into the project."
+  },
+  "reel.caughtUp.workshop.title": {
+    "text": "See what's being built",
+    "description": "Title of a card on a project's empty Needs you page (the Standard (WIP) look): opens the project's Workshop, where its requests and changes are."
+  },
+  "reel.caughtUp.workshop.text": {
+    "text": "Requests and changes, and the ones nobody has picked up",
+    "description": "Line under the Workshop card's title on a project's empty Needs you page (the Standard (WIP) look)."
+  },
+  "reel.caughtUp.discussion.title": {
+    "text": "Join the discussion",
+    "description": "Title of a card on a project's empty Needs you page (the Standard (WIP) look): opens the project's discussion channel."
+  },
+  "reel.caughtUp.discussion.text": {
+    "text": "Say what you think, or ask a question",
+    "description": "Line under the discussion card's title on a project's empty Needs you page (the Standard (WIP) look)."
+  },
+  "reel.caughtUp.hub.title": {
+    "text": "Back to {{project}}",
+    "description": "Title of a card on a project's empty Needs you page (the Standard (WIP) look): opens the project's hub. {{project}} is the project's name."
+  },
+  "reel.caughtUp.hub.text": {
+    "text": "Its hub: what it is and what went live lately",
+    "description": "Line under the hub card's title on a project's empty Needs you page (the Standard (WIP) look)."
+  },
   "reel.done": {
     "text": "Back to Home",
     "description": "Button on the card at the end of the Needs you page (every vote waiting on the person across their projects): returns to Home, where their communities are."

@@ -90,7 +90,7 @@ import { useDevActions } from '../actions-store';
 import { callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
 import type { ActionRef, DevCardModel, DevKanbanView, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
-import { CardSkeleton } from '../card/skeleton';
+import { CardSkeleton, CountSkeleton } from '../card/skeleton';
 import { composeNoReason, VotePicker } from '../card/dev-card';
 import type { NoChoice } from '../../review-flow/vote-sheet';
 import { useWorkshopGroup } from './group-mode-store';
@@ -947,7 +947,7 @@ function pace(d: Dash): string {
  */
 type DashStage = 'open' | 'unclaimed' | 'shipped';
 
-function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
+function DashTiles({ d, owed, pending, onVotes, onStage }: { d: Dash; owed: number; pending?: boolean; onVotes?: () => void; onStage?: (stage: DashStage) => void }): ReactNode {
   const t = useMessages('project');
   const rate = !d.partial && d.shippedPrevWeekToDate > 0 ? (d.shippedWeek > d.shippedPrevWeekToDate ? 'up' : d.shippedWeek < d.shippedPrevWeekToDate ? 'down' : 'same') : null;
   const cells: { key: string; n: number; label: string; tone?: string; title?: string; sub?: ReactNode }[] = [
@@ -990,20 +990,26 @@ function DashTiles({ d, owed, onVotes, onStage }: { d: Dash; owed: number; onVot
         // affordances are the pointer cursor and a keyboard focus ring, so
         // nothing on the strip looks like a button or a link. The markup is
         // otherwise like-for-like: the same class, the same attribute.
-        const tappable = c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
+        //
+        // #6826: "live this week" is counted from the Done list, so while
+        // that read is on its way its number is a pulsing bar — the same
+        // mark the board's column counts wear — and it opens nothing, since
+        // there is no number to open yet.
+        const waiting = !!pending && c.key === 'shipped';
+        const tappable = !waiting && c.n > 0 && (c.key === 'votes' ? !!onVotes : !!onStage);
         const onTap = c.key === 'votes' ? onVotes : () => onStage && onStage(c.key as DashStage);
-        const cls = c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
+        const cls = !waiting && c.tone ? `dev-ws-dash-cell dev-ws-dash-cell-${c.tone}` : 'dev-ws-dash-cell';
         const content = (
           <>
-            <b>{c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
+            <b>{waiting ? <CountSkeleton /> : c.key === 'shipped' && d.partial && c.n ? `${c.n}+` : c.n}</b>
             <span className="dev-ws-dash-label">
               {/* A GRID in app.css, not an inline run: the label wraps at phone
                   widths, and a centred mark floated to the middle of a two-line
                   label while its second line ran back underneath the dot. */}
-              {c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
+              {!waiting && c.tone ? <i className={`dev-ws-dash-dot dev-ws-dash-dot-${c.tone}`} aria-hidden="true" /> : null}
               <span>{c.label}</span>
             </span>
-            {c.sub}
+            {waiting ? null : c.sub}
           </>
         );
         if (tappable && c.key === 'votes') {
@@ -3501,6 +3507,8 @@ export function DevWorkshop(): ReactNode {
   // The project's community record — the hero, the hub's cards and the hub
   // tab's own label all read it. Before the loading return: it is a hook.
   const community = useCommunity(v.slug || '');
+  // Standard (WIP) folds Invite into the hero's row: no Invite card.
+  const wipLook = useLiveSkin() === 'wip';
   // The ⋯'s Pin to sidebar, beside the sidebar that draws the pins.
   const sidebarRows = useSidebarRows();
   const { apps: pins } = useStoreState(pinnedAppsStore);
@@ -3629,8 +3637,12 @@ export function DevWorkshop(): ReactNode {
   // too, and "The first change is yours to start" told its maker to start
   // the change the bot was already making. The same goes for the hub's
   // no-items note below.
+  // #6826: AND NOT WHILE "EVER SHIPPED" IS UNKNOWN. `everShipped` is null
+  // while the Done list is on its way — neither true nor false — so the
+  // banner needs a stated false: a busy project must not be offered its
+  // first change for the moment that read takes.
   const building = !!(community && community.first_version);
-  const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped) && !building;
+  const startHere = !!(v.dashboard && v.dashboard.open === 0 && v.dashboard.everShipped === false) && !building;
   // A project nobody else is in (hubAlone): its hub leaves out the zero a
   // group's hub says, "Nothing more to vote on." (./hub-cards.tsx
   // NothingToVote). The hub is otherwise the same from a project's first
@@ -3936,12 +3948,15 @@ export function DevWorkshop(): ReactNode {
               subAsks: owed > 0,
               onClick: d.votesWaiting > 0 ? votes : null,
             },
+            // #6826: counted from the Done list, so while that read is on
+            // its way this figure is a pulsing bar and opens nothing (see
+            // DashTiles, which draws the same state on this strip's twin).
             {
-              value: d.partial && d.shippedWeek ? `${d.shippedWeek}+` : d.shippedWeek,
+              value: v.mergedPending ? <CountSkeleton /> : d.partial && d.shippedWeek ? `${d.shippedWeek}+` : d.shippedWeek,
               label: t('project:workshop.dash.shipped'),
-              tone: d.shippedWeek ? 'ok' as const : undefined,
-              sub: paced ? t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate }) : null,
-              onClick: d.shippedWeek > 0 ? stage('shipped') : null,
+              tone: !v.mergedPending && d.shippedWeek ? 'ok' as const : undefined,
+              sub: !v.mergedPending && paced ? t('project:workshop.dash.fromLastWeek', { count: d.shippedPrevWeekToDate }) : null,
+              onClick: !v.mergedPending && d.shippedWeek > 0 ? stage('shipped') : null,
             },
           ],
         } : null}
@@ -4129,8 +4144,9 @@ export function DevWorkshop(): ReactNode {
           iconUrl={own ? app.iconUrl : null}
           iconEmoji={own ? app.iconEmoji : null}
           canOpenApp={!actions.selfHosted}
-          // Invite is the card after this hero (InviteHeroCard).
-          inviteCard
+          // Invite is the card after this hero (InviteHeroCard), except
+          // under Standard (WIP), where it stays the row's own button.
+          inviteCard={!wipLook}
           // #3700: Join through the invite link this page was opened from
           // opens Needs you at its first card when votes are already
           // waiting on the new member, and otherwise stays on this hub.
@@ -4198,7 +4214,7 @@ export function DevWorkshop(): ReactNode {
       ) : null}
       {/* INVITE, AS A CARD (request 6654): beside the hero on a wide window,
           under it on a phone. See ./community-card.tsx InviteHeroCard. */}
-      {slug ? <InviteHeroCard slug={slug} data={community} /> : null}
+      {slug && !wipLook ? <InviteHeroCard slug={slug} data={community} /> : null}
       {/* ── First version: where Homeroom bot's build stands ──
           Under the hero while the bot builds the project from its
           description, so a new project's hub says what it is becoming and
@@ -4279,7 +4295,17 @@ export function DevWorkshop(): ReactNode {
           last update went down. Nothing on a project nobody has made a
           version of. See ./hub-cards.tsx FromVersionsCard. */}
       {slug ? <FromVersionsCard slug={slug} data={community} /> : null}
-      {slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} month={community?.activity?.shipped_month} /> : null}
+      {/* #6826: Recently live is read from the Done list. Until it lands its
+          own place holds two of the board's grey cards, so the hub does not
+          say a project has gone live with nothing to show. */}
+      {slug && v.mergedPending ? (
+        <section className="dev-ws-hub-section" data-ws-hub-recent="">
+          <div className="dev-ws-hub-sechead">
+            <SectionHeader className="px-1 pb-0 pt-2">{t('project:hub.recent.title')}</SectionHeader>
+          </div>
+          <CardSkeleton n={2} label={t('project:page.loading')} />
+        </section>
+      ) : slug ? <RecentlyLive slug={slug} rows={v.recentLive} onAll={() => openTab('workshop')} own={ownLive} ident={recentIdent} month={community?.activity?.shipped_month} /> : null}
       {/* Start a new change was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>
@@ -4381,6 +4407,7 @@ export function DevWorkshop(): ReactNode {
           <DashTiles
             d={v.dashboard}
             owed={owed}
+            pending={!!v.mergedPending}
             onVotes={() => {
               const refs = v.dashboard?.votesWaitingRefs || [];
               if (refs.length === 1) callAppView('openTopic', refs[0].kind, refs[0].id);
@@ -4419,7 +4446,10 @@ export function DevWorkshop(): ReactNode {
           its page, back to the project's first (#3293). Mark all seen moves
           the line to now, and what was new is then the week's like the rest
           (#2183). Nothing new is one line. */}
-      {weeks.length || v.since ? (
+      {/* #6826: what happened is counted from the Done list, so while that
+          read is on its way the section holds its own place under its head —
+          two of the board's grey cards — and fills in when it lands. */}
+      {weeks.length || v.since || v.mergedPending ? (
         <>
           <div className="dev-ws-parthead" data-ws-happened-head="">
             <SectionHeader className="px-1.5 pb-0 pt-3.5" data-ws-part="happened">{t('project:workshop.part.happened')}</SectionHeader>
@@ -4436,10 +4466,13 @@ export function DevWorkshop(): ReactNode {
             ) : null}
           </div>
           <section className="dev-ws-strip" data-ws-happened="">
-            {v.since && !sinceRows.length ? (
+            {v.mergedPending ? (
+              <CardSkeleton n={2} label={t('project:page.loading')} />
+            ) : null}
+            {!v.mergedPending && v.since && !sinceRows.length ? (
               <p className="dev-ws-none" data-ws-since-none="">{t('project:since.none')}</p>
             ) : null}
-            {thisWeek ? (
+            {!v.mergedPending && thisWeek ? (
               <ThisWeek
                 week={thisWeek}
                 slug={slug}
@@ -4449,14 +4482,14 @@ export function DevWorkshop(): ReactNode {
                 act={freshAct}
               />
             ) : null}
-            {pastWeeks.length ? (
+            {!v.mergedPending && pastWeeks.length ? (
               <div className="dev-ws-wlist">
                 {pastWeeks.slice(0, weeksShown).map((w) => (
                   <WeekRow key={sinceWeekStateKey(w)} week={w} onOpen={() => openWeekPage(sinceWeekStateKey(w))} />
                 ))}
               </div>
             ) : null}
-            {weeksShown < pastWeeks.length ? (
+            {!v.mergedPending && weeksShown < pastWeeks.length ? (
               <button
                 type="button"
                 className="dev-ws-reveal touch-target-32"
@@ -4466,7 +4499,7 @@ export function DevWorkshop(): ReactNode {
                 <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
                 {t('project:happened.earlierWeeks')}
               </button>
-            ) : firstWeek && pastWeeks.length ? (
+            ) : !v.mergedPending && firstWeek && pastWeeks.length ? (
               <p className="dev-ws-week-note" data-ws-week-start="">
                 {t('project:since.projectStarted', { date: weekDate(firstWeek) })}
               </p>

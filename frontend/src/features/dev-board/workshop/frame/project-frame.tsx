@@ -288,7 +288,8 @@ export function ProjectTopicsFrame({ general, topics, onOpen, ...head }: HeadPro
 
 /** A figure of the Overview: its number, what it counts, the line under it and where its press goes. */
 export interface WorkshopFact {
-  value: number | string;
+  /** A figure, or its placeholder while the read that counts it is pending (#6826). */
+  value: ReactNode;
   label: string;
   tone?: 'acc' | 'ok' | 'wait';
   sub?: string | null;

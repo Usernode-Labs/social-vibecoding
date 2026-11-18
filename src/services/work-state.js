@@ -195,7 +195,7 @@ function checkingState(row, since, now, onYes = requestOnYes) {
   // what it says. A yes-only conflict is up for a vote once it could take
   // one (yesOnlyState); one the lane is resolving says "Syncing with main";
   // one only its author can move keeps the old wording.
-  const stand = syncStand(row);
+  const stand = standOf(row);
   if (stand === 'vote') return onYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
@@ -324,7 +324,7 @@ function fromStage(s, row, now = new Date()) {
     case 'checks_failed': {
       // #6531: a conflicting head the lane is catching up (or that only a yes
       // can move) is not yet its author's failing verdict.
-      const stand = syncStand(row);
+      const stand = standOf(row);
       if (stand === 'vote') return requestOnYes(row, since, now);
       if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
       const failing = Number(row.failed_checks ?? progress.failedCount(row.test_results)) || 0;
@@ -342,7 +342,7 @@ function fromStage(s, row, now = new Date()) {
       // to sync with main, rather than asking for a vote it would throw away.
       // #6531: unless it conflicts and only a yes can move it.
       {
-        const stand = syncStand(row);
+        const stand = standOf(row);
         if (stand === 'vote') return requestOnYes(row, since, now);
         if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
         if (stand === 'author') return state('checking', { since, line: { code: 'sync_wait' } });
@@ -552,6 +552,24 @@ function deriveChange(row, { now = new Date() } = {}) {
   return state('building', { since: row.last_activity_at || row.created_at, whoseMove: 'builder' });
 }
 
+/**
+ * Pure (#6821, 18 Nov 2026): what a change that does not merge cleanly waits
+ * on, once its votes are in. `awaiting_approval` stays stored until the merge
+ * queue measures the change again, so a change whose yes votes are in read as
+ * "only a yes can move it" (syncStand 'vote', and so up_for_vote) while its
+ * page, which reads the live merge gate, said Approved and syncing with main.
+ * That gate already ignores the reason once the votes are in (routes/votes.js
+ * merge gate), so the derivation does too: the stand is what the remaining
+ * reasons say, and an approved change catching up with main is syncing.
+ */
+function standOf(row) {
+  const stand = syncStand(row);
+  if (stand !== 'vote' || !votesIn(row)) return stand;
+  const reasons = (Array.isArray(row?.integration_block_reasons) ? row.integration_block_reasons : []).map(String);
+  if (!reasons.includes('awaiting_approval')) return stand;
+  return syncStand({ ...row, integration_block_reasons: reasons.filter((r) => r !== 'awaiting_approval') });
+}
+
 /** Pure: a change's own facts row that waits only for a yes on a conflict (yesOnlyState). */
 function changeOnYes(row, since, now) {
   return yesOnlyState(row, since, { onHead: changeChecksOnHead(row), held: shotsHeld(row, now) });
@@ -563,7 +581,7 @@ function promotedChange(row, now) {
   // its stale verdict is read as final: only a yes can move it (vote, once
   // it could take one: yesOnlyState), the lane is catching it up (syncing),
   // or it is its author's (author).
-  const stand = syncStand(row);
+  const stand = standOf(row);
   if (stand === 'vote') return changeOnYes(row, since, now);
   if (stand === 'syncing') return state('checking', { since, line: { code: 'syncing' } });
   if (stand === 'author') {
@@ -1969,10 +1987,11 @@ function publicOf(row) {
  * `voteOwed` (its change is open for votes, and they still owe a vote).
  * Anybody but its requester (`viewerId`) reads it as publicOf says.
  */
-function forViewer(row, { mine = false, voteOwed = false, viewerId = null } = {}) {
+function forViewer(row, { mine = false, voteOwed = false, viewerId = null, myVote = null } = {}) {
   if (!row) return null;
   const theirs = viewerId != null && row.requesterId != null && Number(row.requesterId) === Number(viewerId);
-  return { ...(theirs ? row : publicOf(row)), mine: !!mine, voteOwed: !!voteOwed };
+  const vote = myVote === 'yes' || myVote === 'no' ? myVote : null;
+  return { ...(theirs ? row : publicOf(row)), mine: !!mine, voteOwed: !!voteOwed, ...(vote ? { myVote: vote } : {}) };
 }
 
 // ── The sweep ────────────────────────────────────────────────────────────
@@ -2029,9 +2048,46 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100 
     ...missing.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })),
     ...missingChanges.map((r) => ({ sessionId: Number(r.id) })),
   ];
-  if (!items.length) return { checked: 0, seeded: 0, changed: [], pushes: [] };
+  if (!items.length) {
+    return { checked: 0, seeded: 0, changed: [], pushes: [], ...(await sweepMeasure(db)) };
+  }
   const changed = await refresh(db, items, { touch: true });
-  return { checked: rows.length, seeded: missing.length + missingChanges.length, changed, pushes: await pushesOf(db, changed) };
+  return {
+    checked: rows.length,
+    seeded: missing.length + missingChanges.length,
+    changed,
+    pushes: await pushesOf(db, changed),
+    ...(await sweepMeasure(db)),
+  };
+}
+
+/**
+ * #6821: what the sweep has to get through, so a backlog is visible in the
+ * server log rather than only as stale lists: how many open rows there are,
+ * how old the longest-unchecked one is (a full cycle takes at least that
+ * long), and how many marks the drain has waiting and how old the oldest is.
+ * Read after the sweep's own pass. Never throws: a count that cannot be read
+ * says nothing rather than failing the sweep.
+ */
+async function sweepMeasure(db) {
+  try {
+    const { rows: [m] } = await db.query(
+      `SELECT (SELECT COUNT(*)::int FROM work_states WHERE stage <> 'closed') AS open_rows,
+              (SELECT EXTRACT(EPOCH FROM (NOW() - MIN(checked_at))) FROM work_states
+                WHERE stage <> 'closed') AS oldest_check_age_secs,
+              (SELECT COUNT(*)::int FROM work_state_dirty) AS dirty_backlog,
+              (SELECT EXTRACT(EPOCH FROM (NOW() - MIN(marked_at))) FROM work_state_dirty) AS oldest_mark_age_secs`,
+    );
+    return {
+      openRows: Number(m.open_rows) || 0,
+      oldestCheckAgeSecs: m.oldest_check_age_secs == null ? null : Math.round(Number(m.oldest_check_age_secs)),
+      dirtyBacklog: Number(m.dirty_backlog) || 0,
+      oldestMarkAgeSecs: m.oldest_mark_age_secs == null ? null : Math.round(Number(m.oldest_mark_age_secs)),
+    };
+  } catch (err) {
+    require('./logger').warn('work-state', 'Could not measure the sweep', { message: err.message });
+    return {};
+  }
 }
 
 /**
