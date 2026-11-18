@@ -238,8 +238,20 @@ test('a live vote on the board reloads the proposals alone; a merge adds Complet
   assert.deepEqual([...vote([7], true)].sort(), ['merged', 'promoted']);
   assert.deepEqual([...vote([8])], ['sessions'], 'a draft row lives in the session caches');
   assert.equal(vote([99]).size, 0, 'a row this board does not show asks for nothing');
-  assert.equal(AppView._partsForLive({ kinds: new Set(['vote', 'session']), ids: new Set([7]) }), null,
-    'a session appearing or leaving is the whole board');
+  assert.deepEqual([...AppView._partsForLive({ kinds: new Set(['vote', 'session']), ids: new Set([7]) })].sort(),
+    ['issues', 'merged', 'promoted', 'sessions'],
+    '#6791: a session appearing or leaving is the rows and the requests, not the order or the categories');
+  const part = (kind) => [...AppView._partsForLive({ kinds: new Set([kind]), ids: null,
+    named: new Set(), unscopedKinds: new Set([kind]) })];
+  assert.deepEqual(part('issue'), ['issues'], '#6791: a request event is the request lists');
+  assert.deepEqual(part('board-order'), ['order'], '#6791: a reorder is the order');
+  assert.deepEqual([...AppView._partsForLive({ kinds: new Set(['issue', 'vote']), ids: null,
+    named: new Set([7]), unscopedKinds: new Set(['issue']) })].sort(), ['issues', 'promoted'],
+    '#6791: a request event beside a vote that named its row keeps both partial');
+  assert.equal(AppView._partsForLive({ kinds: new Set(['vote']), ids: null,
+    named: new Set(), unscopedKinds: new Set(['vote']) }), null, 'a vote naming no row is the whole board');
+  assert.equal(AppView._partsForLive({ kinds: new Set(['something-new']), ids: new Set([7]) }), null,
+    'a kind with no part of its own is the whole board');
   assert.equal(AppView._partsForLive({ kinds: new Set(['vote']), ids: null }), null,
     'an event that names no row is the whole board');
   AppView._devDataReady = false;
@@ -586,4 +598,84 @@ test('no chat mounted: no extra read even outside the board', async () => {
   h.AppView.__sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: true }) });
   await h.AppView.castVote(7, 'yes', 3, { reason: null });
   assert.deepEqual(h.reads, [], 'nothing re-read when no chat is listening');
+});
+
+// ── #6791: a busy board reads itself at most once every few seconds ─────
+
+function gapHarness() {
+  const AppView = makeAppView();
+  const sb = AppView.__sandbox;
+  const timers = [];
+  let now = 1_000_000;
+  // The members under test read the sandbox's clock and timer.
+  vm.runInContext('Date.now = () => globalThis.__now(); setTimeout = (fn, ms) => globalThis.__timer(fn, ms);', sb);
+  sb.__now = () => now;
+  sb.__timer = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  AppView.appData = { slug: 'demo-app' };
+  AppView._devDataReady = true;
+  sb.App.currentSubTab = 'forum';
+  const loads = [];
+  AppView._loadDevFeed = (opts) => { loads.push(opts && opts.parts ? [...opts.parts].sort() : 'whole'); return Promise.resolve(true); };
+  AppView._refreshOpenChangeFromBoard = () => {};
+  const live = (kind, over = {}) => ({ kinds: new Set([kind]), ids: null, named: new Set(),
+    unscopedKinds: new Set([kind]), ...over });
+  return { AppView, sb, timers, loads, live, tick: (ms) => { now += ms; } };
+}
+
+test('#6791: request and reorder events inside the gap are one later read of their parts', async () => {
+  const h = gapHarness();
+  h.AppView.refreshDevData('issue', h.live('issue'));
+  assert.deepEqual(h.loads, [['issues']], 'the first runs at once, and reads the requests alone');
+  h.tick(200);
+  const a = h.AppView.refreshDevData('issue', h.live('issue'));
+  const b = h.AppView.refreshDevData('board-order', h.live('board-order'));
+  assert.equal(a, b, 'the held events share one read');
+  assert.equal(h.loads.length, 1, 'nothing more inside the gap');
+  assert.equal(h.timers.length, 1);
+  assert.equal(h.timers[0].ms, h.AppView.BOARD_LIVE_MIN_GAP_MS - 200, 'it runs when the gap closes');
+  h.tick(h.timers[0].ms);
+  h.timers[0].fn();
+  assert.equal(await a, true);
+  assert.deepEqual(h.loads, [['issues'], ['issues', 'order']], 'one trailing read carries both parts');
+  h.tick(h.AppView.BOARD_LIVE_MIN_GAP_MS);
+  h.AppView.refreshDevData('issue', h.live('issue'));
+  assert.equal(h.loads.length, 3, 'after the gap the next event reads at once');
+});
+
+test('#6791: a vote and a verdict are never held back', () => {
+  const h = gapHarness();
+  h.AppView._proposals = [openRow()];
+  const asked = [];
+  h.AppView._loadDevFeed = (opts) => { asked.push(opts); return Promise.resolve(true); };
+  h.AppView.refreshDevData('issue', h.live('issue'));
+  h.AppView.refreshDevData('vote', { kinds: new Set(['vote']), ids: new Set([7]) });
+  h.AppView.refreshDevData('checks', { kinds: new Set(['checks']), ids: new Set([7]) });
+  assert.equal(asked.length, 3);
+  assert.equal(asked[1].fresh, true, 'the vote reads past its write');
+  assert.equal(h.timers.length, 0);
+});
+
+test('#6791: a held read is dropped when the reader has left the board', async () => {
+  const h = gapHarness();
+  h.AppView.refreshDevData('issue', h.live('issue'));
+  h.tick(100);
+  const held = h.AppView.refreshDevData('session', h.live('session'));
+  h.sb.App.currentSubTab = 'topic';
+  h.timers[0].fn();
+  assert.equal(await held, true);
+  assert.equal(h.loads.length, 1, 'the board reads itself when it is opened again');
+});
+
+test('#6791: themes still pending after their poll chain are not re-read on every board load', async () => {
+  const AppView = makeAppView();
+  let reads = 0;
+  AppView.__sandbox.fetch = async () => { reads += 1; return { ok: true, json: async () => ({ themes: [], pending: true }) }; };
+  AppView._repaintBoardSurface = () => {};
+  AppView._workshopThemes = { slug: 'demo-app', pending: true, at: Date.now() };
+  AppView._workshopPollTimer = null;
+  await AppView._loadWorkshopThemes('demo-app');
+  assert.equal(reads, 0, 'inside a minute, pending or not');
+  await AppView._loadWorkshopThemes('demo-app', 0, { force: true });
+  assert.equal(reads, 1, 'the server saying it wrote a grouping still reads at once');
+  if (AppView._workshopPollTimer != null) clearTimeout(AppView._workshopPollTimer);
 });

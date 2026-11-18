@@ -281,8 +281,8 @@ test('#6490: a session update saying the change merged patches the same caches',
     const h = makeSessionCtx();
     h.App.handleSessionUpdate({ sessionId: 7, appSlug: 'demo', ...payload });
     assert.deepEqual(h.nsmCalls, [[7, 'demo', { live: false }]], `${JSON.stringify(payload)} patches`);
-    assert.deepEqual(Array.from(h.calls, normCall), [['session', 7, { appSlug: 'demo', home: true }]],
-      'the burst still runs as before');
+    assert.deepEqual(Array.from(h.calls, normCall), [['session', 7, { appSlug: 'demo', home: true, merged: true }]],
+      'the burst runs, and says the row moved to Completed (#6791)');
   }
 });
 

@@ -35,17 +35,17 @@ const HOME = fs.readFileSync(
  * Only that method and its Set are exercised, so the rest of app.js does not
  * need a browser.
  */
-function harness() {
+function harness({ homeVisible = true } = {}) {
   const body = SRC.match(/_listNewlyCreatedApp\(slug\) \{[\s\S]*?\n  \},/);
   assert.ok(body, 'the helper is defined in app.js');
   const loads = [];
-  const sandbox = { loads };
+  const sandbox = { loads, homeVisible };
   sandbox.PlatformI18n = englishPlatformI18n();
   vm.createContext(sandbox);
   vm.runInContext(
     'var Home = { load: function () { loads.push(1); } };'
     + 'var window = { Home: Home };'
-    + 'var App = { _listedNewApps: new Set(), '
+    + 'var App = { _listedNewApps: new Set(), _isScreenVisible: function () { return homeVisible; }, '
     + body[0].replace(/,$/, '')
     + ' };'
     + 'globalThis.__App = App;',
@@ -90,6 +90,17 @@ test('it is reached exactly when there is no card for that slug', () => {
   assert.match(upToAppView, /\} else \{\s*\n\s*App\._listNewlyCreatedApp\(data\.slug\);/);
   // And the running/error reload the card branch already did is untouched.
   assert.match(upToAppView, /if \(data\.status === 'running' \|\| data\.status === 'error'\) \{/);
+});
+
+test('#6791: with Home hidden nothing is pulled, and the slug is not spent', () => {
+  const h = harness({ homeVisible: false });
+  h.App._listNewlyCreatedApp('brand-new');
+  assert.equal(h.loads.length, 0, 'the list is every app: not read behind another screen');
+  assert.equal(h.App._listedNewApps.has('brand-new'), false, 'a later phase with Home showing still pulls');
+  const handler = SRC.slice(SRC.indexOf('handleAppStatusUpdate(data) {'));
+  assert.match(handler.slice(0, handler.indexOf('// Update app view')),
+    /if \(App\._isScreenVisible\('home-screen'\)\) Home\.load\(\);/,
+    'the running/error reload is for a Home on screen too');
 });
 
 test('the tile already has the words for a building app', () => {

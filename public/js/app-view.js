@@ -10874,6 +10874,8 @@ const AppView = {
     const parts = live ? AppView._partsForLive(live) : null;
     // The burst was about rows this board does not show.
     if (parts && !parts.size) return Promise.resolve(true);
+    // A session, a request or a reorder: at most one read every few seconds.
+    if (live && !fresh && AppView._liveIsHeldBack(live)) return AppView._liveBoardLoad(parts);
     if (parts) {
       return AppView._loadDevFeed({ ...(opts || {}), parts }).then((r) => {
         AppView._refreshOpenChangeFromBoard();
@@ -11153,20 +11155,94 @@ const AppView = {
 
   // What a live burst moved, as board parts: a vote moves the proposals'
   // tallies (and, on a merge, the Completed list); a verdict moves the one
-  // row's checks, wherever it lives. Anything else — a session appearing or
-  // leaving, an issue, the board order — is the whole board. Rows the page
-  // does not hold ask for nothing: that is someone else's work, on a board
-  // this viewer is not looking at.
+  // row's checks, wherever it lives. Rows the page does not hold ask for
+  // nothing: that is someone else's work, on a board this viewer is not
+  // looking at.
+  //
+  // #6791: the other kinds name their parts too, instead of the whole
+  // board. A request event is the request lists. A reorder is the order. A
+  // session appearing, leaving or changing state is the sessions, the open
+  // proposals, Completed (a change can merge with no event naming it, #5933)
+  // and the requests (a request's card says who is building it). The order,
+  // the categories and the themes are not re-read for it. A vote or a
+  // verdict that names no row, and any kind not listed here, is still the
+  // whole board.
   _partsForLive(live) {
-    if (!live || !AppView._devDataReady || !live.ids || !live.ids.size) return null;
-    for (const k of live.kinds || []) if (k !== 'vote' && k !== 'checks') return null;
+    if (!live || !AppView._devDataReady) return null;
+    const kinds = [...(live.kinds || [])];
+    if (!kinds.length) return null;
+    const ids = live.named || live.ids;
+    const named = !!(ids && ids.size);
     const parts = new Set();
-    for (const id of live.ids) {
-      const where = AppView._whereHeld(id);
-      if (where) parts.add(where);
+    for (const k of kinds) {
+      if (k === 'vote' || k === 'checks') {
+        const unscoped = live.unscopedKinds ? live.unscopedKinds.has(k) : !live.ids;
+        if (unscoped || !named) return null;
+      } else if (k === 'issue') {
+        parts.add('issues');
+      } else if (k === 'board-order') {
+        parts.add('order');
+      } else if (k === 'session') {
+        parts.add('sessions'); parts.add('promoted'); parts.add('merged'); parts.add('issues');
+      } else {
+        return null;
+      }
+    }
+    if (named) {
+      for (const id of ids) {
+        const where = AppView._whereHeld(id);
+        if (where) parts.add(where);
+      }
     }
     if (live.merged) { parts.add('promoted'); parts.add('merged'); }
     return parts;
+  },
+
+  // #6791: a board with a lot going on used to reload itself for every
+  // burst, four times in a second on the day it was measured. A live refresh
+  // that is not a vote now runs at most once every BOARD_LIVE_MIN_GAP_MS:
+  // the first runs at once, the ones inside the gap are gathered (their
+  // parts added together) and run once when it closes, so the last event is
+  // never dropped. A vote reads past its own write and is never held, and
+  // neither is a verdict, which is one targeted read.
+  BOARD_LIVE_MIN_GAP_MS: 5000,
+  _boardLiveAt: 0,
+  _boardLiveHeld: null,
+  _liveBoardLoad(parts) {
+    const slug = AppView.appData && AppView.appData.slug;
+    const load = (p) => AppView._loadDevFeed(p ? { parts: p } : undefined).then((r) => {
+      AppView._refreshOpenChangeFromBoard();
+      return r;
+    });
+    const held = AppView._boardLiveHeld;
+    if (held && held.slug === slug) {
+      held.parts = AppView._partsUnion(held.parts, parts);
+      return held.promise;
+    }
+    const wait = AppView._boardLiveAt + AppView.BOARD_LIVE_MIN_GAP_MS - Date.now();
+    if (wait <= 0 || AppView._boardLiveSlug !== slug) {
+      AppView._boardLiveAt = Date.now();
+      AppView._boardLiveSlug = slug;
+      return load(parts);
+    }
+    const entry = { slug, parts, promise: null };
+    entry.promise = new Promise((resolve) => {
+      setTimeout(() => {
+        if (AppView._boardLiveHeld === entry) AppView._boardLiveHeld = null;
+        // The reader left this board while it waited: its next open reads it.
+        if (!AppView.appData || AppView.appData.slug !== slug || typeof App === 'undefined'
+            || App.currentTab !== 'dev' || App.currentSubTab !== 'forum') { resolve(true); return; }
+        AppView._boardLiveAt = Date.now();
+        load(entry.parts).then(resolve, () => resolve(false));
+      }, wait);
+    });
+    AppView._boardLiveHeld = entry;
+    return entry.promise;
+  },
+  _boardLiveSlug: null,
+  _liveIsHeldBack(live) {
+    for (const k of live.kinds || []) if (k !== 'vote' && k !== 'checks') return true;
+    return false;
   },
   _liveTouchesVotes(live) {
     if (!live || !live.ids) return true;
@@ -14014,7 +14090,9 @@ const AppView = {
     const n = attempt || 0;
     const force = !!(opts && opts.force);
     const cur = AppView._workshopThemes;
-    if (!n && !force && cur && cur.slug === slug && !cur.pending && (Date.now() - (cur.at || 0)) < 60000) return;
+    // #6791: pending or not. A grouping still pending after its poll chain
+    // ran out used to be re-read on every board load.
+    if (!n && !force && cur && cur.slug === slug && (Date.now() - (cur.at || 0)) < 60000) return;
     // A chain is already polling this slug: let it finish rather than
     // starting a second one beside it.
     if (!n && !force && cur && cur.slug === slug && cur.pending && AppView._workshopPollTimer != null) return;

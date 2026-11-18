@@ -3418,7 +3418,7 @@ const App = {
           // socket already means, so it takes the identical recovery path
           // rather than a second one that could drift from it.
           case 'resync_hint':
-            App.resyncCurrentView();
+            App._resyncForHint();
             break;
           // The answer to the socket's own `ping` (_pingEvents): this
           // server answers, so from now on a silence is held against it.
@@ -3611,6 +3611,20 @@ const App = {
   // the socket reopening and the probe it nudges say the same thing.
   _lastResyncAt: 0,
   RESYNC_SETTLE_MS: 5000,
+  // A `resync_hint` re-reads everything on screen, and a busy stretch sends
+  // several in a row (#6791). One sweep covers them: a hint inside
+  // RESYNC_SETTLE_MS of the last sweep waits for the window to close and
+  // runs once then, so the last hint is never dropped.
+  _resyncHintTimer: null,
+  _resyncForHint() {
+    if (App._resyncHintTimer) return;
+    const wait = App._lastResyncAt + App.RESYNC_SETTLE_MS - Date.now();
+    if (wait <= 0) { App.resyncCurrentView(); return; }
+    App._resyncHintTimer = setTimeout(() => {
+      App._resyncHintTimer = null;
+      App.resyncCurrentView();
+    }, wait);
+  },
   resyncCurrentView() {
     App._lastResyncAt = Date.now();
     // `Home` and `AppView` are classic-script top-level `const` — they
@@ -3692,13 +3706,14 @@ const App = {
    * later phase for that slug then takes the `if (card)` branch above, which
    * keeps `data-status` current with no further fetching.
    *
-   * Deliberately not gated on which screen is showing: Home.load() is the
-   * same call the running/error branch makes, the payload is one request, and
-   * gating it would mean the grid is stale the moment somebody navigates back
-   * to it mid-build — which is the bug wearing a different hat.
+   * Only while Home is showing (#6791): the list is every app the viewer can
+   * see, and every way back to Home reads it again (restoreFromHash), so a
+   * hidden Home is never stale when somebody returns to it mid-build. The
+   * slug is remembered only once the pull was made.
    */
   _listNewlyCreatedApp(slug) {
     if (!slug || App._listedNewApps.has(slug)) return;
+    if (!App._isScreenVisible('home-screen')) return;
     App._listedNewApps.add(slug);
     if (window.Home && typeof Home.load === 'function') Home.load();
   },
@@ -3740,7 +3755,8 @@ const App = {
       // the (server-gated) last_failure_reason for the card tooltip and
       // the "View build log" menu item.
       if (data.status === 'running' || data.status === 'error') {
-        Home.load();
+        // Only while Home is showing (#6791): going back to it reads the list.
+        if (App._isScreenVisible('home-screen')) Home.load();
       }
     } else {
       App._listNewlyCreatedApp(data.slug);
@@ -3868,7 +3884,9 @@ const App = {
     }
     // Refresh proposals / inline chat vote state on the other dev sub-tabs,
     // and the drawer and Home, once for the whole burst (see _liveRefresh).
-    App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug, home: true });
+    // A merge names its parts (#6791): the row moves to Completed.
+    const merged = data.merged === true || data.status === 'merged';
+    App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug, home: true, ...(merged ? { merged: true } : {}) });
   },
 
   handleSessionEvent(data) {
@@ -4094,7 +4112,9 @@ const App = {
         // app on screen), every request number it named, and whether any of
         // its events named no session and no request (a close vote, say).
         slugs: new Set(), numbers: new Set(), unnamed: false,
-        unscoped: false, merged: false, home: false, dev: false, resolve: null,
+        // #6791: which kinds arrived naming no row, so the board can still
+        // read a part for the kinds that did name theirs.
+        unscoped: false, unscopedKinds: new Set(), merged: false, home: false, dev: false, resolve: null,
       };
       b.promise = new Promise((resolve) => { b.resolve = resolve; });
       App._liveBurst = b;
@@ -4114,7 +4134,7 @@ const App = {
     if (opts.dev !== false && forThisApp) {
       b.dev = true;
       b.kinds.add(kind);
-      if (!ids.length) b.unscoped = true;
+      if (!ids.length) { b.unscoped = true; b.unscopedKinds.add(kind); }
     }
     // #6109: the vote tally on a proposal's row in a chat thread follows
     // votes cast by other people. The dev refresh reads it only on the dev
@@ -4141,6 +4161,7 @@ const App = {
       try {
         out = AppView.refreshDevData(kind, {
           kinds: b.kinds, ids: b.unscoped ? null : b.ids, merged: b.merged,
+          named: b.ids, unscopedKinds: b.unscopedKinds,
         });
       } catch { out = undefined; }
     }

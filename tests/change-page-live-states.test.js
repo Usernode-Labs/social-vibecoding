@@ -304,6 +304,9 @@ test('a board reload about another change moves the open change in the Workshop 
   // merged, so the page does not re-read: only the board's patch moves it.
   h.page.events.length = 0;
   h.server.set(ID, { deployment_state: 'deployed', live_at: '2026-10-28T10:09:00Z' });
+  // #6791: a second session reload this soon would wait for the board's
+  // minimum gap; the gap has passed here.
+  h.AppView._boardLiveAt = 0;
   h.App.handleSessionUpdate({ sessionId: OTHER, appSlug: SLUG, action: 'updated' });
   await h.settle();
   assertShows(h, { pill: 'deployed', label: m('changes:badge.pill.live'), says: [m(LIVE)], not: [m(GOING)] },

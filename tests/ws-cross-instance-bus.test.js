@@ -143,8 +143,11 @@ test('excludeWs is not published — it names a socket in one process', () => {
 
 test('the client answers the oversize nudge with its existing recovery path', () => {
   const APP = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
-  assert.match(APP, /case 'resync_hint':\s*\n\s*App\.resyncCurrentView\(\);/,
+  assert.match(APP, /case 'resync_hint':\s*\n\s*App\._resyncForHint\(\);/);
+  const body = APP.slice(APP.indexOf('_resyncForHint() {'), APP.indexOf('resyncCurrentView() {'));
+  assert.match(body, /App\.resyncCurrentView\(\)/,
     'resync_hint reuses resyncCurrentView, the same repair a dropped socket runs');
+  assert.match(body, /RESYNC_SETTLE_MS/, '#6791: several hints in a row are one sweep');
 });
 
 test('the payload budget sits under the NOTIFY hard cap', () => {
