@@ -10210,20 +10210,41 @@ html.un-kb .un-modal {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The change's name is being looked up: a quiet bar where it will be, never
+   the project's name that it would replace a moment later. */
+.staging-title[data-pending] {
+  width: min(14em, 100%);
+  height: 1.25em;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 9%, transparent);
+}
+/* The line under it. Each fact stays whole: when they do not fit on one
+   line the next one moves to a second, so "Needs 1 more yes" is never cut
+   to "Needs 1 more y…". The dot before a fact that starts a line sits in
+   the gutter the titles clip. */
+.staging-titles { overflow: hidden; }
 .staging-facts {
+  display: flex;
+  flex-wrap: wrap;
+  margin-inline-start: -0.9em;
   font-size: 13px;
   line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   color: color-mix(in srgb, var(--text-primary) 58%, transparent);
 }
 .staging-facts:empty { display: none; }
-.staging-fact + .staging-fact::before { content: " · "; }
+.staging-fact {
+  position: relative;
+  padding-inline-start: 0.9em;
+  white-space: nowrap;
+}
+.staging-fact::before {
+  content: "·";
+  position: absolute;
+  inset-inline-start: 0.3em;
+}
 /* On a phone the project's name gives way to the vote's line. */
 @media (max-width: 767px) {
   .staging-fact[data-kind="app"] { display: none; }
-  .staging-fact[data-kind="app"] + .staging-fact::before { content: none; }
 }
 .staging-fact[data-kind="ask"] { color: var(--accent); font-weight: 600; }
 
@@ -10257,7 +10278,8 @@ html.dark .staging-switch button[data-on] {
   box-shadow: none;
 }
 
-/* The platform's Vote, as on a chat's vote card; "See the vote" once voted. */
+/* The platform's Vote, as on a chat's vote card; "See the vote" once the
+   vote is decided, with no fill: nothing is left to do there. */
 .staging-vote {
   height: 32px;
   padding: 0 16px;
@@ -10269,7 +10291,7 @@ html.dark .staging-switch button[data-on] {
   background: var(--accent);
   color: #fff;
 }
-.staging-vote[data-voted] {
+.staging-vote[data-settled] {
   background: transparent;
   border-color: var(--app-sheet-line);
   color: var(--text-primary);
@@ -10329,9 +10351,11 @@ html.dark .staging-switch button[data-on] {
   color: color-mix(in srgb, var(--text-primary) 62%, transparent);
 }
 
-/* The other side of the switch: the change's before and after viewer. */
+/* The other side of the switch: the change's before and after viewer, over
+   the loader too, so a preview that is not running can still be checked. */
 .staging-shots {
   position: absolute;
+  z-index: 1;
   inset: 0;
   overflow: auto;
   padding: 12px 16px;
@@ -10342,6 +10366,7 @@ html.dark .staging-switch button[data-on] {
 .staging-loader { background: var(--dc-sheet-solid); }
 .staging-loader-title { color: var(--text-primary); }
 .staging-loader-sub { color: color-mix(in srgb, var(--text-primary) 62%, transparent); }
+.staging-loader-shots { min-height: 44px; font-size: 14px; }
 .staging-spinner {
   border: 2.5px solid var(--app-sheet-line);
   border-top-color: var(--accent);

@@ -28038,6 +28038,7 @@ const AppView = {
     const sessionId = o.sessionId != null ? o.sessionId : it.id;
     if (!sessionId) return null;
     AppView._rememberSessionTesting(sessionId, it);
+    AppView._rememberPreviewChange(sessionId, it);
     const url = it.staging_url || o.stagingUrl || '';
     // A shared/own session with no live URL is still previewable when the
     // branch has pushed changes — the click routes through ensure-staging,
@@ -29277,10 +29278,12 @@ const AppView = {
     const top = AppView._stagingTop();
     if (top) {
       const own = AppView._stagingApp(opts);
+      const known = AppView._stagingKnownChange(sessionId, own, opts);
       return top.ensureStaging(sessionId, fallbackUrl, testing, {
         ...(opts || {}),
         readOnly: AppView._stagingReadOnly(opts),
         ...(own && own.slug ? { app: AppView._stagingAppRecord(own) } : {}),
+        ...(known ? { change: known } : {}),
       });
     }
     const staging = AppView._staging();
@@ -29322,10 +29325,15 @@ const AppView = {
     // whole window) while the server is asked.
     staging.open();
     AppView._stagingHeader(sessionId, app, opts);
-    if (typeof staging.place === 'function') staging.place({ sessionId, wide: false });
+    // The preview's own address (?preview=<slug>/<id>), written in place, so
+    // a reload or a copied link reopens it (restorePreviewFromAddress).
+    AppView._writePreviewAddress(slug, sessionId);
+    // A preview reopened from its address waits a moment for the page's
+    // column, which may not be drawn yet.
+    if (typeof staging.place === 'function') staging.place({ sessionId, wide: false, settle: !!(opts && opts.settle) });
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
-    AppView._loadStagingChange(sessionId, slug, loadId);
+    const changeLoad = AppView._loadStagingChange(sessionId, slug, loadId);
     staging.clearSrc();
     AppView._pendingStagingPreview = null;
     // #816: a NEUTRAL opening state. This used to assert "the preview was
@@ -29365,15 +29373,26 @@ const AppView = {
         : `/api/sessions/${sessionId}/ensure-staging`;
       const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
+      // Reopened from its address, by somebody the page could not yet say
+      // builds on the project: refused the rebuilding POST, they get the
+      // look-only read every reviewer gets.
+      if (res.status === 403 && !readOnly && opts && opts.lookOnlyIfRefused
+          && loadId === AppView._stagingLoadId) {
+        return AppView.ensureStaging(sessionId, fallbackUrl, testing, {
+          ...opts, readOnly: true, lookOnlyIfRefused: false, telemetryAttempt,
+        });
+      }
       if (!res.ok) {
         AppView._finishStagingTelemetry(telemetryAttempt, 'failure', {
           errorCode: window.UITelemetry?.errorCodeFor?.(res.status),
         });
+        AppView._settleStagingChange(loadId, changeLoad);
         AppView._showStagingUnavailable(loadId, data.error || PlatformI18n.t('changes:frame.unavailable.notRebuilt'), retry);
         return;
       }
     } catch {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'network' });
+      AppView._settleStagingChange(loadId, changeLoad);
       AppView._showStagingUnavailable(loadId, PlatformI18n.t('changes:frame.unavailable.network'), retry);
       return;
     }
@@ -29387,6 +29406,7 @@ const AppView = {
     // it was made for large screens only, in which case it stands in the
     // whole window (services/preview-start.js wideAnswer).
     AppView._stagingAnswerChange(data);
+    AppView._settleStagingChange(loadId, changeLoad);
     if (data.wide === true && typeof staging.place === 'function') staging.place({ sessionId, wide: true });
     if (data.status === 'ready') {
       // #816: `verified` means the server just watched the container answer
@@ -29412,13 +29432,22 @@ const AppView = {
     }
     if (data.status === 'unavailable') {
       AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
+      // Stopped (previews stop after a while unused): it says so, and how
+      // it starts again, rather than "unavailable". Somebody who builds on
+      // the project gets Start the preview; a reviewer is told who can.
+      if (data.reason === 'missing') {
+        AppView._showStagingUnavailable(
+          loadId,
+          PlatformI18n.t(readOnly ? 'changes:frame.unavailable.missingReader' : 'changes:frame.notRunning.sub'),
+          retry,
+          { title: PlatformI18n.t('changes:frame.notRunning.title'), retryLabel: PlatformI18n.t('changes:frame.notRunning.start') }
+        );
+        return;
+      }
       const unavailableIds = {
         demo: 'changes:frame.unavailable.demo',
         unhealthy: 'changes:frame.unavailable.unhealthy',
         edge: 'changes:frame.unavailable.edge',
-        missing: readOnly
-          ? 'changes:frame.unavailable.missingReader'
-          : 'changes:frame.unavailable.notNow',
       };
       AppView._showStagingUnavailable(
         loadId,
@@ -29444,6 +29473,7 @@ const AppView = {
     AppView._setStagingLoader(true, {
       title: PlatformI18n.t('changes:frame.loader.rebuilding'),
       sub: PlatformI18n.t(data.waking ? 'changes:frame.loader.wakingSub' : 'changes:frame.loader.rebuildingSub'),
+      offerShots: true,
     });
     AppView._pendingStagingPreview = {
       sessionId, slug, testing, loadId, retry,
@@ -29461,6 +29491,7 @@ const AppView = {
         title: PlatformI18n.t('changes:frame.loader.slow'),
         sub: PlatformI18n.t(retry ? 'changes:frame.loader.slowRebuildRetry' : 'changes:frame.loader.slowRebuild'),
         ...AppView._offerStagingPreviewRetry(retry),
+        offerShots: true,
       });
     }, 180000);
   },
@@ -29468,14 +29499,18 @@ const AppView = {
   // #439: terminal loader state when a rebuild can't proceed (no changes,
   // demo env, build failure). Shows the reason in the existing loader with
   // the back button already wired by ensureStaging. #3413: `retry` (or null)
-  // puts a "Retry preview" button under the reason.
-  _showStagingUnavailable(loadId, message, retry = null) {
+  // puts a "Retry preview" button under the reason. `words` may name the
+  // title and the button (a stopped preview: "This preview isn't running
+  // right now", Start the preview). Every dead end offers the change's
+  // before and after, when it has verified shots.
+  _showStagingUnavailable(loadId, message, retry = null, words = {}) {
     if (loadId !== AppView._stagingLoadId) return;
     AppView._pendingStagingPreview = null;
     AppView._setStagingLoader(true, {
-      title: PlatformI18n.t('changes:frame.unavailable.title'),
+      title: (words && words.title) || PlatformI18n.t('changes:frame.unavailable.title'),
       sub: message,
-      ...AppView._offerStagingPreviewRetry(retry),
+      ...AppView._offerStagingPreviewRetry(retry, words && words.retryLabel),
+      offerShots: true,
     });
   },
 
@@ -29483,10 +29518,10 @@ const AppView = {
   // fields that show it, labelled for a preview rather than a sign-in. With
   // no `retry` (read-only viewer, demo) it returns nothing and the loader
   // keeps its plain terminal state.
-  _offerStagingPreviewRetry(retry) {
+  _offerStagingPreviewRetry(retry, label) {
     if (typeof retry !== 'function') return {};
     AppView._staging().setHandlers({ onRetry: retry });
-    return { retry: true, retryLabel: PlatformI18n.t('changes:frame.loader.retryPreview') };
+    return { retry: true, retryLabel: label || PlatformI18n.t('changes:frame.loader.retryPreview') };
   },
 
   // #439: called by the staging_ready / staging_failed WS handlers when a
@@ -29509,6 +29544,7 @@ const AppView = {
         title: PlatformI18n.t('changes:frame.unavailable.rebuildFailedTitle'),
         sub: error || PlatformI18n.t('changes:frame.unavailable.rebuildFailed'),
         ...AppView._offerStagingPreviewRetry(pending.retry),
+        offerShots: true,
       });
       return;
     }
@@ -29804,9 +29840,11 @@ const AppView = {
   },
 
   // The header, from what the page knows before the server answers: the
-  // app's name and tile, and whether it is Homeroom itself (drawn on a
-  // mat). The change's own name and number follow (_stagingAnswerChange,
-  // _loadStagingChange).
+  // app's name and tile, whether it is Homeroom itself (drawn on a mat), and
+  // the change's own name and number when the page holds its row (the press
+  // came from it). When it does not, the title waits as a placeholder for
+  // the server's word (_stagingAnswerChange, _loadStagingChange) instead of
+  // showing the project's name first.
   _stagingHeader(sessionId, app, opts) {
     const staging = AppView._staging();
     const open = AppView.appData;
@@ -29815,9 +29853,16 @@ const AppView = {
     const emoji = (app && app.icon_emoji) || (same ? open.icon_emoji : null) || '';
     const image = (app && app.icon_url) || (same ? open.icon_url : null) || '';
     const selfHosted = same ? !!open.self_hosted : !!(app && app.self_hosted);
+    const known = AppView._stagingKnownChange(sessionId, app, opts);
+    const id = Number(sessionId);
     staging.setUrlLabel(AppView._stagingTitle(app, name));
     staging.setAudience(AppView._stagingAudience(app));
-    staging.setChange({ appName: name, tile: emoji, tileImage: image, selfHosted, title: '', number: null });
+    staging.setChange({
+      appName: name, tile: emoji, tileImage: image, selfHosted,
+      title: known ? known.title : '',
+      number: known ? known.number : null,
+      pending: !known && Number.isInteger(id) && id > 0,
+    });
     staging.setVote(null);
     staging.setShots('');
     try {
@@ -29837,6 +29882,61 @@ const AppView = {
   // localStorage: the first-visit line under a preview's header was put away.
   PREVIEW_NOTE_KEY: 'usernode_preview_note_seen_v1',
 
+  // The changes a preview could name at once ({ title, number } by session
+  // id): every row a Preview press is drawn from records its own
+  // (_cardPreviewSpec), and every change a preview learned is kept, so
+  // opening it again names it at once.
+  _sessionChanges: {},
+
+  // Pure: a change's name and number off any of its rows (a vote row, a
+  // change page's item, a card's), or null when the row names neither.
+  _stagingChangeOf(row) {
+    if (!row || typeof row !== 'object') return null;
+    const title = String(row.pr_title || row.session_title || row.title || '').trim().slice(0, 256);
+    const n = Number(row.pr_number != null ? row.pr_number : row.number);
+    const number = Number.isInteger(n) && n > 0 ? n : null;
+    return title ? { title, number } : null;
+  },
+
+  _rememberPreviewChange(sessionId, row) {
+    const id = Number(sessionId);
+    const change = AppView._stagingChangeOf(row);
+    if (!Number.isInteger(id) || id <= 0 || !change) return;
+    AppView._sessionChanges[id] = change;
+  },
+
+  // The change a preview shows, as the page already knows it: the caller's
+  // own (opts.change), one a Preview press or an earlier preview recorded,
+  // this app's vote rows, a change page's item. Null when none names it.
+  _stagingKnownChange(sessionId, app, opts) {
+    const id = Number(sessionId);
+    if (!Number.isInteger(id) || id <= 0) return null;
+    const slug = app && app.slug;
+    const st = AppView.voteState;
+    const sameApp = !!(slug && AppView.appData && AppView.appData.slug === slug);
+    const rows = [
+      opts && opts.change,
+      AppView._sessionChanges[id],
+      sameApp && st && st.bySession ? st.bySession[String(id)] : null,
+      AppView._changeItems && typeof AppView._changeItems.get === 'function' ? AppView._changeItems.get(id) : null,
+    ];
+    for (const row of rows) {
+      const change = AppView._stagingChangeOf(row);
+      if (change) return change;
+    }
+    return null;
+  },
+
+  // The change's name has been looked up both ways (the ensure answer and
+  // the change's row): whatever was found is shown, and a title still
+  // waiting gives way to the project's name.
+  _settleStagingChange(loadId, changeLoad) {
+    Promise.resolve(changeLoad).catch(() => {}).then(() => {
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._staging().setChange({ pending: false });
+    });
+  },
+
   // The server's word on which change it is (`change`: { title, number }).
   _stagingAnswerChange(data) {
     const change = data && data.change;
@@ -29847,7 +29947,10 @@ const AppView = {
     const number = Number(change.number) || null;
     if (!title && !number) return;
     staging.setChange({ title, number });
-    if (pv) pv.number = number;
+    if (pv) {
+      pv.number = number;
+      if (title) AppView._rememberPreviewChange(pv.sessionId, { title, number });
+    }
   },
 
   // The vote and the before-and-after, read the way the chat's vote card and
@@ -29874,11 +29977,17 @@ const AppView = {
     }
     if (!row || loadId !== AppView._stagingLoadId) return;
     const staging = AppView._staging();
-    const vote = typeof GroupChat !== 'undefined' && typeof GroupChat._voteView === 'function' ? GroupChat._voteView(row) : null;
+    let vote = null;
+    try {
+      vote = typeof GroupChat !== 'undefined' && typeof GroupChat._voteView === 'function' ? GroupChat._voteView(row) : null;
+    } catch (_) {
+      vote = null;
+    }
     staging.setVote(vote);
     const title = String(row.pr_title || row.session_title || row.title || '').trim();
     const number = Number(row.pr_number) || null;
     if (title || number) staging.setChange({ title, number });
+    AppView._rememberPreviewChange(id, row);
     try {
       const view = row.shots && typeof row.shots === 'object' ? AppView._shotsView(row.shots) : null;
       staging.setShots(view && view.verified ? AppView.shotsHtml(row.shots, { sessionId: id, thread: true }) : '');
@@ -29904,11 +30013,14 @@ const AppView = {
   // testing guidance stashed when their preview affordance was modelled, so
   // the existing Preview button passes it through without any markdown in
   // DOM attributes.
-  swapToStagingForSession(sessionId, stagingUrl) {
+  // `change` ({ title, number }, optional): the change the press was drawn
+  // from, so the preview's header names it at once.
+  swapToStagingForSession(sessionId, stagingUrl, change) {
     // #439: route through ensure-then-open so a vote-panel preview that was
     // torn down (idle GC, lost container) rebuilds on click instead of
     // opening a dead page.
-    AppView.ensureStaging(sessionId, stagingUrl, (AppView._sessionTesting || {})[sessionId] || null, {});
+    AppView.ensureStaging(sessionId, stagingUrl, (AppView._sessionTesting || {})[sessionId] || null,
+      change && typeof change === 'object' ? { change } : {});
   },
 
   // #439: pending on-demand-rebuild marker ({ sessionId, testing,
@@ -30253,8 +30365,10 @@ const AppView = {
   // stranded under a title that no longer matches it.
   // #3413: `retryLabel` names the retry button; omitted, it reads
   // "Retry sign-in" (swapToStaging's token failure).
-  _setStagingLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
-    AppView._staging().setLoader(visible, { title, sub, retry, retryLabel });
+  // `offerShots`: a wait or a dead end, under which the change's before and
+  // after is offered (the island draws it only for verified shots).
+  _setStagingLoader(visible, { title, sub, retry = false, retryLabel, offerShots = false } = {}) {
+    AppView._staging().setLoader(visible, { title, sub, retry, retryLabel, offerShots });
   },
 
   // #816: retry schedule for the fallback readiness poll below.
@@ -30333,10 +30447,95 @@ const AppView = {
     return false; // superseded/closed
   },
 
+  /*
+   * THE PREVIEW'S ADDRESS (Nov 2026). An open preview is named in the
+   * address's query, `?preview=<slug>/<session id>`, beside whatever page it
+   * stands over, so a reload, a copied link or Back onto the entry reopens
+   * it, on the same change and in the place that page gives it
+   * (features/staging/placement.ts). Written in place: opening a preview is
+   * not a step for Back. The router keeps every query parameter as it goes
+   * (App._routeSearch), so the name stays while the preview is up and goes
+   * when it closes. Never in the side panel's framed copy (the top window
+   * draws the preview) or on a shot route.
+   */
+  PREVIEW_PARAM: 'preview',
+
+  // Pure: the preview a query names ({ slug, sessionId }), or null.
+  _previewAddressAt(search) {
+    let value = null;
+    try { value = new URLSearchParams(String(search || '')).get(AppView.PREVIEW_PARAM); } catch (_) { value = null; }
+    const match = /^([a-z0-9][a-z0-9-]{0,254})\/(\d{1,10})$/.exec(String(value || ''));
+    if (!match) return null;
+    const sessionId = Number(match[2]);
+    return sessionId > 0 ? { slug: match[1], sessionId } : null;
+  },
+
+  // Pure: `search` with the preview named (or, with no slug, not named),
+  // every other parameter kept byte for byte.
+  _previewSearch(search, slug, sessionId) {
+    const raw = String(search || '').replace(/^\?/, '');
+    const kept = raw ? raw.split('&').filter((part) => {
+      if (!part) return false;
+      const key = part.split('=', 1)[0].replace(/\+/g, ' ');
+      try { return decodeURIComponent(key) !== AppView.PREVIEW_PARAM; } catch (_) { return true; }
+    }) : [];
+    const id = Number(sessionId);
+    if (slug && /^[a-z0-9][a-z0-9-]{0,254}$/.test(String(slug)) && Number.isInteger(id) && id > 0) {
+      kept.push(`${AppView.PREVIEW_PARAM}=${slug}/${id}`);
+    }
+    return kept.length ? `?${kept.join('&')}` : '';
+  },
+
+  // Name the open preview in the address, or (no slug) stop naming it.
+  _writePreviewAddress(slug, sessionId) {
+    if (typeof window === 'undefined' || !window.history || !window.location) return false;
+    if (typeof App !== 'undefined' && App && App.embeddedPanel) return false;
+    const loc = window.location;
+    if (slug) {
+      try { if (new URLSearchParams(loc.search || '').get('shot')) return false; } catch (_) { return false; }
+    }
+    const here = AppView._hereAddress();
+    const to = `${loc.pathname || ''}${AppView._previewSearch(loc.search, slug, sessionId)}${loc.hash || ''}`;
+    if (to === here) return true;
+    try {
+      window.history.replaceState(window.history.state, '', to);
+    } catch (_) {
+      return false;
+    }
+    // The Workshop's side panel follows its own written address (#6110).
+    const p = AppView._panelAddress;
+    if (p && p.to === here) p.to = to;
+    return true;
+  },
+
+  // A reload, a pasted link, or Back or Forward onto an entry that names a
+  // preview: open it, as its Preview press did. Run after every route
+  // (App.restoreFromHash); nothing when it is already open on that change,
+  // or nobody is signed in. Who may rebuild it is the app on screen's word
+  // when it is that app; anyone else asks to, and is given the look-only
+  // read when refused.
+  restorePreviewFromAddress() {
+    if (typeof window === 'undefined' || !window.location) return false;
+    if (typeof App === 'undefined' || !App || App.embeddedPanel || !App.user) return false;
+    const at = AppView._previewAddressAt(window.location.search);
+    if (!at) return false;
+    const pv = AppView._stagingPreview;
+    if (pv && Number(pv.sessionId) === at.sessionId && AppView._staging().isOpen()) return false;
+    const sameApp = !!(AppView.appData && AppView.appData.slug === at.slug);
+    AppView.ensureStaging(at.sessionId, null, (AppView._sessionTesting || {})[at.sessionId] || null, {
+      app: sameApp ? AppView.appData : { slug: at.slug },
+      settle: true,
+      ...(sameApp ? {} : { lookOnlyIfRefused: true }),
+    });
+    return true;
+  },
+
   closeStagingOverlay() {
     const staging = AppView._staging();
     const iframe = staging.frame();
     AppView._stagingPreview = null;
+    // The page's own address comes back, in place.
+    AppView._writePreviewAddress(null);
     // Stop following its column or panel, and give the column back.
     if (typeof staging.unplace === 'function') staging.unplace();
     // Invalidate any in-flight readiness poll and hide the loader.

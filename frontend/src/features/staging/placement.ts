@@ -148,7 +148,16 @@ export interface PlaceInput {
   sessionId?: number | null;
   /** The preview answer's `wide`. */
   wide?: boolean;
+  /**
+   * Reopened from its address (a reload, a pasted link): the page under it
+   * may not have drawn its column yet, so it waits up to SETTLE_MS for one
+   * before it keeps the whole window.
+   */
+  settle?: boolean;
 }
+
+/** How long a preview reopened from its address waits for the page's column. */
+export const SETTLE_MS = 4000;
 
 /**
  * Place the preview that is opening. Returns the placement chosen. The store
@@ -173,7 +182,9 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
   }
 
   const placement = choosePlacement({ phone, wide, besideApp, panelOpen: open, columnWidth });
-  if (placement !== 'column' && detailEntry()?.kind === 'preview') closeColumn();
+  const waitForColumn = !!input.settle && placement === 'full' && columnWidth == null
+    && !phone && !wide && !besideApp && detailEntry()?.kind === 'preview';
+  if (placement !== 'column' && !waitForColumn && detailEntry()?.kind === 'preview') closeColumn();
 
   const target = placement === 'column' ? slotEl : placement === 'panel' ? panelEl : null;
   const rect = target ? rectOf(target()) : null;
@@ -187,7 +198,34 @@ export async function placePreview(input: PlaceInput = {}): Promise<Placement> {
     expanded: false,
   });
   if (target && rect) watch(target, placement);
+  if (waitForColumn) settleIntoColumn(mine);
   return rect ? placement : 'full';
+}
+
+/**
+ * The preview stands in the whole window while the page that will give it a
+ * column is still being drawn (a cold load): it moves into the column once
+ * the column is there and wide enough, and keeps the whole window if none
+ * comes within SETTLE_MS, or the column's entry is closed meanwhile.
+ */
+function settleIntoColumn(mine: number): void {
+  const deadline = Date.now() + SETTLE_MS;
+  const tick = () => {
+    if (mine !== generation) return;
+    if (detailEntry()?.kind !== 'preview') return;
+    const rect = rectOf(slotEl());
+    if (rect && rect.width >= MIN_COLUMN) {
+      stagingStore.set({ placement: 'column', rect, beside: null, liveSpot: null, expanded: false });
+      watch(slotEl, 'column');
+      return;
+    }
+    if (rect || Date.now() >= deadline) {
+      closeColumn();
+      return;
+    }
+    setTimeout(tick, 150);
+  };
+  setTimeout(tick, 150);
 }
 
 /** After the app's name in the shell's header, where the Live mark goes. */
