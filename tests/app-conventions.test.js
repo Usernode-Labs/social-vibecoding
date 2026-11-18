@@ -18,8 +18,15 @@ const ESCALATION_HEADING =
 // is the only picture voters get. The guidance says so, with an example.
 test('conventions doc asks for a diagram after a change with nothing visible', () => {
   const doc = getAppConventions().replace(/\s+/g, ' ');
-  assert.match(doc, /record `impact: "none"` with a specific rationale\. Then call `declare_diagram` with the kind that fits \(`flow`, `changes`, `numbers` or `rename`; Mermaid only if none does\), in plain words, 1-60 characters a text/);
-  assert.match(doc, /\{"version":1,"kind":"flow","before":\["Won't mount","Retries 30 min","Fails silently"\],"after":\["Won't mount","Moves machine","Says why"\]\}/);
+  // The offline excerpt is capped at 9 KB, so it carries the step and a valid
+  // example; the kinds and the size rule are spelled out below it.
+  assert.match(doc, /record `impact: "none"` with a specific rationale\. Then call `declare_diagram`: `\{"version":1,"kind":"flow","before":\["A"\],"after":\["B"\]\}`\./);
+  assert.match(doc, /declare a diagram of it: `flow`, `changes`, `numbers` or `rename`, plain words, 1-60 characters a text, e\.g\. `\{"version":1,"kind":"flow"/);
+  // Both examples are diagrams the platform accepts, not invented shapes.
+  const { parseDiagram } = require('../src/services/diagram.js');
+  for (const [, json] of doc.matchAll(/(\{"version":1,"kind":"flow",[^`]*\})/g)) {
+    assert.doesNotThrow(() => parseDiagram(JSON.parse(json), { impact: 'none' }), json);
+  }
 });
 
 test('conventions doc loads non-empty', () => {
@@ -336,7 +343,7 @@ test('conventions doc says to seed a new state in the same proposal, within the 
   // What no seed or step reaches, and what to declare then (18 Nov 2026).
   assert.match(section, /\*\*Some states cannot be staged at all\.\*\* A controlled failure covers one API GET, never a POST, PUT or DELETE; there is no native phone app/);
   assert.match(section, /two requests cannot be made to race/);
-  assert.match(section, /declare `impact: "none"` with a reason that names what the copies cannot do, rather than claim a state they cannot reach, and then declare a diagram of it, as above/);
+  assert.match(section, /declare `impact: "none"` with a reason that names what the copies cannot do, rather than claim a state they cannot reach/);
 
   // The seed rule points there, in the full text and in the offline excerpt.
   const visitor = doc.slice(doc.indexOf('**Never seed the visitor.**'), doc.indexOf('**Request-time seeding only'))
