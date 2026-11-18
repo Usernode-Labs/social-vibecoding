@@ -51,6 +51,7 @@
  * click lands on the place through AppView, a cmd-click or middle-click
  * keeps the href.
  */
+import { useHomeSearchPlaceholder } from '../search-hint';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Btn, Card, CapSub, ChallengeArt, Count, GroupLink, HCard, Icon, Lead, Mut, Note, PageBody, Pill, Row, RowArrow, Search, Sec, SecNote, ShowAll, Sub, Tile, k } from '@/components/ui/kit';
@@ -614,6 +615,7 @@ function Challenges({ challenges }: { challenges: NonNullable<HomePanelsState['c
  */
 function HomeSearch() {
   const t = useMessages('home');
+  const searchPlaceholder = useHomeSearchPlaceholder();
   const [words, setWords] = useState('');
   const host = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
@@ -645,7 +647,7 @@ function HomeSearch() {
         type('');
       }}
     >
-      <Search value={words} onChange={type} placeholder={t('home:search.placeholder')} label={t('home:search.label')} />
+      <Search value={words} onChange={type} placeholder={searchPlaceholder} label={t('home:search.label')} />
     </div>
   );
 }

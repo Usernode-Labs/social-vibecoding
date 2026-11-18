@@ -571,7 +571,9 @@ test('Geist Mono and Young Serif load from our own origin, with their licences b
     const licence = path.join(ROOT, 'public', path.dirname(file), 'LICENSE.txt');
     assert.match(fs.readFileSync(licence, 'utf8'), /SIL Open Font License/, `the OFL travels with ${family}`);
   }
-  assert.ok(!/Young Serif/.test(outsideTheLooks()), 'nothing outside this look and the signed-out pages\' names Young Serif');
+  // Standard (WIP)'s second brand token config names it too, for its section titles (the kit's serif role).
+  const outsideSerif = outsideTheLooks().replace(/STANDARD \(WIP\): the standard look[\s\S]*?END OF STANDARD \(WIP\)\./, '');
+  assert.ok(!/Young Serif/.test(outsideSerif), 'nothing outside this look, Standard (WIP)\'s brand2 config and the signed-out pages\' names Young Serif');
 });
 
 test('the empty-state figures are committed beside their provenance, and drawn only by this look', () => {

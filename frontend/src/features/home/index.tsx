@@ -95,6 +95,7 @@ import { AppGrid } from './app-grid';
 import { openAddAppsSheet } from './add-apps-sheet';
 import { AppsMore } from './apps-more';
 import { chromeStore } from './chrome-store';
+import { useHomeSearchPlaceholder } from './search-hint';
 import { CreateCompact } from './create-tile';
 import { ChallengesSection } from './panels/sections';
 import { HomeJoin } from './home-join';
@@ -139,6 +140,8 @@ export function HomeScreen() {
   // render draw no action at all.
   const grid = useStoreState(gridStore);
   const { moreCount, canFold } = useStoreState(chromeStore);
+  // The field's words, with this device's shortcut when it has one (./search-hint.ts).
+  const searchPlaceholder = useHomeSearchPlaceholder();
   // A look of the one frame draws this page in it (./frame/home-frame.tsx).
   // Read after mount only: the first render must match the prerendered
   // document, which knows no look (lib/skin.ts says why).
@@ -153,7 +156,9 @@ export function HomeScreen() {
   const wip = skin === 'wip';
   // The grid's trailing tile depends on the look (Home.hasSideCard): a look
   // picked while Home is up repaints it.
-  useEffect(() => { (window as any).Home?.render?.(); }, [wip]);
+  // Only once the grid has drawn: a render before the apps are in would
+  // publish an empty grid and take the loading placeholders away early.
+  useEffect(() => { if (gridStore.get().ready) (window as any).Home?.render?.(); }, [wip]);
   const canEdit = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.some((item) => !item.app.demo);
   // ONE HOME (#6361): Pinned apps appears once something is pinned. A new
@@ -168,7 +173,9 @@ export function HomeScreen() {
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
   // Standard (WIP): the Needs you card rides Challenges' row.
-  const aside = wip && grid.ready && !!grid.create;
+  // Mounted as soon as the look is known, not when the grid is ready: the
+  // card holds its place from the first paint (./needs-you-card.tsx).
+  const aside = wip && viewer;
 
   return (
     <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="" data-frame-page={frame ? '' : undefined}>
@@ -243,7 +250,7 @@ export function HomeScreen() {
               id="home-search-input"
               type="text"
               autoComplete="off"
-              placeholder={t('home:search.placeholder')}
+              placeholder={searchPlaceholder}
               aria-label={t('home:search.label')}
               aria-keyshortcuts={HOME_SEARCH_SHORTCUT_KEYS}
               className="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 ps-9 pe-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600"

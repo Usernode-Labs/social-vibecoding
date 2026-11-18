@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import { Chip, FadeRail } from '@/components/ui/chip';
 import { Select } from '@/components/ui/select';
 
+import { WipSkel } from './wip-kit';
 import { useLiveSkin } from '../../lib/skin';
 import { useMessages } from '../../lib/i18n/react';
 import { CARD_GRID, Card, SMALL_CAPS_LABEL } from '../guest/guest-discover';
@@ -159,6 +160,17 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
           ))}
         </FadeRail>
         {oneLine && list.length > 1 ? sortMenu : null}
+        </div>
+      ) : null}
+      {wip && !apps && !failed && !query ? (
+        // Standard (WIP) draws Featured as a row of Home's own, above this
+        // list: its place is held while the directory is read, so the rows
+        // under it do not move when the cards land.
+        <div data-home-join-featured="" data-loading="" className="pb-4 animate-pulse" aria-hidden="true">
+          <h3 className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>{t('home:join.featuredAppsCommunities')}</h3>
+          <div className={`${CARD_GRID} px-1`}>
+            {[0, 1].map((i) => <WipSkel key={i} shape="card" />)}
+          </div>
         </div>
       ) : null}
       {featured.length ? (

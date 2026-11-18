@@ -50,6 +50,7 @@
  * Join, Vote, Ask), never as a wall.
  */
 
+import { useHomeSearchPlaceholder } from '../home/search-hint';
 import { guestSearchFrom, withGuestSearch } from './search-history';
 import { type AnchorHTMLAttributes, type MouseEvent, type ReactNode, useEffect, useMemo, useState } from 'react';
 
@@ -348,6 +349,7 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
   // All apps sections, their sort control and Show more went with it.
   const t = useMessages('auth');
   const th = useMessages('home');
+  const searchPlaceholder = useHomeSearchPlaceholder();
   const [query, setQuery] = useState('');
   // The project page replaces this component. Keep the query on the Home
   // history entry so Back restores this visit, independently of other tabs.
@@ -406,7 +408,7 @@ export function GuestDiscover({ apps, failed, hero, onRetry, signedIn = false, o
             data-guest-search=""
             value={query}
             onChange={(e) => changeQuery(e.target.value)}
-            placeholder={th('home:search.placeholder')}
+            placeholder={searchPlaceholder}
             aria-label={th('home:search.label')}
             className="h-11 min-w-0 flex-1 bg-transparent text-base text-zinc-900 outline-none placeholder:text-zinc-400 dark:text-zinc-100 dark:placeholder:text-zinc-500"
           />
