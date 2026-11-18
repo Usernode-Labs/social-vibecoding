@@ -67,6 +67,8 @@ export interface ThreadItem {
   approved?: boolean;
   /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
   ready?: boolean;
+  /** A change underway that is built and checked, whether its checks pass or fail: its author may put it up for a vote. */
+  promotable?: boolean;
   at?: string | null;
   replies: number;
   folded?: FoldedReply[];

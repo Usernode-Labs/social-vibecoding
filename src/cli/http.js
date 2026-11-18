@@ -61,6 +61,12 @@ async function readLimitedJson(response, maxResponseBytes = MAX_RESPONSE_BYTES) 
   }
 }
 
+// Seconds the server may hold a request before answering what it knows:
+// five under the deadline, so the answer arrives before the abort.
+function preferWaitSeconds(deadlineMs) {
+  return Math.max(1, Math.floor((deadlineMs - 5000) / 1000));
+}
+
 async function requestJson(origin, pathname, {
   method = 'GET',
   body,
@@ -88,6 +94,10 @@ async function requestJson(origin, pathname, {
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        // A route that waits for its work (a sync with main) answers 202,
+        // still running, before this request's own deadline aborts it
+        // (services/prefer-wait.js).
+        Prefer: `wait=${preferWaitSeconds(deadlineMs)}`,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
@@ -144,4 +154,5 @@ module.exports = {
   retryAfterSeconds,
   readLimitedJson,
   requestJson,
+  preferWaitSeconds,
 };

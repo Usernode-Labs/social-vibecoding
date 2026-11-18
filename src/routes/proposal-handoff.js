@@ -876,6 +876,29 @@ function testsSummary(tests) {
   return lines.join('\n');
 }
 
+// What every submit records, whichever way its head reached the branch: the
+// durable history, the local test results as one summary, and the spec frozen
+// against the head. Answers the spec the revision carries.
+async function recordSubmission(pool, session, input) {
+  await insertHistory(pool, session.id, input.history);
+  const summary = testsSummary(input.tests);
+  if (summary) {
+    const summaryId = crypto.createHash('sha256').update(summary).digest('hex').slice(0, 16);
+    await insertHistory(pool, session.id, [{
+      id: `tests:${input.headSha}:${summaryId}`,
+      kind: 'summary',
+      phase: 'test',
+      content: summary,
+    }]);
+  }
+  const spec = input.spec || session.spec_md;
+  if (input.spec) {
+    await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
+  }
+  await snapshotSpec(pool, session.id, spec, input.headSha);
+  return spec;
+}
+
 async function snapshotSpec(pool, sessionId, content, commitSha = null) {
   const { rows: latestRows } = await pool.query(
     `SELECT version, content FROM chat_session_specs
@@ -969,6 +992,74 @@ function proposalHandoffRoutes(config) {
   const pool = getPool(config);
   const proposalJson = express.json({ limit: '512kb' });
   const commitUploadJson = express.json({ limit: COMMIT_UPLOAD_JSON_LIMIT });
+
+  // A build submitted for a head that was pushed to the proposal branch with
+  // plain git rather than uploaded. Homeroom never saw that commit's files,
+  // but it is on the bot-owned branch, which is what a sync with main pushes
+  // to and then adopts (services/cli-handoff-sync.js); this adopts it the
+  // same way, so the new head is the proposal's revision, its checks start,
+  // and a promoted one's approvals are settled by the reviewed-head rule.
+  // Only the branch's live head is adopted, and only one that descends from
+  // the base and from the revision it replaces: a force push that drops
+  // reviewed work is refused, as it is for an upload. Answers null when
+  // there is nothing to adopt, so the caller refuses as before.
+  async function adoptPushedHead(session, input) {
+    if (!['active', 'promoted'].includes(session.status)) return null;
+    // An uploaded commit not submitted yet is the next revision; a different
+    // head is not it.
+    if (hasUnsubmittedUpload(session)) return null;
+    const repo = repoCoordinates(session);
+    if (!github.isEnabled() || !repo || !session.branch_name) return null;
+    try {
+      const liveHead = await github.getBranchSha(repo.owner, repo.repo, session.branch_name);
+      if (String(liveHead || '').toLowerCase() !== input.headSha) return null;
+      const fromBase = await github.compareCommitAncestry(
+        repo.owner, repo.repo, session.handoff_base_sha, input.headSha
+      );
+      if (fromBase.status !== 'ahead' || fromBase.aheadBy < 1) {
+        return { status: 409, body: { error: 'head_not_descendant_of_base' } };
+      }
+      const previousHead = currentProposalBranchHead(session);
+      if (previousHead && previousHead !== input.headSha) {
+        const fromPrevious = await github.compareCommitAncestry(
+          repo.owner, repo.repo, previousHead, input.headSha
+        );
+        if (fromPrevious.status !== 'ahead' || fromPrevious.aheadBy < 1) {
+          return { status: 409, body: { error: 'head_not_descendant_of_previous' } };
+        }
+      }
+    } catch (err) {
+      log.warn('proposal-handoff', 'Pushed head read failed', {
+        sessionId: session.id, ...github.describeGithubError(err),
+      });
+      return { status: 503, body: githubBudget.githubUnavailableBody(err) };
+    }
+    const spec = await recordSubmission(pool, session, input);
+    const adopted = await require('../services/cli-handoff-sync').reconcileCliHandoffSync({
+      config, pool, session: { ...session, spec_md: spec }, newHead: input.headSha,
+    });
+    if (!adopted.ok) {
+      return { status: 409, body: {
+        error: adopted.reason || 'session_state_changed',
+        message: 'The proposal branch changed while its pushed head was being adopted. Read its status and submit the head it reports.',
+      } };
+    }
+    const shotsApplied = await applyShotsRevision({
+      pool, config, session, headSha: input.headSha,
+      visibleChanges: input.visibleChanges,
+      headChanged: currentCheckedHead(session) !== input.headSha, pin: 'handoff',
+    });
+    const promoted = session.status === 'promoted';
+    return { status: 202, body: {
+      ok: true,
+      ...(promoted ? { state: 'promoted', status: 'promoted', revisionState: 'deploying' } : { status: 'deploying' }),
+      sessionId: Number(session.id),
+      headSha: input.headSha,
+      adoptedPushedHead: true,
+      ...shotsResponse(shotsApplied, session),
+      webPath: changeHashPath(session.app_slug, session.id),
+    } };
+  }
 
   // ── Advancing a proposal from its author's fork (#1054) ──────────────
   //
@@ -1576,9 +1667,13 @@ function proposalHandoffRoutes(config) {
         // that Homeroom never received through proposal_push_commit.
         if (!session.handoff_uploaded_sha
             || session.handoff_uploaded_sha !== input.headSha) {
+          // A commit pushed to the proposal branch with plain git is on the
+          // branch already: adopted as a sync with main adopts its push.
+          const pushed = await adoptPushedHead(session, input);
+          if (pushed) return res.status(pushed.status).json(pushed.body);
           return res.status(409).json({
             error: 'head_not_uploaded',
-            message: 'Upload this exact local commit with proposal_push_commit before submitting it for staging.',
+            message: 'Upload this exact local commit with proposal_push_commit, or push it to the proposal branch, before submitting it for staging.',
           });
         }
         if (revisionKind === 'proposal') {
@@ -1610,22 +1705,7 @@ function proposalHandoffRoutes(config) {
               });
             }
 
-            await insertHistory(pool, session.id, input.history);
-            const summary = testsSummary(input.tests);
-            if (summary) {
-              const summaryId = crypto.createHash('sha256').update(summary).digest('hex').slice(0, 16);
-              await insertHistory(pool, session.id, [{
-                id: `tests:${input.headSha}:${summaryId}`,
-                kind: 'summary',
-                phase: 'test',
-                content: summary,
-              }]);
-            }
-            const spec = input.spec || session.spec_md;
-            if (input.spec) {
-              await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
-            }
-            await snapshotSpec(pool, session.id, spec, input.headSha);
+            const spec = await recordSubmission(pool, session, input);
             // The upload is the branch's head (read above) and the head people
             // vote on; this submit is what hands it to the checks, so the
             // checks need not be on it yet. Requiring them to be deadlocked a
@@ -1738,22 +1818,7 @@ function proposalHandoffRoutes(config) {
             return res.status(503).json(githubBudget.githubUnavailableBody(err));
           }
 
-          await insertHistory(pool, session.id, input.history);
-          const summary = testsSummary(input.tests);
-          if (summary) {
-            const summaryId = crypto.createHash('sha256').update(summary).digest('hex').slice(0, 16);
-            await insertHistory(pool, session.id, [{
-              id: `tests:${input.headSha}:${summaryId}`,
-              kind: 'summary',
-              phase: 'test',
-              content: summary,
-            }]);
-          }
-          const spec = input.spec || session.spec_md;
-          if (input.spec) {
-            await pool.query(`UPDATE chat_sessions SET spec_md = $1, spec_html = NULL WHERE id = $2`, [input.spec, session.id]);
-          }
-          await snapshotSpec(pool, session.id, spec, input.headSha);
+          const spec = await recordSubmission(pool, session, input);
           const adopted = await pool.query(
             `UPDATE chat_sessions
                 SET handoff_head_sha = $1,

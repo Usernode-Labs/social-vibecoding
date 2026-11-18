@@ -165,6 +165,7 @@ const notifications = require('../services/notifications');
 // A sync with main is the proposal machine's (src/workflow/proposal/,
 // branch.sync: services/sync-main.js runSyncWork); the routes ask for one.
 const syncMainSvc = require('../services/sync-main');
+const preferWait = require('../services/prefer-wait');
 const { persistBehindMain } = syncMainSvc;
 
 // Track sessions with active coding workers. The Set lives in a
@@ -2594,14 +2595,20 @@ function sessionRoutes(config) {
       // The proposal machine decides whether it may run (nobody else
       // working on it, not being merged) and runs it; this waits for it. A
       // sync already under way is joined.
+      // A client that cannot wait for the whole sync (the CLI aborts after
+      // 30 s) says how long it can (`Prefer: wait=N`), and is answered 202,
+      // still running, when that is up.
       const platform = require('../workflow/platform.ts');
+      const waitMs = preferWait.preferredWaitMs(req.get('prefer'));
+      preferWait.applied(res, waitMs);
       let out = await platform.requestSync({
         sessionId, appId: session.app_id, reason: 'person', userId: req.user.id, wait: true,
+        ...(waitMs != null ? { waitMs } : {}),
         source: { kind: 'route', name: 'sync-main' },
       });
       if (out.status === 'rejected' && out.reason === 'in_progress') {
         const running = await platform.syncUnderWay(sessionId);
-        const i = running ? await platform.waitForSync(sessionId, running.n) : null;
+        const i = running ? await platform.waitForSync(sessionId, running.n, waitMs ?? undefined) : null;
         out = { ...out, status: 'accepted', lastSync: i };
       }
       if (out.status === 'rejected') {

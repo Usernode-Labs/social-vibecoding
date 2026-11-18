@@ -6131,6 +6131,10 @@
     "text": "Built, and its checks pass.",
     "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building and its checks pass."
   },
+  "topic.thread.page.failingMine": {
+    "text": "Built, but its checks don't pass. It can go up for a vote, and it merges only once they pass.",
+    "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building, and its checks ran and failed."
+  },
   "topic.thread.page.proposeAction": {
     "text": "Put it up for a vote",
     "description": "Button on a change's card on a request's page, and its row in the card's ⋯ menu: puts the viewer's own built change up for the group to vote on."
