@@ -248,7 +248,7 @@ test('the block lives last and redeclares none of the counted wallpaper tokens',
 // The look's own colours, one set per mode. A rule for either mode names no
 // colour of the page, the cards, the bars or the sky: it reads these.
 const LOOK_VARS = ['--bl-page', '--bl-card', '--bl-raise', '--bl-label', '--bl-tile-ink', '--bl-bar', '--bl-side',
-  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-lift-home',
+  '--bl-side-end', '--bl-wash-a', '--bl-wash-b', '--bl-wash-c', '--bl-splotch-a', '--bl-splotch-b', '--bl-splotch-c', '--bl-lift-home',
   '--bl-sun', '--bl-sun-lit', '--bl-on-sun', '--bl-wash', '--bl-sky', '--bl-count', '--bl-on-count', '--bl-solid',
   '--bl-on-solid', '--bl-tint-sun', '--bl-tint-sky', '--bl-tint-leaf', '--bl-on-tint', '--bl-edge', '--bl-pic-line',
   '--bl-lift', '--bl-raise-edge', '--bl-field-edge', '--bl-pill-edge', '--bl-pill-edge-down',
@@ -636,7 +636,10 @@ test('the page is the standard wallpaper\'s washes in the look\'s own tints, and
     const [r, g, b] = valueOf(dark, name).split(',').map(Number);
     assert.ok(b > g && g > r, `${name} stays a blue round the dark page`);
   }
-  const ground = ruleFor('body:has(#platform-tabs)').filter((rule) => /--look-washes:/.test(rule.body));
+  // The shared rules, which dark wears; light lays THE SPLOTCHES over them
+  // (the next test).
+  const ground = ruleFor('body:has(#platform-tabs)')
+    .filter((rule) => rule.selectors[0].startsWith(EITHER) && /--look-washes:/.test(rule.body));
   assert.equal(ground.length, 2, 'the phone\'s three washes, and from 640px the seven');
   const wide = ground[1].body;
   for (const at of ['circle at calc(100% - 92px) 115px', 'ellipse 38vw 36vh at 24% 20%', 'ellipse 34vw 28vh at 90% 32%']) {
@@ -646,6 +649,34 @@ test('the page is the standard wallpaper\'s washes in the look\'s own tints, and
   assert.match(ground[0].body, /background:\s*var\(--look-wallpaper\);/);
   assert.match(ground[0].body, /var\(--home-star, none\)/, 'the star falls back to nothing where the route rule does not define it');
   assert.match(ruleFor('body::before')[0].body, /background:\s*var\(--look-wallpaper, var\(--bl-page\)\);/);
+});
+
+// EVAN'S WALLPAPER REVIEW, 18 Nov 2026 (option 5b, "scatter, lilac,
+// softer"): in light, six small splotches in the standard wallpaper's lilac,
+// pink and peach, scattered thin over the cream, sized against the screen.
+test('in light the cream wears six scattered lilac splotches, at every width, and dark keeps its washes', () => {
+  const light = ruleAt(LIGHT).body;
+  assert.equal(valueOf(light, '--bl-splotch-a'), '229, 216, 239', 'the standard wallpaper\'s lilac');
+  assert.equal(valueOf(light, '--bl-splotch-b'), '245, 215, 230', 'its pink');
+  assert.equal(valueOf(light, '--bl-splotch-c'), '252, 219, 212', 'its peach');
+  const rule = ruleAt(`${LIGHT} body:has(#platform-tabs)`);
+  assert.ok(rule, 'one light-only rule lays the splotches over the shared washes');
+  assert.equal(ruleFor('--bl-splotch').length, 0, 'no selector names them');
+  assert.equal(lookRules().filter((r) => /var\(--bl-splotch-/.test(r.body)).length, 1,
+    'only that light rule reads them: dark keeps its washes round the navy');
+  const washes = valueOf(rule.body, '--look-washes');
+  assert.equal((washes.match(/radial-gradient\(circle at /g) || []).length, 6, 'six splotches');
+  for (const at of ['24% 14%', '96% 30%', '36% 58%', '86% 86%', '4% 84%', '72% 4%']) {
+    assert.ok(washes.includes(`circle at ${at}, rgba(var(--bl-splotch-`), `a splotch at ${at}`);
+  }
+  assert.match(washes, /rgba\(var\(--bl-splotch-a\), 0\.39\) 6\.44vmin, rgba\(var\(--bl-splotch-a\), 0\.195\) 17\.17vmin, rgba\(var\(--bl-splotch-a\), 0\) 27\.9vmin/,
+    'faint, half by the middle stop, gone at the edge');
+  assert.doesNotMatch(washes, /\d(px|vw|vh)\b/, 'sized in vmin, so a splotch keeps its size against the screen');
+  assert.ok(/var\(--bl-page\)$/.test(washes), 'on the cream');
+  // After the 640px rule in the sheet, so the one set holds at every width.
+  const block = lookBlock();
+  assert.ok(block.indexOf(`${LIGHT} body:has(#platform-tabs) {`) > block.indexOf('ellipse 34vw 28vh at 90% 32%'),
+    'the light rule follows the 640px washes');
 });
 
 test('Home takes Standard (WIP)\'s New project button and Needs you card, in the look\'s colours', () => {
@@ -673,18 +704,37 @@ test('Home takes Standard (WIP)\'s New project button and Needs you card, in the
   assert.match(at('#home-screen .home-main > #home-join-section').body, /order:\s*6;/);
 });
 
-test('Needs you stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
+test('Recent threads stands beside Pinned apps on a wide screen, and is a sideways row of cards on a phone', () => {
   const block = lookBlock();
   const at = (sel) => ruleAt(`${EITHER} ${sel}`);
   // Only while the card and the apps section are both drawn: otherwise Home is one column as it was.
   const BOTH = '#home-screen:has(#home-needs-card):has(#home-apps-section:not([hidden]))';
-  const wide = block.slice(block.indexOf('NEEDS YOU BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
-  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('NEEDS YOU BESIDE PINNED APPS')) > 0, 'from 1280px');
+  const wide = block.slice(block.indexOf('RECENT THREADS BESIDE PINNED APPS'), block.indexOf('ON A PHONE NEEDS YOU IS A ROW OF CARDS'));
+  assert.ok(block.lastIndexOf('@media (min-width: 1280px) {', block.indexOf('RECENT THREADS BESIDE PINNED APPS')) > 0, 'from 1280px');
   assert.match(at(`${BOTH} .home-body-fill`).body, /display:\s*grid;[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 320px;/);
   assert.match(at(`${BOTH} .home-main`).body, /display:\s*contents;/);
   assert.match(at('#home-screen:has(#home-needs-card) .home-main > #home-apps-section:not([hidden])').body, /grid-column:\s*1;\s*grid-row:\s*1;/);
-  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body, /grid-column:\s*2;\s*grid-row:\s*1;/);
-  assert.match(at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-rows > li:nth-child(n + 6)').body, /display:\s*none;/, 'the first five; the heading opens the rest');
+  const beside = at('#home-screen:has(#home-apps-section:not([hidden])) .home-row > .home-aside:has(#home-needs-card)').body;
+  assert.match(beside, /grid-column:\s*2;\s*grid-row:\s*1;/);
+  // Pinned apps alone sets the row's height: the column stretches to it and
+  // holds its rows to it, so the number of rows the card draws cannot change
+  // the box it was worked out from.
+  assert.match(beside, /contain:\s*size;/, 'the column adds no height of its own to the row');
+  assert.match(beside, /min-height:\s*200px;/, 'a floor of a heading and about two rows');
+  assert.match(beside, /overflow:\s*hidden;/);
+  // A short list ends after its last row instead of matching Pinned apps' height.
+  const card = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card').body;
+  const panel = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card > .wip-panel').body;
+  assert.doesNotMatch(card, /flex:\s*1 1 auto;/, 'the card is its own height');
+  assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
+  assert.match(card, /flex:\s*none;/);
+  assert.match(panel, /flex:\s*none;/);
+  // The last row says how many more there are, in the action's colour.
+  assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
+  const more = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more').body;
+  assert.match(more, /min-height:\s*3\.25rem;/);
+  assert.match(more, /font-size:\s*15px;\s*font-weight:\s*650;/);
+  assert.match(more, /color:\s*var\(--wip-ink-action\);/);
   // The launcher grid is repainted, never moved: the card is the box around it.
   assert.match(at('#home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list').body, /^\s*background-color:\s*transparent;\s*box-shadow:\s*none;\s*$/);
   assert.match(wide, /> \.home-area-label \+ div \{[\s\S]*?background-color:\s*var\(--bl-card\);/);

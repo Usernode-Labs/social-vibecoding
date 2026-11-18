@@ -156,8 +156,8 @@ export function HomeScreen() {
   const wip = skin === 'wip';
   // "Paper, simplified, with brand styling" (Drea's review of #6699) takes
   // two of Standard (WIP)'s pieces in its own colours (app.css, the brand
-  // look's HOME): New project as a button on the search row, and the Needs
-  // you card in a row of its own under Pinned apps.
+  // look's HOME): New project as a button on the search row, and the Recent
+  // threads card in a row of its own under Pinned apps.
   const brand = skin === 'brand';
   // The grid's trailing tile depends on the look (Home.hasSideCard): a look
   // picked while Home is up repaints it.
@@ -177,7 +177,9 @@ export function HomeScreen() {
   // agrees.
   const noApps = grid.ready && grid.view === 'grid' && !grid.editing
     && grid.items.length === 0 && !grid.create;
-  // Standard (WIP): the Needs you card rides Challenges' row.
+  // Standard (WIP): the Recent threads card rides Challenges' row. (Its
+  // component and file keep the names they had as the Needs you card; the
+  // look's CSS knows the section by `#home-needs-card`, #6816.)
   // Under Standard (WIP) it is mounted as soon as the look is known, not
   // when the grid is ready: the card holds its place from the first paint
   // (./needs-you-card.tsx). The brand look mounts it with the grid, as it did.
@@ -455,7 +457,7 @@ export function HomeScreen() {
         */}
         {frame ? null : <HomeSearchMake />}
         {/* Standard (WIP): Home is one column, and under Pinned projects the
-            Needs you card is a row of its own, then Challenges
+            Recent threads card is a row of its own, then Challenges
             (app.css, "STANDARD (WIP)"), at every width. */}
         {wip || brand ? (
           <div id="home-row" className="home-row">

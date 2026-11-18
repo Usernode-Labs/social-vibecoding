@@ -262,10 +262,15 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal(votes.length, 0, 'no vote needed');
     const decided = await pool.query('SELECT status, issue_number FROM bot_cards WHERE id = $1', [action.id]);
     assert.deepEqual(decided.rows[0], { status: 'done', issue_number: 901 });
-    const { rows: [ack] } = await pool.query(
-      'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
+    // 18 Nov 2026: one card per action. The card says what came of it, in
+    // place, and no message under it says it again.
+    const { rows: [last] } = await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
     );
-    assert.match(ack.content, /^\*\*Homeroom\*\* · request #901: Header covers the app\n\nMoved\. It's on Homeroom's own board now, with a link to it left on the original\. I closed the original on Ear trainer, since nobody else had joined in on it\.$/);
+    assert.equal(Number(last.id), Number(offered.messageId), 'nothing said under the card');
+    const outcome = (await read(offered)).metadata.homeroomBot.outcome;
+    assert.deepEqual([outcome.state, outcome.kind, outcome.issueNumber], ['done', 'filed', 901]);
+    assert.match(outcome.text, /^\*\*Homeroom\*\* · request #901: Header covers the app\n\nMoved\. It's on Homeroom's own board now, with a link to it left on the original\. I closed the original on Ear trainer, since nobody else had joined in on it\.$/);
     assert.equal((await tap(action, 'yes')).status, 409, 'decided once');
     assert.equal(gh.created.length, 1);
   });
@@ -293,10 +298,8 @@ test('#4239: moving a request about Homeroom itself to Homeroom\'s own board', {
     assert.equal(vote.payload.issueNumber, 7);
     assert.match(vote.payload.reason, /^Moved to Homeroom's own board as request #902 \(https:\/\/app\.test\/#app\/usernode-2d5619\/dev\/issues\/902\): it is about the Homeroom platform itself, not Ear trainer\.$/);
     assert.ok(systemMessages.some((m) => m.thread?.type === 'issue' && m.thread.ref === 7 && /proposed closing issue #7/.test(m.content)));
-    const { rows: [ack] } = await pool.query(
-      'SELECT content FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1', [opened.conversationId],
-    );
-    assert.match(ack.content, /The original on Ear trainer stays open until its group votes on closing it, because others wrote in its discussion\.$/);
+    const outcome = (await read(offered)).metadata.homeroomBot.outcome;
+    assert.match(outcome.text, /The original on Ear trainer stays open until its group votes on closing it, because others wrote in its discussion\.$/);
   });
 
   await t.test('each kind of involvement, and a comment on GitHub, sends it to a vote', async () => {
