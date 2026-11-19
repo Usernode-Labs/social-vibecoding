@@ -19,7 +19,7 @@ const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
-const { parseActivityAt } = require('../../../services/topochain/activity-time');
+const { activityTimePrecision, parseActivityAt } = require('../../../services/topochain/activity-time');
 const { computeOffchainColumns, resolveOffchainWeight } = require('../../../services/topochain/scoring');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
@@ -72,6 +72,9 @@ function formatActivityRow(r) {
     description: r.description,
     metadata: r.metadata,
     activity_at: iso(r.activity_at),
+    // 'day' for an activity saved with a date and no time of day: the admin
+    // screens then show the date alone, as the member lists do.
+    activity_time_precision: activityTimePrecision(r),
     added_by: r.added_by != null ? Number(r.added_by) : null,
     source: r.source,
     created_at: iso(r.created_at),
