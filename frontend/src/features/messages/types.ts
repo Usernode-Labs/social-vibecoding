@@ -957,7 +957,15 @@ export interface MessagesSnapshot {
   loadingOlder: boolean;
   listLoaded: boolean;
   error: string | null;
+  /**
+   * The list's `error` is only that Homeroom could not be reached and nothing
+   * was saved on this phone (the native-offline proposal): drawn in the
+   * ordinary colour, never red, since being offline is not a fault.
+   */
+  errorOffline?: boolean;
   threadError: string | null;
+  /** The same, for the open conversation's `threadError`. */
+  threadErrorOffline?: boolean;
   /**
    * Why the open conversation cannot be shown when trying again cannot change
    * it (QA 2026-09-24 Q16): `left`, the viewer left it in this tab (Back
