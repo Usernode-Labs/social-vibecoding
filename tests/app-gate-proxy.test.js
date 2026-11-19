@@ -14,6 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
 const net = require('node:net');
+const { brotliCompressSync } = require('node:zlib');
 
 const { createGate, HEALTH_PATH } = require('../scripts/app-gate');
 const { createActivity } = require('../src/services/gateway-activity');
@@ -36,6 +37,7 @@ const unavailableHosts = [];
 const wakingDecisions = new Map();
 const appRequests = [];
 const silent = { error() {}, warn() {} };
+const frameDoorHtml = '<!doctype html><title>door</title>';
 
 test.before(async () => {
   platform = http.createServer((req, res) => {
@@ -58,9 +60,14 @@ test.before(async () => {
     // The frame door page (src/services/edge-gate.js): a 401 page that says
     // who may frame it.
     if (uri.startsWith('/frame-door')) {
-      res.writeHead(401, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
-        'content-security-policy': "default-src 'none'; frame-ancestors https://apex.example" });
-      return res.end('<!doctype html><title>door</title>');
+      const headers = { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        'content-security-policy': "default-src 'none'; frame-ancestors https://apex.example" };
+      if (req.headers['accept-encoding']?.includes('br')) {
+        res.writeHead(401, { ...headers, 'content-encoding': 'br' });
+        return res.end(brotliCompressSync(frameDoorHtml));
+      }
+      res.writeHead(401, headers);
+      return res.end(frameDoorHtml);
     }
     if (uri.startsWith('/redirect')) {
       res.writeHead(302, { location: 'https://apex.example/__access/authorize?x=1', 'set-cookie': ['__Host-usernode_access=new; Path=/; Secure; HttpOnly'], 'x-secret': 'never relayed' });
@@ -175,7 +182,10 @@ test('it asks the platform the way Caddy forward_auth does, and says it is the K
 
 test('an allowed request reaches the app with the identity, and without the gate’s cookies', async () => {
   const r = await through('/ident', {
-    headers: { cookie: 'app=1; __Host-usernode_access=secret; __Host-usernode_anon=1; __Host-usernode_state=hop; theme=dark' },
+    headers: {
+      cookie: 'app=1; __Host-usernode_access=secret; __Host-usernode_anon=1; __Host-usernode_state=hop; theme=dark',
+      'accept-encoding': 'br, gzip',
+    },
   });
   assert.equal(asked[0].headers.cookie, 'app=1; __Host-usernode_access=secret; __Host-usernode_anon=1; __Host-usernode_state=hop; theme=dark',
     'the decision sees them all');
@@ -185,6 +195,7 @@ test('an allowed request reaches the app with the identity, and without the gate
   assert.equal(r.json.headers.cookie, 'app=1; theme=dark');
   assert.equal(r.json.headers.host, 'a.onhomeroom.com', 'the app sees its own host');
   assert.equal(r.json.headers['x-forwarded-host'], 'a.onhomeroom.com');
+  assert.equal(r.json.headers['accept-encoding'], 'br, gzip');
   assert.deepEqual(r.headers['set-cookie'], ['app=1; Path=/'], 'the app’s own response passes through');
 });
 
@@ -262,9 +273,17 @@ test('a refusal is the visitor’s answer, and only its safe headers travel', as
   const denied = await through('/deny');
   assert.equal(denied.status, 404);
   assert.equal(denied.text, 'Not found');
-  const door = await through('/frame-door', { headers: { 'sec-fetch-dest': 'iframe' } });
+  assert.deepEqual(appRequests, []);
+});
+
+test('a private iframe receives readable sign-in HTML when the visitor accepts compression', async () => {
+  const door = await through('/frame-door', {
+    headers: { 'sec-fetch-dest': 'iframe', 'accept-encoding': 'br, gzip' },
+  });
   assert.equal(door.status, 401, 'the frame door page, never the app');
-  assert.equal(door.text, '<!doctype html><title>door</title>');
+  assert.equal(door.text, frameDoorHtml);
+  assert.equal(asked[0].headers['accept-encoding'], 'identity');
+  assert.equal(door.headers['content-encoding'], undefined);
   assert.equal(door.headers['content-security-policy'], "default-src 'none'; frame-ancestors https://apex.example",
     'with the policy that says only the platform may frame it');
   assert.deepEqual(appRequests, []);

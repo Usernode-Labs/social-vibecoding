@@ -169,6 +169,8 @@ function createGate({
     delete headers.host;
     Object.assign(headers, {
       host: platform.host,
+      // The gate relays fallback bodies as-is, without Content-Encoding.
+      'accept-encoding': 'identity',
       'x-forwarded-host': String(req.headers.host || ''),
       'x-forwarded-method': req.method,
       'x-forwarded-uri': req.url,
