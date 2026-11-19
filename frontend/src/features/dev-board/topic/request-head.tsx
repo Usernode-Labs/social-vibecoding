@@ -757,8 +757,13 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // server stored and worded it (issue.standing; from an older server, the
   // track's own work state). A standing gone live never draws a vote, and a
   // build waiting its turn is Ready to build (thread-model.ts requestPill).
+  // Its word and tone are the standing's, as its requester or anyone else
+  // reads them; the thread's changes only add detail.
   const standing = useMemo(() => normalizeWorkState(r.standing) || track?.work || null, [r.standing, track]);
-  const pill = requestPill(layout, r.status.closed ? 'closed' : standing, (id) => translate(id));
+  const pill = requestPill(
+    layout, r.status.closed ? 'closed' : standing, (id, values) => translate(id, values),
+    (r.standing as { mine?: boolean } | null | undefined)?.mine !== false,
+  );
   // A plan a change in the thread was built from goes with that change.
   const { plans, unbuilt } = useMemo(() => plansByChange(specs, layout.changes), [specs, layout.changes]);
   // 1 Nov 2026 (one page per thread): its changes' replies are in its one

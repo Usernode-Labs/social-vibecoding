@@ -232,7 +232,12 @@ test('a live or merged standing never draws Vote', () => {
   assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_checks' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'approved');
   assert.equal(requestPill(layout, standing('going_live', { line: { code: 'github_wait' }, change: change({ voteOpen: false, githubHold: true }) })).key, 'going_live');
   // Its checks failing: not open for votes, so not drawn as up for one.
-  assert.equal(requestPill(layout, standing('checking', { line: { code: 'checks_failing' }, change: change({ voteOpen: false }) })), null);
+  // 19 Nov 2026, the one rule: drawn as the row says, in its blocked tone
+  // (it used to draw nothing at all).
+  const failing = requestPill(layout, standing('checking', { line: { code: 'checks_failing' }, change: change({ voteOpen: false }) }));
+  assert.equal(failing.key, 'checking');
+  assert.equal(failing.tone, 'blocked');
+  assert.equal(failing.spinner, undefined, 'nothing turns while its tests fail');
 
   // The Homeroom bot tab and the feeds: the Vote card leaves with the push.
   const { applyWorkState } = loadTsx(AI);
