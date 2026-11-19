@@ -286,9 +286,10 @@ test('staging ?demo=1 appends its mock requests, and no row carries a headless r
     // choices and the line saying what was chosen, and 9116 for #6581, the
     // request whose build failed twice with a reply under the first failure
     // note, and 9119 for #6867, the request whose build waits for building
-    // credit).
+    // credit, and 9111 for #6752, the request the bot read as filed on the
+    // wrong project, whose discussion carries the note and its close vote).
     // #6503: the similar-title fixture adds one ordinary request.
-    assert.strictEqual(body.issues.length, 29);
+    assert.strictEqual(body.issues.length, 30);
     assert.strictEqual(body.issues.find((i) => i.number === 900001).similar.number, 9006503);
     assert.ok(!body.issues.some((i) => i.number === 900015 || i.number === 900016),
       'the headless work-state mocks are gone');
