@@ -99,6 +99,10 @@
     "text": "Retry {{app}}",
     "description": "Accessible name of the Retry button on a tile whose app failed to build: tries building it again. {{app}} is the app's name."
   },
+  "grid.tile.opened": {
+    "text": "Opened {{when}}",
+    "description": "Small grey line under an app's name on a Pinned apps tile on Home, for an app the viewer used on this device in the last 30 days. {{when}} is a short relative time such as \"2h ago\" or \"just now\", counted from when they left the app. Keep it very short: the tile is narrow."
+  },
   "grid.tile.status.creating": {
     "text": "Spinning up...",
     "description": "Small status line under an app's name on its Home tile: the app is being set up and is not running yet."

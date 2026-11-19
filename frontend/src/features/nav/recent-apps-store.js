@@ -5,8 +5,8 @@
  * row under it in the desktop sidebar, so the strip's Recent apps went. The
  * sidebar still reads a name and a face from here, for a community whose app
  * is still running that the list of yours does not hold
- * (./rail-communities.tsx). Discover's "Opened recently on this device" switch
- * reads the times (../apps/browse.js, #4809).
+ * (./rail-communities.tsx). Home's Pinned apps tiles read the times, for
+ * "Opened 2h ago" under an app's name (../home/app-grid.tsx, #4025).
  *
  * ./parked-store.js keeps ONE app: "which app am I in the middle of", drawn
  * as the phone's Resume strip. The rail's Recents list asks a wider question,
@@ -120,6 +120,34 @@ export function readRecentApps(owner) {
  */
 export function recentAppEntries(owner) {
   return [...recentAppsStore.get().apps, ...readRecentApps(owner)];
+}
+
+/** How far back a tile still says when its app was opened. */
+export const RECENT_WINDOW_DAYS = 30;
+
+/**
+ * When each app in `entries` was last left, slug to time, within
+ * RECENT_WINDOW_DAYS: what a Pinned apps tile's "Opened 2h ago" says (#4025).
+ * The time is when the app was left, the one clock the list keeps. An entry
+ * with no time of its own (readRecentApps seeds one from the parked app) is
+ * left out: nobody knows when it was left. So is a time ahead of now, which
+ * is a clock that was wrong, not an app just left. A slug listed twice keeps
+ * its later time. Pure.
+ *
+ * @param {Array<RecentApp|null>} entries
+ * @param {number} [now]  Milliseconds; defaults to now. A parameter for the tests.
+ * @returns {Map<string, number>}
+ */
+export function recentAppTimes(entries, now) {
+  const at = Number.isFinite(now) ? now : Date.now();
+  const windowMs = RECENT_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+  const times = new Map();
+  for (const entry of entries || []) {
+    const left = entry && entry.at ? Date.parse(entry.at) : NaN;
+    if (!Number.isNaN(left) && left <= at && at - left <= windowMs
+      && !(times.get(entry.slug) >= left)) times.set(entry.slug, left);
+  }
+  return times;
 }
 
 /**

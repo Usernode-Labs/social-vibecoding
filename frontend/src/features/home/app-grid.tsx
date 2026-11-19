@@ -58,19 +58,21 @@
  * element (no `style` prop is passed), so there is no writer to race.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
 import { useLiveSkin } from '../../lib/skin';
+import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { buildLineTileClass } from '../first-session/build-line-words.js';
+import { recentAppsStore, recentAppTimes } from '../nav/recent-apps-store.js';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -165,12 +167,20 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
-function AppCardTile({ app, style, yours, live, editing, rich = false }: {
+function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null }: {
   /** Standard (WIP): under the name, the app's sentence and its contributors. */
   rich?: boolean;
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
+  /** When this account last left the app on this device, in milliseconds; null says nothing. */
+  openedAt?: number | null;
 }) {
   const t = useMessages('home');
+  // "Opened 2h ago" (#4025), in the caption lane a running app leaves empty:
+  // a status has that lane first. Never part of the first render: the list
+  // it is read from is empty until an effect fills it (recent-apps-store.js).
+  const opened = openedAt && !app.statusLabel && !app.buildLine
+    ? t('home:grid.tile.opened', { when: agoStamp(openedAt).text })
+    : '';
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -216,7 +226,9 @@ function AppCardTile({ app, style, yours, live, editing, rich = false }: {
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? listText([app.name, liveAppLabel()]) : app.name}
+      aria-label={live || opened
+        ? listText([app.name, ...(live ? [liveAppLabel()] : []), ...(opened ? [opened] : [])])
+        : app.name}
       aria-haspopup="menu"
       title={t('home:grid.tile.tip', { app: app.name })}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
@@ -421,6 +433,7 @@ function AppCardTile({ app, style, yours, live, editing, rich = false }: {
             ) : null}
           </>
         ) : null}
+        {opened ? <p className="app-card-status app-card-opened">{opened}</p> : null}
       </div>
     </div>
   );
@@ -441,6 +454,9 @@ export function AppGrid() {
   // Standard (WIP), lib/skin.ts: the tile also says what the app is.
   const rich = useLiveSkin() === 'wip';
   const live = useLiveAppSlugs();
+  // When each app was last left on this device, for the tiles' "Opened" line.
+  const { apps: recents } = useStoreState(recentAppsStore);
+  const openedTimes = useMemo(() => recentAppTimes(recents), [recents]);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // `grid-template-rows` is written to the ELEMENT rather than rendered as a
@@ -535,6 +551,7 @@ export function AppGrid() {
           live={live.includes(item.app.slug)}
           editing={state.editing}
           rich={rich}
+          openedAt={state.view === 'grid' && !item.app.demo ? openedTimes.get(item.app.slug) ?? null : null}
         />
       ))}
       {/*

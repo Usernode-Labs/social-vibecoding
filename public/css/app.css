@@ -4719,6 +4719,17 @@ html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-h
   font-size: 0.6875rem; /* 11px */
   line-height: 0.75rem; /* 12px */
 }
+/* "Opened 2h ago" (#4025): when you last left the app, in the caption lane
+   a running app leaves empty, so the row's fixed height does not move. One
+   line, muted. A phone's text lane (about 70px) is narrower than the words,
+   so the line reaches into the tile's own side padding before it is cut. */
+.app-card-opened {
+  margin-inline: -0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
 
 /* ── App icon tiles ────────────────────────────────────────
    The single treatment for every homescreen-style app icon tile:
@@ -6420,6 +6431,13 @@ html[data-skin-wip] .wip-filterbar > select {
   font-weight: 500;
   color: var(--wip-ink-muted);
 }
+/* When you last opened it: one more line of facts, in the row's tile. */
+html[data-skin-wip] #app-list .app-card-opened {
+  margin: 0.25rem 0 0;
+  font-size: var(--wip-meta-size);
+  line-height: 0.9375rem;
+  color: var(--wip-ink-muted);
+}
 
 /* ── A project's tile ───────────────────────────────────────── */
 /* From 1024px it is a row: the icon in the first column and, beside it, the
@@ -6436,7 +6454,7 @@ html[data-skin-wip] #app-list .app-card-title {
   font-weight: var(--wip-title-weight);
 }
 @media (max-width: 1023.98px) {
-  html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people) { display: none; }
+  html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people, .app-card-opened) { display: none; }
   html[data-skin-wip] { --home-cell-h: var(--wip-tile-h-stacked); }
   html[data-skin-wip] #app-list .app-card-title { min-height: 2.5em; }
 }
@@ -6458,6 +6476,12 @@ html[data-skin-wip] #app-list .app-card-title {
   html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { width: var(--wip-icon); height: var(--wip-icon); }
   html[data-skin-wip] #app-list > .app-card > .relative > .app-icon-tile { border-radius: var(--wip-icon-radius); font-size: var(--wip-icon-glyph); }
   html[data-skin-wip] #app-list .app-card-people { justify-content: flex-start; }
+  /* A tile that says when it was opened gives the sentence one line, so the
+     four lines still fit the row's height. */
+  html[data-skin-wip] #app-list > .app-card:has(.app-card-opened) .app-card-desc {
+    -webkit-line-clamp: 1;
+    line-clamp: 1;
+  }
   html[data-skin-wip] #app-list .app-card-title {
     -webkit-line-clamp: 1;
     line-clamp: 1;

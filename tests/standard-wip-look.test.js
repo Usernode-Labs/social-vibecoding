@@ -21,8 +21,8 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 const WIP_HIDES = [
   // Home has no Pinned communities section under the look.
   'html[data-skin-wip] #home-communities-section',
-  // Under 1024px a project's tile is its icon and name alone.
-  'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people)',
+  // Under 1024px a project's tile is its icon and name alone (so not when it was opened either, #4025).
+  'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people, .app-card-opened)',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
   // The board is by stage alone under the look (asked 18 Nov 2026): no By category / By stage switch.
