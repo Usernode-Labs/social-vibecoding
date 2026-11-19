@@ -31,6 +31,7 @@ type GrantView = {
   appSlug: string;
   revoked: boolean;
   spent: string;
+  spentCents?: number;
   cap: string;
   capValue: string;
   capCents: number;
@@ -173,8 +174,19 @@ export function GrantsListView({ phase, grants }: GrantsState) {
   if (!grants.length) {
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">{t('settings:grants.empty')}</p>;
   }
+  // #6512 item 6: what the apps spent between them, for the same day each
+  // row's own figure covers (the cap is daily, so the total is today's). A
+  // revoked app's spend from earlier today still counts: it was spent. With
+  // nothing spent and no app still allowed, a zero would say nothing.
+  const totalCents = grants.reduce((sum, g) => sum + (Number(g.spentCents) || 0), 0);
+  const showTotal = totalCents > 0 || grants.some((g) => !g.revoked);
   return (
     <>
+      {showTotal ? (
+        <p data-role="spend-total" className="text-xs font-medium text-zinc-600 dark:text-zinc-400">
+          {t('settings:grants.totalToday', { spent: (totalCents / 100).toFixed(2) })}
+        </p>
+      ) : null}
       {grants.map((g) => (
         g.revoked ? <RevokedRow key={g.appId} grant={g} /> : <GrantRow key={g.appId} grant={g} />
       ))}

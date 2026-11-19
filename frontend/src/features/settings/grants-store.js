@@ -22,6 +22,9 @@
  * that into the component would be a second place that decides what a cap
  * looks like.
  *
+ * `spentCents` is the same spend as a number, for the list's total across
+ * apps (#6512): a sum cannot be taken from formatted strings.
+ *
  * `appSlug` and `capCents` ride along for Re-enable (#1957): the re-grant
  * endpoint is keyed on slug, not app id, and the previous cap is what it
  * restores — a revoked row keeps both, so the view carries both.
@@ -34,7 +37,7 @@
  *
  * @typedef {{
  *   appId: number, appName: string, appSlug: string, revoked: boolean,
- *   spent: string, cap: string, capValue: string, capCents: number,
+ *   spent: string, spentCents: number, cap: string, capValue: string, capCents: number,
  *   showByok: boolean, allowByok: boolean,
  * }} GrantView
  * @typedef {{ phase: 'idle'|'loading'|'error'|'ready', grants: GrantView[] }} GrantsState
