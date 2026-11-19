@@ -2612,6 +2612,45 @@ test('only a row marked for Reconnect offers it, beside its Disconnect', () => {
   assert.match(html2, /min-h-\[44px\][^"]*text-violet-700/, 'a tinted action, not a pill');
 });
 
+// #6137: a person's own name for a connection.
+test('every connection offers Rename, and a named one keeps its tool\'s name on the row', () => {
+  const html2 = toolRows([
+    { id: '1', title: 'Work laptop', label: 'Work laptop', toolName: 'Claude (claude.ai)', detail: 'Last active 2 Jan', capabilities: null },
+    { id: '2', title: 'Claude (claude.ai)', label: null, toolName: 'Claude (claude.ai)', detail: 'Last active 1 Jan', capabilities: null },
+  ]);
+  const rename = message('settings:connectors.list.rename');
+  assert.equal((html2.match(new RegExp(`>${rename}<`, 'g')) || []).length, 2, 'one Rename a row');
+  assert.match(html2, /data-connector-rename="1"[^>]*aria-expanded="false"/);
+  assert.match(html2, new RegExp(`aria-label="${message('settings:connectors.list.renameNamed', { name: 'Work laptop' })}"`),
+    'which row it renames, for a screen reader');
+  assert.match(html2, />Work laptop</, 'the name leads the row');
+  assert.equal((html2.match(/data-connector-tool-name=""[^>]*>Claude \(claude\.ai\)</g) || []).length, 1,
+    'only the named row needs the tool\'s name under it: the other already leads with it');
+  assert.match(html2, /data-connector-rename="2"[^>]*min-h-\[44px\]/, 'a 44px target');
+  assert.doesNotMatch(html2, /data-connector-rename-form/, 'no editor until Rename is pressed');
+  assert.equal((html2.match(/>Disconnect</g) || []).length, 2);
+});
+
+test('the rename editor: the name in a field, the tool\'s name as its placeholder, Save and Cancel', () => {
+  const connection = { id: '1', title: 'Work laptop', label: 'Work laptop', toolName: 'Claude (claude.ai)', detail: 'Last active 2 Jan', capabilities: null };
+  const noop = () => {};
+  const form = (props) => renderComponent(CONNECTORS_LIST, 'ConnectionRenameForm', {
+    connection, value: 'Work laptop', busy: false, onChange: noop, onSave: noop, onCancel: noop, ...props,
+  });
+  const open = form();
+  assert.match(open, /^<form data-connector-rename-form="1"/);
+  assert.match(open, /<input[^>]*maxLength="60"[^>]*placeholder="Claude \(claude\.ai\)"[^>]*value="Work laptop"/i);
+  assert.ok(open.includes(`aria-label="${message('settings:connectors.rename.fieldLabel', { tool: 'Claude (claude.ai)' })}"`));
+  assert.match(open, new RegExp(`<button type="submit"[^>]*>${message('core:common.save')}<`));
+  assert.match(open, new RegExp(`<button type="button"[^>]*>${message('core:common.cancel')}<`));
+  assert.ok(open.includes(message('settings:connectors.rename.note', { tool: 'Claude (claude.ai)' })));
+  assert.doesNotMatch(open, /disabled/);
+  assert.equal((form({ busy: true }).match(/disabled=""/g) || []).length, 3, 'nothing can be pressed twice while it saves');
+  // Text a person typed is text: React escapes it, and nothing here renders HTML.
+  assert.match(form({ value: '<b>x</b>' }), /value="&lt;b&gt;x&lt;\/b&gt;"/);
+  assert.doesNotMatch(read(CONNECTORS_LIST), /dangerouslySetInnerHTML/);
+});
+
 test('settings.js publishes the connector cards rather than building them', () => {
   const render = settingsJs.slice(
     settingsJs.indexOf('    _renderConnectors() {'),

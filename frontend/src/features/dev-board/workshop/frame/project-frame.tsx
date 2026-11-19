@@ -484,43 +484,22 @@ export function ProjectWorkshopFrame({
   );
 }
 
-/** The board's own filters, as the kit's side column shows them (../../kanban-filters.tsx draws the same state as chips). */
-export interface AllItemsFilters {
-  /** How many filters the dialog holds. */
-  count: number;
-  /** Each active filter, with the key its × clears. */
-  chips: Array<{ key: string; label: string }>;
-  /** Assigned to you and Yours, or null signed out (there is no "you"). */
-  quick: { assignedToMe: boolean; yours: boolean } | null;
-  onOpen: () => void;
-  onDismiss: (key: string) => void;
-  onQuick: (key: 'assignedToMe' | 'yours') => void;
-}
-
 /**
- * All items (version 2 of the tour's s29 and s30): the kit's head, tabs and
- * side column around today's page. The tabs are its two groupings, with the
- * board's own search at their end; Show (Filters and the two quick filters)
- * and Order categories stand beside the list. The list itself (a card per
- * category, or the board by stage) is the product's own, in the content
- * column under this, wearing the look (app.css): it opens to its lanes,
- * holds its order across a re-sort and feeds the panel beside it, which a
- * second drawing would not.
+ * All items (version 2 of the tour's s29 and s30): the kit's head around
+ * today's page, with the board's own search under it. The page has one view,
+ * the board by stage (request 6708), so the kit draws no grouping tabs and
+ * nothing beside the list: the board has the page's width, and keeps its own
+ * filter chips over it. The board itself is the product's own, in the content
+ * column under this, wearing the look (app.css).
  */
 export function ProjectAllItemsFrame({
-  project, group, onGroup, query, querySeq, onQuery, filters, sort, ...head
+  project, query, querySeq, onQuery, ...head
 }: HeadProps & {
   project: string;
-  group: 'category' | 'stage';
-  onGroup: (key: 'category' | 'stage') => void;
   /** The board's search text, and the count that says it was cleared from outside (its chip's ×). */
   query: string;
   querySeq: number;
   onQuery: (next: string) => void;
-  /** Null where the board has no filters to show. */
-  filters: AllItemsFilters | null;
-  /** The order of the categories; null by stage, and where there are none to order. */
-  sort: { key: string; options: Array<{ key: string; label: string }>; onSort: (key: string) => void } | null;
 }) {
   useProjectFrameFlag();
   const t = useMessages('project');
@@ -529,65 +508,12 @@ export function ProjectAllItemsFrame({
   useEffect(() => { setText(query); }, [querySeq]); // eslint-disable-line react-hooks/exhaustive-deps
   const type = (next: string) => { setText(next); onQuery(next); };
   const placeholder = t('project:filters.search.placeholder');
-  const label = t('project:filters.search.label');
-  // Beside the categories only: by stage the board has the page's width, and keeps its own filter chips over it.
-  const side = group === 'category' && (filters || sort) ? (
-    <>
-      {filters ? (
-        <Sec label={t('project:frame.allItems.show')}>
-          <Card>
-            <Row
-              lead={<Lead icon="filter" tone={filters.count > 0 ? 'acc' : undefined} />}
-              title={t('project:filters.button.none')}
-              label={filters.count > 0 ? t('project:filters.button.active', { count: filters.count }) : undefined}
-              right={filters.count > 0 ? <Pill kind="act">{filters.count}</Pill> : undefined}
-              go
-              sm
-              onClick={filters.onOpen}
-            />
-            {filters.chips.length ? (
-              <div className={k('btnrow', 'chips', 'inrow')}>
-                {filters.chips.map((chip) => (
-                  <Btn key={chip.key} small kind="quiet" className="chip" aria-label={t('project:filters.chip.remove', { filter: chip.label })} onClick={() => filters.onDismiss(chip.key)}>
-                    {chip.label}<span aria-hidden="true">×</span>
-                  </Btn>
-                ))}
-              </div>
-            ) : null}
-            {filters.quick ? (
-              <>
-                <Row lead={<Lead icon={filters.quick.assignedToMe ? 'check' : 'user'} />} title={t('project:filters.quick.assignedToYou')} on={filters.quick.assignedToMe} pressed={filters.quick.assignedToMe} sm onClick={() => filters.onQuick('assignedToMe')} />
-                <Row lead={<Lead icon={filters.quick.yours ? 'check' : 'user'} />} title={t('project:filters.quick.yours')} on={filters.quick.yours} pressed={filters.quick.yours} sm onClick={() => filters.onQuick('yours')} />
-              </>
-            ) : null}
-          </Card>
-        </Sec>
-      ) : null}
-      {sort ? (
-        <Sec label={t('project:allItems.sort.label')}>
-          <Card>
-            {sort.options.map((option) => (
-              <Row key={option.key} lead={<span className={k('chk', 'round', sort.key === option.key && 'on')} aria-hidden="true"><Icon name="check" size={14} /></span>} title={option.label} on={sort.key === option.key} pressed={sort.key === option.key} sm onClick={() => sort.onSort(option.key)} />
-            ))}
-          </Card>
-        </Sec>
-      ) : null}
-    </>
-  ) : undefined;
   return (
-    <Frame data-project-frame="all-items" data-all-group={group}>
+    // `data-all-group` is what app.css lays the board out by; "stage" is the one value left.
+    <Frame data-project-frame="all-items" data-all-group="stage">
       <div className={k('inner')}>
         <Head title={t('project:workshop.allItems.title')} purpose={t('project:frame.allItems.purpose', { project })} />
-        <Tabs
-          tabs={[{ key: 'category', label: t('project:allItems.group.category') }, { key: 'stage', label: t('project:allItems.group.stage') }]}
-          current={group}
-          onPick={(key) => onGroup(key === 'stage' ? 'stage' : 'category')}
-          label={t('project:allItems.group.label')}
-          end={<Search flush value={text} onChange={type} placeholder={placeholder} label={label} />}
-        />
-        <Search only="p" value={text} onChange={type} placeholder={placeholder} label={label} />
-        {/* The work column is the product's own list, laid in under this (app.css): the kit draws the column beside it. */}
-        {side ? <div className={k('cols', 'beside')}><div className={k('stack', 'first')}>{side}</div></div> : null}
+        <Search value={text} onChange={type} placeholder={placeholder} label={t('project:filters.search.label')} />
       </div>
     </Frame>
   );

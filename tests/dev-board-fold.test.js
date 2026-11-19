@@ -1795,7 +1795,11 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // eight checks of its Agents rows (changes and work orders in flight) and
   // the Agents fold went with the section; "nothing folds" joined
   // messages.inbox. 706 leaves 174 slots.
-  checkCap.assertPinned(DAPP.tests.length, 706);
+  // 706 → 702: −4 (request 6708) All items is the board by stage alone: the
+  // By category / By stage switch's check, the two of the category cards
+  // (the themes deep link, the demo theme) went with them, and the head's
+  // second check joined workshop.grouping-ear. 702 leaves 178 slots.
+  checkCap.assertPinned(DAPP.tests.length, 702);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -50,7 +50,6 @@ import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
 import { publishDevActions } from './actions-store';
-import { publishWorkshopGroup } from './workshop/group-mode-store';
 import { publishInviteOffer, type InviteOffer } from './workshop/invite-offer';
 import {
   aiEnabledStore,
@@ -141,7 +140,6 @@ export interface DevBoardBridge {
   /** The Workshop's Private requests open private request `id` of `slug` (workshop/private-request-door.ts). */
   showPrivateRequest(slug: string, id: number): void;
   publishViewMode(mode: string): void;
-  publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
   publishInviteOffer(offer: InviteOffer | null): void;
   unmount(host: Element | null): void;
@@ -407,7 +405,6 @@ export const devBoardBridge: DevBoardBridge = {
   showPrivateRequest: (slug: string, id: number) => openPrivateRequest(slug, Number(id)),
 
   publishViewMode,
-  publishWorkshopGroup,
   publishInviteOffer,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,

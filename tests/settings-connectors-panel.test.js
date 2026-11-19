@@ -120,7 +120,7 @@ test('the fixtures cover every state the panel can be reviewed in', () => {
   for (const flag of [
     '1', 'connectors-claude', 'connectors-claude-shown',
     'connectors-chatgpt', 'connectors-unknown', 'connectors-spent', 'connectors-attention',
-    'connectors-reconnect',
+    'connectors-reconnect', 'connectors-renamed',
   ]) {
     assert.ok(demoConnectorState(flag), `?demo=${flag} resolves`);
   }
@@ -475,6 +475,91 @@ test('connectors-attention: the expired row is on its card, and only live rows c
   assert.equal(Settings._navStatusText('connectors'), '1 connected');
   assert.deepEqual(cases(nodes), { local: true, web: true, chat: true });
   assert.ok(hintLine(nodes), 'the Claude connection keeps the tip line');
+});
+
+// #6137: a person's own name for a connection leads its row, and the tool's
+// name stays on the row under it.
+test('connectors-renamed: the named row leads with its name and keeps the tool\'s', async () => {
+  const { tool } = await published('connectors-renamed');
+  const [named, plain] = tool('claude').connections;
+  assert.equal(named.title, 'Sample name: work laptop');
+  assert.equal(named.label, 'Sample name: work laptop');
+  assert.equal(named.toolName, 'Claude (claude.ai)');
+  assert.equal(plain.title, 'Claude (claude.ai)', 'an unnamed row is the tool\'s name, as before');
+  assert.equal(plain.label, null);
+  assert.equal(tool('claude').status, 'working', 'a name changes nothing about the card');
+});
+
+test('a name never moves a connection to another tool\'s card', async () => {
+  const row = { ...demoConnectorState('1').connectors[0], label: 'ChatGPT at work' };
+  const { tool } = await published(null, { connectors: [row], hint: null });
+  assert.equal(tool('claude').connections.length, 1, 'the card follows the tool, not the name');
+  assert.equal(tool('chatgpt').connections.length, 0);
+});
+
+function renameHarness(connectors, fetchImpl) {
+  const calls = [];
+  const h = harness({ connectors, hint: null }, {
+    fetch: async (url, init = {}) => {
+      calls.push({ url: String(url), init });
+      if (init.method === 'PATCH') return fetchImpl(url, init);
+      return { ok: true, status: 200, json: async () => ({ connectors, hint: null }), headers: { get: () => null } };
+    },
+  });
+  return { ...h, calls, status: h.nodes.get('connectors-status') };
+}
+
+test('Rename saves the trimmed name, reloads the list and says so', async () => {
+  const real = { ...demoConnectorState('1').connectors[0], demo: false };
+  const { Settings, calls, status } = renameHarness([real], async () => ({ ok: true, status: 200, json: async () => ({}) }));
+  await Settings._loadConnectors();
+  assert.equal(await Settings._renameConnector(real.id, '  Work   laptop '), true);
+  const sent = calls.find((call) => call.init.method === 'PATCH');
+  assert.equal(sent.url, `/api/me/connectors/${real.id}`);
+  assert.equal(sent.init.body, JSON.stringify({ label: 'Work laptop' }));
+  assert.equal(sent.init.credentials, 'same-origin');
+  assert.equal(calls.filter((call) => !call.init.method || call.init.method === 'GET').length, 2, 'the list is read again');
+  assert.equal(status.textContent, message('settings:connectors.rename.done'));
+});
+
+test('an empty name is sent as a clear, and the line says the name is gone', async () => {
+  const real = { ...demoConnectorState('1').connectors[0], demo: false, label: 'Work laptop' };
+  const { Settings, calls, status } = renameHarness([real], async () => ({ ok: true, status: 200, json: async () => ({}) }));
+  await Settings._loadConnectors();
+  assert.equal(await Settings._renameConnector(real.id, '   '), true);
+  assert.equal(calls.find((call) => call.init.method === 'PATCH').init.body, JSON.stringify({ label: null }));
+  assert.equal(status.textContent, message('settings:connectors.rename.cleared'));
+});
+
+test('a refused rename keeps the editor open: false, and the line says to try again', async () => {
+  const real = { ...demoConnectorState('1').connectors[0], demo: false };
+  const { Settings, status } = renameHarness([real], async () => ({ ok: false, status: 503, json: async () => ({}) }));
+  await Settings._loadConnectors();
+  assert.equal(await Settings._renameConnector(real.id, 'Work'), false);
+  assert.equal(status.textContent, message('settings:connectors.rename.failedRetry'));
+});
+
+test('a name over the cap is stopped on the page, with the cap in the line', async () => {
+  const real = { ...demoConnectorState('1').connectors[0], demo: false };
+  const { Settings, calls, status } = renameHarness([real], async () => { throw new Error('not reached'); });
+  await Settings._loadConnectors();
+  assert.equal(await Settings._renameConnector(real.id, 'x'.repeat(61)), false);
+  assert.equal(calls.some((call) => call.init.method === 'PATCH'), false);
+  assert.equal(status.textContent, message('settings:connectors.rename.tooLong', { max: 60 }));
+  assert.equal(Settings.CONNECTOR_LABEL_MAX, require('../src/routes/mcp-remote').CONNECTOR_LABEL_MAX, 'the page and the server agree on the cap');
+});
+
+test('a fixture row is renamed on the page only: no such connection exists to rename', async () => {
+  const fixture = demoConnectorState('1');
+  const { Settings, calls } = renameHarness(fixture.connectors, async () => { throw new Error('a fixture row never reaches the API'); });
+  const states = [];
+  Settings._publishConnectors = (next) => states.push(next);
+  await Settings._loadConnectors();
+  assert.equal(await Settings._renameConnector(fixture.connectors[0].id, 'Sample name'), true);
+  assert.equal(calls.some((call) => call.init.method === 'PATCH'), false);
+  const claude = states[states.length - 1].tools.find((entry) => entry.key === 'claude');
+  assert.equal(claude.connections[0].title, 'Sample name');
+  assert.equal(claude.connections[0].toolName, 'Claude (claude.ai)');
 });
 
 // #6137: Reconnect skips the steps a still-configured tool has already done.

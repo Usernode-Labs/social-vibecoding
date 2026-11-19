@@ -455,6 +455,11 @@
       "id": "activation-code-links",
       "sha256": "0d7cc779eb97c44a8cc0711711578c22a44d5768dce3816f4972f1cf880ea335",
       "schemaSha256": "171e331152418ea5efbbc2b753e9cf608d8e11fac678d70c8289993e94115f86"
+    },
+    {
+      "id": "connector-grant-labels",
+      "sha256": "2f09d3085823e17a1c6bcd6fdeacd3e2bc2b73c7a493cee0713588da57895470",
+      "schemaSha256": "2d144623d6019588b01826487597281fe6297b1e371781aea48b39c3afc325f7"
     }
   ]
 }

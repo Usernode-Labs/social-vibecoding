@@ -202,6 +202,16 @@ const themes = (list, extra) => ({
   at: Date.now(), themes: list, ...(extra || {}),
 });
 
+// THE CATEGORY PANE IS NOT REACHED IN THE PRODUCT (request 6708: All items is
+// the board by stage, with no switch), but its cards and lanes are still in
+// workshop.tsx. The cases that pin them draw the pane by answering for it
+// here, which nothing in the product does.
+function categoryPaneHtml(AppView, tab) {
+  const prev = AppView._getWorkshopGroup;
+  AppView._getWorkshopGroup = () => 'category';
+  try { return workshopHtml(AppView, tab); } finally { AppView._getWorkshopGroup = prev; }
+}
+
 // ── item keys ────────────────────────────────────────────────────────
 
 test('_workshopItemKey speaks the server\'s vocabulary', () => {
@@ -1299,7 +1309,7 @@ test('themes all start collapsed, and a deep link is what opens one', () => {
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13'] }]);
   // The first theme used to open itself. A lander whose every theme is shut
   // IS a list of headings, and a list of headings is what this screen is for.
-  const shut = workshopHtml(AppView, 'all');
+  const shut = categoryPaneHtml(AppView, 'all');
   assert.match(shut, /data-ws-theme="t"/);
   assert.ok(!shut.includes('dev-ws-theme-body'), 'nothing is opened for you');
   assert.ok(!shut.includes('dev-ws-theme-open'));
@@ -1307,12 +1317,12 @@ test('themes all start collapsed, and a deep link is what opens one', () => {
   // Which means the lanes are only reachable by tapping — so there is a URL
   // that reaches them, and the declared check for them rides it.
   AppView._workshopShot = 'themes';
-  const open = workshopHtml(AppView, 'all');
+  const open = categoryPaneHtml(AppView, 'all');
   assert.match(open, /dev-ws-theme dev-ws-theme-open/);
   assert.match(open, /data-ws-lane="open"[\s\S]{0,400}?class="dev-ws-wrow dev-ws-brow"/);
   assert.ok(!open.includes('dev-feed-entry'), 'the theme only, its items the board\u2019s rows: nothing unfolds in place (#4486)');
-  const check = dapp.tests.find((t) => /dev-ws-theme-body/.test(t.expectSelector || ''));
-  assert.match(check.path, /shot=themes/);
+  // No declared check rides it any more: the pane is not on a page (request 6708).
+  assert.ok(!dapp.tests.some((t) => /dev-ws-theme-body|shot=themes/.test(`${t.expectSelector || ''} ${t.path || ''}`)));
 });
 
 test('What happened is one card under its own label, with Mark all seen beside the label', () => {
@@ -1445,7 +1455,7 @@ test('a quiet theme is not told it has never been built in', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12', 'issue:13', 'session:78'] }]);
-  const html = workshopHtml(AppView, 'all');
+  const html = categoryPaneHtml(AppView, 'all');
   // "nobody building yet" said something the data cannot know: the condition
   // is only that nothing is in flight RIGHT NOW, so a theme that shipped a
   // dozen changes read identically to one nobody has ever touched.
@@ -1455,7 +1465,7 @@ test('a quiet theme is not told it has never been built in', () => {
   // …and with nothing shipped either, it says only what it knows.
   AppView._merged = [];
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
-  assert.match(workshopHtml(AppView, 'all'), /1 involved · nothing in flight right now/);
+  assert.match(categoryPaneHtml(AppView, 'all'), /1 involved · nothing in flight right now/);
 });
 
 // ── the stylesheet has to PARSE, not merely contain the right text ───
@@ -1982,7 +1992,7 @@ test('a theme head counts its people AND how much is still open in it', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'issue:13', 'session:34', 'session:78'] }]);
-  const html = workshopHtml(AppView, 'all');
+  const html = categoryPaneHtml(AppView, 'all');
   // Two issues open + one proposal in review = 3. The merge is NOT counted:
   // the number answers "how much is left in here", and shipped work is not.
   assert.match(
@@ -1997,14 +2007,14 @@ test('a theme wears the glyph the model chose, or its initial when there is none
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'Game Corner', icon: '🎮', items: ['issue:12'] }]);
-  assert.match(workshopHtml(AppView, 'all'), /<span class="dev-ws-theme-icon" aria-hidden="true">🎮<\/span>Game Corner/);
+  assert.match(categoryPaneHtml(AppView, 'all'), /<span class="dev-ws-theme-icon" aria-hidden="true">🎮<\/span>Game Corner/);
 
   // A row written before icons existed, or an answer the sanitiser rejected:
   // the initial on the name's own swatch, which reads as chosen where a
   // hashed-from-the-name emoji would be stable and meaningless.
   AppView._workshopThemes = themes([{ id: 't', name: 'Game Corner', items: ['issue:12'] }]);
   assert.match(
-    workshopHtml(AppView, 'all'),
+    categoryPaneHtml(AppView, 'all'),
     /class="dev-ws-theme-icon dev-ws-theme-icon-letter"[^>]*>G<\/span>Game Corner/,
   );
 });
@@ -2017,7 +2027,7 @@ test('"Shipped this week" opens folded, so a theme opens on what still needs som
   // deep link that opens one. It names a theme and no row, which is exactly
   // the state this is about.
   AppView._workshopShot = 'themes';
-  const html = workshopHtml(AppView, 'all');
+  const html = categoryPaneHtml(AppView, 'all');
   assert.match(html, /data-ws-lane="shipped"/, 'the lane is still drawn — the fold is not a removal');
   assert.match(html, /<h4 class="dev-ws-lane-title" role="button" tabindex="0" aria-expanded="false">/,
     'and it is a disclosure, closed');
@@ -2131,7 +2141,7 @@ test('the Workshop renders its strips, its themes and their rows', () => {
   // Themes start shut; `?shot=themes` is the URL that opens one with every
   // row in it still folded, which is what the lanes below are asserted on.
   AppView._workshopShot = 'themes';
-  const html = workshopHtml(AppView, 'all');
+  const html = categoryPaneHtml(AppView, 'all');
   // The folded row is a row and not a card: the card's own Vote button sits
   // INSIDE it at the trailing edge, which is why the row is a div with the
   // button role and not a <button>. A proposal row lives in its theme's
@@ -2146,7 +2156,7 @@ test('the Workshop renders its strips, its themes and their rows', () => {
   // board and only the board.
   assert.ok(!html.includes('data-ws-dashboard'), 'the dashboard is not on this tab');
   assert.ok(!html.includes('data-discussion-row'), 'nor the discussion row');
-  assert.match(workshopHtml(AppView, 'workshop'), /data-ws-dashboard=""/, 'it is on the Workshop tab');
+  assert.match(categoryPaneHtml(AppView, 'workshop'), /data-ws-dashboard=""/, 'it is on the Workshop tab');
   assert.match(html, /data-ws-theme="t"/, 'the theme');
   assert.match(html, /Dark mode should stick\./, 'with its saying');
   // The deep link opens the first theme, and its rows are the board's rows
@@ -2170,7 +2180,7 @@ test('a folded row wears the card\u2019s own edge, number and glyph, and no chev
   AppView._proposals[0].pr_url = 'https://github.com/x/y/pull/41';
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', items: ['issue:12', 'session:34'] }]);
   AppView._workshopShot = 'themes';
-  const page = workshopHtml(AppView, 'all');
+  const page = categoryPaneHtml(AppView, 'all');
   // The fold lives on where it is still drawn, the hub's Your work (#4486:
   // By category and the board draw the Workshop's row); its rows drawn here
   // through the same fold, folded.
@@ -2753,23 +2763,23 @@ test('the footnote says what is actually happening to the grouping', () => {
     ...extra,
   });
   AppView._workshopThemes = cat({ pending: true });
-  let html = workshopHtml(AppView, 'all');
+  let html = categoryPaneHtml(AppView, 'all');
   assert.match(html, /drafting categories…/, 'pending on the grouping says so in the eyebrow');
   assert.match(html, /Categories are being drafted from the board now\./);
   assert.ok(!html.includes('regrouping…'), 'and does not claim a regroup of categories that do not exist yet');
 
   AppView._workshopThemes = cat({ lastError: 'boom' });
-  html = workshopHtml(AppView, 'all');
+  html = categoryPaneHtml(AppView, 'all');
   assert.match(html, /The last attempt to draft categories failed \(boom\)\./);
 
   AppView._workshopThemes = cat({});
-  html = workshopHtml(AppView, 'all');
+  html = categoryPaneHtml(AppView, 'all');
   assert.match(html, /No AI model is configured, so items are grouped by the categories the group has voted for\./);
   assert.ok(!html.includes('drafted once an AI model is available'), 'the misleading copy is gone');
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'placement', coverage: { total: 4, placed: 1, unplaced: 0, pending: 3 } });
-  html = workshopHtml(AppView, 'all');
+  html = categoryPaneHtml(AppView, 'all');
   assert.match(html, /placing new cards…/, 'pending placement on real categories says so');
   // The stamp has to sit inside `relStamp`'s relative window for that copy to
   // be the copy under test at all. Pinned here so a fixture that drifts out of
@@ -2794,7 +2804,7 @@ test('the footnote says what is actually happening to the grouping', () => {
 
   AppView._workshopThemes = themes([{ id: 't', name: 'Theming', description: 'd', saying: 's', items: ['issue:12'] }],
     { pending: true, pendingStage: 'discovery', unplaced: ['issue:13', 'session:34', 'session:78'], coverage: { total: 4, placed: 1, unplaced: 3, pending: 0 }, lastError: 'placement: boom' });
-  html = workshopHtml(AppView, 'all');
+  html = categoryPaneHtml(AppView, 'all');
   assert.match(html, /re-drafting categories…/, 'a pending discovery on real categories is a re-draft');
   assert.match(html, /3 cards did not fit a category and wait for the next draft\./);
   assert.match(html, /The last attempt failed \(placement: boom\); it is retried shortly\./);
@@ -3093,66 +3103,72 @@ test('no declared check asserts a card\'s text at the lander\'s own route', () =
 // Board view mode does, from the same published view model, so nothing about
 // the board is re-derived or duplicated.
 
-test('the grouping is a two-tab control, and category is what an untouched Workshop shows', () => {
-  const AppView = makeAppView();
-  seed(AppView);
-  AppView._workshopThemes = themes([
-    { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
-  ]);
-  assert.equal(AppView._getWorkshopGroup(), 'category');
-  const html = workshopHtml(AppView, 'all');
-  const cat = html.indexOf('data-ws-group="category"');
-  const stage = html.indexOf('data-ws-group="stage"');
-  assert.ok(cat > 0 && stage > cat, 'both tabs render, category first');
-  assert.match(html.slice(cat, cat + 400), /aria-selected="true"/,
-    'the category tab is the selected one by default');
-  assert.ok(html.includes('By category') && html.includes('By stage'), 'the labels');
-  // The tabs sit UNDER the general discussion and the summary strip, which is
-  // the whole arrangement: those are facts about the app, not about how you
-  // are sorting it, so they do not move when the pane does.
-  assert.ok(html.indexOf('data-ws-dashboard') < cat,
-    'the summary strip is above the tabs');
-  // ...and the category pane is unchanged: its own sort chips and its themes.
-  assert.ok(html.includes('dev-ws-themes'), 'the theme list still renders');
-  assert.ok(html.includes('dev-ws-sort-opts'), 'and its sort chips');
+test('All items is the board by stage, with no grouping switch, whatever was chosen before (request 6708)', () => {
+  // The page had a second view, by category, behind a "By category" / "By
+  // stage" switch. One view is left. A choice stored while the switch existed
+  // (every spelling of it) and a link that asks for a pane change nothing.
+  const cases = [
+    {}, { localStorage: { devWorkshopGroup: 'category' } }, { localStorage: { devWorkshopGroup: 'theme' } },
+    { localStorage: { devWorkshopGroup: 'stage' } }, { localStorage: { devWorkshopGroup: 'nonsense' } },
+    { location: { search: '?group=category', hash: '', href: 'http://localhost/?group=category' } },
+    { location: { search: '?group=theme', hash: '', href: 'http://localhost/?group=theme' } },
+  ];
+  let html = '';
+  for (const o of cases) {
+    const store = { ...(o.localStorage || {}) };
+    const AppView = makeAppView({ ...o, localStorage: store });
+    seed(AppView);
+    AppView._workshopThemes = themes([
+      { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
+    ]);
+    const label = JSON.stringify(o);
+    assert.equal(AppView._getWorkshopGroup(), 'stage', label);
+    html = workshopHtml(AppView, 'all');
+    assert.ok(!html.includes('data-ws-group') && !html.includes('dev-ws-group'), `no switch: ${label}`);
+    assert.ok(!html.includes('By category') && !html.includes('By stage'), `nor its words: ${label}`);
+    assert.ok(html.includes('id="dev-kanban-tabs"'), `the pipeline's steps: ${label}`);
+    assert.match(html, /class="dev-ws-board" data-ws-stage=""><[^>]*id="dev-kanban"/, `over the board's own columns: ${label}`);
+    assert.ok(!html.includes('dev-ws-themes') && !html.includes('dev-ws-sort-opts') && !html.includes('dev-ws-foot-note'),
+      `no category cards, order chips or grouping footnote: ${label}`);
+    assert.equal(store.devWorkshopGroup, (o.localStorage || {}).devWorkshopGroup, `and no choice is written: ${label}`);
+  }
 
-  // NO TITLE LINE IN THE HEAD. It used to open with an "All items" eyebrow,
-  // on the argument that the tabs named the CHOICE without naming what the
-  // choice was being made about. The selected TAB says it — it is the thing
-  // reading "All items", one line above — so the eyebrow was the same word
-  // twice and the head leads with the tools now.
+  // NO TITLE LINE IN THE HEAD. It used to open with an "All items" eyebrow;
+  // the page's own name says it.
   assert.ok(!html.includes('dev-ws-pane-eyebrow'), 'the eyebrow is gone');
   assert.ok(!/\.dev-ws-pane-eyebrow/.test(CSS), 'and so is the rule that styled it');
-  // THE STRIP LEADS THE PANE HEAD AT EVERY WIDTH (#852). It used to leave
-  // the head above 768px for an "ear" on the pane's right shoulder; the ear
-  // is gone, so the narrow render the suite draws (node has no `matchMedia`)
-  // is the one every width shows: the strip, then the tools.
-  // #4486: in ONE ROW with the page's way back and its name, which lead it.
-  assert.match(html, /class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead="">[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div class="dev-ws-group"[\s\S]*?<\/div><div id="dev-actions"/);
+  // #4486: ONE ROW, the page's way back and its name, then the tools.
+  assert.match(html, /class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead="">[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div id="dev-actions"/);
   assert.ok(!html.includes('dev-ws-pagehead-over'), 'and no "Workshop" eyebrow over the name');
-  // The declared checks run at the capture's 1280px viewport, so they now
-  // gate on the same arrangement: nothing names an ear any more.
   assert.ok(
     !dapp.tests.some((t) => /data-ws-ear/.test(t.expectSelector || '')),
     'no declared check names the ear',
   );
-  assert.ok(
-    dapp.tests.some((t) => /\.dev-ws-pane-head > \.dev-ws-allbar > \[data-ws-pagehead\]:first-child \+ \.dev-ws-group\[role="tablist"\]/.test(t.expectSelector || '')),
-    'one names the strip after the page\u2019s way back in the head\u2019s one row',
-  );
-  assert.ok(
-    dapp.tests.some((t) => /\.dev-ws-allbar:not\(:has\(\.dev-ws-pagehead-over, \.dev-ws-eyebrow\)\) > \.dev-ws-group \+ #dev-actions/
-      .test(t.expectSelector || '')),
-    'and one names the tools straight after it, with no title line',
-  );
+  const head = dapp.tests.find((t) => t.id === 'workshop.grouping-ear');
+  assert.ok(head, 'the head\'s declared check keeps its id');
+  assert.ok(!/[?&]group=/.test(head.path), 'and asks for no pane');
+  assert.equal(head.expectText, 'Waiting for approval');
+  assert.ok(html.includes('Waiting for approval'), 'a step of the pipeline, which only the board draws');
+  assert.ok(head.expectSelector.includes('[data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes))'), 'it holds that no switch and no category list is drawn');
+  assert.ok(head.expectSelector.includes('.dev-ws-board[data-ws-stage] > #dev-kanban'), 'that the page is the board');
+  assert.ok(head.expectSelector.endsWith('> .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + #dev-actions'),
+    'and that the tools come straight after the page\'s way back, with no title line');
+  for (const t of dapp.tests) {
+    assert.ok(!/data-ws-group|\.dev-ws-group|\.dev-ws-themes \[|data-ws-theme=|shot=themes/.test(`${t.path || ''} ${t.expectSelector || ''}`.replace(head.expectSelector, '')),
+      `no other declared check walks the switch or the category cards: ${t.name}`);
+    assert.ok(!/^By (category|stage)$/.test(t.expectText || ''), `or reads its words: ${t.name}`);
+  }
+  const old = dapp.tests.find((t) => /[?&]group=category/.test(t.path || ''));
+  assert.ok(old && /\[data-ws-stage\] > #dev-kanban/.test(old.expectSelector), 'an old ?group=category link is checked to land on the board');
 
-  // The sort row's eyebrow leads with the count of NAMED categories —
-  // "Not yet grouped" is a holding pen, not one of them. (This fixture's
-  // themes are shaped for the tab assertions above and name no drawable
-  // card, so the count here is 0; the singular/plural agreement is pinned
-  // in the test below, against a board that has one.)
-  const sort = html.slice(html.indexOf('class="dev-ws-sort"'), html.indexOf('dev-ws-themes'));
-  assert.match(sort, /class="dev-ws-eyebrow">\d+ categor/);
+  // The switch is not in the sources, in any look.
+  assert.ok(!/GroupStrip|data-ws-group|_setWorkshopGroup/.test(WORKSHOP), 'the page draws none and sets none');
+  assert.ok(!/_setWorkshopGroup|_overrideWorkshopGroup|WORKSHOP_GROUP_KEY|devWorkshopGroup'/.test(APP_VIEW_SRC), 'app-view.js stores and reads no choice');
+  assert.match(APP_VIEW_SRC, /\n  _getWorkshopGroup\(\) \{ return 'stage'; \},\n/);
+  assert.ok(!/\.dev-ws-group/.test(CSS.replace(/\/\*[\s\S]*?\*\//g, '').replace(/:is\(\.dev-ws-pagehead, \.dev-ws-group\)/g, '')),
+    'and app.css styles none');
+  const frame = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dev-board/workshop/group-mode-store.ts'), 'utf8');
+  assert.match(frame, /export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'stage';/, 'the pane\'s store rests on the board');
 });
 
 test('the sort row reports the state of the grouping after the count', () => {
@@ -3161,40 +3177,28 @@ test('the sort row reports the state of the grouping after the count', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), source: 'category' };
-  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · grouped by category for now</);
+  assert.match(categoryPaneHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · grouped by category for now</);
   AppView._workshopThemes = { ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true };
-  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · re-drafting categories…</);
+  assert.match(categoryPaneHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · re-drafting categories…</);
   AppView._workshopThemes = {
     ...themes([{ id: 't', name: 'T', items: ['issue:12'] }]), pending: true, pendingStage: 'placement',
   };
-  assert.match(workshopHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · placing new cards…</);
+  assert.match(categoryPaneHtml(AppView, 'all'), /class="dev-ws-eyebrow">1 category · placing new cards…</);
 });
 
-test('"By stage" swaps the pane for the board\'s own columns, and keeps everything above it', () => {
-  const store = { devWorkshopGroup: 'stage' };
-  const AppView = makeAppView({ localStorage: store });
+test('All items draws the board\'s own columns, and keeps everything above it', () => {
+  const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([
     { id: 't1', title: 'Voting', items: [{ kind: 'issue', number: 12 }] },
   ]);
-  assert.equal(AppView._getWorkshopGroup(), 'stage');
   const html = workshopHtml(AppView, 'all');
-  // The board, rendered INSIDE the Workshop — the same node ids the standalone
-  // Board mode draws, because it is the same component.
+  // The board, rendered INSIDE the Workshop: the same node ids the standalone
+  // Board mode drew, because it is the same component.
   assert.ok(html.includes('id="dev-kanban"'), 'the board renders in the pane');
   assert.ok(html.includes('data-ws-stage'), 'inside the stage wrapper');
-  const stage = html.indexOf('data-ws-group="stage"');
-  assert.match(html.slice(stage, stage + 400), /aria-selected="true"/,
-    'and the stage tab is the selected one');
-  // The category pane is GONE, not merely hidden: two groupings of one board
-  // on screen at once is the thing the tabs exist to stop.
-  assert.ok(!html.includes('dev-ws-themes'), 'no theme list under the stage tab');
+  assert.ok(!html.includes('dev-ws-themes'), 'no category list');
   assert.ok(!html.includes('dev-ws-sort-opts'), 'and no category sort chips');
-  // The tiles and the discussion used to sit above this pane on the same
-  // scroll, and the assertion here was that switching grouping did not cost
-  // them. They are a TAB of their own now — the lander's three destinations
-  // are the bar at the bottom — so what has to hold is that the grouping
-  // choice is a control WITHIN one destination and does not move you off it.
   assert.ok(!html.includes('data-ws-dashboard'), 'the status strip is the Workshop page\'s');
   // #4417: the place bar names the Workshop over All items, its page;
   // #4486: the page's way back is in its pinned head under it.
@@ -3221,16 +3225,14 @@ test('the stage pane is the SAME board component, not a second one', () => {
   assert.match(WORKSHOP, /import \{ DevKanban, StageStrip, syncStrip \} from '\.\.\/card\/dev-kanban'/);
 });
 
-test('the board view model is built only for the pane that shows it', () => {
-  // `_kanbanView()` buckets, orders and filters every card on the board.
-  // Doing that on every Workshop repaint for a pane nobody is looking at is
-  // the regression this guards.
+test('the board view model is published on every Workshop repaint, before the mount', () => {
+  // All items is the board (request 6708), so there is no pane to guard the
+  // build behind any more.
   const src = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _rerenderWorkshop()'));
   const body = src.slice(0, src.indexOf('\n  _fmtCountdown('));
   const call = body.indexOf('AppView._kanbanView()');
   assert.ok(call > 0, '_rerenderWorkshop publishes the board');
-  const guard = body.lastIndexOf("if (group === 'stage')", call);
-  assert.ok(guard > 0 && guard < call, 'behind the stage guard');
+  assert.ok(!/if \(group === 'stage'\)|publishWorkshopGroup/.test(body), 'with no pane to ask about');
   // Published BEFORE the Workshop mounts: the board draws from inside the
   // Workshop's tree, so a store still holding the previous board would paint
   // one frame of it.
@@ -3258,68 +3260,41 @@ test('the tabs are no longer additive: the Board view mode retired onto them', (
   // torn out alongside a routing change.
   assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-kanban-board"><\/div>'/);
   assert.match(APP_VIEW_SRC, /body\.innerHTML = '<div id="dev-workshop"><\/div>'/);
-  assert.match(APP_VIEW_SRC, /_overrideWorkshopGroup\(group\) \{/,
+  assert.match(APP_VIEW_SRC, /_overrideWorkshopTab\(tab\) \{/,
     'the retired board ROUTE has a landing');
   const board = dapp.tests.find((t) => /board resolves onto the stage pane/.test(t.name || ''));
   assert.ok(board && /\[data-ws-stage\]/.test(board.expectSelector),
     'and a declared check proves that landing draws the columns');
 });
 
-test('the grouping preference lasts, and an unknown stored value is category', () => {
-  const store = {};
-  const AppView = makeAppView({ localStorage: store });
-  AppView._setWorkshopGroup('stage');
-  assert.equal(store.devWorkshopGroup, 'stage', 'persisted, and to localStorage');
-  assert.equal(AppView._getWorkshopGroup(), 'stage');
-  AppView._setWorkshopGroup('nonsense');
-  assert.equal(AppView._getWorkshopGroup(), 'category', 'an unknown mode falls back');
-  store.devWorkshopGroup = 'themes';
-  assert.equal(AppView._getWorkshopGroup(), 'category', 'and so does an unknown stored one');
-});
-
-test('a retired Board preference opens on the columns, not on the categories', () => {
+test('a retired Board preference opens on the columns', () => {
   // The other half of retiring the Board VIEW MODE. RETIRED_VIEW_MODES stops a
-  // stored 'kanban' naming a mode that no longer exists — but on its own it
-  // forgets what the viewer actually chose, which was the COLUMNS, and hands
-  // them the categories instead. The three board-shaped values therefore open
-  // on the stage pane.
+  // stored 'kanban' naming a mode that no longer exists, but on its own it
+  // forgets what the viewer actually chose, which was the COLUMNS. The three
+  // board-shaped values therefore open on All items, which is the board.
   for (const mode of ['kanban', 'pm', 'report']) {
     const AppView = makeAppView({ localStorage: { devViewMode: mode } });
     assert.equal(AppView._getViewMode(), 'workshop', `${mode} migrates to the one mode left`);
-    assert.equal(AppView._getWorkshopGroup(), 'stage', `${mode} still opens on the columns`);
+    assert.equal(AppView._workshopTab(), 'all', `${mode} still opens on the columns`);
   }
-  // The Workshop's own predecessors get its own default pane: those viewers
+  // The Workshop's own predecessors get its own default tab: those viewers
   // never chose columns.
   for (const mode of ['feed', 'list', 'workshop']) {
     const AppView = makeAppView({ localStorage: { devViewMode: mode } });
-    assert.equal(AppView._getWorkshopGroup(), 'category', `${mode} lands on the lander`);
+    assert.equal(AppView._workshopTab(), 'status', `${mode} lands on the lander`);
   }
-  // A grouping the viewer actually chose outranks the migration — it is read
-  // first, so the migration only ever fills a gap.
-  const chosen = makeAppView({
-    localStorage: { devViewMode: 'kanban', devWorkshopGroup: 'category' },
-  });
-  assert.equal(chosen._getWorkshopGroup(), 'category');
-  // READ-TIME, like every other migration here: nothing is written back, so
-  // the day they pick a pane that choice is what persists.
+  // READ-TIME, like every other migration here: nothing is written back.
   const store = { devViewMode: 'kanban' };
   const fresh = makeAppView({ localStorage: store });
-  assert.equal(fresh._getWorkshopGroup(), 'stage');
-  assert.ok(!('devWorkshopGroup' in store), 'the migration stores nothing');
+  assert.equal(fresh._workshopTab(), 'all');
+  assert.deepEqual(Object.keys(store), ['devViewMode'], 'the migration stores nothing');
 });
 
-test('reaching the retired Board takes BOTH answers: the All items tab and the stage pane', () => {
-  // THE BUG THIS GUARDS, which cost a full round of the merge gate. Those
-  // columns are the `stage` grouping OF THE `all` TAB. A first attempt set the
-  // grouping alone — and the lander then opens on its DEFAULT tab, where the
-  // grouping control is not rendered at all, so the pane never mounts and all
-  // 69 declared checks that select #dev-kanban on a board route failed at once.
-  // Every way in has to supply both halves, and the test above proves that
-  // ('all', 'stage') is what puts the board's own markup on screen verbatim.
-  const at = (o) => {
-    const A = makeAppView(o);
-    return [A._workshopTab(), A._getWorkshopGroup()].join('/');
-  };
+test('reaching the retired Board takes one answer: the All items tab, which is the board', () => {
+  // It took two while All items had a second pane, by category (and setting
+  // the pane alone once failed 69 declared checks at a go). Request 6708
+  // removed that pane, so the tab is the whole answer.
+  const at = (o) => makeAppView(o)._workshopTab();
   const loc = (search) => ({
     location: { search, hash: '', href: `http://localhost/${search}` },
   });
@@ -3327,95 +3302,27 @@ test('reaching the retired Board takes BOTH answers: the All items tab and the s
   // 1. The route alias, driven exactly as app.js's restoreFromHash drives it.
   const route = makeAppView({ localStorage: {} });
   route._overrideWorkshopTab('all');
-  route._overrideWorkshopGroup('stage');
-  assert.equal([route._workshopTab(), route._getWorkshopGroup()].join('/'),
-    'all/stage', '#app/<slug>/board');
+  assert.equal(route._workshopTab(), 'all', '#app/<slug>/board');
 
-  // 2. The retired deep link, which named one thing and meant two.
-  assert.equal(at(loc('?view=kanban')), 'all/stage', '?view=kanban');
+  // 2. The retired deep link.
+  assert.equal(at(loc('?view=kanban')), 'all', '?view=kanban');
 
   // 3. The stored preference of somebody who last left the Dev screen on it.
   for (const mode of ['kanban', 'pm', 'report']) {
-    assert.equal(at({ localStorage: { devViewMode: mode } }), 'all/stage', mode);
+    assert.equal(at({ localStorage: { devViewMode: mode } }), 'all', mode);
   }
 
   // ...and none of those three may drag anybody else onto the board.
-  assert.equal(at({ localStorage: {} }), 'status/category', 'the lander default');
-  assert.equal(at({ localStorage: { devViewMode: 'feed' } }), 'status/category',
+  assert.equal(at({ localStorage: {} }), 'status', 'the lander default');
+  assert.equal(at({ localStorage: { devViewMode: 'feed' } }), 'status',
     'the Workshop replaced feed: that viewer never chose columns');
 
-  // The parameters still being offered, and the viewer's own taps, outrank
-  // every hop above — each half independently.
-  assert.equal(at(loc('?view=kanban&ws=needs')), 'needs/stage', 'an explicit tab wins');
-  assert.equal(at(loc('?view=kanban&group=category')), 'all/category', 'an explicit pane wins');
+  // The parameter still being offered, and the viewer's own taps, outrank
+  // every hop above.
+  assert.equal(at(loc('?view=kanban&ws=needs')), 'needs', 'an explicit tab wins');
   assert.equal(at({
-    localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs', devWorkshopGroup: 'category' },
-  }), 'needs/category', 'and choices they have actually made win over the migration');
-});
-
-test('the grouping strip is the lander\'s own tab control, not a second vocabulary', () => {
-  // Two tab strips two rows apart on one screen. They were drawn in two
-  // vocabularies: the bar above in a raised track with a periwinkle selected
-  // pill, this one in a recessed `--dc-strip` rail with a hairline and a
-  // selected half painted in the plain sheet with a drop shadow. The geometry
-  // already agreed (round rail, 2px between the halves) — only the colour did
-  // not, which is the half a reader actually sees.
-  assert.match(CSS, /\.dev-ws-group \{[^}]*border-radius: 999px/);
-  assert.match(CSS, /\.dev-ws-group \{[^}]*background: var\(--dc-sheet-raise\)/,
-    'the same track surface as .dev-ws-tabtrack');
-  const track = /\.dev-ws-group \{([^}]*)\}/.exec(CSS);
-  assert.ok(track, 'the rail rule exists');
-  assert.ok(!/box-shadow/.test(track[1]), 'and no ring around it, as the bar has none');
-  // THE SELECTED HALF IS THE BAR'S OWN THREE TOKENS, so the two controls
-  // cannot drift apart the next time either is tuned. The bar spends them
-  // across two rules since #2063 — the ink on the selected tab, the fill and
-  // the hairline on the marker that slides between them — and this strip
-  // paints all three on the selected half itself. That difference is
-  // deliberate and is the whole of it: a two-state switch has neither the
-  // measuring machinery the sliding marker needs nor a use for it.
-  const on = /\.dev-ws-group-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
-  const barOn = /\.dev-ws-tab\[aria-selected="true"\] \{([^}]*)\}/.exec(CSS);
-  const marker = /\.dev-ws-tab-marker \{([^}]*)\}/.exec(CSS);
-  assert.ok(on && barOn && marker, 'all three rules exist');
-  assert.ok(on[1].includes('color: var(--lit-ink)'));
-  assert.ok(barOn[1].includes('color: var(--lit-ink)'), 'which is the bar\'s own ink');
-  for (const decl of ['background: var(--lit-tint)', 'box-shadow: inset 0 0 0 1px var(--lit-line)']) {
-    assert.ok(on[1].includes(decl), `the grouping tab carries \`${decl}\``);
-    assert.ok(marker[1].includes(decl), 'and so does the marker, which is where it comes from');
-  }
-  assert.ok(!/var\(--dc-sheet\)/.test(on[1]), 'the plain-sheet fill is gone');
-  // WHAT STAYS DIFFERENT IS THE WIDTH, and that is the real distinction from
-  // the sort chips a row below: full width of the reading column, split
-  // evenly. `flex: 1 1 0`, not `1 1 auto` — on `auto` the halves would be
-  // sized by their labels, so "By category" would take more than "By stage".
-  assert.match(CSS, /\.dev-ws-group-tab \{[^}]*flex: 1 1 0/);
-  assert.ok(!/\.dev-ws-group \{[^}]*align-self: flex-start/.test(CSS),
-    'and the rail itself is not shrunk to its content');
-  // A token that does not resolve is a silently wrong colour, not an error —
-  // and inside a box-shadow list one bad var() voids the whole declaration.
-  for (const token of ['--dc-sheet-raise', '--lit-tint', '--lit-ink', '--lit-line',
-    '--text-muted', '--text-primary']) {
-    assert.ok(CSS.includes(`${token}:`), `${token} is defined`);
-  }
-});
-
-test('?group=stage is a deep link to the pane, and a tap retires it', () => {
-  const store = {};
-  const AppView = makeAppView({
-    localStorage: store,
-    location: { search: '?group=stage', hash: '', href: 'http://localhost/?group=stage' },
-  });
-  assert.equal(AppView._getWorkshopGroup(), 'stage', 'the URL wins over the empty preference');
-  // The preference still wins once the viewer states one — otherwise ?group=
-  // would keep overriding every later tap, which is the bug `_setViewMode`
-  // already carries a comment about.
-  AppView._setWorkshopGroup('category');
-  assert.equal(AppView._getWorkshopGroup(), 'category', 'a tap retires the override');
-  assert.equal(store.devWorkshopGroup, 'category');
-  // A junk value is not a pane. The retired spelling 'category' IS one — it
-  // resolves to 'category' — but 'lanes' was never a grouping.
-  const junk = makeAppView({ location: { search: '?group=lanes', hash: '', href: 'http://x/' } });
-  assert.equal(junk._getWorkshopGroup(), 'category');
+    localStorage: { devViewMode: 'kanban', devWorkshopTab: 'needs' },
+  }), 'needs', 'and a choice they have actually made wins over the migration');
 });
 
 test('what app.css reads off the page\'s hosts is a class, never a :has() that looks inside them', () => {
@@ -3525,7 +3432,7 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
   // full-bleed overflows by its width and adds a horizontal scrollbar.
   // Comments stripped first — the block explains WHY 100vw was rejected, and
   // the prose naming it is not the declaration this forbids.
-  const block = CSS.slice(CSS.indexOf('.dev-ws-group {'), CSS.indexOf('.dev-ws-sort {'))
+  const block = stageRules
     .replace(/\/\*[\s\S]*?\*\//g, '');
   assert.ok(!/\d+vw/.test(block), 'no viewport-width full-bleed declaration');
   // #dev-body drops to 4px of side padding for the Workshop, which reads as
@@ -3542,7 +3449,7 @@ test('the stage pane runs edge to edge, and not by a 100vw full-bleed', () => {
 
 // ── The working pane: the controls, the switch, and what they act on ─────
 
-test('the toolbar renders inside the Workshop pane, above the tabs', () => {
+test('the toolbar renders inside the Workshop pane, above the board', () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([
@@ -3552,15 +3459,10 @@ test('the toolbar renders inside the Workshop pane, above the tabs', () => {
   const pane = html.indexOf('data-ws-pane');
   const head = html.indexOf('dev-ws-pane-head');
   const actions = html.indexOf('id="dev-actions"');
-  const tabs = html.indexOf('data-ws-group="category"');
-  const themesList = html.indexOf('dev-ws-themes');
+  const board = html.indexOf('data-ws-stage');
   assert.ok(pane > 0, 'the pane renders');
-  assert.ok(pane < head && head < tabs, 'the sticky head is the pane’s first child');
-  // THE TABS LEAD. They decide what the search is searching, so the control
-  // that sets the scope comes before the one that acts within it; the other
-  // way round the pane had to be read bottom-up.
-  assert.ok(tabs < actions, 'the tab strip sits above the toolbar');
-  assert.ok(actions < themesList, 'and both above what they act on');
+  assert.ok(pane < head && head < actions, 'the sticky head is the pane’s first child, the toolbar in it');
+  assert.ok(actions < board, 'above what it acts on');
   // The control the toolbar exists for: the search and the filters.
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'the filter host comes with it');
   // NOT the "+", which rode at the end of this row, then closed the tab
@@ -3578,44 +3480,38 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   AppView._workshopThemes = themes([{ id: 't1', name: 'Voting', items: ['issue:12'] }]);
   AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), q: 'nothing matches this' };
   const v = AppView._workshopView();
-  assert.equal(v.themes.length, 0, 'no theme has a row left to draw');
   assert.equal(v.meta.filtered, true);
   const html = workshopHtml(AppView, 'all');
-  // THE PANE STAYS. It was gated on having a theme to draw, so a search that
-  // matched nothing unmounted the whole pane — the grouping tabs, the "+",
-  // and the toolbar whose host the search field lives in. The one control
-  // that could undo the search left the screen with the rows, and the viewer
-  // was stuck on a board they could not widen back out.
+  // THE PANE STAYS. It was once gated on having something to draw, so a
+  // search that matched nothing unmounted the whole pane, the toolbar whose
+  // host the search field lives in with it. The one control that could undo
+  // the search left the screen with the rows.
   assert.ok(html.includes('data-ws-pane'), 'the pane renders');
   assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
   assert.ok(html.includes('data-place-bar="all"'), 'and the project\'s place bar above it');
-  assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
-  // The rows' place says why they are gone, UNDER the controls it is about.
-  assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
-  assert.ok(html.indexOf('id="dev-actions"') < html.indexOf('data-ws-empty'), 'beneath the toolbar');
-  assert.ok(html.indexOf('dev-ws-pane-body') < html.indexOf('data-ws-empty'), 'in the pane body');
-  // And nothing pretends there is a list: no sort row over an empty list, no
-  // "0 categories", no footnote about how they were drafted.
-  assert.ok(!html.includes('dev-ws-sort'), 'no sort row');
-  assert.ok(!html.includes('dev-ws-themes'), 'no empty theme list');
-  assert.ok(!html.includes('dev-ws-foot-note'), 'no grouping footnote');
-  // Widen the search back out and the list is back, the note gone.
+  // The board's columns say why they are empty, UNDER the controls it is
+  // about. (The category view had a note of its own for this; the board
+  // needs none, and a board with entries is not an empty board.)
+  assert.ok(html.indexOf('id="dev-actions"') < html.indexOf('data-ws-stage'), 'the columns are beneath the toolbar');
+  assert.match(html.slice(html.indexOf('data-ws-stage')), /No matching cards/);
+  assert.ok(!html.includes('data-ws-empty'), 'no empty-board note');
+  // Widen the search back out and the rows are back.
   AppView._kanbanFilters = AppView._defaultKanbanFilters();
   const back = workshopHtml(AppView, 'all');
-  assert.ok(back.includes('dev-ws-themes'), 'the themes return');
-  assert.ok(!back.includes('data-ws-empty'), 'and the note goes');
+  assert.ok(!back.includes('No matching cards'), 'the columns have their cards again');
   // The declared check runs this state in a browser: the pane opened already
   // narrowed to a search nothing matches, through `?q=` (app-view.js, where
   // the seed is consumed on the first load so it can never hold a cleared
-  // search). The note is what proves the search applied — without it the box
-  // alone would pass on a pane the URL never narrowed.
+  // search). The columns' words are what prove the search applied: without
+  // them the box alone would pass on a pane the URL never narrowed.
   const check = dapp.tests.find((t) => /[?&]q=/.test(t.path || ''));
   assert.ok(check, 'a declared check opens the pane narrowed by ?q=');
   assert.match(check.path, /[?&]ws=all\b/, 'on All items');
   assert.match(check.expectSelector, /\[data-ws-pane\] > \.dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search$/,
     'and expects the search box, in the pane head');
-  assert.equal(check.expectText, 'Nothing here matches the current search and filters.');
+  assert.equal(check.expectText, 'No matching cards');
+  assert.equal(message('changes:board.column.emptyFiltered'), 'No matching cards');
 });
 
 // ── #2915: the search and filters are All items' alone ──────────────────
@@ -3667,13 +3563,12 @@ test('#2915: a search narrows All items, and leaves Current status and Needs you
   assert.equal(v.dashboard.unclaimed, whole.dashboard.unclaimed);
 
   // Drawn: the hub and the Workshop tab blame no search, and the Workshop
-  // tab has its tiles; All items says why it is empty, under the controls
-  // that emptied it.
+  // tab has its tiles; All items' columns say why they are empty.
   const status = workshopHtml(AppView, 'status');
   const workshop = workshopHtml(AppView, 'workshop');
   assert.ok(workshop.includes('data-ws-dashboard'), 'the Workshop tab draws the dashboard');
   assert.doesNotMatch(status + workshop, /data-ws-empty/, 'and no empty note over either');
-  assert.match(workshopHtml(AppView, 'all'), /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
+  assert.match(workshopHtml(AppView, 'all'), /data-ws-stage=""[\s\S]*?No matching cards/);
 });
 
 test('#2915: while a search or filter is on, a dot on the way to All items says so, from everywhere but All items', () => {
@@ -3876,7 +3771,7 @@ test('#6111: an empty board offers the one action that starts the first change',
   const START = / data-ws-empty-start=""[^>]*>Start a change<\/button>/;
   const START_BOT = / data-ws-empty-start-bot=""[^>]*>Tell Homeroom bot what to change<\/button>/;
 
-  // All items, By category: the note, then one primary action.
+  // All items: the note, then one primary action.
   const category = workshopHtml(empty(), 'all');
   assert.match(category, /data-ws-empty=""[^>]*>Nothing on the board yet\. Press /, 'the note is unchanged');
   assert.match(category, START, 'with Start a change under it');
@@ -3891,25 +3786,26 @@ test('#6111: an empty board offers the one action that starts the first change',
   assert.match(bot, START_BOT, 'the bot door replaces the session');
   assert.doesNotMatch(bot, / data-ws-empty-start=""/, 'never both');
 
-  // By stage used to show only a column of "Nothing here yet"s: the note and
-  // its action now lead the columns.
-  const stageApp = empty({}, { localStorage: { devWorkshopGroup: 'stage' } });
-  const stage = workshopHtml(stageApp, 'all');
+  // The board used to show only a column of "Nothing here yet"s: the note
+  // and its action lead the columns.
+  const stage = category;
   assert.ok(stage.includes('data-ws-stage'), 'the columns render');
   assert.match(stage, START);
   assert.ok(stage.indexOf('data-ws-empty') < stage.indexOf('data-ws-stage'), 'the note comes before the columns');
 
-  // A board with entries is not empty, and By stage says nothing.
-  const full = makeAppView({ localStorage: { devWorkshopGroup: 'stage' } });
+  // A board with entries is not empty, and the page says nothing.
+  const full = makeAppView();
   seed(full);
   assert.ok(!workshopHtml(full, 'all').includes('data-ws-empty'), 'no note on a board with cards');
 
   // A search that hides everything is not an empty board.
-  const searched = empty();
+  const searched = makeAppView();
+  seed(searched);
   searched._workshopThemes = themes([{ id: 't1', name: 'Voting', items: ['issue:12'] }]);
   searched._kanbanFilters = { ...searched._defaultKanbanFilters(), q: 'nothing matches this' };
   const filtered = workshopHtml(searched, 'all');
-  assert.match(filtered, /Nothing here matches the current search and filters\./);
+  assert.ok(!filtered.includes('data-ws-empty'), 'the columns say "No matching cards" for themselves');
+  assert.match(filtered, /No matching cards/);
   assert.doesNotMatch(filtered, START, 'no start action for a search');
 
   // Nor is a list that could not load.
@@ -4224,33 +4120,21 @@ test('the pane head pins, and the pane does not clip what must escape it', () =>
   assert.ok(!/dev-ws-ear/.test(CSS), 'no rule styles an ear any more');
 });
 
-test('the grouping strip is one node, the pane head\'s first row at every width (#852)', () => {
-  // It was ONE NODE IN TWO PLACES: the head below 768px, and above it an
-  // "ear" hanging off the pane's top-right corner beside the tab pill, which
-  // took a measured left bound, a measured width, a clipped top line on the
-  // pane and a z-index relation with the strip. The tabs moved into the
-  // header, so there is no pill to sit beside and the strip leads the head
-  // everywhere, as it always did on a phone.
-  assert.match(WORKSHOP, /function GroupStrip\(\{ group \}: \{ group: string \}\)/);
-  assert.equal((WORKSHOP.match(/data-ws-group="category"/g) || []).length, 1, 'written once');
+test('the pane head leads with the page\'s bar, and the ear and the grouping strip are gone (#852, request 6708)', () => {
+  // The strip was one node in two places (the head, and an "ear" off the
+  // pane's corner), then the head's first row, and is now not drawn: All
+  // items has one view.
+  assert.doesNotMatch(WORKSHOP, /GroupStrip|data-ws-group|dev-ws-group/);
   const headAt = WORKSHOP.indexOf('className="dev-ws-pane-head"');
-  const stripAt = WORKSHOP.indexOf('<GroupStrip group={group} />');
-  const actionsAt = WORKSHOP.indexOf('<DevActionsRow');
-  assert.ok(headAt > 0 && stripAt > headAt && stripAt < actionsAt,
-    'the strip is the head\'s first child, ahead of the tools');
-  assert.equal((WORKSHOP.match(/<GroupStrip /g) || []).length, 1, 'and it is rendered in that one place');
+  const barAt = WORKSHOP.indexOf('className="dev-ws-allbar"');
+  const actionsAt = WORKSHOP.indexOf('<DevActionsRow', barAt);
+  assert.ok(headAt > 0 && barAt > headAt && actionsAt > barAt, 'the bar is the head\'s first child, the tools in it');
   for (const gone of [/EAR_QUERY/, /useEarInset/, /EAR_PROPS/, /data-ws-ear/, /className="dev-ws-ear"/, /--dev-ws-ear-left/, /--dev-ws-group-w/]) {
     assert.doesNotMatch(WORKSHOP, gone, `${gone} is gone with the ear`);
   }
   assert.doesNotMatch(CSS, /dev-ws-ear|--dev-ws-ear-left|--dev-ws-group-w/, 'and app.css styles none of it');
-  // The buttons are real buttons with a real handler.
-  assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'category'\)\}/);
-  assert.match(WORKSHOP, /onClick=\{\(\) => callAppView\('_setWorkshopGroup', 'stage'\)\}/);
-  // #5820: each tab's word shows beside its glyph from the wide layout up.
-  assert.match(WORKSHOP, /<TagIcon className="dev-ws-group-icon" aria-hidden="true" \/>\s*<span className="sr-only dev-chip-word">\{category\}<\/span>/);
-  assert.match(WORKSHOP, /<BoardIcon className="dev-ws-group-icon" aria-hidden="true" \/>\s*<span className="sr-only dev-chip-word">\{stage\}<\/span>/);
-  // #5820: in the wide layout the word is real text again, and the count
-  // moves into it. Two classes on the override, because Tailwind's
+  // #5820: in the wide layout a filter chip's word is real text again, and
+  // the count moves into it. Two classes on the override, because Tailwind's
   // `.sr-only` loads after app.css and one class would lose.
   assert.match(CSS, /@media \(min-width: 700px\) \{[\s\S]*?\.sr-only\.dev-chip-word \{\s*position: static; width: auto; height: auto; margin: 0; padding: 0;\s*overflow: visible; clip: auto; white-space: nowrap;\s*\}[\s\S]*?\.dev-chip-count \{ display: none; \}/);
 });
@@ -4267,7 +4151,7 @@ test('the declared stage check still describes the pane it has to walk', () => {
   // class in it must be one the component actually renders, in the nesting
   // order it renders them.
   const dapp = JSON.parse(read('dapp.json'));
-  const check = dapp.tests.find((t) => /group=stage/.test(t.path || '')
+  const check = dapp.tests.find((t) => /[?&]ws=all&group=category/.test(t.path || '')
     && /dev-ws-board/.test(t.expectSelector || ''));
   assert.ok(check, 'the stage check exists');
   assert.ok(!/\.dev-ws-group \+ \.dev-ws-board/.test(check.expectSelector),
@@ -5809,14 +5693,11 @@ test('a link to the list of requests or changes opens All items by stage, not th
   const block = src.slice(at, at + 1200);
   assert.match(block, /subTab = 'forum';/);
   assert.match(block, /sec === 'proposals' \|\| sec === 'issues' \|\| sec === 'changes'/);
-  assert.match(block, /AppView\._overrideWorkshopTab\('all'\);\s*AppView\._overrideWorkshopGroup\?\.\('stage'\);/,
-    'both halves, as the retired Board route takes them');
-  // …and the two together are what put the stage pane up.
+  assert.match(block, /AppView\._overrideWorkshopTab\('all'\);\n/, 'as the retired Board route does');
+  assert.doesNotMatch(src, /_overrideWorkshopGroup/, 'the tab is the whole answer: All items is the board');
   const view = makeAppView({ localStorage: { devWorkshopTab: 'status' } });
   view._overrideWorkshopTab('all');
-  view._overrideWorkshopGroup('stage');
-  assert.equal([view._workshopTab(), view._getWorkshopGroup()].join('/'), 'all/stage',
-    'over a remembered Hub');
+  assert.equal(view._workshopTab(), 'all', 'over a remembered Hub');
 });
 
 test('a bare link to a project\'s /workshop opens the Workshop; a door, a switch, history and ?ws= keep theirs (audit N03 follow-up)', () => {

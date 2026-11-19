@@ -51,7 +51,6 @@ import {
   ArrowRightIcon,
   ArrowUpIcon,
   BallotIcon,
-  BoardIcon,
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -62,7 +61,6 @@ import {
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
-  TagIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -2688,56 +2686,6 @@ voteSavedStore.subscribe(() => {
 
 
 /**
- * The grouping strip — "By category" / "By stage".
- *
- * THE PANE HEAD'S FIRST ROW, at every width (#852). From 768px up it used to
- * hang off the pane's top-right corner as an "ear", level with the tab pill;
- * the tabs moved into the header, so there is no pill to sit beside and the
- * strip leads the head everywhere, as it always did on a phone. Written once:
- * `[data-ws-group]` is what the declared checks and `querySelector` reach for.
- */
-function GroupStrip({ group }: { group: string }): ReactNode {
-  const t = useMessages('project');
-  // #4916: each tab is its glyph, a tag for category and the board's own
-  // columns for stage (BoardIcon, the Workshop's mark in the places list).
-  // Its words ride along as the tooltip and the aria-label, and as a copy
-  // that is sr-only on a phone and a visible label from 700px up (#5820; the
-  // declared checks read the page's innerText for "By category").
-  const category = t('project:allItems.group.category');
-  const stage = t('project:allItems.group.stage');
-  return (
-    <div className="dev-ws-group" role="tablist" aria-label={t('project:allItems.group.label')}>
-      <button
-        type="button"
-        role="tab"
-        className="dev-ws-group-tab"
-        data-ws-group="category"
-        aria-selected={group === 'category'}
-        aria-label={category}
-        title={category}
-        onClick={() => callAppView('_setWorkshopGroup', 'category')}
-      >
-        <TagIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only dev-chip-word">{category}</span>
-      </button>
-      <button
-        type="button"
-        role="tab"
-        className="dev-ws-group-tab"
-        data-ws-group="stage"
-        aria-selected={group === 'stage'}
-        aria-label={stage}
-        title={stage}
-        onClick={() => callAppView('_setWorkshopGroup', 'stage')}
-      >
-        <BoardIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only dev-chip-word">{stage}</span>
-      </button>
-    </div>
-  );
-}
-
-/**
  * The breakpoint, in one place. app.css's `@media (min-width: 700px)` block is
  * the same decision written in the other language, and the two move together:
  * above it the tab strip is a segmented control at the head of the column and
@@ -3351,17 +3299,12 @@ export function DevWorkshop(): ReactNode {
       window.clearInterval(timer);
     };
   }, [v.slug, tab, hostRef]);
-  // Which pane is under the tabs. Lives in a module-global store rather than
-  // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
-  // the kanban view model only when the stage pane is up. See
-  // ./group-mode-store.ts.
+  // ALL ITEMS IS THE BOARD BY STAGE (request 6708). It had a second pane, by
+  // category, behind a "By category" / "By stage" switch in the page's bar;
+  // the switch is gone, in every look, and nothing publishes another pane to
+  // this store, so `group` is 'stage' (./group-mode-store.ts). The category
+  // pane's own code is still below, unreached in the product.
   const group = useWorkshopGroup();
-  // Standard (WIP): the board is by stage alone (its By category / By stage
-  // switch is not drawn there, app.css), so a board left on By category is
-  // put on By stage, through the same setter the switch uses.
-  useEffect(() => {
-    if (wipLook && group !== 'stage') callAppView('_setWorkshopGroup', 'stage');
-  }, [wipLook, group]);
   // From 700px the pane head pins under the strip at an offset only a
   // measurement knows (`useStripInsets`), and app.css draws a band behind
   // the strip while it is pinned (QA 2026-09-24 Q7). Whether it is pinned,
@@ -3881,18 +3824,14 @@ export function DevWorkshop(): ReactNode {
     };
   };
   const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
-  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head,
-  // its two groupings as tabs, the board's own search and filters, and the
-  // categories' order. The list under it is this page's own (the theme
-  // cards, or the board by stage), which app.css lays in the kit's content
-  // column.
+  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head and
+  // the board's own search. The list under it is this page's own (the board
+  // by stage), which app.css lays in the kit's content column.
   const frameAllUp = frame && !frameTopics && tab === 'all';
   const frameAll = (): ReactNode => (
     <ProjectAllItemsFrame
       {...frameHead}
       project={projectName}
-      group={group === 'stage' ? 'stage' : 'category'}
-      onGroup={(key) => { callAppView('_setWorkshopGroup', key); }}
       query={frameFilters.q}
       querySeq={frameFilters.seq}
       // The board reads its search box (AppView._onKanbanSearchInput), which
@@ -3903,19 +3842,6 @@ export function DevWorkshop(): ReactNode {
         box.value = next;
         callAppView('_onKanbanSearchInput');
       }}
-      filters={frameFilters.mounted ? {
-        count: frameFilters.count,
-        chips: frameFilters.chips,
-        quick: frameFilters.quick || null,
-        onOpen: () => { callAppView('_openKanbanFiltersDialog'); },
-        onDismiss: (key) => { callAppView('_dismissKanbanFilter', key); },
-        onQuick: (key) => { callAppView('_toggleKanbanQuickFilter', key); },
-      } : null}
-      sort={group !== 'stage' && themes.length ? {
-        key: sortKey,
-        options: SORTS.map((option) => ({ key: option.key, label: t(option.label) })),
-        onSort: (key) => { if (key !== sortKey) captureThemeTops(); setSortKey(key as SortKey); },
-      } : null}
     />
   );
   const frameWorkshop = (): ReactNode => {
@@ -4621,16 +4547,11 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-pane-head">
             {/* #4486: ONE ROW, the page's own bar: the way back and the
                 page's name ("All items", no "Workshop" eyebrow: the lit
-                Workshop tab above says where it hangs), the grouping, then
-                the search and the filters. It wraps on a narrow window and
-                on a phone (app.css `.dev-ws-allbar`). It used to be three:
-                a back bar over the pane, which scrolled away, then the
-                grouping, then the tools. The back bar is in the pinned head
-                now, so the page's name stays on screen too.
-
-                THE GROUPING STILL LEADS THE TOOLS IN THE DOCUMENT (#852):
-                it decides what the search searches. The row lays the search
-                out first (app.css), as the board was reviewed (#4486). */}
+                Workshop tab above says where it hangs), then the search and
+                the filters. It wraps on a narrow window and on a phone
+                (app.css `.dev-ws-allbar`). The "By category" / "By stage"
+                switch stood between the two until request 6708: the page
+                has one view now, the board by stage. */}
             <div className="dev-ws-allbar" data-ws-allbar="">
               <PageBack
                 label={t('project:page.backToWorkshop')}
@@ -4638,7 +4559,6 @@ export function DevWorkshop(): ReactNode {
                 onBack={() => openTab(pageParent(tab))}
                 eyebrow={false}
               />
-              <GroupStrip group={group} />
               {/* The search and the filters. NOT the ⋯: that is the hub's, in
                   its hero, so the row draws none of its own. */}
               <DevActionsRow
