@@ -25,8 +25,6 @@ const WIP_HIDES = [
   'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people)',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
-  // The board is by stage alone under the look (asked 18 Nov 2026): no By category / By stage switch.
-  'html[data-skin-wip] #dev-workshop :is(.dev-ws-group)',
   // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
   'html[data-skin-wip][data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
   // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.

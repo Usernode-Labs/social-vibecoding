@@ -285,7 +285,7 @@ test('Standard (WIP): the board ties a request to the changes made for it, and o
   // The Workshop's door opens the board, and the board is by stage alone.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(ws, /if \(!wipLook \|\| tab !== 'workshop'\) return;\s*if \(was === 'all' \|\| was === 'bot'\) return;\s*if \(traversed\.current\) \{ traversed\.current = false; return; \}\s*cameFrom\.current = 'all';\s*setTab\('all'\);/);
-  assert.match(ws, /if \(wipLook && group !== 'stage'\) callAppView\('_setWorkshopGroup', 'stage'\);/);
+  assert.doesNotMatch(ws, /_setWorkshopGroup|GroupStrip/, 'in every look since request 6708: there is no switch to put on By stage');
   assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
   // Advanced mode is on <html> for the look's one detail kept for it.
   assert.match(read('frontend/src/head.html'), /root\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
