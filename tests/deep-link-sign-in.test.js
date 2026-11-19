@@ -69,6 +69,56 @@ test('a provider\'s trip comes back to the link, and the server takes only paths
   }
 });
 
+test('a demo link keeps its flag across a provider\'s trip, and no other query passes (#6712)', () => {
+  const { keepDemoFlag, providerStartUrl } = loadTsx('frontend/src/features/auth/sign-in-sheet.tsx');
+  const { deepLinkReturnTo } = lib();
+  // The sheet adds the flag from the page's own query to the address it was given.
+  assert.equal(keepDemoFlag(deepLinkReturnTo('#app/demo-app/board'), '?demo=1'), '/?demo=1#app/demo-app/board');
+  assert.equal(keepDemoFlag(deepLinkReturnTo('/app/demo-app/board?demo=1'), '?demo=1'), '/app/demo-app/board?demo=1');
+  assert.equal(keepDemoFlag('/', '?demo=1'), '/?demo=1');
+  assert.equal(keepDemoFlag('/#apps', '?utm=x&demo=1'), '/?demo=1#apps', 'the flag alone, never the rest of the query');
+  assert.equal(keepDemoFlag('/#app/demo-app/full?path=/t/1', '?demo=1'), '/?demo=1#app/demo-app/full?path=/t/1');
+  // No flag on the page, no flag on the trip.
+  for (const search of ['', '?', '?demo=0', '?demo=true', '?demo', '?demo=11', '?Demo=1', '?x=demo=1', '?next=//evil.example']) {
+    assert.equal(keepDemoFlag('/#apps', search), '/#apps', search);
+  }
+  // An invite link, and an address that already has a query, are left alone.
+  assert.equal(keepDemoFlag('/invite/AAAAAAAAAAAAAAAAAAAAAA', '?demo=1'), '/invite/AAAAAAAAAAAAAAAAAAAAAA');
+  assert.equal(keepDemoFlag('/app/demo-app?demo=1', '?demo=1'), '/app/demo-app?demo=1');
+  assert.equal(keepDemoFlag('/?demo=1#apps', '?demo=1'), '/?demo=1#apps');
+  assert.equal(keepDemoFlag('//evil.example', '?demo=1'), '//evil.example', 'never made into something the server takes');
+  assert.equal(providers.safeReturnTo(keepDemoFlag('//evil.example', '?demo=1')), '/');
+  assert.equal(
+    providerStartUrl('google', { from: 'signin', followInvite: false, returnTo: keepDemoFlag('/#apps', '?demo=1') }),
+    '/api/auth/oauth/google/start?from=signin&return=%2F%3Fdemo%3D1%23apps',
+  );
+  const sheet = read('frontend/src/features/auth/sign-in-sheet.tsx');
+  assert.match(sheet, /providerStartUrl\(provider, \{\s*from, followInvite, returnTo: keepDemoFlag\(returnTo, window\.location\.search\),\s*\}\)/);
+
+  // The server: exactly `?demo=1`, between the path and the fragment.
+  for (const value of ['/?demo=1', '/?demo=1#apps', '/?demo=1#app/demo-app/board', '/app/demo-app?demo=1',
+    '/app/demo-app/board?demo=1', '/app/demo-app/board?demo=1#settings', '/?demo=1#app/demo-app/full?path=/t/1']) {
+    assert.equal(providers.safeReturnTo(value), value, value);
+  }
+  for (const value of [
+    // Another flag, value or parameter.
+    '/?demo=2', '/?demo=', '/?demo', '/?demo=11', '/?Demo=1', '/?x=1', '/?demo=1&x=1', '/?x=1&demo=1',
+    '/?demo=1&demo=1', '/?demo=1&return=//evil.example', '/?demo=1&next=https://evil.example/', '/??demo=1',
+    '/?demo=1?demo=1', '/app/demo-app/board?demo=1&x=1', '/app/demo-app/board?x=1', '/invite/AAAAAAAAAAAAAAAAAAAAAA?demo=1',
+    // Encoded spellings.
+    '/%3Fdemo=1', '/?demo%3D1', '/?demo=%31', '/?%64emo=1', '/?demo=1%23apps', '/?demo=1%0d%0aLocation:evil',
+    '/?demo=1\n', '/?demo=1 ', ' /?demo=1', '/?demo=1\u0000',
+    // Another origin, with the flag or as it.
+    '//evil.example?demo=1', '//evil.example/?demo=1', '/\\evil.example?demo=1', 'https://evil.example/?demo=1',
+    'https://evil.example/app/demo-app?demo=1', '?demo=1', '?demo=1#apps', '/?demo=1//evil.example', '/?demo=1/x',
+    '/?demo=1@evil.example', '/.?demo=1', '/x?demo=1', '/app?demo=1', '/app/?demo=1', '/app/../?demo=1',
+    '/app/demo-app/?demo=1', '/?demo=1#', '/?demo=1#a b', '/?demo=1#<x>', '/#apps?demo=1#x y',
+    'javascript:alert(1)?demo=1', ['/?demo=1'], { toString: () => '/?demo=1' },
+  ]) {
+    assert.equal(providers.safeReturnTo(value), '/', String(value));
+  }
+});
+
 test('the backdrop is a stand-in, hidden from assistive tech, between the story and the sheet', () => {
   const { DeepLinkBackdrop } = lib();
   const html = renderToHtml(createElement(DeepLinkBackdrop));

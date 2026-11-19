@@ -112,11 +112,16 @@ const STARTED_FROM = Object.freeze(['invite', 'story', 'signin']);
 // page a shared link opened while they were signed out (#5264): a fragment on
 // Home (`/#apps`, `/#app/<slug>/board`) or an app's own path
 // (`/app/<slug>/board`). Every accepted value is a path on this origin: it
-// starts with one `/` followed by nothing, `invite/`, `app/` or `#`, so it
-// can never be read as `//host` or a scheme, and a fragment, whatever it
-// says, cannot change where the browser goes.
+// starts with one `/` followed by nothing, `invite/`, `app/`, `?demo=1` or
+// `#`, so it can never be read as `//host` or a scheme, and a fragment,
+// whatever it says, cannot change where the browser goes.
+// The one query taken is the demo flag, spelled exactly `?demo=1` between
+// the path and the fragment (#6712): a shared demo link is
+// `/?demo=1#app/<slug>/board`, and without the flag the trip came back to a
+// page with no demo in it. No other name, value, second parameter or encoded
+// spelling passes, so the query can carry nothing but that flag.
 const INVITE_PATH_RE = /^\/invite\/[A-Za-z0-9_-]{22}$/;
-const DEEP_LINK_RE = /^\/(?:app\/[a-z0-9][a-z0-9-]{0,254}(?:\/[A-Za-z0-9_-]{1,64}){0,6})?(?:#[A-Za-z0-9_\-/.~%=&?]{1,300})?$/;
+const DEEP_LINK_RE = /^\/(?:app\/[a-z0-9][a-z0-9-]{0,254}(?:\/[A-Za-z0-9_-]{1,64}){0,6})?(?:\?demo=1)?(?:#[A-Za-z0-9_\-/.~%=&?]{1,300})?$/;
 
 class SignInProviderError extends Error {
   constructor(code, message, status = 422) {

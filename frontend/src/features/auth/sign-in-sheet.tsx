@@ -238,6 +238,25 @@ export function resumeError(resume: SignInResume | null | undefined): string | n
   return translate(RESUME_ERRORS[resume.slice('error-'.length)] || RESUME_FALLBACK);
 }
 
+/**
+ * The address a provider's trip comes back to, with the demo flag kept
+ * (#6712). A shared demo link is `/?demo=1#app/<slug>/board`: the flag is in
+ * the page's query, which no `returnTo` carries, so the trip came back to a
+ * page with no demo in it. Only that one flag, spelled `?demo=1`, is added,
+ * and only to Home or an app's path with no query of its own: the server
+ * takes nothing else (services/sign-in-providers.js safeReturnTo), and an
+ * invite link's address is left as it is.
+ */
+export function keepDemoFlag(returnTo: string, search: string): string {
+  let demo = false;
+  try { demo = new URLSearchParams(String(search || '')).get('demo') === '1'; } catch { demo = false; }
+  if (!demo) return returnTo;
+  const at = returnTo.indexOf('#');
+  const path = at < 0 ? returnTo : returnTo.slice(0, at);
+  if (path !== '/' && !/^\/app\/[^?]+$/.test(path)) return returnTo;
+  return `${path}?demo=1${at < 0 ? '' : returnTo.slice(at)}`;
+}
+
 /** Where the provider's sign-in starts: carries what the sheet knows across the trip. */
 export function providerStartUrl(provider: SignInProvider, { from, followInvite, returnTo }: {
   from: 'invite' | 'story' | 'signin';
@@ -1565,7 +1584,9 @@ export function SignInSheet({
     if (blockedOffline(setError)) return;
     setBusy(true);
     if (!native) {
-      window.location.assign(providerStartUrl(provider, { from, followInvite, returnTo }));
+      window.location.assign(providerStartUrl(provider, {
+        from, followInvite, returnTo: keepDemoFlag(returnTo, window.location.search),
+      }));
       return;
     }
     try {

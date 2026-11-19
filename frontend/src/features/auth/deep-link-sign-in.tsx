@@ -69,7 +69,9 @@ export function deepLinkPlace(target: string): DeepLinkPlace {
  * Where Apple's or Google's trip comes back to: the same page, so a sign-in
  * there lands on it too. A fragment comes back on `/`, an app path as
  * itself; the server takes only those shapes and answers anything else with
- * Home (services/sign-in-providers.js safeReturnTo).
+ * Home (services/sign-in-providers.js safeReturnTo). The query is dropped
+ * here; the sheet puts the demo flag back from the page's own address
+ * (./sign-in-sheet.tsx keepDemoFlag), the one query the server takes.
  */
 export function deepLinkReturnTo(target: string): string {
   const raw = String(target || '');
