@@ -31409,7 +31409,8 @@ html[data-skin="sunrise"][data-skin] .fr-tb.fr-on{border-radius:14px}
      not glare beside a dark page.
    - One job per colour. Sun (#ffee6f) means "you are here" on the sidebar
      and the tab bar, and "do this" on the main button, which in light also
-     wears the website's ink outline and hard foot. Deep sky (#1a63c4) is a
+     wears the website's ink outline and hard foot. In dark the sun is
+     turned down a step (#f3d920) and the button is flat. Deep sky (#1a63c4) is a
      link, and a count that asks for you; in dark a link is a light sky,
      which reads on a dark card. Ink (#121a0e) is text; in dark, text is
      a white tinted toward the page's blue.
@@ -31591,8 +31592,13 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-splotch-b: 24, 38, 84;
   --bl-splotch-c: 22, 50, 82;
   --bl-lift-home: var(--bl-lift);
-  --bl-sun: #ffee6f;
-  --bl-sun-lit: #fff6ac;
+  /* The sun turned down, not washed out (19 Nov 2026): the light's full
+     sun (#ffee6f, oklch .94 .148 102) glared as a fill on the navy, and a
+     darker one went olive because it lost its colour too. This is a step
+     dimmer at the most colour the screen can show for it (oklch .88 .18
+     100), so it reads as the same lit yellow with the light turned down. */
+  --bl-sun: #f3d920;
+  --bl-sun-lit: #f8e24c;
   --bl-on-sun: #121a0e;
   --bl-wash: rgba(255, 238, 111, 0.14);
   --bl-sky: #7fbcf7;
@@ -31615,10 +31621,10 @@ html[data-skin="brand"].dark:not([data-app-tone="light"]) {
   --bl-lift: 0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 30px -22px rgba(0, 0, 0, 0.9);
   --bl-raise-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.1), 0 1px 2px rgba(0, 0, 0, 0.3);
   --bl-field-edge: inset 0 0 0 1px rgba(220, 230, 248, 0.14), 0 1px 2px rgba(0, 0, 0, 0.35);
-  /* An ink outline would vanish on the dark page: the pill keeps its hard
-     foot, in a deeper sun. */
-  --bl-pill-edge: 0 2px 0 #a3962b;
-  --bl-pill-edge-down: 0 0 0 #a3962b;
+  /* An ink outline would vanish on the dark page, and the hard foot in a
+     deeper sun it had instead read as yellow on gold: the pill is flat. */
+  --bl-pill-edge: 0 0 0 transparent;
+  --bl-pill-edge-down: 0 0 0 transparent;
   --bg-primary: #0d1421;
   --bg-secondary: #182135;
   --bg-tertiary: #243047;
@@ -31752,6 +31758,26 @@ html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([d
   background-color: var(--bl-card);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+/* MESSAGES ON A PHONE (the drawer, features/messages/phone-drawer.tsx, the
+   layout below 768px). Its list lies flush on the pane it stands on, and
+   that pane is a strip, the page's own cream here: a phone's Messages had
+   no white at all, while the card rule below still drew its edge and lift
+   round rows with no fill. The drawer's pane is the look's card instead, as
+   the standard look's is a white sheet, with the rows flush on it, and the
+   search field takes the page's cream so it still reads on the white. */
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-layout.messages-drawer {
+  background-color: var(--bl-card);
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-layout.messages-drawer .messages-section-card {
+  box-shadow: none;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-layout.messages-drawer .messages-search-input {
+  background: var(--bl-page);
+  border-color: transparent;
+}
+html[data-skin="brand"]:is(:not(.dark):not([data-app-tone="dark"]), .dark:not([data-app-tone="light"])) .messages-layout.messages-drawer .messages-search-input:focus {
+  border-color: var(--brand-line);
 }
 
 /* THE TOP BAR is navy with white words on the top-level screens: a flat
