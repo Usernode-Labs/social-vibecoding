@@ -51,6 +51,7 @@ import { TrackCard, trackClock, trackEyebrow, trackLinks } from '../../messages/
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
 import { TranslateNote, useTranslate } from '../../messages/translate';
+import { useThreadHeadFit } from './thread-head-fit';
 import {
   STAGES,
   newestSpecVersion,
@@ -143,11 +144,13 @@ function summaryWords(text: string): string {
  * as a change's status pill rides beside "Change #N" (./change-head.tsx
  * ChangeBar), once its thread is read (`pill`).
  */
-export function RequestBar({ r, pill = null, threadMenu = false }: {
+export function RequestBar({ r, pill = null, threadMenu = false, title = null }: {
   r: RequestView;
   pill?: StatusPillState | null;
   /** The thread has ⋯ rows of its own (./thread-menu.ts): the ⋯ shows even when the request has none. */
   threadMenu?: boolean;
+  /** #6081: the title as the page shows it, translated when the reader asked; the request's own otherwise. */
+  title?: string | null;
 }): ReactNode {
   const t = useMessages('project');
   // F18 (#5683): the bar names the request itself, under a small-caps line
@@ -168,21 +171,27 @@ export function RequestBar({ r, pill = null, threadMenu = false }: {
   // standard bar's title. The bar above it carries the trail and the way
   // back (RequestHead below).
   const frame = isFrameSkin(useLiveSkin());
+  // 19 Nov 2026: the head card is measured and tightens as the thread
+  // scrolls (./thread-head-fit.ts).
+  const head = useRef<HTMLElement>(null);
+  useThreadHeadFit(head, !frame);
   if (frame) return <TopicFrameHead title={r.title} over={dotLine([kicker, r.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.request.bar.more') } : null} />;
-  // 18 Nov 2026: the bar is the thread's header pill (app.css), as a
-  // change's is (./change-head.tsx ChangeBar): the project, then the topic.
+  // 18 Nov 2026: the bar is the thread's head (app.css), as a change's is
+  // (./change-head.tsx ChangeBar). 19 Nov 2026: a card that leads with the
+  // request's title; the project, the topic, the number and the status are
+  // the small line over it, which app.css lays out from these same nodes.
   const where = dotLine([threadProjectName(), r.category]);
   return (
-    <header className="messages-thread-header">
+    <header ref={head} className="messages-thread-header">
       <ThreadBarTile />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 dev-thread-bar-text">
         {pill ? (
           <div className="flex min-w-0 items-center gap-2">
             <div className="messages-thread-kicker min-w-0" data-request-kicker="">{kicker}</div>
             <span className="shrink-0" data-request-status={pill.key}><StatusPill s={pill} inline /></span>
           </div>
         ) : <div className="messages-thread-kicker" data-request-kicker="">{kicker}</div>}
-        <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{r.title}</div>
+        <div className="messages-thread-name line-clamp-2 dev-request-bar-title">{title || r.title}</div>
         {r.category
           ? <div className="messages-thread-sub" data-request-category="">{where}</div>
           : where ? <div className="messages-thread-sub">{where}</div> : null}
@@ -873,7 +882,7 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<RequestBar r={r} pill={pill} threadMenu={threadMenu} />, bar) : null}
+      {bar ? createPortal(<RequestBar r={r} pill={pill} threadMenu={threadMenu} title={shownTitle} />, bar) : null}
       {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={cardLook ? openNow : null} />, rail) : null}
       {images.viewer}
       <article className={`messages-message dev-request-root${cardLook ? ' dev-thread-card' : ''}`} data-ref-issue={r.number} data-request-root={r.number} data-thread-card={cardLook ? 'request' : undefined}>

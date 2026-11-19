@@ -631,7 +631,9 @@ test('a foot with a vote to cast folds into the header once it has gone up behin
   const block = css.slice(css.indexOf('THE VOTE FOLDS INTO THE HEADER'), css.indexOf("/* THE PAGE'S WAY BACK, AT THE PILL'S START."));
   assert.ok(block.length > 0, 'the fold sits in the header pill\'s own block');
   assert.match(block, /\.dev-request-bar:has\(> \.dev-thread-float\) \.messages-thread-header \{\s*border-end-start-radius: 0;\s*border-end-end-radius: 0;\s*box-shadow: inset 0 0 0 1px var\(--app-sheet-line\);/);
-  assert.match(block, /\.dev-thread-float \{[^}]*border-radius: 0 0 calc\(var\(--pill-h, 56px\) \/ 2\) calc\(var\(--pill-h, 56px\) \/ 2\);/);
+  // 19 Nov 2026: at the head card's 20px corners, no longer the capsule's ends.
+  assert.match(block, /\.dev-thread-float \{[^}]*border-radius: 0 0 20px 20px;/);
+  assert.match(block, /\.dev-request-bar \.messages-thread-header \{\s*position: relative;\s*z-index: 1;\s*\/\* The head's corners, as a length they can ease from\. \*\/\s*border-radius: 20px;/);
   assert.match(block, /\.dev-request-bar > \.messages-thread-header \{ transition: border-radius 180ms ease; \}/);
   assert.match(block, /:has\(\.dev-thread-float\) \.dev-request-rail \{\s*top: 64px;/);
 });

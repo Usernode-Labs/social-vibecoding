@@ -48,13 +48,16 @@ const changeView = (patch = {}) => ({
   via: null, status: null, votes: {}, testing: {}, shots: null, thanks: false, ...patch,
 });
 
-test('a change\'s bar is the pill: the project\'s tile first, "Change #N", the project and topic, ⋯, then ↗ and ×', () => {
+test('a change\'s bar is the head: the project\'s tile first, "Change #N", its title, the project and topic, ⋯, then ↗ and ×', () => {
   const html = withProject(() => renderToHtml(createElement(ChangeBar, { v: changeView(), menuKey: 'change:17' })));
   assert.match(html, /^<header class="messages-thread-header"><span class="app-icon-tile dev-thread-bar-tile"[^>]*aria-hidden="true">/,
     'the tile leads the header');
-  assert.match(html, /<div class="messages-thread-name min-w-0">Change #9200<\/div>/);
+  // 19 Nov 2026: "Change #N" is the small line's; the title is the change's
+  // own, its number until it has one.
+  assert.match(html, /<div class="min-w-0 flex-1 dev-thread-bar-text"><div class="flex min-w-0 items-center gap-2"><div class="messages-thread-kicker min-w-0" data-change-kicker="">Change #9200<\/div><\/div>/);
+  assert.match(html, /<div class="messages-thread-name min-w-0"><span class="dev-thread-bar-title">Change #9200<\/span><\/div>/);
   assert.match(html, /<div class="messages-thread-sub" data-change-category="">Homeroom · Project workflows<\/div>/,
-    'the project, then the topic, on the second line');
+    'the project, then the topic, which app.css puts on the small line');
   // ⋯ stays a direct child of the header (a declared check selects on it), and
   // the two discs end the row after it.
   assert.match(html, /<button type="button" class="messages-thread-action dev-card-menu-btn" data-card-menu="change:17"[\s\S]*?<\/button><span class="dev-thread-exits" data-thread-exits="">/);
@@ -66,13 +69,17 @@ test('a change\'s bar is the pill: the project\'s tile first, "Change #N", the p
   assert.doesNotMatch(bare, /data-change-category/);
 });
 
-test('a request\'s bar is the same pill, its name kept beside its category for the checks that select on it', () => {
+test('a request\'s bar is the same head, its name kept beside its category for the checks that select on it', () => {
   const r = {
     number: 9107, title: 'Staging demo: a request', category: 'Project workflows', menuKey: null,
     status: { closed: false, stage: 'asked' },
   };
   const html = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: null, threadMenu: true })));
   assert.match(html, /^<header class="messages-thread-header"><span class="app-icon-tile dev-thread-bar-tile"/);
+  assert.match(html, /<div class="min-w-0 flex-1 dev-thread-bar-text"><div class="messages-thread-kicker" data-request-kicker="">/);
+  // #6081: the title the page shows, translated when the reader asked.
+  const shown = withProject(() => renderToHtml(createElement(RequestBar, { r, pill: null, title: 'Demo de staging : une demande' })));
+  assert.match(shown, /dev-request-bar-title">Demo de staging : une demande<\/div>/);
   assert.match(html, /<div class="messages-thread-kicker" data-request-kicker="">Request #9107<\/div>/);
   assert.match(html, /<div class="messages-thread-name line-clamp-2 dev-request-bar-title">Staging demo: a request<\/div><div class="messages-thread-sub" data-request-category="">Homeroom · Project workflows<\/div>/);
   assert.match(html, /<span class="dev-thread-exits" data-thread-exits="">/);
@@ -122,15 +129,37 @@ test('the bot column steps its header aside for a request\'s or a change\'s page
   assert.match(src, /data-thread-pill=\{ownPill\}/);
   assert.match(CSS, /html:is\(:not\(\[data-skin\]\), \[data-skin="brand"\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel\[data-thread-pill\] > \.side-panel-head \{ display: none; \}/,
     'only under the looks whose page draws the pill: the frame\'s looks keep the column\'s row and its ×');
+  // 19 Nov 2026: and the column starts on the list's top line in the
+  // standard look too, so the head card stands level with the bot's own.
+  assert.match(CSS, /@media \(min-width: 768px\) \{\s+html:not\(\[data-skin\]\) body:has\(#ai-screen:not\(\.hidden\)\) \.side-panel\[data-thread-pill\] \{\s+top: calc\(var\(--browser-banner-h, 0px\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top, 0px\) \+ \.5rem\);/);
 });
 
-test('app.css: the pill floats over the scroller, the panels draw no sheet, the card starts at its title', () => {
+test('app.css: the head floats over the scroller, the panels draw no sheet, the card starts at its words', () => {
   const at = CSS.indexOf('ONE THREAD, ONE HEADER (18 Nov 2026)');
   assert.ok(at > 0);
   assert.ok(at < CSS.indexOf('/* looks:begin'), 'outside the generated looks section');
   const block = CSS.slice(at);
   assert.match(block, /#dev-topic-thread \.dev-request:has\(\.dev-thread-card\) \.dev-request-bar \{\s+display: block !important;\s+position: absolute;/);
-  assert.match(block, /\.dev-request-bar \.messages-thread-header \{\s+pointer-events: auto;[\s\S]{0,200}border-radius: 999px;/);
+  // 19 Nov 2026: a card, the cards' 20px corners and edge, its tile and ⋯
+  // level at the top, where the capsule was a pill with a drop shadow.
+  assert.match(block, /\.dev-request-bar \.messages-thread-header \{\s+pointer-events: auto;\s+display: flex;\s+align-items: flex-start;[\s\S]{0,140}border-radius: 20px;\s+background: var\(--thread-card-solid, var\(--dc-sheet-solid\)\);\s+box-shadow: var\(--thread-card-edge, inset 0 0 0 1px var\(--app-sheet-line\)\);\n\}/);
+  assert.doesNotMatch(block.slice(0, block.indexOf('THE VOTE FOLDS INTO THE HEADER')), /border-radius: 999px;\s+background: var\(--thread-card-solid/, 'no capsule');
+  // The scroller starts under the head's measured height (thread-head-fit.ts).
+  assert.match(block, /--pill-h: var\(--thread-head-h, 104px\);/);
+  assert.match(block, /:is\(\.dev-ws-side, \.in-side-panel body\) \.dev-request:has\(\.dev-thread-card\) \{ --pill-top: 0px; \}/,
+    'in a panel the head starts on the column\'s top line');
+  // The title in two lines, the small line over it, a request's and a change's alike.
+  assert.match(block, /#gc-thread-bar :is\(\.messages-thread-name\.dev-request-bar-title, \.dev-thread-bar-title\) \{\s+display: -webkit-box;\s+-webkit-box-orient: vertical;\s+-webkit-line-clamp: 2;/);
+  assert.match(block, /\.dev-thread-bar-text > \.messages-thread-sub \{ grid-row: 1; grid-column: 1; \}/);
+  assert.match(block, /\.dev-thread-bar-text > \.messages-thread-name \{ grid-row: 2; grid-column: 1 \/ -1; \}/);
+  // ⋯ is the one disc; ↗ and × are plain after a thin line.
+  assert.match(block, /\.dev-request-bar \.messages-thread-action \{[^}]*background: transparent;\s+box-shadow: none;/);
+  assert.match(block, /\.dev-request-bar \.messages-thread-action\[data-card-menu\] \{ box-shadow: inset 0 0 0 1px var\(--app-sheet-line\); \}/);
+  assert.match(block, /\.messages-thread-header > \[data-card-menu\] \+ \.dev-thread-exits::before \{/);
+  // Scrolled, it tightens to one line of title over the small line.
+  assert.match(block, /\.dev-request\[data-thread-head-tight\]:has\(\.dev-thread-card\) #gc-thread-bar :is\(\.messages-thread-name\.dev-request-bar-title, \.dev-thread-bar-title\) \{ -webkit-line-clamp: 1; \}/);
+  // The card does not say the title again, except while it is being edited.
+  assert.match(block, /\.dev-request:has\(\.dev-thread-card\) \.dev-thread-card > div > \.dev-request-title:not\(:has\(input\)\) \{ display: none; \}/);
   assert.match(block, /\.dev-request-scroll \{\s+padding-top: var\(--pill-under\) !important;\s+scroll-padding-top: var\(--pill-under\);/);
   assert.match(block, /\.dev-request:has\(\.dev-thread-card\) \.dev-thread-kicker \{ display: none; \}/);
   assert.match(block, /:is\(\.dev-ws-side, html\.in-side-panel\.side-panel-beside-ai\) \.dev-thread-exits \{ display: inline-flex; \}/,
@@ -143,9 +172,9 @@ test('app.css: the cards go under the pill and under the reply box, and no furth
   const at = CSS.indexOf('THE CARDS GO UNDER THE PILL AND UNDER THE REPLY BOX');
   assert.ok(at > 0);
   const block = CSS.slice(at, at + 6000);
-  // The top: cut at the pill's middle, on the id so the looks' own fade
+  // The top: cut past the head's upper corners, on the id so the looks' own fade
   // (`html[data-skin] … #gc-thread-scroll`) no longer wins in the brand look.
-  assert.match(block, /\.dev-request:has\(\.dev-thread-card\) #gc-thread-scroll \{\n  --pill-cut: calc\(var\(--pill-top\) \+ var\(--pill-h\) \/ 2\);\n  -webkit-mask-image: linear-gradient\(to bottom, transparent var\(--pill-cut\), #000 var\(--pill-cut\)\), linear-gradient\(#000, #000\);/);
+  assert.match(block, /\.dev-request:has\(\.dev-thread-card\) #gc-thread-scroll \{\n  --pill-cut: calc\(var\(--pill-top\) \+ 24px\);\n  -webkit-mask-image: linear-gradient\(to bottom, transparent var\(--pill-cut\), #000 var\(--pill-cut\)\), linear-gradient\(#000, #000\);/);
   assert.doesNotMatch(block, /transparent 4px/, 'no fade across the gap over the pill');
   // The foot: the strip under the reply box shows only across its card.
   assert.match(block, /mask-size: 100% calc\(100% - var\(--composer-tuck, 0px\)\), calc\(100% - 24px - var\(--composer-end, 0px\)\) var\(--composer-tuck, 0px\);/);
@@ -218,4 +247,59 @@ test('a drag moves the line from the width the column had, towards whichever sid
   } finally {
     if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
   }
+});
+
+test('the head measures itself while full and tightens once the thread scrolls (thread-head-fit.ts)', () => {
+  const { fitThreadHead, HEAD_TIGHT_AFTER_PX } = loadTsx('frontend/src/features/dev-board/topic/thread-head-fit.ts');
+  assert.equal(HEAD_TIGHT_AFTER_PX, 24);
+  const props = new Map();
+  const attrs = new Set();
+  const listeners = {};
+  const scroller = {
+    scrollTop: 0,
+    addEventListener: (type, fn) => { listeners[type] = fn; },
+    removeEventListener: (type) => { delete listeners[type]; },
+  };
+  const page = {
+    style: { setProperty: (k, v) => props.set(k, v), removeProperty: (k) => props.delete(k) },
+    toggleAttribute: (name, on) => { if (on) attrs.add(name); else attrs.delete(name); },
+    removeAttribute: (name) => attrs.delete(name),
+    querySelector: (sel) => (sel === ':scope > .dev-request-sheet > .dev-request-scroll' ? scroller : null),
+  };
+  let height = 102;
+  const head = { closest: (sel) => (sel === '.dev-request' ? page : null), getBoundingClientRect: () => ({ height }) };
+  const undo = fitThreadHead(head);
+  assert.equal(props.get('--thread-head-h'), '102px', 'the scroller starts under the full head');
+  assert.equal(attrs.has('data-thread-head-tight'), false);
+  scroller.scrollTop = 30;
+  listeners.scroll();
+  assert.equal(attrs.has('data-thread-head-tight'), true, 'scrolled: the head tightens');
+  scroller.scrollTop = 10;
+  listeners.scroll();
+  assert.equal(attrs.has('data-thread-head-tight'), false, 'back at the top: full again');
+  undo();
+  assert.equal(props.has('--thread-head-h'), false);
+  assert.deepEqual(Object.keys(listeners), [], 'the scroll listener goes with it');
+  // Outside a thread page it touches nothing.
+  height = 0;
+  const noop = fitThreadHead({ closest: () => null, getBoundingClientRect: () => ({ height }) });
+  assert.equal(typeof noop, 'function');
+  // Both bars fit their head, only where they draw it (not under a frame look).
+  for (const file of [CHANGE, REQUEST]) {
+    const src = read(file);
+    assert.match(src, /const head = useRef<HTMLElement>\(null\);\s+useThreadHeadFit\(head, !frame\);/);
+    assert.match(src, /<header ref=\{head\} className="messages-thread-header">/);
+  }
+});
+
+test('a private thread with the bot draws the same head: the lock line over its name in two lines, ⋯ the one disc', () => {
+  const scope = 'html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet]';
+  const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\{\\s+flex: 0 0 auto;\\s+align-items: flex-start;\\s+gap: 12px;\\s+padding: 14px 12px 14px 16px;`));
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\[data-reply-avatar\\] > \\* \\{ width: 48px; height: 48px; \\}`), 'the face at the tile\'s size');
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\[data-private-thread-sub\\] \\{\\s+order: -1;`), 'the lock line is the small line over the name');
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\[data-reply-title\\] \\{\\s+display: -webkit-box;\\s+-webkit-box-orient: vertical;\\s+-webkit-line-clamp: 2;[^}]*font-size: 20px;\\s+line-height: 26px;`));
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header \\.messages-thread-action \\{[^}]*background: transparent;\\s+box-shadow: none;`));
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header :is\\(\\[data-private-thread-menu\\] > \\.messages-thread-action, \\.messages-thread-preview\\) \\{ box-shadow: inset 0 0 0 1px var\\(--app-sheet-line\\); \\}`));
+  assert.match(CSS, new RegExp(`${esc(scope)} > \\.messages-thread-header > :is\\(\\[data-private-thread-menu\\], \\.messages-thread-preview\\) \\+ \\[data-reply-close\\]::before \\{`), 'a thin line before ×');
 });
