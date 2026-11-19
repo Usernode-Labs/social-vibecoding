@@ -317,9 +317,14 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   assert.match(css, /html\[data-skin-wip\] #home-needs-card \.wip-item-kind \{ display: none; \}/);
 });
 
-test('Standard (WIP): nine more token sets, each whole in light and in dark, and offered by the menu', () => {
+test('Standard (WIP): the Highlighter token set, whole in light and in dark, and offered by the menu', () => {
   const css = read('public/css/app.css');
-  const ids = ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill', 'highlighter'];
+  const ids = ['highlighter'];
+  // Eight sister sets were drawn with it and removed: none of their rules or names is left.
+  for (const gone of ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill']) {
+    assert.ok(!css.includes(`[data-wip-tokens="${gone}"]`), `${gone} has no rule`);
+    assert.ok(!read('frontend/locales/en/settings.json').includes(`experimental.wipTokens.${gone}`), `${gone} has no name`);
+  }
   const names = (body) => [...body.matchAll(/(--(?:wip|lit)-[a-z0-9-]+)\s*:/g)].map((m) => m[1]).sort();
   for (const id of ids) {
     const light = css.match(new RegExp(`html\\[data-skin-wip\\]\\[data-wip-tokens="${id}"\\] \\{([^}]*)\\}`));

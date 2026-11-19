@@ -1259,38 +1259,6 @@
     "text": "Homeroom brand kit V2",
     "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): a second, bolder drawing of that look from Homeroom's brand guidelines (a yellow block for what needs you, serif section titles, black and cream). V2 means version two. Homeroom is the product name."
   },
-  "experimental.wipTokens.window": {
-    "text": "Window",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (cards drawn as small app windows, yellow as the one colour). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.denim": {
-    "text": "Denim",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (a denim-blue menu and main button). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.afterdark": {
-    "text": "After dark",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (navy by day, yellow on navy by night). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.hands": {
-    "text": "Raised hands",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (teal as the one colour). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.shipped": {
-    "text": "Feature shipped",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (no colour, monospace section titles, nearly square corners). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.frontpage": {
-    "text": "Front page",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (a pale sky-blue menu, as the website's hero). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.logosheet": {
-    "text": "Logo sheet",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (cream, white and ink only). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.greenhill": {
-    "text": "Green hill",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (a pale green menu and a green main button). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.wipTokens.highlighter": {
     "text": "Highlighter",
     "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): the name of one set of colours and type that look can be drawn with (a white page with yellow used like a marker pen). A proper name; translate it as a short name, not a sentence."
