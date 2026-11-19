@@ -4,7 +4,7 @@
  * thread take turns (`view`, the Preview and Chat switch).
  *
  * It draws the version shown in a sandboxed frame of the size it was
- * captured at, scaled to fit (../design/frame.ts says what the frame may
+ * captured at, scaled to fit (../artifact/frame-doc.ts says what the frame may
  * do), with a version picker; comments pinned on it; and Request it, which
  * files the design as a request with its plan once the person has read what
  * becomes public.
@@ -34,7 +34,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import { ChevronLeftIcon, XIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
-import { designFrameDoc, currentSheets, DESIGN_SANDBOX, type FramePin } from '../design/frame';
+import { ArtifactFrame } from '../artifact/frame';
+import { currentSheets, type FramePin } from '../artifact/frame-doc';
 import { inlinePictures } from '../design/pictures';
 import * as api from './api';
 import type { DesignThread } from './api';
@@ -108,7 +109,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
   const [design, setDesign] = useState<DesignThread | null>(null);
   const [failed, setFailed] = useState(false);
   const [chosen, setChosen] = useState<number | null>(version || null);
-  const [html, setHtml] = useState<{ version: number; doc: string } | null>(null);
+  const [html, setHtml] = useState<{ version: number; html: string; sheets: string[] } | null>(null);
   const [commenting, setCommenting] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [note, setNote] = useState('');
@@ -153,8 +154,7 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
     // P8: the pictures it names, written in (../design/pictures.ts).
     api.getDesignVersion(rootId, shown).then(async (v) => ({ version: v.version, html: await inlinePictures(v.html) })).then((v) => {
       if (!live) return;
-      const origin = window.location.origin;
-      setHtml({ version: v.version, doc: designFrameDoc(v.html, { origin, sheets: design.surface === 'platform' ? currentSheets() : [] }) });
+      setHtml({ version: v.version, html: v.html, sheets: design.surface === 'platform' ? currentSheets() : [] });
       loads.current = 0;
     }, () => { if (live) setFailed(true); });
     return () => { live = false; };
@@ -189,16 +189,16 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
     try { frameRef.current?.contentWindow?.postMessage(message, '*'); } catch { /* the frame is gone */ }
   }, []);
   useEffect(() => {
-    post({ __design: 'pins', pins: [...pins, ...(draft ? [{ n: pins.length + 1, x: draft.x, y: draft.y, open: true }] : [])] });
+    post({ __artifact: 'pins', pins: [...pins, ...(draft ? [{ n: pins.length + 1, x: draft.x, y: draft.y, open: true }] : [])] });
   }, [pins, draft, drawn, post]);
-  useEffect(() => { post({ __design: 'mode', on: commenting && !draft }); }, [commenting, draft, drawn, post]);
+  useEffect(() => { post({ __artifact: 'mode', on: commenting && !draft }); }, [commenting, draft, drawn, post]);
 
   // A pin the frame placed: only the frame this pane drew is believed.
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
       if (!frameRef.current || event.source !== frameRef.current.contentWindow) return;
-      const data = event.data as { __design?: string; x?: number; y?: number; element?: DesignPin['element'] } | null;
-      if (!data || data.__design !== 'pin' || !commenting) return;
+      const data = event.data as { __artifact?: string; x?: number; y?: number; element?: DesignPin['element'] } | null;
+      if (!data || data.__artifact !== 'pin' || !commenting) return;
       const x = Number(data.x);
       const y = Number(data.y);
       if (!(x >= 0 && x <= 1) || !(y >= 0 && y <= 1)) return;
@@ -333,14 +333,17 @@ export function DesignPane({ conversationId, rootId, view, onView, version = nul
       <div ref={stageRef} className="messages-design-stage">
         {design && html ? (
           <div style={{ width: Math.round(design.width * scale), height: Math.round(design.height * scale) }} className="relative mx-auto overflow-hidden rounded-xl shadow-[0_0_0_1px_var(--app-sheet-line)]">
-            <iframe
-              ref={frameRef}
+            {/* The one frame (../artifact/frame.tsx), running: a design is
+                read only from its author's own private thread. */}
+            <ArtifactFrame
+              frameRef={frameRef}
               key={`${html.version}-${redraw}`}
+              mode="run"
+              viewer="author"
+              html={html.html}
+              sheets={html.sheets}
+              pictured
               title={t('messages:design.pane.frameTitle', { version: html.version })}
-              sandbox={DESIGN_SANDBOX}
-              referrerPolicy="no-referrer"
-              srcDoc={html.doc}
-              data-design-frame=""
               onLoad={onLoad}
               style={{ width: design.width, height: design.height, transform: `scale(${scale})`, transformOrigin: '0 0', border: 0, background: '#fff' }}
             />

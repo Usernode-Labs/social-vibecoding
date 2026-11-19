@@ -26,6 +26,9 @@ COPY scripts/language-packs.js ./scripts/language-packs.js
 # a staging preview that never boots. tests/shell-build.test.js pins this
 # list against the imports themselves.
 COPY src/services/countries.json ./src/services/countries.json
+# The one policy every page the bot writes is drawn under, read by the shell
+# (frontend/src/features/artifact/policy.ts) and by the server alike.
+COPY src/services/artifact-policy.json ./src/services/artifact-policy.json
 # The commit this image is being built from, so the generated document can
 # carry its OWN build identity (a <meta name="platform-build">) instead of the
 # running tab having to infer one from the first /api/version answer it sees —

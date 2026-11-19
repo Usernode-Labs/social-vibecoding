@@ -4,7 +4,7 @@
  * design (src/services/design-threads.js): the bot draws a screen from words
  * there, and says each version in the thread ("Version 2: a green Save
  * button."). Under its words the version is drawn small, in a frame like the
- * design pane's (../design/frame.ts: its own origin, scripts and nothing
+ * design pane's (../artifact/frame.tsx: its own origin, scripts and nothing
  * else, this site's stylesheets only), scaled to the card, and Open preview
  * opens the pane as the Homeroom bot tab's own column (../ai/preview.ts).
  *
@@ -27,7 +27,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { useMessages } from '../../lib/i18n/react';
-import { currentSheets, designFrameDoc, DESIGN_SANDBOX } from '../design/frame';
+import { ArtifactFrame } from '../artifact/frame';
+import { currentSheets } from '../artifact/frame-doc';
 import { inlinePictures } from '../design/pictures';
 import { openPreview } from '../ai/preview';
 import * as api from './api';
@@ -88,7 +89,7 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
 }): ReactNode {
   const t = useMessages('messages');
   const [design, setDesign] = useState<DesignThread | null>(null);
-  const [doc, setDoc] = useState<string | null>(null);
+  const [doc, setDoc] = useState<{ html: string; sheets: string[] } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -99,8 +100,7 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
       // P8: the pictures it names, written in (../design/pictures.ts).
       return readVersion(rootId, version).then((v) => inlinePictures(v.html)).then((html) => {
         if (!live) return;
-        const sheets = found.surface === 'platform' ? currentSheets() : [];
-        setDoc(designFrameDoc(html, { origin: window.location.origin, sheets }));
+        setDoc({ html, sheets: found.surface === 'platform' ? currentSheets() : [] });
       });
     }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
@@ -116,17 +116,17 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
         style={{ width: box.width, height: box.height }}
       >
         {doc && design ? (
-          <iframe
+          <ArtifactFrame
+            mode="run"
+            viewer="author"
+            html={doc.html}
+            sheets={doc.sheets}
+            pictured
+            inert
             title={t('messages:design.card.frameTitle', { version })}
-            sandbox={DESIGN_SANDBOX}
-            referrerPolicy="no-referrer"
-            srcDoc={doc}
-            data-design-frame=""
-            tabIndex={-1}
-            aria-hidden="true"
             style={{
               width: design.width, height: design.height, transform: `scale(${box.scale})`, transformOrigin: '0 0',
-              border: 0, background: '#fff', pointerEvents: 'none',
+              border: 0, background: '#fff',
             }}
           />
         ) : (

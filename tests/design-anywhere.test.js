@@ -368,8 +368,9 @@ test('a version said in a thread is drawn small, with Open preview; nothing is r
   assert.equal(message('messages:design.card.open'), 'Open preview');
   assert.match(html, />Swap list · version 2</);
   const src = read('frontend/src/features/messages/design-card.tsx');
-  assert.match(src, /sandbox=\{DESIGN_SANDBOX\}/, 'sandboxed as the pane\'s frame is');
-  assert.match(src, /tabIndex=\{-1\}\n\s+aria-hidden="true"/, 'a picture, not something to use');
+  assert.match(src, /<ArtifactFrame\s+mode="run"\s+viewer="author"/, 'the one frame, running for its author, as the pane\'s is');
+  assert.doesNotMatch(src, /<iframe|sandbox=/, 'no frame of its own');
+  assert.match(src, /<ArtifactFrame[\s\S]{0,200}?\n\s+inert\n/, 'a picture, not something to use: out of the tab order, hidden from readers, no pointer');
   assert.match(src, /const open = \(\) => openPreview\(\{ conversationId, rootId, version \}\);/);
   const row = read('frontend/src/features/messages/message-row.tsx');
   assert.match(row, /const designVersion = inThread && message\.threadRootId && !message\.deleted \? designVersionOf\(message\) : null;/);

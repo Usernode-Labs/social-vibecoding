@@ -1457,7 +1457,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       const row = await loadAttachment(req, res, { htmlOnly: true });
       if (!row) return res.status(404).end();
       res.set('Content-Type', 'text/html; charset=utf-8');
-      res.set('Content-Security-Policy', 'sandbox allow-scripts');
+      res.set('Content-Security-Policy', require('../services/artifact-policy').ATTACHMENT_VIEW_CSP);
       res.set('Referrer-Policy', 'no-referrer');
       res.set('Content-Disposition', attachments.attachmentDisposition('inline', row.filename || 'file.html'));
       return res.send(row.data);
@@ -1573,7 +1573,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
         const row = await loadReportedAttachment(req, { htmlOnly: true });
         if (!row) return res.status(404).end();
         res.set('Content-Type', 'text/html; charset=utf-8');
-        res.set('Content-Security-Policy', 'sandbox allow-scripts');
+        res.set('Content-Security-Policy', require('../services/artifact-policy').ATTACHMENT_VIEW_CSP);
         res.set('Referrer-Policy', 'no-referrer');
         res.set('Content-Disposition', attachments.attachmentDisposition('inline', row.filename || 'evidence.html'));
         return res.send(row.data);

@@ -40,6 +40,9 @@ COPY frontend ./frontend
 COPY scripts/shell-stamp.js ./scripts/shell-stamp.js
 COPY scripts/language-packs.js ./scripts/language-packs.js
 COPY src/services/countries.json ./src/services/countries.json
+# The one policy every page the bot writes is drawn under, read by the shell
+# (frontend/src/features/artifact/policy.ts) and by the server alike.
+COPY src/services/artifact-policy.json ./src/services/artifact-policy.json
 RUN --mount=type=bind,from=asset-deps,source=/build/frontend/node_modules,target=/build/frontend/node_modules,rw \
     node frontend/scripts/build-shell.mjs --keep-prerender
 

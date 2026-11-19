@@ -136,7 +136,8 @@ test('the compare card: its items read defensively, small previews side by side,
   assert.doesNotMatch(html, /data-bot-compare-propose/, 'Propose waits for the design to be read');
   assert.equal(renderToHtml(createElement(mod.CompareCard, { message: { id: 1 }, conversationId: 4, card: { type: 'compare', rootId: 9, items: [{ version: 2 }] } })), '');
   const src = read('frontend/src/features/messages/bot-cards/compare.tsx');
-  assert.match(src, /sandbox=\{DESIGN_SANDBOX\}/, 'the design card\'s own frame');
+  assert.match(src, /<ArtifactFrame\s+key=\{shown\}\s+mode="run"\s+viewer="author"/, 'the one frame, running for its author, as the design card\'s is');
+  assert.doesNotMatch(src, /<iframe|sandbox=/, 'no frame of its own');
   assert.match(src, /await decideCard\(message, 'pick', item\.key\);/);
   assert.match(src, /t\('messages:botCards\.compare\.pickWords', \{ version: item\.version \}\)/);
   assert.match(src, /<ProposeCard design=\{design\} version=\{pickedVersion\}/, 'the design pane\'s own Propose it');

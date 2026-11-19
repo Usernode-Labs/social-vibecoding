@@ -2,7 +2,7 @@
 // designer's reply in a design thread (services/design-bot-compare.js):
 // two or three of the thread's versions, or the screen as it is now beside
 // them, drawn small side by side, each in the design card's own frame
-// (../design-card.tsx: its own origin, scripts and nothing else).
+// (../design-card.tsx: the one frame, ../../artifact/frame.tsx, running).
 //
 //   SIDE BY SIDE                    [Phone] [Desktop]
 //   ┌──────┐ ┌──────┐ ┌──────┐
@@ -23,7 +23,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { CheckIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../../lib/i18n/react';
-import { currentSheets, designFrameDoc, DESIGN_SANDBOX } from '../../design/frame';
+import { ArtifactFrame } from '../../artifact/frame';
+import { currentSheets } from '../../artifact/frame-doc';
 import { inlinePictures } from '../../design/pictures';
 import { openPreview } from '../../ai/preview';
 import type { DesignThread } from '../api';
@@ -87,6 +88,7 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
   const validRoot = Number.isSafeInteger(rootId) && rootId > 0;
   const [design, setDesign] = useState<DesignThread | null>(null);
   const [docs, setDocs] = useState<Record<number, string>>({});
+  const [sheets, setSheets] = useState<string[]>([]);
   const [failed, setFailed] = useState(false);
   const [size, setSize] = useState<CompareSize | null>(null);
   const [mine, setMine] = useState<CompareKey | null>(null);
@@ -102,12 +104,12 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
     readDesign(rootId, newest).then((found) => {
       if (!live) return;
       setDesign(found);
-      const sheets = found.surface === 'platform' ? currentSheets() : [];
+      setSheets(found.surface === 'platform' ? currentSheets() : []);
       for (const version of new Set(versionsKey.split(',').map(Number))) {
         readVersion(rootId, version)
           .then((v) => inlinePictures(v.html))
           .then((html) => {
-            if (live) setDocs((had) => ({ ...had, [version]: designFrameDoc(html, { origin: window.location.origin, sheets }) }));
+            if (live) setDocs((had) => ({ ...had, [version]: html }));
           })
           .catch(() => { if (live) setFailed(true); });
       }
@@ -176,17 +178,17 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
                 style={{ width: box.width, height: box.height }}
               >
                 {doc && design ? (
-                  <iframe
+                  <ArtifactFrame
                     key={shown}
+                    mode="run"
+                    viewer="author"
+                    html={doc}
+                    sheets={sheets}
+                    inert
                     title={t('messages:botCards.compare.frameTitle', { label })}
-                    sandbox={DESIGN_SANDBOX}
-                    referrerPolicy="no-referrer"
-                    srcDoc={doc}
-                    tabIndex={-1}
-                    aria-hidden="true"
                     style={{
                       width: box.frame.width, height: box.frame.height, transform: `scale(${box.scale})`, transformOrigin: '0 0',
-                      border: 0, background: '#fff', pointerEvents: 'none',
+                      border: 0, background: '#fff',
                     }}
                   />
                 ) : (

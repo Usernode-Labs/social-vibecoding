@@ -480,6 +480,11 @@
       "id": "plan-design-source",
       "sha256": "76f81d8dea4eb885cff349fc7d39164f342c5070cfce38c4e28bb55928f8983a",
       "schemaSha256": "19df16ffd70fe0dca8af24164182e29f28fdc7c41f40c7e7fe1b8976d1aeacd7"
+    },
+    {
+      "id": "artifact-store",
+      "sha256": "0b2b396e8efa0057a68bb5bf7ecbc24eda697b9efe8153102b10a19ad1b23fd8",
+      "schemaSha256": "2f22555e45c9c119433bd409bf53331555290284659c4017394f23cfc71408f8"
     }
   ]
 }

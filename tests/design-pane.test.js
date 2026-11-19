@@ -2,7 +2,7 @@
 
 // #6071: a design thread's pane and the frame it draws a version in
 // (frontend/src/features/messages/design-pane.tsx, frontend/src/features/
-// design/frame.ts), and the way in. 1 Nov 2026 (C1): the screen picker
+// artifact/frame.tsx), and the way in. 1 Nov 2026 (C1): the screen picker
 // retired; the bot draws a screen from words in any private thread
 // (tests/design-anywhere.test.js pins the drawing and the preview column).
 //
@@ -29,39 +29,8 @@ const { message } = require('./lib/platform-i18n');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-const frame = loadTsx('frontend/src/features/design/frame.ts');
-
-test('a version is drawn under a policy that keeps it to this site, with the pin helper first', () => {
-  const csp = frame.designCsp('https://homeroom.test');
-  assert.equal(csp, [
-    "default-src 'none'",
-    "style-src 'unsafe-inline' https://homeroom.test",
-    'img-src data: https://homeroom.test',
-    'font-src data: https://homeroom.test',
-    "script-src 'unsafe-inline'",
-    "connect-src 'none'",
-    "frame-src 'none'",
-    "form-action 'none'",
-    "base-uri 'none'",
-  ].join('; '));
-  assert.equal(frame.DESIGN_SANDBOX, 'allow-scripts', 'its own origin: never allow-same-origin, forms, popups or top navigation');
-  const doc = frame.designFrameDoc('<!doctype html><html><head><base href="https://elsewhere.test/"><script>mine()</script></head><body>Hi</body></html>', { origin: 'https://homeroom.test' });
-  assert.doesNotMatch(doc, /<base\b/i);
-  const head = doc.indexOf('<head>') + '<head>'.length;
-  assert.equal(doc.indexOf('<meta http-equiv="Content-Security-Policy"'), head, 'the policy is the head\'s first child');
-  assert.ok(doc.indexOf("__design==='mode'") < doc.indexOf('mine()'), 'the helper runs before the design\'s own script');
-  // A body with no document around it gets one.
-  assert.match(frame.designFrameDoc('<p>Bare</p>', { origin: 'https://h.test' }), /^<!doctype html><html><head><meta http-equiv="Content-Security-Policy"[\s\S]*<body><p>Bare<\/p><\/body><\/html>$/);
-});
-
-test('a Homeroom page is drawn with today\'s stylesheets', () => {
-  const captured = '<html><head><link rel="stylesheet" href="https://h.test/b/aaaa/css/app.css"><link rel="stylesheet" href="https://h.test/b/aaaa/css/tailwind.css"><link rel="icon" href="/favicon.ico"></head><body></body></html>';
-  const now = ['https://h.test/b/bbbb/usernode-native/v1/native.css', 'https://h.test/b/bbbb/css/app.css', 'https://h.test/b/bbbb/css/tailwind.css'];
-  const doc = frame.designFrameDoc(captured, { origin: 'https://h.test', sheets: now });
-  assert.match(doc, /href="https:\/\/h\.test\/b\/bbbb\/css\/app\.css"/);
-  assert.match(doc, /href="https:\/\/h\.test\/b\/bbbb\/css\/tailwind\.css"/);
-  assert.match(doc, /<link rel="icon" href="\/favicon\.ico">/, 'a link that is no stylesheet is left as it was');
-});
+// The frame a version is drawn in, its policy and its helper are the one
+// frame's now (frontend/src/features/artifact/): tests/artifact-frame.test.js.
 
 test('the pane reads nothing in its first render, and says it is drawing', () => {
   const calls = [];
@@ -177,28 +146,8 @@ test('the bridge answers a capture only to Homeroom, and its mirror is the same 
   assert.equal(read('public/usernode-bridge.js'), bridge);
 });
 
-// #6261: a comment's picture leaves every frame out, so a design's frame was
-// a blank box. The frame draws its own body, with the vendored SnapDOM source
-// sent in and run as an inline script (the policy allows inline scripts),
-// and answers the shell.
-test('a design frame draws its own picture when the shell asks', () => {
-  const doc = frame.designFrameDoc('<p>Hi</p>', { origin: 'https://h.test' });
-  assert.equal(frame.DESIGN_FRAME_ATTR, 'data-design-frame');
-  // The helper answers a picture request, and only from the parent.
-  assert.match(doc, /d\.__design==='picture'/, 'the helper handles a picture request');
-  assert.match(doc, /typeof d\.lib!=='string'/, 'the library text comes in the request');
-  assert.match(doc, /s\.textContent=d\.lib/, 'the vendored library arrives as an inline script');
-  assert.match(doc, /exclude:\['\[data-design-pins\]'\]/, 'the pins layer is left out of the design\'s own picture');
-  assert.match(doc, /parent\.postMessage\(\{__design:'picture'/, 'the picture goes back to the shell');
-  assert.match(doc, /e\.source!==parent/, 'only the parent is believed');
-  assert.match(doc, /\},'\*'\);/, 'the frame\'s origin is opaque, so the reply is not origin-scoped');
-  // The safety limits are unchanged.
-  assert.ok(doc.includes(`content="${frame.designCsp('https://h.test')}"`), 'the same policy as before');
-  assert.equal(frame.DESIGN_SANDBOX, 'allow-scripts');
-  // Both design frames are marked for the shell to find.
-  assert.match(read('frontend/src/features/messages/design-pane.tsx'), /data-design-frame=""/);
-  assert.match(read('frontend/src/features/messages/design-card.tsx'), /data-design-frame=""/);
-});
+// #6261, a design frame drawing its own picture: the one frame's helper,
+// tests/artifact-frame.test.js.
 
 test('the design routes are the owner\'s taps: same-origin and limited, and a pin rides only when it checks out', () => {
   const routes = read('src/routes/conversations.js');
