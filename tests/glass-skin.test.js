@@ -225,7 +225,9 @@ test('Settings › Experimental offers every look in one menu, shipped hidden, a
   assert.match(section[1], /^hidden /, 'hidden until the admin gate lifts it');
   assert.match(section[2], /<label[^>]*for="settings-look"[^>]*>Look<\/label>/);
   const options = [...section[2].matchAll(/<option value="([^"]*)"[^>]*>([^<]*)<\/option>/g)].map((m) => [m[1], m[2]]);
-  assert.deepEqual(options, [['', 'Standard'], ...MENU_LOOKS.map((id) => [id, LOOK_NAMES[id]])],
+  // Standard (WIP) is listed once per token set, each named with (WIP), right after the look itself.
+  const WIP_SETS = [['wip:brand', 'Homeroom brand kit (WIP)'], ['wip:brand2', 'Homeroom brand kit V2 (WIP)'], ['wip:highlighter', 'Highlighter (WIP)']];
+  assert.deepEqual(options, [['', 'Standard'], ...MENU_LOOKS.flatMap((id) => (id === 'wip' ? [[id, LOOK_NAMES[id]], ...WIP_SETS] : [[id, LOOK_NAMES[id]]]))],
     'Standard, then brand, then the five in the tour\'s order, each by its name');
   assert.doesNotMatch(html, /new-look-enabled/, 'the New look switch is gone: its look is the menu\'s');
   assert.doesNotMatch(experimentalSrc(), /settings:experimental\.newLook\./, 'and so are its words');

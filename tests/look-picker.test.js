@@ -136,3 +136,16 @@ test('the toggle is the theme\'s own switch, and follows it wherever it is chang
   assert.match(src, /document\.documentElement\.classList\.contains\('dark'\)/, 'what is on screen, so "System" reads as what the device shows');
   assert.equal((src.match(/window\.Theme\?\.onChange\?\.\(/g) || []).length, 1, 'one listener, however many pickers are mounted');
 });
+
+test('Standard (WIP) is listed once per token set, beside the looks, each named with (WIP), and a pick sets both', () => {
+  const picked = [];
+  const html = renderComponent(PICKER, 'LookPickerView', { variant: 'shell', skin: 'wip', tokens: 'brand2', onPick: (s) => picked.push(['look', s]), onTokens: (s) => picked.push(['tokens', s]) }, { cache: false });
+  const options = [...html.matchAll(/<option value="([a-z0-9:]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]);
+  assert.deepEqual(options.slice(0, 5), [
+    ['standard', 'Standard', false], ['wip', 'Standard (WIP)', false], ['wip:brand', 'Homeroom brand kit (WIP)', false],
+    ['wip:brand2', 'Homeroom brand kit V2 (WIP)', true], ['wip:highlighter', 'Highlighter (WIP)', false],
+  ], 'the look, then each of its token sets, the device\'s own chosen');
+  assert.doesNotMatch(html, /data-look-tokens/, 'no second menu for the token sets');
+  const src = read(PICKER);
+  assert.match(src, /if \(next\.skin === 'wip'\) onTokens\?\.\(next\.tokens\);\s*onPick\(next\.skin\);/, 'the set is written before the look, so the look arrives already drawn with it');
+});

@@ -67,6 +67,9 @@ export function ExperimentalSection() {
           <Select id="settings-look" variant="plain">
             <option value="">{t('settings:experimental.look.standard')}</option>
             <option value="wip">{t('settings:experimental.look.wip')}</option>
+            <option value="wip:brand">{t('settings:experimental.wipTokens.brand')}</option>
+            <option value="wip:brand2">{t('settings:experimental.wipTokens.brand2')}</option>
+            <option value="wip:highlighter">{t('settings:experimental.wipTokens.highlighter')}</option>
             <option value="brand">{t('settings:experimental.look.brand')}</option>
             <option value="glass">{t('settings:experimental.look.glass')}</option>
             <option value="paper">{t('settings:experimental.look.paper')}</option>

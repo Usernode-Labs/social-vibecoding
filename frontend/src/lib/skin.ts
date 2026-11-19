@@ -69,6 +69,34 @@ const SKINS: readonly Skin[] = ['standard', ...MENU_SKINS];
 export const WIP_TOKEN_SETS = ['current', 'brand', 'brand2', 'highlighter'] as const;
 export type WipTokens = typeof WIP_TOKEN_SETS[number];
 
+/**
+ * The Look menu's entries (19 Nov 2026): every look, with Standard (WIP)
+ * once for each of its token sets, side by side with the other looks. The
+ * look as it is drawn is 'wip'; another set is written 'wip:<set>'. The
+ * device still keeps the two apart (the look, and its token set): an entry
+ * is only how the menus name the pair.
+ */
+export type LookChoice = Skin | `wip:${Exclude<WipTokens, 'current'>}`;
+export const LOOK_CHOICES: readonly LookChoice[] = (['standard', ...MENU_SKINS] as Skin[]).flatMap((skin): LookChoice[] => (
+  skin === 'wip'
+    ? WIP_TOKEN_SETS.map((set): LookChoice => (set === 'current' ? 'wip' : `wip:${set}`))
+    : [skin]
+));
+
+/** The menu entry a look and its token set make. */
+export function lookChoice(skin: Skin, tokens: WipTokens = 'current'): LookChoice {
+  return skin === 'wip' && tokens !== 'current' ? `wip:${tokens}` : skin;
+}
+
+/** The look and the token set a menu entry names; anything unknown is Standard. */
+export function parseLookChoice(choice: string): { skin: Skin; tokens: WipTokens } {
+  const [skin, set] = String(choice || '').split(':');
+  if (skin === 'wip') {
+    return { skin: 'wip', tokens: (WIP_TOKEN_SETS as readonly string[]).includes(set) ? set as WipTokens : 'current' };
+  }
+  return { skin: (SKINS as readonly string[]).includes(skin) ? skin as Skin : 'standard', tokens: 'current' };
+}
+
 /** The device's token config for Standard (WIP); 'current' when the head module is absent. */
 export function currentWipTokens(): WipTokens {
   if (typeof window === 'undefined') return 'current';

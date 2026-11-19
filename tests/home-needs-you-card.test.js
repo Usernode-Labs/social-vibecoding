@@ -343,7 +343,19 @@ test('Standard (WIP): the Highlighter token set, whole in light and in dark, and
   const mod = read('frontend/src/lib/skin.ts').match(/export const WIP_TOKEN_SETS = \[([\s\S]*?)\] as const;/)[1];
   assert.deepEqual([...mod.matchAll(/'([a-z0-9]+)'/g)].map((m) => m[1]), ['current', 'brand', 'brand2', ...ids]);
   const picker = read('frontend/src/features/frame/look-picker.tsx');
-  for (const id of ids) assert.ok(picker.includes(`${id}: 'settings:experimental.wipTokens.${id}',`), `${id} is named in the picker`);
+  // In the Look menu it is an entry beside the looks, 'wip:<set>', named with (WIP) like every drawing of that look.
+  for (const id of ids) assert.ok(picker.includes(`'wip:${id}': 'settings:experimental.wipTokens.${id}',`), `${id} is named in the picker`);
+  assert.equal(message('settings:experimental.wipTokens.brand'), 'Homeroom brand kit (WIP)');
+  assert.equal(message('settings:experimental.wipTokens.brand2'), 'Homeroom brand kit V2 (WIP)');
+  assert.equal(message('settings:experimental.wipTokens.highlighter'), 'Highlighter (WIP)');
+  assert.doesNotMatch(picker, /data-look-tokens/, 'no second menu for the token sets');
+  const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  assert.deepEqual(skinMod.LOOK_CHOICES.slice(0, 5), ['standard', 'wip', 'wip:brand', 'wip:brand2', 'wip:highlighter']);
+  assert.deepEqual(skinMod.parseLookChoice('wip:brand2'), { skin: 'wip', tokens: 'brand2' });
+  assert.deepEqual(skinMod.parseLookChoice('wip'), { skin: 'wip', tokens: 'current' });
+  assert.deepEqual(skinMod.parseLookChoice('nope'), { skin: 'standard', tokens: 'current' });
+  assert.equal(skinMod.lookChoice('wip', 'highlighter'), 'wip:highlighter');
+  assert.equal(skinMod.lookChoice('brand', 'highlighter'), 'brand', 'a token set belongs to Standard (WIP) alone');
   // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.
   assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
 });
