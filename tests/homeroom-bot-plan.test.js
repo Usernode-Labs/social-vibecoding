@@ -34,6 +34,7 @@ const bot = require('../src/services/homeroom-bot');
 const dm = require('../src/services/homeroom-bot-dm');
 const live = require('../src/services/homeroom-bot-live');
 const { tapsNow } = require('./lib/bot-replies');
+const { waitFor } = require('./lib/wait-for');
 
 const fence = (obj) => `Done.\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
 
@@ -449,6 +450,18 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
   );
   const app = (await pool.query('SELECT id, slug, name, community_id FROM apps WHERE id = $1', [inserted.id])).rows[0];
   await pool.query('INSERT INTO community_members (community_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [app.community_id, maya.id]);
+  // The request's bot-request events are applied by a pipeline slot in the
+  // background, which may answer after enqueueFront's bounded wait: a read
+  // straight after a reply can see the queue before its Owed lands. Wait for
+  // the slot to finish (held events are not pending) before reading it.
+  const requestSettled = () => waitFor(async () => {
+    const { rows: [r] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM wf_events
+        WHERE machine = 'bot-request' AND key = $1 AND status = 'pending'`,
+      [`request:${app.id}:1`],
+    );
+    return r.n === 0;
+  }, { label: 'the request\'s bot-request events to be applied', timeoutMs: 30000, everyMs: 25 });
   const set = (key, value) => pool.query(
     `INSERT INTO platform_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
     [key, value],
@@ -573,6 +586,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.ok(out?.messageId, 'the bot says it heard');
     const said = (await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [out.messageId])).rows[0];
     assert.equal(said.content, "Thanks. I'll work that into a new plan for Plant Pal and send it here.");
+    await requestSettled();
     const run = await runRow(second);
     assert.deepEqual([run.plan_change, run.awaiting_go_at, run.build_ok], ['Make it work for my partner too', null, false]);
     const { rows: [q] } = await pool.query('SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 1', [app.id]);
@@ -597,6 +611,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.notEqual((await planMessage(first)).meta.replaced, true, 'a plan that was built stays as it was');
     // Where the request stands, stored as the drain stores it: waiting for its plan.
     const { settleWorkStates } = require('./lib/work-states');
+    await requestSettled();
     await settleWorkStates(pool);
     assert.deepEqual(await bot.retireWaitingPlans(pool, { appId: app.id, issueNumber: 1, why: 'the request was read again' }), [third]);
     const run = await runRow(third);
@@ -605,6 +620,7 @@ test('B6: a first version\'s plan, end to end, against the full PostgreSQL schem
     assert.equal(card.meta.status, 'closed');
     // Step 3: its Build it card retires with the request's move off its plan
     // (bot-cards.js retireOnMove, from the standing), as the drain finds it.
+    await requestSettled();
     await settleWorkStates(pool);
     const { rows: [action] } = await pool.query('SELECT status, retired_reason FROM bot_cards WHERE id = $1', [card.meta.actionId]);
     assert.equal(action.status, 'retired');
