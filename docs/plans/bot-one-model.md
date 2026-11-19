@@ -549,3 +549,104 @@ the two turns took about 200k (the designer's 170k to 250k plus the chat's
 27k hand-off), about a cent more on DeepSeek V4.1 Flash. One turn is recorded
 and counted per message, not two.
 
+
+## Step 7: the architecture pass (19 Nov 2026)
+
+### Why
+
+After step 6, a read-only pass of the bot looked at three things on every
+surface: where its words come from, who decides each state a person sees,
+and what happens when something fails. The surfaces that read the stored
+work state agreed with one another. What went wrong came from places that
+still decided for themselves:
+
+- the push's own mappings;
+- the first-version relay;
+- the plan card;
+- the change page's timeline and pill;
+- the Workshop list;
+- bot-change's own readiness check;
+- the request machine, which dropped the bot's own retries.
+
+Two fixes merged that day did not do their main job. #6859's plan retry
+never ran, and #6868's credit wait never resumed: `bot-request owed()`
+dropped any debt above priority 0 while the request was `building`. Request
+#6864's plan failed at 12:03 UTC, after #6859 merged, and no retry came.
+
+### What was built
+
+**The bot's own retries and credit.**
+- `plan_retry` and `credit_wait` are kept while a look or build runs, and
+  taken when it ends after their own wait.
+- A run stopped for credit no longer blocks reads.
+- A build's 402 pauses the lane.
+- One out-of-credit classifier (`openrouter-credit.js creditOut`, which
+  reads the status, the body, the runner's error code and the runtime's own
+  line) is used by every turn: read, plan, build, revise, checks fix, the
+  chat, the voice and look_into. Each says one first-person line, keeps or
+  refunds its work, and calls `noteOutage`.
+- Admins are told at once.
+- With no balance to read, a timed one-token probe lifts the pause, and a
+  pause older than `homeroom_bot_credit_stale_hours` (6) raises an incident.
+- A chat message the outage held is answered once when credit is back
+  (bot-dm `CreditBack`, version 2).
+
+**One stored state for every screen.**
+- A closed bot change (stored `archived`) reads Stopped, not "Not started",
+  and no longer hides a person's change.
+- A credit wait reads "Waiting for building credit", and a retried plan
+  reads "Trying the plan again".
+- These now read the stored row instead of deciding for themselves:
+  - the change page's timeline and pill;
+  - the plan card;
+  - the Workshop list;
+  - the vote card;
+  - Needs you questions;
+  - a first version's Testing versus Going live.
+- "Ready to try" bells and the ready-to-vote follow-ups ring when the
+  change's row opens for votes (`votePings`), and are deduped against
+  `pr_proposed`.
+- The sweep is driven by due times (`standing.dueAt`), not a fixed 100 rows
+  a minute.
+- A project's queued requests are marked when the line moves.
+- Each refresh runs with its pushes as one unit, and a mark that keeps
+  failing is parked after three tries.
+
+**The bot's words from stored causes.**
+- One stop decoder (`bot-stop-cause.js`) is read by the note, the track
+  line, `standing.cause`, the stage and the push.
+- The push names the action the page really offers.
+- A person's Stop says "Stopped by @x".
+- A "person decides" verdict says who decides, or what kind of hand-back it
+  is (setup outside the app, stored data, Homeroom itself, another project,
+  the wrong project, close it).
+- A blocked build is no longer "nothing to build".
+- A failed build's note carries a Try again card that restarts it without a
+  model.
+- "I built this" says the vote opens once its tests and screenshots are
+  done; this was agreed with Evan.
+
+**Failures that told nobody.**
+- A merge whose answer was lost is recorded as merged.
+- A provider error in a sync's conflict turn backs off, instead of reading
+  as an unresolvable conflict.
+- An unresolvable conflict on the bot's change, an approved change stuck on
+  GitHub's checks (capped at 15 tries a head), a checks fix lost twice and a
+  failed deploy each reach the requester and, where it fits, an incident.
+- A held voice answer whose post ran out of tries is decided again.
+- The chat's fallback after a Stop says what the turn did.
+- A verdict that could not be acted on is retried.
+- A change whose review failed says so in its description.
+- Out-of-memory and provider-code reads are counted as infra, not as model
+  failures.
+
+### Left for later
+
+- **Before and after shots.** Most of the step's screens show only bot
+  states, which a fresh staging copy cannot reach (the bot is off there).
+  A person's change in shots, syncing or stuck on GitHub could be seeded,
+  which would let those states be shot.
+- **Voice and look_into.** These still ask to be asked again once credit is
+  back; only the chat resumes by itself.
+- **The live `updateComingSql` check in Needs you stays.** The row can lag
+  a turn's start by the 3-second drain.
