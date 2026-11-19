@@ -822,10 +822,10 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     sent.length = 0;
     const id = await say(sam, '@Homeroom bot #12 is done, close it');
     const { rows: [o] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'close_request', $2, $3) RETURNING id`,
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, 'close_request', $2, $3) RETURNING id`,
       [app.id, JSON.stringify({ issueNumber: 12, title: 'Show due dates', why: 'Done.' }), sam.id]);
     const reply = await say(homeroomBot, 'Propose to close?', { type: 'message', ref: id }, { homeroomBot: { kind: 'voice', offer: { id: o.id, status: 'open' } } });
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [o.id, reply]);
+    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [o.id, reply]);
     // The request read and the vote's filing are stood in for: this is about
     // what the settled report says.
     const mayor = Object.create(require('../src/services/homeroom-bot-mayor'));
@@ -843,12 +843,12 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     sent.length = 0;
     const id = await say(sam, '@Homeroom bot add a dark mode');
     const { rows: [o] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'file_request', $2, $3) RETURNING id`,
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, 'file_request', $2, $3) RETURNING id`,
       [app.id, JSON.stringify({ title: 'Dark mode', details: 'Add a dark mode', messageId: id }), sam.id]);
     const reply = await say(homeroomBot, 'I drafted it.', { type: 'message', ref: id }, { homeroomBot: { kind: 'voice', offer: { id: o.id, status: 'open' } } });
-    await pool.query('UPDATE homeroom_bot_voice_offers SET message_id = $2 WHERE id = $1', [o.id, reply]);
+    await pool.query('UPDATE bot_cards SET chat_message_id = $2 WHERE id = $1', [o.id, reply]);
     // The first attempt claimed it, and its process went.
-    await pool.query(`UPDATE homeroom_bot_voice_offers SET status = 'deciding', decided_key = 'offer:cut' WHERE id = $1`, [o.id]);
+    await pool.query(`UPDATE bot_cards SET status = 'deciding', decided_key = 'offer:cut' WHERE id = $1`, [o.id]);
     const filed = [];
     const chatSvc = {
       ...require('../src/services/homeroom-bot-chat'),
@@ -880,12 +880,12 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     sent.length = 0;
     const id = await say(sam, '@Homeroom bot withdraw it');
     const { rows: [o] } = await pool.query(
-      `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id) VALUES ($1, 'withdraw_change', '{}', $2) RETURNING id`, [app.id, sam.id]);
+      `INSERT INTO bot_cards (place, app_id, kind, args, user_id) VALUES ('thread', $1, 'withdraw_change', '{}', $2) RETURNING id`, [app.id, sam.id]);
     const reply = await say(homeroomBot, 'Withdraw it?', { type: 'message', ref: id }, { homeroomBot: { kind: 'voice', offer: { id: o.id, status: 'open' } } });
-    await pool.query(`UPDATE homeroom_bot_voice_offers SET message_id = $2, status = 'deciding', decided_key = 'offer:x' WHERE id = $1`, [o.id, reply]);
+    await pool.query(`UPDATE bot_cards SET chat_message_id = $2, status = 'deciding', decided_key = 'offer:x' WHERE id = $1`, [o.id, reply]);
     assert.deepEqual(await voice.actOnOffer(pool, {}, { offerId: o.id, userId: 0, choice: 'no', key: 'offer:x', gaveUp: true, deps: { ws } }),
       { decision: 'failed' });
-    const { rows: [row] } = await pool.query('SELECT status FROM homeroom_bot_voice_offers WHERE id = $1', [o.id]);
+    const { rows: [row] } = await pool.query('SELECT status FROM bot_cards WHERE id = $1', [o.id]);
     assert.equal(row.status, 'failed');
     assert.match(sent[0].content, /didn't work just now/);
   });

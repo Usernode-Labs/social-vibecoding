@@ -2402,7 +2402,7 @@ async function post({
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
   proposalSessionId = null, sender = null, threadMessage = null, dm = null, untag = null, onlyProposal = false,
   skipIssueThread = false, skipGithub = false, homeroomText = null, strict = false, version = null,
-  card = null, requestPostId = null,
+  card = null,
 }) {
   const botPost = require('./bot-post');
   // Homeroom bot parity (P4, P5): the request moved; its batch's roll-up and
@@ -2487,8 +2487,8 @@ async function post({
     };
   }
   // The request's record from before this release, when the post is one
-  // (its row, taken up; or `requestPostId`, a held answer's pending row).
-  const priorPostId = Number(had?.request_post_id) || Number(requestPostId) || null;
+  // (its row, taken up).
+  const priorPostId = Number(had?.request_post_id) || null;
   try {
     return await sayClaimedPost({
       pool, github, ws, app, repo, issueNumber, kind, runId, text, msgType, metadata, senderId, notifications,

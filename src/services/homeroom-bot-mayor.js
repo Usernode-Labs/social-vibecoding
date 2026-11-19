@@ -6035,9 +6035,9 @@ async function readDraft(pool, { user, actionId }) {
   if (!user?.id || !Number.isInteger(id) || id <= 0) return { ok: false };
   const { rows: [row] } = await pool.query(
     `SELECT a.title, a.details, a.status, ap.slug, ap.name
-       FROM homeroom_bot_dm_actions a
+       FROM bot_cards a
        JOIN apps ap ON ap.id = a.app_id
-      WHERE a.id = $1 AND a.user_id = $2 AND a.kind = 'file_request'`,
+      WHERE a.id = $1 AND a.place = 'dm' AND a.user_id = $2 AND a.kind = 'file_request'`,
     [id, user.id]);
   if (!row || row.status !== 'open') return { ok: false };
   return {
