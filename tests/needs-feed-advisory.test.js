@@ -142,7 +142,8 @@ test('the demo feed’s shopping-list card is the advisory one', () => {
   assert.ok(!overview.DEMO_NEEDS_FEED.some((it) => it.id !== -104 && it.advisory), 'and it is the only one');
   // The route orders the demo overlay too: the deciding cards first.
   const ordered = overview.decidingFirst(overview.withDemoNeedsFeed([])).map((it) => it.id);
-  assert.deepEqual(ordered, [-103, -105, -106, -104], 'the advisory card last, behind the approval card');
+  // #6832: -107, -108 and -109 are the three plain pictures' cards.
+  assert.deepEqual(ordered, [-103, -105, -107, -108, -109, -106, -104], 'the advisory card last, behind the approval card');
 });
 
 // ── The reel and the sheet: the flags reach the card and the picker ───

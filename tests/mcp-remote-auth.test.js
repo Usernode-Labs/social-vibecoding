@@ -154,6 +154,7 @@ test('the browser-session routes are CSRF-checked against the configured origin'
   for (const marker of [
     "router.post('/api/connect/oauth/authorize'",
     "router.delete('/api/me/connectors/:id'",
+    "router.patch('/api/me/connectors/:id'",
   ]) {
     const idx = SRC.indexOf(marker);
     assert.ok(idx > 0, `${marker} exists`);

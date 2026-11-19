@@ -25,8 +25,26 @@ export function quotaHeadline(quota: AppCreationQuota): string {
       ? translate('dialogs:allowance.headline.noLimit')
       : translate('dialogs:allowance.headline.usedNoLimit', { count: quota.used });
   }
+  // #6842: an account with no slots at all says so, rather than reading
+  // "0 of 0 app slots used".
+  if (quota.limit === 0) return translate('dialogs:allowance.headline.noSlots');
   if (quota.used == null) return translate('dialogs:allowance.headline.slots', { count: quota.limit });
   return translate('dialogs:allowance.headline.used', { count: quota.limit, used: quota.used });
+}
+
+/**
+ * Which limit stops this account making an app (#6842), the server's own
+ * rule (src/services/app-allowance.js `blockedBy`): its own slots first, then
+ * the server. Null when nothing does. Pure.
+ */
+export type BlockedReason = 'no_slots' | 'slots' | 'server' | null;
+
+export function blockedReason(quota: AppCreationQuota | null, server: ServerCapacity | null): BlockedReason {
+  if (!quota || quota.limit === null) return null;
+  if (quota.limit === 0) return 'no_slots';
+  if (server?.full) return 'server';
+  if (quota.used != null && quota.used >= quota.limit) return 'slots';
+  return null;
 }
 
 /**
@@ -37,6 +55,8 @@ export function quotaHeadline(quota: AppCreationQuota): string {
 export function appSlotsLine(quota: AppCreationQuota | null, requestedAt: string | null): string | null {
   if (!quota) return null;
   if (quota.limit === null) return quotaHeadline(quota);
+  // #6842: no slots at all is not "no slots free" of a set the person has.
+  if (quota.limit === 0) return translate('dialogs:allowance.headline.noSlots');
   // #6466: the row says how much ROOM there is, not how much is used: "1 app
   // slot free of 2", and "No app slots free · Request more" once none is.
   const free = quota.remaining ?? (quota.used != null ? Math.max(quota.limit - quota.used, 0) : null);
@@ -99,7 +119,13 @@ export function useAppAllowance() {
   // Both shots pin the whole panel, server line included, so what they show
   // does not depend on how many apps the server they run against holds.
   try {
-    const shot = new URLSearchParams(location.search).get('shot');
+    const params = new URLSearchParams(location.search);
+    const shot = params.get('shot');
+    // #6842: the make screen's own address is ?shot=make, so the pin can
+    // ride beside it as a second shot value: ?shot=make&shot=no-app-slots
+    // opens the screen and pins its state on the before and after builds
+    // alike. Alone, the pin serves Create, where the screen is a click away.
+    const shots = params.getAll('shot');
     if (quota && shot === 'create-quota') {
       quota = { used: 1, limit: 2, remaining: 1 };
       server = null;
@@ -116,13 +142,25 @@ export function useAppAllowance() {
       quota = { used: 2, limit: 2, remaining: 0 };
       server = null;
     }
+    // #6842: an account with no app slots at all (not let in yet, or an
+    // admin set its quota to zero). A fresh staging account always has some,
+    // so the state is pinned here for the before/after shots. Display only.
+    // Pinned whether or not an allowance has loaded: a shot of this state is
+    // about an account whose reason is exactly this, not about its count.
+    if (shots.includes('no-app-slots')) {
+      quota = { used: 0, limit: 0, remaining: 0 };
+      server = null;
+    }
   } catch { /* prerender */ }
   const spent = !!quota && quota.limit !== null && quota.used !== null && quota.used >= quota.limit;
   // QA 2026-09-24 Q33b: a full server blocks creation exactly as a spent
   // allowance does, so the dialog says so up front instead of at Create.
+  // #6842: the same rule now says WHICH limit it is, so an account with no
+  // slots is never told it used them all.
   const serverFull = !!server?.full;
-  const blocked = spent || serverFull;
-  return { ...state, quota, server, spent, serverFull, blocked };
+  const reason = blockedReason(quota, server);
+  const blocked = reason !== null;
+  return { ...state, quota, server, spent, serverFull, reason, blocked };
 }
 
 /**
@@ -165,7 +203,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
   quiet?: boolean;
 }) {
   const t = useMessages('dialogs');
-  const { quota, server, requestedAt, loading, error, spent, serverFull } = useAppAllowance();
+  const { quota, server, requestedAt, loading, error, spent, serverFull, reason } = useAppAllowance();
   const binds = !!quota && serverBinds(quota, server);
   const [busy, setBusy] = useState(false);
   const [requestError, setRequestError] = useState('');
@@ -188,15 +226,18 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
   return (
     <div id={id} className={SURFACE[surface]}
       aria-live="polite"
-      data-quota-state={!quota ? 'loading' : serverFull ? 'server-full' : spent ? 'spent' : 'available'}>
+      data-quota-state={!quota ? 'loading' : reason === 'no_slots' ? 'no-slots' : serverFull ? 'server-full' : spent ? 'spent' : 'available'}>
       <div className="flex items-baseline justify-between gap-3 text-sm">
         <span className="font-medium text-zinc-700 dark:text-zinc-200">{t('dialogs:allowance.title')}</span>
         <strong className="text-end text-zinc-900 dark:text-zinc-100">
-          {!quota ? t('dialogs:allowance.checking') : serverFull ? t('dialogs:allowance.serverFull') : quotaHeadline(quota)}
+          {/* #6842: no slots at all is this account's own reason, so it is
+              said even while the whole server is also full. */}
+          {!quota ? t('dialogs:allowance.checking') : serverFull && reason !== 'no_slots' ? t('dialogs:allowance.serverFull') : quotaHeadline(quota)}
         </strong>
       </div>
-      {quota && !serverFull ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-        {quota.limit === null ? t('dialogs:allowance.detail.admin')
+      {quota && reason !== 'server' ? <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+        {reason === 'no_slots' ? t('dialogs:allowance.detail.noSlots')
+          : quota.limit === null ? t('dialogs:allowance.detail.admin')
           : quota.remaining == null
             ? (spent ? t('dialogs:allowance.detail.unavailableSpent') : t('dialogs:allowance.detail.unavailable'))
           : spent ? t('dialogs:allowance.detail.availableSpent', { count: quota.remaining })
@@ -210,7 +251,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
           The same words the write route refuses with, so the dialog and the
           429 never disagree.
       */}
-      {quota && binds && server ? (
+      {quota && binds && server && reason !== 'no_slots' ? (
         <p id={id ? `${id}-server` : undefined} data-server-full={serverFull ? 'true' : 'false'}
           className={serverFull ? 'mt-1 text-xs text-red-700 dark:text-red-400' : 'mt-1 text-xs text-zinc-500 dark:text-zinc-400'}>
           {serverFull
@@ -220,7 +261,7 @@ export function AppAllowance({ id, surface = 'inset', quiet = false }: {
             : t('dialogs:allowance.server.room', { count: server.remaining, limit: server.limit })}
         </p>
       ) : null}
-      {quota && quota.limit !== null && !serverFull ? (
+      {quota && quota.limit !== null && reason !== 'server' ? (
         <div className="mt-2">
           <div className="flex flex-wrap gap-2">
             <Button type="button" size="sm" {...REQUEST_BUTTON[surface]} disabled={busy || !!requestedAt} disabledStyle="block" onClick={request}>

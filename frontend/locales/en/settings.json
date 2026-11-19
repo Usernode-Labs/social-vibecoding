@@ -319,6 +319,14 @@
     "text": "Reconnect",
     "description": "Button under a connection whose sign-in ran out, on its AI tool's card in Settings > Connectors: opens that tool's setup steps at the one step that signs in again, so the person can connect it again without repeating the whole setup. Shown for Claude and Codex."
   },
+  "connectors.list.rename": {
+    "text": "Rename",
+    "description": "Text button under a connection's lines, on its AI tool's card in Settings > Connectors: opens a small form under the row where the person types their own name for that connection (for example \"Work laptop\"), so two connections of the same tool can be told apart. A verb."
+  },
+  "connectors.list.renameNamed": {
+    "text": "Rename {{name}}",
+    "description": "Screen-reader label of the Rename button on a connection's row in Settings > Connectors. {{name}} is the connection's current name: the person's own name for it, or the AI tool's name such as \"Claude (claude.ai)\". \"Rename\" is a verb."
+  },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
     "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
@@ -2962,6 +2970,30 @@
   "connectors.disconnect.failed": {
     "text": "Could not disconnect.",
     "description": "Error in Settings > Connectors when disconnecting a chat app failed and there is no more specific reason."
+  },
+  "connectors.rename.fieldLabel": {
+    "text": "Your name for this {{tool}} connection",
+    "description": "Screen-reader label of the text field that renames a connection, under its row in Settings > Connectors. {{tool}} is the AI tool's own name, such as \"Claude (claude.ai)\"."
+  },
+  "connectors.rename.note": {
+    "text": "Only you see this name. Save it empty to show {{tool}} again.",
+    "description": "Note under the text field that renames a connection in Settings > Connectors. {{tool}} is the AI tool's own name, such as \"Claude (claude.ai)\", which the row shows when the person has given no name."
+  },
+  "connectors.rename.done": {
+    "text": "Renamed.",
+    "description": "Confirmation in Settings > Connectors after the person saved their own name for a connection."
+  },
+  "connectors.rename.cleared": {
+    "text": "Name removed.",
+    "description": "Confirmation in Settings > Connectors after the person saved an empty name for a connection, so its row shows the AI tool's own name again."
+  },
+  "connectors.rename.tooLong": {
+    "text": "A name can be up to {{max}} characters.",
+    "description": "Error in Settings > Connectors when the name typed for a connection is too long. {{max}} is the largest number of characters allowed, 60."
+  },
+  "connectors.rename.failedRetry": {
+    "text": "Could not rename. Try again.",
+    "description": "Error in Settings > Connectors when saving the person's name for a connection failed."
   },
   "socialIdentity.load.failed": {
     "text": "Could not load social accounts. Try again shortly.",

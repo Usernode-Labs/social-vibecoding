@@ -5,7 +5,7 @@
 # So the gate's esbuild is compiled here from the same version's source with
 # a patched Go, and only that one binary reaches the image below.
 ARG ESBUILD_VERSION=0.25.12
-FROM golang:1.27.3-trixie AS esbuild-build
+FROM golang:1.27.4-trixie AS esbuild-build
 ARG ESBUILD_VERSION
 RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOBIN=/out \
     go install -trimpath "github.com/evanw/esbuild/cmd/esbuild@v${ESBUILD_VERSION}" \
@@ -193,7 +193,7 @@ COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 # The Chromium is Playwright's own build (Chrome for Testing), which the image
 # audit cannot see as a distro package; scripts/security-*.js read its version
 # off the image and report the Chromium advisories that apply to it.
-ARG PLAYWRIGHT_MCP_VERSION=0.0.85
+ARG PLAYWRIGHT_MCP_VERSION=0.0.86
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \

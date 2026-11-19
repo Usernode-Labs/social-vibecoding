@@ -13,13 +13,24 @@
  * hands it the id and the button and forgets. `Settings._reconnectConnector`
  * likewise, for the reason it gives: Reconnect opens this card's guide on the
  * step that signs in again, and that guide is static markup settings.js owns.
+ *
+ * Rename (#6137) is the one piece of state here: which row's editor is open,
+ * and what is typed in it. The editor is this component's own subtree, drawn
+ * under its row, and `Settings._renameConnector` does the saving: it resolves
+ * true when the name was saved (the editor closes) and false when it was not
+ * (the editor stays, with what was typed).
  */
 
+import { Fragment, useState } from 'react';
+
+import { Button } from '@/components/ui/button';
 import { ListRow } from '@/components/ui/grouped-list';
+import { Input } from '@/components/ui/input';
 
 import { useMessages } from '../../lib/i18n/react';
 import { useStoreState } from '../../lib/use-store-state';
 import { connectorsStore } from './connectors-store.js';
+import { EDITOR_ACTIONS, EDITOR_NOTE } from './sections/sign-in-row';
 
 type ToolKey = 'claude' | 'chatgpt' | 'codex' | 'generic';
 type StatusKey = 'working' | 'unused' | 'attention' | 'none';
@@ -28,6 +39,10 @@ type ConnectionView = {
   title: string;
   detail: string;
   capabilities: string | null;
+  /** The person's own name for it (#6137); `title` is then this, not the tool's. */
+  label?: string | null;
+  /** The tool's own name, kept on the row under a label. */
+  toolName?: string;
   /** Its sign-in ran out and its guide has a step that signs in again (#6137). */
   reconnect?: boolean;
 };
@@ -61,6 +76,65 @@ export function ToolStatusView({ status }: { status: StatusKey }) {
   );
 }
 
+/** The longest name a connection can be given: the server's cap. */
+const LABEL_MAX = 60;
+
+/** The quiet text action under a row's lines: 44px tall, no fill. */
+const ROW_TEXT_ACTION = 'inline-flex min-h-[44px] items-center rounded-lg text-[0.9375rem] font-medium text-violet-700 hover:text-violet-500 dark:text-violet-400 dark:hover:text-violet-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
+
+/**
+ * The editor's box. The row above it draws the hairline between them (a row
+ * that is not last has one), so this draws only the one under itself, and only
+ * when another row follows.
+ */
+const RENAME_EDITOR = 'px-4 pt-3 pb-4 space-y-3 border-zinc-200 dark:border-zinc-800 [&:not(:last-child)]:border-b';
+
+/**
+ * A connection's name, edited in place under its row (#6137). Enter saves,
+ * Escape cancels, and an empty field saved puts the tool's own name back,
+ * which is why that name is the placeholder.
+ */
+export function ConnectionRenameForm({ connection, value, busy, onChange, onSave, onCancel }: {
+  connection: ConnectionView;
+  value: string;
+  busy: boolean;
+  onChange: (next: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const t = useMessages('settings');
+  const toolName = connection.toolName || connection.title;
+  return (
+    <form
+      data-connector-rename-form={connection.id}
+      className={RENAME_EDITOR}
+      onSubmit={(e) => { e.preventDefault(); onSave(); }}
+      onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); onCancel(); } }}
+    >
+      <Input
+        aria-label={t('settings:connectors.rename.fieldLabel', { tool: toolName })}
+        type="text"
+        autoComplete="off"
+        autoFocus
+        maxLength={LABEL_MAX}
+        placeholder={toolName}
+        value={value}
+        disabled={busy}
+        onChange={(e) => onChange(e.currentTarget.value)}
+      />
+      <div className={EDITOR_ACTIONS}>
+        <Button type="submit" variant="pillAccent" size="pill" disabled={busy}>
+          {t('core:common.save')}
+        </Button>
+        <Button type="button" variant="pillNeutral" size="pill" ink="neutral" disabled={busy} onClick={onCancel}>
+          {t('core:common.cancel')}
+        </Button>
+      </div>
+      <p className={EDITOR_NOTE}>{t('settings:connectors.rename.note', { tool: toolName })}</p>
+    </form>
+  );
+}
+
 /**
  * Disconnect stays its OWN button and the row is not a control: a destructive
  * action never gets a whole row's width, where a stray thumb finds it.
@@ -69,46 +143,93 @@ export function ToolStatusView({ status }: { status: StatusKey }) {
  * beside Disconnect: two buttons in the trailing edge leave a phone's title a
  * few letters wide. It is the list's tinted control (the guide's "Ask Claude"
  * surface), the one action the row asks for.
+ *
+ * Rename sits under the lines too, as plain accent words: it is always there,
+ * so it gets no fill. A named row leads with the person's name and keeps the
+ * tool's on the line under it.
  */
 export function ToolConnectionsView({ tool, connections }: { tool: ToolKey; connections: ConnectionView[] }) {
   const t = useMessages('settings');
+  const [editing, setEditing] = useState<{ id: string; value: string; busy: boolean } | null>(null);
+  const save = async () => {
+    if (!editing || editing.busy) return;
+    const { id, value } = editing;
+    setEditing({ id, value, busy: true });
+    let saved = false;
+    try {
+      saved = (await controller()?._renameConnector?.(id, value)) === true;
+    } catch {
+      saved = false;
+    }
+    // Only this save's own editor: Cancel, or another row opened meanwhile, wins.
+    setEditing((now) => (now && now.id === id && now.busy ? (saved ? null : { id, value, busy: false }) : now));
+  };
   return (
     <>
-      {connections.map((connection) => (
-        <ListRow
-          key={connection.id}
-          inset="text"
-          chevron={false}
-          title={connection.title}
-          titleClassName="font-medium"
-          subtitle={(
-            <>
-              <span className="block">{connection.detail}</span>
-              {connection.capabilities ? <span className="mt-0.5 block">{connection.capabilities}</span> : null}
-              {connection.reconnect ? (
+      {connections.map((connection) => {
+        const open = editing && editing.id === connection.id ? editing : null;
+        return (
+          <Fragment key={connection.id}>
+            <ListRow
+              inset="text"
+              chevron={false}
+              title={connection.title}
+              titleClassName="font-medium"
+              subtitle={(
+                <>
+                  {connection.label && connection.toolName ? (
+                    <span data-connector-tool-name="" className="block">{connection.toolName}</span>
+                  ) : null}
+                  <span className="block">{connection.detail}</span>
+                  {connection.capabilities ? <span className="mt-0.5 block">{connection.capabilities}</span> : null}
+                  <span className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1">
+                    {connection.reconnect ? (
+                      <button
+                        type="button"
+                        data-connector-reconnect={tool}
+                        className="mt-1 inline-flex min-h-[44px] items-center rounded-full bg-zinc-100 px-4 text-[0.9375rem] font-semibold text-violet-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:text-violet-400 dark:hover:bg-zinc-700"
+                        onClick={() => controller()?._reconnectConnector?.(tool)}
+                      >
+                        {t('settings:connectors.list.reconnect')}
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      data-connector-rename={connection.id}
+                      aria-expanded={open ? 'true' : 'false'}
+                      aria-label={t('settings:connectors.list.renameNamed', { name: connection.title })}
+                      className={ROW_TEXT_ACTION}
+                      onClick={() => setEditing(open ? null : { id: connection.id, value: connection.label || '', busy: false })}
+                    >
+                      {t('settings:connectors.list.rename')}
+                    </button>
+                  </span>
+                </>
+              )}
+              subtitleClassName="whitespace-normal"
+              trailing={(
                 <button
                   type="button"
-                  data-connector-reconnect={tool}
-                  className="mt-2 inline-flex min-h-[44px] items-center rounded-full bg-zinc-100 px-4 text-[0.9375rem] font-semibold text-violet-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-800 dark:text-violet-400 dark:hover:bg-zinc-700"
-                  onClick={() => controller()?._reconnectConnector?.(tool)}
+                  className="ui-btn-sm inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
+                  onClick={(e) => controller()?._disconnectConnector?.(connection.id, e.currentTarget)}
                 >
-                  {t('settings:connectors.list.reconnect')}
+                  {t('settings:connectors.list.disconnect')}
                 </button>
-              ) : null}
-            </>
-          )}
-          subtitleClassName="whitespace-normal"
-          trailing={(
-            <button
-              type="button"
-              className="ui-btn-sm inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
-              onClick={(e) => controller()?._disconnectConnector?.(connection.id, e.currentTarget)}
-            >
-              {t('settings:connectors.list.disconnect')}
-            </button>
-          )}
-        />
-      ))}
+              )}
+            />
+            {open ? (
+              <ConnectionRenameForm
+                connection={connection}
+                value={open.value}
+                busy={open.busy}
+                onChange={(value) => setEditing({ id: connection.id, value, busy: false })}
+                onSave={save}
+                onCancel={() => setEditing(null)}
+              />
+            ) : null}
+          </Fragment>
+        );
+      })}
     </>
   );
 }

@@ -37,9 +37,10 @@ No security exception or scanner suppression is added.
   `go.mod h1:Npdv43fFqlhZW7Xo8fbm3ZMYFvAGNviUPqX21VERbcE=`.
 
 The runtime binary identifies itself as `v0.39.0-rc1-homeroom.1` and retains
-the upstream revision. The compiler is pinned to Go 1.26.10, the supported
-1.26 patch returned by Go's release feed on November 10, 2026. The build
-uses the target OS and architecture even when its compiler runs natively.
+the upstream revision. The compiler is pinned to Go 1.26.11, the supported
+1.26 patch that fixes the standard library findings of the November 2026
+audit. The build uses the target OS and architecture even when its compiler
+runs natively.
 
 ## Verification
 

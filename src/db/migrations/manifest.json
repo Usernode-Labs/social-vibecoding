@@ -457,9 +457,14 @@
       "schemaSha256": "171e331152418ea5efbbc2b753e9cf608d8e11fac678d70c8289993e94115f86"
     },
     {
+      "id": "connector-grant-labels",
+      "sha256": "2f09d3085823e17a1c6bcd6fdeacd3e2bc2b73c7a493cee0713588da57895470",
+      "schemaSha256": "2d144623d6019588b01826487597281fe6297b1e371781aea48b39c3afc325f7"
+    },
+    {
       "id": "shots-sized-copies",
       "sha256": "0e29a42dcc35e0b66730b85622df511b532fd0f172759f24364a5a529d99b389",
-      "schemaSha256": "0dfb79dc486fa00839cba6d52817179d74268c3b325b240483435419ce63c355"
+      "schemaSha256": "786bd09025cd1135f5ad57804b775b9fa94261ec82cbc71f6f64dba6a428db05"
     }
   ]
 }

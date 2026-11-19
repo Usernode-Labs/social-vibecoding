@@ -427,8 +427,11 @@ test('the form offers comment mode with its draft, and only where the switch is 
     'shipped hidden: the switch is off until a person turns it on');
   const src = read('frontend/src/features/dialogs/feedback.tsx');
   assert.match(src, /setOffersComment\(formOffersComment\(\)\);/, 'read on every open');
-  assert.match(src, /const carry = Feedback\._takeDraft\(\);\s*dialog\.close\(\);/, 'taken, then closed, so no second copy is saved');
-  assert.match(src, /openCommentMode\(\{ via: 'switch', carry: any \? carry : null \}\);/);
+  // #6679: taken, then the form closes before comment mode opens, so the kit
+  // modal behind the mode cannot take its Escape, and no second copy is saved.
+  assert.match(src, /const carry = Feedback\._takeDraft\(\);/);
+  assert.match(src, /dialog\.closeThen\(\(\) => openCommentMode\(\{ via: 'switch', carry: any \? carry : null \}\)\);/,
+    'the mode opens only after the form\'s close has committed');
   const fc = read('frontend/src/features/dialogs/feedback-controller.js');
   assert.match(fc, /Feedback\._takeDraft = \(\) => \{[\s\S]*?feedbackText\.value = '';[\s\S]*?resetScreenshotState\(\);[\s\S]*?return draft;/);
 });

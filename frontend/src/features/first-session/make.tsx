@@ -269,6 +269,18 @@ export function makeSpeed(
   return 'custom';
 }
 
+/**
+ * #6842: why Make it is pale, as a message id, one for each limit the
+ * allowance names (`blockedReason`). The same sentence the server refuses
+ * with. Create draws its own allowance card instead; every other door says
+ * the one line (this screen, and the import form's own slot for it).
+ */
+export const BLOCKED_LINE = {
+  no_slots: 'onboarding:firstSession.make.blocked.noSlots',
+  slots: 'onboarding:firstSession.make.blocked.slots',
+  server: 'onboarding:firstSession.make.blocked.server',
+} as const;
+
 /** The line for each, a message id: its first word is bold (`<0>…</0>`). */
 export const SPEED_LINE = {
   instant: 'onboarding:firstSession.make.speed.instant',
@@ -457,7 +469,8 @@ export function MakeScreen({
   // At the allowance's limit (or a full server), Make it and Import it are
   // pale and the row above says why (the retired dialog's rule: never offer
   // a submit the server will refuse). Never pale for a missing answer.
-  const { blocked: quotaBlocks } = useAppAllowance();
+  // #6842: `reason` says which limit it is, so the line names it truthfully.
+  const { blocked: quotaBlocks, reason: quotaReason } = useAppAllowance();
   // Make it, or (from Create only) Import it.
   const [mode, setMode] = useState<'make' | 'import'>(fromCreate && startImport ? 'import' : 'make');
   // N9: Create's form as it was last left (keptDraft), read once at mount.
@@ -792,7 +805,13 @@ export function MakeScreen({
   // From Create, the allowance when it bears on Make it (the New project
   // dialog's quiet row, #23): a returning maker can be at their limit, a new
   // account never is. The wrapper goes with it when there is nothing to say.
-  const allowance = fromCreate ? <div className="mt-4 empty:hidden"><AppAllowance id="make-app-quota" surface="pane" quiet /></div> : null;
+  // Every other door has no card: it says the one line (#6842) instead, so
+  // a pale Make it or Import it is never pale with nothing to explain it.
+  const allowance = fromCreate
+    ? <div className="mt-4 empty:hidden"><AppAllowance id="make-app-quota" surface="pane" quiet /></div>
+    : quotaReason
+      ? <p data-make-blocked={quotaReason} className="mt-3 text-[14px] text-red-700 dark:text-red-400">{t(BLOCKED_LINE[quotaReason])}</p>
+      : null;
 
   // THE KIT'S PAGE. Everything it shows is read off the state above and
   // every press runs a handler above; the three closures written out here

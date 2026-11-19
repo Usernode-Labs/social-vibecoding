@@ -26,7 +26,7 @@
  * thread's root post, its GitHub comments in the thread's own stream.
  */
 
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { FormEvent, KeyboardEvent, ReactNode, SyntheticEvent } from 'react';
 
@@ -34,6 +34,7 @@ import { Html } from '../../../lib/html';
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
 import { t as translate } from '../../../lib/i18n/runtime';
 import { FRESH, watch } from '../../../lib/live-reads';
+import { TouchesPicture, readTouches } from '../workshop/touches';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, PencilSquareIcon, PlusIcon, SearchIcon, XIcon } from '@/components/ui/icons';
@@ -1697,7 +1698,7 @@ let detailsFromUrl = typeof window !== 'undefined'
  * shut, so the steps it carries are on the page for whoever reads them by
  * selector.
  */
-export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
+export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '', touches }: {
   id: number;
   prRef: HeroView['ref'];
   steps: StepsView | null | undefined;
@@ -1705,8 +1706,11 @@ export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
   html: string;
   /** #4455: Shot details, what the change page's Before and after card leaves out. */
   shotsHtml?: string;
+  /** #6832: "What it touches", which lived on the card and now belongs here. */
+  touches?: unknown;
 }): ReactNode {
   const t = useMessages('project');
+  const touchesPicture = useMemo(() => readTouches(touches), [touches]);
   const [open, setOpen] = useState(() => {
     if (!detailsFromUrl) return false;
     detailsFromUrl = false;
@@ -1748,6 +1752,12 @@ export function DetailsSheet({ id, prRef, steps, help, html, shotsHtml = '' }: {
           </button>
         </div>
         <DetailsBody prRef={prRef} steps={steps} help={help} html={html} />
+        {touchesPicture ? (
+          <section className="dev-details-part" data-details-part="touches" data-note="touches">
+            <h5 className="dev-details-sub">{t('project:topic.details.touches')}</h5>
+            <TouchesPicture t={touchesPicture} />
+          </section>
+        ) : null}
         {shotsHtml ? (
           <section className="dev-details-part" data-details-part="shots" data-note="shots">
             <h5 className="dev-details-sub">{t('project:topic.details.shots')}</h5>
@@ -1780,6 +1790,7 @@ export function ChangeSheets({ id, row, body }: { id: number; row: any; body: To
         help={!!(body.details && body.details.help)}
         html={body.proposalBody?.html || ''}
         shotsHtml={av && row?.shots ? av.shotsHtml(row.shots, { sessionId: id, details: true, canRetake: !!av._canRetakeShots?.(row) }) : ''}
+        touches={row?.touches}
       />
       {av?._canEditDescription?.(row) ? (
         <DescriptionEditor key={id} id={id} onSaved={(data) => av._cacheDescription(id, data)} />
@@ -1939,6 +1950,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               help={!!(body.details && body.details.help)}
               html={body.proposalBody?.html || ''}
               shotsHtml={av && session?.shots ? av.shotsHtml(session.shots, { sessionId: Number(id), details: true, canRetake: !!av._canRetakeShots?.(session) }) : ''}
+              touches={session?.touches}
             />
           ) : null}
           {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {

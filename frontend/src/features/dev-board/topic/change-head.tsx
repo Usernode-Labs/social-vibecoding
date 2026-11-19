@@ -1201,7 +1201,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
           {/* The card look: with nothing to picture it says so; then the foot,
               which says where it stands once. Votes and Testing above are the
               content of the layer their steps open, kept in the page. */}
-          {cardLook && !v.shots ? <NoPicture none={!!v.shotsNone} phase={phaseOf(v)} stopped={fixStanding(v.testing) === 'stopped'} touches={v.touches} diagramLed={!!readDiagram(body.diagram)} /> : null}
+          {cardLook && !v.shots ? <NoPicture none={!!v.shotsNone} phase={phaseOf(v)} stopped={fixStanding(v.testing) === 'stopped'} diagram={body.diagram} diagramLed={!!readDiagram(body.diagram)} /> : null}
           {/* The private suggestion rides at the foot's end, inside its band. */}
           {cardLook ? <ChangeFoot id={id} card={card} v={v} page={page} tail={workWithBot} float /> : null}
           {cardLook && body.plan && openNow?.kind === 'plan' ? (

@@ -51,7 +51,6 @@ import {
   ArrowRightIcon,
   ArrowUpIcon,
   BallotIcon,
-  BoardIcon,
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -62,7 +61,6 @@ import {
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
-  TagIcon,
   UserIcon,
   XIcon,
 } from '@/components/ui/icons';
@@ -139,7 +137,6 @@ import { PlanPage } from './plan-page';
 import { takeWorkshopPanelItem, WORKSHOP_SIDE_QUERY } from './panel-target';
 import { PrivateRequests } from './private-requests';
 import { Diagram, decisionDiagram, readDiagram, type DecisionFacts, type DiagramRecord, type DiagramSource } from '../../../lib/diagram/diagram';
-import { TouchesPicture, readTouches, touchesSaid, type Touches } from './touches';
 import { PageBack } from './page-back';
 import { BotSlotsDoor, BotSlotsPage, warmBotSlots } from './bot-slots';
 import { readAskStream } from './ask-stream';
@@ -1200,8 +1197,8 @@ export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
  *
  * The PICTURE fills the card, chosen in one order (usePicture): the run's
  * own outlined screen (ShotsPicture), the author's or a group decision's
- * diagram, a legacy before & after pair (BeforeAfter), then "What it
- * touches" (TouchesPicture). Over its foot, on a scrim that keeps it
+ * diagram, then a legacy before & after pair (BeforeAfter); with none of them
+ * nothing is drawn in its place. Over its foot, on a scrim that keeps it
  * legible whatever the picture is, sits the CAPTION, bottom-left as on a
  * reel: who and when, the title, the summary clamped to two lines with a
  * "more", and one line of facts ("0 of 1 approval · your yes puts it live ·
@@ -2016,12 +2013,12 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
   const summary = row.summary || null;
   // #4490: THE PICTURE, in one order: the run's own screens, then its
   // author's diagram (or a group decision's, from its own facts), a legacy
-  // capture pair, then "What it touches". A Mermaid diagram that cannot be
-  // drawn falls back to "What it touches".
+  // capture pair. #6832: "What it touches" lives in the change's Technical
+  // details now, so a card with none of these is led by its words.
   const shots = !!(row.visuals && row.visuals.screens && row.visuals.screens.length);
   const picture = usePicture(row, shots);
-  // NO PICTURE AT ALL (no verified shots, no diagram, no capture pair, no
-  // "What it touches"): the card is led by its words instead. app.css lets
+  // NO PICTURE AT ALL (no verified shots, no diagram, no capture pair): the
+  // card is led by its words instead. app.css lets
   // the summary run to eight lines on a phone and ten on a wide window and
   // sets the caption in the middle of the card, so the room is the words',
   // not an empty frame. Nothing is drawn in the picture's place.
@@ -2031,9 +2028,7 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
   // summary's own words, so on its own it is "more" only when the summary is
   // cut short.
   const changes = row.visuals && row.visuals.changes ? row.visuals.changes : [];
-  const touches = useMemo(() => readTouches(row.touches), [row.touches]);
-  const said = touches ? touchesSaid(touches, !!row.nothingVisible) : '';
-  const behind = !!(changes.length || said);
+  const behind = !!changes.length;
   // Whether the clamp cuts the summary short, measured where it is laid
   // out: a summary that fits, with nothing behind it, offers no "more".
   const textRef = useRef<HTMLParagraphElement>(null);
@@ -2117,8 +2112,7 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
           <Diagram d={picture.d} source={picture.source} onOpen={onMore} onFail={picture.fail} defer={!near} className="dev-ws-media-diagram" />
         )
           : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
-            : picture.kind === 'touches' ? <TouchesPicture t={picture.t} nothingVisible={!!row.nothingVisible} onOpen={onMore} />
-              : <div className="dev-ws-item-spacer" aria-hidden="true" />}
+            : <div className="dev-ws-item-spacer" aria-hidden="true" />}
       {/* What keeps the caption legible over any picture: a fade up from the
           card's foot, and the whole card dimmed while the caption is open. */}
       <span className="dev-ws-item-scrim" aria-hidden="true" />
@@ -2157,7 +2151,6 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
             </ol>
           </div>
         ) : null}
-        {open && said ? <p className="dev-ws-item-touched">{said}</p> : null}
         <FactsLine facts={facts} />
         {open ? (
           <button type="button" className="dev-ws-item-less" data-ws-less="" aria-expanded onClick={onMore}>
@@ -2176,14 +2169,14 @@ const FeedItem = memo(function FeedItem({ row, index, tint, near, voted, wide, s
 
 type Picture =
   | { kind: 'diagram'; d: DiagramRecord; source: DiagramSource; fail: () => void }
-  | { kind: 'touches'; t: Touches }
   | { kind: 'none' };
 
 /**
  * #4490: which picture a row shows when it has no shots. The author's
- * diagram first (or a group decision's, drawn from its facts), then "What it
- * touches"; a Mermaid diagram that failed to draw drops to the second. The
- * legacy capture pair sits between the two in FeedItem itself.
+ * diagram first (or a group decision's, drawn from its facts); a Mermaid
+ * diagram that failed to draw drops to no picture (#6832: "What it touches"
+ * lives in the change's Technical details now). The legacy capture pair sits
+ * between the two in FeedItem itself.
  */
 function usePicture(row: QueueRow, shots: boolean): Picture {
   const [failed, setFailed] = useState(false);
@@ -2192,12 +2185,11 @@ function usePicture(row: QueueRow, shots: boolean): Picture {
     () => (authored ? null : decisionDiagram(row.decision as DecisionFacts | null, row.app ? row.app.name : null)),
     [authored, row.decision, row.app],
   );
-  const touches = useMemo(() => readTouches(row.touches), [row.touches]);
   const fail = useCallback(() => setFailed(true), []);
   if (shots) return { kind: 'none' };
   const d = authored || decided;
   if (d && !failed) return { kind: 'diagram', d, source: authored ? 'author' : 'decision', fail };
-  return touches ? { kind: 'touches', t: touches } : { kind: 'none' };
+  return { kind: 'none' };
 }
 
 /**
@@ -2221,22 +2213,21 @@ function wantsEnd(): boolean {
  * project that is just yours), with its vote sheet up, so a declared check
  * can read the sheet's line ("Waiting for your approval."). And (#4490)
  * `needs-diagram` / `needs-touches`, the first item whose picture is its
- * author's diagram or "What it touches", for the declared check and the
+ * author's diagram, for the declared check and the
  * before & after shots of those pictures. Read at mount.
  */
-function shotTarget(): 'approve' | 'diagram' | 'touches' | null {
+function shotTarget(): 'approve' | 'diagram' | null {
   if (typeof window === 'undefined' || typeof window.location === 'undefined') return null;
   try {
     const shot = new URLSearchParams(window.location.search).get('shot');
-    return shot === 'needs-approve' ? 'approve' : shot === 'needs-diagram' ? 'diagram' : shot === 'needs-touches' ? 'touches' : null;
+    return shot === 'needs-approve' ? 'approve' : shot === 'needs-diagram' ? 'diagram' : null;
   } catch { return null; }
 }
 /** Whether a row is the one a `?shot=` target opens on. */
-function shotMatches(target: 'approve' | 'diagram' | 'touches', r: QueueRow): boolean {
+function shotMatches(target: 'approve' | 'diagram', r: QueueRow): boolean {
   if (target === 'approve') return approves(r);
   if (r.visuals && r.visuals.screens && r.visuals.screens.length) return false;
-  const drawn = !!readDiagram(r.diagram);
-  return target === 'diagram' ? drawn : !drawn && !!readTouches(r.touches);
+  return !!readDiagram(r.diagram);
 }
 
 /**
@@ -2693,56 +2684,6 @@ voteSavedStore.subscribe(() => {
   devWorkshopStore.set({ queue });
 });
 
-
-/**
- * The grouping strip — "By category" / "By stage".
- *
- * THE PANE HEAD'S FIRST ROW, at every width (#852). From 768px up it used to
- * hang off the pane's top-right corner as an "ear", level with the tab pill;
- * the tabs moved into the header, so there is no pill to sit beside and the
- * strip leads the head everywhere, as it always did on a phone. Written once:
- * `[data-ws-group]` is what the declared checks and `querySelector` reach for.
- */
-function GroupStrip({ group }: { group: string }): ReactNode {
-  const t = useMessages('project');
-  // #4916: each tab is its glyph, a tag for category and the board's own
-  // columns for stage (BoardIcon, the Workshop's mark in the places list).
-  // Its words ride along as the tooltip and the aria-label, and as a copy
-  // that is sr-only on a phone and a visible label from 700px up (#5820; the
-  // declared checks read the page's innerText for "By category").
-  const category = t('project:allItems.group.category');
-  const stage = t('project:allItems.group.stage');
-  return (
-    <div className="dev-ws-group" role="tablist" aria-label={t('project:allItems.group.label')}>
-      <button
-        type="button"
-        role="tab"
-        className="dev-ws-group-tab"
-        data-ws-group="category"
-        aria-selected={group === 'category'}
-        aria-label={category}
-        title={category}
-        onClick={() => callAppView('_setWorkshopGroup', 'category')}
-      >
-        <TagIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only dev-chip-word">{category}</span>
-      </button>
-      <button
-        type="button"
-        role="tab"
-        className="dev-ws-group-tab"
-        data-ws-group="stage"
-        aria-selected={group === 'stage'}
-        aria-label={stage}
-        title={stage}
-        onClick={() => callAppView('_setWorkshopGroup', 'stage')}
-      >
-        <BoardIcon className="dev-ws-group-icon" aria-hidden="true" />
-        <span className="sr-only dev-chip-word">{stage}</span>
-      </button>
-    </div>
-  );
-}
 
 /**
  * The breakpoint, in one place. app.css's `@media (min-width: 700px)` block is
@@ -3358,17 +3299,12 @@ export function DevWorkshop(): ReactNode {
       window.clearInterval(timer);
     };
   }, [v.slug, tab, hostRef]);
-  // Which pane is under the tabs. Lives in a module-global store rather than
-  // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
-  // the kanban view model only when the stage pane is up. See
-  // ./group-mode-store.ts.
+  // ALL ITEMS IS THE BOARD BY STAGE (request 6708). It had a second pane, by
+  // category, behind a "By category" / "By stage" switch in the page's bar;
+  // the switch is gone, in every look, and nothing publishes another pane to
+  // this store, so `group` is 'stage' (./group-mode-store.ts). The category
+  // pane's own code is still below, unreached in the product.
   const group = useWorkshopGroup();
-  // Standard (WIP): the board is by stage alone (its By category / By stage
-  // switch is not drawn there, app.css), so a board left on By category is
-  // put on By stage, through the same setter the switch uses.
-  useEffect(() => {
-    if (wipLook && group !== 'stage') callAppView('_setWorkshopGroup', 'stage');
-  }, [wipLook, group]);
   // From 700px the pane head pins under the strip at an offset only a
   // measurement knows (`useStripInsets`), and app.css draws a band behind
   // the strip while it is pinned (QA 2026-09-24 Q7). Whether it is pinned,
@@ -3888,18 +3824,14 @@ export function DevWorkshop(): ReactNode {
     };
   };
   const frameWorkshopUp = frame && !frameTopics && tab === 'workshop' && !weekUp;
-  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head,
-  // its two groupings as tabs, the board's own search and filters, and the
-  // categories' order. The list under it is this page's own (the theme
-  // cards, or the board by stage), which app.css lays in the kit's content
-  // column.
+  // ALL ITEMS IN THE KIT (version 2 of the tour's s29): the kit's head and
+  // the board's own search. The list under it is this page's own (the board
+  // by stage), which app.css lays in the kit's content column.
   const frameAllUp = frame && !frameTopics && tab === 'all';
   const frameAll = (): ReactNode => (
     <ProjectAllItemsFrame
       {...frameHead}
       project={projectName}
-      group={group === 'stage' ? 'stage' : 'category'}
-      onGroup={(key) => { callAppView('_setWorkshopGroup', key); }}
       query={frameFilters.q}
       querySeq={frameFilters.seq}
       // The board reads its search box (AppView._onKanbanSearchInput), which
@@ -3910,19 +3842,6 @@ export function DevWorkshop(): ReactNode {
         box.value = next;
         callAppView('_onKanbanSearchInput');
       }}
-      filters={frameFilters.mounted ? {
-        count: frameFilters.count,
-        chips: frameFilters.chips,
-        quick: frameFilters.quick || null,
-        onOpen: () => { callAppView('_openKanbanFiltersDialog'); },
-        onDismiss: (key) => { callAppView('_dismissKanbanFilter', key); },
-        onQuick: (key) => { callAppView('_toggleKanbanQuickFilter', key); },
-      } : null}
-      sort={group !== 'stage' && themes.length ? {
-        key: sortKey,
-        options: SORTS.map((option) => ({ key: option.key, label: t(option.label) })),
-        onSort: (key) => { if (key !== sortKey) captureThemeTops(); setSortKey(key as SortKey); },
-      } : null}
     />
   );
   const frameWorkshop = (): ReactNode => {
@@ -4628,16 +4547,11 @@ export function DevWorkshop(): ReactNode {
           <div className="dev-ws-pane-head">
             {/* #4486: ONE ROW, the page's own bar: the way back and the
                 page's name ("All items", no "Workshop" eyebrow: the lit
-                Workshop tab above says where it hangs), the grouping, then
-                the search and the filters. It wraps on a narrow window and
-                on a phone (app.css `.dev-ws-allbar`). It used to be three:
-                a back bar over the pane, which scrolled away, then the
-                grouping, then the tools. The back bar is in the pinned head
-                now, so the page's name stays on screen too.
-
-                THE GROUPING STILL LEADS THE TOOLS IN THE DOCUMENT (#852):
-                it decides what the search searches. The row lays the search
-                out first (app.css), as the board was reviewed (#4486). */}
+                Workshop tab above says where it hangs), then the search and
+                the filters. It wraps on a narrow window and on a phone
+                (app.css `.dev-ws-allbar`). The "By category" / "By stage"
+                switch stood between the two until request 6708: the page
+                has one view now, the board by stage. */}
             <div className="dev-ws-allbar" data-ws-allbar="">
               <PageBack
                 label={t('project:page.backToWorkshop')}
@@ -4645,7 +4559,6 @@ export function DevWorkshop(): ReactNode {
                 onBack={() => openTab(pageParent(tab))}
                 eyebrow={false}
               />
-              <GroupStrip group={group} />
               {/* The search and the filters. NOT the ⋯: that is the hub's, in
                   its hero, so the row draws none of its own. */}
               <DevActionsRow

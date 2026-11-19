@@ -1679,3 +1679,124 @@ test('posting a comment shows a sent card on the screen (#5008), not only the to
   assert.equal(message('devchat:commentPin.sent.label'), 'Request posted');
   assert.match(src, /CheckIcon/, 'a check says it went through');
 });
+
+// ── 5. Escape and the Form/Comment switch (#6679) ─────────────────────
+//
+// The kit's Escape listener (public/usernode-native/v1/native.js) runs on
+// `window` in the capture phase, before the shell's own listeners, and
+// dismisses the top modal on the stack. Comment mode's listener runs in the
+// bubble phase and bails on `defaultPrevented`, so while a kit modal stayed
+// on the stack the kit closed the form behind the mode and left the mode's
+// grey ground and bar over a page nothing could reach. The mode's root now
+// claims the key the way the full-size picture preview does, and the form
+// finishes closing before the mode opens.
+const NATIVE = read('public/usernode-native/v1/native.js');
+
+test('comment mode\'s root claims Escape from the kit modal behind it', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const rootStart = src.indexOf("className={leaving ? 'comment-mode-leaving fixed inset-0'");
+  assert.ok(rootStart > 0, 'the mode root is still the element carrying the leave animation');
+  const root = src.slice(rootStart, src.indexOf('>', rootStart));
+  assert.match(root, /data-owns-escape=""/, 'the kit stands aside for it');
+  // The listener stays in the bubble phase, so an inner handler (the title
+  // field's own Escape) goes first, and still stands aside for one that did.
+  const listener = src.slice(
+    src.indexOf('const onKey = (e: globalThis.KeyboardEvent)'),
+    src.indexOf("window.addEventListener('keydown', onKey)")
+  );
+  assert.match(listener, /e\.defaultPrevented/);
+  assert.match(listener, /e\.preventDefault\(\)/);
+  assert.match(listener, /e\.stopPropagation\(\)/, 'nothing else treats the press as its own');
+  assert.match(src, /window\.addEventListener\('keydown', onKey\)/, 'bubble phase');
+});
+
+test('Escape asks about unposted words the way Done does', () => {
+  const src = read('frontend/src/features/comment-pin/comment-pin.tsx');
+  const escape = src.match(/const escape = useCallback\(\(\) => \{([\s\S]*?)\}, \[([^\]]*)\]\);/);
+  assert.ok(escape, 'escape() is still a callback');
+  assert.match(escape[1], /requestExit\(\);/, 'carried form words are asked about');
+  assert.doesNotMatch(escape[1], /\bleave\(\)/, 'never leaves without asking');
+  assert.match(escape[2], /requestExit/);
+});
+
+test('the form\'s Comment switch waits for the close before comment mode opens', () => {
+  const DIALOG = read('frontend/src/features/dialogs/feedback.tsx');
+  const start = DIALOG.indexOf('const toComment = () => {');
+  const toComment = DIALOG.slice(start, DIALOG.indexOf('};', start));
+  assert.match(toComment, /dialog\.closeThen\(\(\) => openCommentMode\(/, 'one surface closes before the next opens');
+  assert.doesNotMatch(toComment, /dialog\.close\(\)/, 'not closed and opened in the same task');
+  assert.doesNotMatch(DIALOG, /dialog\.close\(\);[\s\S]{0,120}openCommentMode\(/);
+});
+
+// The kit's modal-stack Escape listener, run for real: the section from
+// `var modalStack` up to the next banner comment holds it.
+function kitEscape() {
+  const page = { owned: null };
+  let onKeydown = null;
+  const context = vm.createContext({
+    document: { querySelector: (sel) => (sel === '[data-owns-escape]' ? page.owned : null) },
+    window: {
+      addEventListener(type, fn, capture) {
+        if (type === 'keydown' && capture === true && !onKeydown) onKeydown = fn;
+      },
+    },
+    activePopover: null,
+    getComputedStyle: () => ({ opacity: '0' }),
+    requestAnimationFrame: () => 0,
+    cancelAnimationFrame() {},
+    setTimeout: () => 0,
+    clearTimeout() {},
+  });
+  const at = NATIVE.indexOf('  var modalStack = []');
+  vm.runInContext(`${NATIVE.slice(at, NATIVE.indexOf('\n  /* ', at))}\nthis.modalStack = modalStack;`, context);
+  let dismissed = 0;
+  return {
+    page,
+    stack: context.modalStack,
+    present: () => context.modalStack.push({ dismissible: true, dismiss: () => { dismissed += 1; } }),
+    press() {
+      let prevented = false;
+      onKeydown({ key: 'Escape', preventDefault() { prevented = true; } });
+      return prevented;
+    },
+    dismissed: () => dismissed,
+  };
+}
+
+test('Form, Comment, Form, Comment, then Escape leaves nothing behind', () => {
+  const kit = kitEscape();
+  // The form presents: one stack entry, no marked root.
+  kit.present();
+  // Its Comment switch: the entry leaves before the marked mode root exists
+  // (feedback.tsx closes through `closeThen` before openCommentMode).
+  kit.stack.pop();
+  kit.page.owned = { nodeType: 1 };
+  // The bar's Form: the root goes before the form presents again.
+  kit.page.owned = null;
+  kit.present();
+  // Comment again: the form closes first, then the mode mounts.
+  kit.stack.pop();
+  kit.page.owned = { nodeType: 1 };
+
+  // Escape: the kit does nothing, the press reaches comment mode, which runs
+  // its own handler and then leaves, taking the marked root with it.
+  let commentHandled = 0;
+  const prevented = kit.press();
+  if (!prevented) commentHandled += 1;
+  assert.equal(kit.dismissed(), 0, 'the kit did not close a dialog behind the mode');
+  assert.equal(prevented, false, 'the key was not swallowed');
+  assert.equal(commentHandled, 1, 'comment mode saw the press');
+
+  // leave() unmounts the mode and removes its host.
+  kit.page.owned = null;
+  assert.equal(kit.page.owned, null, 'no marked root remains');
+  assert.equal(kit.stack.length, 0, 'no modal entry remains');
+});
+
+test('with an entry left on the stack and no mark, the kit takes the key (the reported bug)', () => {
+  const kit = kitEscape();
+  kit.present();
+  const prevented = kit.press();
+  assert.equal(kit.dismissed(), 1, 'the dialog behind closes');
+  assert.equal(prevented, true, 'and comment mode never sees the press');
+});
