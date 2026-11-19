@@ -1586,7 +1586,13 @@ if (typeof module !== 'undefined' && module.exports) {
 
   async function networkFirstApi(event) {
     const context = apiContext(event.request);
-    if (!context) return fetch(new Request(event.request, { cache: 'no-store' }));
+    // No scope, no cache. An <img> can send no header, so every picture comes
+    // this way, a change's shots too: their bytes arriving count as the
+    // network answering (reportArriving; the 19 Nov retest of #6876 went
+    // "Connecting…" while shots drained because this path was not wrapped).
+    if (!context) {
+      return fetch(new Request(event.request, { cache: 'no-store' })).then((res) => reportArriving(event, res));
+    }
     await apiCacheWork;
     if (!currentApiContext(context)) return staleApiResponse();
     const cache = await caches.open(API_CACHE);
