@@ -139,6 +139,25 @@ test('app.css: the pill floats over the scroller, the panels draw no sheet, the 
   assert.match(block, /\.dev-ws-side:has\(\.dev-thread-card\) > \.dev-ws-side-bar \{ display: none; \}/);
 });
 
+test('app.css: the cards go under the pill and under the reply box, and no further', () => {
+  const at = CSS.indexOf('THE CARDS GO UNDER THE PILL AND UNDER THE REPLY BOX');
+  assert.ok(at > 0);
+  const block = CSS.slice(at, at + 6000);
+  // The top: cut at the pill's middle, on the id so the looks' own fade
+  // (`html[data-skin] … #gc-thread-scroll`) no longer wins in the brand look.
+  assert.match(block, /\.dev-request:has\(\.dev-thread-card\) #gc-thread-scroll \{\n  --pill-cut: calc\(var\(--pill-top\) \+ var\(--pill-h\) \/ 2\);\n  -webkit-mask-image: linear-gradient\(to bottom, transparent var\(--pill-cut\), #000 var\(--pill-cut\)\), linear-gradient\(#000, #000\);/);
+  assert.doesNotMatch(block, /transparent 4px/, 'no fade across the gap over the pill');
+  // The foot: the strip under the reply box shows only across its card.
+  assert.match(block, /mask-size: 100% calc\(100% - var\(--composer-tuck, 0px\)\), calc\(100% - 24px - var\(--composer-end, 0px\)\) var\(--composer-tuck, 0px\);/);
+  assert.match(block, /mask-position: 0 0, calc\(12px \+ var\(--composer-end, 0px\) \* \(1 - var\(--rtl-sign\)\) \/ 2\) 100%;/);
+  // The scroller runs on under the card by its corner radius, and its foot
+  // grows by the same, so the newest reply still ends 12px over the card.
+  assert.match(CSS, /\.messages-composer-card \{\n  border-radius: 22px;/, 'the tuck is the card\'s corner radius');
+  assert.match(block, /\.dev-request-sheet:has\(> \.chat-status:empty \+ \.messages-composer > \.messages-composer-card\):not\(:has\(> \.messages-composer > :is\(#gc-thread-reply-preview:not\(\.hidden\), \.dc-attach-error:not\(\.hidden\), \.dc-attach-strip:not\(:empty\)\)\)\) > #gc-thread-scroll \{\n  --composer-tuck: 22px;\n  margin-bottom: calc\(-1 \* var\(--composer-tuck\)\);\n  padding-bottom: calc\(12px \+ var\(--composer-tuck\)\) !important;\n\}/);
+  // On a wide page the reply box ends where the card does, before the timeline.
+  assert.match(CSS, /--thread-rail-gap: 20px;\n[\s\S]{0,200}--composer-end: calc\(var\(--thread-rail-w\) \+ var\(--thread-rail-gap\)\);/);
+});
+
 test('app.css: the Workshop panel covers the list below 1760px only while a plan is open beside the page', () => {
   assert.match(CSS, /@media \(max-width: 1759px\) \{\s+body:has\(\.dev-ws-side-body > #gc-spec-side-panel\.gc-spec-side-panel-open\) #dev-workshop:has\(> \.dev-ws\[data-ws-side-open\]\) \{ margin-inline-start: 0; max-width: none; \}/);
   assert.doesNotMatch(CSS, /@media \(max-width: 1759px\) \{\s+#dev-workshop:has/, 'not whenever the window is under 1760px');
