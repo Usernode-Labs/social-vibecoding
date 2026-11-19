@@ -86,20 +86,25 @@ test('#6766: a service that needs a key is ready, not a person', () => {
   assert.match(read('src/services/homeroom-bot.js'), /A key the app declares in `dapp\.json` `secrets` is not operator work\./);
 });
 
-test('#6766: a secret is never named as operator work, and never a go-ahead blocker', () => {
+test('#6766, #6869: operator work is the project\'s own setup, and names who can act', () => {
   const md = read('src/prompts/homeroom-bot-triage.md');
   const service = read('src/services/homeroom-bot.js');
   // The operator-work example is work outside the app, such as a DNS or
-  // infrastructure change; setting a key is not that work. The parenthetical
-  // goes on to say so, so only its opening is pinned here.
+  // infrastructure change; a key the app declares in dapp.json is not that
+  // work (the `ready` rule says so).
   assert.match(md, /`operator_work` \(work outside this app, such as a DNS or infrastructure change/);
-  for (const line of md.match(/`operator_work`[^\n]*/g) || []) {
-    assert.doesNotMatch(line, /\bsecret\b/i, line);
-  }
+  assert.match(md, /a key the app declares in `dapp\.json` `secrets` is not operator work/);
+  // #6869: the project's own setup (a secret's value, an outside account, a
+  // domain) is operator work only when no code change does it, and the note
+  // names who can act: the control and who has it, never a coding agent.
+  assert.match(md, /`operator_work` is only the project's own setup outside its code/);
+  assert.match(md, /`who_acts`: at most 100 characters naming who and where/);
+  assert.match(md, /an admin of this project, in Settings › Secrets/);
+  assert.match(md, /Never send a project's owner to a coding agent/);
   assert.doesNotMatch(md, /such as setting a secret/);
   // The go-ahead decline list is these blockers and nothing else: operator
   // work, a destructive database change, and (#6755) a request whose answer
-  // is a reply rather than a commit. A secret is never among them.
+  // is a reply rather than a commit.
   assert.deepEqual(live.GO_AHEAD_BLOCKERS, ['operator_work', 'destructive_db', 'explanation']);
   assert.match(md, /False only with `cannot_because` \(`operator_work`, `destructive_db` or `explanation`\)/);
   assert.match(md, /"cannot_because": "operator_work" \| "destructive_db" \| "explanation"/);

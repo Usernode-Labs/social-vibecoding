@@ -1986,26 +1986,50 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     await forgetRequests(notes.id, 6);
   });
 
-  await t.test('#6395: a go-ahead that cannot settle it queues nothing and says why', async () => {
+  await t.test('#6869: a start after a part offer builds the part; with none it still refuses', async () => {
     await forgetRequests(notes.id, 6);
     const ctx = (extra = {}) => ({ bot, user: ada, settings, config: CONFIG, deps: { domain: 'app.test' }, cards: [], appIds: new Set(), ...extra });
     const { rows: [run] } = await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, go_ahead_decides, first_step, go_ahead_blocker)
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, go_ahead_decides, first_step, go_ahead_blocker, who_acts)
        VALUES ($1, 6, 'live', 'person',
                'moving App secrets and deleting a GitHub Actions secret are operator work outside this app',
-               FALSE, 'Remove the dead bot token line from the deploy workflow', 'operator_work') RETURNING id`,
+               FALSE, 'Remove the dead bot token line from the deploy workflow', 'operator_work',
+               'an admin of this project, in Settings › Secrets') RETURNING id`,
       [notes.id],
     );
+    const before = created.length;
     const out = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 6 });
-    assert.equal(out.ok, false);
-    assert.equal(out.code, 'go_ahead_cannot');
-    assert.match(out.said, /^A go-ahead can't settle this one\. This needs something set up outside this app, which I can't do from here: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
-    assert.match(out.said, /I can build this part now: Remove the dead bot token line from the deploy workflow\.$/);
-    assert.match(out.next, /Do not say you are on it/);
+    assert.equal(out.ok, true, out.error);
+    assert.match(out.said, /^Building remove the dead bot token line from the deploy workflow now, as its own request #\d+\./);
+    assert.match(out.said, /It's linked to this one, and its plan comes next\./);
+    assert.equal(created.length, before + 1, 'the part is filed as its own request');
+    const part = created[created.length - 1];
+    assert.equal(part.title, 'Remove the dead bot token line from the deploy workflow');
+    assert.match(part.body, /A smaller part of request #6/);
+    const { rows: [partIssue] } = await pool.query(
+      `SELECT github_issue_number FROM issues WHERE app_id = $1 AND payload->>'fileKey' = $2`,
+      [notes.id, `part:${notes.id}:6:${run.id}`],
+    );
+    assert.ok(partIssue, 'the part is keyed by the run, so a second yes finds it');
+    const { rows: [partQueued] } = await pool.query(
+      'SELECT reason, requested_by FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2',
+      [notes.id, partIssue.github_issue_number],
+    );
+    assert.equal(partQueued?.reason, 'dm_start');
+    assert.equal(Number(partQueued?.requested_by), ada.id);
     const { rows: queued } = await pool.query(
       'SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
     );
-    assert.equal(queued.length, 0, 'nothing was queued: a new look would only read the same answer');
+    assert.equal(queued.length, 0, 'the original is not read again: the part is its own request');
+
+    // A note that offered no part keeps the plain refusal.
+    await pool.query('UPDATE homeroom_bot_runs SET first_step = NULL WHERE id = $1', [run.id]);
+    const refused = await mayor.startRequest(pool, ctx(), { project: 'note-board', number: 6 });
+    assert.equal(refused.ok, false);
+    assert.equal(refused.code, 'go_ahead_cannot');
+    assert.match(refused.said, /^A go-ahead can't settle this one\. This needs something set up outside this project's code, which I can't do from here: moving App secrets and deleting a GitHub Actions secret are operator work outside this app\./);
+    assert.match(refused.said, /No code change does this: an admin of this project, in Settings › Secrets can\./);
+    assert.match(refused.next, /Do not say you are on it/);
     // 17 Nov 2026: the same refusal from before the read named its blocker
     // is not said again: the go-ahead queues a fresh read.
     await pool.query('UPDATE homeroom_bot_runs SET go_ahead_blocker = NULL WHERE id = $1', [run.id]);
@@ -2016,6 +2040,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       'SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 6', [notes.id],
     );
     assert.equal(reread.length, 1, 'the request is read again');
+    await forgetRequests(notes.id, partIssue.github_issue_number);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = $2', [notes.id, partIssue.github_issue_number]);
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
     await forgetRequests(notes.id, 6);
   });

@@ -1639,6 +1639,7 @@ function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
     } : v.plan,
     reason: plain(v.reason),
     firstStep: plain(v.firstStep),
+    whoActs: plain(v.whoActs),
     planVariant: plain(v.planVariant),
     elsewhere: plain(v.elsewhere),
     elsewhereCandidates: Array.isArray(v.elsewhereCandidates) ? v.elsewhereCandidates.map(plain) : v.elsewhereCandidates,
@@ -1904,6 +1905,10 @@ function readVerdict(text) {
         ? !(obj.go_ahead === false && live.blockerOf(obj.cannot_because)) : null,
       blocker: verdict === 'person' && !withdrawn && !wrongProject && obj.platform !== true && !elsewhere && obj.done !== true
         && obj.go_ahead === false ? live.blockerOf(obj.cannot_because) : null,
+      // 19 Nov 2026 (#6869): who can act on the project's own setup (a secret
+      // to set, an outside account), named only when that is the blocker.
+      whoActs: verdict === 'person' ? (live.blockerOf(obj.cannot_because) === 'operator_work'
+        ? clip(obj.who_acts, 100) : null) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
       // #6211: the read's overlap call, as it wrote it. plainVerdict keeps it
@@ -2777,7 +2782,7 @@ ${designGuidance}
 // it. A re-read and the repair ask restate it too (VERDICT_KEYS_LINE):
 // without it, a re-read answered in keys of its own (`next_step`,
 // `ask_reporter`) that nothing reads, and so did the ask to repair it.
-const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db" | "explanation"}';
+const VERDICT_FORMAT = '{"verdict": "question" | "empty" | "ready" | "person", "determined": true | false, "missing_fact": "...", "question": "...", "default": "...", "build_note": "...", "reason": "...", "first_step": "...", "go_ahead": true | false, "cannot_because": "operator_work" | "destructive_db" | "explanation", "who_acts": "who and where, operator_work only"}';
 const VERDICT_KEYS_LINE = 'Use these keys and the others your instructions name (such as `answers`, `blocker`, `assumptions`, `platform`): a block with keys of its own, or no `verdict`, cannot be read.';
 
 function triageClosing(issueNumber) {
@@ -2817,6 +2822,13 @@ function triagePromptFor({
   // homeroom-bot-overlap.js candidatesFor gives them. Nothing is added to
   // the prompt without them, so a read without the board is what it was.
   overlapCandidates = null,
+  // #6869: the app's state before anything is blamed on its running version
+  // ({ status, lastDeployAt, deploy, lastFailure }, homeroom-bot.js
+  // readAppState), and the same report on another project
+  // (homeroom-bot-same-report.js). Null adds nothing, so a prompt rebuilt
+  // from an older snapshot is unchanged.
+  appState = null,
+  sameReports = null,
 }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
@@ -2824,6 +2836,8 @@ function triagePromptFor({
     locale ? `The requester's locale is \`${locale}\`.` : null,
     live.requestRulesLines({ triage: true }).join('\n').trim(),
     signal ? signalNote(signal) : null,
+    appState ? appStateNote(appState) : null,
+    sameReports ? require('./homeroom-bot-same-report').sameReportNote(sameReports) : null,
     require('./homeroom-bot-overlap').overlapNote(overlapCandidates) || null,
     firstVersion ? firstVersionNote(starter) : null,
     firstVersion ? membersNote(members) : null,
@@ -2833,6 +2847,75 @@ function triagePromptFor({
     live.guidanceLines(guidance).join('\n').trim() || null,
     triageReference({ readsImages }), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
+}
+
+/**
+ * 19 Nov 2026 (#6869): what a "won't load", blank or garbled report is checked
+ * against before anything is blamed on the project's running version: whether
+ * it is running, when it last deployed, whether a deploy is under way, and
+ * whether its last deploy failed. A null input adds nothing to a prompt.
+ * Pure.
+ */
+function appStateNote(appState) {
+  if (!appState) return null;
+  const status = String(appState.status || '').trim();
+  const running = status === 'running';
+  const lines = [running
+    ? 'This project is running.'
+    : `This project is not running (its status is \`${status || 'unknown'}\`).`];
+  const deployedMs = appState.lastDeployAt ? new Date(appState.lastDeployAt).getTime() : NaN;
+  if (Number.isFinite(deployedMs)) {
+    const days = Math.max(0, Math.floor((Date.now() - deployedMs) / (24 * 60 * 60 * 1000)));
+    const date = new Date(deployedMs);
+    const month = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][date.getUTCMonth()];
+    lines.push(`Its last deploy was ${date.getUTCDate()} ${month} ${date.getUTCFullYear()} (${days} ${days === 1 ? 'day' : 'days'} ago).`);
+  } else {
+    lines.push('It has not deployed.');
+  }
+  lines.push(appState.deploy?.deploying ? 'A deploy is under way.' : 'No deploy is under way.');
+  if (appState.lastFailure) {
+    const f = appState.lastFailure;
+    const what = [f.stage ? `stage ${f.stage}` : null, f.reason ? String(f.reason).replace(/\s+/g, ' ').trim().slice(0, 300) : null]
+      .filter(Boolean).join(': ');
+    lines.push(what ? `Its last deploy failed (${what}).` : 'Its last deploy failed.');
+  } else {
+    lines.push('Its last deploy did not fail.');
+  }
+  if (running && !appState.deploy?.deploying && !appState.lastFailure) {
+    lines.push('It is running and unchanged: a restart, redeploy or rollback is not the answer.');
+  }
+  return lines.join(' ');
+}
+
+/**
+ * 19 Nov 2026 (#6869): the app's state for the triage prompt, read from its
+ * row. `deploy` is services/app-deploy-status.js's read, so a deploy app
+ * delivery runs and a rollover both count. Never throws; null when the row
+ * cannot be read.
+ */
+async function readAppState(pool, app) {
+  try {
+    const { rows: [row] } = await pool.query(
+      `SELECT status, last_deploy_at, last_failure, deploy_state, deploy_started_at, deploy_from_sha
+         FROM apps WHERE id = $1`,
+      [Number(app.id)],
+    );
+    if (!row) return null;
+    const failure = row.last_failure && typeof row.last_failure === 'object' ? row.last_failure : null;
+    return {
+      status: row.status || null,
+      lastDeployAt: row.last_deploy_at ? new Date(row.last_deploy_at).toISOString() : null,
+      deploy: require('./app-deploy-status').read(app.slug, row),
+      lastFailure: failure ? {
+        stage: failure.stage ? String(failure.stage) : null,
+        reason: failure.reason ? String(failure.reason).slice(0, 300) : null,
+        at: failure.at ? new Date(failure.at).toISOString() : null,
+      } : null,
+    };
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not read an app\'s state for the read', { app: app?.slug, err: err.message });
+    return null;
+  }
 }
 
 /**
@@ -3224,7 +3307,8 @@ async function threadAnsweredGoAhead(pool, { app, issueNumber, messageId }) {
     const { rows } = await pool.query(
       `SELECT 1 FROM chat_messages
         WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2 AND deleted_at IS NULL
-          AND metadata->'homeroomBot'->'goAheadCannot'->>'messageId' = $3
+          AND (metadata->'homeroomBot'->'goAheadCannot'->>'messageId' = $3
+            OR metadata->'homeroomBot'->'partStarted'->>'messageId' = $3)
         LIMIT 1`,
       [app.id, Number(issueNumber), String(Number(messageId))],
     );
@@ -3439,11 +3523,11 @@ async function insertRunRow(pool, run) {
   }
   // 6 Nov 2026 (#6395): whether a go-ahead could settle a person verdict, and
   // the smaller first step it named, the same way.
-  if (id && (run.goAheadDecides === true || run.goAheadDecides === false || run.firstStep)) {
+  if (id && (run.goAheadDecides === true || run.goAheadDecides === false || run.firstStep || run.whoActs)) {
     await pool.query(
-      'UPDATE homeroom_bot_runs SET go_ahead_decides = $2, first_step = $3, go_ahead_blocker = $4 WHERE id = $1',
+      'UPDATE homeroom_bot_runs SET go_ahead_decides = $2, first_step = $3, go_ahead_blocker = $4, who_acts = $5 WHERE id = $1',
       [id, typeof run.goAheadDecides === 'boolean' ? run.goAheadDecides : null, run.firstStep || null,
-        run.goAheadDecides === false ? live.blockerOf(run.blocker) : null],
+        run.goAheadDecides === false ? live.blockerOf(run.blocker) : null, run.whoActs || null],
     ).catch((err) => log.warn('homeroom-bot', 'Could not record whether a go-ahead settles it', { runId: id, err: err.message }));
   }
   // What the read saw of its request (readFingerprintOf), and the held run
@@ -4720,6 +4804,21 @@ async function runTriage(pool, config, {
       app, bot, issueNumber, deps: { github, ...(deps.slotHolders ? { slotHolders: deps.slotHolders } : {}) },
     })
     : [];
+  // #6869: the app's state, so a "won't load" report is checked before
+  // anything is blamed on its running version. A first version has no
+  // running version to check, and the platform's own app is never blamed on
+  // itself.
+  const appState = liveMode && !requester?.firstVersion
+    ? await readAppState(pool, app)
+    : null;
+  // #6869: the same report on public projects in the last seven days, so the
+  // note can say another project reported it. Never throws.
+  const sameReportRows = liveMode && !requester?.firstVersion
+    && app.slug !== PLATFORM_SELF_APP_SLUG
+    ? await require('./homeroom-bot-same-report').sameReports(pool, {
+      app, issueNumber, title: issue?.title || null,
+    })
+    : [];
   const promptInput = {
     seed, issueNumber, firstVersion: !!requester?.firstVersion, decider,
     ...(members ? { members } : {}),
@@ -4734,6 +4833,9 @@ async function runTriage(pool, config, {
     goAhead,
     // #6211: the board the read was given, so it can offer an overlap.
     ...(overlapCandidates.length ? { overlapCandidates } : {}),
+    // #6869: the app's state and the same report elsewhere, when there are.
+    ...(appState ? { appState } : {}),
+    ...(sameReportRows.length ? { sameReports: sameReportRows } : {}),
   };
   // The prompt as it stands before the turn resolves its model. The one sent
   // is rendered at dispatch, for what that model can see, and replaces this
@@ -4765,6 +4867,9 @@ async function runTriage(pool, config, {
   snapshot.extra.goAhead = goAhead;
   // #6211: and the board it read, so the replay says the same thing.
   if (overlapCandidates.length) snapshot.extra.overlapCandidates = overlapCandidates;
+  // #6869: and the app's state and the same report elsewhere, for the replay.
+  if (appState) snapshot.extra.appState = appState;
+  if (sameReportRows.length) snapshot.extra.sameReports = sameReportRows;
 
   let session;
   try {
@@ -5185,6 +5290,7 @@ async function runTriage(pool, config, {
     wrongProject: parsed.wrongProject,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
     firstStep: parsed.firstStep, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
+    whoActs: parsed.whoActs,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
     durationMs: Date.now() - startedMs, readFingerprint,
@@ -8396,7 +8502,7 @@ async function actOnVerdict({
     // Go ahead that was just refused.
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
-      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by, blocker: parsed.blocker })
+      ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by, blocker: parsed.blocker, whoActs: parsed.whoActs })
       : wrongNote
         ? live.wrongProjectHomeroomText({ wrongProject: parsed.wrongProject, project })
         : withdrawnNote
@@ -8432,9 +8538,12 @@ async function actOnVerdict({
       // offer in the thread for the person who asked. #6771: the target's
       // name, whether they must join first, and the project's id are on it.
       const moveWanted = (parsed.platform || moveTarget) && Number.isSafeInteger(Number(requester?.userId)) && Number(requester.userId) > 0;
+      // #6311, #6869: a note about Homeroom itself always offers a copy that
+      // keeps the request open here, whatever its requester filed first; only
+      // a move to another project closes the original.
       const copyOffer = moveWanted
         ? {
-          kind: parsed.platform && requester.firstVersion ? 'copy_request' : 'move_request',
+          kind: parsed.platform ? 'copy_request' : 'move_request',
           forUserId: Number(requester.userId),
           args: {
             issueNumber,
@@ -8476,6 +8585,7 @@ async function actOnVerdict({
           // 6 Nov 2026 (#6430): the DM says a person has to build it, not
           // that a go-ahead can settle it, and names the smaller part.
           ...(parsed.goAheadDecides === false ? { goAheadDecides: false, blocker: parsed.blocker } : {}),
+          ...(parsed.whoActs ? { whoActs: parsed.whoActs } : {}),
           ...(parsed.firstStep ? { firstStep: parsed.firstStep } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),

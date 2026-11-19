@@ -1145,11 +1145,11 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.deepEqual(await heard(evan, `Go ahead ${'x'.repeat(60)}`), { speak: false, why: 'not_addressed' });
   });
 
-  // 6 Nov 2026 (#6430): a go-ahead typed in the request's own discussion,
-  // when the last live read left it for a person and said a go-ahead cannot
-  // settle it, gets the chat's one plain answer: the model never writes "I'm
-  // on it" or offers to tell them later.
-  await t.test('#6430: a go-ahead in a request\'s discussion gets the one plain answer, without the model', async () => {
+  // 6 Nov 2026 (#6430), 19 Nov 2026 (#6869): a yes to the part the last note
+  // offered, typed in the request's own discussion, files that part as a
+  // smaller request linked to this one. It never says "A go-ahead can't
+  // settle this one", because the note offered something to say yes to.
+  await t.test('#6869: a yes to the offered part files and starts it, without the model', async () => {
     const number = 6430;
     await pool.query(
       'INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, $4)',
@@ -1170,40 +1170,61 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     const trigger = await say(evan, 'go ahead, with the full version', { type: 'issue', ref: number });
     sent.length = 0;
     const model = scripted([{ text: 'I am on it now.' }]);
+    const filed = [];
+    const github = {
+      isEnabled: () => true,
+      async createIssue(owner, repo, { title, body }) {
+        filed.push({ owner, repo, title, body });
+        return { number: 7001, title };
+      },
+      safeMention: (s) => s,
+    };
     const out = await turn({ type: 'issue', ref: number }, model, {
-      key: 'go-ahead-cannot-1',
-      deps: { chat: async () => { throw new Error('the model must not answer a go-ahead that cannot settle it'); } },
+      key: 'go-ahead-part-1',
+      deps: {
+        chat: async () => { throw new Error('the model must not answer a yes to the part'); },
+        github, domain: 'app.test',
+        ws: { ...ws, async sendSystemMessage() { return { id: 1 }; }, sendBotMessage: ws.sendBotMessage.bind(ws) },
+      },
     });
     assert.equal(out.outcome, 'replied');
     assert.equal(model.seen.length, 0, 'the model was never called');
-    assert.equal(sent.length, 1, 'one reply, not a promise and a refusal');
+    assert.equal(sent.length, 1, 'one reply');
     const answer = sent[0];
-    assert.equal(answer.content, require('../src/services/homeroom-bot-live').goAheadCannotText({
-      reason: 'it changes permissions and production database access',
-      firstStep: 'Just the three missing read tools',
-      reader: evan.username, blocker: 'operator_work',
-    }));
-    assert.doesNotMatch(answer.content, /I'm on it|I am on it|about to read/i);
-    assert.doesNotMatch(answer.content, /tell you/i);
-    assert.match(answer.content, /A person has to build it, for example you with a coding agent/);
-    assert.equal(answer.metadata.homeroomBot.goAheadCannot.messageId, Number(trigger));
-    assert.deepEqual(answer.metadata.homeroomBot.actions.map((a) => a.id), ['smaller', 'not_now']);
-    assert.deepEqual(answer.metadata.homeroomBot.actions.map((a) => a.label),
-      ['Just the three missing read tools', 'Not now']);
-    assert.deepEqual(answer.metadata.homeroomBot.actions.map((a) => a.style), ['primary', 'secondary']);
-    assert.ok(answer.metadata.homeroomBot.actions.every((a) => a.id !== 'go_ahead'));
+    assert.equal(answer.content, require('../src/services/homeroom-bot-part')
+      .partStartedText('Just the three missing read tools', 7001));
+    assert.match(answer.content, /^Building just the three missing read tools now, as its own request #7001\./);
+    assert.doesNotMatch(answer.content, /A go-ahead can't settle this one/);
+    assert.doesNotMatch(answer.content, /coding agent/);
+    assert.equal(filed.length, 1, 'the part was filed as its own request');
+    assert.equal(filed[0].title, 'Just the three missing read tools');
+    assert.match(filed[0].body, /A smaller part of request #6430/);
+    assert.equal(answer.metadata.homeroomBot.partStarted.messageId, Number(trigger));
+    assert.equal(answer.metadata.homeroomBot.partStarted.issueNumber, 7001);
+    assert.equal(answer.metadata.homeroomBot.actions, undefined, 'no buttons: it started');
+    const { rows: [queuedPart] } = await pool.query(
+      'SELECT reason, requested_by FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 7001', [app.id],
+    );
+    assert.equal(queuedPart?.reason, 'dm_start');
+    assert.equal(Number(queuedPart?.requested_by), evan.id);
     const { rows: [record] } = await pool.query(
       'SELECT outcome FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1',
     );
     assert.equal(record.outcome, 'replied');
 
-    // Somebody the note did not name is not answered this way.
-    const other = await say(sam, 'go ahead', { type: 'issue', ref: number });
+    // A note that offered no part keeps the refusal: nothing to start.
+    await pool.query('UPDATE homeroom_bot_runs SET first_step = NULL WHERE id = $1', [run.id]);
+    const other = await say(evan, 'go ahead', { type: 'issue', ref: number });
     sent.length = 0;
-    const second = await turn({ type: 'issue', ref: number }, model, { key: 'go-ahead-cannot-2', through: out.throughId });
-    assert.equal(second.outcome, 'quiet');
-    assert.equal(sent.length, 0);
+    const refused = await turn({ type: 'issue', ref: number }, model, { key: 'go-ahead-part-2', through: out.throughId });
+    assert.equal(refused.outcome, 'replied');
+    assert.equal(model.seen.length, 0);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].content, /^A go-ahead can't settle this one\./);
+    assert.equal(sent[0].metadata.homeroomBot.goAheadCannot.messageId, Number(other));
     await pool.query('DELETE FROM chat_messages WHERE id = $1', [other]);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 7001', [app.id]);
+    await pool.query('DELETE FROM issues WHERE app_id = $1 AND github_issue_number = 7001', [app.id]);
     await pool.query('DELETE FROM homeroom_bot_runs WHERE id = $1', [run.id]);
   });
 

@@ -470,6 +470,11 @@
       "id": "homeroom-bot-run-wrong-project",
       "sha256": "fdc0c8bb3143d57bf1fa862ec7df4425181c404567d57e905c389dc72e4bc212",
       "schemaSha256": "d152c81140f521c625329f79688b2a26f42d7632f19df52bf3e042d3bb0cdd9f"
+    },
+    {
+      "id": "homeroom-bot-run-who-acts",
+      "sha256": "eeb7e1c51a7f0ebc6b68d46ad4a3e1f8daa5d6ea4bb32a055bd779185288d000",
+      "schemaSha256": "b1ba5d805ef1af6d088ca4a6c89cd6b69ca2169c7a0612f90ede5f664a8c6e22"
     }
   ]
 }
