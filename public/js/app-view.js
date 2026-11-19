@@ -18713,7 +18713,19 @@ const AppView = {
     // keeps the inline capsule — it already has a wide header, and a bar
     // that wide there would just read as a rule.
     const pillState = AppView.statusPillState(pr, { majority, locked: ctx.locked });
-    const pill = pillState && pillState.label ? { state: pillState, inline: noNav } : null;
+    // The one rule (frontend/src/lib/work-state.ts): the card says where the
+    // change stands in its stored row's words while that row is not up for a
+    // vote ("Taking screenshots", "Syncing with main"), as its own page's
+    // header does (_workPill), never "Vote · 0/2" beside a Homeroom bot tab
+    // that says otherwise. `state` stays the live vote's: its counts, and the
+    // key the change's page and its Votes card read (_changeThreadView,
+    // _changeVotesView). `row` is what a card, a row and the Needs you facts
+    // DRAW in its place (card/model.ts shownPill); absent while the row is up
+    // for a vote, or there is none.
+    const rowPill = pillState && pillState.label ? AppView._workPill(pr, pillState) : null;
+    const pill = pillState && pillState.label
+      ? { state: pillState, inline: noNav, ...(rowPill && rowPill !== pillState ? { row: rowPill } : {}) }
+      : null;
 
     // ── Actions: Yes / No / Explore + icon Preview; ⋯ is in the rail ──
     // Explore is PROMOTED off the ⋯ menu for a live proposal the pill rule
