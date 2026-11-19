@@ -7316,6 +7316,13 @@ const App = {
 
   // Show/hide one screen root through whichever half owns it.
   _setScreenVisible(id, visible) {
+    // #6696: every route OFF Home comes through here to hide it (navigateToApp,
+    // the tab switches, Settings, Messages, the AI tab, the profile). Edit mode
+    // ends there, not on a catalog refresh, so coming back starts clean while a
+    // status update no longer takes the remove buttons away mid-arranging.
+    if (id === 'home-screen' && !visible && window.Home && typeof window.Home.setEditing === 'function') {
+      window.Home.setEditing(false);
+    }
     if (App.REACT_SCREEN_IDS.includes(id)) { App.Visibility.publish(id, visible); return; }
     const el = document.getElementById(id);
     if (el) el.classList.toggle('hidden', !visible);

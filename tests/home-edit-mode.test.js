@@ -193,11 +193,25 @@ test('entering edit mode mid-gesture defers the paint to the settle flush', () =
 
 // ── what ends edit mode ───────────────────────────────────────────────
 
-test('load() ends edit mode — the router calls it on every visit to Home', async () => {
+test('a refresh keeps edit mode (#6696)', async () => {
   const { Home } = makeHome();
   Home._editing = true;
   await Home.load();
-  assert.equal(Home._editing, false);
+  assert.equal(Home._editing, true, 'a background catalog refresh does not end it');
+  const load = HOME_SRC.slice(HOME_SRC.indexOf('  load() {'), HOME_SRC.indexOf('  async _loadOnce() {'));
+  assert.doesNotMatch(load, /Home\._editing = false;/,
+    'load() no longer clears the flag');
+});
+
+test('leaving Home ends edit mode (#6696)', () => {
+  const APP = read('public/js/app.js');
+  const fn = APP.slice(APP.indexOf('_setScreenVisible(id, visible) {'), APP.indexOf('// Is a screen root on screen?'));
+  assert.match(fn, /id === 'home-screen' && !visible/,
+    'the hide path is where it ends');
+  assert.match(fn, /window\.Home\.setEditing\(false\)/,
+    'and it goes through the one setter');
+  assert.match(fn, /typeof window\.Home\.setEditing === 'function'/,
+    'only when Home has loaded');
 });
 
 test('a value in the search field ends edit mode', () => {
