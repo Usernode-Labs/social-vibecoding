@@ -224,14 +224,14 @@ test('the Homeroom bot page lists a stopped change under Needs you', () => {
   const open = {
     proposal_status: 'promoted', proposal_at: new Date(Date.now() - 20 * 60000).toISOString(),
     check_state: 'failing', checks_sha: HEAD, reviewed_head_sha: HEAD, fix_stopped: true,
-  };  assert.deepEqual(progress.stageOf(open), {
-    stage: 'fix_stopped', since: open.checks_at || open.proposal_at,
-    doing: 'its checks are failing, and Homeroom bot stopped fixing them', waitingOn: 'them',
-  });
+  };
   // Every page says it stopped (services/work-state.js); the bot page puts it under Needs you.
   const ws = require('../src/services/work-state');
-  const stopped = ws.fromStage(progress.stageOf(open), open);
-  assert.deepEqual([stopped.stage, stopped.reason], ['stopped', 'fix_stopped']);
+  const stopped = ws.derive(open);
+  assert.deepEqual([stopped.stage, stopped.reason, stopped.since], ['stopped', 'fix_stopped', open.proposal_at]);
+  // Its change's own row says where the change is: its checks failing.
+  assert.equal(ws.deriveChange({ status: 'promoted', check_state: 'failing', promoted_at: open.proposal_at }).stage, 'checking');
+  assert.equal(typeof progress.checksOnHead, 'function');
   assert.equal(ws.placeFor(stopped, { requester: true }), 'needs');
 });
 

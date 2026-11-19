@@ -15,30 +15,35 @@ const progress = require('../src/services/homeroom-bot-progress');
 
 const NOW = new Date('2026-10-02T16:04:00Z');
 const ago = (minutes) => new Date(NOW.getTime() - minutes * 60 * 1000).toISOString();
-const stage = (row) => progress.stageOf(row, { now: NOW });
+// Where a request's facts row puts it (services/work-state.js derive): its
+// stage and its line's code.
+const stage = (row) => {
+  const s = require('../src/services/work-state').derive(row, { now: NOW });
+  return [s.stage, s.line && s.line.code].filter(Boolean).join(' ');
+};
 
 test('#8 (WP3): a queue row from before its proposal merged is left over, not work in the queue', () => {
   const merged = { proposal_status: 'merged', merged_at: '2026-10-03T12:00:00Z', queue_id: 9, queue_reason: 'changed' };
   // Put there before the merge (a reply, a look again): nothing in progress,
   // where it used to read "waiting in the queue" in the header for days.
   assert.equal(progress.leftOverQueue({ ...merged, enqueued_at: '2026-10-03T11:58:00Z' }), true);
-  assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T11:58:00Z' }), null);
-  assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T11:58:00Z', started_at: '2026-10-03T11:59:00Z' }), null,
+  // A request whose change is live reads Live whatever its queue row says
+  // (the derive reads the merge first), so no surface draws the leftover.
+  assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T11:58:00Z' }), 'live');
+  assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T11:58:00Z', started_at: '2026-10-03T11:59:00Z' }), 'live',
     'nor being read');
   assert.equal(progress.leftOverQueue({ ...merged, enqueued_at: new Date('2026-10-03T11:59:59.999Z'), merged_at: new Date('2026-10-03T12:00:00Z') }), true,
     'the database\'s dates, to the millisecond');
   // Put there after the merge: new work.
   assert.equal(progress.leftOverQueue({ ...merged, enqueued_at: '2026-10-03T12:05:00Z' }), false);
-  assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T12:05:00Z' }).stage, 'queued');
   // Not merged, or no merge time to compare: the row stands.
   assert.equal(progress.leftOverQueue({ ...merged, proposal_status: 'promoted', enqueued_at: '2026-10-03T11:58:00Z' }), false);
   assert.equal(progress.leftOverQueue({ ...merged, merged_at: null, enqueued_at: '2026-10-03T11:58:00Z' }), false);
-  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }).stage, 'queued', 'an ordinary queue row is untouched');
+  assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }), 'reading queued', 'an ordinary queue row is untouched');
   // B24: a request that closed with its change live has no work left, whenever its row was put there.
   const closedLive = { ...merged, request_closed: true, enqueued_at: '2026-10-03T12:05:00Z', started_at: '2026-10-03T12:06:00Z' };
   assert.equal(progress.leftOverQueue(closedLive), true);
-  assert.equal(stage(closedLive), null, 'never "Reading the request" under its "It\'s live"');
-  assert.equal(stage({ ...closedLive, request_closed: false }).stage, 'reading', 'an open one reread after it went live is new work');
+  assert.equal(stage(closedLive), 'live', 'never "Reading the request" under its "It\'s live"');
 });
 
 test('#19 (WP3): how long a step usually takes is a fixed range, never past its time limit, and none for a wait', () => {

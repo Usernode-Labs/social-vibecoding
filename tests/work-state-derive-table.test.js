@@ -22,8 +22,65 @@ const cases = require('./lib/work-state-cases');
 
 const BEFORE = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/work-state-derive.before.json'), 'utf8'));
 
-// The intended differences from the recording. Empty: nothing has changed.
-const INTENDED = [];
+// The intended differences from the recording, most particular first (a case
+// is explained by the first entry that fits it). All of them are one change:
+// a request whose change is up for a vote or past it now reads that change's
+// own derived state (deriveChange) unless Homeroom bot is doing something
+// about it (work-state.js withBot), where it had a second copy of the rules
+// in another order (homeroom-bot-progress.js stageOf and fromStage, both
+// gone). No change's own row says anything it did not say before, and no
+// request without a change of the bot's up for a vote does either: the test
+// below holds them to the recording with no entry here.
+const CONFLICT = ['yes', 'syncing', 'author', 'deferred'];
+const GITHUB = ['github_stuck', 'github_checks_failing', 'github_checks', 'github_refused'];
+const WHOLE = ['stage', 'line', 'whoseMove', 'since', 'words', 'place', 'bot', 'busy'];
+const INTENDED = [
+  {
+    id: 'a queued fix is the change',
+    why: 'A fix of its failing checks waiting its turn (#6545) said "Checking, N tests failing" whatever the change stood at, timed from when it was queued. It reads what the change reads: the same words in the usual case, timed from the verdict, and the conflict or GitHub hold when one holds the change.',
+    group: ['request', 'request-alone'], where: { bot: 'fix_queued' }, fields: WHOLE,
+  },
+  {
+    id: 'a check being fixed, after what holds the change',
+    why: 'A check that is not its own being fixed (#6807) said "Fixing" before a conflict with main or a merge GitHub holds, and for a verdict of unknown. The change says it only for a failing verdict, after those.',
+    group: ['request', 'request-alone'], where: { bot: 'flake_fixing' }, fields: WHOLE,
+  },
+  {
+    id: 'a conflict before a GitHub hold',
+    why: 'A request read a merge GitHub holds before a conflict with main; a change reads the conflict first (#6531). The request says Syncing with main, Waiting to sync, or what a yes will do, not Approved.',
+    group: ['request', 'request-alone'], where: { merge: CONFLICT, hold: GITHUB }, fields: WHOLE,
+  },
+  {
+    id: 'a conflict before a first version',
+    why: 'A first version that conflicts with main said "Going live" on its request and Syncing on its change. It says what the change says.',
+    group: ['request', 'request-alone'], where: { merge: CONFLICT, first: true }, fields: WHOLE,
+  },
+  {
+    id: 'a GitHub hold before the verdict and a first version',
+    why: 'With its merge held by GitHub, a request with failing checks said "N tests failing" and a first version said "Going live"; the change says what GitHub holds it on (#6546).',
+    group: ['request', 'request-alone'], where: { merge: 'clean', hold: GITHUB }, fields: WHOLE,
+  },
+  {
+    id: 'an unknown verdict is still checking',
+    why: 'A request read a check verdict of unknown as failing ("Tests failing"); a change reads only failing and error so, and unknown as checks still to come. Homeroom bot having stopped fixing it still reads Stopped (withBot).',
+    group: ['request', 'request-alone'], where: { check: 'unknown' }, fields: WHOLE,
+  },
+  {
+    id: 'a failing verdict about another commit',
+    why: 'A request read a failing verdict about a commit that is not its head as checks still to come (N5); a change reads the failure. Kept as the change reads it, since its order wins; see the report.',
+    group: ['request', 'request-alone'], where: { head: 'off', check: ['failing', 'error'] }, fields: ['line', 'words', 'since'],
+  },
+  {
+    id: 'a conflict only its author can move',
+    why: 'On a conflict only its author (or the bot) can move, a failing change says "Tests failing" with no count, as the change always did, and one whose verdict is about another commit says the failure, not "Waiting to sync".',
+    group: ['request', 'request-alone'], where: { merge: 'author' }, fields: ['line', 'words', 'since'],
+  },
+  {
+    id: 'since when, as the change says',
+    why: 'A request timed a conflict from when its change was proposed and a GitHub hold from its checks; a change times a conflict from its checks and a hold from when it was proposed. A change being merged had no time at all on its request.',
+    group: ['request', 'request-alone'], fields: ['since'],
+  },
+];
 
 const among = (want, got) => (Array.isArray(want) ? want.includes(got) : want === got);
 const matches = (rule, c) => (!rule.group || among(rule.group, c.group.split('.')[0]))
@@ -52,6 +109,40 @@ test('the derive says what it said before, but for the differences listed', () =
   assert.equal(unexplained.length, 0,
     `${unexplained.length} case(s) differ from the recording with no entry in INTENDED:\n  ${unexplained.slice(0, 12).join('\n  ')}`);
   for (const rule of INTENDED) assert.ok(used.has(rule.id), `INTENDED "${rule.id}" explains no case any more: remove it`);
+});
+
+// The composition itself: with Homeroom bot doing nothing about it, a
+// request's row is its change's row, whatever holds the change.
+test('a request the bot is doing nothing about reads exactly as its change does', () => {
+  let read = 0;
+  for (const c of cases.allCases()) {
+    if (c.kind !== 'request' || !c.change || c.row.proposal_status !== 'promoted') continue;
+    if (c.a.bot && !['none', 'fix_queued', 'flake_fixing', 'question_closed'].includes(c.a.bot)) continue;
+    const request = cases.fieldsOf(ws, cases.subject(ws, c));
+    const change = cases.fieldsOf(ws, ws.deriveChange(c.change, { now: cases.NOW }));
+    assert.deepEqual(request, change, `${c.group}: ${c.name}`);
+    read += 1;
+  }
+  assert.ok(read > 3000, `${read} requests read against their changes`);
+});
+
+// What the bot is doing about it is the request's own, over the same change.
+test('what Homeroom bot is doing about a change is said on its request, never on the change', () => {
+  const core = { check: 'failing', head: 'on', merge: 'clean', hold: null, shots: false, first: false, votes: false };
+  const find = (bot) => cases.allCases().find((c) => c.group === 'request.bot'
+    && Object.entries({ ...core, bot }).every(([k, v]) => c.a[k] === v));
+  const said = (bot) => {
+    const c = find(bot);
+    const st = cases.subject(ws, c);
+    return [st.stage, st.why || st.reason || (st.line && st.line.code) || '', ws.deriveChange(c.change, { now: cases.NOW }).line.code].join(' ');
+  };
+  assert.equal(said('fixing'), 'building fixing checks_failing');
+  assert.equal(said('revising'), 'building revising checks_failing');
+  assert.equal(said('followup_queued'), 'building update_queued checks_failing');
+  assert.equal(said('question'), 'waiting_for_you question checks_failing');
+  assert.equal(said('fix_stopped'), 'stopped fix_stopped checks_failing');
+  // A closed request's open question waits on nobody: it reads as the change.
+  assert.equal(said('question_closed'), 'checking checks_failing checks_failing');
 });
 
 test('the cases reach every stage, why, reason and line the derive writes', () => {

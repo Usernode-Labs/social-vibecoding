@@ -476,10 +476,13 @@ const progressSvc = require('../src/services/homeroom-bot-progress');
 // 19 Nov 2026 (docs/plans/bot-one-model.md): which of the person's requests
 // is under way is its stored work state (services/work-state.js), the row
 // every surface draws; requestStates' stages read the same records before.
-// Each stage of the bot's own step (progress.stageOf), as the work state
-// stores it (fromStage), with what the row it is derived from carries.
+// Each point of the bot's work on a request, as the work state stores it
+// (tests/lib/work-at.js: the derive's reading of that situation's facts).
 const ws = require('../src/services/work-state');
-const stored = (stage, row = {}) => ({ kind: 'request', appId: 1, issueNumber: 3, ...ws.fromStage({ stage, since: '2026-10-02T11:50:00Z' }, row) });
+const { workAt } = require('./lib/work-at');
+const stored = (stage, row = {}) => ({
+  kind: 'request', appId: 1, issueNumber: 3, ...workAt(stage, row, { now: new Date('2026-10-02T12:00:00Z'), since: '2026-10-02T11:50:00.000Z' }),
+});
 
 test('work under way is a look being read, or the plan and build its ready verdict started', () => {
   // The stages a card follows: the bot is at it this minute (busyNow), on

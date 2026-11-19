@@ -27,14 +27,12 @@ const ENDED = new Set(['live', 'stopped', 'closed']);
 
 // The step each stage lights (none before the work starts, or once it ended
 // some other way than live).
-const STEP_OF_STAGE = Object.freeze({
-  reading: 'plan', planning: 'plan', waiting_for_you: 'plan', building: 'build', checking: 'checks',
-  up_for_vote: 'vote', going_live: 'live', live: 'live', stopped: null, closed: null,
-});
-// A line that says nobody is at it yet, or that it waits its turn.
-const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
-// T2.2: a build that waits for building credit is ready too (work-state.js READY).
-const READY = new Set(['queued', 'held_builds', 'held_waiting', 'credit_wait']);
+const STEP_OF_STAGE = Object.freeze(Object.fromEntries(
+  Object.entries(require('./work-stages').STAGE).map(([stage, def]) => [stage, def.step || null]),
+));
+// A line that says nobody is at it yet, or that it waits its turn, and a
+// build found ready that waits: the one table's (work-stages.json).
+const { NOT_STARTED, READY } = require('./work-stages');
 
 // The limits a request can be held at. `builds`: the project's builds
 // waiting or under way (homeroom-bot.js BUILDS_PER_APP, #6156), so it waits
@@ -688,14 +686,25 @@ function demoSlots(app, now = Date.now(), mocks = []) {
     title: mock.get(n)?.title || fallback, askedBy, excerpt: requestExcerpt(mock.get(n)?.body) || null,
   });
   const job = (n, title) => ({ key: `demo#${n}`, appSlug: app.slug, appName: app.name || app.slug, issueNumber: n, title });
-  // Each demo request's work state: a stage of the bot's by its old name
-  // (work-state.js fromStage maps it), or how its work ended.
+  // Each demo request's work state, by a short name for where it is, or how
+  // its work ended.
+  const DEMO_WORK = {
+    queued: { stage: 'reading', line: { code: 'queued' }, whoseMove: 'bot' },
+    question: { stage: 'waiting_for_you', why: 'question', whoseMove: 'requester' },
+    plan: { stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester' },
+    build_queued: { stage: 'building', line: { code: 'queued' }, whoseMove: 'bot' },
+    building: { stage: 'building', whoseMove: 'bot' },
+    reviewing: { stage: 'building', line: { code: 'reviewing', round: 1, of: 1 }, whoseMove: 'bot' },
+    fixing: { stage: 'building', line: { code: 'fixing' }, whoseMove: 'bot' },
+    checks: { stage: 'checking', whoseMove: 'bot' },
+    vote: { stage: 'up_for_vote', whoseMove: 'group' },
+  };
   const ENDED_WORK = {
     build_failed: { stage: 'stopped', reason: 'build_failed' },
     person: { stage: 'waiting_for_you', why: 'decide' },
   };
   const workOf = (fields = {}, extra = {}) => {
-    if (fields.stage) return { ...workState.fromStage({ stage: fields.stage, since: fields.since || null }, {}), since: fields.since || null };
+    if (fields.stage) return { why: null, reason: null, line: null, ...DEMO_WORK[fields.stage], since: fields.since || null };
     if (fields.outcome === 'held') {
       return extra.held?.limit === 'taken'
         ? { stage: 'building', line: { code: 'claimed', by: extra.held.by }, whoseMove: 'builder' }

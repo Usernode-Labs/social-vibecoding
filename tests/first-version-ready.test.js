@@ -42,16 +42,19 @@ test('a verdict about another commit than the head up for approval is not its ow
   assert.equal(progress.checksOnHead({ proposal_source: 'imported', imported_pr_head_sha: FIX, reviewed_head_sha: HEAD, checks_sha: HEAD }), false);
 
   // Club Votes at 22:39:38: promoted on 83d22f05, a pass of 394d7494 stored.
-  const stale = progress.stageOf({ ...open, check_state: 'passing', reviewed_head_sha: HEAD, checks_sha: FIX }, { now });
-  assert.equal(stale.stage, 'checks');
-  assert.match(stale.doing, /its tests are running/);
-  assert.equal(progress.buildLineOf(stale.stage), 'testing');
-  // The same pass about its own head is the vote, as before.
-  assert.equal(progress.stageOf({ ...open, check_state: 'passing', reviewed_head_sha: HEAD, checks_sha: HEAD }, { now }).stage, 'vote');
-  assert.equal(progress.stageOf({ ...open, check_state: 'skipped', reviewed_head_sha: HEAD, checks_sha: HEAD }, { now }).stage, 'vote');
-  // A failure about another commit is not its own failure either.
-  assert.equal(progress.stageOf({ ...open, check_state: 'failing', reviewed_head_sha: HEAD, checks_sha: FIX }, { now }).stage, 'checks');
-  assert.equal(progress.stageOf({ ...open, check_state: 'failing', reviewed_head_sha: HEAD, checks_sha: HEAD }, { now }).stage, 'checks_failed');
+  const ws = require('../src/services/work-state');
+  const at = (row) => { const s = ws.derive(row, { now }); return [s.stage, s.line && s.line.code].filter(Boolean).join(' '); };
+  const stale = ws.derive({ ...open, check_state: 'passing', reviewed_head_sha: HEAD, checks_sha: FIX }, { now });
+  assert.deepEqual([stale.stage, stale.line], ['checking', null]);
+  assert.equal(progress.buildLineOf(progress.firstVersionStageOf(stale)), 'testing');
+  // The same pass about its own head is the vote, as before (a first
+  // version's: it goes live without one).
+  const voteOf = (row) => at({ ...row, first_version: false });
+  assert.equal(voteOf({ ...open, check_state: 'passing', reviewed_head_sha: HEAD, checks_sha: HEAD }), 'up_for_vote');
+  assert.equal(voteOf({ ...open, check_state: 'skipped', reviewed_head_sha: HEAD, checks_sha: HEAD }), 'up_for_vote');
+  // A failure about its own head is its failure. (One about another commit
+  // reads as the change's own row reads it: review B2's list of differences.)
+  assert.equal(voteOf({ ...open, check_state: 'failing', reviewed_head_sha: HEAD, checks_sha: HEAD }), 'checking checks_failing');
 });
 
 test('the per-request record reads which commit the verdict is about, and the head up for approval', () => {
@@ -74,14 +77,13 @@ test('the App tab\'s stage: ready to try only when ready, never while a follow-u
 });
 
 // 19 Nov 2026 (docs/plans/bot-one-model.md): the App tab draws its
-// request's stored work state (services/work-state.js), not stageOf through
-// requestStates. Each stage of the bot's own step, as the work state stores
-// it (fromStage), is drawn at the step, build line and phase it was before,
-// wherever the two deciders agreed.
+// request's stored work state (services/work-state.js). Each point of the
+// bot's work, as the work state stores it (tests/lib/work-at.js), is drawn
+// at the step, build line and phase its name always had.
 test('firstVersionStageOf: the App tab\'s stage is the work state\'s, at the step it always was', () => {
-  const ws = require('../src/services/work-state');
-  const facts = { first_version: true, check_state: 'pending', review_round: 1, review_max_rounds: 3 };
-  const stored = (step, row = facts) => ws.fromStage(step, row, now);
+  const { workAt } = require('./lib/work-at');
+  const facts = { first_version: true, review_round: 1, review_max_rounds: 3 };
+  const stored = (step, row = facts) => (step.work || workAt(step.stage, row, { now: new Date(now) }));
   const same = (step, row) => {
     const mapped = progress.firstVersionStageOf(stored(step, row));
     const label = `${step.stage}${step.reply ? ' (reply)' : ''}${step.retry ? ' (retry)' : ''}`;
@@ -98,10 +100,11 @@ test('firstVersionStageOf: the App tab\'s stage is the work state\'s, at the ste
     'reviewing', 'proposing', 'building', 'fixing', 'revising', 'followup_queued', 'fix_queued', 'checks', 'checks_failed', 'merging']) {
     same({ stage });
   }
-  same({ stage: 'reading', reply: true });
-  assert.equal(same({ stage: 'queued', retry: 'plan' }), 'queued', 'a plan to write again waits to be read');
+  same({ stage: 'reading', reply: true, work: { stage: 'reading', line: { code: 'reply' } } });
+  assert.equal(same({ stage: 'queued', retry: 'plan', work: { stage: 'planning', line: { code: 'retry_plan' } } }), 'queued',
+    'a plan to write again waits to be read');
   // A first version whose checks passed goes live without a vote: Ready to
-  // try once its readiness says so (firstVersionStage), as before.
+  // try, as before.
   assert.equal(same({ stage: 'vote' }, { ...facts, check_state: 'passing' }), 'vote');
   assert.equal(progress.firstVersionStageOf({ stage: 'up_for_vote' }), 'vote');
   assert.equal(progress.firstVersionStageOf({ stage: 'going_live', line: { code: 'github_checks' } }), 'merging');

@@ -292,14 +292,14 @@ function allCases() {
  */
 function subject(ws, c) {
   if (c.kind === 'change') return ws.deriveChange(c.change, { now: NOW });
-  // The refresh reads a request's lead change's facts and derives it beside
-  // the request; a request derived alone (no `change`) is the pure derive.
-  const next = ws.derive(c.row, { now: NOW });
-  if (!c.change) return next;
-  const leadState = ws.deriveChange(c.change, { now: NOW });
-  if (next.stage === 'up_for_vote' && !ws.voteOpenOf(leadState)) return { ...leadState };
-  return next;
+  // The refresh hands a request's derive its change's own facts; a request
+  // derived alone (no `change`) reads them off its own row.
+  return ws.derive(c.row, { now: NOW, change: c.change });
 }
+
+// (The recording was made with the composition the refresh did then: a
+// request derived up for a vote whose change was not open for votes took
+// its change's state.)
 
 // placeFor lists a live item for a week by the clock: read it at the cases' own time.
 function atNow(fn) {
