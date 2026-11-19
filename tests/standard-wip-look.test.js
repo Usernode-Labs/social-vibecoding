@@ -37,6 +37,8 @@ const WIP_HIDES = [
   'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
+  'html[data-skin-wip] #app-list .app-card-opened',
 ];
 
 function wipBlock() {

@@ -4719,6 +4719,22 @@ html:not([data-skin]) #auth-landing-screen:has([data-guest-discover]) #landing-h
   font-size: 0.6875rem; /* 11px */
   line-height: 0.75rem; /* 12px */
 }
+/* "Opened 2h ago" (#4025): when you last left the app, in the caption lane
+   a running app leaves empty, so the row's fixed height does not move. One
+   line, muted, and never cut: a line that is only a time says nothing with
+   its end missing. Under 640px, where the grid's four columns leave a text
+   lane of 69px on a 375px screen (55px at 320px), the sentence (about 91px
+   at its longest, "Opened 59m ago") gives way to the time alone, 46px at
+   its longest. The tile's aria-label keeps the sentence. */
+.app-card-opened {
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.app-card-opened-short { display: none; }
+@media (max-width: 639.98px) {
+  .app-card-opened-long { display: none; }
+  .app-card-opened-short { display: inline; }
+}
 
 /* ── App icon tiles ────────────────────────────────────────
    The single treatment for every homescreen-style app icon tile:
@@ -7756,6 +7772,9 @@ html[data-skin-wip] body > :is(.dev-ws-side) {
   background-color: var(--wip-card-bg);
   box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-menu-shadow);
 }
+/* A pinned app's tile does not say when it was opened under the look: its
+   tiles say less. */
+html[data-skin-wip] #app-list .app-card-opened { display: none; }
 /* THE LEFT MENU AND THE TOP BAR, AS THE MOSAIC LOOK DRAWS THEM (from 768px,
    where the menu is a sidebar; a phone's bar is untouched).
    The sidebar is a panel of its own: the look's card, standing a little in
