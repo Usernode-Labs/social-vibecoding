@@ -10,8 +10,10 @@
 // table (review B2: `credit_wait` needed seven edits and missed an eighth).
 //
 // Nothing here requires anything but the table: the browser reads the same
-// JSON (as it reads services/countries.json), and tests build their lists
-// from it.
+// JSON (as it reads services/countries.json) through
+// frontend/src/lib/work-stages.ts, and tests build their lists from it.
+// tests/work-stages-client.test.js fails when the client and this table
+// disagree on any stage, why, reason or line code.
 //
 // A stage:
 //   phrase        its word, a phrase id of frontend/locales/en/core.json
@@ -42,6 +44,10 @@
 //   counted       its words count the project's other requests (a place in
 //                 a line), so a move of one marks the others
 //   approved      its change's votes are in
+//   failing       its change's tests fail (its own checks, GitHub's, or a
+//                 fix of them that failed): a surface tints the row bad.
+//                 Read by the client only (lib/work-stages.ts FAILING_LINES,
+//                 and app-view.js's copy the agreement test holds to it)
 //   stageWord     the stage word it replaces, by stage
 //   bot           what the bot is doing on it, by stage, where that is not
 //                 the stage's own: null (nothing), { what, held?, turn? },
@@ -85,6 +91,8 @@ const LISTED_WAITING = codesWith((l) => l.listed === 'waiting');
 const PLACE_LINES = Object.freeze(LINE_CODES.filter((code) => LINE[code].counted === true));
 // The lines that say a change's votes are in.
 const APPROVED_LINES = Object.freeze(LINE_CODES.filter((code) => LINE[code].approved === true));
+// The lines that say a change's tests fail (the client tints them bad).
+const FAILING_LINES = codesWith((l) => l.failing === true);
 
 const lineOf = (code) => (code && Object.prototype.hasOwnProperty.call(LINE, code) ? LINE[code] : null);
 const stageOf = (stage) => (stage && Object.prototype.hasOwnProperty.call(STAGE, stage) ? STAGE[stage] : null);
@@ -170,6 +178,7 @@ module.exports = {
   LISTED_WAITING,
   PLACE_LINES,
   APPROVED_LINES,
+  FAILING_LINES,
   whoseMoveOf,
   stageWordOf,
   linePhraseOf,

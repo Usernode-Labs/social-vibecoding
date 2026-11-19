@@ -133,7 +133,8 @@
     "checks_failing": {
       "stages": ["checking"],
       "phrase": "core:work.line.checksFailing",
-      "valued": { "phrase": "core:work.line.checksFailingCount", "need": "failing", "values": { "count": "failing" } }
+      "valued": { "phrase": "core:work.line.checksFailingCount", "need": "failing", "values": { "count": "failing" } },
+      "failing": true
     },
     "checks_running": {
       "stages": ["checking"],
@@ -146,8 +147,8 @@
     "shots": { "stages": ["checking"], "phrase": "core:work.line.shots", "stageWord": { "checking": "core:work.stage.shots" } },
     "approved_checking": { "stages": ["checking"], "phrase": "core:work.line.approvedChecking", "approved": true },
     "fixing_check": { "stages": ["checking"], "phrase": "core:work.line.fixingCheck", "stageWord": { "checking": "core:work.stage.fixing" } },
-    "bot_fix_failed": { "stages": ["checking"], "phrase": "core:work.line.botFixFailed" },
-    "github_checks_failing": { "stages": ["checking"], "phrase": "core:work.line.githubChecksFailing" },
+    "bot_fix_failed": { "stages": ["checking"], "phrase": "core:work.line.botFixFailed", "failing": true },
+    "github_checks_failing": { "stages": ["checking"], "phrase": "core:work.line.githubChecksFailing", "failing": true },
     "github_checks": { "stages": ["going_live"], "phrase": "core:work.line.githubChecks", "approved": true, "stageWord": { "going_live": "core:work.stage.approved" } },
     "github_wait": { "stages": ["going_live"], "phrase": "core:work.line.githubWait", "stageWord": { "going_live": "core:work.stage.waitingToMerge" } },
     "github_stuck": { "stages": ["going_live"], "phrase": "core:work.line.githubStuck", "stageWord": { "going_live": "core:work.stage.stuck" } },

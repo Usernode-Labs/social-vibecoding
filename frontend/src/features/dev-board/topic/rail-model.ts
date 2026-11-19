@@ -12,6 +12,7 @@
  */
 
 import { lineWords, stageWords, type Phrase, type Stage, type Standing, type WorkState } from '../../../lib/work-state';
+import { lookOf, stagePhrase } from '../../../lib/work-stages';
 import type { RequestSpecCard } from './request-model';
 import { changePhase, fixStanding, stageNote, SETTLED_PHASES, type ChangePhase, type GateLike } from './card-model';
 import type { ThreadItem } from './thread-model';
@@ -76,9 +77,13 @@ export function newestPlan(specs: RequestSpecCard[]): RequestSpecCard | null {
   return pool.reduce((best, s) => ((s.version ?? 0) >= (best.version ?? 0) ? s : best), pool[0]);
 }
 
-const BUSY: ReadonlySet<Stage> = new Set<Stage>(['reading', 'planning', 'building', 'checking', 'going_live']);
-
-const STAGE_ICON: Record<Stage, RailIcon> = {
+/**
+ * The icon of the timeline's last step, by its stage: one for every stage of
+ * the table (lib/work-stages.ts), so a new stage is drawn on purpose. Whether
+ * the step spins, how it is tinted and whether its note asks somebody are
+ * the stage's look (STAGE_LOOK), which the foot (./card-model.ts) reads too.
+ */
+export const STAGE_ICON: Readonly<Record<Stage, RailIcon>> = {
   reading: 'working',
   planning: 'plan',
   waiting_for_you: 'waiting',
@@ -90,9 +95,6 @@ const STAGE_ICON: Record<Stage, RailIcon> = {
   stopped: 'stopped',
   closed: 'closed',
 };
-
-/** The stages a change's tests have been passed by, so "Tested" is an event behind it. */
-const PAST_TESTS: ReadonlySet<Stage> = new Set<Stage>(['up_for_vote', 'going_live', 'live']);
 
 function planStep(plan: RequestSpecCard): RailStep {
   return step({
@@ -107,9 +109,6 @@ function planStep(plan: RequestSpecCard): RailStep {
   });
 }
 
-/** The stages that wait on a person: their note is the one that asks. */
-const ASKS: ReadonlySet<Stage> = new Set<Stage>(['waiting_for_you', 'up_for_vote']);
-
 /**
  * Where the thread stands, as its last step. Its title is short (the foot
  * carries the server's whole headline; a stop's reason is the note), and a
@@ -120,20 +119,21 @@ function nowStep(standing: WorkState, yours: boolean, track = false, ballot: Req
   const lead = standing.change || null;
   const shots = stage === 'checking' && standing.line?.code === 'shots';
   const choosing = !!ballot && stage === 'up_for_vote';
+  const look = lookOf(stage);
   return step({
     key: `now:${stage}`,
     icon: shots ? 'shots' : STAGE_ICON[stage] || 'working',
     title: choosing ? { id: 'project:topic.card.ballot.choosing', values: { count: ballot!.count } }
-      : stage === 'stopped' ? { id: 'core:work.stage.stopped' } : stageWords(standing, { yours }),
+      : stage === 'stopped' ? { id: stagePhrase('stopped') } : stageWords(standing, { yours }),
     at: standing.since || null,
     since: stage !== 'live' && stage !== 'closed',
     now: true,
-    tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
-    busy: BUSY.has(stage),
+    tone: look.tone,
+    busy: look.busy,
     // The rule of a ballot; else the server's own second line, else the
     // plain sentence for the stage.
     note: choosing ? ballot!.about : lineWords(standing) || stageNote(standing),
-    noteTone: stage === 'stopped' ? 'bad' : ASKS.has(stage) ? 'act' : 'plain',
+    noteTone: stage === 'stopped' ? 'bad' : look.asks ? 'act' : 'plain',
     open: lead && (stage === 'up_for_vote' || stage === 'going_live' || stage === 'live')
       ? { kind: 'votes', changeId: lead.id }
       : lead && stage === 'checking'
@@ -225,7 +225,7 @@ export function requestRail(input: RequestRailInput): RailStep[] {
         title: failing ? { id: 'project:topic.rail.testsFailed', values: { count: failing } } : { id: 'project:topic.rail.testsFailedPlain' },
         link: { label: { id: 'project:topic.rail.seeFailed' }, open: { kind: 'checks', changeId: item.id } },
       }));
-    } else if (lead.checks.state === 'passing' && stage && (PAST_TESTS.has(stage) || (stage === 'checking' && standing?.line?.code === 'shots'))) {
+    } else if (lead.checks.state === 'passing' && stage && (lookOf(stage).pastTests || (stage === 'checking' && standing?.line?.code === 'shots'))) {
       steps.push(step({
         key: `tested:${item.id}`,
         icon: 'tested',
@@ -467,17 +467,18 @@ function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePh
   // minutes"), which says more than the row's line and is the only place
   // the card look shows it while the step layer is shut.
   const held = stage === 'going_live' && phase === 'approved' && !!merge && merge.note.length > 0 && !!steps[at].note;
+  const look = lookOf(stage);
   steps[at] = {
     ...steps[at],
     icon: shots ? 'shots' : STAGE_ICON[stage] || 'working',
-    title: stage === 'stopped' ? { id: 'core:work.stage.stopped' } : stageWords(work, { yours }),
-    tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
-    busy: BUSY.has(stage),
+    title: stage === 'stopped' ? { id: stagePhrase('stopped') } : stageWords(work, { yours }),
+    tone: look.tone,
+    busy: look.busy,
     // The row's second line; a stop of the bot's fixes keeps the card's own
     // words for who fixes it now, which the row has no line for.
     note: held ? steps[at].note
       : lineWords(work) || (stage === 'stopped' && phase === 'failed' ? steps[at].note : null) || stageNote(work),
-    noteTone: stage === 'stopped' ? 'bad' : ASKS.has(stage) ? 'act' : 'plain',
+    noteTone: stage === 'stopped' ? 'bad' : look.asks ? 'act' : 'plain',
   };
   return steps;
 }

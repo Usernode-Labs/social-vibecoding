@@ -14,6 +14,7 @@
 
 import { isSettled, lineWords, stageWords, type WorkState } from '../../../lib/work-state';
 import { testsFailing } from './card-model';
+import { lookOf } from '../../../lib/work-stages';
 
 export type ThreadItemType = 'request' | 'change' | 'close' | 'decision';
 
@@ -529,9 +530,6 @@ export type RequestPill = {
   spinner?: boolean; title?: string;
 };
 
-/** The stages whose name the header says even with nothing in the thread yet: the work is built, being built or past it. */
-const HEADER_STAGES: ReadonlySet<string> = new Set(['building', 'checking', 'up_for_vote', 'going_live', 'live', 'stopped']);
-
 export function requestPill(
   layout: ThreadLayout,
   stand: 'closed' | WorkState | null,
@@ -546,8 +544,9 @@ export function requestPill(
   // or once the thread has a change in it (what its items said, which a
   // change whose vote is not open yet leaves out). A vote to close it while
   // nothing is built is the request's own vote, no stage of its work: it
-  // keeps its pill.
-  const named = HEADER_STAGES.has(work.stage)
+  // keeps its pill. Which stages say so is the stage's look
+  // (lib/work-stages.ts STAGE_LOOK `named`).
+  const named = lookOf(work.stage).named
     || (!!items && items.key !== 'close')
     || layout.changes.some((c) => c.state === 'review');
   if (!named) return items;

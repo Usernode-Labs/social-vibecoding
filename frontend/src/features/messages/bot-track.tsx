@@ -12,6 +12,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { firstSpecScreen, type SpecScreen } from '../../lib/spec-html';
 import { ArtifactFrame } from '../artifact/frame';
 import { lineWords, stageWords, type Stage } from '../../lib/work-state';
+import { STAGE_LOOK, STAGES, type KnownWhy } from '../../lib/work-stages';
 import { BotActivityCard, ActivityLink, spanText } from './bot-activity';
 import { requestKey } from './bot-request';
 import { useBotWork } from './bot-work';
@@ -68,15 +69,19 @@ const CAUSE_LINES: Record<string, string> = {
 };
 
 // Papote #3: what a request waits on, naming who it waits on, for a page
-// anyone can open (BotTrack.waitingFor).
-const NAMED_WAITING_LINES: Record<string, string> = {
+// anyone can open (BotTrack.waitingFor): one entry for every why of the
+// table (lib/work-stages.ts). `null`: the row's own second line says it
+// (a decision handed back, a request that may already work).
+export const NAMED_WAITING_LINES: Readonly<Record<KnownWhy, string | null>> = {
   question: 'messages:bot.track.line.waiting.questionNamed',
   plan: 'messages:bot.track.line.waiting.planNamed',
+  decide: null,
+  already_works: null,
   needs_detail: 'messages:bot.track.line.waiting.detailNamed',
 };
 
-/** The stages that are over: what "finished" counts. */
-export const ENDED_STAGES: ReadonlySet<Stage> = new Set(['live', 'stopped', 'closed']);
+/** The stages that are over: what "finished" counts (lib/work-stages.ts STAGE_LOOK `ended`). */
+export const ENDED_STAGES: ReadonlySet<Stage> = new Set(STAGES.filter((stage) => STAGE_LOOK[stage].ended));
 
 /** Pure: a phrase, said. */
 const say = (p: { id: string; values?: Record<string, string | number> } | null) => (p ? translate(p.id, p.values) : '');
@@ -116,8 +121,10 @@ export function trackLine(track: BotTrack): string {
       return translate('messages:bot.track.line.cooldown.until', { date: when });
     }
   }
-  if (work.stage === 'waiting_for_you' && track.waitingFor && work.why && NAMED_WAITING_LINES[work.why]) {
-    return translate(NAMED_WAITING_LINES[work.why], { username: track.waitingFor });
+  const named = work.why && Object.prototype.hasOwnProperty.call(NAMED_WAITING_LINES, work.why)
+    ? NAMED_WAITING_LINES[work.why as KnownWhy] : null;
+  if (work.stage === 'waiting_for_you' && track.waitingFor && named) {
+    return translate(named, { username: track.waitingFor });
   }
   if (work.stage === 'stopped' && track.cause === 'stopped' && track.causeBy) {
     return translate('messages:bot.track.line.stopped.stoppedBy', { username: track.causeBy });

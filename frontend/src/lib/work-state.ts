@@ -10,7 +10,9 @@
  * sent, and a `work_state` push carries the whole standing when it moves.
  * Nothing here decides a stage or picks words: the mapping from a stage, a
  * why, a reason and a line to its phrase exists once, on the server
- * (work-state.js phrasesOf).
+ * (work-state.js phrasesOf), and the vocabulary it maps (the stages, whys,
+ * reasons and line codes, and a stage's own word) is the one table both
+ * sides read (./work-stages.ts, src/services/work-stages.json).
  *
  * Ten stages: reading, planning, waiting_for_you (always with a why),
  * building, checking, up_for_vote, going_live, live, stopped (with a
@@ -36,18 +38,15 @@
  * since merged or closed, whose own status is newer than any row.
  */
 
-export type Stage =
-  | 'reading' | 'planning' | 'waiting_for_you' | 'building' | 'checking'
-  | 'up_for_vote' | 'going_live' | 'live' | 'stopped' | 'closed';
+import { isStage, stagePhrase, STAGES, type KnownReason, type KnownWhy, type Stage } from './work-stages';
 
-type KnownWhy = 'question' | 'plan' | 'decide' | 'already_works' | 'needs_detail';
-type KnownReason = 'build_failed' | 'fix_stopped' | 'look_failed' | 'change_closed' | 'stalled';
+export { isStage, STAGES, type Stage };
 
 /**
  * Why it waits for its requester, and why it stopped. The ones this build
- * knows are named; a newer server may send one it does not, and that code is
- * kept as it came (normalizeWorkState), since the row's `words` already say
- * it.
+ * knows are the table's (./work-stages.ts); a newer server may send one it
+ * does not, and that code is kept as it came (normalizeWorkState), since the
+ * row's `words` already say it.
  */
 export type Why = KnownWhy | (string & {});
 
@@ -173,40 +172,16 @@ export interface Standing extends WorkState {
   myVote?: 'yes' | 'no' | null;
 }
 
-export const STAGES: readonly Stage[] = Object.freeze([
-  'reading', 'planning', 'waiting_for_you', 'building', 'checking',
-  'up_for_vote', 'going_live', 'live', 'stopped', 'closed',
-]);
-
-// A payload with no words (an older server, a copy kept from before) says
-// only its plain stage word. Each id is written whole, so the language
-// inventory can find it; this is no mapping of whys, reasons or lines.
-const PLAIN_STAGE: Record<Stage, string> = {
-  reading: 'core:work.stage.reading',
-  planning: 'core:work.stage.planning',
-  waiting_for_you: 'core:work.stage.waitingForYou',
-  building: 'core:work.stage.building',
-  checking: 'core:work.stage.checking',
-  up_for_vote: 'core:work.stage.upForVote',
-  going_live: 'core:work.stage.goingLive',
-  live: 'core:work.stage.live',
-  stopped: 'core:work.stage.stopped',
-  closed: 'core:work.stage.closed',
-};
-
-/** Pure: whether a value is a stage this build knows. */
-export function isStage(value: unknown): value is Stage {
-  return typeof value === 'string' && (STAGES as readonly string[]).includes(value);
-}
-
 /**
  * Pure: the stage's words, as the server chose them: the requester's
- * (`yours`) or anyone else's. With no words, the plain stage word.
+ * (`yours`) or anyone else's. With no words (an older server, a copy kept
+ * from before), the stage's own word from the table both sides read; this
+ * is no mapping of whys, reasons or lines.
  */
 export function stageWords(state: WorkState, { yours = true }: { yours?: boolean } = {}): Phrase {
   const words = state.words;
   const said = words ? (yours ? words.stage : words.stageOthers) : null;
-  return said || { id: PLAIN_STAGE[state.stage] || PLAIN_STAGE.reading };
+  return said || { id: stagePhrase(state.stage) };
 }
 
 /** Pure: the second line's words, as the server chose them, or null. */
