@@ -3041,7 +3041,7 @@
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-message-image[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
       "name": "The notifications strip reads Unread, Recent threads, All, and it opens on Unread (#2718 review, #5289, #6785)",

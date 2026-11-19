@@ -32,37 +32,45 @@ const item = (over) => ({
 });
 const rows = (items) => renderComponent(STRIP, 'PendingStripRows', { items, onRemove: () => {} });
 
-test('a chip carries its badge, name, size and a remove control', () => {
+test('a file that is not a picture is a card: icon, name and badge (#6862)', () => {
   const html = rows([item()]);
-  assert.equal(
-    html,
-    '<div class="dc-attach-item dc-attach-chip" title="notes.md">'
-      + '<span class="dc-attach-kind">MD</span>'
-      + '<span class="dc-attach-name">notes.md</span>'
-      + '<span class="dc-attach-size">2 KB</span>'
-      + '<button type="button" class="dc-attach-remove" title="Remove" aria-label="Remove notes.md">×</button>'
-      + '</div>',
-  );
+  assert.match(html, /^<div class="dc-attach-item dc-attach-file" title="notes\.md">/);
+  assert.match(html, /<span class="dc-attach-file-icon" aria-hidden="true"><svg/);
+  assert.match(html, /<span class="dc-attach-file-text"><span class="dc-attach-name">notes\.md<\/span><span class="dc-attach-kind">MD<\/span><\/span>/);
+  assert.match(html, /<button type="button" class="dc-attach-remove" title="Remove" aria-label="Remove notes\.md">×<\/button>/);
   // A kind with no tag draws no empty span.
   assert.ok(!rows([item({ kind: 'text', badge: null })]).includes('dc-attach-kind'));
 });
 
-test('an image with a local preview is a thumbnail, not a chip', () => {
-  const html = rows([item({ kind: 'image', badge: null, thumbUrl: 'blob:x', name: 'shot.png' })]);
-  assert.match(html, /<div class="dc-attach-item"><img class="dc-attach-thumb" src="blob:x" alt="shot.png" title="shot.png"\/>/);
-  assert.ok(!html.includes('dc-attach-chip'));
-  // …and an image whose preview has not been made yet falls back to the chip,
-  // rather than rendering an <img> with no source.
-  assert.match(rows([item({ kind: 'image', badge: null, thumbUrl: null })]), /dc-attach-chip/);
+test('an image with a local preview is its picture, not a name (#6862)', () => {
+  const html = rows([item({ kind: 'image', badge: null, thumbUrl: 'blob:x', name: 'shot.png', size: '10 KB' })]);
+  // The square thumbnail, cropped by CSS, is both the picture and the link
+  // to the viewer; its × names the file.
+  assert.match(html, /<div class="dc-attach-item dc-attach-image">/);
+  assert.match(html, /<a class="dc-attach-thumb-link" href="blob:x" data-image-open="" title="shot.png" aria-label="Preview shot.png"><img class="dc-attach-thumb" src="blob:x" alt="shot.png"\/><\/a>/);
+  assert.match(html, /aria-label="Remove shot.png"/);
+  assert.ok(!html.includes('dc-attach-file'));
+  // The tap opens the app's own viewer, with the file's size beside its name.
+  const src = read(STRIP);
+  assert.match(src, /<ImageViewer src=\{src\} alt=\{item\.name\} detail=\{item\.size\}/);
+  // …and an image whose preview has not been made yet falls back to a file
+  // card, rather than rendering an <img> with no source.
+  assert.match(rows([item({ kind: 'image', badge: null, thumbUrl: null })]), /dc-attach-file/);
 });
 
-test('an upload in flight offers no remove control', () => {
+test('an upload in flight offers no remove control, and says it is working', () => {
   // Cancelling mid-PUT would leave a half-written row for the 24h orphan
-  // sweep to find anyway, and a control that sometimes works is worse than an
-  // honest "…". Both chats behave this way, and now they do so once.
-  const html = rows([item({ uploading: true })]);
-  assert.match(html, /<span class="dc-attach-uploading">…<\/span>/);
-  assert.ok(!html.includes('dc-attach-remove'));
+  // sweep to find anyway, and a control that sometimes works is worse than
+  // a dimmed picture under a ring. Both chats behave this way, once.
+  const image = rows([item({ kind: 'image', badge: null, thumbUrl: 'blob:x', uploading: true })]);
+  assert.match(image, /dc-attach-image-uploading/);
+  assert.match(image, /<span class="dc-attach-progress"><svg[^>]*data-progress-ring-spinning=""/);
+  assert.match(image, /aria-label="Uploading notes\.md"/);
+  assert.ok(!image.includes('dc-attach-remove'));
+  // A file waits with the same ellipsis it always did.
+  const file = rows([item({ uploading: true })]);
+  assert.match(file, /<span class="dc-attach-uploading">…<\/span>/);
+  assert.ok(!file.includes('dc-attach-remove'));
 });
 
 test('a filename reaches the DOM as text, in all three slots it appears in', () => {
@@ -115,4 +123,40 @@ test('the composer owns its strip element, and the class comes with it', () => {
   // …and the rows-only export still emits no wrapper at all, which is what
   // keeps a caller that already has a host from nesting a second one.
   assert.ok(!rows([item()]).includes('dc-attach-strip'));
+});
+
+test('a message box stages an image as its picture and a PDF as a file card (#6862)', () => {
+  // The rule both Messages boxes follow (frontend/src/features/messages/
+  // attachment-views.ts): a sent image is drawn from the server's copy, a
+  // file keeps a card, and an upload in flight is its local preview.
+  const { attachmentView, pendingUploadView } = loadTsx('frontend/src/features/messages/attachment-views.ts');
+  const image = attachmentView({
+    id: 'a1', name: 'shot.png', size: 10240, contentType: 'image/png', url: '/attachments/a1', viewUrl: '/attachments/a1/view',
+  });
+  assert.equal(image.kind, 'image');
+  assert.equal(image.thumbUrl, '/attachments/a1/view', 'a sent image is drawn from the server, not a blob');
+  assert.match(rows([image]), /<img class="dc-attach-thumb" src="\/attachments\/a1\/view" alt="shot.png"\/>/);
+
+  const file = attachmentView({
+    id: 'a2', name: 'brief.pdf', size: 2048, contentType: 'application/pdf', url: '/attachments/a2',
+  });
+  assert.equal(file.kind, 'file');
+  assert.equal(file.badge, 'PDF');
+  assert.match(rows([file]), /dc-attach-file[\s\S]*brief\.pdf[\s\S]*dc-attach-kind">PDF/);
+
+  const pending = pendingUploadView({
+    key: 'p1', file: new File(['x'], 'draft.png', { type: 'image/png' }), thumbUrl: 'blob:preview',
+  });
+  assert.equal(pending.uploading, true);
+  assert.equal(pending.thumbUrl, 'blob:preview');
+  assert.match(rows([pending]), /<img class="dc-attach-thumb" src="blob:preview" alt="draft.png"\/>/);
+
+  // Both boxes show the file that is still uploading, and revoke its local
+  // preview when the row goes.
+  for (const source of ['frontend/src/features/messages/composer.tsx', 'frontend/src/features/messages/new-thread.tsx']) {
+    const src = read(source);
+    assert.match(src, /URL\.createObjectURL\(file\)/, `${source} makes a preview before the upload answers`);
+    assert.match(src, /URL\.revokeObjectURL\(/, `${source} revokes it when the row goes`);
+    assert.match(src, /<PendingStripRows items=\{staged\} onRemove=\{removeStaged\}/, `${source} draws its rows with the one strip`);
+  }
 });

@@ -15,6 +15,22 @@
     "text": "Remove file",
     "description": "Accessible name of the × button on a file waiting to be sent in the message box. Used for a file with no name; \"file\" is written as it has always been shown."
   },
+  "attachments.previewNamed": {
+    "text": "Preview {{file}}",
+    "description": "Accessible name of an image waiting to be sent in the message box: tapping its thumbnail opens the picture full size. {{file}} is the file's name."
+  },
+  "attachments.previewUnnamed": {
+    "text": "Preview file",
+    "description": "Accessible name of an image waiting to be sent in the message box that has no name: tapping its thumbnail opens the picture full size."
+  },
+  "attachments.uploadingNamed": {
+    "text": "Uploading {{file}}",
+    "description": "Accessible name of the progress ring over an image waiting to be sent in the message box while it uploads. {{file}} is the file's name."
+  },
+  "attachments.uploadingUnnamed": {
+    "text": "Uploading file",
+    "description": "Accessible name of the progress ring over an image waiting to be sent in the message box while it uploads, for an image that has no name."
+  },
   "attachments.refusedMore_one": {
     "text": "{{reason}} {{count}} more file wasn’t attached.",
     "description": "Error under the message box when several chosen files were refused. {{reason}} is a complete sentence saying why the first one was refused, kept first; {{count}} is how many other files were also left out."
