@@ -4564,7 +4564,8 @@
     // Re-enable (#1957): the re-grant endpoint is keyed on slug, and the
     // previous cap is what it restores.
     _grantView(g) {
-      const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
+      const spentCents = (Number(g.spentTodayCents) || 0) + (Number(g.byokSpentTodayCents) || 0);
+      const spent = spentCents / 100;
       const cap = (g.dailyCapCents || 0) / 100;
       return {
         appId: g.appId,
@@ -4572,6 +4573,7 @@
         appSlug: String(g.appSlug ?? ''),
         revoked: g.status !== 'active',
         spent: spent.toFixed(2),
+        spentCents,
         cap: cap.toFixed(2),
         capValue: cap.toFixed(2),
         capCents: Number(g.dailyCapCents) || 0,

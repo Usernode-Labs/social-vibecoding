@@ -185,10 +185,10 @@ test('the pending-upload strip earns its active class from having rows', () => {
     ],
   });
   assert.match(html, /id="gc-attachments" class="dc-attach-strip dc-attach-strip-active"/);
-  // A chip: badge, name, size, remove.
-  assert.match(html, /<div class="dc-attach-item dc-attach-chip" title="notes.md"><span class="dc-attach-kind">MD<\/span><span class="dc-attach-name">notes.md<\/span><span class="dc-attach-size">2 KB<\/span>/);
-  // An image with a local preview: the thumbnail, not a chip.
-  assert.match(html, /<img class="dc-attach-thumb" src="blob:x" alt="shot.png" title="shot.png"\/>/);
+  // A file card: icon, name, badge, remove (#6862).
+  assert.match(html, /<div class="dc-attach-item dc-attach-file" title="notes.md"><span class="dc-attach-file-icon"[^>]*><svg[\s\S]*?<span class="dc-attach-file-text"><span class="dc-attach-name">notes.md<\/span><span class="dc-attach-kind">MD<\/span><\/span>/);
+  // An image with a local preview: its picture, linked to the app's viewer.
+  assert.match(html, /<a class="dc-attach-thumb-link" href="blob:x" data-image-open="" title="shot.png" aria-label="Preview shot.png"><img class="dc-attach-thumb" src="blob:x" alt="shot.png"\/><\/a>/);
   // In flight: the ellipsis, and NO remove control — cancelling mid-PUT would
   // leave a half-written row behind.
   assert.match(html, /<span class="dc-attach-uploading">…<\/span>/);

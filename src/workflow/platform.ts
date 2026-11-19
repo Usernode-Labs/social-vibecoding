@@ -812,12 +812,13 @@ const BOT_SOURCE = (name: string) => ({ kind: 'system' as const, name });
 // retried caller append once.
 export async function botOwed(db: Db, p: {
   appId: number; issueNumber: number; reason: string; priority: number; payer?: number | null; requestedBy?: number | null;
-  changedBy?: string | null; threadSeenAt?: string | null; key?: string | null; source?: string;
+  changedBy?: string | null; threadSeenAt?: string | null; key?: string | null; source?: string; waitMs?: number | null;
 }): Promise<void> {
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'Owed',
     payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), reason: p.reason, priority: p.priority,
-      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null } as any,
+      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null,
+      ...(p.waitMs ? { waitMs: Number(p.waitMs) } : {}) } as any,
   }, { requestKey: p.key || `owed:${randomUUID()}`, source: BOT_SOURCE(p.source || 'owed'), appId: Number(p.appId) });
 }
 
@@ -829,7 +830,8 @@ export async function botOwedAndWait(p: Parameters<typeof botOwed>[1]): Promise<
   const out = await runtime.appendAndWait(BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'Owed',
     payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), reason: p.reason, priority: p.priority,
-      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null } as any,
+      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null,
+      ...(p.waitMs ? { waitMs: Number(p.waitMs) } : {}) } as any,
   }, { requestKey: p.key || `owed:${randomUUID()}`, source: BOT_SOURCE(p.source || 'owed'), appId: Number(p.appId), waitMs: 3000 });
   return (out.reply as any) || null;
 }

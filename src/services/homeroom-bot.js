@@ -495,6 +495,14 @@ const CHECKS_REASON = 'checks_failing';
 // request while it ran (interruptRead). It was already told the bot is
 // looking, and it is never started over a second time.
 const READ_AGAIN_REASON = 'read_again';
+// #6859: the queue reason of a read the bot owes itself after a plan could
+// not be written (announceBuilt's build_failed, #6313's plan cause). #6313
+// promised that read and never queued it: it counted on the failure note's
+// own post on the request to move it, and since #6806 the bot's own post is
+// not a change to read. It is queued here instead, once, and waits a few
+// minutes (a provider error is usually over by then).
+const PLAN_RETRY_REASON = 'plan_retry';
+const PLAN_RETRY_AFTER_MS = 3 * 60 * 1000;
 // The queue reason of a request somebody asked the bot to build from its
 // page, or just filed on a project it builds on (homeroom-bot-dm.js
 // askBotToBuild, noteRequestFiled).
@@ -506,14 +514,15 @@ const ASKED_REASON = 'asked';
 // speaks only when it has something to say.
 const BACKLOG_REASON = 'backlog';
 // Rows the bot queued for itself rather than for anything on the issue: a
-// restart's (#3471), a failing check's, and a read started over. The issue
+// restart's (#3471), a failing check's, a read started over, and a failed
+// plan's read (#6859). The issue
 // has not changed since the bot last looked, which is exactly what a
 // refresh reads as "nothing to do", so a refresh keeps them (and their
 // reason) while the issue is open and nobody else has it. It used to delete
 // a restart's row on the very pass its wake started, which is how a live
 // build a restart interrupted was never looked at again (recipebot #48,
 // run 613).
-const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON]);
+const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, PLAN_RETRY_REASON]);
 // The rows a refresh keeps while their request is unchanged and nobody
 // else's: those, and an older request's read (BACKLOG_REASON), which a
 // refresh queues for an unchanged request by design.
@@ -7473,14 +7482,37 @@ async function recordLiveBuild(pool, runId, built, model = null) {
 }
 
 /**
- * Pure (#6313): whether the bot is already trying this failure again by
- * itself, so its words say "I'm trying again" and ask nobody for a reply. A
- * plan that could not be written (nothing was built) is read again by the
- * bot's own queue: its post on the request is what moves the request, and
- * the bot reads a moved request again.
+ * #6859: a plan that could not be written (#6313's cause: nothing was
+ * built) is read again by the bot itself, once, a few minutes later. #6313
+ * said it was trying again and queued nothing, counting on its own post on
+ * the request to move it; since #6806 the bot's own post is not a change to
+ * read (classifyIssue's ownPostAt). So the read is queued here, as a row of
+ * the bot's own (SELF_QUEUED_REASONS: uncharged, kept while the request is
+ * quiet), and the words say it is trying again only when that row is really
+ * owed. Answers that. `error` is the run's own record, never quoted.
  */
-function retriesItself(reason) {
-  return require('./homeroom-bot-dm').buildFailedCause(reason).cause === 'plan';
+async function queuePlanRetry(pool, { app, issueNumber, runId, error }) {
+  if (require('./homeroom-bot-dm').buildFailedCause(error).cause !== 'plan') return false;
+  // Once: a look read for this reason is the retry, and is not tried again.
+  const { rows: [read] = [] } = await pool.query(
+    'SELECT read_reason FROM homeroom_bot_runs WHERE id = $1', [runId],
+  ).catch(() => ({ rows: [] }));
+  if (read?.read_reason === PLAN_RETRY_REASON) return false;
+  try {
+    // Its own key, so a restart that says this run's failure again queues it
+    // once; `queued` is the instance's answer, false when a look already
+    // runs (which takes it after) or when it never arrived.
+    const owed = await platform().botOwedAndWait({
+      appId: app.id, issueNumber, reason: PLAN_RETRY_REASON, priority: 2,
+      key: `plan_retry:${runId}`, source: PLAN_RETRY_REASON, waitMs: PLAN_RETRY_AFTER_MS,
+    });
+    return owed?.queued === true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not queue the read that tries a failed plan again', {
+      app: app?.slug, issueNumber, runId, err: err.message,
+    });
+    return false;
+  }
 }
 
 /**
@@ -7560,17 +7592,22 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     log.warn('homeroom-bot', 'Live build finished and waits for its upload', {
       app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
     });
-    await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
-      { dm: { reason: built.error, retrying: retriesItself(built.error) } });
+    await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: false }),
+      { dm: { reason: built.error, retrying: false } });
     return 'waiting_to_push';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
   });
+  // #6859: a plan that could not be written is read again by the bot itself
+  // (queuePlanRetry), and "I'm trying again" is said only when that read is
+  // really owed. A second failure in a row is not tried a third time by
+  // itself: the words ask for a reply (or Restart build) instead.
+  const retrying = await queuePlanRetry(pool, { app, issueNumber, runId, error: built.error });
   // Said once per run, whatever brought the build here again (its key), and
   // only when it says something new (bot-post.js, the failure rule).
-  await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: retriesItself(built.error) }),
-    { dm: { reason: built.error, retrying: retriesItself(built.error) } });
+  await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying }),
+    { dm: { reason: built.error, retrying } });
   return 'build_failed';
 }
 
@@ -12321,6 +12358,9 @@ module.exports = {
   RESTART_REASON,
   RETRY_FAILED_REASON,
   READ_AGAIN_REASON,
+  // #6859: the read a failed plan owes itself, and how long it waits.
+  PLAN_RETRY_REASON,
+  PLAN_RETRY_AFTER_MS,
   FAILED_TRIAGE_RETRY_AFTER_MS,
   RESTARTED_BUILD_NOTE,
   MAX_RESTARTED_BUILDS,

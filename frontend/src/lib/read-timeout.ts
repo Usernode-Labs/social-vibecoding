@@ -193,12 +193,18 @@ function slowRead(win: any): void {
  * (public/sw.js CACHED_AT_HEADER): the screen's freshness hears when it was
  * saved, and an answer from the network says the address is current again.
  */
-function noteAnswer(path: string | undefined, res: Response): void {
+function noteAnswer(win: any, path: string | undefined, res: Response): void {
   if (!path || !res) return;
   try {
     const saved = Number(res.headers && res.headers.get('sw-cached-at'));
-    if (saved > 0) noteSaved(path, saved);
-    else if (res.ok) noteFresh(path);
+    if (saved > 0) {
+      noteSaved(path, saved);
+      return;
+    }
+    if (res.ok) noteFresh(path);
+    // The network answered (not the worker's saved copy, not a server that
+    // is down): a slow link, if the probe runs out of time, not a dead one.
+    if (res.status > 0 && res.status < 500 && win.Offline && typeof win.Offline.answered === 'function') win.Offline.answered();
   } catch { /* a response without headers says nothing */ }
 }
 
@@ -233,7 +239,7 @@ export function installReadTimeout(win: any = typeof window !== 'undefined' ? wi
     const slow = plan.ms == null ? null : setTimeout(() => slowRead(win), Math.min(SLOW_READ_MS, plan.ms));
     return sent.then((res: Response) => {
       if (slow) clearTimeout(slow);
-      noteAnswer(plan.path, res);
+      noteAnswer(win, plan.path, res);
       return res;
     }, (error: unknown) => {
       if (slow) clearTimeout(slow);

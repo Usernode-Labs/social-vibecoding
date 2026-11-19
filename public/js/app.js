@@ -3466,6 +3466,9 @@ const App = {
       // Any frame at all says the socket still carries (_checkEvents).
       App._eventsHeardAt = Date.now();
       App._eventsAwaiting = false;
+      // ...and that the network is answering: a probe that runs out of time
+      // on a slow link is not taken for a dead one (lib/offline.ts answered).
+      try { window.Offline?.answered?.(); } catch (_) { /* no probe */ }
       try {
         const data = JSON.parse(event.data);
         // The Homeroom bot page keeps its lists current from these: it

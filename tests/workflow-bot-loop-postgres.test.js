@@ -20,7 +20,7 @@ const { Pool } = require('pg');
 const { createRuntime } = require('../src/workflow/kernel/index.ts');
 const request = require('../src/workflow/bot-request/machine.ts');
 const lane = require('../src/workflow/bot-lane/machine.ts');
-const { requestKey, lookCardKey, SLOTS_IN_USE_SQL, NEXT_ELIGIBLE_SQL } = require('../src/workflow/rules/bot-loop.ts');
+const { requestKey, lookCardKey, SLOTS_IN_USE_SQL, NEXT_ELIGIBLE_SQL, READ_CANDIDATES_SQL } = require('../src/workflow/rules/bot-loop.ts');
 const { TURN_STOP } = require('../src/workflow/rules/turn-stop.ts');
 const { TURN_OWNER_SQL, syncWorkingSql } = require('../src/workflow/session-work.ts');
 const progress = require('../src/services/homeroom-bot-progress');
@@ -873,5 +873,40 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     await settle();
     assert.equal(calls(request.WORK.look).filter((c) => c.input.issueNumber === 30).length, 2, 'looked at again for the newer ask');
     assert.equal(calls(request.WORK.look).filter((c) => c.input.issueNumber === 30)[1].input.owed.reason, 'dm_answer');
+  });
+  // #6859: a read the bot owes itself after a plan could not be written is
+  // held a few minutes before the lane may take it (the Owed event's
+  // `waitMs`): its own wait (wait_until), never a hold for the payer's week,
+  // so nothing about it reads as "on hold until Monday".
+  await t.test('#6859: a debt the bot owes itself can wait a few minutes before the lane takes it', async () => {
+    reset();
+    const garden = await mkApp('orchards');
+    await setting('homeroom_bot_mode', 'live');
+    const waitMs = 3 * 60 * 1000;
+    const before = Date.now();
+    await oweOnly(garden.id, 9, { reason: 'plan_retry', priority: 2, waitMs });
+    const i = await inst(request.MACHINE, requestKey(garden.id, 9));
+    assert.equal(i.state, 'queued', 'owed, waiting');
+    const q = await row(garden.id, 9);
+    assert.equal(q.reason, 'plan_retry');
+    assert.equal(q.started_at, null);
+    assert.equal(q.held_until, null, 'not a hold for the payer\'s week');
+    const until = new Date(q.wait_until).getTime();
+    assert.ok(until >= before + waitMs - 5000 && until <= Date.now() + waitMs, `waits about three minutes (${q.wait_until})`);
+    // The lane's candidates leave it out until the wait ends.
+    const { rows: cands } = await pool.query(READ_CANDIDATES_SQL, [bot.id, []]);
+    assert.ok(!cands.some((c) => Number(c.issue_number) === 9), 'not a candidate yet');
+    // Its clock is the wait, so the lane is woken when it ends.
+    const { rows: [next] } = await pool.query(NEXT_ELIGIBLE_SQL);
+    assert.ok(new Date(next.at).getTime() <= until + 1000, 'the next look is when the wait ends');
+    // A refresh that finds the request unchanged keeps a row the bot owes
+    // itself (KEPT_WHILE_QUIET_REASONS): nothing read it, so it is still owed.
+    await send(request.MACHINE, requestKey(garden.id, 9), 'NotOwed', { appId: garden.id, issueNumber: 9, quiet: true });
+    assert.ok(await row(garden.id, 9), 'the wait and its read survive a quiet refresh');
+    // Nothing about it is "on hold": the request page reads the wait, and
+    // its newest failed plan, as Homeroom bot trying the plan again.
+    const stage = progress.stageOf({ queue_id: q.id, enqueued_at: q.enqueued_at, wait_until: q.wait_until,
+      build_ok: false, build_error: 'no plan could be written (the spec turn ended on an API error)' });
+    assert.deepEqual([stage.stage, stage.retry], ['queued', 'plan']);
   });
 });

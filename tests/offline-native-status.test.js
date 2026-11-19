@@ -69,27 +69,29 @@ async function goOnline(api, requests) {
   await flush();
 }
 
-test('the header says "Connecting…" while Homeroom does not answer, and holds it 10 s once shown', async (t) => {
-  const { api, requests, status } = setup(t);
+test('the header says "Connecting…" while Homeroom does not answer, and holds it 3 s once shown', async (t) => {
+  const { api, engine, requests, status } = setup(t);
+  assert.equal(engine.MIN_SHOWN_MS, 3000);
+  assert.equal(engine.FLAP_SHOWN_MS, 10_000);
   assert.equal(status(), 'online');
   await goOffline(t, api, requests);
   assert.equal(api.isOffline(), true);
   assert.equal(status(), 'connecting');
 
-  t.mock.timers.tick(3000);
+  t.mock.timers.tick(1000);
   await goOnline(api, requests);
   assert.equal(api.isOffline(), false, 'the offline state itself moves at once, so queued writes go');
-  assert.equal(status(), 'connecting', 'what is shown lingers');
-  t.mock.timers.tick(6999);
+  assert.equal(status(), 'connecting', 'what is shown lingers, briefly');
+  t.mock.timers.tick(1999);
   assert.equal(status(), 'connecting');
   t.mock.timers.tick(1);
-  assert.equal(status(), 'online', 'gone 10 s after it was shown');
+  assert.equal(status(), 'online', 'gone 3 s after it was shown');
 });
 
-test('a link that flaps keeps the status up for a minute the second time', async (t) => {
+test('a link that flaps keeps the status up 10 s the second time, never a minute', async (t) => {
   const { api, requests, status } = setup(t);
   await goOffline(t, api, requests);
-  t.mock.timers.tick(10_000);
+  t.mock.timers.tick(3000);
   await goOnline(api, requests);
   assert.equal(status(), 'online', 'shown long enough already: it goes at once');
 
@@ -97,17 +99,17 @@ test('a link that flaps keeps the status up for a minute the second time', async
   await goOffline(t, api, requests);
   assert.equal(status(), 'connecting');
   await goOnline(api, requests);
-  t.mock.timers.tick(30_000);
-  assert.equal(status(), 'connecting', 'back within two minutes: held longer');
-  t.mock.timers.tick(30_000);
-  assert.equal(status(), 'online');
+  t.mock.timers.tick(5000);
+  assert.equal(status(), 'connecting', 'back within two minutes: held a little longer');
+  t.mock.timers.tick(5000);
+  assert.equal(status(), 'online', 'and gone 10 s after it was shown (the 19 Nov retest saw a full minute)');
 });
 
 test('going offline again during the hold cancels the hide', async (t) => {
   const { api, requests, status } = setup(t);
   await goOffline(t, api, requests);
   await goOnline(api, requests);
-  t.mock.timers.tick(5000);
+  t.mock.timers.tick(1000);
   await goOffline(t, api, requests);
   t.mock.timers.tick(20_000);
   assert.equal(status(), 'connecting', 'the pending hide was cancelled');
@@ -125,7 +127,7 @@ test('the phone saying it has no network reads "No internet", and a network back
   requests[requests.length - 1].resolve({ ok: true });
   await flush();
   assert.equal(api.isOffline(), false);
-  t.mock.timers.tick(10_000);
+  t.mock.timers.tick(3000);
   assert.equal(status(), 'online', 'and gone once it answers, after the hold');
 });
 
@@ -164,4 +166,53 @@ test('the screen\'s freshness: the oldest saved copy on show, forgotten on a cur
   assert.equal(fresh.showsAge(null, now), false);
   assert.match(fresh.savedAtLabel(now - 60_000, now, 'en-US'), /\d{1,2}:\d{2}/, 'today: a time of day');
   assert.match(fresh.savedAtLabel(now - 2 * 86_400_000, now, 'en-US'), /Nov 16/, 'an earlier day: its date');
+});
+
+// The native-offline follow-up (19 Nov 2026), from the live test on a 600 ms /
+// 500 kbps link: the probe timed out behind the other reads' bandwidth, a
+// stuck read counted as its second witness, and a working network read as
+// offline. A timed-out probe is not believed while reads are being answered.
+
+test('a slow link that is answering reads is not offline, however stuck one read is', async (t) => {
+  const { api, requests, status } = setup(t);
+  api.answered();
+  api.slowRead();
+  await flush();
+  assert.equal(requests.length, 1, 'the stuck read still asks the probe');
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(api.isOffline(), false, 'the probe ran out of time while the link was answering');
+  assert.equal(status(), 'online');
+});
+
+test('a timed-out probe counts again once nothing has answered for a while', async (t) => {
+  const { api, requests, status } = setup(t);
+  api.answered();
+  t.mock.timers.tick(11_000);
+  api.slowRead();
+  await flush();
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(api.isOffline(), true, 'no answer in eleven seconds: the stuck read and the probe agree');
+  assert.equal(status(), 'connecting');
+  assert.equal(requests.length, 1);
+});
+
+test('a probe that fails outright is believed even while reads were answering', async (t) => {
+  const { api, requests } = setup(t);
+  api.answered();
+  api.slowRead();
+  await flush();
+  requests[0].reject(new TypeError('Load failed'));
+  await flush();
+  assert.equal(api.isOffline(), true, 'a refused connection is not slowness');
+});
+
+test('the phone saying it has no network is believed while reads were answering', async (t) => {
+  const { api, window, status } = setup(t);
+  api.answered();
+  window.dispatchEvent(Object.assign(new Event('usernode:native-connectivity'), { detail: { online: false, via: ['none'] } }));
+  await flush();
+  assert.equal(api.isOffline(), true);
+  assert.equal(status(), 'no-internet');
 });

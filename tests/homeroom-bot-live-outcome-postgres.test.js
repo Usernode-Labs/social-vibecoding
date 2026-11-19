@@ -193,7 +193,12 @@ test('a live build always records its outcome, against the full PostgreSQL schem
       assert.deepEqual(await queueRows(), [{ issue_number: 48, reason }],
         `${reason}: the row is kept, reason and all, so the next look does not say "looking" twice`);
     }
+    // #6859: the loop leaves the last of the bot's own reasons on the row;
+    // this part reads a look started over by a person's message, so its row
+    // is put back as that (the loop's last reason is not it).
     const own = bot.READ_AGAIN_REASON;
+    await resetQueue();
+    await put([[48, 1, own]]);
 
     // Activity on the issue keeps the reason too.
     await pool.query('UPDATE homeroom_bot_runs SET thread_seen_at = $2 WHERE id = $1', [runId, '2026-09-01T00:00:00Z']);

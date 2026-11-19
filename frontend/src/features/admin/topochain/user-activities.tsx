@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { eventOptions, fetchAllEvents, fetchJson, send } from './api.ts';
+import { fmtActivityAt } from '../activity-at.ts';
 import { BTN } from './tokens.ts';
 import {
   EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List, Options, Pager,
@@ -47,6 +48,7 @@ type Activity = {
   activity_type: string;
   points: number;
   activity_at?: string | null;
+  activity_time_precision?: 'day' | 'instant' | null;
   description?: string | null;
   metadata?: unknown;
 };
@@ -73,7 +75,7 @@ const COLUMNS: Column<Activity>[] = [
   { label: 'Challenge', cell: (a) => a.challenge?.goal || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
   { label: 'Type', cell: (a) => a.activity_type, tdClass: 'text-xs' },
   { label: 'Points', cell: (a) => a.points, tdClass: 'font-mono text-end', thClass: 'text-end' },
-  { label: 'At', cell: (a) => fmt(a.activity_at), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+  { label: 'At', cell: (a) => fmtActivityAt(a.activity_at, a.activity_time_precision, fmt), tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
 ];
 
 function ActivityForm({ id, events, onClose, onSaved }: {

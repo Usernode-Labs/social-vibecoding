@@ -145,9 +145,20 @@ async function removeOrphan(pool, store, key, cutoff) {
     // retake holds that row and waits for this registry key. This ordinary
     // MVCC read is conservative; the FK below remains the final authority
     // for new or other referencing tables, and concurrent new references.
+    // #6825's sized copies are referenced by their own keys. Their columns
+    // are added by a later migration than the media contract, so a sweep
+    // that runs before it must not name them: ask the tables which columns
+    // they have.
+    const { rows: sized } = await tx.query(
+      `SELECT table_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND column_name = 'thumb_object_key'
+          AND table_name IN ('shot_run_files', 'shot_artifacts')`);
+    const sizedOf = (table) => (sized.some((row) => row.table_name === table)
+      ? ' OR thumb_object_key = $1 OR screen_object_key = $1' : '');
     const { rows: [references] } = await tx.query(`SELECT EXISTS (
-      SELECT 1 FROM shot_run_files WHERE object_key = $1 OR dense_object_key = $1
-      UNION ALL SELECT 1 FROM shot_artifacts WHERE object_key = $1 OR dense_object_key = $1
+      SELECT 1 FROM shot_run_files WHERE object_key = $1 OR dense_object_key = $1${sizedOf('shot_run_files')}
+      UNION ALL SELECT 1 FROM shot_artifacts WHERE object_key = $1 OR dense_object_key = $1${sizedOf('shot_artifacts')}
       UNION ALL SELECT 1 FROM shots_eval_artifacts WHERE object_key = $1
       UNION ALL SELECT 1 FROM shot_diagnostic_artifacts WHERE object_key = $1
       UNION ALL SELECT 1 FROM session_visuals WHERE object_key = $1

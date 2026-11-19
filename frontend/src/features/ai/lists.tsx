@@ -704,7 +704,7 @@ export function AiLists({
           // picked a project, however few there are, so All is a tap away.
           <div className="flex items-start" data-ai-project-filter="">
             <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
-              <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
+              <Chip size="bar" className={`gap-2 px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
                 {t('messages:ai.filter.all')}
                 <FreshBadge count={freshAll} className={!picked.length ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
               </Chip>

@@ -549,3 +549,59 @@ test('a close-up is served to any signed-in viewer at its own address', async (t
   userId = null;
   assert.equal((await fetch(`${url}?density=device`)).status, 404, 'not to a guest');
 });
+
+// #6825: a still's smaller copies at their own addresses, so a slot loads a
+// file its own size instead of the whole screen shot.
+test('a still\'s smaller copies are served at their own addresses, with their own ETags', async (t) => {
+  const session = { id: 42, app_id: 9, user_id: 7, source: 'imported', imported_pr_head_sha: 'b'.repeat(40), shots_state: 'verified' };
+  const store = require('./lib/media-store').useMemoryMedia(t);
+  const PNG = Buffer.from('the-original-png');
+  const THUMB = Buffer.from('webp-thumb');
+  const SCREEN = Buffer.from('webp-screen');
+  for (const [data, type] of [[PNG, 'image/png'], [THUMB, 'image/webp'], [SCREEN, 'image/webp']]) {
+    await store.putObject(media.objectKey(data), data, type);
+  }
+  const row = (extra = {}) => ({
+    object_key: media.objectKey(PNG), sha256: 'f'.repeat(64), bytes: PNG.length, content_type: 'image/png', variant: 'context',
+    thumb_object_key: media.objectKey(THUMB), thumb_sha256: 'a'.repeat(64), thumb_bytes: THUMB.length,
+    screen_object_key: media.objectKey(SCREEN), screen_sha256: 'b'.repeat(64), screen_bytes: SCREEN.length,
+    ...extra,
+  });
+  let saw = row();
+  const pool = { query: async (sql) => {
+    if (String(sql).includes('FROM chat_sessions cs')) return { rows: [session] };
+    if (String(sql).includes('FROM shot_artifacts a')) return { rows: [saw] };
+    throw new Error(`Unexpected query: ${String(sql).slice(0, 80)}`);
+  } };
+  const url = `${await serve(t, {
+    pool, user: () => 7, config: { shots: { present: true } },
+    stubs: [[appAccess, 'getAppForUser', async () => ({ id: 9, slug: 'demo' })]],
+  })}/${'1'.repeat(32)}`;
+  const get = async (query, headers = {}) => fetch(`${url}${query}`, { headers });
+  const thumb = await get('?size=thumb');
+  assert.equal(thumb.status, 200);
+  assert.equal(thumb.headers.get('content-type'), 'image/webp');
+  assert.equal(thumb.headers.get('etag'), `"${'a'.repeat(64)}"`);
+  assert.equal(Buffer.from(await thumb.arrayBuffer()).toString(), 'webp-thumb');
+  // Its own ETag answers a repeat with a 304, as the original's does (#6793).
+  assert.equal((await get('?size=thumb', { 'if-none-match': `"${'a'.repeat(64)}"` })).status, 304);
+  const screen = await get('?size=screen');
+  assert.equal(screen.headers.get('etag'), `"${'b'.repeat(64)}"`);
+  assert.equal(Buffer.from(await screen.arrayBuffer()).toString(), 'webp-screen');
+  // Any other word is ignored: the original, as before.
+  const plain = await get('?size=huge');
+  assert.equal(plain.headers.get('etag'), `"${'f'.repeat(64)}"`);
+  // A still saved before the copies existed falls back to the original.
+  saw = row({ thumb_object_key: null, thumb_sha256: null, thumb_bytes: null });
+  const fallen = await get('?size=thumb');
+  assert.equal(fallen.headers.get('etag'), `"${'f'.repeat(64)}"`);
+  assert.equal(Buffer.from(await fallen.arrayBuffer()).toString(), 'the-original-png');
+  // A clip is saved with no smaller copy, so the address is its own file.
+  saw = row({ variant: 'animation', content_type: 'video/webm',
+    thumb_object_key: null, thumb_sha256: null, thumb_bytes: null });
+  assert.equal((await get('?size=thumb')).headers.get('etag'), `"${'f'.repeat(64)}"`);
+  // A close-up is only ever shown whole, so a size on it is not found.
+  saw = row({ variant: 'closeup' });
+  assert.equal((await get('?size=thumb')).status, 404);
+  assert.equal((await get('?density=device&size=thumb')).status, 404);
+});

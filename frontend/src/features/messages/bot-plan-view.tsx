@@ -104,6 +104,12 @@ export interface PlanCardViewProps {
   surface?: 'messages' | 'app' | 'request';
   /** #4046: the step its request is at, drawn at the top (the chat's only). */
   progress?: PlanProgress | null;
+  /**
+   * #6860: a settled card's own line, in place of the state's words (null
+   * draws none): the request's page says what became of its plan in the
+   * line under the title, as the rest of that page does.
+   */
+  settledLine?: ReactNode;
   /** Drawn last, inside the card. */
   footer?: ReactNode;
   /**
@@ -261,7 +267,7 @@ export function PlanChoices({ questions, picked, onPick, idBase, top = 'divided'
 
 export function PlanCardView({
   appName, plan, state, choices = [], busy = false, building, onBuild, onChange, surface = 'messages', progress = null, footer = null,
-  request = null, planSpec = null, sub = null, card = null, readWhole = null,
+  request = null, planSpec = null, sub = null, card = null, readWhole = null, settledLine,
 }: PlanCardViewProps) {
   const t = useMessages('messages');
   const [picked, setPicked] = useState<Array<string | null>>(() => plan.questions.map(() => null));
@@ -362,7 +368,8 @@ export function PlanCardView({
         </>
       ) : null}
       {shown === 'built' ? (progress ? null : <DoneLine spinning={building ?? busy}>{t(PLAN_STATE_LINES.built)}</DoneLine>)
-        : shown !== 'open' && shown !== 'replaced' ? <p className="messages-bot-answered" role="status">{t(PLAN_STATE_LINES[shown])}</p> : null}
+        : shown !== 'open' && shown !== 'replaced' ? (settledLine !== undefined ? settledLine
+          : <p className="messages-bot-answered" role="status">{t(PLAN_STATE_LINES[shown])}</p>) : null}
       {footer}
     </div>
   );

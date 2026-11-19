@@ -564,11 +564,24 @@ test('close-ups reach only a viewer in the experiment, in their own shape, and n
   // Each passes the change page's own address checks (app-view.js shotsUrl,
   // openShotsComparison's and _workshopVisuals's urlOk).
   const appView = require('node:fs').readFileSync(require('node:path').join(__dirname, '../public/js/app-view.js'), 'utf8');
-  const checks = [...appView.matchAll(/\/\^\\\/api\\\/apps[^\n]*?\(\?:\\\?density=device\)\?\$\//g)].map((m) => new RegExp(m[0].slice(1, -1)));
-  assert.equal(checks.length, 3);
+  // #6825: the two checks a still is drawn through (`_workshopVisuals`,
+  // `shotsHtml`) take a smaller copy's own address too (`?size=thumb`,
+  // `?size=screen`); the comparison overlay's takes only the still itself.
+  const densityOnly = [...appView.matchAll(/\/\^\\\/api\\\/apps[^\n]*?\(\?:\\\?density=device\)\?\$\//g)].map((m) => new RegExp(m[0].slice(1, -1)));
+  const withSizes = [...appView.matchAll(/\/\^\\\/api\\\/apps[^\n]*?\(\?:\\\?density=device\|\\\?size=\(\?:thumb\|screen\)\)\?\$\//g)].map((m) => new RegExp(m[0].slice(1, -1)));
+  const checks = [...densityOnly, ...withSizes];
+  assert.equal(densityOnly.length, 1);
+  assert.equal(withSizes.length, 2);
   for (const artifact of dense.artifacts.filter((a) => a.variant === 'closeup')) {
     for (const check of checks) assert.match(artifact.url, check);
   }
+  // A still's smaller copy is drawn by the two that take one, and refused
+  // by the overlay, which shows the whole still.
+  for (const check of withSizes) {
+    assert.match(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=thumb`, check);
+    assert.doesNotMatch(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=huge`, check);
+  }
+  for (const check of densityOnly) assert.doesNotMatch(`/api/apps/demo/proposals/42/shots/${id(1001)}?size=thumb`, check);
   // A malformed one is left out.
   for (const odd of [{ scale: 1 }, { scale: 20 }, { part: 3 }, { focusRect: null }, { focusRect: { x: -1, y: 0, w: 1, h: 1 } }, { side: 'base' }]) {
     const out = view.serialize(run({ artifactSummary: [closeup(1, odd)] }), session(), 'demo', HEAD, { dense: true });

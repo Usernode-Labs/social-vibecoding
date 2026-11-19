@@ -15,6 +15,22 @@
     "text": "Remove file",
     "description": "Accessible name of the × button on a file waiting to be sent in the message box. Used for a file with no name; \"file\" is written as it has always been shown."
   },
+  "attachments.previewNamed": {
+    "text": "Preview {{file}}",
+    "description": "Accessible name of an image waiting to be sent in the message box: tapping its thumbnail opens the picture full size. {{file}} is the file's name."
+  },
+  "attachments.previewUnnamed": {
+    "text": "Preview file",
+    "description": "Accessible name of an image waiting to be sent in the message box that has no name: tapping its thumbnail opens the picture full size."
+  },
+  "attachments.uploadingNamed": {
+    "text": "Uploading {{file}}",
+    "description": "Accessible name of the progress ring over an image waiting to be sent in the message box while it uploads. {{file}} is the file's name."
+  },
+  "attachments.uploadingUnnamed": {
+    "text": "Uploading file",
+    "description": "Accessible name of the progress ring over an image waiting to be sent in the message box while it uploads, for an image that has no name."
+  },
   "attachments.refusedMore_one": {
     "text": "{{reason}} {{count}} more file wasn’t attached.",
     "description": "Error under the message box when several chosen files were refused. {{reason}} is a complete sentence saying why the first one was refused, kept first; {{count}} is how many other files were also left out."
@@ -5972,11 +5988,11 @@
     "description": "Line on a thread's live draft bar when opening, proposing or closing the draft failed for a reason the server did not say."
   },
   "newThread.starts.live.label": {
-    "text": "I want to change it live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "text": "I want to change an app live<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
-    "text": "I want to change it live",
-    "description": "Written into the message box when the \"I want to change it live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change it live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project."
+    "text": "I want to change an app live",
+    "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
   }
 }

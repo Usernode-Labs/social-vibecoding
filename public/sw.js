@@ -1128,6 +1128,19 @@ if (typeof module !== 'undefined' && module.exports) {
   // served the same stale entry from the same cache and is just as wrong.
   // The noise that buys is bounded on the page side — App.refreshActiveScreen
   // bails on a hidden tab or an open sheet.
+  // The network answered a read the worker had already answered from its
+  // saved copy (the native-offline follow-up, 19 Nov 2026): the page never
+  // sees that answer, so on a slow link it saw none at all and took the
+  // link for a dead one. Say so, at most once every NETWORK_ANSWERED_GAP_MS.
+  const NETWORK_ANSWERED_GAP_MS = 2000;
+  let networkAnsweredAt = 0;
+  function noteNetworkAnswered(event) {
+    const now = Date.now();
+    if (now - networkAnsweredAt < NETWORK_ANSWERED_GAP_MS) return;
+    networkAnsweredAt = now;
+    event.waitUntil(notifyClients({ type: 'network-answered' }));
+  }
+
   async function notifyClients(message) {
     try {
       const windows = await self.clients.matchAll({ type: 'window' });
@@ -1577,6 +1590,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
     const { response, fromCache, pending } = await raceNetworkAndCache({
       startFetch: () => sharedApiFetch(event.request).then((res) => {
+        if (res && res.status > 0 && res.status < 500 && served.fromCache) noteNetworkAnswered(event);
         // Only genuine successes are worth replaying offline; 401/403/500
         // must never mask a later real answer. Clone before returning —
         // once the page starts reading the body the response is locked.

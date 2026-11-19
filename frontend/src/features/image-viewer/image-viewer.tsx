@@ -152,10 +152,12 @@ export { isRemoteFile } from './save-image';
 /** How long a finger rests on the picture, still, before it downloads (#4055). */
 export const HOLD_SAVE_MS = 500;
 
-export function ImageViewer({ src, alt, onClose }: {
+export function ImageViewer({ src, alt, onClose, detail }: {
   src: string;
   alt: string;
   onClose: () => void;
+  /** A line under the picture, such as a staged file's size (#6862). */
+  detail?: string;
 }) {
   const t = useMessages('messages');
   const closeRef = useRef<HTMLButtonElement | null>(null);
@@ -279,6 +281,17 @@ export function ImageViewer({ src, alt, onClose }: {
         // keeps the browser's "Save image as…".
         onContextMenu={(event) => { if (touching.current) event.preventDefault(); }}
       />
+      {detail ? (
+        // A picture staged in a message box says what it is and how big it is
+        // (#6862). A sent picture is already named by the message around it.
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-0 flex items-baseline justify-center gap-2 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] text-center text-sm text-white"
+          data-image-viewer-caption=""
+        >
+          <span className="max-w-[70%] truncate font-medium">{name}</span>
+          <span className="shrink-0 text-white/70">{detail}</span>
+        </div>
+      ) : null}
       <div className="absolute inset-x-0 top-0 flex items-center justify-end gap-3 px-3 pt-[calc(env(safe-area-inset-top)+12px)]">
         {/* #4654: Download for every picture, beside ✕. A picture on another
             site is fetched as a blob too, and opens as its original where
