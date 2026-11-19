@@ -165,3 +165,52 @@ test('the screen\'s freshness: the oldest saved copy on show, forgotten on a cur
   assert.match(fresh.savedAtLabel(now - 60_000, now, 'en-US'), /\d{1,2}:\d{2}/, 'today: a time of day');
   assert.match(fresh.savedAtLabel(now - 2 * 86_400_000, now, 'en-US'), /Nov 16/, 'an earlier day: its date');
 });
+
+// The native-offline follow-up (19 Nov 2026), from the live test on a 600 ms /
+// 500 kbps link: the probe timed out behind the other reads' bandwidth, a
+// stuck read counted as its second witness, and a working network read as
+// offline. A timed-out probe is not believed while reads are being answered.
+
+test('a slow link that is answering reads is not offline, however stuck one read is', async (t) => {
+  const { api, requests, status } = setup(t);
+  api.answered();
+  api.slowRead();
+  await flush();
+  assert.equal(requests.length, 1, 'the stuck read still asks the probe');
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(api.isOffline(), false, 'the probe ran out of time while the link was answering');
+  assert.equal(status(), 'online');
+});
+
+test('a timed-out probe counts again once nothing has answered for a while', async (t) => {
+  const { api, requests, status } = setup(t);
+  api.answered();
+  t.mock.timers.tick(11_000);
+  api.slowRead();
+  await flush();
+  t.mock.timers.tick(5000);
+  await flush();
+  assert.equal(api.isOffline(), true, 'no answer in eleven seconds: the stuck read and the probe agree');
+  assert.equal(status(), 'connecting');
+  assert.equal(requests.length, 1);
+});
+
+test('a probe that fails outright is believed even while reads were answering', async (t) => {
+  const { api, requests } = setup(t);
+  api.answered();
+  api.slowRead();
+  await flush();
+  requests[0].reject(new TypeError('Load failed'));
+  await flush();
+  assert.equal(api.isOffline(), true, 'a refused connection is not slowness');
+});
+
+test('the phone saying it has no network is believed while reads were answering', async (t) => {
+  const { api, window, status } = setup(t);
+  api.answered();
+  window.dispatchEvent(Object.assign(new Event('usernode:native-connectivity'), { detail: { online: false, via: ['none'] } }));
+  await flush();
+  assert.equal(api.isOffline(), true);
+  assert.equal(status(), 'no-internet');
+});

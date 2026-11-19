@@ -151,3 +151,21 @@ test('a read stuck past five seconds tells the probe, and a saved answer tells t
   assert.match(timeout, /res\.headers\.get\('sw-cached-at'\)/);
   assert.match(read('public/sw.js'), /const CACHED_AT_HEADER = 'sw-cached-at';/, 'the worker still stamps its saved answers');
 });
+
+test('read-timeout tells the probe the network answered, never for the worker\'s saved copy', () => {
+  const timeout = read('frontend/src/lib/read-timeout.ts');
+  const noteAnswer = timeout.slice(timeout.indexOf('function noteAnswer('), timeout.indexOf('function nudge('));
+  assert.ok(noteAnswer.indexOf('return;') < noteAnswer.indexOf('Offline.answered()'), 'a saved copy returns before it is counted');
+  assert.match(noteAnswer, /res\.status > 0 && res\.status < 500/, 'a server that is down is no answer');
+  assert.match(read('frontend/src/lib/offline.ts'), /outcome === 'timeout' && !offline && !noNetwork\s*&& answeredAt > 0 && Date\.now\(\) - answeredAt < ANSWERED_RECENTLY_MS/);
+});
+
+test('offline, an item whose own read had no answer keeps its page instead of dropping to the Workshop', () => {
+  const view = read('public/js/app-view.js');
+  const miss = view.slice(view.indexOf('const onMiss = () => {'), view.indexOf('const settle = () => {'));
+  assert.ok(miss.indexOf('AppView._noAnswerNow()') > -1 && miss.indexOf('AppView._noAnswerNow()') < miss.indexOf("App.switchTab('dev')"),
+    'the offline branch comes before the Workshop fallback');
+  assert.match(miss, /AppView\._openChangeWhenOnline\(content, ref, AppView\._devTopic\);/);
+  assert.match(view, /_noAnswerNow\(\) \{[\s\S]*?Offline\.isOffline\(\)[\s\S]*?online === false/);
+  assert.match(message('changes:page.notSavedYetThread'), /isn’t saved on this phone yet/);
+});

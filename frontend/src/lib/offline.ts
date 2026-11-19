@@ -92,6 +92,19 @@ export const HUNG_READ_MS = 5000;
 const HUNG_READ_COUNTS_MS = 15_000;
 
 /**
+ * A SLOW LINK IS NOT A DEAD ONE (the native-offline follow-up, 19 Nov 2026).
+ * On a 600 ms / 500 kbps link the probe's /health read waited behind the
+ * bandwidth every other read was using, timed out, and with a stuck read as
+ * its second witness the shell went offline: "Connecting…", controls greyed,
+ * writes queued, on a network that was answering. So a probe that TIMED OUT
+ * is not believed while an API read was answered within this long
+ * (./read-timeout.ts tells `answered`, never for the service worker's saved
+ * copy). A probe that failed outright still is, and so is the phone saying it
+ * has no network.
+ */
+export const ANSWERED_RECENTLY_MS = 10_000;
+
+/**
  * The banner's planned-restart notice (issue #6403): while Homeroom restarts
  * for a release, the amber strip says "Updating Homeroom..." instead of the
  * offline words, and `body.is-offline` is never turned on. Separate store key,
@@ -127,6 +140,7 @@ export interface OfflineApi {
   forceOffline(): void;
   probe(): Promise<void>;
   slowRead(): void;
+  answered(): void;
   restartNotice(): void;
   restartDone(): void;
   restartNoticeVisible(): boolean;
@@ -156,6 +170,8 @@ let forced = false;
 let noNetwork = false;
 // When the last same-origin read hung (HUNG_READ_MS), or 0.
 let hungAt = 0;
+// When the network last answered an API read (status under 500), or 0.
+let answeredAt = 0;
 // The header status's hysteresis: when it was last shown and hidden, whether
 // this showing came soon after the last one, and the pending hide.
 let shownAt = 0;
@@ -255,18 +271,20 @@ export function probe(): Promise<void> {
   // A network request can remain pending across a reconnect. Bound the probe
   // itself as well as aborting the fetch, so every retry cannot get stuck
   // joining the same request. Only the race winner may publish a result.
-  const deadline = new Promise<boolean>((resolve) => {
+  // What the check found: an answer, no answer in time, or a failure.
+  type Outcome = 'ok' | 'timeout' | 'failed';
+  const deadline = new Promise<Outcome>((resolve) => {
     timer = setTimeout(() => {
-      resolve(false);
+      resolve('timeout');
       controller.abort();
     }, PROBE_TIMEOUT_MS);
   });
   const health = Promise.resolve()
     .then(() => fetch('/health', { cache: 'no-store', signal: controller.signal }))
-    .then((res) => res.ok, () => false);
+    .then((res): Outcome => (res.ok ? 'ok' : 'failed'), (): Outcome => 'failed');
   probing = Promise.race([health, deadline])
-    .then((reachable) => {
-      if (reachable) {
+    .then((outcome) => {
+      if (outcome === 'ok') {
         failures = 0;
         hungAt = 0;
         if (confirmTimer) {
@@ -276,8 +294,16 @@ export function probe(): Promise<void> {
         set(false);
         return;
       }
-      failures += 1;
       if (typeof navigator !== 'undefined' && navigator.onLine === false) noNetwork = true;
+      // Slow, not gone: the check ran out of time while other reads were
+      // being answered (ANSWERED_RECENTLY_MS). Nothing is counted, the stuck
+      // read is explained, and the next sign of trouble asks again.
+      if (outcome === 'timeout' && !offline && !noNetwork
+          && answeredAt > 0 && Date.now() - answeredAt < ANSWERED_RECENTLY_MS) {
+        hungAt = 0;
+        return;
+      }
+      failures += 1;
       // Two failures in a row (or a tab already showing the banner): a real
       // outage. One is not enough — ask again in two seconds first — unless
       // a read hung just before it: two witnesses, the same as two checks.
@@ -417,6 +443,11 @@ export function slowRead(): void {
   void probe();
 }
 
+/** The network answered an API read (./read-timeout.ts): the link is carrying something. */
+export function answered(): void {
+  answeredAt = Date.now();
+}
+
 let started = false;
 
 /** Install `window.Offline` and start listening. Idempotent. */
@@ -429,6 +460,7 @@ export function initOffline(): OfflineApi {
     forceOffline,
     probe,
     slowRead,
+    answered,
     restartNotice,
     restartDone,
     restartNoticeVisible,
