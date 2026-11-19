@@ -1290,27 +1290,49 @@ function canon(value) {
 }
 const sameJson = (a, b) => JSON.stringify(canon(a ?? null)) === JSON.stringify(canon(b ?? null));
 
+/**
+ * Pure (review B3): which derive wrote a stored row: the lower of its
+ * `derive_version` column and its `standing.v`, so a row a Pod of an older
+ * release wrote again (it writes `standing.v` only, and leaves the column
+ * as a newer Pod set it) still reads as that older derive's. 0 for none.
+ */
+function versionOf(row) {
+  const col = row && row.derive_version != null ? Number(row.derive_version) : null;
+  const old = row && row.standing && row.standing.v != null ? Number(row.standing.v) : null;
+  const known = [col, old].filter((n) => Number.isFinite(n));
+  return known.length ? Math.min(...known) : 0;
+}
+
+// What of a row is the sweep's own and never something a reader shows: its
+// due time (T2.7) and which derive wrote it (B3). A row whose only change
+// is one of these is stored quietly: no push, no new updated_at, no move in
+// a list sorted by it.
+const QUIET_STANDING = (v) => { const { dueAt, v: version, ...rest } = v || {}; void dueAt; void version; return rest; };
+
 async function upsert(db, key, next, { touch = false } = {}) {
   const { rows: [prev] } = await db.query(
-    `SELECT stage, why, reason, line, whose_move, requester_id, since, standing, vote_open, lead_change_id FROM work_states
+    `SELECT stage, why, reason, line, whose_move, requester_id, since, standing, vote_open, lead_change_id, derive_version
+       FROM work_states
       WHERE app_id = $1 AND item_kind = $2 AND item_ref = $3`,
     [key.appId, key.kind, key.ref],
   );
-  const standing = next.standing || {};
-  // T2.7: the due time is the sweep's, never something a reader shows, so a
-  // row whose due time alone moved is stored quietly: no push, no move.
-  const withoutDue = (v) => { const { dueAt, ...rest } = v || {}; void dueAt; return rest; };
+  // B3: which derive wrote it, in its own column and, for the Pods of the
+  // release before this one, in the standing (they read only that).
+  const standing = { ...(next.standing || {}), v: DERIVE_VERSION };
+  // B3: `since` counts: a row whose stage and line stay but whose time moved
+  // is a row that changed.
   if (prev && prev.stage === next.stage && (prev.why || null) === next.why && (prev.reason || null) === next.reason
     && sameJson(prev.line, next.line) && (prev.whose_move || null) === next.whoseMove
     && (prev.requester_id == null ? null : Number(prev.requester_id)) === (next.requesterId ?? null)
+    && iso(prev.since) === iso(next.since)
     && prev.vote_open === !!next.voteOpen
     && (prev.lead_change_id == null ? null : Number(prev.lead_change_id)) === (next.leadChangeId ?? null)
-    && sameJson(withoutDue(prev.standing), withoutDue(standing))) {
-    if ((prev.standing && prev.standing.dueAt) !== standing.dueAt) {
+    && sameJson(QUIET_STANDING(prev.standing), QUIET_STANDING(standing))) {
+    if ((prev.standing && prev.standing.dueAt) !== standing.dueAt || versionOf(prev) !== DERIVE_VERSION) {
       await db.query(
-        `UPDATE work_states SET standing = $4::jsonb, checked_at = NOW()
+        `UPDATE work_states SET standing = $4::jsonb, derive_version = $5, checked_at = NOW()
           WHERE app_id = $1 AND item_kind = $2 AND item_ref = $3`,
-        [key.appId, key.kind, key.ref, JSON.stringify(standing)],
+        [key.appId, key.kind, key.ref, JSON.stringify(standing), DERIVE_VERSION],
       );
       return null;
     }
@@ -1323,17 +1345,18 @@ async function upsert(db, key, next, { touch = false } = {}) {
   }
   await db.query(
     `INSERT INTO work_states (app_id, item_kind, item_ref, issue_number, session_id, stage, why, reason, line,
-                              whose_move, requester_id, since, standing, vote_open, lead_change_id, updated_at, checked_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13::jsonb, $14, $15, NOW(), NOW())
+                              whose_move, requester_id, since, standing, vote_open, lead_change_id, derive_version,
+                              updated_at, checked_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13::jsonb, $14, $15, $16, NOW(), NOW())
      ON CONFLICT (app_id, item_kind, item_ref) DO UPDATE
        SET issue_number = EXCLUDED.issue_number, session_id = EXCLUDED.session_id, stage = EXCLUDED.stage,
            why = EXCLUDED.why, reason = EXCLUDED.reason, line = EXCLUDED.line, whose_move = EXCLUDED.whose_move,
            requester_id = EXCLUDED.requester_id, since = EXCLUDED.since, standing = EXCLUDED.standing,
            vote_open = EXCLUDED.vote_open, lead_change_id = EXCLUDED.lead_change_id,
-           updated_at = NOW(), checked_at = NOW()`,
+           derive_version = EXCLUDED.derive_version, updated_at = NOW(), checked_at = NOW()`,
     [key.appId, key.kind, key.ref, key.issueNumber ?? null, key.sessionId ?? null, next.stage, next.why, next.reason,
       next.line ? JSON.stringify(next.line) : null, next.whoseMove, next.requesterId ?? null, next.since,
-      JSON.stringify(standing), !!next.voteOpen, next.leadChangeId ?? null],
+      JSON.stringify(standing), !!next.voteOpen, next.leadChangeId ?? null, DERIVE_VERSION],
   );
   return {
     prev: prev ? {
@@ -1545,6 +1568,37 @@ async function decidersOf(db, row) {
 // that its request's row is where it stands.
 const CHANGE_ROW_STATUSES = new Set(['promoted', 'merging', 'merged', 'closed', 'archived']);
 
+// ── One writer per item (review B3) ─────────────────────────────────────
+
+const { WORK_STATE_ITEM_LOCK } = require('./advisory-locks');
+const requestLock = (r) => `request:${Number(r.appId)}:${Number(r.issueNumber)}`;
+const changeLock = (id) => `change:${Number(id)}`;
+
+/**
+ * Review B3 (19 Nov 2026): take the item locks named by `keys` (requestLock,
+ * changeLock) for `db`'s transaction, in the order given, never waiting for
+ * one: resolves the set of keys it could NOT take, because another
+ * transaction holds them (so a caller with nothing busy reads nothing back).
+ * Such an item's holder is deriving it now, from facts it reads after taking
+ * the lock, so whatever this caller wrote is either in what the holder reads
+ * or marked the item for the drain after the holder's commit (every fact the
+ * derive reads marks its item: work-state-marks-all-inputs.sql). Taking it
+ * again in the same transaction succeeds. Waiting instead could deadlock: a
+ * machine's transition holds its change's chat_sessions row FOR UPDATE when
+ * it stores its rows, and a holder's bell row needs a key share on that row
+ * (notifications.session_id).
+ */
+async function takeItems(db, keys) {
+  const list = [...new Set(keys)];
+  if (!list.length) return new Set();
+  const { rows } = await db.query(
+    `SELECT t.k FROM (SELECT k FROM unnest($2::text[]) WITH ORDINALITY AS u(k, n) ORDER BY n OFFSET 0) t
+      WHERE NOT pg_try_advisory_xact_lock($1::int, hashtext(t.k))`,
+    [WORK_STATE_ITEM_LOCK, list],
+  );
+  return new Set((rows || []).map((r) => r.k));
+}
+
 /**
  * Derive the items again and store each that changed. `items` are
  * { appId, issueNumber } (a request) or { sessionId } (a change: its own
@@ -1552,8 +1606,19 @@ const CHANGE_ROW_STATUSES = new Set(['promoted', 'merging', 'merged', 'closed', 
  * rows: { appId, kind, ref, issueNumber, sessionId, state, prev, bell },
  * `state` carrying the whole stored row (stage, why, reason, line, whose
  * move, since, requesterId, voteOpen, leadChangeId, standing).
+ *
+ * Review B3 (19 Nov 2026): each item is stored under its own lock
+ * (takeItems), taken before its facts are read and held to the end of the
+ * transaction, so a write can never put back what an older reading of the
+ * facts said over a row derived from a newer one (which rang its bell a
+ * second time when the newer reading came round again). On a pool it runs
+ * in a transaction of its own, so the locks mean something. An item another
+ * writer holds is skipped, and named in `skipped` (an array the caller
+ * passes) as { appId, issueNumber } or { sessionId }: the drain puts its
+ * mark back.
  */
-async function refresh(db, items, { now = new Date(), touch = false } = {}) {
+async function refresh(db, items, { now = new Date(), touch = false, skipped = null } = {}) {
+  if (isPool(db)) return unit(db, (tx) => refresh(tx, items, { now, touch, skipped }));
   const requests = new Map();
   const changes = new Set();
   for (const it of items || []) {
@@ -1563,6 +1628,19 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
       for (const r of await requestsOfSession(db, Number(it.sessionId))) requests.set(`${r.appId}:${r.issueNumber}`, r);
       changes.add(Number(it.sessionId));
     }
+  }
+  // B3: the requests first, then the changes, each in order, before any of
+  // their facts is read.
+  const busy = await takeItems(db, [
+    ...[...requests.values()].sort((a, b) => a.appId - b.appId || a.issueNumber - b.issueNumber).map(requestLock),
+    ...[...changes].sort((a, b) => a - b).map(changeLock),
+  ]);
+  const skip = (item) => { if (Array.isArray(skipped)) skipped.push(item); };
+  for (const [k, r] of requests) {
+    if (busy.has(requestLock(r))) { requests.delete(k); skip({ appId: r.appId, issueNumber: r.issueNumber }); }
+  }
+  for (const id of [...changes]) {
+    if (busy.has(changeLock(id))) { changes.delete(id); skip({ sessionId: id }); }
   }
   const changed = [];
   let rows = [];
@@ -1581,6 +1659,14 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     if (row.lead_change_id) leads.add(row.lead_change_id);
     if (Number(row.lc_id)) leads.add(Number(row.lc_id));
   }
+  // B3: the change rows its requests draw are stored under their own locks
+  // too, taken now, before the changes' facts are read. One another writer
+  // holds is still read, for the requests that draw it, and not stored here.
+  const busyLeads = await takeItems(db, [...leads].filter((id) => !changes.has(id)).sort((a, b) => a - b).map(changeLock));
+  for (const id of leads) {
+    if (busyLeads.has(changeLock(id))) skip({ sessionId: id });
+  }
+  const mayStore = (id) => changes.has(Number(id)) || (leads.has(Number(id)) && !busyLeads.has(changeLock(id)));
   const ids = [...new Set([...changes, ...leads])];
   const facts = new Map();
   if (ids.length) {
@@ -1660,11 +1746,10 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
         // T2.10: a hand-back a person decides names who, when its requester does not.
         deciders: next.stage === 'waiting_for_you' && next.why === 'decide' ? await decidersOf(db, row) : [],
       });
-      // T2.7: when it next moves by time alone, for the sweep, and which
-      // derive wrote it.
+      // T2.7: when it next moves by time alone, for the sweep (upsert
+      // stores which derive wrote it).
       const dueAt = dueOf({ state: next, row, change: lead, offers: next.standing.asks && next.standing.asks.offers, now });
       if (dueAt) next.standing.dueAt = dueAt;
-      next.standing.v = DERIVE_VERSION;
       const sessionId = Number(row.proposal_session_id || row.build_session_id || row.lc_id) || null;
       const key = { appId: Number(row.app_id), kind: 'request', ref: Number(row.issue_number), issueNumber: Number(row.issue_number), sessionId };
       const wrote = await upsert(db, key, next, { touch });
@@ -1679,10 +1764,11 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
   // it is open for votes, and the sweep must find it checked), and one whose
   // change is gone or headless is removed.
   const existing = new Set();
-  if (ids.length) {
+  const storable = ids.filter(mayStore);
+  if (storable.length) {
     // A change's row carries its own id as its session (work_states_session_idx).
     const { rows: had } = await db.query(
-      `SELECT item_ref FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [ids]);
+      `SELECT item_ref FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [storable]);
     for (const r of had) existing.add(Number(r.item_ref));
   }
   const gone = [...existing].filter((id) => !facts.has(id) || facts.get(id).is_headless === true);
@@ -1690,7 +1776,7 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
     await db.query(`DELETE FROM work_states WHERE session_id = ANY($1::int[]) AND item_kind = 'change'`, [gone]);
   }
   const own = [...facts.values()]
-    .filter((f) => f.is_headless !== true && (changes.has(Number(f.id)) || leads.has(Number(f.id))))
+    .filter((f) => f.is_headless !== true && mayStore(f.id))
     .filter((f) => existing.has(Number(f.id)) || f.has_requests !== true || CHANGE_ROW_STATUSES.has(f.status))
     .sort((a, b) => Number(a.id) - Number(b.id));
   for (const f of own) {
@@ -1706,11 +1792,10 @@ async function refresh(db, items, { now = new Date(), touch = false } = {}) {
         said: null,
       },
     };
-    // T2.7: when it next moves by time alone, for the sweep, and which
-    // derive wrote it.
+    // T2.7: when it next moves by time alone, for the sweep (upsert stores
+    // which derive wrote it).
     const dueAt = dueOf({ state: st, change: f, offers: next.standing.asks.offers, now });
     if (dueAt) next.standing.dueAt = dueAt;
-    next.standing.v = DERIVE_VERSION;
     const key = { appId: Number(f.app_id), kind: 'change', ref: Number(f.id), issueNumber: null, sessionId: Number(f.id) };
     const wrote = await upsert(db, key, next, { touch });
     // A change with requests never rings: its requests' rows do.
@@ -1987,26 +2072,31 @@ async function unit(db, fn) {
  * pushed to nobody left a stage moved with its bell never rung (bellOf rings
  * a move only once). The batch is one unit; when it throws, each item is a
  * unit of its own, so one bad item keeps no other from moving. Resolves {
- * changed, pushes, failed } (`failed`: the items that threw, with why). The
- * cards a move retires are the caller's (settleCards), after its commit.
+ * changed, pushes, failed, skipped } (`failed`: the items that threw, with
+ * why; `skipped`: those another writer held, B3). The cards a move retires
+ * are the caller's (settleCards), after its commit.
  */
 async function refreshUnits(db, items, { now = new Date(), touch = false } = {}) {
   const list = (items || []).filter(Boolean);
-  if (!list.length) return { changed: [], pushes: [], failed: [] };
-  const run = (tx, these) => refresh(tx, these, { now, touch })
-    .then(async (changed) => ({ changed, pushes: await pushesOf(tx, changed, { cards: false }) }));
+  if (!list.length) return { changed: [], pushes: [], failed: [], skipped: [] };
+  const run = async (tx, these) => {
+    const skipped = [];
+    const changed = await refresh(tx, these, { now, touch, skipped });
+    return { changed, skipped, pushes: await pushesOf(tx, changed, { cards: false }) };
+  };
   try {
     const out = await unit(db, (tx) => run(tx, list));
     return { ...out, failed: [] };
   } catch (err) {
-    if (list.length === 1) return { changed: [], pushes: [], failed: [{ item: list[0], error: err }] };
+    if (list.length === 1) return { changed: [], pushes: [], failed: [{ item: list[0], error: err }], skipped: [] };
   }
-  const out = { changed: [], pushes: [], failed: [] };
+  const out = { changed: [], pushes: [], failed: [], skipped: [] };
   for (const item of list) {
     try {
       const one = await unit(db, (tx) => run(tx, [item]));
       out.changed.push(...one.changed);
       out.pushes.push(...one.pushes);
+      out.skipped.push(...one.skipped);
     } catch (err) {
       out.failed.push({ item, error: err });
     }
@@ -2096,6 +2186,16 @@ function quietBell(bell, facts, item = null) {
   return facts?.read_reason === 'backlog' || !!(facts?.builder && String(facts.builder).trim());
 }
 
+/**
+ * Pure (review B3): the key of the moment a changed row rings: its item, its
+ * stage with the why or reason that made it a moment (bellOf), and since
+ * when. Stored on the bell (notifications.bell_key).
+ */
+function bellKeyOf(row) {
+  const st = row && row.state ? row.state : {};
+  return ['work', row.kind, Number(row.appId), Number(row.ref), st.stage, st.why || st.reason || '', iso(st.since) || ''].join(':');
+}
+
 async function bellPushes(db, changed) {
   const pushes = [];
   for (const row of changed || []) {
@@ -2119,12 +2219,19 @@ async function bellPushes(db, changed) {
     // push when no phone can take it (activity-mail.js noticeMailTargets).
     // No chat is its home (notifications.js STAGE_BELL_SQL): its change, by
     // which a merge settles it (change-notifications.ts settleDecidedChange).
+    // B3: once per moment. A move stored twice (an older reading of its
+    // facts written over a newer one, put right a few seconds later) is the
+    // same item, stage and since, and rings nothing while its bell is still
+    // unread. A real return to the moment (an update that withdrew its
+    // "ready to try", then its vote again) finds its old bell read.
     const { rows: rang } = await db.query(
-      `INSERT INTO notifications (user_id, source_user_id, kind, detail, app_id, session_id, mailed_at)
-       SELECT $1, $2, $3::text, $4, $5, $6, CASE WHEN $3::text = 'build_ready' THEN NULL ELSE NOW() END
+      `INSERT INTO notifications (user_id, source_user_id, kind, detail, app_id, session_id, mailed_at, bell_key)
+       SELECT $1, $2, $3::text, $4, $5, $6, CASE WHEN $3::text = 'build_ready' THEN NULL ELSE NOW() END, $7::text
         WHERE NOT EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = $1 AND b.blocked_user_id = $2)
+          AND NOT EXISTS (SELECT 1 FROM notifications n
+                           WHERE n.user_id = $1 AND n.read_at IS NULL AND n.bell_key = $7::text)
        RETURNING id`,
-      [userId, f.bot_id, BELL_KINDS[row.bell], detail, row.appId, Number(row.sessionId) || null],
+      [userId, f.bot_id, BELL_KINDS[row.bell], detail, row.appId, Number(row.sessionId) || null, bellKeyOf(row)],
     );
     if (rang.length) pushes.push({ kind: 'user', routing: { userId }, data: { type: 'notifications_changed' } });
   }
@@ -2507,11 +2614,15 @@ const SWEEP_MOVING_SQL = `
      AND ws.checked_at < NOW() - make_interval(secs => $1)
    ORDER BY ws.checked_at ASC LIMIT $2`;
 
-// Rows an older derive wrote (no `standing.v`, or a lower one): derived again
-// once, the longest unchecked first.
+// Rows an older derive wrote: derived again once, the longest unchecked
+// first. B3: which derive wrote a row is its own column, and the standing's
+// `v` for the Pods of the release before this one, which write only that;
+// the lower of the two counts (versionOf), so a row such a Pod wrote again
+// during a release is derived again after it.
 const SWEEP_OLDER_SQL = `
   SELECT app_id, item_kind, item_ref FROM work_states
-   WHERE stage <> 'closed' AND COALESCE((standing->>'v')::int, 0) < $1
+   WHERE stage <> 'closed'
+     AND LEAST(COALESCE(derive_version, 0), COALESCE((standing->>'v')::int, 0)) < $1
    ORDER BY checked_at ASC LIMIT $2`;
 
 const SWEEP_DUE_SQL = `
@@ -2700,7 +2811,14 @@ async function drainDirty(pool, { limit = 200 } = {}) {
       [limit],
     );
     // Each moment's bell is rung with the stage, in this transaction.
-    const done = rows.length ? await refreshUnits(client, rows.map(itemOfMark)) : { changed: [], pushes: [], failed: [] };
+    const done = rows.length ? await refreshUnits(client, rows.map(itemOfMark)) : { changed: [], pushes: [], failed: [], skipped: [] };
+    // B3: an item another writer was deriving is marked again, so it is
+    // derived after that writer's commit: it may have read the facts before
+    // the write this mark stood for.
+    for (const item of done.skipped || []) {
+      const mark = markOfItem(item);
+      await client.query('SELECT work_state_mark($1, $2, $3)', [mark.app_id, mark.issue_number, mark.session_id]);
+    }
     const parked = [];
     for (const f of done.failed) {
       const mark = markOfItem(f.item);
@@ -2746,31 +2864,37 @@ async function drainDirty(pool, { limit = 200 } = {}) {
 
 /**
  * The rows of requests that have none yet, made now (a reader listing
- * requests from before the table, or one the sweep has not reached).
- * Resolves nothing; read the rows after.
+ * requests from before the table, or one the sweep has not reached), and
+ * what that changed published as any refresh's is (touched: the rows'
+ * pushes, the bells and the voters' pings their first state owes, the cards
+ * their move retires). Review B3: it threw those away, so a row a reader
+ * made first never rang its bell nor asked its voters. Resolves the changed
+ * rows; never throws (a row it could not make is not read).
  */
 async function ensure(db, items) {
   const list = (items || []).filter((it) => Number(it.appId) > 0 && Number(it.issueNumber) > 0);
-  if (!list.length) return;
+  if (!list.length) return [];
   const { rows } = await db.query(
     `SELECT x.app_id, x.issue_number FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)
       WHERE NOT EXISTS (SELECT 1 FROM work_states ws
                          WHERE ws.app_id = x.app_id AND ws.item_kind = 'request' AND ws.item_ref = x.issue_number)`,
     [list.map((it) => Number(it.appId)), list.map((it) => Number(it.issueNumber))],
   );
-  if (rows.length) await refresh(db, rows.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })));
+  if (!rows.length) return [];
+  return touched(db, rows.map((r) => ({ appId: Number(r.app_id), issueNumber: Number(r.issue_number) })));
 }
 
-/** The rows of changes that have none yet, made now (ensure, for changes). Resolves nothing. */
+/** The rows of changes that have none yet, made now and published (ensure, for changes). Resolves the changed rows. */
 async function ensureChanges(db, sessionIds) {
   const list = [...new Set((sessionIds || []).map(Number).filter((n) => n > 0))];
-  if (!list.length) return;
+  if (!list.length) return [];
   const { rows } = await db.query(
     `SELECT x.id FROM unnest($1::int[]) AS x(id)
       WHERE NOT EXISTS (SELECT 1 FROM work_states ws WHERE ws.item_kind = 'change' AND ws.item_ref = x.id)`,
     [list],
   );
-  if (rows.length) await refresh(db, rows.map((r) => ({ sessionId: Number(r.id) })));
+  if (!rows.length) return [];
+  return touched(db, rows.map((r) => ({ sessionId: Number(r.id) })));
 }
 
 module.exports = {
@@ -2833,6 +2957,11 @@ module.exports = {
   tryOpened,
   botChangesOpened,
   botChangesWaiting,
+  // Review B3: one writer per item, which derive wrote a row, a bell once per moment.
+  takeItems,
+  versionOf,
+  bellKeyOf,
+  DERIVE_VERSION,
   // T2.7, T2.8
   dueOf,
   refreshUnits,

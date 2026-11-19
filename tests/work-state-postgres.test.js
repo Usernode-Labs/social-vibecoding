@@ -824,5 +824,159 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal(await ws.botChangesWaiting(pool), 0);
     assert.deepEqual(await opened(toldAlready.id), []);
   });
+
+  // Review B3 (19 Nov 2026): one writer at a time per item. A writer takes
+  // the item's lock before it reads the facts, and one that finds it taken
+  // leaves the item to its holder; the drain puts that item's mark back, so
+  // it is derived again after the holder's commit.
+  await t.test('B3: a refresh leaves an item another writer is deriving, and the drain marks it again', async () => {
+    await pool.query('DELETE FROM work_state_dirty');
+    await ask(140, ada, 'Seed labels');
+    await ws.refresh(pool, [req(140)]);
+    assert.deepEqual((await stored('request', 140)).line, { code: 'waiting' });
+    const marks = async () => (await pool.query(
+      'SELECT issue_number FROM work_state_dirty WHERE app_id = $1 ORDER BY id', [app.id])).rows.map((r) => Number(r.issue_number));
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      assert.equal((await ws.takeItems(holder, [`request:${app.id}:140`])).size, 0, 'the holder takes it');
+      assert.equal((await ws.takeItems(holder, [`request:${app.id}:140`])).size, 0, 'and takes it again in its own transaction');
+      // A fact moves meanwhile (it marks the request), and another writer comes.
+      await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority) VALUES ($1, 140, 1)', [app.id]);
+      assert.deepEqual(await marks(), [140]);
+      const skipped = [];
+      assert.deepEqual(await ws.refresh(pool, [req(140)], { skipped }), [], 'nothing stored');
+      assert.deepEqual(skipped, [req(140)]);
+      assert.deepEqual((await stored('request', 140)).line, { code: 'waiting' }, 'its row is left to its holder');
+      // The drain takes the mark, finds the item taken, and marks it again.
+      const drained = await ws.drainDirty(pool);
+      assert.equal(drained.taken, 1);
+      assert.deepEqual(drained.changed, []);
+      assert.deepEqual(await marks(), [140], 'marked again, for after the holder');
+      await holder.query('COMMIT');
+    } finally {
+      holder.release();
+    }
+    const after = await ws.drainDirty(pool);
+    assert.deepEqual(after.changed.map((c) => [c.ref, c.state.line && c.state.line.code]), [[140, 'queued']]);
+    // (Its move into the bot's line marks the project's others in it: markPlaces.)
+    assert.equal((await marks()).includes(140), false, 'taken, and not marked again');
+  });
+
+  await t.test('B3: a moment rings once while its bell is unread, and a real return to it rings again', async () => {
+    await ask(141, ada, 'Swap shelf');
+    const up = await change(bot, 641, [141], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    const bells = async () => (await pool.query(
+      `SELECT id, kind, bell_key FROM notifications WHERE user_id = $1 AND kind = 'build_ready' AND session_id = $2 ORDER BY id`,
+      [ada.id, up.id])).rows;
+    await run(141, 'ready', { buildOk: true, proposalSessionId: up.id });
+    const opened = (await ws.refresh(pool, [req(141)])).filter((c) => c.kind === 'request');
+    assert.deepEqual([opened[0].state.stage, opened[0].bell], ['up_for_vote', 'ready']);
+    await ws.pushesOf(pool, opened);
+    const [first] = await bells();
+    assert.equal(first.bell_key, ws.bellKeyOf(opened[0]));
+    assert.match(first.bell_key, new RegExp(`^work:request:${app.id}:141:up_for_vote::\\d{4}-`));
+    // The same move stored again (an older reading written over it, then
+    // put right): the same item, stage and since, while its bell is unread.
+    assert.deepEqual(await ws.bellPushes(pool, opened), [], 'no second bell');
+    assert.equal((await bells()).length, 1);
+    // Read, and the same moment again: a real return rings.
+    await pool.query('UPDATE notifications SET read_at = NOW() WHERE id = $1', [first.id]);
+    assert.equal((await ws.bellPushes(pool, opened)).length, 1);
+    assert.equal((await bells()).length, 2);
+  });
+
+  await t.test('B3: a row a reader makes first is published, and rings its bell', async () => {
+    await ask(142, ada, 'Seed calendar export');
+    const up = await change(bot, 642, [142], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await run(142, 'ready', { buildOk: true, proposalSessionId: up.id });
+    assert.equal(await stored('request', 142), undefined);
+    // A reader finds no row and makes it: what that changed is published.
+    const made = await ws.ensure(pool, [req(142)]);
+    assert.deepEqual(made.filter((c) => c.kind === 'request').map((c) => [c.ref, c.bell]), [[142, 'ready']]);
+    const { rows: rang } = await pool.query(
+      `SELECT kind FROM notifications WHERE user_id = $1 AND kind = 'build_ready' AND session_id = $2`, [ada.id, up.id]);
+    assert.equal(rang.length, 1, 'the bell its first state rings');
+    assert.deepEqual(await ws.ensure(pool, [req(142)]), [], 'a row that exists is not made again');
+    // A change's row made by its reader, too: returned, opened for votes.
+    const lone = await change(bob, 643, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    const made2 = await ws.ensureChanges(pool, [lone.id]);
+    assert.deepEqual(made2.map((c) => [c.kind, c.state.voteOpen, c.prev]), [['change', true, null]]);
+    assert.deepEqual(await ws.ensureChanges(pool, [lone.id]), []);
+  });
+
+  await t.test('B3: a row whose time alone moved is a row that changed', async () => {
+    const at = new Date(Date.now() - 60 * 60 * 1000);
+    await ask(143, bob, 'Seed swap map');
+    const up = await change(bot, 644, [143], 'promoted', { promotedAt: at, checkState: 'passing' });
+    await run(143, 'ready', { buildOk: true, proposalSessionId: up.id });
+    await ws.refresh(pool, [req(143)]);
+    const before = await one(`SELECT since, updated_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 143`, [app.id]);
+    // Put up again later (a new promote): the same stage, a new since.
+    const later = new Date(at.getTime() + 30 * 60 * 1000);
+    await pool.query('UPDATE chat_sessions SET promoted_at = $2 WHERE id = $1', [up.id, later]);
+    const moved = (await ws.refresh(pool, [req(143)])).filter((c) => c.kind === 'request');
+    assert.equal(moved.length, 1, 'stored, and pushed');
+    assert.equal(moved[0].bell, null, 'the same stage rings nothing');
+    const after = await one(`SELECT stage, since, updated_at FROM work_states WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 143`, [app.id]);
+    assert.equal(after.stage, 'up_for_vote');
+    assert.equal(new Date(after.since).toISOString(), later.toISOString());
+    assert.ok(new Date(after.updated_at) > new Date(before.updated_at));
+  });
+
+  // B3: nothing tested the two sweeps that read a row again by time and by
+  // which derive wrote it.
+  await t.test('B3: the version sweep derives an older derive\'s rows again, quietly; the due sweep reads rows that are due', async () => {
+    await ask(144, ada, 'Seed swap reminders');
+    await ws.refresh(pool, [req(144)]);
+    const row = () => one(
+      `SELECT stage, line, standing, derive_version, updated_at, checked_at FROM work_states
+        WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 144`, [app.id]);
+    const fresh = await row();
+    assert.equal(fresh.derive_version, ws.DERIVE_VERSION, 'its own column');
+    assert.equal(fresh.standing.v, ws.DERIVE_VERSION, 'and the standing, for the release before');
+    assert.equal(ws.versionOf(fresh), ws.DERIVE_VERSION);
+    // Written by an older derive: as before the column, and as a Pod of the
+    // release before writes it again (the standing's `v` only).
+    const older = async (version, column) => {
+      await pool.query(
+        `UPDATE work_states SET standing = jsonb_set(standing, '{v}', to_jsonb($2::int)), derive_version = $3,
+                checked_at = NOW() - interval '1 hour'
+          WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 144`, [app.id, version, column]);
+    };
+    for (const [v, column] of [[1, null], [ws.DERIVE_VERSION - 1, ws.DERIVE_VERSION]]) {
+      await older(v, column);
+      const was = await row();
+      assert.equal(ws.versionOf(was), v);
+      const swept = await ws.sweep(pool, { olderThanMs: 24 * 60 * 60 * 1000, seed: 0 });
+      assert.ok(!swept.changed.some((c) => c.kind === 'request' && c.ref === 144), `v${v}: nothing a reader sees changed: no push`);
+      const now = await row();
+      assert.deepEqual([now.derive_version, now.standing.v], [ws.DERIVE_VERSION, ws.DERIVE_VERSION], `v${v}: derived again`);
+      assert.equal(String(now.updated_at), String(was.updated_at), `v${v}: quietly, so no list moves`);
+      assert.ok(new Date(now.checked_at) > new Date(was.checked_at));
+    }
+    // At this derive: not read again by the version sweep.
+    const settled = await row();
+    await ws.sweep(pool, { olderThanMs: 24 * 60 * 60 * 1000, seed: 0 });
+    assert.equal(String((await row()).checked_at), String(settled.checked_at));
+
+    // Due: read again once its due time passes, and not before.
+    const due = async (at) => pool.query(
+      `UPDATE work_states SET standing = jsonb_set(standing, '{dueAt}', to_jsonb($2::text)), checked_at = NOW() - interval '1 hour'
+        WHERE app_id = $1 AND item_kind = 'request' AND item_ref = 144`, [app.id, at.toISOString()]);
+    await due(new Date(Date.now() + 60 * 60 * 1000));
+    const notYet = await row();
+    const quiet = await ws.sweep(pool, { olderThanMs: 24 * 60 * 60 * 1000, seed: 0 });
+    assert.equal(String((await row()).checked_at), String(notYet.checked_at), 'not due yet: not read');
+    assert.ok(Number.isInteger(quiet.due));
+    await due(new Date(Date.now() - 60 * 1000));
+    const pastDue = await row();
+    const swept = await ws.sweep(pool, { olderThanMs: 24 * 60 * 60 * 1000, seed: 0 });
+    assert.ok(swept.due >= 1, 'read as due');
+    const read = await row();
+    assert.ok(new Date(read.checked_at) > new Date(pastDue.checked_at), 'derived again');
+    assert.equal(read.standing.dueAt, undefined, 'a row that moves by nothing has no due time');
+    assert.equal(String(read.updated_at), String(pastDue.updated_at), 'its due time alone moved: stored quietly');
+  });
 });
 
