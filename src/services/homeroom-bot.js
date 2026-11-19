@@ -1609,6 +1609,7 @@ function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
     planVariant: plain(v.planVariant),
     elsewhere: plain(v.elsewhere),
     elsewhereCandidates: Array.isArray(v.elsewhereCandidates) ? v.elsewhereCandidates.map(plain) : v.elsewhereCandidates,
+    wrongProject: v.wrongProject ? { project: plain(v.wrongProject.project), why: plain(v.wrongProject.why) } : v.wrongProject,
   };
 }
 
@@ -1780,6 +1781,17 @@ function readVerdict(text) {
       ? (Array.isArray(obj.elsewhere_candidates) ? obj.elsewhere_candidates : [])
         .map((c) => clip(String(c || '').replace(/\s+/g, ' ').trim(), 80)).filter(Boolean).slice(0, 3)
       : [];
+    // #6752: a request filed on the wrong project: it names another project,
+    // one of that project's screens, or its code. Only a person verdict
+    // carries it, never with `platform` or `done`, and it offers no Go ahead.
+    const wrongProject = verdict === 'person' && obj.platform !== true && obj.done !== true
+      && obj.wrong_project && typeof obj.wrong_project === 'object'
+      && clip(obj.wrong_project.why, 400)
+      ? {
+        project: clip(String(obj.wrong_project.project || '').replace(/\s+/g, ' ').trim(), 80) || null,
+        why: clip(obj.wrong_project.why, 400),
+      }
+      : null;
     // #6413: its requester, or somebody who decides on the project, said in
     // the discussion to close, drop or withdraw it. It gets the same close
     // offer a done request does, and no Go ahead. A person or empty verdict
@@ -1823,6 +1835,10 @@ function readVerdict(text) {
       // which. Only a person verdict carries them, never with `platform`.
       elsewhere,
       elsewhereCandidates,
+      // #6752: a request it leaves because it was filed on the wrong project:
+      // where it seems to belong and what in the request points there. Only a
+      // person verdict carries it, never with `platform` or `done`.
+      wrongProject,
       // A request whose ask is already there (in the app, or done by a merged
       // change): its requester is offered a vote on closing it, not left at a
       // "person decides" with nothing to decide. A person or empty verdict
@@ -1839,7 +1855,7 @@ function readVerdict(text) {
       // 3 Nov 2026: the smaller first step a person verdict would build, as
       // a reply in the requester's own words (at most 60 characters). The
       // note offers it as a button to tap beside Go ahead.
-      firstStep: verdict === 'person' && !withdrawn ? firstStepOf(obj.first_step) : null,
+      firstStep: verdict === 'person' && !withdrawn && !wrongProject ? firstStepOf(obj.first_step) : null,
       // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
       // can settle this, or it still fails `ready` for somebody else to act
       // on (operator work outside the app, or a database change that could
@@ -1851,9 +1867,9 @@ function readVerdict(text) {
       // The bare false was set far beyond them (sign-in fixes, large
       // requests, product direction), and nothing checked it: without a
       // blocker it is a request a go-ahead can settle.
-      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
+      goAheadDecides: verdict === 'person' && !withdrawn && !wrongProject && obj.platform !== true && !elsewhere && obj.done !== true
         ? !(obj.go_ahead === false && live.blockerOf(obj.cannot_because)) : null,
-      blocker: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
+      blocker: verdict === 'person' && !withdrawn && !wrongProject && obj.platform !== true && !elsewhere && obj.done !== true
         && obj.go_ahead === false ? live.blockerOf(obj.cannot_because) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
@@ -3416,6 +3432,11 @@ async function insertRunRow(pool, run) {
     await pool.query('UPDATE homeroom_bot_runs SET already_done = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record an already-done verdict', { runId: id, err: err.message }));
   }
+  // #6752: a request filed on the wrong project, and why, the same way.
+  if (id && run.wrongProject && typeof run.wrongProject === 'object') {
+    await pool.query('UPDATE homeroom_bot_runs SET wrong_project = $2 WHERE id = $1', [id, JSON.stringify(run.wrongProject)])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record a wrong-project verdict', { runId: id, err: err.message }));
+  }
   return id;
 }
 
@@ -4013,6 +4034,7 @@ async function reuseHeldVerdict(pool, config, {
     appId: app.id, issueNumber, mode: runMode,
     verdict: 'ready', determined: parsed.determined, missingFact: parsed.missingFact,
     plan: parsed.plan, aboutPlatform: parsed.platform, alreadyDone: parsed.done, complicated: parsed.complicated,
+    wrongProject: parsed.wrongProject,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
     model: held.model || null, costUsd: 0, inputTokens: 0, outputTokens: 0,
@@ -5127,6 +5149,7 @@ async function runTriage(pool, config, {
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
+    wrongProject: parsed.wrongProject,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
     firstStep: parsed.firstStep, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
@@ -8197,7 +8220,7 @@ async function actOnVerdict({
   // again (mayor.closeGate). Resolves the card to write with the note
   // (step 3: live.post's `card`, written in the note's own transaction), or
   // null.
-  const doneCloseOffer = async () => {
+  const doneCloseOffer = async (why = null) => {
     const { rows: open } = await pool.query(
       `SELECT id FROM issues
         WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
@@ -8209,7 +8232,7 @@ async function actOnVerdict({
     if (open.length) return null;
     return {
       kind: 'close_request', forUserId: null,
-      args: { issueNumber, title: issue?.title || null, why: clip(parsed.reason, 500) },
+      args: { issueNumber, title: issue?.title || null, why: clip(why || parsed.reason, 500) },
     };
   };
   if (!gate.speak) {
@@ -8277,11 +8300,15 @@ async function actOnVerdict({
     const suggestFor = deciders.length
       ? await idsOfUsernames(pool, deciders)
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
+    // #6752: a request filed on the wrong project. It offers the close vote
+    // under the note, not a move or a Go ahead.
+    const wrongNote = !!parsed.wrongProject;
     // #6771: a request about another project has that project resolved
     // against what its requester can see (a private one they cannot see is
-    // never named), so its note can offer the move there.
+    // never named), so its note can offer the move there. A wrong-project
+    // note offers the close vote instead, with nothing to move.
     const moveSvc = require('./homeroom-bot-move');
-    const elsewhere = (parsed.elsewhere || (parsed.elsewhereCandidates || []).length)
+    const elsewhere = !wrongNote && (parsed.elsewhere || (parsed.elsewhereCandidates || []).length)
       ? await moveSvc.resolveElsewhere(pool, {
         app, name: parsed.elsewhere, candidates: parsed.elsewhereCandidates,
         requester: Number(requester?.userId) > 0 ? { id: Number(requester.userId), username: requester.username } : null,
@@ -8293,6 +8320,7 @@ async function actOnVerdict({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
       withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
       elsewhere: !!(moveTarget || moveCandidates.length), candidates: moveCandidates,
+      wrongProject: wrongNote,
     });
     // #6770: a request that only asks for an explanation has its answer in the
     // note and nothing to build, so it takes the close vote instead.
@@ -8306,13 +8334,15 @@ async function actOnVerdict({
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
       ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by, blocker: parsed.blocker })
-      : withdrawnNote
-        ? live.withdrawnHomeroomText(parsed)
-        : live.personHomeroomText({
-          ...parsed, project, requester: asker?.username || null, deciders,
-          elsewhere: moveTarget ? (moveTarget.name || moveTarget.slug) : null,
-          elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
-        });
+      : wrongNote
+        ? live.wrongProjectHomeroomText({ wrongProject: parsed.wrongProject, project })
+        : withdrawnNote
+          ? live.withdrawnHomeroomText(parsed)
+          : live.personHomeroomText({
+            ...parsed, project, requester: asker?.username || null, deciders,
+            elsewhere: moveTarget ? (moveTarget.name || moveTarget.slug) : null,
+            elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
+          });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -8353,9 +8383,12 @@ async function actOnVerdict({
         }
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
-      // #6413: a withdrawn request gets the same close offer. The card is
-      // written with the note (live.post `card`), so its buttons always work.
-      const threadCard = copyOffer || (parsed.done || withdrawnNote || explanationNote ? await doneCloseOffer() : null);
+      // #6413: a withdrawn request gets the same close offer. #6752: so does
+      // one filed on the wrong project, with the reason saying where it
+      // belongs. The card is written with the note (live.post `card`), so its
+      // buttons always work.
+      const threadCard = copyOffer || (wrongNote || parsed.done || withdrawnNote || explanationNote
+        ? await doneCloseOffer(wrongNote ? live.wrongProjectReason(parsed.wrongProject) : null) : null);
       const noteMeta = threadCard
         ? null
         : (suggestActions.length && suggestFor.length
@@ -8383,6 +8416,7 @@ async function actOnVerdict({
           ...(parsed.firstStep ? { firstStep: parsed.firstStep } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
+          ...(wrongNote ? { wrongProject: parsed.wrongProject } : {}),
         },
       });
     }
@@ -8464,9 +8498,10 @@ async function actOnVerdict({
   // #6211: the read found this request is a duplicate of, part of, or
   // overlaps one on the board: one note in this discussion, after the usual
   // reply, with the choice for its requester (homeroom-bot-overlap.js). A
-  // request with nothing in it, one already done, and one asked to be closed
-  // get none, and neither does a note whose pair was offered before.
-  if (parsed.overlap && parsed.verdict !== 'empty' && !parsed.done && !parsed.withdrawn) {
+  // request with nothing in it, one already done, one asked to be closed, and
+  // one filed on the wrong project get none, and neither does a note whose
+  // pair was offered before.
+  if (parsed.overlap && parsed.verdict !== 'empty' && !parsed.done && !parsed.withdrawn && !parsed.wrongProject) {
     const requester = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
     await require('./homeroom-bot-overlap').offerOverlap(pool, {
       app, bot, issueNumber, overlap: parsed.overlap, requester, ws: ws || null, deps,
