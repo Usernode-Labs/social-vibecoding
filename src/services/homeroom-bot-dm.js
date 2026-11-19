@@ -2030,6 +2030,14 @@ function requestNews(kind, dm, context) {
         return `${line}\n\nThis is about Homeroom itself rather than ${context.appName}, so no change to ${context.appName} `
           + `can do it: ${clip(dm.reason, 600)}`;
       }
+      // #6752: filed on the wrong project. It says where it seems to belong
+      // and offers the close vote, which is this message's own buttons
+      // (homeroom-bot-move.js foldOffer).
+      if (dm.wrongProject) {
+        const to = dm.wrongProject.project ? clip(dm.wrongProject.project, 80) : 'another project';
+        return `${line}\n\nThis seems to belong to ${to}, not ${context.appName}, so I haven't built it: `
+          + clip(dm.wrongProject.why, 600);
+      }
       if (dm.done) return doneText(line, dm);
       // 17 Nov 2026 (#6770): a request that only asked for an explanation has
       // the answer itself, and a close vote under it, not a Go ahead.
@@ -2432,13 +2440,21 @@ async function relayIssuePost({
   };
   if (!metadata.said) delete metadata.said;
   if (!metadata.waiting) delete metadata.waiting;
+  // #6752: a request filed on the wrong project offers the close vote
+  // instead (its folded offer below), not a Go ahead that would build it.
+  if (dm.wrongProject && STUCK_ACTIONS[kind]) {
+    delete metadata.actions;
+    delete metadata.status;
+  }
   // One story: an offer is folded into the verdict that gives its reason,
   // so one verdict is one message and rings once (homeroom-bot-move.js).
   const move = require('./homeroom-bot-move');
   const offerKind = kind === 'person' && dm.platform ? 'move_request'
-    : (kind === 'person' || kind === 'empty') && (dm.done || dm.explanation) ? 'close_request' : null;
+    : (kind === 'person' || kind === 'empty') && (dm.done || dm.explanation || dm.wrongProject) ? 'close_request' : null;
   const offer = offerKind ? await move.foldOffer(pool, {
     kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
+    // #6752: the wrong-project reason names the project it belongs to.
+    ...(dm.wrongProject ? { reason: require('./homeroom-bot-live').wrongProjectReason(dm.wrongProject) } : {}),
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
   // Step 3: its card is written with the message (sendDm `card`).

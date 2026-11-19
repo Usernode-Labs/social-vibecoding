@@ -243,6 +243,10 @@ function fromStage(s, row, now = new Date()) {
       // which a thread's reply line reads (homeroom-bot-reply-status.js).
       return state('reading', { since, ...(s.reply ? { line: { code: 'reply', ...(s.waiting ? { soon: true } : {}) } } : {}) });
     case 'queued':
+      // #6867: a request a build's credit wait left owed says it is waiting
+      // for credit, not that it is next in line. It is not stopped: the bot
+      // picks it up by itself once the balance shows credit.
+      if (row.queue_reason === 'credit_wait') return state('reading', { since, line: { code: 'credit_wait' } });
       return s.retry === 'plan'
         ? state('planning', { since, line: { code: 'retry_plan' } })
         : state('reading', {
@@ -720,6 +724,8 @@ const PLAIN_LINES = new Set([
   'bot_fix_failed',
   // #6807: Homeroom bot is getting the check it fails on fixed.
   'fixing_check',
+  // #6867: the build stopped because OpenRouter's credit ran out.
+  'credit_wait',
 ]);
 
 const camel = (s) => String(s).replace(/_([a-z])/g, (_m, c) => c.toUpperCase());
@@ -815,7 +821,7 @@ function lineSays(item) {
 }
 
 // The second lines of the bot's stages that say it waits rather than works.
-const WAITING_LINES = new Set([...NOT_STARTED, ...READY, 'update_queued', 'retry_plan', 'planning_with_you', 'claimed']);
+const WAITING_LINES = new Set([...NOT_STARTED, ...READY, 'update_queued', 'retry_plan', 'planning_with_you', 'claimed', 'credit_wait']);
 
 /**
  * Pure: whether Homeroom bot is at an item this minute: reading it,

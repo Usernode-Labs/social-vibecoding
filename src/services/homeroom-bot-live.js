@@ -217,7 +217,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [], wrongProject = null }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -225,6 +225,14 @@ function personText({ reason, platform = false, project = null, done = false, wi
   if (platform) {
     return `Homeroom bot thinks this is about Homeroom itself, not ${name}: ${reasonSentence(reason)}\n\n`
       + `Whoever asked for it, or ${project ? `${name}'s` : 'this project\'s'} creator or admins, can have it filed on Homeroom's own board too, or moved there.`;
+  }
+  // #6752: filed on the wrong project. GitHub's copy says where it seems to
+  // belong and that its group can propose to close it; the buttons are under
+  // the note in the request's thread.
+  if (wrongProject) {
+    const to = wrongProject.project ? clipText(wrongProject.project, 80) : 'another project';
+    return `Homeroom bot thinks this was filed on the wrong project: ${reasonSentence(wrongProject.why)}\n\n`
+      + `It seems to belong to ${to}, not ${name}. Anyone in the project can propose to close it, or reply here if it belongs here.`;
   }
   // #6771: about another project. Its board is named when it is public, and
   // the person who asked is offered the move in the project's own thread.
@@ -393,6 +401,29 @@ function withdrawnHomeroomText({ reason }) {
   return `Asked to close: ${reasonSentence(reason)} Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here to keep it going.`;
 }
 
+/**
+ * #6752: the note for a request filed on the wrong project. It says where
+ * the request seems to belong and quotes what points there, and its one
+ * action (the card under the note) opens the same close vote a finished
+ * request gets. Pure.
+ */
+function wrongProjectHomeroomText({ wrongProject = null, project = null } = {}) {
+  const to = wrongProject?.project ? clipText(wrongProject.project, 80) : 'another project';
+  const here = project ? clipText(project, 80) : 'this project';
+  return `Wrong project? This seems to be about ${to}, not ${here}: ${reasonSentence(wrongProject?.why)} `
+    + 'Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here if it does belong here.';
+}
+
+/**
+ * #6752: why a wrong-project request is proposed for closing: the project it
+ * seems to belong to, and what in the request points there. At most 500
+ * characters, the close proposal's reason. Pure.
+ */
+function wrongProjectReason(wrongProject = null) {
+  const to = wrongProject?.project ? clipText(wrongProject.project, 80) : 'another project';
+  return clipText(`Filed on the wrong project: it seems to belong to ${to}. ${reasonSentence(wrongProject?.why)}`, 500);
+}
+
 // The note's fixed replies, beside its own sentence: words the bot offers for
 // a person to send as their own, server text rather than shell catalog text.
 const GO_AHEAD_LABEL = 'Go ahead';
@@ -410,8 +441,8 @@ const NOT_NOW_LABEL = 'Not now';
  * 17 Nov 2026 (#6770): an explanation offers none at all: the close vote is
  * under its note instead (homeroom-bot.js doneCloseOffer).
  */
-function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null, blocker = null, elsewhere = false, candidates: elsewhereCandidates = [] } = {}) {
-  if (platform || done || withdrawn || blockerOf(blocker) === 'explanation' || elsewhere || (Array.isArray(elsewhereCandidates) && elsewhereCandidates.length)) return [];
+function personSuggestions({ firstStep = null, platform = false, done = false, withdrawn = false, goAheadDecides = null, blocker = null, elsewhere = false, candidates: elsewhereCandidates = [], wrongProject = false } = {}) {
+  if (platform || done || withdrawn || wrongProject || blockerOf(blocker) === 'explanation' || elsewhere || (Array.isArray(elsewhereCandidates) && elsewhereCandidates.length)) return [];
   const cannot = goAheadDecides === false;
   const mayor = require('./homeroom-bot-mayor');
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
@@ -569,6 +600,13 @@ function buildFailedText(reason, { firstVersion = false, retrying = false } = {}
     return `${words} Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.`;
   }
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
+}
+
+// #6867: what a request says when the build stopped because OpenRouter's
+// credit ran out. Not a failure and nothing for a person to do: the bot
+// picks it up by itself once credit is added.
+function buildCreditText() {
+  return 'Waiting for building credit. Homeroom bot picks this up again by itself.';
 }
 
 // A first version whose build did not finish is tried once more on its own,
@@ -3981,7 +4019,13 @@ function readSpecText(text) {
   if (blocked) return { ok: false, blocked, error: `blocked: ${blocked}` };
   // A run that died on the wire can report the failure as its final message,
   // which would otherwise be stored as the spec.
-  if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
+  // #6867: the notice's own first line is kept, as a build's failure keeps
+  // its ("it ended on an API error: …"), so the next outage is readable from
+  // the run itself instead of only "an API error".
+  const api = agentApiFailure(specMd);
+  if (api) {
+    return { ok: false, error: api.line ? `the spec turn ended on an API error: ${clipText(api.line, 200)}` : 'the spec turn ended on an API error' };
+  }
   if (!specShaped(specMd, { isHtml: !!captured.html || specHtml.isHtmlSpec(raw) })) {
     return { ok: false, fragment: true, error: FRAGMENT_ERROR };
   }
@@ -4218,7 +4262,10 @@ async function draftSpec({
   const read = readSpec(filled?.lastResultText, { parts: filled?.answerParts });
   if (!read.ok) {
     if (read.fragment) log.warn('homeroom-bot', 'The spec turn left only part of a spec; building from the plan', { sessionId: session.id });
-    return { ...read, costUsd, ...turn };
+    // #6867: a plan turn that ended on OpenRouter's 402 for credit is an
+    // outage, told apart from every other failed plan.
+    const out = require('./openrouter-credit').creditOut({ error: read.error }) ? { creditOut: true } : {};
+    return { ...read, costUsd, ...turn, ...out };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
   let { specMd } = read;
@@ -5076,6 +5123,8 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut(),
       ...noChangeOut(),
+      // #6867: a turn that ended on OpenRouter's 402 for credit.
+      ...(require('./openrouter-credit').creditOut({ error }) ? { creditOut: true } : {}),
     };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
@@ -6057,6 +6106,8 @@ module.exports = {
   personText,
   personHomeroomText,
   withdrawnHomeroomText,
+  wrongProjectHomeroomText,
+  wrongProjectReason,
   personSuggestions,
   goAheadCannotText,
   canBuildPart,
@@ -6080,6 +6131,7 @@ module.exports = {
   fromPlanCommentText,
   fromPlanHomeroomText,
   buildFailedText,
+  buildCreditText,
   retryCommentText,
   heldText,
   heldKind,

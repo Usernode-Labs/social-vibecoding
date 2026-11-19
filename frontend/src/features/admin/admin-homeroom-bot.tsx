@@ -438,6 +438,13 @@ interface Payload {
   // currentConfigurations), over the stage settings; a scope with none is null.
   configurations?: Configurations | null;
   bot: Bot | null;
+  // #6867: OpenRouter's building credit, as the last read left it, with the
+  // two levels admins are warned at (services/openrouter-credit.js status).
+  credit?: {
+    balanceCents: number | null; accountCents?: number | null; keyCents?: number | null;
+    daysLeft: number | null; at: string | null; warnCents: number; urgentCents: number;
+    outage?: { since: string; words?: string | null } | null;
+  } | null;
   loop: LastPass | null;
   totals: Totals;
   // `buildsWaiting`: live builds waiting their turn, which wait on their
@@ -1692,6 +1699,8 @@ export function health(settings: Settings | undefined, loop: LastPass | null | u
   if (loop.paused === 'budget') return { tone: 'warn', text: 'Paused: the weekly budget is spent' };
   if (loop.paused === 'infra') return { tone: 'bad', text: `Platform fault${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
   if (loop.paused === 'github') return { tone: 'warn', text: `Waiting for GitHub's hourly limit${retryAt(loop) ? `, trying again at ${retryAt(loop)}` : ''}` };
+  // #6867: nothing the bot does with its key can succeed until credit is added.
+  if (loop.paused === 'credit') return { tone: 'bad', text: 'Paused: OpenRouter credit ran out' };
   if (loop.refusals?.length) return { tone: 'warn', text: `${loop.refusals.length} app${loop.refusals.length === 1 ? '' : 's'} backing off` };
   return { tone: 'ok', text: `Working, last pass ${when(loop.at)}` };
 }
@@ -1902,11 +1911,12 @@ function HomeroomBotSection() {
   const pairsLine = pairsWaitingLine(payload?.pairsWaiting);
   const movesLine = moveOffersLine(payload?.moveOffers);
 
-  const tile = (label: string, value: string, id: string, sub?: string) => (
+  const tile = (label: string, value: string, id: string, sub?: string, extra?: ReactNode) => (
     <div className="rounded-xl bg-zinc-100 dark:bg-zinc-800 p-3" id={id}>
       <div className={AdminUI.muted}>{label}</div>
       <div className="text-2xl font-semibold mt-0.5 tabular-nums">{value}</div>
       {sub ? <div className={AdminUI.muted}>{sub}</div> : null}
+      {extra || null}
     </div>
   );
 
@@ -1959,6 +1969,14 @@ function HomeroomBotSection() {
               payload ? waitingFor(payload.queue.depth, payload.queue.buildsWaiting || 0) || undefined : undefined)}
             {tile('Spent this week', bot ? dollarsFromCents(bot.weeklySpentCents) : '–', 'admin-homeroom-bot-tile-spend',
               bot ? `of ${dollarsFromCents(bot.weeklyLimitCents)}` : undefined)}
+            {tile('OpenRouter credit',
+              payload?.credit && payload.credit.balanceCents != null ? dollarsFromCents(payload.credit.balanceCents) : '–',
+              'admin-homeroom-bot-tile-credit',
+              payload?.credit
+                ? `${payload.credit.daysLeft != null ? `About ${payload.credit.daysLeft} days at this week's rate. ` : ''}Warns at ${dollarsFromCents(payload.credit.warnCents)} and ${dollarsFromCents(payload.credit.urgentCents)}.`
+                : undefined,
+              <a key="add" id="admin-homeroom-bot-credit-add" className={`${AdminUI.btn.link} text-xs`}
+                href="https://openrouter.ai/settings/credits">Add credit</a>)}
             {tile('You agree with it', agreement == null ? '–' : `${agreement}%`, 'admin-homeroom-bot-tile-agreement',
               totals && totals.rated ? `of ${totals.rated} rated` : 'nothing rated yet')}
           </div>

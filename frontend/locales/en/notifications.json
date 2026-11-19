@@ -759,6 +759,22 @@
     "text": "Platform limit",
     "description": "First line of a notification to an administrator about a server-wide limit, when its details cannot be read."
   },
+  "row.credit.low.label": {
+    "text": "OpenRouter credit is below {{threshold}}",
+    "description": "First line of a notification sent to platform administrators: the credit that pays for Homeroom bot's building has dropped below a level it warns at. {{threshold}} is a dollar amount, such as $500."
+  },
+  "row.credit.low.body": {
+    "text": "{{balance}} left, about {{days}} days at this week's rate. Add credit before Homeroom bot stops building.",
+    "description": "Second line of that notification. {{balance}} is the credit left as a dollar amount, {{days}} how many days it lasts at this week's spending."
+  },
+  "row.credit.out.label": {
+    "text": "OpenRouter credit ran out",
+    "description": "First line of a notification sent to platform administrators: the credit that pays for Homeroom bot's building is gone, so the bot has paused."
+  },
+  "row.credit.out.body": {
+    "text": "Homeroom bot paused building. It starts again by itself once credit is added.",
+    "description": "Second line of that notification: the pause lifts without anyone doing anything once credit is added."
+  },
   "row.releaseHold.label": {
     "text": "Needs your approval",
     "description": "First line of a notification sent to platform administrators: a proposed change is held until one of them approves it. The change's name is on the line below."

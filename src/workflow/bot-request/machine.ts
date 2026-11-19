@@ -396,6 +396,7 @@ function lookWork(d: Data, lk: Look): WorkRequest {
 //   busy        its change's session was taken (backed off; tries untouched)
 //   fault       the platform failed under it (the lane pauses; untouched)
 //   budget      the bot's weekly cap (the lane pauses; untouched)
+//   credit      OpenRouter's credit ran out (the lane pauses; untouched)
 //   held        its payer's week is spent: held until `until`
 //   interrupted a person wrote during the read: read again, `carried` spent
 //   requeue     to be looked at again later as `reason` / `priority`
@@ -440,6 +441,9 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       break;
     }
     case 'budget': back = lk.owed; lane = { budget: true }; break;
+    // #6867: OpenRouter's credit ran out during the look: owed as it was
+    // (tries untouched), and the lane starts nothing until credit is back.
+    case 'credit': back = lk.owed; lane = { ran: true, credit: true, words: r.words ? String(r.words).slice(0, 300) : null }; break;
     // GitHub's hourly budget nearly used up: owed as it was, and the lane
     // grants nothing until it resets.
     case 'github': back = lk.owed; lane = { github: optTime(r.until) }; break;
@@ -465,8 +469,8 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
   const runId = Number.isInteger(r.build) ? r.build as number : null;
   let next: Data = {
     ...d, look: null, slot: null, carried: null, owed: owedNext,
-    backoff: backoff ?? (['budget', 'held', 'github'].includes(outcome) ? d.backoff : null),
-    faults: outcome === 'fault' ? (d.faults || 0) + 1 : (['budget', 'held', 'github'].includes(outcome) ? d.faults || 0 : 0),
+    backoff: backoff ?? (['budget', 'held', 'github', 'credit'].includes(outcome) ? d.backoff : null),
+    faults: outcome === 'fault' ? (d.faults || 0) + 1 : (['budget', 'held', 'github', 'credit'].includes(outcome) ? d.faults || 0 : 0),
     lastRead: r.lastRead !== undefined ? (r.lastRead as Json) : d.lastRead,
     spentRetry: Number.isInteger(r.spentRetry) ? r.spentRetry : d.spentRetry,
     build: runId && (!d.build || d.build.phase === 'waiting') ? { runId, phase: 'waiting', since: iso(ctx), key: null } : d.build,
@@ -480,7 +484,7 @@ function lookEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): O
       const fx = answerFix(next, String(r.fix.outcome), { why: r.fix.why ? String(r.fix.why) : null });
       next = fx.data;
       messages = [...messages, ...fx.messages];
-    } else if (!['busy', 'fault', 'budget', 'held', 'github'].includes(outcome) && next.owed?.reason !== CHECKS_REASON) {
+    } else if (!['busy', 'fault', 'budget', 'held', 'github', 'credit'].includes(outcome) && next.owed?.reason !== CHECKS_REASON) {
       const fx = answerFix(next, 'lost');
       next = fx.data;
       messages = [...messages, ...fx.messages];
@@ -531,9 +535,9 @@ function buildStarted(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext)
   }
   // An older build's start held it for an overlap (#6423), which holds
   // nothing now (#6428): it waits for its slot again, as one not started.
-  if (r.outcome === 'held' || r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'not_started') {
+  if (r.outcome === 'held' || r.outcome === 'fault' || r.outcome === 'budget' || r.outcome === 'github' || r.outcome === 'credit' || r.outcome === 'not_started') {
     const lane: Record<string, Json> = r.outcome === 'budget' ? { budget: true } : r.outcome === 'fault' ? { fault: true }
-      : r.outcome === 'github' ? { github: optTime(r.until) } : {};
+      : r.outcome === 'github' ? { github: optTime(r.until) } : r.outcome === 'credit' ? { ran: true, credit: true, words: r.words ? String(r.words).slice(0, 300) : null } : {};
     return step('building', { ...d, slot: null, build: { ...current(d.build), phase: 'waiting' } },
       { messages: [toLane('Released', lane, d.appId)] });
   }

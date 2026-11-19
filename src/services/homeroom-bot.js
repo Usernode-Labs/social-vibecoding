@@ -241,6 +241,11 @@ const KEY_LIVE_BUILD_STREAM = 'live_build_stream';
 // is the default model; a cap of 0 makes none.
 const KEY_IMAGE_MODEL = 'homeroom_bot_model_image';
 const KEY_PICTURE_WEEKLY_CAP = 'homeroom_bot_picture_weekly_cap';
+// #6867: the two levels OpenRouter credit is warned at (services/
+// openrouter-credit.js holds the state and the policy).
+const KEY_CREDIT_WARN = 'homeroom_bot_credit_warn_cents';
+const KEY_CREDIT_URGENT = 'homeroom_bot_credit_urgent_cents';
+const MAX_CREDIT_CENTS = 10_000_000;
 const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 // #6632: who the bot works for (services/homeroom-bot-verified.js):
 // 'everyone' who is let in, as before, or 'verified' accounts only, which
@@ -265,6 +270,7 @@ const SETTING_KEYS = Object.freeze([
   KEY_LIVE_BUILD_STREAM, KEY_DEFAULT_MODEL, KEY_HELPER_MODEL,
   KEY_IMAGE_MODEL, KEY_PICTURE_WEEKLY_CAP,
   KEY_WORKS_FOR, KEY_VERIFIED_SIGNALS, KEY_VERIFIED_GRANDFATHER, KEY_VERIFIED_SINCE,
+  KEY_CREDIT_WARN, KEY_CREDIT_URGENT,
   ...Object.values(KEY_MODELS),
 ]);
 const MAX_USER_WEEKLY_CENTS = 10_000_000;
@@ -313,6 +319,9 @@ const DEFAULTS = Object.freeze({
   imageModel: DEFAULT_IMAGE_MODEL,
   pictureWeeklyCap: 24,
   // #6632: everyone who is let in, until an admin chooses verified accounts.
+  // #6867: the credit warnings' levels.
+  creditWarnCents: 50000,
+  creditUrgentCents: 20000,
   worksFor: 'everyone',
   verifiedSignals: botVerified.DEFAULT_SIGNALS,
   verifiedGrandfather: true,
@@ -502,6 +511,10 @@ const READ_AGAIN_REASON = 'read_again';
 // not a change to read. It is queued here instead, once, and waits a few
 // minutes (a provider error is usually over by then).
 const PLAN_RETRY_REASON = 'plan_retry';
+// #6867: the queue reason of a request a build found OpenRouter's credit
+// gone on. It waits quietly, as a restart's row does, and the balance read
+// that lifts the pause lets the lane grant it again; nobody replies.
+const CREDIT_WAIT_REASON = 'credit_wait';
 const PLAN_RETRY_AFTER_MS = 3 * 60 * 1000;
 // The queue reason of a request somebody asked the bot to build from its
 // page, or just filed on a project it builds on (homeroom-bot-dm.js
@@ -522,7 +535,7 @@ const BACKLOG_REASON = 'backlog';
 // a restart's row on the very pass its wake started, which is how a live
 // build a restart interrupted was never looked at again (recipebot #48,
 // run 613).
-const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, PLAN_RETRY_REASON]);
+const SELF_QUEUED_REASONS = Object.freeze([RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, PLAN_RETRY_REASON, CREDIT_WAIT_REASON]);
 // The rows a refresh keeps while their request is unchanged and nobody
 // else's: those, and an older request's read (BACKLOG_REASON), which a
 // refresh queues for an unchanged request by design.
@@ -741,6 +754,10 @@ function parseSettings(rows) {
   // #6632. A stored list that does not parse is no signal at all (the
   // closed side: only admins and grandfathered accounts pass); none stored
   // is the default three.
+  const creditWarnCents = clampInt(map.get(KEY_CREDIT_WARN), DEFAULTS.creditWarnCents, 0, MAX_CREDIT_CENTS);
+  const creditUrgentCents = Math.min(
+    clampInt(map.get(KEY_CREDIT_URGENT), DEFAULTS.creditUrgentCents, 0, MAX_CREDIT_CENTS), creditWarnCents,
+  );
   const worksFor = map.get(KEY_WORKS_FOR) === 'verified' ? 'verified' : 'everyone';
   let verifiedSignals = [...DEFAULTS.verifiedSignals];
   if (map.has(KEY_VERIFIED_SIGNALS)) {
@@ -760,7 +777,7 @@ function parseSettings(rows) {
     shadowBuilds, buildConcurrency, shadowBuildPlatform, userWeeklyCents, adminWeeklyCents,
     liveAtOnce, perPerson, readsPerApp, dmChat, voiceSession, voiceIssue, voiceChat, continueReads, models,
     defaultModel, helperModel, everyoneSince, proposalCeiling, appCaps, liveBuildStream,
-    imageModel, pictureWeeklyCap,
+    imageModel, pictureWeeklyCap, creditWarnCents, creditUrgentCents,
   };
 }
 
@@ -997,6 +1014,22 @@ function validateSettingsPatch(patch) {
   if (body.verifiedGrandfather !== undefined) {
     if (typeof body.verifiedGrandfather !== 'boolean') return { ok: false, error: 'verifiedGrandfather must be true or false' };
     updates.push([KEY_VERIFIED_GRANDFATHER, body.verifiedGrandfather ? 'on' : 'off']);
+  }
+  // #6867: the two credit levels, in dollars. The urgent one is never above
+  // the first, which would warn in the wrong order.
+  if (body.creditWarnCents !== undefined) {
+    const n = Number(body.creditWarnCents);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_CREDIT_CENTS) {
+      return { ok: false, error: `creditWarnCents must be an integer from 0 to ${MAX_CREDIT_CENTS}` };
+    }
+    updates.push([KEY_CREDIT_WARN, String(n)]);
+  }
+  if (body.creditUrgentCents !== undefined) {
+    const n = Number(body.creditUrgentCents);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_CREDIT_CENTS) {
+      return { ok: false, error: `creditUrgentCents must be an integer from 0 to ${MAX_CREDIT_CENTS}` };
+    }
+    updates.push([KEY_CREDIT_URGENT, String(n)]);
   }
   if (body.liveBuildStream !== undefined) {
     if (typeof body.liveBuildStream !== 'boolean') return { ok: false, error: 'liveBuildStream must be true or false' };
@@ -1609,6 +1642,7 @@ function plainVerdict(v, { overlapCandidates = [], issueNumber = null } = {}) {
     planVariant: plain(v.planVariant),
     elsewhere: plain(v.elsewhere),
     elsewhereCandidates: Array.isArray(v.elsewhereCandidates) ? v.elsewhereCandidates.map(plain) : v.elsewhereCandidates,
+    wrongProject: v.wrongProject ? { project: plain(v.wrongProject.project), why: plain(v.wrongProject.why) } : v.wrongProject,
   };
 }
 
@@ -1780,6 +1814,17 @@ function readVerdict(text) {
       ? (Array.isArray(obj.elsewhere_candidates) ? obj.elsewhere_candidates : [])
         .map((c) => clip(String(c || '').replace(/\s+/g, ' ').trim(), 80)).filter(Boolean).slice(0, 3)
       : [];
+    // #6752: a request filed on the wrong project: it names another project,
+    // one of that project's screens, or its code. Only a person verdict
+    // carries it, never with `platform` or `done`, and it offers no Go ahead.
+    const wrongProject = verdict === 'person' && obj.platform !== true && obj.done !== true
+      && obj.wrong_project && typeof obj.wrong_project === 'object'
+      && clip(obj.wrong_project.why, 400)
+      ? {
+        project: clip(String(obj.wrong_project.project || '').replace(/\s+/g, ' ').trim(), 80) || null,
+        why: clip(obj.wrong_project.why, 400),
+      }
+      : null;
     // #6413: its requester, or somebody who decides on the project, said in
     // the discussion to close, drop or withdraw it. It gets the same close
     // offer a done request does, and no Go ahead. A person or empty verdict
@@ -1823,6 +1868,10 @@ function readVerdict(text) {
       // which. Only a person verdict carries them, never with `platform`.
       elsewhere,
       elsewhereCandidates,
+      // #6752: a request it leaves because it was filed on the wrong project:
+      // where it seems to belong and what in the request points there. Only a
+      // person verdict carries it, never with `platform` or `done`.
+      wrongProject,
       // A request whose ask is already there (in the app, or done by a merged
       // change): its requester is offered a vote on closing it, not left at a
       // "person decides" with nothing to decide. A person or empty verdict
@@ -1839,7 +1888,7 @@ function readVerdict(text) {
       // 3 Nov 2026: the smaller first step a person verdict would build, as
       // a reply in the requester's own words (at most 60 characters). The
       // note offers it as a button to tap beside Go ahead.
-      firstStep: verdict === 'person' && !withdrawn ? firstStepOf(obj.first_step) : null,
+      firstStep: verdict === 'person' && !withdrawn && !wrongProject ? firstStepOf(obj.first_step) : null,
       // 6 Nov 2026 (#6395): whether a go-ahead from the person the note names
       // can settle this, or it still fails `ready` for somebody else to act
       // on (operator work outside the app, or a database change that could
@@ -1851,9 +1900,9 @@ function readVerdict(text) {
       // The bare false was set far beyond them (sign-in fixes, large
       // requests, product direction), and nothing checked it: without a
       // blocker it is a request a go-ahead can settle.
-      goAheadDecides: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
+      goAheadDecides: verdict === 'person' && !withdrawn && !wrongProject && obj.platform !== true && !elsewhere && obj.done !== true
         ? !(obj.go_ahead === false && live.blockerOf(obj.cannot_because)) : null,
-      blocker: verdict === 'person' && !withdrawn && obj.platform !== true && !elsewhere && obj.done !== true
+      blocker: verdict === 'person' && !withdrawn && !wrongProject && obj.platform !== true && !elsewhere && obj.done !== true
         && obj.go_ahead === false ? live.blockerOf(obj.cannot_because) : null,
       stopMentioning: live.parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: live.parseStopMentioning(obj.resume_mentioning),
@@ -3416,6 +3465,11 @@ async function insertRunRow(pool, run) {
     await pool.query('UPDATE homeroom_bot_runs SET already_done = TRUE WHERE id = $1', [id])
       .catch((err) => log.warn('homeroom-bot', 'Could not record an already-done verdict', { runId: id, err: err.message }));
   }
+  // #6752: a request filed on the wrong project, and why, the same way.
+  if (id && run.wrongProject && typeof run.wrongProject === 'object') {
+    await pool.query('UPDATE homeroom_bot_runs SET wrong_project = $2 WHERE id = $1', [id, JSON.stringify(run.wrongProject)])
+      .catch((err) => log.warn('homeroom-bot', 'Could not record a wrong-project verdict', { runId: id, err: err.message }));
+  }
   return id;
 }
 
@@ -4013,6 +4067,7 @@ async function reuseHeldVerdict(pool, config, {
     appId: app.id, issueNumber, mode: runMode,
     verdict: 'ready', determined: parsed.determined, missingFact: parsed.missingFact,
     plan: parsed.plan, aboutPlatform: parsed.platform, alreadyDone: parsed.done, complicated: parsed.complicated,
+    wrongProject: parsed.wrongProject,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: [issue.updatedAt, issue.createdAt, personAt].reduce(latestOf, item.thread_seen_at || null),
     model: held.model || null, costUsd: 0, inputTokens: 0, outputTokens: 0,
@@ -5127,6 +5182,7 @@ async function runTriage(pool, config, {
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
     question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     plan: parsed.plan, aboutPlatform: !!parsed.platform, complicated: !!parsed.complicated, alreadyDone: !!parsed.done,
+    wrongProject: parsed.wrongProject,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed, builder: parsed.builder || null,
     firstStep: parsed.firstStep, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
@@ -7448,7 +7504,9 @@ async function recordLiveBuild(pool, runId, built, model = null) {
             build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md),
             build_model = COALESCE($10, build_model), build_no_change = COALESCE($11::jsonb, build_no_change)
       WHERE id = $1 AND (proposal_session_id IS NULL OR proposal_session_id = $8)`,
-    [runId, built.waitingToPush ? null : !!built.ok, error, built.branchName || null, built.sha || null,
+    // #6867: a build that ran out of credit is not a failed build: its
+    // verdict stays open (NULL), as one waiting to push does.
+    [runId, built.waitingToPush || built.creditOut ? null : !!built.ok, error, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
       Number.isFinite(built.costUsd) ? built.costUsd : null,
       built.sessionId || null, built.specMd || null, model || built.model || null,
@@ -7572,6 +7630,33 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying: false }),
       { dm: { reason: built.error, retrying: false } });
     return 'waiting_to_push';
+  }
+  if (built.creditOut) {
+    // #6867: OpenRouter's credit ran out. An outage, not a failed build: the
+    // run keeps no failed verdict and is not charged, the request waits as
+    // it does for a restart, and the lane starts nothing until the balance
+    // read shows credit again (openrouter-credit.js sweep). One incident and
+    // one alert per outage, never one per request.
+    await pool.query(
+      `UPDATE homeroom_bot_runs
+          SET charged = FALSE,
+              build_finish = COALESCE(build_finish, '{}'::jsonb)
+                || jsonb_build_object('credit_wait_at', COALESCE(build_finish->>'credit_wait_at', NOW()::text))
+        WHERE id = $1`,
+      [runId],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record that a build waited for credit', { runId, err: err.message }));
+    const credit = require('./openrouter-credit');
+    await credit.noteOutage(pool, { words: built.error || null });
+    try {
+      await platform().botOwed(pool, {
+        appId: app.id, issueNumber, reason: CREDIT_WAIT_REASON, priority: 2,
+        key: `credit_wait:${runId}`, source: CREDIT_WAIT_REASON,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not queue a request that waited for credit', { app: app?.slug, issueNumber, err: err.message });
+    }
+    await say('build_failed', live.buildCreditText(), { dm: { reason: CREDIT_WAIT_REASON } });
+    return 'credit_wait';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
@@ -8198,7 +8283,7 @@ async function actOnVerdict({
   // again (mayor.closeGate). Resolves the card to write with the note
   // (step 3: live.post's `card`, written in the note's own transaction), or
   // null.
-  const doneCloseOffer = async () => {
+  const doneCloseOffer = async (why = null) => {
     const { rows: open } = await pool.query(
       `SELECT id FROM issues
         WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
@@ -8210,7 +8295,7 @@ async function actOnVerdict({
     if (open.length) return null;
     return {
       kind: 'close_request', forUserId: null,
-      args: { issueNumber, title: issue?.title || null, why: clip(parsed.reason, 500) },
+      args: { issueNumber, title: issue?.title || null, why: clip(why || parsed.reason, 500) },
     };
   };
   if (!gate.speak) {
@@ -8278,11 +8363,15 @@ async function actOnVerdict({
     const suggestFor = deciders.length
       ? await idsOfUsernames(pool, deciders)
       : (Number.isSafeInteger(Number(asker?.userId)) && Number(asker?.userId) > 0 ? [Number(asker.userId)] : []);
+    // #6752: a request filed on the wrong project. It offers the close vote
+    // under the note, not a move or a Go ahead.
+    const wrongNote = !!parsed.wrongProject;
     // #6771: a request about another project has that project resolved
     // against what its requester can see (a private one they cannot see is
-    // never named), so its note can offer the move there.
+    // never named), so its note can offer the move there. A wrong-project
+    // note offers the close vote instead, with nothing to move.
     const moveSvc = require('./homeroom-bot-move');
-    const elsewhere = (parsed.elsewhere || (parsed.elsewhereCandidates || []).length)
+    const elsewhere = !wrongNote && (parsed.elsewhere || (parsed.elsewhereCandidates || []).length)
       ? await moveSvc.resolveElsewhere(pool, {
         app, name: parsed.elsewhere, candidates: parsed.elsewhereCandidates,
         requester: Number(requester?.userId) > 0 ? { id: Number(requester.userId), username: requester.username } : null,
@@ -8294,6 +8383,7 @@ async function actOnVerdict({
       firstStep: parsed.firstStep, platform: parsed.platform, done: parsed.done,
       withdrawn: parsed.withdrawn, goAheadDecides: parsed.goAheadDecides, blocker: parsed.blocker,
       elsewhere: !!(moveTarget || moveCandidates.length), candidates: moveCandidates,
+      wrongProject: wrongNote,
     });
     // #6770: a request that only asks for an explanation has its answer in the
     // note and nothing to build, so it takes the close vote instead.
@@ -8307,13 +8397,15 @@ async function actOnVerdict({
     const goAheadCannot = parsed.goAheadDecides === false && !!goAhead?.by;
     const noteText = goAheadCannot
       ? live.goAheadCannotText({ reason: parsed.reason, firstStep: parsed.firstStep, reader: goAhead.by, blocker: parsed.blocker })
-      : withdrawnNote
-        ? live.withdrawnHomeroomText(parsed)
-        : live.personHomeroomText({
-          ...parsed, project, requester: asker?.username || null, deciders,
-          elsewhere: moveTarget ? (moveTarget.name || moveTarget.slug) : null,
-          elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
-        });
+      : wrongNote
+        ? live.wrongProjectHomeroomText({ wrongProject: parsed.wrongProject, project })
+        : withdrawnNote
+          ? live.withdrawnHomeroomText(parsed)
+          : live.personHomeroomText({
+            ...parsed, project, requester: asker?.username || null, deciders,
+            elsewhere: moveTarget ? (moveTarget.name || moveTarget.slug) : null,
+            elsewhereJoin: !!elsewhere?.join, candidates: moveCandidates,
+          });
     // #6391: the note also gives the other members a set of their own.
     const suggestOthers = ["I'd like this too", "What's left to do?"]
       .map((label, i) => ({ id: `others-${i + 1}`, label, style: 'secondary', type: 'prompt' }));
@@ -8354,9 +8446,12 @@ async function actOnVerdict({
         }
         : null;
       // #6321: a note about Homeroom itself is never `done`, so never both.
-      // #6413: a withdrawn request gets the same close offer. The card is
-      // written with the note (live.post `card`), so its buttons always work.
-      const threadCard = copyOffer || (parsed.done || withdrawnNote || explanationNote ? await doneCloseOffer() : null);
+      // #6413: a withdrawn request gets the same close offer. #6752: so does
+      // one filed on the wrong project, with the reason saying where it
+      // belongs. The card is written with the note (live.post `card`), so its
+      // buttons always work.
+      const threadCard = copyOffer || (wrongNote || parsed.done || withdrawnNote || explanationNote
+        ? await doneCloseOffer(wrongNote ? live.wrongProjectReason(parsed.wrongProject) : null) : null);
       const noteMeta = threadCard
         ? null
         : (suggestActions.length && suggestFor.length
@@ -8384,6 +8479,7 @@ async function actOnVerdict({
           ...(parsed.firstStep ? { firstStep: parsed.firstStep } : {}),
           ...(parsed.builder ? { builder: parsed.builder, quiet: true } : quiet),
           ...(withdrawnNote ? { withdrawn: true, quiet: true } : {}),
+          ...(wrongNote ? { wrongProject: parsed.wrongProject } : {}),
         },
       });
     }
@@ -8465,9 +8561,10 @@ async function actOnVerdict({
   // #6211: the read found this request is a duplicate of, part of, or
   // overlaps one on the board: one note in this discussion, after the usual
   // reply, with the choice for its requester (homeroom-bot-overlap.js). A
-  // request with nothing in it, one already done, and one asked to be closed
-  // get none, and neither does a note whose pair was offered before.
-  if (parsed.overlap && parsed.verdict !== 'empty' && !parsed.done && !parsed.withdrawn) {
+  // request with nothing in it, one already done, one asked to be closed, and
+  // one filed on the wrong project get none, and neither does a note whose
+  // pair was offered before.
+  if (parsed.overlap && parsed.verdict !== 'empty' && !parsed.done && !parsed.withdrawn && !parsed.wrongProject) {
     const requester = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
     await require('./homeroom-bot-overlap').offerOverlap(pool, {
       app, bot, issueNumber, overlap: parsed.overlap, requester, ws: ws || null, deps,
@@ -11037,6 +11134,15 @@ async function loopMemory(pool, now = Date.now()) {
     const until = (v) => { const t = Date.parse(v || ''); return Number.isFinite(t) ? t : 0; };
     if (d.fault && until(d.fault.until) > now) out.fault = { attempts: Number(d.fault.attempts) || 1, until: until(d.fault.until), error: null, at: null };
     if (d.budget && until(d.budget.until) > now) out.budgetUntil = until(d.budget.until);
+    // #6867: why the lane starts nothing, for the console's chip. Credit
+    // first: it is the one nobody can wait out.
+    if (out.loop) {
+      out.loop.paused = d.credit ? 'credit'
+        : out.budgetUntil ? 'budget'
+          : out.fault ? 'infra'
+            : d.github ? 'github' : null;
+      if (d.credit) out.loop.credit = { since: d.credit.since || null, words: d.credit.words || null };
+    }
     const { rows: slots } = await pool.query(loopRules.SLOTS_IN_USE_SQL);
     out.inFlight = slots.map((r) => {
       // Its read slot, and whether an older release may be running it (rules/bot-loop.ts slotOfRow).
@@ -11224,6 +11330,9 @@ async function adminPayload(pool, config, {
     helperBuiltInModel: helperModelSetting.BUILT_IN,
     configurations: await currentConfigurations(pool),
     bot,
+    // #6867: OpenRouter's credit, as the last read left it (the console's
+    // tile beside this week's spend), and why the lane is paused.
+    credit: await require('./openrouter-credit').status(pool).catch(() => null),
     loop: memory.loop,
     totals,
     queue: { ...queue, buildsWaiting: builds.waiting },
@@ -11698,6 +11807,14 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
     ...(o.laneFault ? { laneFault: true } : {}),
   };
   if (r?.reason === 'interrupted') return { outcome: 'interrupted', carried: r.carried || null, ...extra };
+  // #6867: a look whose turn ended on OpenRouter's 402 for credit is an
+  // outage, not a fault: it keeps its debt and its tries, and the lane
+  // pauses until credit is back.
+  const creditWords = o.error || r?.detail || null;
+  if (creditWords && require('./openrouter-credit').creditOut({ error: creditWords })) {
+    await require('./openrouter-credit').noteOutage(pool, { words: creditWords }).catch(() => {});
+    return { outcome: 'credit', words: String(creditWords).slice(0, 300), ...extra };
+  }
   if (r?.reason === 'budget') {
     // The bot's weekly cap: the people waiting on it hear, once a pause.
     await L.once('budget', () => pauseOnBudget(pool, { settings, bot, reason: r.detail || null, people: [personIdOf(item.person), item.requested_by].filter(Boolean), deps })

@@ -423,6 +423,14 @@ export const JOBS: readonly Job[] = Object.freeze([
     run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/platform-signals').sweep(pool, config),
   },
   {
+    // #6867: OpenRouter's credit, read every 15 minutes and warned about
+    // before it runs out; an outage it finds ended lifts the bot's pause
+    // (services/openrouter-credit.js).
+    name: 'openrouter-credit',
+    everyMs: 15 * MIN,
+    run: (_ctx: WorkContext, { pool, config }: JobDeps) => legacy('services/openrouter-credit').sweep(pool, config),
+  },
+  {
     // The unexpected-events digest and the hourly pile-up alert.
     name: 'incident-alerts', everyMs: 5 * MIN,
     run: (_ctx: WorkContext, { pool }: JobDeps) => legacy('services/platform-incident-alerts').sweep(pool),
