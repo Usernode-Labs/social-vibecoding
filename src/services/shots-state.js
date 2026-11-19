@@ -285,6 +285,9 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
                 'contentType', a.content_type, 'width', a.width,
                 'height', a.height, 'bytes', a.bytes,
                 'density', a.density, 'denseWidth', a.dense_width, 'denseHeight', a.dense_height,
+                'thumbWidth', a.thumb_width, 'thumbHeight', a.thumb_height,
+                'screenWidth', a.screen_width, 'screenHeight', a.screen_height,
+                'placeholder', a.placeholder,
                 'sha256', a.sha256,
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels,
                 'part', a.part, 'scale', a.scale
@@ -320,6 +323,9 @@ async function getPublishedRuns(pool, runIds) {
                 'contentType', a.content_type, 'width', a.width,
                 'height', a.height, 'bytes', a.bytes,
                 'density', a.density, 'denseWidth', a.dense_width, 'denseHeight', a.dense_height,
+                'thumbWidth', a.thumb_width, 'thumbHeight', a.thumb_height,
+                'screenWidth', a.screen_width, 'screenHeight', a.screen_height,
+                'placeholder', a.placeholder,
                 'focusRect', a.focus_rect, 'stageLabels', a.stage_labels,
                 'part', a.part, 'scale', a.scale
               ) ORDER BY a.story_id, a.viewport, a.side, a.variant, a.theme, a.part)

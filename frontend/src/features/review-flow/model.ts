@@ -43,8 +43,8 @@ export type ReviewScreen = {
   density?: number;
   /** Denser stills of parts of the after side, `rect` in CSS px of this screen. */
   closeups?: Closeup[];
-  before: { url: string; height: number };
-  after: { url: string; height: number };
+  before: { url: string; height: number; srcSet?: string; placeholder?: string | null };
+  after: { url: string; height: number; srcSet?: string; placeholder?: string | null };
   regions: Region[];
   /** The declared changes this screen shows, by number (1 is the first claim). */
   changes?: number[];

@@ -291,11 +291,16 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
       // account in the New Needs you experiment; anyone else asking for it
       // gets the 1x copy every other address serves.
       const dense = req.query.density === 'device' && await view.viewerSeesDense(pool, req.user);
+      // #6825: a still's smaller copy at its own address. Anything but these
+      // two words is ignored, and served the original as before.
+      const size = req.query.size === 'thumb' || req.query.size === 'screen' ? req.query.size : null;
       const { rows } = await pool.query(
         `SELECT CASE WHEN $4 THEN COALESCE(a.dense_sha256, a.sha256) ELSE a.sha256 END AS sha256,
                 CASE WHEN $4 THEN COALESCE(a.dense_object_key, a.object_key) ELSE a.object_key END AS object_key,
                 CASE WHEN $4 THEN COALESCE(a.dense_bytes, a.bytes) ELSE a.bytes END AS bytes,
-                a.content_type, a.variant
+                a.content_type, a.variant,
+                a.thumb_sha256, a.thumb_object_key, a.thumb_bytes,
+                a.screen_sha256, a.screen_object_key, a.screen_bytes
            FROM shot_artifacts a
            JOIN shot_runs r ON r.id = a.run_id
            JOIN chat_sessions s ON s.id = r.session_id
@@ -321,10 +326,18 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
                 AND r.state IN ('verified', 'stale')))`,
         [req.params.artifactId, id, ctx.app.id, dense === true]
       );
-      const artifact = rows[0];
+      const found = rows[0];
       // A close-up (services/shots-closeups.js) is only ever shown to an
-      // account in the experiment, at its own address.
-      if (!artifact || (artifact.variant === 'closeup' && !dense)) return res.status(404).json({ error: 'Shots artifact not found' });
+      // account in the experiment, at its own address, and has no smaller
+      // copy.
+      if (!found || (found.variant === 'closeup' && (!dense || size))) {
+        return res.status(404).json({ error: 'Shots artifact not found' });
+      }
+      // The file this address names: a smaller copy when one was asked for
+      // and saved, else the dense still for the experiment, else the 1x.
+      const artifact = (size && found[`${size}_sha256`])
+        ? { sha256: found[`${size}_sha256`], object_key: found[`${size}_object_key`], bytes: found[`${size}_bytes`], content_type: 'image/webp' }
+        : found;
       // #6793: the browser already has this exact image. Answered only after
       // the lookup above, so a stale or hidden one is still a 404, and
       // before the media store is opened.
@@ -336,8 +349,8 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
         });
         return res.status(304).end();
       }
-      const size = Number(artifact.bytes);
-      const range = parseRange(req.headers.range, size);
+      const length = Number(artifact.bytes);
+      const range = parseRange(req.headers.range, length);
       res.set({
         'Content-Type': artifact.content_type,
         'Accept-Ranges': 'bytes',
@@ -348,18 +361,18 @@ function shotsRoutes(config, { store = mediaStore.getStore(config) } = {}) {
         'Content-Disposition': 'inline',
       });
       if (range === false) {
-        res.set('Content-Range', `bytes */${size}`);
+        res.set('Content-Range', `bytes */${length}`);
         return res.status(416).end();
       }
       if (range) {
         res.status(206);
         res.set({
-          'Content-Range': `bytes ${range.start}-${range.end}/${size}`,
+          'Content-Range': `bytes ${range.start}-${range.end}/${length}`,
           'Content-Length': String(range.end - range.start + 1),
         });
         return await mediaStore.respond(res, store, artifact, range);
       }
-      res.set('Content-Length', String(size));
+      res.set('Content-Length', String(length));
       return await mediaStore.respond(res, store, artifact);
     } catch (err) {
       log.error('shots', 'Shots artifact read failed', { sessionId: id, err: err.message });

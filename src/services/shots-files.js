@@ -286,6 +286,10 @@ function cleanConditions(value) {
 // a run taken at device density (services/shots-density.js): its original,
 // `{ density, data, width, height, bytes, sha256 }`. `buffer` and `info` are
 // then its 1x copy, what everyone outside the experiment is shown.
+// A still's smaller copies and its blurred preview (#6825,
+// services/shots-sized.js, `{ thumb, screen, placeholder }`) are made once as
+// it is saved, in shots-control.js's `persist`, and kept beside it in
+// shot_run_files. They are not part of this record.
 function stored(target, buffer, info, dense = null) {
   return {
     ...target,

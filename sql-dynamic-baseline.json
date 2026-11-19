@@ -1655,6 +1655,13 @@
       "preview": "dailySql"
     },
     {
+      "source": "src/services/media-store.js",
+      "kind": "structural-template",
+      "fingerprint": "06fc5a6477da1e84d73a",
+      "count": 1,
+      "preview": "`SELECT EXISTS ( SELECT 1 FROM shot_run_files WHERE object_key = $1 OR dense_object_key = $1${sizedOf('shot_run_files')} UNION ALL SELECT 1 FROM shot_artifacts "
+    },
+    {
       "source": "src/services/moderation.js",
       "kind": "structural-template",
       "fingerprint": "356f708962d79716e928",
@@ -2049,7 +2056,7 @@
     {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
-      "fingerprint": "3bade3328c90c1bbde14",
+      "fingerprint": "56d3e02570eb63f250df",
       "count": 1,
       "preview": "`SELECT r.*, COALESCE(( SELECT jsonb_agg(jsonb_build_object( 'id', a.id, 'storyId', a.story_id, 'viewport', a.viewport, 'side', a.side, 'variant', a.variant, 'm"
     },
