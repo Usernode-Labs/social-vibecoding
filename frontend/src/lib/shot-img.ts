@@ -46,12 +46,25 @@ export function shotSrcSet(image: ShotImage | null | undefined): string | undefi
   return parts.join(', ');
 }
 
-/** The background a slot draws until the still decodes, or undefined. */
-export function shotPreview(image: ShotImage | null | undefined): { backgroundImage: string; backgroundSize: string; backgroundPosition: string } | undefined {
+/**
+ * The background a slot draws until the still decodes, or undefined.
+ *
+ * `stretch` fills the whole box instead of covering it: a placed (zoomed)
+ * still is the whole screen transformed, so its preview has to line up with
+ * that same box, exactly.
+ */
+export function shotPreview(
+  image: ShotImage | null | undefined,
+  { stretch = false }: { stretch?: boolean } = {},
+): { backgroundImage: string; backgroundSize: string; backgroundPosition: string } | undefined {
   const value = typeof image?.placeholder === 'string' && image.placeholder.length <= 1400
     && PLACEHOLDER.test(image.placeholder) ? image.placeholder : null;
   return value
-    ? { backgroundImage: `url("${value}")`, backgroundSize: 'cover', backgroundPosition: 'center' }
+    ? {
+        backgroundImage: `url("${value}")`,
+        backgroundSize: stretch ? '100% 100%' : 'cover',
+        backgroundPosition: stretch ? '0 0' : 'center',
+      }
     : undefined;
 }
 

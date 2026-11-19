@@ -341,36 +341,42 @@ export function CompareSlider({ screen, pair, ground, width, height, marks, near
     ))
     : null);
 
-  // #6825: a whole-screen still takes the smallest copy sharp for this slot
-  // (`srcset` and `sizes`, the slot's drawn width), over its blurred preview,
-  // so the card fills in sooner and nothing moves when the sharp one lands.
-  // A placed or zoomed still and a close-up keep the one url.
+  // #6825: a still takes the smallest copy sharp for the width it is drawn
+  // at (`srcset` and `sizes`), over its blurred preview, so the card fills in
+  // sooner and nothing moves when the sharp one lands. A placed (zoomed)
+  // still is the whole screen transformed, so its width is the scaled one
+  // and its preview stretches to the same box. Only a close-up keeps the
+  // one url.
   const shotOf = (which: 'before' | 'after'): { url: string; srcSet?: string; placeholder?: string | null } | null => (
     screen ? screen[which] : pair ? { url: pair[which] ?? '' } : null);
   const img = (which: 'before' | 'after', alt: 'before' | 'after') => {
     const shot = shotOf(which);
     const url = shot && shot.url ? shot.url : null;
     if (!url || !near) return null;
-    const whole = place ? null : shot;
+    const placed = !!(place && screen);
+    // The whole screen scaled by its placement, else the window it fills.
+    const drawn = placed
+      ? Math.max(1, Math.round(screen!.width * place!.scale))
+      : Math.max(1, Math.round(W));
     return (
       <img
         src={url}
-        srcSet={whole?.srcSet}
-        sizes={whole?.srcSet ? `${Math.max(1, Math.round(W))}px` : undefined}
+        srcSet={shot?.srcSet}
+        sizes={shot?.srcSet ? `${drawn}px` : undefined}
         // The still's own size keeps the slot's box before it loads, so the
         // preview fills exactly the space the sharp picture will take.
-        width={whole && screen ? Math.round(screen.width) : undefined}
-        height={whole && screen ? Math.round(which === 'after' ? screen.after.height : screen.before.height) : undefined}
+        width={!placed && screen ? Math.round(screen.width) : undefined}
+        height={!placed && screen ? Math.round(which === 'after' ? screen.after.height : screen.before.height) : undefined}
         alt={alt === 'after' ? t('communities:review.alt.after') : t('communities:review.alt.before')}
         draggable={false}
         className={place ? 'rf-shot-img' : 'rf-shot-img rf-shot-whole'}
         style={{
           ...(place ? { width: screen!.width, height: which === 'after' ? screen!.after.height : screen!.before.height } : null),
-          ...(whole ? shotPreview(whole) : null),
+          ...(shot ? shotPreview(shot, { stretch: placed }) : null),
         }}
         // If no smaller copy loads, the full-size picture takes over rather
         // than leaving the slot on its blurred preview (#6825).
-        onError={whole?.srcSet ? (event) => {
+        onError={shot?.srcSet ? (event) => {
           const node = event.currentTarget;
           node.removeAttribute('srcset');
           node.removeAttribute('sizes');
