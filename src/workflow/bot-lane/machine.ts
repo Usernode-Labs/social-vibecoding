@@ -13,7 +13,9 @@
 // ended by a look that ran) or the bot's weekly cap is reached, and it
 // keeps the refresh's clock: every five minutes, and soon after a project
 // is asked for (bot.refresh: services/homeroom-bot.js refresh), with the
-// loop's five-minute sweeps beside it (bot.sweep).
+// loop's five-minute sweeps beside it (bot.sweep). When OpenRouter's credit
+// is back (CreditBack, from the credit sweep) it lifts its credit pause and
+// tells each person's DM that kept a message for it (bot-dm CreditBack).
 // workflow-foundation's design-bot-loop.md is the design.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
@@ -23,8 +25,9 @@ import {
   faultMs, pickLive, pickLiveBuilds, requestKey,
 } from '../rules/bot-loop.ts';
 import type { Slot } from '../rules/bot-loop.ts';
-import { NO_FACTS, readFacts } from './facts.ts';
+import { NO_FACTS, readCreditDms, readFacts } from './facts.ts';
 import type { Facts } from './facts.ts';
+import { DM } from '../rules/bot-replies.ts';
 
 export const MACHINE = BOT_LANE;
 export const KEY = LANE_KEY;
@@ -68,7 +71,8 @@ const EVENTS = {
     ran: !!p?.ran, fault: !!p?.fault, budget: !!p?.budget, github: optTime(p?.github), credit: !!p?.credit,
     words: typeof p?.words === 'string' ? p.words.slice(0, 300) : null,
   }),
-  // Credit is back (the balance read): the pause lifts and grants resume.
+  // Credit is back (the balance read): the pause lifts and grants resume,
+  // and each DM that kept a message for it is told (bot-dm CreditBack).
   CreditBack: () => ({}),
   // A project to refresh soon (null: every project); `now`: at once.
   RefreshAsked: (p: any) => ({ appId: optInt(p?.appId), now: !!p?.now }),
@@ -171,9 +175,15 @@ function released(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): O
   return decide(d, f, ctx);
 }
 
-// #6867: credit is back (the balance read): grants resume from here.
+// #6867: credit is back (the balance read): grants resume from here. 19 Nov
+// 2026: and every DM that kept a message whose answer ended on credit hears
+// it (bot-dm CreditBack), in this event, so each is answered once.
 function creditBack(s: LState, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
-  return decide({ ...live(s, ctx), credit: null }, f, ctx);
+  const out = decide({ ...live(s, ctx), credit: null }, f, ctx);
+  const told: MessageRequest[] = (f.creditDms || []).map((dm) => ({
+    to: { machine: DM, key: dm.key }, event: { type: 'CreditBack', payload: { userId: dm.userId } }, appId: null,
+  }));
+  return told.length ? { ...out, messages: [...(out.messages || []), ...told] } : out;
 }
 
 function refreshAsked(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
@@ -222,7 +232,11 @@ export function botLane(deps: Deps = { staging: false }) {
     // What web appends: a new request or a chat line asking the lane to look again.
     web: ['RefreshAsked'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
-    facts: (tx) => readFacts(tx, deps),
+    // CreditBack also reads the DMs to tell (readCreditDms).
+    facts: async (tx, _s, e) => {
+      const f = await readFacts(tx, deps);
+      return e?.type === 'CreditBack' ? { ...f, creditDms: await readCreditDms(tx) } : f;
+    },
     authorize: {
       Look: () => ok(), Released: () => ok(), RefreshAsked: () => ok(), CreditBack: () => ok(),
       Tick: (e) => (e.source.kind === 'timer' || e.source.kind === 'system' ? ok() : reject('not_the_clock')),

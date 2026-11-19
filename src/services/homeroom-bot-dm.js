@@ -5149,8 +5149,12 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
  * keys (an attempt a restart cut short) ends it; every effect it has on the
  * way is keyed by `workKey` (a post by its mark, an ask by its message, a
  * claimed offer by its item, a report by the checkpoint `once`). Throws on a
- * failure a retry can cure. Resolves { sent, later }: `later` is the try the
- * machine asks next, when the model could not answer.
+ * failure a retry can cure. Resolves { sent, later, credit }: `later` is the
+ * try the machine asks next, when the model could not answer; `credit`, that
+ * the turn ended on OpenRouter's credit (a try asked again, or its last
+ * try's line), so the machine keeps the message to answer once credit is
+ * back. `resume`: that answer (the machine's CreditBack round, answered as a
+ * later try is, under keys of its own).
  *
  * Task 2148: `stop` is the watch for the person's Stop of this answer
  * (homeroom-bot-stop.js watch: { signal, did, note, add }). The turn ends
@@ -5159,20 +5163,23 @@ async function heardInDm(db, { user, conversationId, messageId, membership, memb
  * again: `retried`) is said here, with nothing done again.
  */
 async function answerOwed(pool, config, {
-  userId, conversationId, messageId, attempt = 0, workKey, once = null, also = [], stop = null, retried = false, deps = {},
+  userId, conversationId, messageId, attempt = 0, resume = 0, workKey, once = null, also = [], stop = null, retried = false,
+  deps = {},
 }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return { sent: false, skipped: 'no_bot' };
-  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) {
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt, resume })) {
     // Said already, by an attempt a restart cut short: if what it said was
-    // "I'll get back to you", the later try it promised is still owed.
-    return { sent: true, skipped: 'answered', later: await laterPromised(pool, { messageId, attempt }) };
+    // "I'll get back to you", the later try it promised is still owed, and
+    // a line about credit still owes the answer once credit is back.
+    const promised = await promisedBy(pool, { messageId, attempt });
+    return { sent: true, skipped: 'answered', later: promised.later, ...(promised.credit ? { credit: true } : {}) };
   }
   if (stop?.signal?.aborted) {
     // What an earlier try did is known only as far as it was kept: with
     // nothing kept after one, the line names nothing and rules nothing out.
     const did = retried && !(stop.did || []).length ? null : stop.did;
-    const said = await sayStopped(pool, { userId, conversationId, messageId, attempt, did, deps: { ...deps, bot } });
+    const said = await sayStopped(pool, { userId, conversationId, messageId, attempt, resume, did, deps: { ...deps, bot } });
     return { sent: !!said, later: null, stopped: true };
   }
   const { rows: [u] } = await pool.query(
@@ -5187,17 +5194,21 @@ async function answerOwed(pool, config, {
   const message = await conversations.getMessage(pool, user, Number(conversationId), Number(messageId));
   if (!message || message.deletedAt || message.deleted_at) return { sent: false, skipped: 'gone' };
   let later = null;
+  let credit = false;
   // Strict: an answer that could not be delivered fails the work, which is
   // retried and then says it could not (dm.sorry), never counted as said.
   const turnDeps = {
-    ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; },
+    ...deps, bot, workKey, once, strict: true, onLater: (n) => { later = n; }, onCredit: () => { credit = true; },
     ...(stop ? { stop } : {}),
+    ...(resume > 0 ? { resume: Number(resume) } : {}),
     // 31 Oct 2026: their earlier messages whose answer this one took over
     // (the bot-dm machine's `also`): the turn answers them too.
     ...(Array.isArray(also) && also.length ? { alsoUnanswered: also } : {}),
   };
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
-  const sent = attempt > 0
+  // The answer owed once credit came back is the model's turn again, as a
+  // later try is: the message's other paths decided at its first try.
+  const sent = attempt > 0 || resume > 0
     ? await mayor.answerLater(pool, config, { bot, user, conversationId: Number(conversationId), message, deps: turnDeps }, attempt)
     : await noteUserMessage(pool, config, { user, conversationId: Number(conversationId), message, deps: turnDeps });
   // #6764 (17 Nov 2026): once the bot has answered in a new thread, name it
@@ -5211,32 +5222,37 @@ async function answerOwed(pool, config, {
       .then(() => name({ userId: Number(userId), conversationId: Number(conversationId), messageId: Number(messageId), deps }))
       .catch(() => {});
   }
-  return { sent: !!sent, later };
+  return { sent: !!sent, later, ...(credit ? { credit: true } : {}) };
 }
 
 /**
- * Whether the bot already answered message `messageId` (a later try:
- * `attempt`), by the keys its answers to that message use (`hrbot-<kind>-
- * <messageId>`, a later try's `hrbot-mayor-<messageId>-d<n>`).
+ * What an answer to `messageId` (try `attempt`) that was said promised, by
+ * its turn's record: `later`, the try it said would come (a model that could
+ * not answer: 'deferred', 'plain_later', or out of credit: 'credit'), or
+ * null; `credit`, that it was a line about OpenRouter's credit, which owes
+ * the answer once credit is back.
  */
-/**
- * The later try an answer to `messageId` (try `attempt`) promised, by its
- * turn's record (a model that could not answer: 'deferred', 'plain_later'),
- * or null.
- */
-async function laterPromised(pool, { messageId, attempt = 0 }) {
+async function promisedBy(pool, { messageId, attempt = 0 }) {
   const { rows: [turn] } = await pool.query(
     `SELECT fallback FROM homeroom_bot_dm_turns WHERE message_id = $1 ORDER BY id DESC LIMIT 1`, [Number(messageId)]);
   const next = Number(attempt) + 1;
   const tries = require('../workflow/rules/bot-replies.ts').DEFER_DELAYS_MS.length;
-  return turn && ['deferred', 'plain_later'].includes(turn.fallback) && next <= tries ? next : null;
+  const later = turn && ['deferred', 'plain_later', 'credit'].includes(turn.fallback) && next <= tries ? next : null;
+  return { later, credit: turn?.fallback === 'credit' };
 }
 
+/**
+ * Whether the bot already answered message `messageId` (a later try:
+ * `attempt`; the answer owed once credit came back: `resume`), by the keys
+ * its answers to that message use (`hrbot-<kind>-<messageId>`, a later try's
+ * `hrbot-mayor-<messageId>-d<n>`, a resumed one's `hrbot-mayor-<messageId>-
+ * r<n>[-d<n>]`: homeroom-bot-mayor.js answerKey).
+ */
 // The keys an answer to a person's message is sent under, by what answered it.
 const ANSWER_KEY_KINDS = Object.freeze(['mayor', 'ack', 'plan-change', 'finish', 'revise', 'offer']);
-async function answeredAlready(pool, { botId, conversationId, messageId, attempt = 0 }) {
-  const pattern = attempt > 0
-    ? `^hrbot-mayor-${Number(messageId)}-d${Number(attempt)}$`
+async function answeredAlready(pool, { botId, conversationId, messageId, attempt = 0, resume = 0 }) {
+  const pattern = attempt > 0 || resume > 0
+    ? `^${require('./homeroom-bot-mayor').answerKey(messageId, attempt, resume)}$`
     : `^hrbot-(${ANSWER_KEY_KINDS.join('|')})-${Number(messageId)}$`;
   const { rows } = await pool.query(
     `SELECT 1 FROM conversation_messages
@@ -5251,15 +5267,16 @@ async function answeredAlready(pool, { botId, conversationId, messageId, attempt
  * hears the bot could not answer, once, under the answer's own key (so it
  * is nothing when an answer did go out). Throws on a failure.
  */
-async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, attempt = 0, deps = {} }) {
+async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, attempt = 0, resume = 0, deps = {} }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
-  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return null;
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt, resume })) return null;
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
-  // A later try's: it had promised to come back, so it says it could not.
+  // A later try's, or the answer owed once credit came back: it had promised
+  // to come back, so it says it could not.
   return sendDm(pool, {
-    bot, userId: Number(userId), content: attempt ? mayor.DEFERRED_GAVE_UP_TEXT : mayor.BROKEN_TEXT,
-    idempotencyKey: mayor.answerKey(messageId, attempt), replyToId: Number(messageId), moment: 'reply',
+    bot, userId: Number(userId), content: attempt || resume ? mayor.DEFERRED_GAVE_UP_TEXT : mayor.BROKEN_TEXT,
+    idempotencyKey: mayor.answerKey(messageId, attempt, resume), replyToId: Number(messageId), moment: 'reply',
   });
 }
 
@@ -5271,14 +5288,14 @@ async function sayCouldNotAnswer(pool, { userId, conversationId, messageId, atte
  * (homeroom-bot-stop.js stoppedText; null when there is no record). Throws
  * on a failure.
  */
-async function sayStopped(pool, { userId, conversationId, messageId, attempt = 0, did = null, deps = {} }) {
+async function sayStopped(pool, { userId, conversationId, messageId, attempt = 0, resume = 0, did = null, deps = {} }) {
   const bot = deps.bot || await botAccount(pool);
   if (!bot) return null;
-  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt })) return null;
+  if (await answeredAlready(pool, { botId: bot.id, conversationId, messageId, attempt, resume })) return null;
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   return sendDm(pool, {
     bot, userId: Number(userId), content: require('./homeroom-bot-stop').stoppedText(did),
-    idempotencyKey: mayor.answerKey(messageId, attempt), replyToId: Number(messageId), moment: 'reply',
+    idempotencyKey: mayor.answerKey(messageId, attempt, resume), replyToId: Number(messageId), moment: 'reply',
   });
 }
 

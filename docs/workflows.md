@@ -932,8 +932,11 @@ slot no other read holds while it runs, three builds per project.
   an hour, ended by a look that ran; the bot's weekly cap a minute at a time; GitHub's
   hourly budget nearly used up (`services/github-budget.js`: a look, a build's start, the
   refresh or a sweep found it so, reading nothing), with no grant and no refresh until it
-  resets, then a full refresh. A request an admin must look at (its instance flagged)
-  holds no slot.
+  resets, then a full refresh; OpenRouter's credit run out (a turn's 402 for credit,
+  `Released` with `credit`), with no grant until the credit sweep finds it back
+  (`services/openrouter-credit.js sweep` → `CreditBack`). That `CreditBack` also tells every
+  person's `bot-dm` that kept a message for credit (its `CreditBack`, below). A request an
+  admin must look at (its instance flagged) holds no slot.
 - **The refresh** (`bot.refresh`) every five minutes, and 20 seconds after a project is asked
   for (a person wrote on an idle request, a merge, a settings change), at once for a first
   version just filed, with the five-minute sweeps beside each full one (`bot.sweep`). Its one deadline is the earliest of those, a
@@ -1700,6 +1703,19 @@ bot owes them there. One instance per person (`person:<userId>`).
   one. An answer whose work fails for good gets one fixed line (`dm.sorry`: "I couldn't
   answer just now", or for a later try, that it still could not), and a retry of an answer
   that had said "I'll get back to you" still owes the later try it promised.
+- **Answered once credit is back.** An answer that ended on OpenRouter's credit (its "out of
+  building credit" line, a later try that met it again, or the last try's "I'll answer it
+  here once credit is back") reports `credit`, and the instance keeps the message, with any
+  that rode on it, in `data.credit`. When the credit sweep finds credit back, the bot's lane
+  messages each instance keeping one (`CreditBack`, version 2): each kept message is owed one
+  answer (`data.resume`), taken after the messages waiting, the model's turn as a later try
+  is, under keys of that round's own (`msg:<id>:r<n>`, the reply's `hrbot-mayor-<id>-r<n>`).
+  One that meets the 402 again says nothing more and is kept for the next return. Any other
+  end of a message's answer (answered, failed for good, stopped) drops it, so a message
+  answered in between is never answered twice, and a second `CreditBack` answers nothing.
+  Older code leaves the instances version 2 wrote, and their work, alone; a rollback past it
+  lowers them (`UPDATE wf_instances SET machine_version = 1 WHERE machine = 'bot-dm'`) once
+  no process of the newer release is live and no instance is answering a kept message.
 - **Stop.** While the bot works on their message the composer offers Stop
   (`POST /api/conversations/:id/bot-stop`, naming the message the bot's typing event says
   it is answering). `StopRequested` marks the answer under way (`current.stop`) and

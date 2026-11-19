@@ -43,6 +43,8 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
     // The answer to one message: every code path and the model's turn
     // (answerUserMessage), or a later try at one the model could not
     // answer. `later`: the try to ask next, when it deferred again.
+    // `credit`: the turn ended on OpenRouter's credit, so the machine keeps
+    // the message to answer once credit is back; `resume`: that answer.
     [WORK.answer]: {
       maxAttempts: 6,
       backoffMs: backoff,
@@ -67,6 +69,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
         const userId = Number(input.userId);
         const messageId = Number(input.messageId);
         const attempt = Number(input.attempt) || 0;
+        const resume = Number(input.resume) || 0;
         const stop = await legacy('services/homeroom-bot-stop').watch({
           asked: () => stopAsked(pool, { userId, messageId, attempt }),
           kept: did,
@@ -74,11 +77,14 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
         });
         try {
           const out = await dm().answerOwed(pool, config, {
-            userId, conversationId: Number(input.conversationId), messageId, attempt, workKey: key, once,
+            userId, conversationId: Number(input.conversationId), messageId, attempt, resume, workKey: key, once,
             also: Array.isArray(input.also) ? input.also.map(Number).filter((n: number) => Number.isInteger(n) && n > 0) : [],
             stop, retried: tries > 1,
           });
-          return { sent: !!out?.sent, later: out?.later ?? null, skipped: out?.skipped ?? null, ...(out?.stopped ? { stopped: true } : {}) };
+          return {
+            sent: !!out?.sent, later: out?.later ?? null, skipped: out?.skipped ?? null,
+            ...(out?.stopped ? { stopped: true } : {}), ...(out?.credit ? { credit: true } : {}),
+          };
         } finally {
           stop.end();
         }
@@ -92,7 +98,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
       async run({ input }): Promise<Json> {
         const sent = await dm().sayCouldNotAnswer(pool, {
           userId: Number(input.userId), conversationId: Number(input.conversationId), messageId: Number(input.messageId),
-          attempt: Number(input.attempt) || 0,
+          attempt: Number(input.attempt) || 0, resume: Number(input.resume) || 0,
         });
         return { sent: !!sent };
       },
@@ -107,7 +113,7 @@ export function botDmServices({ config, pool }: Deps): Record<string, WorkHandle
       async run({ input }): Promise<Json> {
         const sent = await dm().sayStopped(pool, {
           userId: Number(input.userId), conversationId: Number(input.conversationId), messageId: Number(input.messageId),
-          attempt: Number(input.attempt) || 0,
+          attempt: Number(input.attempt) || 0, resume: Number(input.resume) || 0,
         });
         return { sent: !!sent };
       },
