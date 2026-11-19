@@ -51,6 +51,8 @@ const {
 } = require('../../services/topochain/challenge-onboarding');
 const { isWeekly, weekStartMs } = require('../../services/topochain/challenge-rules');
 const { inviteStatuses } = require('../../services/topochain/invite-statuses');
+const { loadFeedbackGoal } = require('../../services/topochain/feedback-goal');
+const { intervalMinutes: scorerIntervalMinutes } = require('../../services/topochain/challenge-scorer');
 const { checkAppAccess } = require('../../services/app-access');
 
 const { Router } = require('express');
@@ -1007,6 +1009,24 @@ function topochainMobileRoutes(config) {
     }
   }
 
+  // #6758: how many more useful reports this week's "Send useful feedback"
+  // challenge can still count for the viewer, for the line above Cancel and
+  // Post in the Suggest an improvement dialog. `data` is
+  // { target, counted, left }, or null when no rule scores such a challenge
+  // right now (./feedback-goal.js decides). Always 200: the line is a note,
+  // and a failed read must not put an error in the console of somebody who
+  // only opened the dialog; the fault is logged here instead.
+  async function meFeedbackGoalHandler(req, res) {
+    try {
+      const data = await loadFeedbackGoal(pool, req.user.id,
+        { defaultMinutes: scorerIntervalMinutes(config) });
+      return ok(res, { data });
+    } catch (err) {
+      log.warn('topochain-mobile', 'GET me/feedback-goal failed', { message: err.message });
+      return ok(res, { data: null });
+    }
+  }
+
   // ── GET /me/ranking (SPEC 1769-1820) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > neither (global) —
   // SPEC 1774's "takes precedence over season_id".
@@ -1675,6 +1695,7 @@ function topochainMobileRoutes(config) {
   router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meRankingHandler);
   router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meBreakdownHandler);
   router.get('/challenges-api/me/invites', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meInvitesHandler);
+  router.get('/challenges-api/me/feedback-goal', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meFeedbackGoalHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
   // consent with the platform session. The handlers are hoisted function

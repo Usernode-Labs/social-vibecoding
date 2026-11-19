@@ -57,6 +57,9 @@ const SESSIONS = {
   'expired-session': { user_id: WEB_USER.id, expires_at: new Date(Date.now() - DAY) },
 };
 
+// #6758: what the mock answers the feedback-goal read with, set per test.
+const FEEDBACK_GOAL = { rows: [], fail: false };
+
 function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
@@ -109,6 +112,14 @@ function makeMockPool() {
     // /me/breakdown global scope: public seasons list.
     if (sql.includes('SELECT id, name FROM seasons WHERE internal = FALSE ORDER BY display_order')) {
       return { rows: [] };
+    }
+
+    // /me/feedback-goal (#6758): the weekly useful-feedback rule rows. One
+    // user has an open challenge with one credit this week, one has none,
+    // and one makes the read throw.
+    if (sql.startsWith('/* feedback weekly goal */')) {
+      if (FEEDBACK_GOAL.fail) throw new Error('feedback goal read failed');
+      return { rows: FEEDBACK_GOAL.rows };
     }
 
     throw new Error(`Unhandled mock query: ${sql}`);
@@ -203,6 +214,44 @@ test('valid session reads succeed with the v4 envelope', async () => {
       assert.equal(body.success, true, p);
       assert.deepEqual(body.data, [], p);
     }
+  });
+});
+
+// #6758: the Suggest an improvement dialog's weekly line. 200 with a goal,
+// 200 with null when no rule scores such a challenge, and 200 with null when
+// the read fails: a console error on opening the dialog is never the answer.
+test('/me/feedback-goal answers the goal, or nothing, and never an error', async () => {
+  await withServer(async (base) => {
+    const read = async () => {
+      const res = await fetch(`${base}/challenges-api/me/feedback-goal`, {
+        headers: sessionCookie('good-session'),
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.success, true);
+      return body.data;
+    };
+    try {
+      FEEDBACK_GOAL.rows = [];
+      assert.equal(await read(), null, 'no such challenge this season');
+      FEEDBACK_GOAL.rows = [{
+        rule_id: 1, measure: 'USEFUL_FEEDBACK', rule_target: 4, rule_points: 250,
+        rule_interval_minutes: null, challenge_id: 900731, enabled: true, completed: false,
+        schedule_start: null, schedule_end: null, metric_target: null, reward: null,
+        t_category: 'WEEKLY', t_schedule_start: null, t_schedule_end: null,
+        t_metric_target: 4, t_reward: '250 pts',
+        event_starts_at: new Date(Date.now() - DAY), event_ends_at: new Date(Date.now() + DAY),
+        credits: 1,
+      }];
+      assert.deepEqual(await read(), { target: 4, counted: 1, left: 3 });
+      FEEDBACK_GOAL.fail = true;
+      assert.equal(await read(), null, 'a failed read answers nothing, not a 500');
+    } finally {
+      FEEDBACK_GOAL.rows = [];
+      FEEDBACK_GOAL.fail = false;
+    }
+    const out = await fetch(`${base}/challenges-api/me/feedback-goal`);
+    assert.equal(out.status, 401, 'signed out: the dialog never asks, and the route still refuses');
   });
 });
 

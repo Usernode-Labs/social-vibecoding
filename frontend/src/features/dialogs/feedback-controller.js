@@ -640,6 +640,44 @@ export function init() {
       privateCheckbox.checked = false;
       privateRow.classList.toggle('hidden', !App.user?.canAdminWrite);
     };
+    // #6758: how many more useful reports this week's "Send useful feedback"
+    // challenge can still count for the viewer. The server answers from the
+    // rule that scores the challenge (GET /challenges-api/me/feedback-goal:
+    // { target, counted, left }, or null when nothing scores one), so the
+    // target is the cap the scorer pays by and the line never counts toward
+    // a goal that will not move. A report is credited later, once it has
+    // been checked as useful, so the words say what CAN count and promise
+    // nothing about this report. A note and nothing more: Post is never
+    // disabled by it, and it hides itself when there is no answer.
+    const weeklyGoalLine = document.getElementById('feedback-weekly-goal');
+    const hideWeeklyGoal = () => {
+      if (!weeklyGoalLine) return;
+      weeklyGoalLine.textContent = '';
+      weeklyGoalLine.classList.add('hidden');
+    };
+    const refreshWeeklyGoal = () => {
+      hideWeeklyGoal();
+      if (!weeklyGoalLine || !App.user) return;
+      // Read once per open: an answer that lands after the dialog closed and
+      // reopened, or after the account changed, belongs to nothing on screen.
+      const opened = presentation;
+      const userId = App.user.id;
+      fetch('/challenges-api/me/feedback-goal', { credentials: 'same-origin' })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((body) => {
+          if (opened !== presentation || userId !== App.user?.id) return;
+          const goal = body && body.data;
+          if (!goal || !Number.isInteger(goal.target) || goal.target < 1
+            || !Number.isInteger(goal.left)) return;
+          const { target } = goal;
+          const left = Math.min(target, goal.left);
+          weeklyGoalLine.textContent = left <= 0
+            ? t('dialogs:feedback.weeklyGoal.met', { target })
+            : t('dialogs:feedback.weeklyGoal.left', { count: left, counted: target - left, target });
+          weeklyGoalLine.classList.remove('hidden');
+        })
+        .catch(() => { /* the line stays hidden */ });
+    };
     privateCheckbox.addEventListener('change', () => {
       if (privateCheckbox.checked) {
         bountyCheckbox.checked = false;
@@ -2699,6 +2737,9 @@ export function init() {
       resetScreenshotState();
       // #3940: and clip-less, with the row repainted to "Video".
       resetVideoState();
+      // #6758: the weekly goal line, read once for this open (never while
+      // editing an already-sent report, and never behind a confirmation).
+      refreshWeeklyGoal();
       // #4127: every open starts with the paperclip's popover shut.
       setAttachMenuOpen(false);
       void probeNativeCaptureSupport(screenshotSession, true);
@@ -2908,6 +2949,8 @@ export function init() {
     // line belongs to useStaticModal.
     Feedback._reset = () => {
       presentation += 1;
+      // #6758: the count belonged to the open that is ending.
+      hideWeeklyGoal();
       const wasEditing = !!editing;
       resetEdit();
       setAttachMenuOpen(false);

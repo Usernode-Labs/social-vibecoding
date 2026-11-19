@@ -405,6 +405,10 @@ async function migrate(config) {
   // After it: the First challenges hang off its season-type event.
   await seedStagingFirstChallenges(pool);
   await seedStagingCountedCredit(pool, config);
+  // #6758: the weekly feedback challenge, and its scoring rule, that the
+  // Suggest an improvement dialog's line counts against; after the season
+  // event the First challenges hang off.
+  await seedStagingFeedbackGoal(pool);
   // Must run AFTER seedStagingTopochain (it decorates the same three viewer
   // identities) and AFTER seedStagingLeaderboardProfile (it decorates that
   // seed's 900001 / 900002 fixture accounts).
@@ -15904,6 +15908,61 @@ async function seedStagingCountedCredit(pool, config) {
   }
 }
 
+// #6758: the weekly "Send useful feedback" challenge the Suggest an
+// improvement dialog's line counts against, and the rule that scores it. The
+// line is answered from a USEFUL_FEEDBACK rule (services/topochain/
+// feedback-goal.js), and a fresh staging copy has none on a weekly challenge
+// of the fixture season, so the line would never show and the before/after
+// shots would have nothing to photograph.
+//
+// One template, one enabled challenge on the fixture season's own event and
+// one rule, with NO credits for anybody: the line then reads "0 of 4
+// counted" (a count is the viewer's own, so seeding a credit would fabricate
+// progress this code reads). The challenge's window opens when it is seeded,
+// not with the event: the scorer reads only reports sent inside the window,
+// so nothing copied from before this staging copy booted is graded here.
+// Ids clear of every fixture above (templates 900508-900516, challenges
+// 900720-900730, rule 900900), ON CONFLICT (id) DO NOTHING, so a reboot
+// changes nothing.
+async function seedStagingFeedbackGoal(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  const EVENT_SEASON_ID = 900501;
+  try {
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, metric_type, metric_target,
+          metric_label, illustration, created_at, updated_at)
+       VALUES (900517, 'WEEKLY', 'Send useful feedback (staging demo)',
+               'Tell a project what would make it better.', '250 pts',
+               'Weekly feedback fixture for the line above Cancel and Post.', 'count', 4,
+               'Reports sent', 'useful-feedback', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, schedule_start, schedule_end,
+          enabled, display_order, completed, created_at, updated_at)
+       VALUES (900731, $1, 900517, NOW(), NOW() + INTERVAL '45 days',
+               TRUE, 6, FALSE, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_SEASON_ID]
+    );
+    await pool.query(
+      `INSERT INTO challenge_scoring_rules
+         (id, name, measure, challenge_template_id, challenge_id, target,
+          points, enabled, notes, created_at, updated_at)
+       VALUES (900911, 'Staging demo: four useful reports a week',
+               'USEFUL_FEEDBACK', NULL, 900731, 4, 250, TRUE,
+               'Staging demo: backs the weekly line in the Suggest an improvement dialog.',
+               NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    log.info('db', 'Staging weekly feedback goal seeded', { event: EVENT_SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Staging weekly feedback goal seed skipped', { message: err.message });
+  }
+}
+
 // Profile customization fixtures (issue #982).
 //
 // TWO of the three "missing in staging" categories apply here:
@@ -16592,6 +16651,7 @@ module.exports = {
   markChangesWithoutWorkState,
   seedStagingTranslations,
   migrate, seedStagingTopochain, seedStagingFirstChallenges, seedStagingCountedCredit,
+  seedStagingFeedbackGoal,
   seedStagingProfileCustomization,
   seedTermsVersions, TERMS_VERSIONS,
   seedStagingBotChatRequest,

@@ -553,6 +553,18 @@ export function FeedbackDialog() {
         >
           <ControllerText id="dialogs:feedback.queue.retry" />
         </button>
+        {/* #6758: how many more useful reports this week's "Send useful
+            feedback" challenge can still count, or that the goal is met. A
+            note only: Post is never gated on it. Renders EMPTY and hidden
+            for the same hydration reason as #feedback-status: the controller
+            words it on each open from the server's answer, and hides it
+            when there is nothing to say.
+            `mb-5` is load-bearing: `.feedback-actions` is sticky with
+            `bottom: 0` and `margin-bottom: -20px`, so it lifts 20px and
+            paints over the last line before it (#4033). Without the margin
+            this note IS that line, so the pinned row would hide it. */}
+        <p id="feedback-weekly-goal" className="hidden mt-3 mb-5 text-xs text-zinc-500 dark:text-zinc-400">
+        </p>
         {/* #4033: Cancel and Post stay on screen while the form above them
             scrolls (a long description, the kudos row). `.feedback-actions`
             in app.css pins the row to the bottom of the kit modal, which is

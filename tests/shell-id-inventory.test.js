@@ -545,6 +545,7 @@ const ADDED_IDS = {
   'share-homeroom-address': '#4405: the "Also at <homeroom host>" line under Share\'s link, shown only when the link offered is the project\'s custom domain. Ships hidden and empty.',
   // ── #4127: one paperclip for Photo and Video in Send feedback ─────────
   'feedback-queue-retry': '#3994: Try again under Send feedback\'s status line, shown while a message saved on this device has not been sent. It sends the outbox now (FeedbackQueue.retryNow) instead of waiting for reconnect, sign-in or the backoff timer. Shown and worded by ./feedback-controller.',
+  'feedback-weekly-goal': '#6758: the small grey line above Cancel and Post in the Suggest an improvement dialog, saying how many more useful reports this week\'s "Send useful feedback" challenge can still count (or that the goal is met). Ships hidden and empty; shown and worded by ./feedback-controller on each open from GET /challenges-api/me/feedback-goal, and hidden when no rule scores such a challenge or the read fails.',
   'feedback-attach-btn': '#4127: the paperclip in Send feedback\'s attachment row. It opens #feedback-attach-menu, which holds the Photo (#feedback-screenshot-picker-btn) and Video (#feedback-video-btn) rows that were two buttons of their own, so the row fits on one line. dapp.json\'s feedback check selects on it.',
   'feedback-attach-menu': '#4127: the paperclip\'s popover, in the vote popover\'s frame. Opened and closed by ./feedback-controller (outside click, Escape, a choice).',
   'report-modal': '#2721 shared reporting dialog',

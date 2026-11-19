@@ -1567,6 +1567,18 @@
     "text": "Couldn't add the bounty: the bounty could not be placed.",
     "description": "Sentence added to the confirmation after a request was posted but its kudos reward was refused without an explanation."
   },
+  "feedback.weeklyGoal.left_one": {
+    "text": "This week's feedback challenge: {{counted}} of {{target}} counted. {{count}} more useful report can still count.",
+    "description": "Small grey line just above Cancel and Post in the \"Suggest an improvement\" dialog, about this week's \"Send useful feedback\" challenge. {{counted}} is how many of the person's reports were counted this week, {{target}} the most that count in a week, and {{count}} how many more can still count. A report is counted later, once it has been checked as useful, so the line must not promise that the next report counts."
+  },
+  "feedback.weeklyGoal.left_other": {
+    "text": "This week's feedback challenge: {{counted}} of {{target}} counted. {{count}} more useful reports can still count.",
+    "description": "Small grey line just above Cancel and Post in the \"Suggest an improvement\" dialog, about this week's \"Send useful feedback\" challenge. {{counted}} is how many of the person's reports were counted this week, {{target}} the most that count in a week, and {{count}} how many more can still count. A report is counted later, once it has been checked as useful, so the line must not promise that the next report counts."
+  },
+  "feedback.weeklyGoal.met": {
+    "text": "You've met this week's feedback challenge: {{target}} of {{target}} counted. More reports are welcome, but no more count this week.",
+    "description": "Small grey line just above Cancel and Post in the \"Suggest an improvement\" dialog, once the person has reached this week's \"Send useful feedback\" challenge goal. {{target}} is the most reports that count in a week. Sending is still allowed."
+  },
   "feedback.queue.retry": {
     "text": "Try again",
     "description": "Button under the status line of the \"Suggest an improvement\" dialog while a message saved on this device has not been sent: tries to send it now."
