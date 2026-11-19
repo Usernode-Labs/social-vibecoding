@@ -87,6 +87,20 @@ async function threadOf(pool, { userId, conversationId, message }) {
 const designFor = store.artifactFor;
 
 /**
+ * Pure (artifacts, stage 2): whether a thread's artifact is a design, the
+ * one kind that may leave its thread: as a plan (postDesignPlan), or as the
+ * first screen of a new project (homeroom-bot-dm.js designForProject, the
+ * POST /api/apps route). A plain page never does: it is its author's alone.
+ * A row from before kinds were stored is a design.
+ */
+function isDesign(artifact) {
+  return !!artifact && store.kindOf(artifact.artifactKind || 'design').kind === 'design';
+}
+
+// What a design path answers for a thread whose artifact is not a design.
+const NOT_A_DESIGN = Object.freeze({ ok: false, status: 409, error: 'not_a_design' });
+
+/**
  * #6680 (15 Nov 2026): the viewer's own private thread that filed a request,
  * or posted its plan there, by its root message: { rootId } or null. Read for
  * the viewer alone, so nobody else's read can learn a private thread exists
@@ -267,8 +281,14 @@ async function startDesign(pool, config, {
   };
 }
 
-/** Pure: the bot's line a thread it opened to draw a screen starts with. */
-function drawLine({ title = null, appName = null } = {}) {
+/**
+ * Pure: the bot's line a thread it opened to draw a screen starts with, or,
+ * for a plain page (`kind` 'page', artifact-session.js), to write one in.
+ */
+function drawLine({ title = null, appName = null, kind = 'design' } = {}) {
+  if (kind === 'page') {
+    return `I'm writing ${title ? `"${clip(title, 80)}"` : 'the page'} in a new thread. Only you can see it.`;
+  }
   const what = title ? `"${clip(title, 80)}"` : 'the screen';
   return appName
     ? `I'm drawing ${what} for ${clip(appName, 80)} in a new thread. Only you can see it.`
@@ -284,25 +304,27 @@ function drawLine({ title = null, appName = null } = {}) {
  * thread at all. Keyed by the message it answers, so a retry finds the same
  * thread. Resolves the thread (draftingThread's shape) or null.
  */
-async function openDrawThread(pool, { user, app = null, title = null, messageId = null, deps = {} }) {
+async function openDrawThread(pool, { user, app = null, title = null, messageId = null, kind = 'design', deps = {} }) {
   const dm = deps.dm || require('./homeroom-bot-dm');
   if (!user?.id || user.isSynthetic) return null;
   const bot = deps.bot || await dm.botAccount(pool);
   if (!bot) return null;
   const named = clip(title, MAX_TITLE) || null;
   const appName = app ? app.name || app.slug : null;
+  // A plain page is of no project, and its thread is not a design's.
+  const page = kind === 'page';
   const said = await dm.sendDm(pool, {
     bot,
     userId: user.id,
-    content: drawLine({ title: named, appName }),
+    content: drawLine({ title: named, appName, kind }),
     // The thread's first message, its row written with it (sendDm `thread`),
     // quoting what asked for the screen.
     replyToId: id(messageId),
-    thread: { kind: 'ask', appId: app?.id ? Number(app.id) : null },
+    thread: { kind: 'ask', appId: !page && app?.id ? Number(app.id) : null },
     moment: null,
     idempotencyKey: id(messageId) ? `design-draw-${id(messageId)}` : null,
     metadata: {
-      kind: 'opened_thread', changeKind: 'design',
+      kind: 'opened_thread', changeKind: page ? 'any' : 'design',
       ...(named ? { designTitle: named } : {}),
       ...(app ? { appSlug: app.slug, appName } : {}),
     },
@@ -612,6 +634,8 @@ async function postDesignPlan(pool, config, {
   const specs = deps.requestSpecs || require('./request-specs');
   const design = await designFor(pool, { userId: user?.id, rootId });
   if (!design) return { ok: false, status: 404, error: 'No such design' };
+  // A plain page stays in its thread: nothing posts it, whoever asks.
+  if (!isDesign(design)) return { ...NOT_A_DESIGN };
   if (!POSTABLE.has(design.state)) {
     return { ok: false, status: 409, error: 'already_done', state: design.state, number: design.number };
   }
@@ -778,6 +802,7 @@ async function postDesignPlan(pool, config, {
 async function proposeDesign(pool, config, { user, rootId, version = null, title = null, notes = null, deps = {} }) {
   const design = await designFor(pool, { userId: user?.id, rootId });
   if (!design) return { ok: false, status: 404, error: 'No such design' };
+  if (!isDesign(design)) return { ...NOT_A_DESIGN };
   const issueNumber = await planTargetOf(pool, design);
   return postDesignPlan(pool, config, { user, rootId, version, issueNumber, title, notes, deps });
 }
@@ -790,6 +815,7 @@ module.exports = {
   validHtml,
   threadOf,
   designFor,
+  isDesign,
   threadForRequest,
   surfaceFor,
   draftingThread,

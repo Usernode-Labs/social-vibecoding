@@ -141,6 +141,26 @@ test('a project made from a design', { timeout: 180000 }, async (t) => {
     assert.equal(again.status, 409, 'a design makes one project');
   });
 
+  await t.test('artifacts: a plain page is never made into a project, through the same route', async () => {
+    // A new person: the create limiter's bucket is per person.
+    const pia = await person('ad_pia');
+    const store = require('../src/services/artifacts');
+    const page = await dm.sendDm(pool, { bot, userId: pia.id, content: 'Lay my trip budget out as a page.', moment: null, thread: { kind: 'idea' } });
+    const held = await store.ensureArtifact(pool, {
+      user: pia, thread: { rootId: page.messageId, conversationId: page.conversationId }, kind: 'page', title: 'Trip budget', viewport: 'desktop',
+    });
+    await store.addVersion(pool, { threadId: held.threadId, html: '<h1>Trip budget</h1>', author: 'bot', note: 'Flights and hotel' });
+    const { rows: [{ n: before }] } = await pool.query('SELECT COUNT(*)::int AS n FROM apps');
+    const res = await post({ name: 'Trip budget', audience: 'solo', brief: 'Trip budget', design: { rootId: page.messageId, version: 1 } }, pia);
+    assert.deepEqual([res.status, res.data.error], [409, 'not_a_design']);
+    const { rows: [{ n: after }] } = await pool.query('SELECT COUNT(*)::int AS n FROM apps');
+    assert.equal(after, before, 'nothing was made');
+    const { rows: fv } = await pool.query('SELECT 1 FROM homeroom_bot_first_versions WHERE design_thread_id = $1', [held.threadId]);
+    assert.equal(fv.length, 0);
+    const { rows: [thread] } = await pool.query('SELECT app_id, state FROM private_threads WHERE id = $1', [held.threadId]);
+    assert.deepEqual(thread, { app_id: null, state: 'open' }, 'its thread is as it was');
+  });
+
   await t.test('its first version is the design\'s: the brief, a ready plan that asks nothing, the thread', async () => {
     const { rows: [fv] } = await pool.query('SELECT * FROM homeroom_bot_first_versions WHERE app_id = $1', [made.id]);
     assert.equal(Number(fv.design_thread_id), Number(row.id));

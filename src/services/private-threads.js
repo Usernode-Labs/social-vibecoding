@@ -93,7 +93,7 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
   const { rows: [row] } = await pool.query(
     `SELECT p.state, p.result_ref, p.kind, p.title AS own_title, p.title_source,
             a.slug, a.name, t.number AS target_number,
-            d.title AS design_title,
+            d.title AS design_title, d.kind AS artifact_kind,
             (SELECT MAX(v.version) FROM design_versions v WHERE v.private_thread_id = p.id) AS design_version,
             -- #6784: an idea thread a project was made from says so in its head.
             EXISTS (SELECT 1 FROM homeroom_bot_first_versions f WHERE f.idea_thread_id = p.id) AS made,
@@ -136,8 +136,10 @@ async function stateOf(pool, { user, rootId, bot = null, deps = {} }) {
     ...(row.made && app ? { made: true } : {}),
     // B04 (audit 2 Nov 2026): a screen drawn for no project yet, which New
     // project makes the project from (its name, the drawing), never the
-    // generic create screen with the thread's last words.
-    ...(!app && row.design_version != null
+    // generic create screen with the thread's last words. Artifacts: a
+    // design only. A plain page is never made into a project (nothing takes
+    // it out of its thread), so its thread offers no New project for it.
+    ...(!app && row.design_version != null && (row.artifact_kind || 'design') === 'design'
       ? { design: { title: row.design_title || null, version: Number(row.design_version) } } : {}),
   };
 }

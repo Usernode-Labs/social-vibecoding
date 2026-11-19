@@ -444,6 +444,8 @@ async function migrate(config) {
   await moveMainChatToThreads(pool);
   await moveOldChatsToThreads(pool);
   await backfillPlanRows(pool);
+  // Artifacts, stage 0: a plan an older build posted during a rollout names its design.
+  await require('../services/plan-design-source').backfill(pool);
   await backfillFiledDraftCards(pool);
   await revokeLegacyGithubGrants(pool, config);
   await failOrphanedHeadlessRuns(pool);

@@ -33,8 +33,9 @@
  * (allow-same-origin), only so this side could measure it and read what was
  * tapped. Homeroom's own helper inside the frame says both now
  * (../artifact/frame-doc.ts: `size`, with the boxes of its links and
- * summaries), let run by a nonce made new for each frame; the fragment has
- * no script of its own left to run. Its font is written into the document
+ * summaries), let run by a nonce made new for each frame: the one frame's
+ * `helper` mode (../artifact/policy.ts), never its static one. The fragment
+ * has no script of its own left to run. Its font is written into the document
  * as data, since a frame with an origin of its own cannot fetch this
  * site's.
  *
@@ -438,10 +439,9 @@ export function BotHtmlReply({ html, fallback, className = '', onSized }: {
       {doc ? (
         <ArtifactFrame
           frameRef={frame}
-          mode="static"
+          mode="helper"
           html={doc}
           site={false}
-          helper
           title={t('messages:row.botHtml.frameTitle')}
           className={measured ? 'block w-full border-0 bg-transparent' : 'pointer-events-none absolute inset-x-0 top-0 block w-full border-0 bg-transparent opacity-0'}
           style={{ height: measured ? height : 1, pointerEvents: 'none', colorScheme: scheme }}

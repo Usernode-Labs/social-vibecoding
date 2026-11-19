@@ -3783,6 +3783,26 @@
     "text": "The design couldn't be drawn just now.",
     "description": "Shown in the design pane when the design or a version of it could not be read."
   },
+  "design.pane.labelPage": {
+    "text": "Page preview",
+    "description": "Accessible name of the pane beside a private thread with Homeroom bot that shows a page the bot wrote there (a self-contained page such as a table or a checklist, not a screen design)."
+  },
+  "design.pane.labelOpening": {
+    "text": "Preview",
+    "description": "Accessible name of the preview beside a private thread with Homeroom bot before it is known what it shows (a screen design or a page the bot wrote), and of the column that holds it."
+  },
+  "design.pane.opening": {
+    "text": "Opening the preview…",
+    "description": "Shown in the preview beside a private thread with Homeroom bot, and on the small picture in the thread, while what it shows is loading and before it is known whether it is a screen design or a page."
+  },
+  "design.pane.failedPage": {
+    "text": "The page couldn't be opened just now.",
+    "description": "Shown in the preview of a page Homeroom bot wrote in a private thread when the page or a version of it could not be read."
+  },
+  "design.pane.openFailed": {
+    "text": "The preview couldn't be opened just now.",
+    "description": "Shown in the preview beside a private thread with Homeroom bot when nothing could be read, before it is known whether it shows a screen design or a page."
+  },
   "design.pane.pickVersion": {
     "text": "Version shown",
     "description": "Screen-reader label of the picker that chooses which version of the design the preview draws."
@@ -3839,6 +3859,10 @@
     "text": "Version {{version}} of the design",
     "description": "Accessible title of the frame that draws one version of the design."
   },
+  "design.pane.frameTitlePage": {
+    "text": "Version {{version}} of the page",
+    "description": "Accessible title of the frame in the preview that draws one version of a page Homeroom bot wrote in a private thread. {{version}} is the version's number."
+  },
   "design.pane.showChat": {
     "text": "Chat",
     "description": "On a phone: switches from the design's preview to its thread."
@@ -3886,6 +3910,10 @@
   "design.card.frameTitle": {
     "text": "Version {{version}} of the design, small",
     "description": "Title of the frame that draws a design's version small in a private thread with Homeroom bot (read by assistive technology). {{version}} is the version's number."
+  },
+  "design.card.frameTitlePage": {
+    "text": "Version {{version}} of the page, small",
+    "description": "Title of the frame that draws a version of a page Homeroom bot wrote small in a private thread (read by assistive technology). {{version}} is the version's number."
   },
   "design.card.failed": {
     "text": "This version couldn't be drawn just now.",

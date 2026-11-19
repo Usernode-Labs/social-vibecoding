@@ -1,7 +1,13 @@
 /**
  * Artifacts (docs/plans/artifacts.md): THE frame every page the bot writes
- * is drawn in. One component, two modes (./policy.ts), and the rule about
+ * is drawn in. One component, three modes (./policy.ts), and the rule about
  * who sees a page running:
+ *
+ *   run     the page's own scripts run (for its author: the viewer rule)
+ *   static  nothing runs
+ *   helper  nothing of the page's runs; Homeroom's helper alone does, by a
+ *           nonce made new for the frame, so the chat learns the page's size
+ *           and where its links are (a laid-out answer, bot-html.tsx)
  *
  * ── The viewer rule ───────────────────────────────────────────────────
  *
@@ -26,7 +32,7 @@
  *   html   the page (a design's version, any artifact): this builds the
  *          frame's document (./frame-doc.ts artifactFrameDoc)
  *   doc    a whole document already under the static policy (a plan's
- *          screen, lib/spec-html.ts; a laid-out answer, bot-html.tsx)
+ *          screen, lib/spec-html.ts)
  *   src    a document a route serves under the same policy as a header (a
  *          first look's drawn screen)
  *
@@ -49,6 +55,9 @@ export type Viewer = 'author' | 'other';
  * viewer who chose to run it.
  */
 export function frameModeFor({ mode, viewer = 'other', chose = false }: { mode: FrameMode; viewer?: Viewer; chose?: boolean }): FrameMode {
+  // The helper mode runs nothing of the page's, only Homeroom's own helper:
+  // the same for whoever looks.
+  if (mode === 'helper') return 'helper';
   if (mode !== 'run') return 'static';
   return viewer === 'author' || chose ? 'run' : 'static';
 }
@@ -68,9 +77,7 @@ export interface ArtifactFrameProps {
   /** Whether the page draws with this site's stylesheets, pictures and fonts. */
   site?: boolean;
   sheets?: readonly string[];
-  /** A static page that must tell the shell its size or its taps (frame-doc.ts, the helper). */
-  helper?: boolean;
-  /** The helper's nonce; made here when left out. */
+  /** The helper mode's nonce (frame-doc.ts, the helper); made here, new for the frame, when left out. */
   nonce?: string;
   /** Nothing in it can be tapped or focused: a picture of the page. */
   inert?: boolean;
@@ -90,7 +97,7 @@ const RUN_BUTTON = 'inline-flex h-9 items-center rounded-full bg-zinc-900 px-3 t
 
 /** The one frame. See the head of this file. */
 export function ArtifactFrame({
-  mode, viewer = 'other', author = null, html, doc, src, title, origin, site = true, sheets, helper, nonce,
+  mode, viewer = 'other', author = null, html, doc, src, title, origin, site = true, sheets, nonce,
   inert = false, pictured = false, lazy = false, scrolling, className, style, frameRef, onLoad, tabIndex, ariaHidden,
 }: ArtifactFrameProps): ReactNode {
   const t = useMessages('core');
@@ -98,20 +105,19 @@ export function ArtifactFrame({
   // A prebuilt document or a served one is static, whatever was asked.
   const asked: FrameMode = html == null ? 'static' : mode;
   const drawn = frameModeFor({ mode: asked, viewer, chose });
-  const made = useMemo(() => nonce || (helper && drawn === 'static' ? frameNonce() : ''), [nonce, helper, drawn]);
+  const made = useMemo(() => nonce || (drawn === 'helper' ? frameNonce() : ''), [nonce, drawn]);
   const site_ = origin || (typeof window !== 'undefined' ? window.location.origin : '');
   const srcDoc = useMemo(() => {
     if (src) return undefined;
     if (html == null) return doc;
-    return artifactFrameDoc(html, { mode: drawn, origin: site_, site, sheets, helper, nonce: made || null });
-  }, [src, html, doc, drawn, site_, site, sheets, helper, made]);
-  const helped = drawn === 'static' && !!helper && (html == null || !!made);
+    return artifactFrameDoc(html, { mode: drawn, origin: site_, site, sheets, nonce: made || null });
+  }, [src, html, doc, drawn, site_, site, sheets, made]);
   const frame = (
     <iframe
       ref={frameRef}
       {...(src ? { src } : {})}
       title={title}
-      sandbox={sandboxFor(drawn, { helper: helped })}
+      sandbox={sandboxFor(drawn)}
       referrerPolicy="no-referrer"
       {...(src ? {} : { srcDoc })}
       {...(lazy ? { loading: 'lazy' as const } : {})}

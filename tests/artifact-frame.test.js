@@ -91,12 +91,14 @@ test('a static page: everything of its own that would run is taken out, and no h
   const doc = docs.artifactFrameDoc(VERSION, { mode: 'static', origin: SITE });
   assert.ok(doc.includes(`content="${policy.cspFor('static', { site: SITE })}"`));
   assert.doesNotMatch(doc, /<script/i, 'nothing runs: not the page\'s, not the helper');
-  assert.doesNotMatch(docs.artifactFrameDoc(VERSION, { mode: 'static', origin: SITE, helper: true }), /<script/i, 'a helper with no nonce is no helper');
-  // With a nonce: Homeroom's helper, and only it.
-  const helped = docs.artifactFrameDoc(VERSION, { mode: 'static', origin: SITE, site: false, helper: true, nonce: 'f00d' });
-  assert.ok(helped.includes(`content="${policy.cspFor('static', { nonce: 'f00d' })}"`));
+  assert.doesNotMatch(docs.artifactFrameDoc(VERSION, { mode: 'static', origin: SITE, nonce: 'f00d' }), /<script/i, 'a static page never takes the helper, nonce or not');
+  // The helper mode: the page cleaned as a static one, and Homeroom's helper alone, by its nonce.
+  assert.doesNotMatch(docs.artifactFrameDoc(VERSION, { mode: 'helper', origin: SITE }), /<script/i, 'a helper with no nonce is no helper');
+  const helped = docs.artifactFrameDoc(VERSION, { mode: 'helper', origin: SITE, site: false, nonce: 'f00d' });
+  assert.ok(helped.includes(`content="${policy.cspFor('helper', { nonce: 'f00d' })}"`));
   assert.equal((helped.match(/<script\b/g) || []).length, 1);
   assert.match(helped, /<script nonce="f00d">\(function\(F\)\{[\s\S]*\}\)\(1\);<\/script>/);
+  assert.doesNotMatch(helped, /onload=|onclick=|javascript:|function openMenu/, 'nothing of the page\'s own');
   assert.match(docs.frameNonce(), /^[0-9a-f]{32}$/);
   assert.notEqual(docs.frameNonce(), docs.frameNonce(), 'new for every frame');
 });
@@ -129,6 +131,8 @@ test('the viewer rule: a page runs for its author; anyone else gets the static v
   assert.equal(frameModeFor({ mode: 'run' }), 'static', 'a caller that does not say who is looking gets the safe side');
   assert.equal(frameModeFor({ mode: 'run', viewer: 'other', chose: true }), 'run', 'their own choice');
   assert.equal(frameModeFor({ mode: 'static', viewer: 'author', chose: true }), 'static', 'a static page never runs');
+  // The helper mode runs nothing of the page's, for anyone: Homeroom's helper alone.
+  for (const viewer of ['author', 'other']) assert.equal(frameModeFor({ mode: 'helper', viewer }), 'helper', viewer);
 
   const author = frameOf(renderToHtml(createElement(ArtifactFrame, { mode: 'run', viewer: 'author', html: VERSION, title: 'Version 2', origin: SITE })));
   assert.equal(author.attr('sandbox'), 'allow-scripts');
@@ -218,18 +222,25 @@ test('a plan\'s screens are drawn in the one frame, static, wherever a plan is s
   assert.match(side.attr('srcDoc'), /<main>Plant list<\/main>/);
 });
 
-test('a laid-out answer is drawn in the one frame, static, with the helper and no origin', () => {
+test('a laid-out answer is drawn in the one frame, in the helper mode, with no origin', () => {
   const src = code('frontend/src/features/messages/bot-html.tsx');
-  assert.match(src, /<ArtifactFrame\s+frameRef=\{frame\}\s+mode="static"\s+html=\{doc\}\s+site=\{false\}\s+helper/);
+  assert.match(src, /<ArtifactFrame\s+frameRef=\{frame\}\s+mode="helper"\s+html=\{doc\}\s+site=\{false\}/);
   const reply = loadTsx('frontend/src/features/messages/bot-html.tsx');
   const look = { vars: Object.fromEntries(reply.REPLY_TOKENS.map(([name, , fallback]) => [name, fallback])), dark: false, font: 'system-ui, sans-serif', size: '17px' };
   // A stored reply's fragment, cleaned (a page with DOMPurify does that), then framed.
   const page = reply.replyFrameDoc('<h3>Two ways</h3><ol><li>Keep it</li><li>Group it</li></ol><p><a href="https://example.com/rooms" target="_blank" rel="noopener noreferrer">Rooms</a></p>', look);
-  const frame = frameOf(renderToHtml(createElement(ArtifactFrame, { mode: 'static', html: page, site: false, helper: true, nonce: 'abc123', title: 'Homeroom bot\'s answer, laid out', origin: SITE })));
-  assert.equal(frame.attr('sandbox'), 'allow-scripts', 'scripts on for Homeroom\'s helper alone');
-  assert.equal(frame.attr('data-artifact-frame'), 'static');
+  const frame = frameOf(renderToHtml(createElement(ArtifactFrame, { mode: 'helper', html: page, site: false, nonce: 'abc123', title: 'Homeroom bot\'s answer, laid out', origin: SITE })));
+  assert.equal(frame.attr('sandbox'), policy.sandboxFor('helper'), 'scripts on for Homeroom\'s helper alone');
+  assert.equal(frame.attr('data-artifact-frame'), 'helper', 'its own mode, never called static');
   const doc = frame.attr('srcDoc');
-  assert.ok(doc.includes(`content="${policy.cspFor('static', { nonce: 'abc123' })}"`));
+  assert.ok(doc.includes(`content="${policy.cspFor('helper', { nonce: 'abc123' })}"`));
+  // Made here, new for the frame, when the caller gives none.
+  const own = frameOf(renderToHtml(createElement(ArtifactFrame, { mode: 'helper', html: page, site: false, title: 'x', origin: SITE })));
+  assert.match(own.attr('srcDoc'), /script-src 'nonce-[0-9a-f]{32}'/);
+  // A static frame stays static: sandbox "", no script at all.
+  const plain = frameOf(renderToHtml(createElement(ArtifactFrame, { mode: 'static', html: page, site: false, nonce: 'abc123', title: 'x', origin: SITE })));
+  assert.equal(plain.attr('sandbox'), '');
+  assert.doesNotMatch(plain.attr('srcDoc'), /<script/);
   assert.doesNotMatch(doc.replace(/<script nonce="abc123">[\s\S]*?<\/script>/, ''), /<script|https:\/\/homeroom\.test/, 'no other script, and no origin named');
   assert.match(doc, /<div class="reply" dir="auto"><h3>Two ways<\/h3>/);
   // What the helper says is read defensively, and a press is looked up in it.

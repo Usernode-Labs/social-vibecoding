@@ -29,6 +29,7 @@ import { inlinePictures } from '../../design/pictures';
 import { openPreview } from '../../ai/preview';
 import type { DesignThread } from '../api';
 import { readDesign, readVersion } from '../design-card';
+import { paneWordIds, requestable } from '../artifact-kind';
 import { ProposeCard } from '../design-pane';
 import { decideCard, sayAsMe, type BotCardProps } from './index';
 
@@ -41,7 +42,6 @@ const SCREENS = { phone: { width: 390, height: 844 }, desktop: { width: 1280, he
 // Each picture's width on the card, and the most it may be tall.
 const BOX_W = { phone: 140, desktop: 240 } as const;
 const MAX_H = 240;
-const POSTABLE = ['open', 'posted', 'filed'];
 
 /** Pure: an item's key as the card stores it, or null. */
 export function compareKeyOf(value: unknown): CompareKey | null {
@@ -139,7 +139,8 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
       setBusy(false);
     }
   };
-  const postable = !!design?.app && POSTABLE.includes(design.state);
+  // Artifacts: only a design is requested as a plan (../artifact-kind.ts requestable).
+  const postable = requestable(design);
   const pickedVersion = typeof picked === 'number' ? picked : null;
   const box = compareBox(design, shown);
 
@@ -184,6 +185,7 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
                     viewer="author"
                     html={doc}
                     sheets={sheets}
+                    site={design.kind !== 'page'}
                     inert
                     title={t('messages:botCards.compare.frameTitle', { label })}
                     style={{
@@ -193,7 +195,7 @@ export function CompareCard({ message, conversationId, card }: BotCardProps): Re
                   />
                 ) : (
                   <span className="absolute inset-0 flex items-center justify-center p-2 text-center text-[12px] text-zinc-500">
-                    {failed ? t('messages:design.card.failed') : t('messages:design.pane.loading')}
+                    {failed ? t('messages:design.card.failed') : t(paneWordIds(design?.kind).loading)}
                   </span>
                 )}
                 <button

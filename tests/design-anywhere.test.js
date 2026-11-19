@@ -315,7 +315,8 @@ test('the preview: its own column beside the thread, three where they fit, halve
   // #6230: the preview is one kind of the detail column, drawn by
   // ../detail/detail-pane.tsx; the page still sets data-ai-preview for it.
   assert.match(ai, /data-ai-preview=\{detailHere \? layout : undefined\}/);
-  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.label'\)\}\n\s+>/);
+  // Artifacts: the column is named for what any preview is (a design, a page, a plan), not for a design.
+  assert.match(ai, /<aside\n\s+ref=\{previewRef\}\n\s+id="ai-preview-pane"\n\s+className="ai-preview-pane"\n\s+data-ai-preview-pane=\{layout\}\n\s+aria-label=\{detail\.kind === 'draft' \? t\('messages:draft\.pane\.label'\) : t\('messages:design\.pane\.labelOpening'\)\}\n\s+>/);
   assert.match(ai, /probe=\{previewProbe\}\n\s+\/>\n\s+\)\}\n\s+<DetailPane layout=\{layout\} \/>/);
   assert.match(read('frontend/src/features/detail/detail-pane.tsx'),
     /onClose=\{closeDetail\}\n\s+closeAs=\{layout === 'full' \? 'back' : 'close'\}/);
@@ -342,7 +343,7 @@ test('the pane as the tab\'s column: × beside the thread, a back arrow where it
   assert.match(side, new RegExp(`aria-label="${message('messages:design.pane.close')}"[^>]*data-design-close="close"`));
   assert.doesNotMatch(side, /messages-design-view-switch/);
   const phone = renderToHtml(createElement(DesignPane, { conversationId: 4, rootId: 9, view: 'preview', onView: () => {}, onClose: () => {}, closeAs: 'back' }));
-  assert.ok(phone.indexOf('data-design-close="back"') < phone.indexOf(message('messages:design.pane.loading')), 'the arrow leads its head');
+  assert.ok(phone.indexOf('data-design-close="back"') < phone.indexOf(message('messages:design.pane.opening')), 'the arrow leads its head');
   const messages = renderToHtml(createElement(DesignPane, { conversationId: 4, rootId: 9, view: 'preview', onView: () => {} }));
   assert.doesNotMatch(messages, /data-design-close/);
   assert.match(messages, /messages-design-view-switch/);

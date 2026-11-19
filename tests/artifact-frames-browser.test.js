@@ -12,12 +12,16 @@
 //                         refused, a pinned comment's click is answered
 //   the same page, for    static until they choose: nothing of the page's
 //   anyone else           runs; Run it draws it running in a plain box
-//   a laid-out answer     static with Homeroom's helper: measured by a
-//                         message, a link opens in the same tick as the
-//                         press, a summary toggles, no script of its own
+//   a laid-out answer     the helper mode (Homeroom's helper alone runs, by
+//                         its nonce): measured by a message, a link opens in
+//                         the same tick as the press, a summary toggles, no
+//                         script of its own
 //   a plan's screens      static: sandbox "", nothing runs
 //   a first look's        static, from a route under the same policy as a
 //   drawn screen          header
+//   a plain page          run, for its author, on its version card and in
+//                         its pane: named a page, loading nothing from any
+//                         address (not even this site), never a plan
 //
 // Skipped (with the reason) where Chromium cannot launch.
 //
@@ -33,6 +37,23 @@ const path = require('node:path');
 const ROOT = path.join(__dirname, '..');
 const FRONTEND = path.join(ROOT, 'frontend');
 const policy = require('../src/services/artifact-policy');
+const { message } = require('./lib/platform-i18n');
+
+// A plain page the bot wrote (artifact-session.js), as its version is
+// stored: self-contained, with a script that adds up. It also tries to load
+// a picture from this very site, which a page may not (it names no origin).
+const PAGE = `<!doctype html><html><head><style>td{padding:4px}</style></head><body>
+<h1>Trip budget</h1><table><tr><td>Flights</td><td class="n">420</td></tr><tr><td>Hotel</td><td class="n">610</td></tr></table>
+<p id="sum"></p><img src="/leak?from=page" alt="">
+<script>var t = 0; document.querySelectorAll('.n').forEach(function (n) { t += Number(n.textContent); });
+document.getElementById('sum').textContent = 'Total: ' + t; parent.postMessage({ ran: 'page', total: t }, '*');</script>
+</body></html>`;
+// The thread that holds it, as GET /api/conversations/homeroom-bot/designs/:rootId answers.
+const PAGE_THREAD = {
+  rootId: 9, conversationId: 4, state: 'open', number: null, kind: 'idea', about: null, app: { slug: 'ear', name: 'Ear Trainer' },
+  artifactKind: 'page', place: 'thread', title: 'Trip budget', surface: 'new', route: null, viewport: 'desktop', width: 1280,
+  height: 800, latest: 1, versions: [{ version: 1, author: 'bot', note: 'Flights and hotel', messageId: 31 }], planOn: null,
+};
 
 // A design's version as design-bot.js saves it: a whole document, one of the
 // project's stylesheets written in, and a script for an interactive state.
@@ -63,7 +84,7 @@ const REPLY = `<style>.opt{border:1px solid var(--line);padding:8px}</style>
 <img src="x" onerror="parent.postMessage({ ran: 'reply' }, '*')">
 <script>parent.postMessage({ ran: 'reply' }, '*')</script>`;
 
-function bundle() {
+async function bundle() {
   const esbuild = require(require.resolve('esbuild', { paths: [FRONTEND] }));
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'artifact-frames-'));
   const entry = path.join(dir, 'entry.tsx');
@@ -74,6 +95,8 @@ function bundle() {
     import { BotHtmlReply } from ${from('features/messages/bot-html.tsx')};
     import { PlanCrops } from ${from('features/messages/plan-crops.tsx')};
     import { DrawnLook } from ${from('features/first-session/drawn-look.tsx')};
+    import { DesignVersionCard } from ${from('features/messages/design-card.tsx')};
+    import { DesignPane } from ${from('features/messages/design-pane.tsx')};
     const roots: Record<string, any> = {};
     const rootOf = (id: string) => (roots[id] ||= createRoot(document.getElementById(id)!));
     const w = window as any;
@@ -95,11 +118,25 @@ function bundle() {
       <ArtifactFrame mode="static" html={html} title="Static" style={{ width: 390, height: 120, border: 0 }} />,
     );
     w.drawPlan = (html: string) => rootOf('plan').render(<PlanCrops html={html} />);
+    w.drawPageCard = () => rootOf('page-card').render(<DesignVersionCard conversationId={4} rootId={9} version={1} title="Trip budget" />);
+    w.drawPagePane = () => rootOf('page-pane').render(<DesignPane conversationId={4} rootId={9} view="preview" onView={() => {}} />);
     w.drawLook = (src: string) => rootOf('look').render(
       <div style={{ position: 'relative', width: 125, height: 270 }}><DrawnLook src={src} label="The first look" width={125} onLoad={() => { w.lookLoaded = true; }} /></div>,
     );
   `);
-  const result = esbuild.buildSync({
+  // The pane's thread store is the whole Messages screen's; the pane reads
+  // only the thread's replies from it, and there are none here.
+  const store = path.join(dir, 'store-stub.ts');
+  fs.writeFileSync(store, 'export const loadReplyThread = () => Promise.resolve();\n'
+    + 'export const useMessagesSnapshot = () => ({ thread: null });\n');
+  const stubStore = {
+    name: 'stub-store',
+    setup(b) {
+      b.onResolve({ filter: /^\.\/store$/ }, (args) => (args.importer.endsWith('design-pane.tsx') ? { path: store } : undefined));
+    },
+  };
+  const result = await esbuild.build({
+    plugins: [stubStore],
     entryPoints: [entry], bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2020',
     jsx: 'automatic', alias: { '@': path.join(FRONTEND, '@') }, nodePaths: [path.join(FRONTEND, 'node_modules')],
     define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'silent', loader: { '.json': 'json' },
@@ -134,7 +171,7 @@ function storedPlan() {
 test('every page the bot writes is drawn in the one frame: what runs, what gets out, and what the chat still knows', async (t) => {
   const { browser, skip } = await launch();
   if (skip) { t.skip(skip); return; }
-  const code = bundle();
+  const code = await bundle();
   const purify = fs.readFileSync(path.join(ROOT, 'public/vendor/purify-3.4.17.min.js'));
   const requests = [];
   const missing = [];
@@ -148,6 +185,7 @@ test('every page the bot writes is drawn in the one frame: what runs, what gets 
           <div id="design-author"></div><div id="design-other"></div>
           <div id="reply" style="width:420px"></div><div id="static"></div>
           <div id="plan" style="width:420px"></div><div id="look"></div>
+          <div id="page-card"></div><div id="page-pane" style="width:700px"></div>
           <script src="/purify.js"></script><script>${code.replace(/<\/script/gi, '<\\/script')}</script>
         </body></html>`);
       return;
@@ -156,6 +194,12 @@ test('every page the bot writes is drawn in the one frame: what runs, what gets 
     if (url === '/favicon.ico') { res.statusCode = 204; res.end(); return; }
     // The language runtime asks what is translated; English needs nothing.
     if (url === '/api/languages') { res.setHeader('Content-Type', 'application/json'); res.end('{"languages":[]}'); return; }
+    if (url === '/api/conversations/homeroom-bot/designs/9') {
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(PAGE_THREAD)); return;
+    }
+    if (url === '/api/conversations/homeroom-bot/designs/9/versions/1') {
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ version: 1, html: PAGE })); return;
+    }
     if (url === '/drawn') {
       // routes/apps.js GET /api/apps/:slug/first-version/first-look/drawn.
       res.setHeader('Content-Type', 'text/html');
@@ -235,7 +279,8 @@ test('every page the bot writes is drawn in the one frame: what runs, what gets 
       await page.waitForSelector('#reply [data-bot-html="drawn"]', { timeout: 10000 });
       const frame = page.locator('#reply iframe');
       const sandbox = await frame.getAttribute('sandbox');
-      assert.equal(sandbox, policy.sandboxFor('static', { helper: true }));
+      assert.equal(sandbox, policy.sandboxFor('helper'));
+      assert.equal(await frame.getAttribute('data-artifact-frame'), 'helper', 'the helper mode, its own, never the static one');
       assert.doesNotMatch(sandbox, /allow-same-origin/);
       assert.equal(await page.locator('#words').count(), 0, 'the words give way once the frame has its size');
       const reachable = await frame.evaluate((el) => { try { return !!el.contentDocument; } catch { return false; } });
@@ -300,10 +345,41 @@ test('every page the bot writes is drawn in the one frame: what runs, what gets 
       assert.deepEqual(await said({ ran: 'look' }), []);
     });
 
+    await t.test('a plain page runs for its author on its card and in its pane, named a page, loading nothing, never a plan', async () => {
+      await page.evaluate(() => { window.said.length = 0; });
+      await page.evaluate(() => window.drawPageCard());
+      const card = page.locator('#page-card iframe');
+      await card.waitFor({ timeout: 10000 });
+      assert.equal(await card.getAttribute('sandbox'), 'allow-scripts', 'running, for its author');
+      assert.equal(await card.getAttribute('title'), message('messages:design.card.frameTitlePage', { version: 1 }));
+      const cardCsp = /Content-Security-Policy" content="([^"]+)"/.exec(await card.getAttribute('srcdoc'))[1];
+      assert.equal(cardCsp, policy.cspFor('run'), 'a page names no origin: not even this site\'s');
+      await waitSaid({ ran: 'page' });
+      assert.equal((await said({ ran: 'page' }))[0].total, 1030, 'its own script ran');
+
+      await page.evaluate(() => window.drawPagePane());
+      const pane = page.locator('#page-pane section[data-design-pane="9"]');
+      await page.waitForSelector('#page-pane iframe', { timeout: 10000 });
+      assert.equal(await pane.getAttribute('aria-label'), message('messages:design.pane.labelPage'));
+      assert.notEqual(message('messages:design.pane.labelPage'), message('messages:design.pane.label'));
+      const frame = page.locator('#page-pane iframe');
+      assert.equal(await frame.getAttribute('title'), message('messages:design.pane.frameTitlePage', { version: 1 }));
+      assert.equal(await frame.getAttribute('sandbox'), 'allow-scripts');
+      const csp = /Content-Security-Policy" content="([^"]+)"/.exec(await frame.getAttribute('srcdoc'))[1];
+      assert.equal(csp, policy.cspFor('run'));
+      assert.equal(await page.locator('#page-pane [data-design-propose]').count(), 0, 'no Request it, though its thread is in a project');
+      assert.equal(await page.locator('#page-pane [data-design-comment]').count(), 1, 'pins work on any artifact');
+      const text = await pane.textContent();
+      assert.doesNotMatch(text, /design/i, 'never called a design');
+      await page.waitForTimeout(300);
+      assert.equal(requests.some((url) => url.startsWith('/leak?from=page')), false, 'the page\'s picture by address never loaded');
+    });
+
     // What the frames were refused is what this suite asked them to try:
     // the design's fetch, and the served look's script (its route's header
     // refuses it; a real one is cleaned of scripts before it is stored).
-    const unexpected = errors.filter((text) => !/\/leak\?from=design|Refused to connect|Connecting to|violates the following Content Security Policy directive: "connect-src|Blocked script execution in '[^']*\/drawn'|\/drawn/.test(text));
+    // And a page's picture by address, which its policy refuses.
+    const unexpected = errors.filter((text) => !/\/leak\?from=design|Refused to connect|Connecting to|violates the following Content Security Policy directive: "connect-src|Blocked script execution in '[^']*\/drawn'|\/drawn|\/leak\?from=page|directive: "img-src/.test(text));
     assert.deepEqual(unexpected, [], `no other error on the page that holds the frames (not found: ${missing.join(', ')})`);
   } finally {
     await page.close();

@@ -57,8 +57,6 @@ const READ_UNTIL = DESIGN_LIMITS.readUntilRound;
 // scripts left out, at most this long (a read_source answer's size).
 const ENTRY_BODY_CHARS = 12_000;
 const MAX_EDITS = DESIGN_LIMITS.editsPerCall;
-const MAX_FIND_CHARS = 4000;
-const MAX_REPLACE_CHARS = 40_000;
 // An edit's pairs and its words fit in this: room for a reasoning model's
 // thinking and the edit after it (the transport's own ceiling). #6358: a
 // draw still cut off at it is asked again with twice it, and a step may take
@@ -1294,26 +1292,9 @@ function withPictures(history, ids, pictures, { seen = false, described = new Ma
 
 // ── Edits ────────────────────────────────────────────────────────────────
 
-/**
- * Pure: `html` with each edit applied in order, or { error } naming the first
- * that does not apply (its find missing, or found more than once).
- */
-function applyEdits(html, edits) {
-  if (!Array.isArray(edits) || !edits.length) return { error: 'Give at least one edit.' };
-  if (edits.length > MAX_EDITS) return { error: `At most ${MAX_EDITS} edits in one call.` };
-  let out = String(html);
-  for (let i = 0; i < edits.length; i += 1) {
-    const find = typeof edits[i]?.find === 'string' ? edits[i].find : '';
-    const replace = typeof edits[i]?.replace === 'string' ? edits[i].replace : null;
-    if (!find || replace == null) return { error: `Edit ${i + 1} needs both find and replace.` };
-    if (find.length > MAX_FIND_CHARS || replace.length > MAX_REPLACE_CHARS) return { error: `Edit ${i + 1} is too long.` };
-    const at = out.indexOf(find);
-    if (at < 0) return { error: `Edit ${i + 1}: its find is not in the HTML. Copy it exactly from the current version.` };
-    if (out.indexOf(find, at + 1) >= 0) return { error: `Edit ${i + 1}: its find occurs more than once. Make it longer.` };
-    out = out.slice(0, at) + replace + out.slice(at + find.length);
-  }
-  return { html: out };
-}
+// Artifacts, stage 2: the one way every kind of artifact is edited
+// (artifact-session.js applyEdits), with the design kind's own limit.
+const applyEdits = (html, edits) => require('./artifact-session').applyEdits(html, edits, { max: MAX_EDITS });
 
 /** Pure: write_screen's arguments, checked: { title, size, html, note } or { error }. */
 function screenArgs(args) {
@@ -1446,23 +1427,24 @@ const UNREAD_TEXT = 'I couldn\'t read this design\'s newest version just now. As
  * (design-threads.js openDrawThread), where the bot's typing and its working
  * card move. Resolves { room, opened } or null when no thread could be had.
  */
-async function roomFor(pool, { bot, user, message, app = null, title = null, deps = {} }) {
+async function roomFor(pool, { bot, user, message, app = null, title = null, kind = 'design', deps = {} }) {
   const threads = deps.designThreads || require('./design-threads');
+  const page = kind === 'page';
   const inThread = deps.threadRootId && !deps.threadRequest
     ? await threads.draftingThread(pool, { userId: user.id, botId: bot.id, rootId: deps.threadRootId })
     : null;
   const room = inThread || await threads.openDrawThread(pool, {
-    user, app, title, messageId: message.id, deps: { ...deps, bot },
+    user, app, title, messageId: message.id, kind, deps: { ...deps, bot },
   });
   if (!room) return null;
   if (!inThread) {
     // Task 2148: the thread opened for it stays, whatever a Stop then ends.
-    await deps.stop?.add?.({ did: 'opened a thread for the screen', stays: 'it stays open' });
+    await deps.stop?.add?.({ did: page ? 'opened a thread for the page' : 'opened a thread for the screen', stays: 'it stays open' });
     // Best-effort: a card left behind costs no drawing.
     if (typeof deps.moveTyping === 'function') {
       try {
         await deps.moveTyping(room.rootId);
-        if (typeof deps.doing === 'function') await deps.doing({ kind: 'drawing' });
+        if (typeof deps.doing === 'function') await deps.doing({ kind: page ? 'writing' : 'drawing' });
       } catch (err) {
         log.warn('design-bot', 'Could not move the bot\'s typing to the new thread', { err: clip(err?.message, 200) });
       }

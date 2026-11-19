@@ -33,6 +33,7 @@ import { inlinePictures } from '../design/pictures';
 import { openPreview } from '../ai/preview';
 import * as api from './api';
 import type { DesignThread } from './api';
+import { paneWordIds } from './artifact-kind';
 
 // The card's picture: a phone screen 180px wide, a desktop one 320px, at
 // most 260px tall (the top of the screen, where its point usually is).
@@ -89,7 +90,7 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
 }): ReactNode {
   const t = useMessages('messages');
   const [design, setDesign] = useState<DesignThread | null>(null);
-  const [doc, setDoc] = useState<{ html: string; sheets: string[] } | null>(null);
+  const [doc, setDoc] = useState<{ html: string; sheets: string[]; site: boolean } | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -100,7 +101,7 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
       // P8: the pictures it names, written in (../design/pictures.ts).
       return readVersion(rootId, version).then((v) => inlinePictures(v.html)).then((html) => {
         if (!live) return;
-        setDoc({ html, sheets: found.surface === 'platform' ? currentSheets() : [] });
+        setDoc({ html, sheets: found.surface === 'platform' ? currentSheets() : [], site: found.kind !== 'page' });
       });
     }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
@@ -121,9 +122,10 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
             viewer="author"
             html={doc.html}
             sheets={doc.sheets}
+            site={doc.site}
             pictured
             inert
-            title={t('messages:design.card.frameTitle', { version })}
+            title={design.kind === 'page' ? t('messages:design.card.frameTitlePage', { version }) : t('messages:design.card.frameTitle', { version })}
             style={{
               width: design.width, height: design.height, transform: `scale(${box.scale})`, transformOrigin: '0 0',
               border: 0, background: '#fff',
@@ -131,7 +133,7 @@ export function DesignVersionCard({ conversationId, rootId, version, title = nul
           />
         ) : (
           <span className="absolute inset-0 flex items-center justify-center p-3 text-center text-[12px] text-zinc-500">
-            {failed ? t('messages:design.card.failed') : t('messages:design.pane.loading')}
+            {failed ? t('messages:design.card.failed') : t(paneWordIds(design?.kind).loading)}
           </span>
         )}
         <button

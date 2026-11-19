@@ -1131,7 +1131,7 @@ export function AiScreen(): ReactNode {
           id="ai-preview-pane"
           className="ai-preview-pane"
           data-ai-preview-pane={layout}
-          aria-label={detail.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.label')}
+          aria-label={detail.kind === 'draft' ? t('messages:draft.pane.label') : t('messages:design.pane.labelOpening')}
         >
           {/* The thread | preview edge, a handle too (#6359): it sets the
               preview's own width, and the list takes what is left. */}

@@ -205,9 +205,10 @@ test('every message under an open live draft is the chat\'s turn, told the draft
   assert.equal(h.turns[0].deps.threadDesign, undefined);
 });
 
-test('the private profile is one speaker with two capabilities, and no design or draft kind is left', async () => {
+test('the private profile is one speaker with its capabilities, and no design or draft kind is left', async () => {
   assert.deepEqual(profiles.KINDS, ['private', 'request', 'change', 'channel', 'reply']);
-  assert.deepEqual(profiles.profileOf('private').capabilities, ['design', 'draft']);
+  // Artifacts, stage 2: a plain page's capability beside the design's and the draft's.
+  assert.deepEqual(profiles.profileOf('private').capabilities, ['design', 'draft', 'artifact']);
   assert.throws(() => profiles.profileOf('design'), /no thread kind design/);
   assert.throws(() => profiles.profileOf('draft'), /no thread kind draft/);
   assert.deepEqual(profiles.turnLimits([]).rounds, profiles.CHAT_LIMITS.rounds, 'an ordinary turn keeps its limits');

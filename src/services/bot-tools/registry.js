@@ -9,6 +9,9 @@
 // Scopes are where the tool is offered, by what the thread already knows:
 //   main     a person's chat with the bot (Main, and a private thread in it)
 //   design   a design thread
+//   artifact a private thread that holds a plain page, or a turn that is
+//            writing one (docs/plans/artifacts.md): the tools every kind of
+//            artifact is written and changed with (./artifact.js)
 //   thread   a project's own thread: a request's, a change's, its chat, a
 //            reply thread, and the already-done check; the project is the
 //            thread's
@@ -18,7 +21,7 @@
 // Names the model already uses are kept, so the prompts and what they teach
 // it do not move.
 
-const SCOPES = Object.freeze(['main', 'design', 'thread']);
+const SCOPES = Object.freeze(['main', 'design', 'thread', 'artifact']);
 
 const TOOLS = new Map();
 

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "modes": {
     "run": {
       "sandbox": "allow-scripts",
@@ -28,11 +28,21 @@
         ["form-action", "'none'"],
         ["base-uri", "'none'"]
       ]
+    },
+    "helper": {
+      "sandbox": "allow-scripts",
+      "directives": [
+        ["default-src", "'none'"],
+        ["style-src", "'unsafe-inline'", "{site}"],
+        ["img-src", "data:", "{site}"],
+        ["font-src", "data:", "{site}"],
+        ["script-src", "'nonce-{nonce}'"],
+        ["connect-src", "'none'"],
+        ["frame-src", "'none'"],
+        ["form-action", "'none'"],
+        ["base-uri", "'none'"]
+      ]
     }
-  },
-  "helper": {
-    "sandbox": "allow-scripts",
-    "script-src": "'nonce-{nonce}'"
   },
   "attachmentView": "sandbox allow-scripts"
 }

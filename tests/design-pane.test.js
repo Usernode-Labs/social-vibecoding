@@ -32,7 +32,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 // The frame a version is drawn in, its policy and its helper are the one
 // frame's now (frontend/src/features/artifact/): tests/artifact-frame.test.js.
 
-test('the pane reads nothing in its first render, and says it is drawing', () => {
+test('the pane reads nothing in its first render, and says it is opening, in words that fit a design or a page', () => {
   const calls = [];
   const api = new Proxy({}, { get: (_t, name) => (...args) => { calls.push(name); return new Promise(() => {}); } });
   const { DesignPane, isDesignRoot } = loadTsx('frontend/src/features/messages/design-pane.tsx', {
@@ -43,8 +43,10 @@ test('the pane reads nothing in its first render, and says it is drawing', () =>
   });
   const html = renderToHtml(createElement(DesignPane, { conversationId: 4, rootId: 9, view: 'preview', onView: () => {} }));
   assert.deepEqual(calls, [], 'no request in the first render');
-  assert.match(html, /<section class="messages-design-pane" data-design-pane="9" data-design-view="preview" aria-label="Design preview">/);
-  assert.match(html, new RegExp(message('messages:design.pane.loading').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  // Until the thread is read nobody knows whether it holds a design or a plain page, so it is named for neither.
+  assert.match(html, new RegExp(`<section class="messages-design-pane" data-design-pane="9" data-design-view="preview" aria-label="${message('messages:design.pane.labelOpening')}">`));
+  assert.match(html, new RegExp(message('messages:design.pane.opening').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(html.replace(/<[^>]*>/g, ' '), /design/i, 'and a page is never called a design');
   assert.doesNotMatch(html, /<iframe/, 'the frame waits for the design');
   assert.equal(isDesignRoot({ sender: { bot: true }, metadata: { homeroomBot: { kind: 'opened_design' } } }), true);
   assert.equal(isDesignRoot({ sender: { bot: false }, metadata: { homeroomBot: { kind: 'opened_design' } } }), false);

@@ -982,6 +982,12 @@ export async function sendMessage(id: number, input: { content: string; replyToI
 
 /** A design thread as its pane reads it (routes/conversations.js). */
 export interface DesignThread {
+  /**
+   * Artifacts (docs/plans/artifacts.md): what the thread's artifact is. A
+   * design is drawn with its project's stylesheets and can be requested as a
+   * plan; a plain page is self-contained and stays in its thread.
+   */
+  kind: 'design' | 'page';
   rootId: number;
   conversationId: number;
   state: string;
@@ -1057,6 +1063,7 @@ export async function getDesign(rootId: number): Promise<DesignThread> {
   const data = record(await request<unknown>(`${DESIGNS}/${rootId}`));
   const app = record(pick(data, 'app'));
   return {
+    kind: pick(data, 'artifactKind') === 'page' ? 'page' : 'design',
     rootId: strictId(pick(data, 'rootId')) || rootId,
     conversationId: strictId(pick(data, 'conversationId')) || 0,
     state: text(pick(data, 'state')) || 'open',

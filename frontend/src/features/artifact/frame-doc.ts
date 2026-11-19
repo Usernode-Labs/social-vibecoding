@@ -6,7 +6,7 @@
  * ./policy.ts (one text, shared with the server). This file was the design
  * pane's own (../design/frame.ts, #6071) until every page moved onto it.
  *
- * ── Two modes, and never the site's own origin ────────────────────────
+ * ── Three modes, and never the site's own origin ──────────────────────
  *
  *   run     `sandbox="allow-scripts"` and nothing more: an origin of its
  *           own, so a script in it reaches none of the shell's cookies,
@@ -19,10 +19,13 @@
  *   static  `sandbox=""`: nothing of the page's runs, and its scripts and
  *           handlers are taken out before it is drawn (`staticMarkup`), so
  *           the policy has nothing to refuse.
+ *   helper  a page that must say how tall it is and where its links are (a
+ *           laid-out answer): cleaned as a static page is, and drawn with
+ *           `sandbox="allow-scripts"` (an origin of its own) under a policy
+ *           that lets one script run, the helper below, by a nonce made new
+ *           for the frame (./policy.ts). Nothing of the page's runs.
  *
- * No frame ever has allow-same-origin. A page that must say how tall it is
- * (a laid-out answer) is static with Homeroom's own helper let run by a
- * nonce (see ./policy.ts): the helper below is then the only script in it.
+ * No frame ever has allow-same-origin.
  *
  * One way out remains that no policy closes: a script can navigate its own
  * frame. A pane that draws a running page draws it again whenever the frame
@@ -170,28 +173,28 @@ export interface FrameDocOptions {
   /** Today's stylesheets, for a captured Homeroom page (currentSheets). */
   sheets?: readonly string[];
   /**
-   * Whether Homeroom's helper goes in. A running page always has it (pins,
-   * its own picture). A static page has it only when the shell must be told
-   * its size or its taps, and then only with `nonce`.
+   * The helper mode's nonce: its helper goes in with it, and is the one
+   * script the frame's policy lets run. Without it the helper mode runs
+   * nothing, as a static frame does. No other mode takes one: a running
+   * page always has the helper (pins, its own picture), a static page never.
    */
-  helper?: boolean;
   nonce?: string | null;
 }
 
 /**
- * Pure: a page as its frame draws it: the policy and (where asked) the
- * helper first in its head, no <base>, and (for a Homeroom page) today's
- * stylesheets in place of the build's it was captured on. In static mode
- * everything of the page's that would run is taken out first.
+ * Pure: a page as its frame draws it: the policy and (where its mode has
+ * one) the helper first in its head, no <base>, and (for a Homeroom page)
+ * today's stylesheets in place of the build's it was captured on. Unless it
+ * runs, everything of the page's own that would run is taken out first.
  */
-export function artifactFrameDoc(html: string, { mode, origin, site = true, sheets = [], helper, nonce = null }: FrameDocOptions): string {
+export function artifactFrameDoc(html: string, { mode, origin, site = true, sheets = [], nonce = null }: FrameDocOptions): string {
   const running = mode === 'run';
   let doc = String(html || '').replace(/<base\b[^>]*>/gi, '');
   if (!running) doc = staticMarkup(doc);
   doc = freshSheets(doc, sheets);
-  const helped = running ? helper !== false : !!helper && !!nonce;
-  const csp = cspFor(mode, { site: site ? origin : null, nonce: helped && !running ? nonce : null });
-  const script = helped ? `<script${!running && nonce ? ` nonce="${nonce}"` : ''}>${helperSource(!running)}</script>` : '';
+  const helped = running || (mode === 'helper' && !!nonce);
+  const csp = cspFor(mode, { site: site ? origin : null, nonce: mode === 'helper' ? nonce : null });
+  const script = helped ? `<script${running ? '' : ` nonce="${nonce}"`}>${helperSource(!running)}</script>` : '';
   const head = `<meta http-equiv="Content-Security-Policy" content="${csp}">${script}`;
   if (/<head\b[^>]*>/i.test(doc)) return doc.replace(/<head\b[^>]*>/i, (open) => `${open}${head}`);
   if (/<html\b[^>]*>/i.test(doc)) return doc.replace(/<html\b[^>]*>/i, (open) => `${open}<head>${head}</head>`);

@@ -6,25 +6,28 @@
 // (frontend/src/features/artifact/policy.ts builds the same strings from the
 // same file, and tests/artifact-policy.test.js holds the two to each other).
 //
-// A page is drawn in a frame in one of two modes:
+// A page is drawn in a frame in one of three modes:
 //
 //   run     the page's own scripts run. The frame is sandbox="allow-scripts"
 //           and nothing more, so it has an origin of its own: no cookies, no
 //           storage, no reach into Homeroom. Its policy lets it fetch
 //           nothing (connect-src 'none'), post no form and hold no frame.
-//   static  nothing of the page's runs. The frame is sandbox="" and the
-//           policy refuses every script.
+//   static  nothing runs. The frame is sandbox="" and the policy refuses
+//           every script.
+//   helper  nothing of the page's runs, and Homeroom's own small helper
+//           does: a page that must say how tall it is and where its links
+//           are, so the chat can size its box and open a link (a laid-out
+//           answer). The frame cannot be measured from outside without
+//           sharing Homeroom's origin, which no frame here ever does, so the
+//           frame is sandbox="allow-scripts" (an opaque origin, as `run`)
+//           and its policy lets one script run: the one carrying the nonce
+//           made new for that frame (script-src 'nonce-...'), which only
+//           Homeroom's helper carries. The page's markup is cleaned of its
+//           scripts and handlers first. With no nonce, no script runs.
 //
 // `site` is this site's origin for a page that draws with Homeroom's or a
 // project's stylesheets, pictures and fonts (a design, a plan's screen); a
 // page that needs none of them names no origin at all and can load nothing.
-//
-// One more thing a static page may need: to say how tall it is, so the chat
-// can size its box (a laid-out answer). The frame cannot be measured from
-// outside without sharing Homeroom's origin, which no frame here ever does.
-// So Homeroom's own small helper is let run in it and nothing else is
-// (`helper`: a nonce only Homeroom's script carries, made new for every
-// frame); the page's markup is cleaned of scripts before it is drawn.
 //
 // THE RULE no mode breaks: a frame never has both scripts and
 // allow-same-origin. No sandbox here names allow-same-origin at all.
@@ -39,31 +42,32 @@ function modeOf(mode) {
   return found;
 }
 
-/** Pure: the sandbox attribute of a frame in `mode`; with `helper`, a static frame that runs Homeroom's own helper. */
-function sandboxFor(mode, { helper = false } = {}) {
-  const found = modeOf(mode);
-  return helper && mode === 'static' ? policy.helper.sandbox : found.sandbox;
+/** Pure: the sandbox attribute of a frame in `mode`. */
+function sandboxFor(mode) {
+  return modeOf(mode).sandbox;
 }
 
 /**
  * Pure: the content security policy text of a page drawn in `mode`. `site`:
  * this site's origin when the page draws with its stylesheets, pictures and
- * fonts, else null and the page names no origin. `nonce`: a static page that
- * runs Homeroom's helper allows that one script by it. `header`: the policy
- * as a response header, which carries the sandbox too.
+ * fonts, else null and the page names no origin. `nonce`: the helper mode's
+ * one script, by this frame's nonce (no other mode takes one; without it the
+ * helper mode runs nothing). `header`: the policy as a response header,
+ * which carries the sandbox too.
  */
 function cspFor(mode, { site = null, nonce = null, header = false } = {}) {
   const found = modeOf(mode);
   const origin = site ? String(site).replace(/["';,\s]/g, '') : '';
-  const helper = mode === 'static' && nonce ? String(nonce).replace(/[^A-Za-z0-9+/=_-]/g, '') : '';
+  const kept = nonce ? String(nonce).replace(/[^A-Za-z0-9+/=_-]/g, '') : '';
   const parts = found.directives.map(([name, ...values]) => {
-    const kept = name === 'script-src' && helper
-      ? [policy.helper['script-src'].replace('{nonce}', helper)]
-      : values.map((value) => (value === '{site}' ? origin : value)).filter(Boolean);
-    return `${name} ${kept.join(' ')}`;
+    const said = values
+      .map((value) => (value === '{site}' ? origin : value))
+      .map((value) => (value.includes('{nonce}') ? (kept ? value.replace('{nonce}', kept) : '') : value))
+      .filter(Boolean);
+    return `${name} ${said.length ? said.join(' ') : "'none'"}`;
   });
   if (header) {
-    const sandbox = sandboxFor(mode, { helper: !!helper });
+    const sandbox = sandboxFor(mode);
     parts.unshift(sandbox ? `sandbox ${sandbox}` : 'sandbox');
   }
   return parts.join('; ');

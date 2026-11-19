@@ -138,8 +138,15 @@ test('Make the project opens the make sheet in place, and Make it posts the desi
 });
 
 test('the design pane posts on the thread\'s request when it has one, and may post again', () => {
+  // Who is offered Request it (the pane's and the compare card's), by what the thread holds.
+  const { requestable } = loadTsx('frontend/src/features/messages/artifact-kind.ts');
+  const app = { slug: 'recipebot', name: 'RecipeBot' };
+  for (const state of ['open', 'posted', 'filed']) assert.equal(requestable({ kind: 'design', app, state }), true, `a design ${state}`);
+  assert.equal(requestable({ kind: 'design', app: null, state: 'open' }), false, 'a design for no project yet posts nowhere: Make the project is its way');
+  assert.equal(requestable({ kind: 'design', app, state: 'done' }), false, 'a thread put away posts nothing');
+  assert.equal(requestable({ kind: 'page', app, state: 'open' }), false, 'a plain page stays in its thread, whatever project its thread is in');
+  assert.equal(requestable(null), false);
   const pane = read('frontend/src/features/messages/design-pane.tsx');
-  assert.match(pane, /const postable = !!design\?\.app && \(open \|\| design\?\.state === 'posted' \|\| design\?\.state === 'filed'\);/, 'a design for no project yet posts nowhere: Make the project is its way');
   assert.match(pane, /\{on \? t\('messages:design\.propose\.warningOn', \{ version, number: on, project \}\)/);
   assert.equal(message('messages:design.propose.sendOn'), 'Post it as a plan');
   const route = read('src/routes/conversations.js');
