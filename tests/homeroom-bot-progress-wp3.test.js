@@ -25,24 +25,15 @@ const stage = (row) => {
 test('#8 (WP3): a queue row from before its proposal merged is left over, not work in the queue', () => {
   const merged = { proposal_status: 'merged', merged_at: '2026-10-03T12:00:00Z', queue_id: 9, queue_reason: 'changed' };
   // Put there before the merge (a reply, a look again): nothing in progress,
-  // where it used to read "waiting in the queue" in the header for days.
-  assert.equal(progress.leftOverQueue({ ...merged, enqueued_at: '2026-10-03T11:58:00Z' }), true);
-  // A request whose change is live reads Live whatever its queue row says
-  // (the derive reads the merge first), so no surface draws the leftover.
+  // where it used to read "waiting in the queue" in the header for days. A
+  // request whose change is live reads Live whatever its queue row says (the
+  // derive reads the merge first), so no surface draws the leftover.
   assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T11:58:00Z' }), 'live');
   assert.equal(stage({ ...merged, enqueued_at: '2026-10-03T11:58:00Z', started_at: '2026-10-03T11:59:00Z' }), 'live',
     'nor being read');
-  assert.equal(progress.leftOverQueue({ ...merged, enqueued_at: new Date('2026-10-03T11:59:59.999Z'), merged_at: new Date('2026-10-03T12:00:00Z') }), true,
-    'the database\'s dates, to the millisecond');
-  // Put there after the merge: new work.
-  assert.equal(progress.leftOverQueue({ ...merged, enqueued_at: '2026-10-03T12:05:00Z' }), false);
-  // Not merged, or no merge time to compare: the row stands.
-  assert.equal(progress.leftOverQueue({ ...merged, proposal_status: 'promoted', enqueued_at: '2026-10-03T11:58:00Z' }), false);
-  assert.equal(progress.leftOverQueue({ ...merged, merged_at: null, enqueued_at: '2026-10-03T11:58:00Z' }), false);
   assert.equal(stage({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }), 'reading queued', 'an ordinary queue row is untouched');
   // B24: a request that closed with its change live has no work left, whenever its row was put there.
   const closedLive = { ...merged, request_closed: true, enqueued_at: '2026-10-03T12:05:00Z', started_at: '2026-10-03T12:06:00Z' };
-  assert.equal(progress.leftOverQueue(closedLive), true);
   assert.equal(stage(closedLive), 'live', 'never "Reading the request" under its "It\'s live"');
 });
 
@@ -54,8 +45,10 @@ test('#19 (WP3): how long a step usually takes is a fixed range, never past its 
   for (const stageName of ['queued', 'build_queued', 'question', 'vote', 'held', 'stalled', 'merging', 'followup_queued', 'fix_queued', 'checks_failed']) {
     assert.equal(progress.typicalMinutes(stageName), null, `${stageName} waits on somebody, and takes no usual time`);
   }
+  // The steps the bot (or the setup it started) is at this minute.
+  const busy = new Set(['setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'reviewing', 'proposing', 'merging']);
   for (const [key, [from, to]] of Object.entries(progress.TYPICAL_MINUTES)) {
-    assert.ok(progress.BUSY_STAGES.has(key) || key === 'checks', `${key} is a step that takes a while`);
+    assert.ok(busy.has(key) || key === 'checks', `${key} is a step that takes a while`);
     assert.ok(Number.isInteger(from) && Number.isInteger(to) && from > 0 && from < to, key);
   }
   // 11 Nov 2026: on what the bot says of a request's stored work state

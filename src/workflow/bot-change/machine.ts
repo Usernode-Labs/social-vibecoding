@@ -44,7 +44,6 @@ export const WORK = Object.freeze({
   merged: 'bot.stopRequestWork',
   liveDm: 'bot.tellLive',
   livePost: 'bot.commentLive',
-  approved: 'bot.tellApproved',
   // #6264: the promises people asked for, kept where they asked.
   followups: 'bot.tellFollowups',
   // #6407: a change built from a person's plan is compared with that plan's
@@ -465,8 +464,9 @@ function wentLive(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
 // A vote: whoever asked for the change reads where its requests stand again
 // (they name who it still waits on). 5 Nov 2026 (docs/plans/bot-one-model.md,
 // decision 6): a yes is no longer a line in the request's thread ("ada
-// approved it."); the change's votes are on its page. WORK.approved stays
-// for work owed before, which its service now settles quietly.
+// approved it."); the change's votes are on its page. (Its work,
+// bot.tellApproved, settled quietly what was owed before; nothing has
+// enqueued it since, and it is gone.)
 function voted(s: BState, _e: Event<any>, f: Facts, _ctx: TransitionContext): Outcome<BState> {
   const live = s as Live;
   return step(live.name as Name, live.data, { work: [], push: tray(f) });

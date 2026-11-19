@@ -33,12 +33,6 @@
 // an estimate, and a record the bot cannot read is left out, not filled in.
 // How long a step usually takes is a fixed range per step (typicalMinutes,
 // #19), said as that and nothing finer.
-//
-// #3734: the DM's activity tray (homeroom-bot-tray.js) lists under Now what
-// this module says is in flight (inFlight below), so the tray and the bot's
-// own answer never disagree. They used to read it separately: the tray from
-// claimed queue rows alone, so a build (whose queue row is gone) and a
-// follow-up waiting its turn showed as nothing while the bot said otherwise.
 
 const { changeHref } = require('./change-destination');
 // #6528: the ready rule the bot's own ready card uses (checks passed and the
@@ -95,40 +89,11 @@ function replyLateralSql({
 }
 
 /**
- * #6246 (4 Nov 2026): a plan waiting for Build it, as `$`-free SQL that
- * returns the newest run's `awaiting_go_at` when the request's newest run
- * (newest by id, any mode) waits: live, ready, nothing built from it, not
- * held by a limit, on a request still open. Null otherwise. The aliases are
- * the caller's, as replyLateralSql's are, so the bot page (ai-work.js
- * FACTS_SQL) and anything else that asks the same question asks it one way.
- * planWaits below mirrors it field by field.
- */
-function planWaitingSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
-  return `(SELECT CASE WHEN run.mode = 'live' AND run.verdict = 'ready'
-                    AND run.awaiting_go_at IS NOT NULL
-                    AND run.live_build_waiting_at IS NULL
-                    AND run.build_ok IS NULL
-                    AND run.build_session_id IS NULL
-                    AND run.proposal_session_id IS NULL
-                    AND run.cap_suppressed IS NULL
-                    AND NOT (COALESCE((SELECT ri.status = 'closed' FROM issues ri
-                                        WHERE ri.app_id = ${appId} AND ri.github_issue_number = ${issueNumber}
-                                        ORDER BY ri.id DESC LIMIT 1), FALSE)
-                             OR EXISTS (SELECT 1 FROM homeroom_bot_closed_requests cr
-                                         WHERE cr.app_id = ${appId} AND cr.issue_number = ${issueNumber}
-                                           AND cr.closed_at IS NOT NULL))
-                   THEN run.awaiting_go_at END
-              FROM homeroom_bot_runs run
-             WHERE run.app_id = ${appId} AND run.issue_number = ${issueNumber}
-             ORDER BY run.id DESC LIMIT 1)`;
-}
-
-/**
  * Pure (#6246): whether a request's record row (REQUEST_RECORD_COLUMNS) is a
  * plan waiting for Build it:
  * its newest run is live and ready with nothing built from it, the plan still
  * waits (plan_waiting_at), no build is queued or under way, no limit held it,
- * and the request is not closed. planWaitingSql is the same test in SQL.
+ * and the request is not closed.
  */
 function planWaits(row) {
   return !!row && row.mode === 'live' && row.verdict === 'ready' && row.build_ok == null
@@ -229,19 +194,6 @@ const STEP_OF_STAGE = Object.freeze({
   vote: 'vote',
   merging: 'vote',
 });
-
-// The stages in which the bot itself (or the setup it started) is doing
-// something this minute, rather than waiting on the person, the group, the
-// checks or its queue: what "working on now" means.
-const BUSY_STAGES = new Set([
-  'setting_up', 'reading', 'revising', 'fixing', 'starting', 'planning', 'building', 'reviewing', 'proposing', 'merging',
-]);
-
-// #3734: what the bot has in hand for the person: doing this minute, or in
-// its queue to be done (a request to read, a follow-up on its proposal).
-// Not what waits on them or the group, a proposal's checks running, or a
-// build held back or stalled. The activity tray's Now is exactly this.
-const IN_FLIGHT_STAGES = new Set([...BUSY_STAGES, 'queued', 'build_queued', 'followup_queued', 'fix_queued']);
 
 // app-creation-phase.js PHASES, in words.
 const SETUP_PARTS = Object.freeze({
@@ -439,39 +391,6 @@ function iso(value) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-function plural(n, one, many = `${one}s`) {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
-/** Pure: a proposal's checks, in plain words, from its columns. */
-function checksWords({ check_state: state, check_phase: phase, checks_progress: progress, failed_checks: failedChecks }) {
-  if (state === 'passing') return 'passed';
-  if (state === 'skipped') return 'not needed for this change';
-  if (state === 'failing') {
-    const n = Number(failedChecks);
-    return Number.isInteger(n) && n > 0 ? `failed (${plural(n, 'test')} did not pass)` : 'failed';
-  }
-  if (state === 'error' || state === 'unknown') return 'could not run (the preview or the test run broke)';
-  if (state === 'pending' || state === 'running') {
-    if (phase === 'building') return 'running: building the preview first';
-    const p = progress && typeof progress === 'object' ? progress : {};
-    if (phase === 'queued') {
-      const ahead = Number(p.queue && p.queue.ahead);
-      return Number.isInteger(ahead) && ahead > 0
-        ? `waiting for a checks slot (${ahead} ahead)`
-        : 'waiting for a checks slot';
-    }
-    const ran = Number(p.ran);
-    const expected = Number(p.expected);
-    const failed = Number(p.failed) || 0;
-    if (Number.isInteger(ran) && Number.isInteger(expected) && expected > 0) {
-      return `running: ${ran} of ${expected} done, ${failed} failed so far`;
-    }
-    return 'running';
-  }
-  return 'not run yet';
-}
-
 /** Pure: how many checks did not pass, from a proposal's test_results. */
 function failedCount(results) {
   if (!Array.isArray(results)) return null;
@@ -487,24 +406,6 @@ function links(domain, { slug, number = null, proposal = null, pr = null }) {
     // #4367: a change with a pull request goes by its number.
     ...(proposal ? { proposal: `https://${domain}/${changeHref(slug, proposal, pr)}` } : {}),
   };
-}
-
-/**
- * Pure (#8, WP3): whether a request's queue row is left over from before its
- * proposal merged: put there before the merge (a reply, a look again), and
- * moot once it went live. It read as "waiting in the queue" in the DM's
- * header long after. A row put there after the merge is new work.
- */
-function leftOverQueue(row) {
-  if (row.proposal_status !== 'merged' || !row.queue_id || !row.merged_at) return false;
-  // B24 (audit 2 Nov 2026): nor is any row on a request that closed with its
-  // change live: the bot reads open requests only, so nothing comes of it.
-  // A live request's row read "Reading the request" under its "It's live".
-  if (row.request_closed === true) return true;
-  const ms = (value) => (value instanceof Date ? value.getTime() : Date.parse(value || ''));
-  const queued = ms(row.enqueued_at || row.started_at);
-  const merged = ms(row.merged_at);
-  return Number.isFinite(queued) && Number.isFinite(merged) && queued <= merged;
 }
 
 /**
@@ -1052,12 +953,6 @@ async function queuePositions(pool, rows, settings) {
   return position;
 }
 
-// 13 Nov 2026: what a request waiting to be read waits for, in the bot's
-// words (stageOf's `queued`). It is the bot's own line (per project), and it
-// starts by itself: a tester read "waiting for a free builder" as waiting for
-// another person, and wondered whether the project had to be made public for one.
-const QUEUE_WAIT = 'waiting its turn in my own line; I\'ll start on it by myself when I have a free slot';
-
 /**
  * The first versions the bot is to build for this person whose request is
  * not filed yet: the project is still being set up, or could not be.
@@ -1094,11 +989,6 @@ function setupOf(row, { phase = null } = {}) {
   return { stage: 'setting_up', since: row.app_created_at || row.created_at, doing: `setting up the project${part}` };
 }
 
-/** Pure: whether a stage (stageOf) is in the bot's hands now (IN_FLIGHT_STAGES). */
-function inFlight(item) {
-  return !!item && IN_FLIGHT_STAGES.has(item.stage) && !item.waitingOn;
-}
-
 
 module.exports = {
   FIRST_VERSION_STEPS,
@@ -1112,8 +1002,6 @@ module.exports = {
   firstVersionSteps,
   GOING_LIVE,
   SETUP_PARTS,
-  BUSY_STAGES,
-  IN_FLIGHT_STAGES,
   START_GRACE_MS,
   // #6228: a reply on a request waiting to be read.
   REPLY_WAIT_MS,
@@ -1127,7 +1015,6 @@ module.exports = {
   REQUEST_RECORD_COLUMNS,
   // #6246: a plan waiting for Build it, read by the bot page and the Workshop.
   planWaits,
-  planWaitingSql,
   // #6282: an update on its way holds the vote it would otherwise ask for.
   UPDATE_TAKEN_HOURS,
   UPDATE_QUEUED_DAYS,
@@ -1139,7 +1026,6 @@ module.exports = {
   updateComingSql,
   updateFailedSql,
   updateAskSql,
-  inFlight,
   // #6234: the bot's own fix of a change's failing checks, for its page.
   changeBotFix,
   // #6776: the same queue order, for a try's place in line.
@@ -1155,15 +1041,12 @@ module.exports = {
   planFailed,
   planRetryOwed,
   PLAN_RETRY_GRACE_MS,
-  QUEUE_WAIT,
   setupOf,
   firstVersionRows,
   stepNumber,
-  checksWords,
   failedCount,
   links,
   // #8, #19 (WP3)
   TYPICAL_MINUTES,
-  leftOverQueue,
   typicalMinutes,
 };

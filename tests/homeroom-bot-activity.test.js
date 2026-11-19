@@ -489,8 +489,6 @@ test('work under way is a look being read, or the plan and build its ready verdi
   // the request's own look.
   const under = ['reading', 'starting', 'planning', 'building', 'reviewing', 'proposing'];
   for (const stage of under) {
-    assert.ok(progressSvc.BUSY_STAGES.has(stage), `${stage}: the bot is working on it this minute`);
-    assert.ok(progressSvc.IN_FLIGHT_STAGES.has(stage), `${stage}: it is in flight`);
     const work = stored(stage);
     assert.equal(work.whoseMove, 'bot', `${stage}: the bot's to do`);
     assert.equal(activity.workUnderWay(work), true, `${stage}: under way`);
@@ -499,8 +497,7 @@ test('work under way is a look being read, or the plan and build its ready verdi
   // own: waiting in the queue, a ready verdict waiting its turn to be built,
   // a follow-up on its proposal, a merge, a project being set up. None of
   // them is given a card.
-  const others = [...progressSvc.IN_FLIGHT_STAGES].filter((stage) => !under.includes(stage)).sort();
-  assert.deepEqual(others, ['build_queued', 'fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up']);
+  const others = ['build_queued', 'fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up'];
   for (const stage of [...others, 'question', 'plan', 'held', 'stalled', 'checks', 'checks_failed', 'vote', 'fix_stopped']) {
     const work = stage === 'setting_up' ? null : stored(stage, { check_state: 'passing' });
     assert.equal(activity.workUnderWay(work), false, stage);

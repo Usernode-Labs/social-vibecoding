@@ -123,8 +123,7 @@ test('a ready request waits in Homeroom bot\'s own line; one held for her plan w
   // The retired words are gone from the card's catalog, and from what the
   // bot says in its own chat (homeroom-bot-activity.js, -progress.js).
   assert.ok(!/free builder/i.test(read('frontend/locales/en/chat.json')));
-  const said = [require('../src/services/homeroom-bot-activity').QUEUED_WORDS,
-    require('../src/services/homeroom-bot-progress').QUEUE_WAIT];
+  const said = [require('../src/services/homeroom-bot-activity').QUEUED_WORDS];
   for (const words of said) assert.match(words, /^(?!.*builder).*by myself.*free slot/, words);
 });
 

@@ -613,17 +613,17 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.equal(yes.rowCount, 1, 'the vote is recorded as before');
     await settle();
     // 5 Nov 2026 (decision 6): its votes are on the change's page.
-    assert.deepEqual(calls(WORK.approved), []);
+    assert.deepEqual(calls('bot.tellApproved'), []);
     assert.deepEqual(pushes.filter((p) => p.data?.type === 'homeroom_bot_work_changed').map((p) => p.routing.userId), [asker.id]);
     await cast('no');
     await cast('yes');
     await settle();
-    assert.equal(calls(WORK.approved).length, 0);
+    assert.equal(calls('bot.tellApproved').length, 0);
     pushes.length = 0;
     const out = await retractVote({ pool, sessionId: s.id, userId: voter.id });
     assert.equal(out.vote, 'yes');
     await settle();
-    assert.equal(calls(WORK.approved).length, 0, 'taken back: still none');
+    assert.equal(calls('bot.tellApproved').length, 0, 'taken back: still none');
     assert.equal(pushes.filter((p) => p.data?.type === 'homeroom_bot_work_changed').length, 1, 'its tray reads again');
     // A change the machine does not follow tells nobody.
     const other = await change({ owner: asker.id, run: false });

@@ -85,7 +85,6 @@ test('a request being read, asked about, or waiting in the queue', () => {
   // 13 Nov 2026: whose line it is, and that it starts by itself ("waiting
   // for a free builder" read as a wait for another person).
   assert.equal(at({ queue_id: 4, enqueued_at: ago(1), queue_position: 2 }), 'reading queued');
-  assert.equal(progress.QUEUE_WAIT, 'waiting its turn in my own line; I\'ll start on it by myself when I have a free slot');
   assert.equal(at({ verdict: 'person', mode: 'live' }), 'waiting_for_you decide', 'nothing in progress: handed back');
 });
 
@@ -171,20 +170,6 @@ test('D1: a first version up for testing waits on nobody\'s approval', () => {
   assert.deepEqual([passing.stage, passing.line, passing.whoseMove, passing.since], ['going_live', { code: 'first_version' }, null, ago(20)]);
   assert.equal(at({ ...open, check_state: 'pending', check_phase: 'building' }), 'checking');
   assert.equal(at({ ...open, check_state: 'failing', test_results: [{ status: 'fail' }] }), 'checking checks_failing');
-  assert.equal(progress.inFlight({ stage: 'vote' }), false, 'nor is it the bot\'s work in flight');
-});
-
-test('#3734: in flight is what the bot is doing now or has in its queue, never what waits on others', () => {
-  for (const name of ['setting_up', 'queued', 'reading', 'starting', 'planning', 'building', 'proposing',
-    'followup_queued', 'revising', 'fix_queued', 'fixing', 'merging']) {
-    assert.equal(progress.inFlight({ stage: name }), true, name);
-  }
-  for (const name of ['question', 'vote', 'checks', 'checks_failed', 'held', 'stalled']) {
-    assert.equal(progress.inFlight({ stage: name }), false, name);
-  }
-  assert.equal(progress.inFlight({ stage: 'setting_up', waitingOn: 'them' }), false, 'a project waiting for its secrets waits on them');
-  assert.equal(progress.inFlight(null), false);
-  for (const busy of progress.BUSY_STAGES) assert.ok(progress.IN_FLIGHT_STAGES.has(busy), `${busy}: busy is in flight`);
 });
 
 test('a first version\'s setup: which part runs, when this process knows', () => {
@@ -248,8 +233,6 @@ test('a ready request waiting for its build slot says so, and what it waits for'
   const state = ws.derive(row, { now });
   assert.deepEqual([state.stage, state.line, state.since], ['building', { code: 'queued' }, '2026-10-03T12:31:00.000Z']);
   assert.equal(progress.stepNumber('build_queued', false), 2, 'the plan is the next step');
-  assert.ok(progress.IN_FLIGHT_STAGES.has('build_queued') && !progress.BUSY_STAGES.has('build_queued'),
-    'in the bot\'s hands, not this minute');
   // Its session exists: it is under way, not waiting.
   assert.equal(ws.derive({ ...row, build_session_id: 5001, build_status: 'active' }, { now }).line, null);
   // Every screen draws it as ready to build, waiting its turn (services/work-state.js).
@@ -371,23 +354,6 @@ test('#6246: built, held, replaced or closed, a plan is no longer waiting', () =
     assert.equal(progress.planWaits({ ...waiting, ...extra }), false, name);
     assert.notEqual(at({ ...waiting, ...extra }), 'waiting_for_you plan', name);
   }
-});
-
-test('#6246: one SQL definition of a waiting plan, shared by the page and the Workshop', () => {
-  const sql = progress.planWaitingSql();
-  assert.match(sql, /run\.mode = 'live' AND run\.verdict = 'ready'/);
-  assert.match(sql, /run\.awaiting_go_at IS NOT NULL/);
-  assert.match(sql, /run\.live_build_waiting_at IS NULL/);
-  assert.match(sql, /run\.build_ok IS NULL/);
-  assert.match(sql, /run\.build_session_id IS NULL/);
-  assert.match(sql, /run\.proposal_session_id IS NULL/);
-  assert.match(sql, /run\.cap_suppressed IS NULL/);
-  assert.match(sql, /ORDER BY run\.id DESC LIMIT 1/, 'the newest run, any mode, decides');
-  assert.match(sql, /github_issue_number = m\.issue_number/);
-  assert.match(sql, /homeroom_bot_closed_requests/);
-  assert.doesNotMatch(sql, /\$\d/, 'no parameters of its own');
-  assert.match(progress.planWaitingSql({ appId: 'q.app_id', issueNumber: 'q.issue_number' }),
-    /run\.app_id = q\.app_id AND run\.issue_number = q\.issue_number/);
 });
 
 // #6228 (3 Nov 2026): a person's reply on a request the bot handed back is

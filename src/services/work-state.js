@@ -284,7 +284,7 @@ function ownStep(row, now) {
   // on now, so it stays the plan whatever sits beside it: a reply the bot is
   // reading, a queue row on hold, or a question left open from before the
   // look that made it (#6219). A question the plan's own look asked still
-  // wins. The Workshop reads the same wait (planWaitingSql).
+  // wins.
   if (progress.planWaits(row)) {
     const olderQuestion = !!row.question_at && !!row.run_at && new Date(row.question_at) < new Date(row.run_at);
     if (row.question_at && !olderQuestion) return question(row);
@@ -1152,9 +1152,10 @@ const CHANGE_FACTS_SQL = `
  * What is asked of each request's requester and what Homeroom bot last said
  * about it, one row per request named by ($1 app ids, $2 numbers): the
  * bot's open question, its newest plan, an open vote to close it, a private
- * thread holding it for its requester's plan, its open cards (and a
- * thread's offers from before the card store), the reports filed from it,
- * and the bot's newest post about it.
+ * thread holding it for its requester's plan, its open cards (bot_cards;
+ * the offers a thread kept before the card store, homeroom_bot_voice_offers,
+ * are no longer read: no writer is left and their 14 days ended on 19 Nov
+ * 2026), the reports filed from it, and the bot's newest post about it.
  */
 const STANDING_SQL = `
   WITH it AS (
@@ -1172,11 +1173,6 @@ const STANDING_SQL = `
               WHERE c.app_id = it.app_id AND c.status = 'open' AND c.expires_at > NOW()
                 AND COALESCE(c.issue_number, c.source_issue_number,
                              CASE WHEN (c.args->>'issueNumber') ~ '^[0-9]{1,9}$' THEN (c.args->>'issueNumber')::int END) = it.issue_number
-             UNION ALL
-             SELECT jsonb_build_object('id', v.id, 'kind', v.kind, 'expiresAt', v.created_at + INTERVAL '14 days')
-               FROM homeroom_bot_voice_offers v
-              WHERE v.app_id = it.app_id AND v.status = 'open' AND v.created_at > NOW() - INTERVAL '14 days'
-                AND (v.args->>'issueNumber') = it.issue_number::text
            ) offered), '[]'::jsonb) AS offers,
          (SELECT COUNT(*)::int FROM feedback_reports fr
            WHERE fr.app_id = it.app_id AND fr.issue_number = it.issue_number) AS reports,
