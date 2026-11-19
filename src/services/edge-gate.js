@@ -764,10 +764,13 @@ async function handleAccess(pool, req, res) {
     }));
   };
   const crossSiteFrame = isFrameNavigation(req.headers, method) && framesCrossSite(host);
+  // Opted-in apps serve the authenticated document with its own startup
+  // assets bundled. Every later private request still needs its credential.
+  const tokenFrame = crossSiteFrame && vis.viewPrivate && vis.cookieFreeFrame;
 
   // Every 2xx goes out through here, so what an edge copies onto the
   // request is decided in one place.
-  const allow = async ({ identityFor = null, guest = false } = {}) => {
+  const allow = async ({ identityFor = null, guest = false, cacheApp = true } = {}) => {
     // A request that reaches a preview is a use of it: a preview in use
     // does not go to sleep (#6157). At most once a minute per preview, and
     // never awaited.
@@ -799,7 +802,7 @@ async function handleAccess(pool, req, res) {
       // Offline apps (services/offline-cache.js): the gate gives this app's
       // pages and files a long fresh lifetime. A production address only (a
       // preview runs unmerged code), and only while the switch is on.
-      if (isProduction && offlineCache.enabled() && !(await appAccess.offlineOptedOut(pool, vis.appId))) {
+      if (cacheApp && isProduction && offlineCache.enabled() && !(await appAccess.offlineOptedOut(pool, vis.appId))) {
         res.set(offlineCache.DECISION_HEADER, offlineCache.DECISION_APP);
       }
     } else if (viaCaddyCustom) {
@@ -867,6 +870,12 @@ async function handleAccess(pool, req, res) {
       if (!member) {
         log.warn('edge-gate', 'Frame door refused', { host, reason: claims ? 'not_a_member' : 'invalid_token' });
         return redirect(withRetryMarker(next));
+      }
+      if (tokenFrame) {
+        const params = parseUriQuery(next);
+        params.delete(RETRY_MARKER);
+        params.set('token', frameToken);
+        return redirect(`${uriPath(next)}?${params}`);
       }
       const door = platformJwt.signEdgeCookie({ uid: claims.id, appId: vis.appId, host });
       res.cookie(names.access, door, doorCookieOptions(host, req.headers, method));
@@ -995,6 +1004,7 @@ async function handleAccess(pool, req, res) {
   if (iframeJwt && Number.isInteger(iframeJwt.id)
       && (await appAccess.isViewMember(pool, vis.appId, iframeJwt.id)
         || (!isProduction && await isCaptureIdentity(pool, iframeJwt.id)))) {
+    if (tokenFrame && queryToken) return allow({ cacheApp: false });
     // A frame on another site that came back from that bounce without the
     // door: this browser keeps no cookie there, so the page's assets would
     // all be refused. It is told so, with the app offered in its own tab.

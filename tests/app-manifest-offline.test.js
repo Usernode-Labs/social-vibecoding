@@ -51,3 +51,11 @@ test('absent key, missing file and unparseable JSON all read as no opinion', () 
   withManifest(null, (m) => assert.equal(m.offline, null));
   withManifest('{not json', (m) => assert.equal(m.offline, null));
 });
+
+test('only a literal true enables cookie-free frame launches in the manifest snapshot', () => {
+  withManifest({ cookieFreeFrame: true }, (m) => assert.equal(m.cookieFreeFrame, true));
+  for (const value of [false, 'true', 1, null, {}, []]) {
+    withManifest({ cookieFreeFrame: value }, (m) => assert.equal(m.cookieFreeFrame, undefined));
+  }
+  withManifest({}, (m) => assert.equal(m.cookieFreeFrame, undefined));
+});

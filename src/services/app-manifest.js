@@ -1534,6 +1534,9 @@ function read(cloneDir) {
     category: readCategory(parsed),
     followOriginal: readFollowOriginal(parsed),
     offline: readOffline(parsed),
+    // A private app can opt in if its frame document bundles its startup
+    // resources and its later requests authenticate with an app token.
+    ...(parsed?.cookieFreeFrame === true ? { cookieFreeFrame: true } : {}),
   };
 }
 
