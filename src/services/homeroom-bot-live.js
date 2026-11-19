@@ -571,6 +571,13 @@ function buildFailedText(reason, { firstVersion = false, retrying = false } = {}
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
 }
 
+// #6867: what a request says when the build stopped because OpenRouter's
+// credit ran out. Not a failure and nothing for a person to do: the bot
+// picks it up by itself once credit is added.
+function buildCreditText() {
+  return 'Waiting for building credit. Homeroom bot picks this up again by itself.';
+}
+
 // A first version whose build did not finish is tried once more on its own,
 // from the plan its creator already said Build it to (homeroom-bot.js
 // buildLive): said on its request as the build's start is.
@@ -3981,7 +3988,13 @@ function readSpecText(text) {
   if (blocked) return { ok: false, blocked, error: `blocked: ${blocked}` };
   // A run that died on the wire can report the failure as its final message,
   // which would otherwise be stored as the spec.
-  if (agentApiFailure(specMd)) return { ok: false, error: 'the spec turn ended on an API error' };
+  // #6867: the notice's own first line is kept, as a build's failure keeps
+  // its ("it ended on an API error: …"), so the next outage is readable from
+  // the run itself instead of only "an API error".
+  const api = agentApiFailure(specMd);
+  if (api) {
+    return { ok: false, error: api.line ? `the spec turn ended on an API error: ${clipText(api.line, 200)}` : 'the spec turn ended on an API error' };
+  }
   if (!specShaped(specMd, { isHtml: !!captured.html || specHtml.isHtmlSpec(raw) })) {
     return { ok: false, fragment: true, error: FRAGMENT_ERROR };
   }
@@ -4218,7 +4231,10 @@ async function draftSpec({
   const read = readSpec(filled?.lastResultText, { parts: filled?.answerParts });
   if (!read.ok) {
     if (read.fragment) log.warn('homeroom-bot', 'The spec turn left only part of a spec; building from the plan', { sessionId: session.id });
-    return { ...read, costUsd, ...turn };
+    // #6867: a plan turn that ended on OpenRouter's 402 for credit is an
+    // outage, told apart from every other failed plan.
+    const out = require('./openrouter-credit').creditOut({ error: read.error }) ? { creditOut: true } : {};
+    return { ...read, costUsd, ...turn, ...out };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
   let { specMd } = read;
@@ -5076,6 +5092,8 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut(),
       ...noChangeOut(),
+      // #6867: a turn that ended on OpenRouter's 402 for credit.
+      ...(require('./openrouter-credit').creditOut({ error }) ? { creditOut: true } : {}),
     };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
@@ -6080,6 +6098,7 @@ module.exports = {
   fromPlanCommentText,
   fromPlanHomeroomText,
   buildFailedText,
+  buildCreditText,
   retryCommentText,
   heldText,
   heldKind,

@@ -2358,6 +2358,10 @@ const PLATFORM_INCIDENT_HOUR_RE = /^hour:([a-z][a-z0-9_]{0,23}):(\d{1,5})$/;
 // which only admins see, in the Workshop's Private requests.
 const PLATFORM_INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 const PLATFORM_INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
+// #6867: services/openrouter-credit.js detailToken(): the level, its
+// dollars, the balance's and the days it lasts ("credit:low:500:480:6").
+const PLATFORM_INCIDENT_CREDIT_RE = /^credit:(low|urgent):(\d{1,7}):(\d{1,7}):(\d{1,4})$/;
+const PLATFORM_INCIDENT_CREDIT_OUT_RE = /^credit:out$/;
 
 function parsePlatformIncidentDetail(detail) {
   const s = String(detail || '');
@@ -2365,6 +2369,14 @@ function parsePlatformIncidentDetail(detail) {
   if (sig) return { type: 'signal', issueNumber: Number(sig[1]) };
   const priv = PLATFORM_INCIDENT_PRIVATE_RE.exec(s);
   if (priv) return { type: 'private', privateRequestId: Number(priv[1]) };
+  if (PLATFORM_INCIDENT_CREDIT_OUT_RE.test(s)) return { type: 'creditOut' };
+  const credit = PLATFORM_INCIDENT_CREDIT_RE.exec(s);
+  if (credit) {
+    return {
+      type: 'credit', level: credit[1],
+      thresholdCents: Number(credit[2]) * 100, balanceCents: Number(credit[3]) * 100, days: Number(credit[4]),
+    };
+  }
   const h = PLATFORM_INCIDENT_HOUR_RE.exec(s);
   if (h) return { type: 'hour', kind: h[1], n: Number(h[2]) };
   const d = PLATFORM_INCIDENT_DIGEST_RE.exec(s);
@@ -3319,6 +3331,30 @@ function rowWords(n) {
   if (n.kind === 'platform_incident') {
     const alert = parsePlatformIncidentDetail(n.detail);
     const words = (kind) => String(kind).replace(/_/g, ' ');
+    // #6867: OpenRouter's building credit, warned about before it runs out,
+    // and the outage itself (services/openrouter-credit.js).
+    if (alert && (alert.type === 'credit' || alert.type === 'creditOut')) {
+      const hearts = alert.type === 'credit' && alert.level === 'urgent' ? '\u{1F6A8}' : '⚠️';
+      if (alert.type === 'creditOut') {
+        return {
+          ...base,
+          appLine: t('notifications:row.source.admin'),
+          wrap: true,
+          icon: '\u{1F6A8}',
+          label: t('notifications:row.credit.out.label'),
+          segments: [{ t: 'text', v: t('notifications:row.credit.out.body') }],
+        };
+      }
+      const dollars = (cents) => `$${Math.round(cents / 100).toLocaleString('en-US')}`;
+      return {
+        ...base,
+        appLine: t('notifications:row.source.admin'),
+        wrap: true,
+        icon: hearts,
+        label: t('notifications:row.credit.low.label', { threshold: dollars(alert.thresholdCents) }),
+        segments: [{ t: 'text', v: t('notifications:row.credit.low.body', { balance: dollars(alert.balanceCents), days: alert.days }) }],
+      };
+    }
     if (alert && alert.type === 'private') {
       return {
         ...base,
