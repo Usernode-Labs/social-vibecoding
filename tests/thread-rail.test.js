@@ -350,6 +350,21 @@ test('T2.3: a change\'s timeline ends on its stored row\'s words while it is not
   assert.equal(words(update[update.length - 1].note), 'An update is on its way');
   const held = changeRail({ ...input, work: standing({ stage: 'going_live', line: { code: 'github_checks' } }) });
   assert.equal(names(held).pop(), 'Approved');
+  // GitHub holding its merge (the Merging card, AppView._changeMergeView):
+  // the note stays the card's own account. Under the card look the card
+  // itself sits in the shut step layer, so this note is the only place the
+  // page says what GitHub is doing (dapp.json #6593 reads it).
+  const merge = {
+    name: 'Merging', figure: "Waiting on GitHub's checks", tone: 'muted', done: false,
+    note: ['Approved and tested by Homeroom. GitHub is now building and scanning the release images, which usually takes about 6 minutes. It merges as soon as they pass.'],
+  };
+  const github = changeRail({
+    ...input, votes: gate({ figure: '3 yes', tone: 'done', done: true }), merge,
+    work: standing({ stage: 'going_live', line: { code: 'github_checks' } }),
+  });
+  assert.equal(names(github).pop(), 'Approved');
+  assert.match(words(github[github.length - 1].note), /building and scanning the release images/);
+  assert.match(words(github[github.length - 1].note), /^Waiting on GitHub's checks\./);
   const fixing = changeRail({
     ...input, testing: gate({ name: 'Testing', figure: 'Found a problem', tone: 'bad' }),
     // The server words it (work-state.js phrasesOf): "Fixing", its line.

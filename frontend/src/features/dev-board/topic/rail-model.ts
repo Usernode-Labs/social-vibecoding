@@ -395,7 +395,7 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       });
     }
   }
-  return withStoredNow(steps, input.work || null, phase);
+  return withStoredNow(steps, input.work || null, phase, input.merge || null);
 }
 
 /** The phases a change's own status settles: merged, merging, a stalled release, closed. */
@@ -412,7 +412,7 @@ const SETTLED_PHASES: ReadonlySet<ChangePhase> = new Set<ChangePhase>(['live', '
  * Only while the change is open: once it is live, closed or merging, the
  * phase's own step stands (its date, its pill).
  */
-function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePhase): RailStep[] {
+function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePhase, merge: GateLike | null = null): RailStep[] {
   if (!work || !work.stage || work.stage === 'up_for_vote') return steps;
   // Merged, merging, a stalled release or closed: the change's own status
   // is newer than any row, and its step already says so.
@@ -421,6 +421,12 @@ function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePh
   if (at < 0) return steps;
   const stage = work.stage;
   const shots = stage === 'checking' && work.line?.code === 'shots';
+  // Approved, and GitHub holds its merge (the Merging card): the row titles
+  // the step, and its note stays the card's own account ("GitHub is now
+  // building and scanning the release images, which usually takes about 6
+  // minutes"), which says more than the row's line and is the only place
+  // the card look shows it while the step layer is shut.
+  const held = stage === 'going_live' && phase === 'approved' && !!merge && merge.note.length > 0 && !!steps[at].note;
   steps[at] = {
     ...steps[at],
     icon: shots ? 'shots' : STAGE_ICON[stage] || 'working',
@@ -429,7 +435,8 @@ function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePh
     busy: BUSY.has(stage),
     // The row's second line; a stop of the bot's fixes keeps the card's own
     // words for who fixes it now, which the row has no line for.
-    note: lineWords(work) || (stage === 'stopped' && phase === 'failed' ? steps[at].note : null) || stageNote(work),
+    note: held ? steps[at].note
+      : lineWords(work) || (stage === 'stopped' && phase === 'failed' ? steps[at].note : null) || stageNote(work),
     noteTone: stage === 'stopped' ? 'bad' : ASKS.has(stage) ? 'act' : 'plain',
   };
   return steps;
