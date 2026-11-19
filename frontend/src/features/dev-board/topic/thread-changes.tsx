@@ -68,8 +68,9 @@ import { Button } from '@/components/ui/button';
 import { Avatar } from '@/components/ui/feed';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { ActionButton, StatusPill } from '../card/dev-card';
+import type { Standing } from '../../../lib/work-state';
 import type { DevCardModel } from '../card/model';
-import { ChangeFoot, ChangeGates, PreviousShotsLine, ShotsCard , phaseOf } from './change-head';
+import { ChangeFoot, ChangeGates, PreviousShotsLine, ShotsCard , headPill, phaseOf } from './change-head';
 import { ballotHeadline, fixStanding } from './card-model';
 import { StepLayer, ThreadCardContext, ThreadFoot , NoPicture } from './thread-card';
 import { closeStep, openStep, publishLead, useOpenStep } from './step-store';
@@ -359,6 +360,10 @@ export function ChangeLine({ item, view, propose = NO_PROPOSE, letter = null, fo
   const t = useMessages('project');
   const kicker = useKicker(item, letter);
   const status = view?.v.status || null;
+  // The pill is the change's stored row's words while that row is not up
+  // for a vote ("Taking screenshots", never "Vote · 0/2"), as the change's
+  // own page draws it (./change-head.tsx headPill, AppView._workPill).
+  const pill = view ? headPill(view.v) : null;
   // #6233: the change is live in the app, but this tab runs the version
   // before it: say so and offer the same reload the side menu does.
   const behind = !!status && (status.key === 'deployed_reload' || status.key === 'merged_reload');
@@ -366,7 +371,7 @@ export function ChangeLine({ item, view, propose = NO_PROPOSE, letter = null, fo
     <div className="min-w-0" data-thread-change-line={item.id}>
       <div className="flex min-w-0 items-center gap-2">
         <div className={`${KICKER} min-w-0 flex-1 truncate`}>{kicker}</div>
-        {status && !footed ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
+        {status && pill && !footed ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={pill} inline /></span> : null}
         {behind ? (
           <button
             type="button"
@@ -751,9 +756,11 @@ function LookFacts({ v }: { v: ChangeThreadView }): ReactNode {
   );
 }
 
-function ChangeBody({ item, view, plan = null, ballot = false, request, tail = null, covered = false, look = false }: {
+function ChangeBody({ item, view, plan = null, ballot = false, request, tail = null, covered = false, look = false, row = null }: {
   /** Opened from its row in a ballot (the card look's Look): its summary, two facts and its picture. */
   look?: boolean;
+  /** The request's own stored row, for the foot of its one change (./change-head.tsx ChangeFoot). */
+  row?: Standing | null;
   item: ThreadItem; view: ChangeView | null; plan?: RequestSpecCard | null; ballot?: boolean; request: number;
   /** The card's summary already speaks for this change (the request's one change): its own is left out. */
   covered?: boolean;
@@ -789,7 +796,7 @@ function ChangeBody({ item, view, plan = null, ballot = false, request, tail = n
           the pair below is then the content of the layer the timeline's
           steps open (change-head.tsx ChangeGates). */}
       {lone && view && item.state !== 'underway' && hasCards(item)
-        ? <ChangeFoot id={item.id} card={view.card} v={view.v} page={thread.page} tail={tail} /> : null}
+        ? <ChangeFoot id={item.id} card={view.card} v={view.v} page={thread.page} tail={tail} row={row} /> : null}
       {item.state === 'underway' || !hasCards(item) ? (
         propose.can ? (
           // #6599: its one action, where the Votes card will appear, with the
@@ -880,7 +887,9 @@ function ChangeBlock({ item, plan = null, request, onChanged, sole = false }: {
   return (
     <div ref={box} className="mt-3" data-thread-change={item.id} data-thread-change-state={item.state || ''}>
       <ChangeLine item={item} view={view} propose={propose} footed={footed} sole={thread.card && sole} />
-      <ChangeBody item={item} view={view} plan={plan} request={request} tail={footed ? workWithBot : null} covered={thread.card && sole && !!thread.covers} />
+      {/* The request's one change: its foot says where the REQUEST stands
+          (the request's own row), as the timeline's last step does. */}
+      <ChangeBody item={item} view={view} plan={plan} request={request} tail={footed ? workWithBot : null} covered={thread.card && sole && !!thread.covers} row={sole ? thread.row || null : null} />
       {footed ? null : workWithBot}
     </div>
   );
@@ -891,13 +900,15 @@ function ChangeBlock({ item, plan = null, request, onChanged, sole = false }: {
  * the rest of its section. `open` is the ballot's, so a tap on the change's
  * row in the ballot opens it too.
  */
-function FoldedChange({ item, i, view, plan, request, open, onToggle, onChanged }: {
+export function FoldedChange({ item, i, view, plan, request, open, onToggle, onChanged }: {
   item: ThreadItem; i: number; view: ChangeView | null; plan: RequestSpecCard | null; request: number; open: boolean; onToggle: () => void;
   onChanged?: () => void;
 }): ReactNode {
   const t = useMessages('project');
   const kicker = useKicker(item, letterOf(i));
   const status = view?.v.status || null;
+  // The row's words while it is not up for a vote, as ChangeLine draws it.
+  const pill = view ? headPill(view.v) : null;
   const propose = useProposeChange(item, onChanged);
   return (
     <div className="dev-thread-fold" data-thread-change={item.id} data-thread-change-state={item.state || ''} data-thread-fold={open ? 'open' : 'shut'}>
@@ -911,7 +922,7 @@ function FoldedChange({ item, i, view, plan, request, open, onToggle, onChanged 
             {item.title || t('project:topic.thread.item.changeUnnumbered')}
           </span>
         </button>
-        {status ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={status} inline /></span> : null}
+        {status && pill ? <span className="shrink-0" data-thread-change-status={status.key}><StatusPill s={pill} inline /></span> : null}
         <ChangeMenu item={item} view={view} propose={propose} />
       </div>
       {open ? <div className="ps-[22px]"><ChangeBody item={item} view={view} plan={plan} ballot request={request} /></div> : null}

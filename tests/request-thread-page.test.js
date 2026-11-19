@@ -978,7 +978,8 @@ test('#6594 an approved change says Approved in the header and the list', () => 
   });
   const checking = requestPill(layout, standing('checking', 'approved_checking'), (id) => id);
   assert.equal(checking.key, 'checking');
-  assert.equal(checking.label, 'project:topic.thread.pill.checking');
+  // 19 Nov 2026, the one rule: in the row's own words.
+  assert.equal(checking.label, 'core:work.stage.checking');
   assert.equal(checking.tone, 'progress', 'Checking takes the in-progress look');
   assert.equal(checking.spinner, true);
   assert.equal(requestPill(layout, standing('going_live', 'github_checks'), (id) => id).key, 'approved');

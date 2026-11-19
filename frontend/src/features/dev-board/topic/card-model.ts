@@ -40,8 +40,15 @@ export interface ChangeFootInput {
    * headline and line, so the page and the lists can never disagree. The
    * buttons stay on the live gates: what a press does never depends on a row
    * a few seconds old.
+   *
+   * On a request's page with one change it is the REQUEST's row instead
+   * (./thread-changes.tsx): the page is the request's, so its foot says
+   * where the request stands ("Stopped: its tests still fail", a question
+   * asked), which the change's own row does not know.
    */
   work?: Standing | null;
+  /** The viewer is the row's requester: its words are theirs (a request's row; a change's row reads the same to everyone). */
+  yours?: boolean;
 }
 
 /**
@@ -134,18 +141,36 @@ export function changeFoot(input: ChangeFootInput): ChangeFoot {
   const key = status?.key || '';
   const label = status?.label || '';
   const foot = liveFoot(input, key, label);
-  return storedFoot(foot, input.work || null);
+  return storedFoot(foot, input.work || null, changePhase(input), input.yours !== false);
 }
 
+/** The phases a change's own status settles: merged, merging, a stalled release, closed. */
+export const SETTLED_PHASES: ReadonlySet<ChangePhase> = new Set<ChangePhase>(['live', 'closed', 'going', 'stuck']);
+
 /**
- * #6821: the foot worded from the change's stored work state instead of the
- * live gates. An approved change catching up with main reads "Syncing with
- * main", never "Up for a vote"; the viewer's own yes is the line under it at
- * any stage. A change still up for a vote keeps its live foot, which carries
- * the tally and the vote's own words.
+ * #6821: the foot worded from the stored work state instead of the live
+ * gates, by the one rule (lib/work-state.ts): the row gives the word, the
+ * live gates add detail under it. An approved change catching up with main
+ * reads "Syncing with main", never "Up for a vote"; the row's second line
+ * and the viewer's own yes lead the line under it. A change still up for a
+ * vote keeps its live foot, which carries the tally and the vote's own
+ * words under the same stage word.
+ *
+ * The live foot's sentences stay as the detail (`sub`): who fixes failed
+ * tests, that an update is on its way and clears a yes cast now, what a
+ * conflict means for the vote. They used to be dropped, and the foot said a
+ * stage with nothing under it that the page's own cards knew.
+ *
+ * Only while the change is open. Once it is live, closed, merging or its
+ * release is stuck (`phase`), its own status is newer than any row and its
+ * live foot stands whole: the day it went live, why it was closed, what a
+ * stuck merge waits on. The timeline's last step has the same guard
+ * (./rail-model.ts withStoredNow); without it a row a few seconds behind
+ * said "Taking screenshots" over a change that had just gone live.
  */
-function storedFoot(foot: ChangeFoot, work: Standing | null): ChangeFoot {
+function storedFoot(foot: ChangeFoot, work: Standing | null, phase: ChangePhase, yours = true): ChangeFoot {
   if (!work || !work.stage || work.stage === 'up_for_vote') return foot;
+  if (SETTLED_PHASES.has(phase)) return foot;
   const line = lineWords(work);
   const mine = work.myVote === 'yes'
     ? { id: 'changes:page.votes.note.youSaidYes' }
@@ -153,10 +178,41 @@ function storedFoot(foot: ChangeFoot, work: Standing | null): ChangeFoot {
   return {
     ...foot,
     headline: '',
-    title: stageWords(work, { yours: true }),
+    title: stageWords(work, { yours }),
     facts: [...(line ? [line] : []), ...(mine ? [mine] : [])],
-    sub: [],
+    // The row tints it too, whatever the gates say: a foot that says
+    // "Building: Homeroom bot is fixing its tests" is not red because a test
+    // failed, and a stop is red even while the gates are quiet.
+    tone: storedTone(work),
   };
+}
+
+/**
+ * The second lines of a row whose change's tests fail (services/work-state.js
+ * derives them): its own checks, GitHub's, or a takeover's fix that failed
+ * while they still fail (withUpdate). A surface tints such a row with the bad
+ * tone, as AppView._workPill does. Kept out of lib/work-state.ts, which
+ * names no line code (tests/work-state.test.js): the words are the server's.
+ */
+const FAILING_LINES: ReadonlySet<string> = new Set(['checks_failing', 'github_checks_failing', 'bot_fix_failed']);
+
+/** Pure: whether the row says its change's tests fail. */
+export function testsFailing(state: WorkState | null | undefined): boolean {
+  return !!state && !!state.line && FAILING_LINES.has(state.line.code);
+}
+
+/**
+ * Pure: the foot's tone for a stored row that is not up for a vote, in the
+ * foot's own tones (`liveFoot`): a stop or failing tests are bad; an
+ * approved change on its way (going live) is the ok of Approved; live is ok
+ * and closed muted (a row ahead of the page); anything still in hand is
+ * plain.
+ */
+export function storedTone(work: WorkState): FootTone {
+  if (work.stage === 'stopped' || testsFailing(work)) return 'bad';
+  if (work.stage === 'going_live' || work.stage === 'live') return 'ok';
+  if (work.stage === 'closed') return 'muted';
+  return null;
 }
 
 function liveFoot(input: ChangeFootInput, key: string, label: string): ChangeFoot {
