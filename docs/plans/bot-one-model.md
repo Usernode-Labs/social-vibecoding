@@ -382,8 +382,12 @@ One offer store, written with its message (migration `bot-cards-retired`):
 
 ## Step 5: threads as the unit
 
-- **Thread kinds:** `main`, `private` (ask, draft, idea), `design`,
-  `request`, `change`, `channel` (a project's chat and its topics), `reply`.
+- **Thread kinds:** `private` (ask, draft, idea), `request`, `change`,
+  `channel` (a project's chat and its topics), `reply`. Amended 19 Nov 2026
+  (step 6): `main` went with Main Chat (14 Nov 2026), and `design` and
+  `draft` are no kinds any more: a design a private thread holds and a live
+  draft open in it are capabilities of the private profile's one turn, not
+  speakers of their own.
 - **One entry:** `threadBot.answer(thread, message, deps)` in
   `src/services/thread-bot.js` decides the thread's kind and hands it to that
   kind's profile. A profile (`src/services/bot-profiles/`) is data plus a
@@ -403,7 +407,8 @@ Built 5 Nov 2026:
 - `src/services/bot-profiles.js`: seven kinds and their profiles. A project
   thread's kind comes from its place type (issue, session, chat or
   category, message); a message in the chat is Main, private (a private
-  thread, or a request card's thread from before) or design.
+  thread, or a request card's thread from before) or design. Amended 19 Nov
+  2026 (step 6): a message in the chat is always private.
 - The surfaces read their limits from their profile (the values did not
   change), and no surface offers a tool its profile does not list
   (`tests/bot-profiles.test.js`).
@@ -412,4 +417,109 @@ Built 5 Nov 2026:
 - `src/services/thread-bot.js answer`: the chat's routing (after what needs
   no model) and the bot-voice machine's turn call it; it runs the kind on
   its surface.
+
+## Step 6: one agent per private thread
+
+Built 19 Nov 2026 (request #6864, widened to every private thread).
+
+### Why
+
+A private thread still had three speakers after step 5, and which one
+answered was decided by the thread's state before any model read the
+message (`homeroom-bot-dm.js answerUserMessage`):
+
+1. a thread whose live draft was open sent every message to the draft bot
+   (`live-draft-bot.js answer`), whose only tools changed the draft's code:
+   it could not offer or file a request, ask a question card, read a request
+   or say where someone's work stood, and its replies were the only ones no
+   reply check read (`reply-claims.js`);
+2. a pinned comment on a design's preview, or a reply to one of its
+   versions (`designDirect`), went to the designer (`design-bot.js answer`);
+3. any non-quoting message in a request's thread with an open bot question
+   was drafted as the answer to it (`answerOnRequest`), with no model;
+4. any non-quoting message in a request's thread with a plan waiting for
+   Build it was a change to the plan (`changePlan`), which read the request
+   again first in line: "what does step 3 mean?" was planned again, never
+   answered;
+5. everything else was the chat's turn, which handed drawing to the designer
+   (`draw_screen`: "call it alone, do not reply: the designer answers them")
+   and handed an opened live draft to the draft bot.
+
+Evan's thread 58922 (19 Nov 2026, 15 messages, 11 bot turns) showed what
+that costs. "Nice, yeah lgtm. Can you implement?" went to the chat's turn,
+which had only `offer_request` (the designer alone had `offer_plan`), so
+#6863 was filed with no design: its body named "version 4" of a thread
+nobody else can open, and its build ran from the words alone. "What would
+the 2 earlier steps be?" was asked beside a change; the chat only handed
+over and the designer only talked about the drawing, so nobody answered.
+The version line was the designer's edit log, every `edit_design` note
+joined with "; " and cut at 300 characters mid-word, and the designer,
+told only that its edits make "the next version", called version 4 "version
+3".
+
+### What was built
+
+- **One speaker.** Every message in a private thread is the chat's turn
+  (`homeroom-bot-mayor.js runDmTurn`), its reply the one reply. Nothing hands
+  a message to a designer or a draft bot: `draw_screen`, `ctx.drawScreen`,
+  `design-bot.js answer` and `draw`, `live-draft-bot.js answer` and `opened`,
+  `designDirect` and the `design` and `draft` thread kinds are gone.
+- **Capabilities by thread state** (`bot-profiles.js CAPABILITIES`). The
+  private profile gains the design capability in a thread that holds a
+  design (`homeroom-bot-dm.js capabilityDeps`: `threadDesign`), or once a
+  turn starts one (`start_design`, about the size of the `draw_screen` it
+  replaces, so an ordinary chat's prompt does not grow), and the draft
+  capability while a live draft is open (`threadLiveDraft`) or once a turn
+  opens one (`open_app_preview`, which no longer ends the turn). A
+  capability is a session the turn holds (`design-bot.js openSession`,
+  `live-draft-bot.js openSession`): its prompt section (the design's rules,
+  its HTML, size, pins, pictures and layout widths; the draft's files, notes
+  and saved edits), its tools, and their handlers, which are the ones the
+  two bots ran (edit application, the capture, the style check and the look
+  at a version, the plan card; read, edit, apply and restart, rollback).
+  Only the routing moved. Each section loads only in those threads; the
+  turn's rounds, output room and request clock grow to the capability's
+  limits (`turnLimits`) only while its tools are loaded, its rounds counted
+  from where it opened.
+- **The reply in a design thread** answers any question in their message
+  first, then says "Version N: <summary>". N is the version the turn saved
+  (`write_screen` and `edit_design` return it, and the prompt says it); the
+  summary is the reply's own `summary`, written once for the version and
+  stored as its note, never joined from per-edit notes (`edit_design` and
+  `write_screen` lost `note`), and `design-threads.js versionLine` shortens
+  it at a word (`clipWords`), never mid-word. The message carries the version
+  card (`metadata.kind = 'design_version'`, Open preview) as the designer's
+  did.
+- **Approval files the design.** In a design thread the prompt says that
+  lgtm, looks good, build, implement, file or post it is `offer_plan`, whose
+  New request files the request with the design as its plan, and that
+  `offer_request` is only for something that is not this design. An
+  `offer_request` on the design's own project is refused with a pointer to
+  `offer_plan` unless it says `notTheDesign`.
+- **Request threads stop routing by state.** Decided before any model reads
+  it: a suggested answer tapped under the question (`isSuggestedAnswer`),
+  Build it said under a waiting plan (`isPlanGoWord`, the button's words),
+  and a reply quoting the question or the plan card. Everything else is the
+  turn's, which drafts their words as the answer (`answer_question`, Post it,
+  as before) or plans the request again (`change_plan`: the old `changePlan`
+  path, run as a tool, `asTool`) when that is what they meant, and otherwise
+  answers. With the model switched off, the thread decides by state as it
+  did.
+- **One reply check, Stop and working card for the whole turn.** The draft's
+  replies go through `reply-claims.js` (`draft_done`: a change said with none
+  saved this turn); the design's claims are the same `drawing`,
+  `design_done` and `not_built`. Stop covers every round (`apply_changes` is
+  what lasts of a draft; no version is saved from a stopped turn), and the
+  working card says "Drawing version 4" and "Changing the draft".
+- **Asking says why.** The chat's prompt tells it to say, in one clause,
+  what it found that makes a question necessary before asking it.
+
+### What it costs
+
+An ordinary private thread's turn is what it was: no design or draft
+section, and `start_design` in `draw_screen`'s place. A design turn runs its
+drawing rounds with the chat's prompt on top, about 400k input tokens where
+the two turns took about 200k (the designer's 170k to 250k plus the chat's
+27k hand-off), about a cent more on DeepSeek V4.1 Flash. One turn is recorded
+and counted per message, not two.
 

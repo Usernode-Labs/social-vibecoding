@@ -11,7 +11,8 @@
 //      the voice's prompt asks for it, with room for it.
 //   2. The voice keeps the copy, checks its words for claims, and sends it
 //      only beside the words as written, never under an offer.
-//   3. The design bot's plain answer may carry it; a version's line does not.
+//   3. A design thread's plain answer (the chat's own turn's, step 6) may
+//      carry it; a version's line does not.
 //   4. The thread's row reads it only off the bot's own reply, drops it on
 //      an edit, and the body draws it in its own box, folded the same way.
 
@@ -43,8 +44,10 @@ test('every reply tool that takes the copy describes it the one way, and the voi
     assert.deepEqual(reply.required, ['text'], `${type}: the words are always sent`);
     assert.equal(Object.keys(reply.properties)[1], 'html', `${type}: the words stream first`);
   }
-  const designReply = read('src/services/design-bot.js');
-  assert.match(designReply, /properties: \{ text: \{ type: 'string' \}, html: \{ type: 'string', description: replyHtml\.REPLY_HTML_DESCRIPTION \} \},/);
+  // Step 6: a design thread's reply is the chat's, with the version's summary.
+  const designReply = mayor.DESIGN_REPLY_TOOL.function.parameters.properties;
+  assert.equal(designReply.html.description, replyHtml.REPLY_HTML_DESCRIPTION);
+  assert.equal(require('../src/services/design-bot').TOOLS.some((t) => t.function.name === 'reply'), false);
 
   const prompt = voice.systemPrompt({ app: { slug: 'x', name: 'X' }, place: { type: 'issue', ref: 1 }, tools: voice.toolsFor({ type: 'issue', ref: 1 }, {}) });
   assert.ok(prompt.includes('- Keep a reply under 100 words unless they ask for detail. No headings in text.'));
@@ -123,17 +126,15 @@ test('say() stores the copy on the bot\'s reply, and none under an offer', async
 
 // ── 3. The design bot's plain answer ─────────────────────────────────────
 
-test('a design thread\'s answer with no new version may come laid out; the not-drawn line never does', () => {
-  const src = read('src/services/design-bot.js');
-  assert.match(src, /replyCopy = replyHtml\.cleanReplyHtml\(args\.html\);\n\s+copyBeside = replyText;/);
-  // Its words and its copy are checked together (reply-claims.js), and a
-  // copy goes only when nothing in either was cut.
-  assert.match(src, /endProblems = await claimsIn\(replyText, replyCopy\);/);
-  assert.match(src, /const copy = !notDrawn && !error && replyCopy && replyText && replyText === copyBeside\n\s+&& !endProblems\.length \? replyCopy : null;/);
-  assert.match(src, /Object\.keys\(meta\)\.length \? \{ metadata: \{ kind: 'chat', \.\.\.meta \} \} : \{\}\);/,
-    'a chat answer, which the chat draws laid out (messages/bot-html.tsx botReplyHtml)');
+test('a design thread\'s answer with no new version may come laid out; a version and the not-drawn line never do', () => {
+  // Step 6 (#6864): the design thread's answer is the chat's own turn's, laid
+  // out as any chat answer is (answerHtml), and checked by the one reply check.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /text, html: ownHtml, laysOut: !fallback && !ctx\.offer && !designShown && !notDrawn, deps,/);
+  assert.match(src, /check: async \(made\) => !\(await claims\.checkReply\(pool, ctx, replyHtml\.htmlWords\(made\)\)\)\.length,/);
   // A version's line keeps its words: the version card is its picture.
-  const version = src.slice(src.indexOf("kind: 'design_version'"), src.indexOf("kind: 'design_version'") + 300);
+  const version = src.slice(src.indexOf("kind: 'design_version', appSlug"), src.indexOf("kind: 'design_version', appSlug") + 300);
+  assert.ok(version.length > 0);
   assert.doesNotMatch(version, /html/);
 });
 

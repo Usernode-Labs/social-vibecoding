@@ -130,12 +130,17 @@ test('a turn on the bot\'s included key is debited; any other, or a free one, is
   });
 });
 
-test('the chat, the voice, the design bot and the look before filing all run on the engine, and debit through it', () => {
-  for (const rel of ['src/services/homeroom-bot-mayor.js', 'src/services/homeroom-bot-voice.js', 'src/services/design-bot.js']) {
+test('the chat, the voice and the look before filing all run on the engine, and debit through it', () => {
+  for (const rel of ['src/services/homeroom-bot-mayor.js', 'src/services/homeroom-bot-voice.js']) {
     const src = read(rel);
     assert.match(src, /turnEngine\.runRounds\(turnRounds, /, `${rel} runs its rounds on the engine`);
     assert.match(src, /turnEngine\.chargeTurn\(pool, /, `${rel} debits through the engine`);
     assert.doesNotMatch(src, /recordSpend\(/, `${rel} keeps no copy of the debit`);
+  }
+  // Step 6 (#6864): a design and a live draft are capabilities of the chat's
+  // own turn, with no rounds, record or debit of their own.
+  for (const rel of ['src/services/design-bot.js', 'src/services/live-draft-bot.js']) {
+    assert.doesNotMatch(read(rel), /runRounds|chargeTurn|recordSpend\(/, `${rel} runs no turn of its own`);
   }
   const look = read('src/services/homeroom-bot-already-done.js');
   assert.match(look, /turnEngine\.runRounds\(\{ rounds: 0, limit: MAX_ROUNDS \}, /);

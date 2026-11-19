@@ -69,9 +69,9 @@ test('Pick: one of the card\'s versions, on a design of theirs, patched as the c
 
 test('the designer has compare_versions and make_pictures between its own tools and its offers, and says when to use them', () => {
   const names = designBot.TOOLS.map((t) => t.function.name);
-  // #6354: capture_page comes after the board readers. #6682: a request that
-  // is not the design is offered from here too, beside the design's offers.
-  assert.deepEqual(names, ['write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'read_plan', 'compare_versions', 'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'offer_request', 'list_requests', 'get_request', 'capture_page']);
+  // #6354: capture_page comes after the board readers. Step 6 (#6864): the
+  // chat's own reply, close_thread and offer_request serve a design thread.
+  assert.deepEqual(names, ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan', 'compare_versions', 'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page']);
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Garden club' }, title: 'Plots', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
     pictures: [{ id: 'a'.repeat(32), label: 'A · light', width: 1024, height: 1024 }, { id: 'nope', label: 'B' }],
@@ -82,13 +82,13 @@ test('the designer has compare_versions and make_pictures between its own tools 
   assert.doesNotMatch(prompt, /Picture B/, 'only a picture by its id');
   assert.match(prompt, /THE CURRENT VERSION \(version 2\), its whole HTML:\n<p>x<\/p>$/, 'the version stays last');
   assert.doesNotMatch(prompt, /—/);
-  const src = read('src/services/design-bot.js');
-  assert.match(src, /const withCard = card && !error \? \{ card \} : \{\};/);
-  // Task 2020 follow-up: beside the reply's laid-out copy, when it has one.
-  assert.match(src, /const meta = \{ \.\.\.withCard, \.\.\.\(copy \? \{ html: copy \} : \{\}\) \};/);
-  assert.match(src, /Object\.keys\(meta\)\.length \? \{ metadata: \{ kind: 'chat', \.\.\.meta \} \} : \{\}/, 'a reply with no new version carries it');
-  assert.match(src, /designTitle: held\.title, \.\.\.withCard,/, 'a version\'s message carries it too');
-  assert.match(src, /offered: !!offered \|\| !!card/, 'a card is an answer: no nudge to draw');
+  // Step 6: the chat's own turn puts the design's card under its reply: a
+  // reply with no new version carries it as any chat card, and so does a
+  // version's message.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /const toolCard = caps\.design\?\.card \|\| ownCard;/);
+  assert.match(src, /designVersion: saved\.made\.version, designTitle: saved\.held\.title,\n\s+\.\.\.\(toolCard \? \{ card: toolCard \} : \{\}\)/);
+  assert.match(read('src/services/design-bot.js'), /offered: !!offered \|\| !!card \|\| otherOffer\(\)/, 'a card is an answer: no nudge to draw');
 });
 
 // ── The card ──────────────────────────────────────────────────────────────

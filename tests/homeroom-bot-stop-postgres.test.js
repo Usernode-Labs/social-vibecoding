@@ -312,23 +312,24 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     await forget(ada);
   });
 
-  await t.test('a screen handed to the designer: it draws in her thread, and a Stop there says so in it', async () => {
+  await t.test('a screen the turn starts: it draws in her thread, and a Stop there says so in it, saving nothing', async () => {
     pushed.length = 0;
     const messageId = await write(ada, conversationId, 'draw me a plant list screen');
     let requests = 0;
     script = async (request) => {
       requests += 1;
-      if (requests === 1) return callsOf(1, [['draw_screen', { what: 'A list of plants with when each was last watered.', title: 'Plant list' }]]);
-      // The designer's first request: she presses Stop while it draws.
+      if (requests === 1) return callsOf(1, [['start_design', { what: 'A list of plants with when each was last watered.', title: 'Plant list' }]]);
+      // Step 6 (#6864): the same turn's next request draws, and she presses
+      // Stop while it does.
       await press(ada, conversationId, { messageId });
       await waitFor(() => request.signal.aborted, { label: 'the answer\'s work to read the mark', timeoutMs: botStop.STOP_POLL_MS + 4000 });
-      return callsOf(2, [['write_screen', { title: 'Plant list', size: 'phone', html: '<main><h1>Plants</h1></main>', note: 'First drawing' }]]);
+      return callsOf(2, [['write_screen', { title: 'Plant list', size: 'phone', html: '<main><h1>Plants</h1></main>' }]]);
     };
     const out = await runAnswer(ada, conversationId, messageId);
     assert.deepEqual(out, { sent: true, later: null, skipped: null });
     const said = await botSaid(messageId);
     // 14 Nov 2026: her message is in a thread already (every message is), so
-    // the designer draws there. No thread is opened for the screen, and the
+    // the design is drawn there. No thread is opened for the screen, and the
     // one line of the Stop is said where the working card was.
     assert.deepEqual(said.map((m) => [m.content, Number(m.thread_root_id), m.idempotency_key]),
       [['Stopped. Nothing was filed or changed.', messageId, `hrbot-mayor-${messageId}`]]);
@@ -336,9 +337,9 @@ test('Stop in the chat with Homeroom bot, against the full PostgreSQL schema', {
     assert.ok(thread, 'her thread stays');
     const { rows: versions } = await pool.query('SELECT version FROM design_versions WHERE private_thread_id = $1', [thread.id]);
     assert.equal(versions.length, 0, 'no version of the screen was saved');
-    // The designer's turn is recorded as stopped too (the turn that handed it the screen went through).
+    // One turn, the chat's own, recorded as stopped.
     const turns = await turnOf(messageId);
-    assert.deepEqual(turns.map((r) => [r.error, r.fallback]), [[null, null], [null, 'stopped']]);
+    assert.deepEqual(turns.map((r) => [r.error, r.fallback]), [[null, 'stopped']]);
     // Its typing stayed in her thread, still naming her message.
     const there = pushed.filter((p) => p.type === 'conversation_typing' && p.typing && Number(p.threadRootId) === messageId);
     assert.ok(there.length >= 1);

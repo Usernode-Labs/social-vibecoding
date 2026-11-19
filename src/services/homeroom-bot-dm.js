@@ -1091,15 +1091,24 @@ const typingSends = new Map();
 // the card says "Writing", and the answer appears once, whole, as the
 // bot's message, so nothing shown is ever replaced or wiped.
 // 'looking': a helper sent to look into a project's code (P3, look_into).
-const DOING_KINDS = Object.freeze(['progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking']);
+// Step 6 (#6864): 'drawing' names the design version it is saved as
+// ("Drawing version 4"), and 'changing_draft' is a live draft's code being
+// changed in the chat's own turn.
+const DOING_KINDS = Object.freeze([
+  'progress', 'request', 'code', 'drawing', 'capturing', 'designing', 'drafting', 'writing', 'looking', 'changing_draft',
+]);
 const MAX_DOING_PROJECT = 60;
 
-/** Pure: `what` as a typing event carries it ({ kind, number?, project? }), or null for "thinking". */
+/** Pure: `what` as a typing event carries it ({ kind, number?, project?, page?, version? }), or null for "thinking". */
 function typingDoing(what) {
   if (!what || typeof what !== 'object' || !DOING_KINDS.includes(what.kind)) return null;
   if (what.kind === 'request') {
     const number = Number(what.number);
     return Number.isSafeInteger(number) && number > 0 ? { kind: 'request', number } : null;
+  }
+  if (what.kind === 'drawing') {
+    const version = Number(what.version);
+    return Number.isSafeInteger(version) && version > 0 ? { kind: 'drawing', version } : { kind: 'drawing' };
   }
   if (what.kind === 'code' || what.kind === 'looking') {
     const project = typeof what.project === 'string' ? clip(what.project.replace(/\s+/g, ' ').trim(), MAX_DOING_PROJECT) : '';
@@ -1275,9 +1284,9 @@ async function whileTyping(pool, { botId, conversationId, threadRootId = null, w
   clearTimeout(waited);
   const typing = {
     doing: (what) => { said = what; return stop.doing(what); },
-    // 1 Nov 2026: a screen asked for in Main Chat is drawn in a thread the
-    // designer opens (design-bot.js draw), so the working card waited in
-    // Main Chat while the new thread looked idle. The typing goes there:
+    // 1 Nov 2026: a screen asked for outside a private thread is drawn in one
+    // opened for it (step 6: design-bot.js roomFor), so the working card waited
+    // where it was asked while the new thread looked idle. The typing goes there:
     // started in the thread first, saying what it was doing, then stopped
     // here, so the card is never gone from both.
     moveTo: async (rootId) => {
@@ -2980,17 +2989,25 @@ async function answerFirstVersion(pool, { user, appId, answers = [], deps = {} }
  * and the request is read again first in line with them (homeroom-bot.js
  * planChangesFor), which sends a new plan. The card's buttons go. Resolves
  * what the bot said back.
+ *
+ * Step 6 (#6864, 5): only a reply that QUOTES the plan card comes here
+ * before any model reads it. Anything else written under a waiting plan is
+ * the chat's turn's, which calls this as its change_plan tool (`asTool`)
+ * when that is what they meant: then nothing is sent from here. It resolves
+ * { said } (the words the turn's reply rests on) or, for a complicated
+ * change's plan, { draft: true } (the turn drafts their words for the
+ * request with Post it, as changeOnRequest does), or null.
  */
-async function changePlan(pool, { bot, user, target, message, deps = {} }) {
+async function changePlan(pool, { bot, user, target, message, deps = {}, asTool = false }) {
   const text = String(message.content || '').trim();
   const { rows: [app] } = await pool.query('SELECT id, slug, name FROM apps WHERE id = $1', [target.app_id]);
   if (!app) return null;
   const name = app.name || app.slug;
   const issueNumber = Number(target.issue_number);
-  const reply = (content) => sendDm(pool, {
+  const reply = (content) => (asTool ? { said: content } : sendDm(pool, {
     bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-plan-change-${message.id}`, content, moment: 'reply',
     metadata: { kind: 'ack', appSlug: app.slug, appName: name, issueNumber, firstVersion: true },
-  });
+  }));
   if (!text) return reply(`Write what you'd like changed in the plan as a message, and I'll plan ${name} again.`);
   // "Build it" (or "yes") written under the plan is its button.
   if (isPlanGoWord(text)) {
@@ -3011,6 +3028,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
           'SELECT thread_root_id FROM conversation_messages WHERE id = $1', [Number(target.message_id)],
         );
         if (thanks && (thanks.messageId > Number(target.message_id) || Number(planRow?.thread_root_id) === thanks.messageId)) {
+          if (asTool) return { said: `That was Build it: ${name} is being built from the plan as written.`, built: true };
           return { conversationId: thanks.conversationId, messageId: thanks.messageId, duplicate: true };
         }
         return reply(activity.thanksText(name));
@@ -3031,6 +3049,7 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   // group: what to change is said there, and its next look plans it again.
   const { rows: [planned] = [] } = await pool.query('SELECT plan FROM homeroom_bot_runs WHERE id = $1', [target.run_id]);
   if (planned?.plan?.complicated === true) {
+    if (asTool) return { draft: true, app };
     return changeOnRequest(pool, { bot, user, target, text, message, deps });
   }
   await pool.query(
@@ -3063,7 +3082,8 @@ async function changePlan(pool, { bot, user, target, message, deps = {} }) {
   log.info('homeroom-bot-dm', 'A first version\'s plan is planned again with its creator\'s words', {
     app: app.slug, issueNumber, userId: user.id,
   });
-  return reply(`Thanks. I'll work that into a new plan for ${name} and send it here.`);
+  const saidBack = `Thanks. I'll work that into a new plan for ${name} and send it here.`;
+  return asTool ? { said: saidBack, replanned: true } : reply(saidBack);
 }
 
 /**
@@ -4556,10 +4576,13 @@ async function messageThread(pool, { userId, conversationId, message }) {
  * threadDraft }).
  */
 async function threadDeps(pool, { userId, conversationId, message }) {
+  // Step 6: a later try loads the thread's design and live draft too, as its
+  // first try did (capabilityDeps).
+  const caps = await capabilityDeps(pool, { userId, conversationId, message }).catch(() => ({}));
   const request = await threadRequest(pool, { userId, conversationId, message });
-  if (request) return { threadRequest: request };
+  if (request) return { ...caps, threadRequest: request };
   const other = await messageThread(pool, { userId, conversationId, message });
-  return other ? { threadRootId: other.rootId, threadDraft: other.draft, threadKind: other.kind } : {};
+  return other ? { ...caps, threadRootId: other.rootId, threadDraft: other.draft, threadKind: other.kind } : caps;
 }
 
 /**
@@ -5234,20 +5257,20 @@ async function sayStopped(pool, { userId, conversationId, messageId, attempt = 0
 }
 
 /**
- * Pure (15 Nov 2026, #6683): whether a message in a thread that holds a
- * design is the design's own, and so answered by the designer
- * (design-bot.js) rather than by the chat's turn. Two signals say it is: a
- * comment pinned on the preview (metadata.designPin), and a reply to one of
- * the design's versions (design_versions.message_id). Anything else is
- * answered by the chat's turn, which hands drawing work back to the designer
- * (homeroom-bot-mayor.js draw_screen).
+ * Step 6 (19 Nov 2026, #6864): what a private thread's state gives the
+ * chat's turn of a message written there: the design it holds
+ * (`threadDesign`, design-threads.js threadOf) and its open live draft
+ * (`threadLiveDraft`, live-drafts.js threadOf), each a capability the turn
+ * loads (bot-profiles.js CAPABILITIES). Nothing here picks who answers: the
+ * chat's turn always does. Proposed, closed, or with drafts switched off, a
+ * draft is none.
  */
-function designDirect(message, design) {
-  if (!design) return false;
-  if (message?.metadata?.designPin) return true;
-  const replyTo = Number(message?.reply?.id ?? message?.replyToId) || null;
-  if (!replyTo) return false;
-  return (Array.isArray(design.versions) ? design.versions : []).some((v) => Number(v?.messageId) === replyTo);
+async function capabilityDeps(pool, { userId, conversationId, message, deps = {} }) {
+  const [draft, design] = await Promise.all([
+    (deps.liveDrafts || require('./live-drafts')).threadOf(pool, { userId, conversationId, message }),
+    (deps.designThreads || require('./design-threads')).threadOf(pool, { userId, conversationId, message }),
+  ]);
+  return { ...(design ? { threadDesign: design } : {}), ...(draft ? { threadLiveDraft: draft } : {}) };
 }
 
 /** What noteUserMessage does with a message from somebody it works for, while the bot types. */
@@ -5255,37 +5278,32 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const quoted = message?.reply?.id || null;
   // One story per request: written in a request's thread, it is about that
-  // request. Not quoting anything, it answers the request's open question,
-  // or changes its waiting plan; anything else is the model's, told which
-  // request it is about. What the bot says back goes in the same thread
-  // (sendDm's threadRootFor, from the message it answers).
-  // #6071: a design thread is one that holds a design. 1 Nov 2026: any
-  // private thread that holds one is ("+", an idea, a thread about a request
-  // or a change, a draft); one that holds none yet goes to the turn below,
-  // whose draw_screen hands the design bot version 1.
-  // 15 Nov 2026 (#6683): only the design's own message goes to the designer
-  // (designDirect): a comment pinned on the preview, or a reply to one of its
-  // versions. Everything else is answered by the chat's turn here, with all
-  // its usual tools, told which design the thread holds (threadDesign), and
-  // its draw_screen still hands drawing work to the designer.
-  // A thread whose live draft is open (services/live-drafts.js): every
-  // message there is the draft bot's (live-draft-bot.js), which changes the
-  // draft's code while its preview runs beside the chat. Proposed, closed,
-  // or with drafts switched off, the thread is answered as any other.
-  const draft = await (deps.liveDrafts || require('./live-drafts')).threadOf(pool, { userId: user.id, conversationId, message });
-  if (draft) {
-    return require('./thread-bot').answer(pool, config, { kind: 'draft', bot, user, settings, conversationId, message, draft, deps });
-  }
-  const design = await (deps.designThreads || require('./design-threads')).threadOf(pool, { userId: user.id, conversationId, message });
-  if (design && designDirect(message, design)) {
-    return require('./thread-bot').answer(pool, config, { kind: 'design', bot, user, settings, conversationId, message, design, deps });
-  }
-  if (design) deps = { ...deps, threadDesign: design };
+  // request. What the bot says back goes in the same thread (sendDm's
+  // threadRootFor, from the message it answers).
+  // #6071, 1 Nov 2026: any private thread may hold a design; #6683 sent only
+  // a pinned comment or a reply to one of its versions to the designer.
+  // Step 6 (#6864): one agent per private thread. A thread that holds a
+  // design, or whose live draft is open, is answered by the chat's turn like
+  // any other, which loads the design's or the draft's tools as capabilities
+  // (capabilityDeps): a pinned comment, a reply to a version and a message
+  // under an open draft included.
+  deps = { ...deps, ...(await capabilityDeps(pool, { userId: user.id, conversationId, message, deps })) };
   const thread = await threadRequest(pool, { userId: user.id, conversationId, message });
   if (thread && !quoted) {
+    // Step 6 (#6864, 5): only an unambiguous signal is decided here, before
+    // any model reads it: a suggested answer tapped under the question (the
+    // chip sends its words), and Build it said under a waiting plan (its
+    // button's words, PLAN_GO_WORDS). Anything else written in the thread is
+    // the turn's, which drafts it as the answer (answer_question) or plans it
+    // again (change_plan) when that is what they meant, and otherwise
+    // answers it ("what does step 3 mean?").
     const open = await newestOpenQuestion(pool, user.id, { appId: thread.appId, issueNumber: thread.issueNumber });
-    if (open) return answerOnRequest(pool, { bot, user, target: open, message, conversationId, deps });
-    const plan = await waitingPlan(pool, { userId: user.id, appId: thread.appId, issueNumber: thread.issueNumber });
+    if (open && await isSuggestedAnswer(pool, open.message_id, String(message.content || '').trim())) {
+      return answerOnRequest(pool, { bot, user, target: open, message, conversationId, deps });
+    }
+    const plan = !open && isPlanGoWord(message.content)
+      ? await waitingPlan(pool, { userId: user.id, appId: thread.appId, issueNumber: thread.issueNumber })
+      : null;
     if (plan) {
       const target = await quotedTarget(pool, user.id, plan.messageId);
       if (target) return changePlan(pool, { bot, user, target, message, deps });
@@ -5339,6 +5357,16 @@ async function answerUserMessage(pool, config, { bot, user, settings, conversati
       kind: require('./bot-profiles').kindInChat(turnDeps), bot, user, settings, conversationId, message,
       deps: { ...turnDeps, mayor },
     });
+  }
+  // Step 6: with the model switched off, nothing reads the words, so a
+  // request's thread decides them by its state, as it did before: its open
+  // question takes them as their answer, or its waiting plan is planned again.
+  if (thread && !quoted) {
+    const open = await newestOpenQuestion(pool, user.id, { appId: thread.appId, issueNumber: thread.issueNumber });
+    if (open) return answerOnRequest(pool, { bot, user, target: open, message, conversationId, deps });
+    const plan = await waitingPlan(pool, { userId: user.id, appId: thread.appId, issueNumber: thread.issueNumber });
+    const planTarget = plan ? await quotedTarget(pool, user.id, plan.messageId) : null;
+    if (planTarget) return changePlan(pool, { bot, user, target: planTarget, message, deps });
   }
   // A quote of anything but a question is not an answer to some other open
   // question (MIRRORED_KINDS): without the model, it gets the help text.
@@ -7142,7 +7170,7 @@ module.exports = {
   threadRequest,
   messageThread,
   threadDeps,
-  designDirect,
+  capabilityDeps,
   noteStep,
   // Homeroom bot parity P6: a request's card in a person's chat with the bot.
   cardShown,

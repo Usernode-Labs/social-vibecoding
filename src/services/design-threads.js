@@ -278,7 +278,7 @@ async function addVersion(pool, { threadId, html, author = 'bot', note = null, m
     await db.query(
       `INSERT INTO design_versions (private_thread_id, version, html, author, note, message_id)
        VALUES ($1, $2, $3, $4, $5, $6)`,
-      [Number(threadId), version, body, author, note ? clip(note, MAX_NOTE) : null, id(messageId)],
+      [Number(threadId), version, body, author, note ? clipWords(note, MAX_NOTE) : null, id(messageId)],
     );
     await db.query('UPDATE private_threads SET updated_at = NOW() WHERE id = $1', [Number(threadId)]);
     await db.query('COMMIT');
@@ -310,11 +310,28 @@ function bareNote(note) {
   }
 }
 
-/** Pure: what a version's message says. */
-function versionLine(version, note) {
-  const said = note
-    ? clip(String(note).split('; ').map(bareNote).filter(Boolean).join('; '), MAX_NOTE)
-    : '';
+/**
+ * Pure (step 6, #6864): `text` cut to at most `max` characters at a word's
+ * end, with "…" where it was cut: never mid-word. A first word longer than
+ * that is cut at `max`, the one place a word can be.
+ */
+function clipWords(text, max) {
+  const said = String(text ?? '').replace(/\s+/g, ' ').trim();
+  if (said.length <= max) return said;
+  const room = said.slice(0, max);
+  const at = room.lastIndexOf(' ');
+  const kept = (at > 0 ? room.slice(0, at) : room.slice(0, max - 1)).replace(/[\s,;:.\-–]+$/, '');
+  return `${kept}…`;
+}
+
+/**
+ * Pure: what a version's message says: "Version N: <summary>." Step 6
+ * (#6864): the summary is the one line the turn wrote for the version
+ * (the reply's summary), never a join of its edits' notes, and it is
+ * shortened at a word's end, never mid-word. "Version N." with none.
+ */
+function versionLine(version, summary) {
+  const said = summary ? clipWords(bareNote(summary), MAX_NOTE) : '';
   return said ? `Version ${version}: ${said}${/[.!?…]$/.test(said) ? '' : '.'}` : `Version ${version}.`;
 }
 
@@ -965,6 +982,7 @@ module.exports = {
   addVersion,
   noteVersionMessage,
   bareNote,
+  clipWords,
   versionLine,
   startDesign,
   pinFor,

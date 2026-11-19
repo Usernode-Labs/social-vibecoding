@@ -34,15 +34,16 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const designBot = require('../src/services/design-bot');
 
-test('the design bot draws, reads the project\'s code and edits, in up to twelve rounds', () => {
-  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'reply']);
+test('the design draws, reads the project\'s code and edits, in its twelve rounds of the chat\'s turn', () => {
+  // Step 6 (#6864): the chat's own reply ends the turn, with the version's summary.
+  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan']);
   assert.equal(designBot.MAX_ROUNDS, 12);
   for (const t of designBot.TOOLS) {
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
     assert.doesNotMatch(t.function.description, /—/);
   }
   const write = designBot.TOOLS[0].function.parameters;
-  assert.deepEqual(write.required, ['title', 'size', 'html', 'note']);
+  assert.deepEqual(write.required, ['title', 'size', 'html'], 'no note: the reply\'s summary is the version\'s one line');
   assert.deepEqual(write.properties.size.enum, ['phone', 'desktop']);
   assert.equal(designBot.TOOLS.find((t) => t.function.name === 'read_source').function.parameters.required.join(), 'path',
     'the design\'s own project unless it names another');
@@ -259,8 +260,8 @@ test('#6257: a first drawing with nothing to go on asks first, and quotes a ques
     'a statement is not a question, even when asking is allowed');
 
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'design', appSlug: null } } });
-  assert.match(prompt, /your designer asks them in the thread before it draws/);
-  assert.match(prompt, /Put in only what they said of the app and the screen/);
+  assert.match(prompt, /When they have not said yet what the app is for\n {2}and what this screen should do, call it anyway, and ask them that before you draw\./);
+  assert.match(prompt, /Put in only what they said of/);
 });
 
 test('their pictures: as pictures for a model that reads them, else in the words a cheap one said', () => {
@@ -276,29 +277,30 @@ test('their pictures: as pictures for a model that reads them, else in the words
   assert.equal(designBot.withPictures(history, [6, 7], []), history);
 });
 
-test('the chat draws a screen in place of the screen picker: draw_screen, in the thread the turn is in', () => {
+test('the chat draws a screen in place of the screen picker: start_design, in the thread the turn is in', () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
-  const draw = mayor.TOOLS.find((t) => t.function.name === 'draw_screen');
-  assert.ok(draw, 'draw_screen');
+  const draw = mayor.TOOLS.find((t) => t.function.name === 'start_design');
+  assert.ok(draw, 'start_design');
   assert.deepEqual(draw.function.parameters.required, ['what', 'title']);
-  assert.equal(mayor.TOOLS.some((t) => t.function.name === 'offer_design'), false);
+  assert.equal(mayor.TOOLS.some((t) => t.function.name === 'offer_design' || t.function.name === 'draw_screen'), false);
   assert.equal(mayor.PICK_SCREEN, undefined);
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'design', appSlug: null } } });
-  assert.match(prompt, /When they want to see how a\n  screen could look, call draw_screen: it is drawn here, in this thread/);
-  assert.match(prompt, /\(draw_screen\): your designer draws it from their words/);
-  assert.doesNotMatch(prompt, /offer_design|Pick the screen/);
+  assert.match(prompt, /When they want to see how a\n  screen could look, call start_design: you draw it here, in this thread/);
+  assert.match(prompt, /\(start_design\): it gives you the design tools for the rest of this turn, and you draw it yourself from/);
+  assert.doesNotMatch(prompt, /offer_design|Pick the screen|designer/);
   const src = read('src/services/homeroom-bot-mayor.js');
-  // The chat is a profile on the turn engine: its rounds end with a reply, a
-  // screen handed over, or a live preview handed over (live-draft-bot.js).
-  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen \|\| !!ctx\.openPreview,/, 'the turn ends with it');
+  // Step 6 (#6864): the chat's rounds end with its own reply; nothing is
+  // handed to a designer or a draft bot.
+  assert.match(src, /done: \(\) => !!ctx\.reply,/, 'the turn ends with its reply');
+  assert.doesNotMatch(src, /ctx\.drawScreen|\)\.draw\(pool, config/);
   // 14 Nov 2026: every message is in a thread, so it is drawn in the thread
   // the turn is in; nothing opens one from Main Chat first.
-  assert.match(src, /if \(ctx\.drawScreen\) \{\n\s+return \(deps\.designBot \|\| require\('\.\/design-bot'\)\)\.draw\(pool, config, \{\n\s+bot, user, settings, conversationId, message, ask: ctx\.drawScreen, deps,\n/);
+  assert.match(src, /ctx\.loadDesign = async \(\{ app = null, title = null, brief = null \}\) => \{\n\s+const got = await designBot\.roomFor\(pool, \{ bot, user, message, app, title, deps \}\);/);
   assert.doesNotMatch(src, /ctx\.projectThread/);
   assert.doesNotMatch(draw.function.description, /Main Chat/);
-  assert.match(draw.function.description, /shows it small in this thread with Open preview/);
-  assert.match(read('src/services/homeroom-bot-dm.js'), /const design = await \(deps\.designThreads \|\| require\('\.\/design-threads'\)\)\.threadOf\(/,
-    'a design thread still reads whether it holds a design (designDirect routes each message)');
+  assert.match(draw.function.description, /shown small in this thread with Open preview/);
+  assert.match(read('src/services/homeroom-bot-dm.js'), /\(deps\.designThreads \|\| require\('\.\/design-threads'\)\)\.threadOf\(pool, \{ userId, conversationId, message \}\),/,
+    'a design thread still reads whether it holds a design (capabilityDeps gives the turn the design)');
   assert.doesNotMatch(read('src/services/design-threads.js'), /p\.kind = 'design'/, 'any private thread can hold one');
   assert.match(read('src/db/migrations/0004-design-anywhere.sql'), /CHECK \(surface IN \('platform', 'app', 'new'\)\)/);
 });

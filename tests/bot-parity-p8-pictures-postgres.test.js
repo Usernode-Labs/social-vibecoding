@@ -98,7 +98,16 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
   const tool = require('../src/services/homeroom-bot-thread-tools/pictures');
   const cards = require('../src/services/homeroom-bot-cards');
   const designs = require('../src/services/design-threads');
-  const designBot = require('../src/services/design-bot');
+  // Step 6 (#6864): a design thread's message is the chat's own turn, with
+  // the design as its capability (design-bot.js openSession).
+  const mayor = require('../src/services/homeroom-bot-mayor');
+  const designTurn = ({ message, design: held, settings: given, deps: turnDeps }) => mayor.runDmTurn(pool, config, {
+    bot, user: ada, settings: given, conversationId: held.conversationId, message,
+    deps: { openMcp: async () => null, ...turnDeps, threadRootId: held.rootId, threadDesign: held },
+  });
+  const section = (messages) => (messages || [])
+    .filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S DESIGN'))
+    .map((m) => m.content).join('\n');
 
   async function user(username, { synthetic = false } = {}) {
     const { rows: [row] } = await pool.query(
@@ -307,21 +316,21 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     assert.equal(started.ok, true, JSON.stringify(started));
     design = await designs.designFor(pool, { userId: ada.id, rootId: started.rootId });
     const ask = async (content) => (await conversations.sendMessage(pool, ada, design.conversationId, { content, thread_root_id: design.rootId })).message;
-    await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: design.conversationId, message: await ask('make the title bigger'), design,
+    await designTurn({
+      settings, message: await ask('make the title bigger'), design,
       deps: {
         ...deps, apiKey: 'sk-test', seesImages: false,
         chat: scripted([
-          [['edit_design', { edits: [{ find: '<h1 class="title">', replace: '<h1 class="title" style="font-size:40px">' }], note: 'A bigger title' }]],
-          [['reply', { text: 'The title is bigger.' }]],
+          [['edit_design', { edits: [{ find: '<h1 class="title">', replace: '<h1 class="title" style="font-size:40px">' }] }]],
+          [['reply', { text: 'The title is bigger.', summary: 'A bigger title' }]],
         ]),
       },
     });
     design = await designs.designFor(pool, { userId: ada.id, rootId: design.rootId });
     assert.equal(design.latest, 2);
     const seen = [];
-    const sent = await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: design.conversationId, message: await ask('show it next to how it looks now'), design,
+    const sent = await designTurn({
+      settings, message: await ask('show it next to how it looks now'), design,
       deps: {
         ...deps, apiKey: 'sk-test', seesImages: false,
         chat: scripted([
@@ -330,7 +339,7 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
         ], seen),
       },
     });
-    assert.match(seen[0][0].content, /call\n {2}compare_versions/);
+    assert.match(section(seen[0]), /call\n {2}compare_versions/);
     const { rows: [reply] } = await pool.query('SELECT content, thread_root_id, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
     assert.equal(reply.thread_root_id, design.rootId);
     assert.equal(reply.content, 'Here they are side by side: pick the one you like.');
@@ -348,8 +357,8 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
 
   await t.test('pictures in a design thread: a gallery for the design, Add to the design, and the designer is told', async () => {
     const message = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'make a pear picture for the top', thread_root_id: design.rootId })).message;
-    const sent = await designBot.answer(pool, config, {
-      bot, user: ada, settings: { ...settings, pictureWeeklyCap: 20 }, conversationId: design.conversationId, message, design,
+    const sent = await designTurn({
+      settings: { ...settings, pictureWeeklyCap: 20 }, message, design,
       deps: {
         ...deps, apiKey: 'sk-test', seesImages: false, pictures: pictureDeps,
         chat: scripted([
@@ -370,10 +379,10 @@ test('pictures and the compare card against the full schema', { timeout: 120000 
     // The next turn's prompt names it, by its address.
     const seen = [];
     const next = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'Add picture A to the design.', thread_root_id: design.rootId })).message;
-    await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: design.conversationId, message: next, design,
+    await designTurn({
+      settings, message: next, design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }),
       deps: { ...deps, apiKey: 'sk-test', seesImages: false, chat: scripted([[['reply', { text: 'Done.' }]]], seen) },
     });
-    assert.match(seen[0][0].content, new RegExp(`- Picture A: /api/conversations/homeroom-bot/pictures/${gallery.images[0].id} \\(1024 by 1024\\)`));
+    assert.match(section(seen[0]), new RegExp(`- Picture A: /api/conversations/homeroom-bot/pictures/${gallery.images[0].id} \\(1024 by 1024\\)`));
   });
 });

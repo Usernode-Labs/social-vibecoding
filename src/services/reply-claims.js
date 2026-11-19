@@ -208,6 +208,18 @@ const NO_CONTROL_CLAIM = /\b(?:from|on) your (?:side|end)\b|\bI\s+(?:can['’]?t
 // header blue", which tells of a version before.
 const DESIGN_DONE = /\bI(?:'ve| have)\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|redrawn|drawn|redesigned|reworked)\b|\bI\s+(?:just|now)\s+(?:changed|updated|made|moved|added|removed|swapped|replaced|redrew|drew|redesigned|reworked)\b|\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?(?:version|screen|design)\b/i;
 
+// Step 6 (#6864, 6): a thread whose live draft is open, answered by the
+// chat's own turn: "I've made the button bigger", "I changed it", "it's
+// saved", "the preview now shows it". Only an apply_changes that saved this
+// turn backs it (live-draft-bot.js), so a reply never claims an edit that
+// was not applied.
+const DRAFT_DONE = new RegExp([
+  String.raw`\bI(?:'ve| have)\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|fixed|saved|applied|renamed|edited)\b`,
+  String.raw`\bI\s+(?:just|now)\s+(?:changed|updated|made|moved|added|removed|swapped|replaced|fixed|saved|applied|renamed|edited)\b`,
+  String.raw`\b(?:it|that|the change|your change|the edit)(?:'s| is| has been| was)\s+(?:now\s+)?(?:saved|applied|live in the preview)\b`,
+  String.raw`\bthe preview (?:now )?(?:shows|has) (?:it|the change|your change)\b`,
+].join('|'), 'i');
+
 // #6151: a filed design (design-bot.js) said not to be built, or to need
 // somebody else to start it: "I can't build it myself", "someone on the
 // project has to start it", "building starts on the project's side".
@@ -452,9 +464,9 @@ const CLAIMS = Object.freeze([
     kind: 'drawing',
     proof: 'turn',
     re: DRAWING_CLAIM,
-    // Main: draw_screen handed it to the designer. A design thread: a
-    // version, an offer or a card made this turn.
-    turn: (t) => !!(t.drawScreen || t.drew),
+    // A design thread (or a turn that started one, step 6): a version, an
+    // offer or a card made this turn.
+    turn: (t) => !!t.drew,
     said: 'says you are drawing a screen',
   },
   {
@@ -486,6 +498,15 @@ const CLAIMS = Object.freeze([
     applies: (t) => !!t.design,
     turn: (t) => !!t.drew,
     said: 'says you changed or drew the design',
+  },
+  {
+    // Step 6 (#6864, 6): a live draft's change, said with none saved.
+    kind: 'draft_done',
+    proof: 'turn',
+    re: DRAFT_DONE,
+    applies: (t) => !!t.liveDraft,
+    turn: (t) => !!t.draftSaved,
+    said: 'says you changed or saved the draft',
   },
   {
     kind: 'not_built',
@@ -590,8 +611,9 @@ function mentions(text, { receipt = null } = {}) {
 // The flags of what a turn did, which back a claim with no read, are read
 // off the surface's own turn context: offer, started, workBusy, batchQueued,
 // revised, recentRevision, described, withdrew, reported, lookRunning,
-// followedUp, steered, pictures, attached, drawScreen, closedThread; and, on
-// a design thread, design, drew, filedDesign, designBuilds; on the voice,
+// followedUp, steered, pictures, attached, closedThread; and, on
+// a design thread, design, drew, filedDesign, designBuilds; with a live draft
+// open (step 6), liveDraft, draftSaved; on the voice,
 // readChanges.
 
 // ── What a turn's tools returned ──────────────────────────────────────────
@@ -1403,13 +1425,21 @@ function repairNote(problems, { tools = null } = {}) {
     ? ` Your reply points at a New project card or button under it, but none is there.${offered('offer_new_project') ? ' If they want to make a new app of its own, call offer_new_project now, then reply; otherwise ask what the app is for and do not mention New project.' : ' Do not mention New project.'}`
     : '';
   // 1 Nov 2026: a screen said to be drawing with nothing drawn.
+  // Step 6: with the design tools loaded it draws now; else start_design
+  // gives it them first (homeroom-bot-mayor.js).
   const drawWith = offered('write_screen') ? 'write_screen (or edit_design)' : null;
   const drawing = kinds.has('drawing') || kinds.has('design_done')
-    ? (offered('draw_screen')
-      ? ' Your reply says you are drawing a screen, but you did not call draw_screen in this turn, so nothing is being drawn. If they asked for a screen, call draw_screen now with what to draw and its title, and do not reply. If you cannot, say so plainly.'
-      : drawWith
-        ? ` You have not drawn anything this turn. Call ${drawWith} now, then reply.`
+    ? (drawWith
+      ? ` You have not drawn anything this turn. Call ${drawWith} now, then reply.`
+      : offered('start_design')
+        ? ' Your reply says you are drawing a screen, but you did not call start_design in this turn, so nothing is being drawn. If they asked for a screen, call start_design now with what to draw and its title, draw it, then reply. If you cannot, say so plainly.'
         : ' Nothing is being drawn here, so do not say it is.')
+    : '';
+  // Step 6 (#6864, 6): a live draft's change said with nothing saved.
+  const draftDone = kinds.has('draft_done')
+    ? (offered('apply_changes')
+      ? ' Nothing was saved to the draft this turn. Make the change with edit_file and save it with apply_changes, then reply; or say plainly that nothing changed.'
+      : ' Nothing was saved to the draft, so do not say it was.')
     : '';
   // #6159: there is no control on their side; close_thread finishes a private thread.
   const noControl = kinds.has('no_control')
@@ -1429,7 +1459,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${shortBrief}${drawing}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${draftDone}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 

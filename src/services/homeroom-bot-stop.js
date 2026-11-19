@@ -155,16 +155,27 @@ const LASTING = Object.freeze({
   // Made and counted, and its gallery goes under a reply that is not sent.
   make_pictures: (_args, result) => (result?.ok
     ? { did: 'made the pictures you asked for', stays: 'they are not shown here' } : null),
+  // Step 6 (#6864): a live draft's change, saved to the draft (and its
+  // preview) by the chat's own turn. Its changes not yet saved are not.
+  apply_changes: (_args, result) => (result?.saved
+    ? { did: 'saved a change to the live draft', stays: 'it stays in the draft' } : null),
+  // A request's plan put back in the queue to be planned again (change_plan).
+  change_plan: (_args, result) => (result?.ok && !result.drafted
+    ? { did: 'asked for a new plan', stays: 'it is planned again' } : null),
 });
 
 // The tools that change nothing that lasts when they run: a read, or
 // something drawn only with the reply (an offer, a card, a screen), which a
-// stopped turn never sends.
+// stopped turn never sends. Step 6 (#6864): a design's version is saved only
+// with the turn's reply, so a stopped turn saves none; a live draft's edits
+// are saved only by apply_changes. A thread start_design opens for the screen
+// is said by the design (design-bot.js roomFor, `add`).
 const NOTHING = new Set([
   'progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'comment_on_request', 'offer_request',
-  'offer_move_request', 'offer_copy_request', 'offer_close_request', 'draw_screen', 'offer_new_project', 'reply',
+  'offer_move_request', 'offer_copy_request', 'offer_close_request', 'start_design', 'offer_new_project', 'reply',
   'offer_options', 'ask_questions', 'show_table', 'show_change', 'start_investigation', 'stop_and_redo',
   'write_screen', 'edit_design', 'compare_versions', 'offer_plan', 'offer_project', 'capture_page',
+  'search_code', 'edit_file', 'write_file',
 ]);
 // A read, by its name (the platform's and the admin's among them).
 const READ = /^(?:list|get|read)_[a-z_]+$/;

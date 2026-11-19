@@ -88,7 +88,12 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
   wsBus.publishBatched = () => {};
   const conversations = require('../src/services/conversations');
   const designs = require('../src/services/design-threads');
-  const designBot = require('../src/services/design-bot');
+  // Step 6 (#6864): a design thread's message is the chat's own turn, with
+  // the design as its capability (design-bot.js openSession).
+  const designTurn = ({ message, design: held, settings: given, deps: turnDeps }) => mayor.runDmTurn(pool, config, {
+    bot, user: ada, settings: given, conversationId: held.conversationId, message,
+    deps: { openMcp: async () => null, seesImages: false, ...turnDeps, threadRootId: held.rootId, threadDesign: held },
+  });
   const mayor = require('../src/services/homeroom-bot-mayor');
   const dm = require('../src/services/homeroom-bot-dm');
   const specs = require('../src/services/request-specs');
@@ -258,8 +263,8 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     about = await designs.designFor(pool, { userId: ada.id, rootId: about.rootId });
     const message = await ask(about, 'looks good');
     const seen = [];
-    const sent = await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: about.conversationId, message, design: about,
+    const sent = await designTurn({
+      settings, message, design: about,
       deps: { ...deps, apiKey: 'sk-test', chat: scripted([[['offer_plan', {}]], [['reply', { text: 'Tap below to post it on #12.' }]]], seen) },
     });
     assert.match(JSON.stringify(seen[1]), /Post as a plan on #12/, 'the model is told what the card says');
@@ -302,8 +307,8 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
     words = await designs.designFor(pool, { userId: ada.id, rootId: words.rootId });
     await pool.query(`UPDATE private_threads SET state = 'open', result_ref = NULL WHERE id = $1`, [words.threadId]);
     words = await designs.designFor(pool, { userId: ada.id, rootId: words.rootId });
-    const plain = await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: words.conversationId, message: await ask(words, 'perfect, post it'), design: words,
+    const plain = await designTurn({
+      settings, message: await ask(words, 'perfect, post it'), design: words,
       deps: { ...deps, apiKey: 'sk-test', chat: scripted([[['offer_plan', {}]], [['reply', { text: 'Where should it go?' }]]]) },
     });
     const choices = (await pool.query('SELECT metadata FROM conversation_messages WHERE id = $1', [plain.messageId])).rows[0].metadata.homeroomBot;
@@ -311,8 +316,8 @@ test('plans that post and build, against the full schema', { timeout: 180000 }, 
       [['New request', 'server', false], ['Add to an existing request…', 'prompt', true]]);
     // A number they gave that is no open request is no card.
     const seenBad = [];
-    const bad = await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: words.conversationId, message: await ask(words, 'put it on #99'), design: words,
+    const bad = await designTurn({
+      settings, message: await ask(words, 'put it on #99'), design: words,
       deps: { ...deps, apiKey: 'sk-test', chat: scripted([[['offer_plan', { target: 'request', issueNumber: 99 }]], [['reply', { text: 'Which request?' }]]], seenBad) },
     });
     assert.match(JSON.stringify(seenBad[1]), /has no open request #99/);

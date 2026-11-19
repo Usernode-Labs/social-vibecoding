@@ -1,12 +1,13 @@
 'use strict';
 
 // Homeroom bot in a thread with an open live draft
-// (src/services/live-draft-bot.js): the pure edit rules (exact find, once;
-// numbered reads), and whole turns against a scripted model, a stand-in
-// draft (its files, its saves) and a stand-in chat: read, edit, save and
-// reply; a save that stopped the app fixed in the same turn; changes the
-// model forgot to save saved before its reply; secrets never read; and the
-// switched-off and busy answers.
+// (src/services/live-draft-bot.js, the draft capability of the chat's turn
+// since step 6): the pure edit rules (exact find, once; numbered reads), and
+// whole chat turns against a scripted model, a stand-in draft (its files, its
+// saves) and a stand-in chat: read, edit, save and reply; a save that
+// stopped the app fixed in the same turn; changes the model forgot to save
+// saved before its reply; secrets never read; the switched-off and busy
+// answers; and a draft opened and changed in one turn.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -42,6 +43,11 @@ test('appliedWords says what the preview did, never more', () => {
 });
 
 // ── A whole turn ───────────────────────────────────────────────────────
+//
+// Step 6 (#6864): the draft is a capability of the chat's own turn
+// (homeroom-bot-mayor.js runDmTurn, told the open draft as
+// deps.threadLiveDraft): its tools beside the chat's, its section in the
+// prompt, and the chat's one reply, checked as every reply is.
 
 const DRAFT = {
   id: 3, user_id: 10, root_message_id: 50, app_slug: 'gym', app_name: 'Gym Tracker', head_sha: 'a'.repeat(40), state: 'open',
@@ -56,23 +62,18 @@ function setup({ script, previews = [], settings = {}, turns = 0 }) {
   const sent = [];
   const saved = [];
   const seenByModel = [];
+  const offered = [];
   let call = 0;
-  let files = { ...FILES };
+  const files = { ...FILES };
   const call_ = (name, args) => ({ id: `c${call}${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } });
-  const mayor = {
-    ...realMayor,
-    answerKey: (id) => `key-${id}`,
-    turnsLastHour: async () => turns,
-    botKey: async () => 'sk-test',
-    recordTurn: async () => {},
-    askModel: async (_t, options) => {
-      seenByModel.push(JSON.parse(JSON.stringify(options.messages)));
-      const step = script[call] || { reply: 'Done.' };
-      call += 1;
-      if (typeof step === 'function') return step(options);
-      if (step.reply) return { content: '', toolCalls: [call_('reply', { text: step.reply })] };
-      return { content: '', toolCalls: step.calls.map(([name, args]) => call_(name, args)) };
-    },
+  const chat = async (options) => {
+    seenByModel.push(JSON.parse(JSON.stringify(options.messages)));
+    offered.push((options.tools || []).map((tool) => tool.function.name));
+    const step = script[call] || { reply: 'Done.' };
+    call += 1;
+    if (typeof step === 'function') return step(options);
+    if (step.reply) return { content: '', toolCalls: [call_('reply', { text: step.reply })] };
+    return { content: '', toolCalls: step.calls.map(([name, args]) => call_(name, args)) };
   };
   const liveDrafts = {
     async listFiles() { return Object.keys(files).map((path) => ({ path, size: files[path].length })); },
@@ -86,14 +87,22 @@ function setup({ script, previews = [], settings = {}, turns = 0 }) {
       return { ok: true, head: 'b'.repeat(40), preview };
     },
   };
-  const dm = { async sendDm(_pool, msg) { sent.push(msg); return { messageId: 99 }; } };
-  const pool = { async query() { return { rows: [] }; } };
-  const run = (content = 'Make the start button bigger') => draftBot.answer(pool, {}, {
-    bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings, conversationId: 7,
-    message: { id: 60, content, threadRootId: 50 }, draft: DRAFT,
-    deps: { mayor, liveDrafts, dm, apiKey: 'sk-test' },
+  const dmSvc = { ...require('../src/services/homeroom-bot-dm'), async sendDm(_pool, msg) { sent.push(msg); return { messageId: 99 }; } };
+  const pool = {
+    async query(sql) {
+      if (/FROM homeroom_bot_dm_turns/.test(sql) && /COUNT/.test(sql)) return { rows: [{ n: turns }] };
+      return { rows: [] };
+    },
+  };
+  const run = (content = 'Make the start button bigger') => realMayor.runDmTurn(pool, {}, {
+    bot: { id: 1, username: 'homeroom_bot' }, user: { id: 10, username: 'evan' }, settings: { mode: 'live', ...settings }, conversationId: 7,
+    message: { id: 60, content, threadRootId: 50 },
+    deps: {
+      chat, apiKey: 'sk-test', openMcp: async () => null, seesImages: false, sleep: async () => {}, streamDraft: false,
+      dmSvc, liveDrafts, threadRootId: 50, threadDraft: null, threadKind: 'ask', threadLiveDraft: DRAFT,
+    },
   });
-  return { run, sent, saved, seenByModel, files: () => files };
+  return { run, sent, saved, seenByModel, offered, files: () => files };
 }
 
 test('a turn reads, edits, saves and replies; the preview restarts with it', async () => {
@@ -110,17 +119,19 @@ test('a turn reads, edits, saves and replies; the preview restarts with it', asy
   assert.equal(s.saved.length, 1);
   assert.deepEqual(s.saved[0].files, [{ path: 'public/index.html', content: '<button class="start big">Start workout</button>\n' }]);
   assert.equal(s.saved[0].summary, 'Bigger Start workout button');
-  assert.equal(s.sent.length, 1);
+  assert.equal(s.sent.length, 1, 'one reply, the chat turn\'s');
   assert.equal(s.sent[0].content, 'The Start workout button is bigger now.');
-  assert.equal(s.sent[0].threadRootId, 50);
   assert.deepEqual(s.sent[0].metadata.liveDraft, { id: 3, head: 'b'.repeat(40), app: 'gym' });
   // The search found the line, and the prompt told the model what the draft is.
-  const prompt = s.seenByModel[0][0].content;
+  const prompt = s.seenByModel[0].filter((m) => m.role === 'system').map((m) => m.content).join('\n');
+  assert.match(prompt, /THIS THREAD'S LIVE DRAFT/);
   assert.match(prompt, /changing the app "Gym Tracker" together with @evan/);
   assert.match(prompt, /- Earlier change/);
   assert.match(prompt, /public\/index\.html/);
   const searched = s.seenByModel[1].find((m) => m.role === 'tool');
   assert.match(searched.content, /"line":1/);
+  // The chat's own tools are there too: a draft's thread can still file a request.
+  assert.ok(s.offered[0].includes('offer_request') && s.offered[0].includes('apply_changes'));
 });
 
 test('a save that stops the app comes back with its log, and the fix is saved in the same turn', async () => {
@@ -180,45 +191,36 @@ test('a secret file is never read, and nothing outside the app is touched', asyn
   assert.equal(s.sent[0].content, 'Nothing to change.');
 });
 
-test('switched off, or asked too much this hour, it says so and does nothing', async () => {
+test('switched off, or asked too much this hour, it says so and does nothing, as any chat turn does', async () => {
   const off = setup({ script: [], settings: { mode: 'off' } });
   await off.run();
-  assert.equal(off.sent[0].content, draftBot.OFF_TEXT);
+  assert.equal(off.sent[0].content, realMayor.OFF_TEXT);
   assert.equal(off.seenByModel.length, 0);
   const busy = setup({ script: [], turns: 10_000 });
   await busy.run();
-  assert.equal(busy.sent[0].content, draftBot.BUSY_TEXT);
+  assert.equal(busy.sent[0].content, realMayor.BUSY_TEXT);
+  assert.equal(busy.seenByModel.length, 0);
 });
 
-test('a draft the chat\'s turn just opened answers that message, told it is starting, never counted twice', async () => {
-  const sent = [];
-  let prompt = '';
-  const out = await draftBot.opened({ async query() { return { rows: [] }; } }, {}, {
-    bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: {}, conversationId: 7,
-    message: { id: 61, content: 'I want to change an app live', threadRootId: 50 }, draftId: 3,
+test('a draft whose code cannot be read is said in the turn\'s prompt, and its tools are not offered', async () => {
+  const s = setup({ script: [{ reply: 'I couldn\'t read this draft\'s code just now. Try again in a minute.' }] });
+  const dmSvc = { ...require('../src/services/homeroom-bot-dm'), async sendDm(_pool, msg) { s.sent.push(msg); return { messageId: 99 }; } };
+  await realMayor.runDmTurn({ async query() { return { rows: [] }; } }, {}, {
+    bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: { mode: 'live' }, conversationId: 7,
+    message: { id: 62, content: 'make it blue', threadRootId: 50 },
     deps: {
-      mayor: {
-        ...realMayor, answerKey: (id) => `key-${id}`, turnsLastHour: async () => 10_000, botKey: async () => 'sk', recordTurn: async () => {},
-        askModel: async (_t, options) => {
-          prompt = options.messages[0].content;
-          return { content: '', toolCalls: [{ id: 'r1', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: 'The preview is starting. Tell me what to change.' }) } }] };
-        },
-      },
-      liveDrafts: {
-        byId: async () => DRAFT, listFiles: async () => [{ path: 'server.js', size: 3 }], readFile: async () => 'x', editsOf: async () => [],
-      },
-      dm: { async sendDm(_p, msg) { sent.push(msg); return { messageId: 1 }; } },
-      apiKey: 'sk',
+      chat: async (options) => { s.offered.push(options.tools.map((t) => t.function.name)); s.seenByModel.push(options.messages); return { content: '', toolCalls: [{ id: 'r', function: { name: 'reply', arguments: JSON.stringify({ text: 'Its code cannot be read just now.' }) } }] }; },
+      apiKey: 'sk', openMcp: async () => null, seesImages: false, streamDraft: false, dmSvc,
+      liveDrafts: { async listFiles() { return null; } }, threadRootId: 50, threadDraft: null, threadLiveDraft: DRAFT,
     },
   });
-  assert.match(prompt, /You just opened this live draft for their message/);
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0].content, 'The preview is starting. Tell me what to change.', 'not the busy line: the chat turn counted it');
-  assert.equal(sent[0].idempotencyKey, 'key-61', 'the answer to their message, as the chat turn left it unanswered');
-  assert.equal(out.messageId, 1);
+  assert.ok(!s.offered[0].includes('apply_changes'));
+  const prompt = s.seenByModel[0][0].content;
+  assert.match(prompt, /A live draft of Gym Tracker is open beside this thread, but its code cannot be read just now/);
+  assert.match(prompt, new RegExp(draftBot.NO_CODE_TEXT.replace(/[.']/g, '.')));
 });
 
-test('open_app_preview opens the thread\'s draft and hands the turn over; it asks which project when there is none', async () => {
+test('open_app_preview opens the thread\'s draft and loads its tools for the rest of the turn; it asks which project when there is none', async () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
   let appId = null;
   const pool = {
@@ -229,8 +231,10 @@ test('open_app_preview opens the thread\'s draft and hands the turn over; it ask
     },
   };
   const opened = [];
+  const loaded = [];
   const ctx = (extra = {}) => ({
     user: { id: 10, username: 'evan' }, config: {},
+    loadDraft: async (id) => { loaded.push(id); return { ok: true }; },
     deps: { threadRootId: 50, liveDrafts: { open: async (_p, _c, args) => { opened.push(args.rootId); return { status: 200, body: { ok: true, draft: { id: 3 } } }; } }, ...extra },
   });
   const none = await mayor.openAppPreview(pool, ctx(), {});
@@ -241,16 +245,67 @@ test('open_app_preview opens the thread\'s draft and hands the turn over; it ask
   appId = 21;
   const c = ctx();
   const out = await mayor.openAppPreview(pool, c, {});
-  assert.deepEqual([out.ok, c.openPreview, opened], [true, { draftId: 3 }, [50]]);
-  assert.match(out.note, /do not reply/);
+  assert.deepEqual([out.ok, c.openPreview, opened, loaded], [true, { draftId: 3 }, [50], [3]]);
+  assert.match(out.note, /the draft's tools are yours\s+for the rest of this turn/);
+  assert.doesNotMatch(out.note, /do not reply/, 'nothing hands the turn over');
   const refused = await mayor.openAppPreview(pool, ctx({ liveDrafts: { open: async () => ({ status: 409, body: { error: 'too_many', message: 'You can have 2 app previews open at once.' } }) } }), {});
   assert.deepEqual([refused.ok, refused.error], [false, 'You can have 2 app previews open at once.']);
   const noThread = await mayor.openAppPreview(pool, { user: { id: 10 }, config: {}, deps: {} }, {});
   assert.match(noThread.error, /New chat/);
   const first = await mayor.openAppPreview(pool, ctx({ threadKind: 'first_version' }), {});
   assert.match(first.error, /first version/);
-  // The turn ends with it, and the draft answers.
+  // The turn ends with its own reply.
   const src = require('fs').readFileSync(require('path').join(__dirname, '../src/services/homeroom-bot-mayor.js'), 'utf8');
-  assert.match(src, /done: \(\) => !!ctx\.reply \|\| !!ctx\.drawScreen \|\| !!ctx\.openPreview,/);
-  assert.match(src, /require\('\.\/live-draft-bot'\)\)\.opened\(pool, config, \{/);
+  assert.match(src, /done: \(\) => !!ctx\.reply,/);
+  assert.doesNotMatch(src, /\)\.opened\(pool, config, \{/);
+});
+
+test('a draft the turn just opened makes the change asked for in that same turn, counted once', async () => {
+  const sent = [];
+  const saved = [];
+  const seen = [];
+  const files = { 'public/index.html': '<button class="start">Start workout</button>\n' };
+  let i = 0;
+  const steps = [
+    { name: 'open_app_preview', args: {} },
+    { name: 'read_file', args: { path: 'public/index.html' } },
+    { name: 'edit_file', args: { path: 'public/index.html', edits: [{ find: 'class="start"', replace: 'class="start big"' }] } },
+    { name: 'apply_changes', args: { summary: 'Bigger Start button' } },
+    { name: 'reply', args: { text: 'The preview is starting with a bigger Start button.' } },
+  ];
+  const pool = {
+    async query(sql) {
+      if (/FROM private_threads WHERE root_message_id/.test(sql)) return { rows: [{ id: 4, app_id: 21 }] };
+      return { rows: [] };
+    },
+  };
+  await realMayor.runDmTurn(pool, {}, {
+    bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: { mode: 'live' }, conversationId: 7,
+    message: { id: 61, content: 'I want to change an app live: make the start button bigger', threadRootId: 50 },
+    deps: {
+      chat: async (options) => {
+        seen.push({ tools: options.tools.map((t) => t.function.name), messages: JSON.parse(JSON.stringify(options.messages)) });
+        const step = steps[Math.min(i, steps.length - 1)];
+        i += 1;
+        return { content: '', toolCalls: [{ id: `c${i}`, function: { name: step.name, arguments: JSON.stringify(step.args) } }] };
+      },
+      apiKey: 'sk', openMcp: async () => null, seesImages: false, streamDraft: false,
+      dmSvc: { ...require('../src/services/homeroom-bot-dm'), async sendDm(_p, msg) { sent.push(msg); return { messageId: 1 }; } },
+      threadRootId: 50, threadDraft: null, threadKind: 'ask',
+      liveDrafts: {
+        open: async () => ({ status: 200, body: { ok: true, draft: { id: 3 } } }),
+        byId: async () => DRAFT, listFiles: async () => [{ path: 'public/index.html', size: 10 }],
+        readFile: async (_d, p) => files[p] ?? null, editsOf: async () => [],
+        applyEdit: async (_p, _c, args) => { saved.push(args); return { ok: true, head: 'c'.repeat(40), preview: { rebuilding: true, why: 'starting' } }; },
+      },
+    },
+  });
+  assert.ok(!seen[0].tools.includes('apply_changes'), 'no draft tools before it opens');
+  assert.ok(seen[1].tools.includes('apply_changes'), 'its tools from the next round');
+  assert.ok(seen[1].messages.some((m) => m.role === 'system' && m.content.includes(draftBot.OPENING_NOTE)), 'told it just opened it');
+  assert.equal(saved.length, 1);
+  assert.equal(sent.length, 1, 'one reply: the turn\'s');
+  assert.equal(sent[0].content, 'The preview is starting with a bigger Start button.');
+  assert.equal(sent[0].idempotencyKey, realMayor.answerKey(61), 'the answer to their message, under its own key');
+  assert.deepEqual(sent[0].metadata.liveDraft, { id: 3, head: 'c'.repeat(40), app: 'gym' });
 });

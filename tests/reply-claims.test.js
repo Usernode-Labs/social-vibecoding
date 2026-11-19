@@ -164,16 +164,21 @@ test('the repair note names only the tools its place offers, and asks for no den
     { kind: 'filed', said: 'says a request was filed' }, { kind: 'promised', said: 'promises to come back to something later' },
   ];
   const thread = claims.repairNote(problems, { tools: new Set(['reply', 'start_request', 'offer_close_request']) });
-  for (const name of ['draw_screen', 'close_thread', 'offer_request', 'comment_on_request', 'report_problem', 'request_detail']) {
+  for (const name of ['start_design', 'close_thread', 'offer_request', 'comment_on_request', 'report_problem', 'request_detail']) {
     assert.ok(!thread.includes(name), `${name} is not offered there`);
   }
   assert.match(thread, /start_request starts one/);
-  const main = claims.repairNote(problems, { tools: new Set(['reply', 'draw_screen', 'close_thread', 'offer_request']) });
-  assert.match(main, /call draw_screen now/);
+  // Step 6: a private thread starts a design itself, and draws it in the same turn.
+  const main = claims.repairNote(problems, { tools: new Set(['reply', 'start_design', 'close_thread', 'offer_request']) });
+  assert.match(main, /call start_design now with what to draw and its title, draw it, then reply/);
+  assert.doesNotMatch(main, /draw_screen|do not reply/);
   assert.match(main, /to finish this private thread, call close_thread\./);
-  const design = claims.repairNote([{ kind: 'design_done', said: 'x' }], { tools: new Set(['reply', 'write_screen', 'edit_design']) });
-  assert.match(design, /Call write_screen \(or edit_design\) now, then reply\./);
-  for (const note of [thread, main, design]) {
+  const design = claims.repairNote([{ kind: 'design_done', said: 'x' }], { tools: new Set(['reply', 'write_screen', 'edit_design', 'start_design']) });
+  assert.match(design, /Call write_screen \(or edit_design\) now, then reply\./, 'with the design loaded it draws now');
+  // A live draft's change said with none saved (step 6, draft_done).
+  const draft = claims.repairNote([{ kind: 'draft_done', said: 'says you changed or saved the draft' }], { tools: new Set(['reply', 'apply_changes']) });
+  assert.match(draft, /Nothing was saved to the draft this turn\. Make the change with edit_file and save it with apply_changes/);
+  for (const note of [thread, main, design, draft]) {
     assert.doesNotMatch(note, /say plainly (?:that )?it (?:has not|hasn't) been done|has not been done|retract|If you cannot confirm it/i);
     assert.doesNotMatch(note, /—/);
   }
