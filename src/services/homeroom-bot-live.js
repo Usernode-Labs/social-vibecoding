@@ -548,14 +548,19 @@ function proposalText({ link, docOnly = false }) {
   return `Homeroom bot built this. It's up for a vote: ${link}`;
 }
 
+// T1.15 (19 Nov 2026): said right after the promote, while the change is
+// still Checking and its vote is not open yet (vote_open false), so it says
+// when the vote opens rather than that it is up for one.
+const VOTE_OPENS = 'Its vote opens once its tests and screenshots are done.';
+
 function proposalHomeroomText({ title, docOnly = false }) {
   const name = clipText(title, 200);
   if (docOnly) {
     return name
-      ? `This adds a written plan; nothing changes in the app. It's up for a vote: ${name}`
-      : 'This adds a written plan; nothing changes in the app. It\'s up for a vote.';
+      ? `This adds a written plan; nothing changes in the app: ${name}. ${VOTE_OPENS}`
+      : `This adds a written plan; nothing changes in the app. ${VOTE_OPENS}`;
   }
-  return name ? `I built this. It's up for a vote: ${name}` : 'I built this. It\'s up for a vote.';
+  return name ? `I built this: ${name}. ${VOTE_OPENS}` : `I built this. ${VOTE_OPENS}`;
 }
 
 // #6209: a change that touches only written documents (a plan under docs/,
@@ -596,6 +601,14 @@ function liveText({ title }) {
   return name ? `Homeroom bot's change for this is live: ${name}.` : 'Homeroom bot\'s change for this is live.';
 }
 
+// T1.10: the request's line when the bot's change merged and its production
+// deploy failed: nothing for a person to do, and when it goes live.
+function deployFailedText({ title = null } = {}) {
+  const name = clipText(title, 200);
+  return `Homeroom bot's change for this merged${name ? `: ${name}` : ''}, but it isn't live yet: the deploy failed. `
+    + 'It goes live with the next deploy that succeeds, and this request says so then.';
+}
+
 function liveHomeroomText({ title, project }) {
   const name = clipText(title, 200);
   const where = clipText(project, 80);
@@ -620,7 +633,10 @@ function liveHomeroomText({ title, project }) {
 // reply here does not do (it reads the request again and starts over): its
 // maker's Try again in their chat with the bot proposes what was built
 // (homeroom-bot.js finishBuiltFirstVersion).
-function buildFailedText(reason, { firstVersion = false, retrying = false } = {}) {
+// T1.15: `tapToRetry`, the Homeroom copy of a note with a Try again card
+// under it (homeroom-bot.js announceBuilt): a reply alone starts nothing
+// unless the chat's model reads it as an ask, so the note names the card.
+function buildFailedText(reason, { firstVersion = false, retrying = false, tapToRetry = false } = {}) {
   const dm = require('./homeroom-bot-dm');
   const read = dm.buildFailedCause(reason);
   const words = dm.buildFailedWords(reason, 'this', 'bot', { first: firstVersion });
@@ -635,14 +651,35 @@ function buildFailedText(reason, { firstVersion = false, retrying = false } = {}
   if (firstVersion && read.cause === 'unproposed') {
     return `${words} Whoever asked for it can tap Try again in their chat with Homeroom bot, and it will finish it.`;
   }
+  if (tapToRetry) return `${words} ${TAP_TO_RETRY}`;
   return `${words} Reply here (or on the GitHub issue) and it will try again.`;
+}
+
+// T1.15: what a failure note with a Try again card under it says.
+const TAP_TO_RETRY = 'Tap Try again under this, or reply with what to change.';
+
+/**
+ * T1.15: whether a failed build's note gets a Try again card (its tap starts
+ * the request again with no model reading the reply): a failure a fresh
+ * start can get past, not one the bot is already trying again, nor a push
+ * the platform retries itself, nor a first version that Try again in the
+ * maker's chat finishes. Pure.
+ */
+function retryCardFits(reason, { firstVersion = false, retrying = false } = {}) {
+  if (retrying) return false;
+  const cause = require('./homeroom-bot-dm').buildFailedCause(reason).cause;
+  if (cause === 'push' || cause === 'push_permanent' || cause === 'push_gave_up') return false;
+  if (firstVersion && cause === 'unproposed') return false;
+  return true;
 }
 
 // #6867: what a request says when the build stopped because OpenRouter's
 // credit ran out. Not a failure and nothing for a person to do: the bot
-// picks it up by itself once credit is added.
+// picks it up by itself once credit is added (its credit_wait read, kept by
+// the request's instance and granted once the lane's pause lifts: T1.1).
+// T1.15: GitHub's copy; Homeroom's is the bot's own words (firstPerson).
 function buildCreditText() {
-  return 'Waiting for building credit. Homeroom bot picks this up again by itself.';
+  return 'Homeroom bot is out of building credit right now. It will pick this up again by itself once credit is back.';
 }
 
 // A first version whose build did not finish is tried once more on its own,
@@ -1633,7 +1670,9 @@ function buildDescription({ text, spec = null }) {
  * Best-effort: a proposal that cannot be named or described still goes up,
  * under the fallback name. Resolves { title, description }; never throws.
  */
-async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false, fromPlan = null }) {
+async function prepareProposal({
+  pool, bot, sessionId, spec = null, buildText = '', model = null, checkedFirst = false, fromPlan = null, reviewNote = null,
+}) {
   const title = proposalTitle(spec);
   if (title) {
     try {
@@ -1658,7 +1697,9 @@ async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = 
   const description = credited && checkedFirst ? checkedDescription(credited, askedBy) : credited;
   // #6407: a change built from a person's plan names that plan first, and
   // says where it departed when the model left that out.
-  const proposalDescription = withPlanLine(description, fromPlan);
+  // T1.13: a change whose review did not run (its reviewer failed) says so
+  // to the people voting on it, once.
+  const proposalDescription = withReviewNote(withPlanLine(description, fromPlan), reviewNote);
   if (ccOutput) {
     try {
       await pool.query(
@@ -1708,6 +1749,13 @@ function checkedDescription(description, username = null) {
   const text = String(description || '').trim();
   const line = `Checked with ${username ? `@${username}` : 'the person who asked for it'} first: they saw this plan and its screens and said Build it.`;
   if (text.split('\n').some((l) => l.trim() === line)) return text;
+  return `${text}\n\n${line}`;
+}
+
+/** Pure (T1.13): a change's description, ending with the line its review left (unreviewedLine), once. */
+function withReviewNote(description, line) {
+  const text = String(description || '').trim();
+  if (!line || !text || text.split('\n').some((l) => l.trim() === line)) return description;
   return `${text}\n\n${line}`;
 }
 
@@ -4290,7 +4338,13 @@ async function draftSpec({
   const turn = routed?.logicalTurnId ? { turnId: routed.logicalTurnId } : {};
   if (stopped) return { ok: false, stopped: true, costUsd, ...turn, error: `the spec ran past its time limit${progress.suffix()}` };
   if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
-  if (routed.error) return { ok: false, costUsd, ...turn, error: `the spec turn failed (${routed.error})` };
+  // T1.3: a plan turn that ended on OpenRouter's 402 for credit, read off its
+  // error and what the worker read of how it ended (the Codex harness's
+  // agentErrorCode, which an empty reply carries and nothing else).
+  const credit = require('./openrouter-credit');
+  const creditOut = credit.creditOut({ error: routed.error || null }) || credit.creditOut(routed.result || null)
+    ? { creditOut: true } : {};
+  if (routed.error) return { ok: false, costUsd, ...turn, error: `the spec turn failed (${routed.error})`, ...creditOut };
   // Its saved screens go where the figure holds their placeholders.
   const filled = fvScreens
     ? await fillSavedScreens({ fvScreens, screens: savedScreens, worker, containerName, result: routed.result })
@@ -4300,7 +4354,7 @@ async function draftSpec({
     if (read.fragment) log.warn('homeroom-bot', 'The spec turn left only part of a spec; building from the plan', { sessionId: session.id });
     // #6867: a plan turn that ended on OpenRouter's 402 for credit is an
     // outage, told apart from every other failed plan.
-    const out = require('./openrouter-credit').creditOut({ error: read.error }) ? { creditOut: true } : {};
+    const out = creditOut.creditOut || credit.creditOut({ error: read.error }) ? { creditOut: true } : {};
     return { ...read, costUsd, ...turn, ...out };
   }
   if (read.joined) log.info('homeroom-bot', 'The spec came in several messages; kept it whole', { sessionId: session.id });
@@ -5125,7 +5179,8 @@ async function buildAndPropose({
   let spec = null;
   const specOut = () => {
     if (spec?.ok) return { specMd: spec.specMd, specVersion: spec.version, ...(spec.screens ? { specScreens: spec.screens } : {}) };
-    if (spec && !spec.blocked && spec.error) return { specNote: `no spec (${spec.error}); the build worked from the plan` };
+    // A plan that ran out of credit built nothing from the plan (T1.3).
+    if (spec && !spec.blocked && spec.error && !spec.creditOut) return { specNote: `no spec (${spec.error}); the build worked from the plan` };
     return {};
   };
   // What each of its stages cost, on its model (services/stage-costs.js):
@@ -5149,6 +5204,9 @@ async function buildAndPropose({
     Object.assign(stages, stageCosts.reviewParts(reviewed, { buildModel: model, fixTurnIds }));
     return Object.keys(stages).length ? { stageCosts: stages } : {};
   };
+  // T1.3: the last build turn, read for OpenRouter's 402 for credit when the
+  // build fails (the Codex harness's agentErrorCode is on its result only).
+  let creditTurn = null;
   const fail = async (error) => {
     // Not this process's to fail any more: the build's next owner goes on.
     steps.fence();
@@ -5159,8 +5217,10 @@ async function buildAndPropose({
     return {
       ok: false, sessionId: session.id, branchName: session.branch_name || null, error, ...specOut(), ...costsOut(),
       ...noChangeOut(),
-      // #6867: a turn that ended on OpenRouter's 402 for credit.
-      ...(require('./openrouter-credit').creditOut({ error }) ? { creditOut: true } : {}),
+      // #6867: a turn that ended on OpenRouter's 402 for credit (its error,
+      // or T1.3 the build turn's own result).
+      ...(require('./openrouter-credit').creditOut({ error }) || require('./openrouter-credit').creditOut(creditTurn)
+        ? { creditOut: true } : {}),
     };
   };
   // A skip is put away as a failed attempt is, and says why it stopped.
@@ -5331,6 +5391,8 @@ async function buildAndPropose({
       return {
         ok: false, planned: false, sessionId: session.id, error: `no plan could be written (${spec.error || 'unknown'})`,
         costUsd: spec.costUsd ?? null, ...costsOut(),
+        // T1.3: out of OpenRouter's credit is an outage (announceBuilt).
+        ...(spec.creditOut ? { creditOut: true } : {}),
       };
     }
     return {
@@ -5370,6 +5432,12 @@ async function buildAndPropose({
       }
       return true;
     });
+  } else if (spec.creditOut) {
+    // T1.3: the plan ran out of OpenRouter's credit, and so would the build
+    // turn: nothing is built from the plan alone. The build stops as one
+    // that waits for credit (homeroom-bot.js announceBuilt).
+    log.warn('homeroom-bot', 'No spec: OpenRouter\'s credit ran out; not building', { sessionId: session.id, error: spec.error });
+    return { ...(await fail(spec.error)), creditOut: true, costUsd: spec.costUsd ?? null };
   } else {
     log.warn('homeroom-bot', 'No spec; building from the plan', { sessionId: session.id, error: spec.error });
     if (spec.stopped) {
@@ -5463,6 +5531,7 @@ async function buildAndPropose({
       .catch(() => {});
   };
   let { routed, stopped } = await runBuildTurn({ prompt, budgetMs: turnBudgetMs, commitMsg, progress, key: 'build' });
+  creditTurn = routed || null;
   buildTurnMs = Date.now() - turnStartedMs;
   // The screens the platform wrote are a commit of the branch's own: a turn
   // that added nothing after it changed nothing (pastStartingScreens).
@@ -5537,6 +5606,7 @@ async function buildAndPropose({
         resumeThreadId: routed?.result?.agentThreadId || null,
         budgetMs: Math.max(leftMs, BUILD_NUDGE_MIN_MS), commitMsg, progress, telemetry: telemetry || BUILD_NUDGE_TELEMETRY, key: 'nudge',
       }));
+      creditTurn = routed || null;
       pastStartingScreens(routed, startingScreens);
       countTurn(routed);
       const nudge = turnFacts({ routed, stopped }, { turn: 'nudge', model, seconds: (Date.now() - nudgeStartedMs) / 1000 });
@@ -5751,6 +5821,7 @@ async function buildAndPropose({
     await prepareProposal({
       pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
       buildText: result.lastResultText, model, checkedFirst, fromPlan,
+      reviewNote: require('./bot-review').unreviewedLine(reviewed),
     });
     return true;
   });
@@ -6128,6 +6199,7 @@ module.exports = {
   waitOutShotsRun,
   askerOf,
   creditedDescription,
+  withReviewNote,
   checkedDescription,
   BOT_USERNAME,
   isOwnMessage,
@@ -6169,6 +6241,9 @@ module.exports = {
   fromPlanHomeroomText,
   buildFailedText,
   buildCreditText,
+  deployFailedText,
+  retryCardFits,
+  TAP_TO_RETRY,
   retryCommentText,
   heldText,
   heldKind,

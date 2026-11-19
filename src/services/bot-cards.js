@@ -99,8 +99,11 @@ function offerActions(kind, offerId, args = {}) {
     ];
   }
   // #6533: the plan offer names its request, as the change page does.
+  // T1.15: Try again under a failure note on a request (args.restart) is
+  // the note's own words: "Tap Try again under this".
   const yes = kind === 'post_pictures_plan' && Number(args.issueNumber) > 0
-    ? `${words.yes} on request #${Number(args.issueNumber)}` : words.yes;
+    ? `${words.yes} on request #${Number(args.issueNumber)}`
+    : kind === 'try_again' && args.restart === true ? 'Try again' : words.yes;
   return [
     { id: 'yes', label: yes, style: 'primary', offerId: Number(offerId) },
     { id: 'no', label: words.no, style: 'secondary', offerId: Number(offerId) },

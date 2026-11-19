@@ -116,7 +116,9 @@ function rawOf(owner, repo, slug, row, { head = null, base = null, mergeable = n
     draft: !!row.draft,
     merged: !!row.merged,
     merged_at: iso(row.merged_at),
-    merge_commit_sha: row.merge_commit_sha || null,
+    // T1.7: an open pull request's merge_commit_sha is native-merge.js's
+    // checkpoint of a merge not recorded yet, never a merge.
+    merge_commit_sha: row.merged ? (row.merge_commit_sha || null) : null,
     mergeable,
     mergeable_state,
     html_url: changeUrl(slug, row.number),

@@ -44,6 +44,12 @@ export const WORK = Object.freeze({
   // #6407: a change built from a person's plan is compared with that plan's
   // after screen before anyone is asked to vote.
   planCheck: 'bot.checkPlan',
+  // T1.9: a fix round lost twice: its requester takes it from here.
+  handOff: 'bot.handOffFix',
+  // T1.10: merged, and its deploy failed: whoever asked hears it is not live yet.
+  deployFailed: 'bot.tellDeployFailed',
+  // T1.7: it conflicts with main and the sync could not resolve it.
+  conflict: 'bot.handOffConflict',
 });
 // How often a change being merged is looked at again (a merge GitHub does
 // not confirm puts it back up for its vote).
@@ -53,8 +59,10 @@ export const FIX_LOOK_MS = 10 * 60 * 1000;
 // (FixRoundEnded, with `outcome`), or that it was not taken (FixRefused).
 // A round lost (its look ended without it, or failed for good) is asked
 // once more (Q3); lost again, it is given up on: a change whose checks pass
-// is ready to try, saying what does not work; one whose checks fail is left
-// as [main] left it (nobody is told). A round a person stopped is not asked
+// is ready to try, saying what does not work; one whose checks fail is
+// handed to its requester (T1.9: their Needs you and a note, as a round
+// that could not fix them is), never left with nobody told. A round a
+// person stopped is not asked
 // again for that head: it is asked when it is next needed (a new verdict,
 // its shots, a promote), as a refusal is (design-bot-loop Q1).
 export const FIX_ROUNDS = 2;
@@ -113,6 +121,17 @@ const EVENTS = {
   FixRoundEnded: (p: any) => ({ ...session(p), head: optSha(p?.head), outcome: text(p?.outcome, 20) }),
   FixRefused: (p: any) => ({ ...session(p), head: optSha(p?.head), why: text(p?.why, 64) }),
   Merged: (p: any) => ({ ...session(p), before: text(p?.before, 40) }),
+  // T1.10: merge-followups: merged, and the production deploy failed.
+  DeployFailed: (p: any) => ({ ...session(p), message: text(p?.message, 300) }),
+  // T1.7: the proposal machine: its approved merge was held MAX_HELD_TRIES
+  // times on `head` (GitHub's required checks, GitHub itself) and stopped.
+  MergeStuck: (p: any) => ({ ...session(p), head: optSha(p?.head), why: text(p?.why, 200) }),
+  // T1.7: the proposal machine: a sync with main could not resolve the
+  // conflict on `head` (`files`: what conflicted).
+  ConflictUnresolved: (p: any) => ({
+    ...session(p), head: optSha(p?.head),
+    files: Array.isArray(p?.files) ? p.files.filter((x: unknown) => typeof x === 'string').slice(0, 20) as string[] : [],
+  }),
   Live: session,
   Closed: (p: any) => ({ ...session(p), reason: text(p?.reason, 64) }),
   Look: () => ({}),
@@ -285,7 +304,11 @@ function answered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Out
   if (!due || due.head !== fix.head) return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false } });
   const lost = fix.lost + 1;
   if (lost < FIX_ROUNDS) return askFix(s.data, fix.head, lost, ctx);
-  return decide(s, f, ctx, { ...s.data, fix: { ...fix, asked: false, lost, gaveUp: true } });
+  // T1.9: given up on: whoever asked for it is handed it, once per head.
+  const key = `handoff:${shortSha(fix.head)}`;
+  const work: WorkRequest[] = s.data.notes[key] ? [] : [{ kind: WORK.handOff, key, input: { sessionId: s.data.sessionId, head: fix.head } }];
+  const out = decide(s, f, ctx, asked({ ...s.data, fix: { ...fix, asked: false, lost, gaveUp: true } }, work));
+  return work.length ? { ...out, work: [...(out.work || []), ...work] } : out;
 }
 
 function created(e: Event<any>, f: Facts): Data {
@@ -338,6 +361,42 @@ function merged(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
   // #6264: whoever asked to be told it merged hears it, once.
   const tell = followupWork(d, 'merged', 'followups:merged');
   return step('merged', asked(d, tell), { work: [...work, ...tell], timer: null });
+}
+
+// T1.10: merged, and its deploy failed: whoever asked for it hears so, once
+// per merge (it goes live with the next deploy that succeeds, and its Live
+// says that). Before, only the change's own discussion had a line.
+function deployFailed(s: BState, e: Event<any>): Outcome<BState> {
+  const live = s as Live;
+  const key = 'deploy-failed';
+  if (live.data.notes[key]) return step(live.name as Name, live.data);
+  const work: WorkRequest[] = [{ kind: WORK.deployFailed, key, input: { sessionId: live.data.sessionId, message: e.payload.message ?? null } }];
+  return step(live.name as Name, asked(live.data, work), { work });
+}
+
+// T1.7: a conflict the sync could not resolve, on a change up for its vote:
+// the bot has no turn that resolves one, so whoever asked for it is handed
+// it (their Needs you, a note on the request, their DM), once per head.
+function conflictUnresolved(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
+  const live = s as Live;
+  if (!f.row || f.row.status !== 'promoted') return step(live.name as Name, live.data);
+  const head = e.payload.head || (f.row.reviewed_head_sha ? String(f.row.reviewed_head_sha).toLowerCase() : null);
+  const key = `conflict:${head ? shortSha(head) : 'head'}`;
+  if (live.data.notes[key]) return step(live.name as Name, live.data);
+  const work: WorkRequest[] = [{ kind: WORK.conflict, key, input: { sessionId: live.data.sessionId, head, files: e.payload.files || [] } }];
+  return step(live.name as Name, asked(live.data, work), { work });
+}
+
+// T1.7: an approved merge GitHub held until Homeroom stopped asking: whoever
+// asked for it is handed it (the same hand-off, its own words), once per head.
+function mergeStuck(s: BState, e: Event<any>, f: Facts): Outcome<BState> {
+  const live = s as Live;
+  if (!f.row || !['promoted', 'merging'].includes(String(f.row.status))) return step(live.name as Name, live.data);
+  const head = e.payload.head || (f.row.reviewed_head_sha ? String(f.row.reviewed_head_sha).toLowerCase() : null);
+  const key = `stuck:${head ? shortSha(head) : 'head'}`;
+  if (live.data.notes[key]) return step(live.name as Name, live.data);
+  const work: WorkRequest[] = [{ kind: WORK.conflict, key, input: { sessionId: live.data.sessionId, head, why: e.payload.why ?? null, stuck: true } }];
+  return step(live.name as Name, asked(live.data, work), { work });
 }
 
 // #6264: one follow-up work item, unless it was already asked under its key.
@@ -468,6 +527,9 @@ export function botChange(): Machine<BState, Facts> {
     Proposed: { to: look }, Verdict: { to: look }, ShotsSettled: { to: look }, FixRoundEnded: { to: look }, FixRefused: { to: look }, Look: { to: look },
     PreviewStopped: { to: stopped },
     Merged: { to: merged },
+    DeployFailed: { to: deployFailed },
+    ConflictUnresolved: { to: conflictUnresolved },
+    MergeStuck: { to: mergeStuck },
     Live: { to: wentLive },
     Closed: { to: closed as any },
     Voted: { to: voted },
@@ -477,6 +539,7 @@ export function botChange(): Machine<BState, Facts> {
   const ended = {
     Proposed: { ignore: 'ended' }, Verdict: { ignore: 'ended' }, ShotsSettled: { ignore: 'ended' }, FixRoundEnded: { ignore: 'ended' }, FixRefused: { ignore: 'ended' },
     Look: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' }, Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
+    DeployFailed: { ignore: 'ended' }, ConflictUnresolved: { ignore: 'ended' }, MergeStuck: { ignore: 'ended' },
     Closed: { ignore: 'ended' }, Voted: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
   };
   // Once merged only its Merged (when a look saw the merge first) and its
@@ -485,6 +548,7 @@ export function botChange(): Machine<BState, Facts> {
     ...looks,
     Proposed: { ignore: 'merged' }, Verdict: { ignore: 'merged' }, ShotsSettled: { ignore: 'merged' },
     FixRoundEnded: { ignore: 'merged' }, FixRefused: { ignore: 'merged' }, Look: { ignore: 'merged' }, PreviewStopped: { ignore: 'merged' },
+    ConflictUnresolved: { ignore: 'merged' }, MergeStuck: { ignore: 'merged' },
   };
   // Closed: put up for a vote again (reopened), it is followed again.
   const closedState = { ...ended, Proposed: { to: look } };
@@ -501,8 +565,12 @@ export function botChange(): Machine<BState, Facts> {
   return defineMachine<BState, Facts>({
     name: MACHINE,
     // 2: a vote on the change (Voted, bot.tellApproved): an older Pod would
-    // refuse its event and leave its work's result unread.
-    version: 2,
+    // refuse its event and leave its work's result unread. 3 (T1.9, T1.10):
+    // a fix lost twice is handed to its requester (bot.handOffFix), and a
+    // merge whose deploy failed is told (DeployFailed, bot.tellDeployFailed),
+    // and a conflict the sync could not resolve is handed to its requester
+    // (ConflictUnresolved, bot.handOffConflict).
+    version: 3,
     events: EVENTS,
     create: CREATE,
     // What web appends: a vote on the change, and the admin console's Retry follow-up.
@@ -524,6 +592,9 @@ export function botChange(): Machine<BState, Facts> {
       FixRoundEnded: anyProducer,
       FixRefused: anyProducer,
       Merged: fromMachine('merge-followups'),
+      DeployFailed: fromMachine('merge-followups'),
+      ConflictUnresolved: fromMachine('proposal'),
+      MergeStuck: fromMachine('proposal'),
       Live: fromMachine('merge-followups'),
       Closed: fromMachine('proposal'),
       Look: timer,

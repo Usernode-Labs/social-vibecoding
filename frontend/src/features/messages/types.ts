@@ -484,6 +484,8 @@ export interface BotTrack {
   waitingOn: 'you' | 'group' | null;
   /** Why a build that did not finish stopped, as a code (homeroom-bot-track.js buildStopWhy). */
   cause?: string;
+  /** T2.9: who stopped a build a person stopped (`cause` 'stopped'), by username. */
+  causeBy?: string;
   /**
    * Who a track waiting on "you" waits on, by username, where it is drawn
    * for somebody else (a request's page: homeroom-bot-track.js forViewer).
@@ -615,7 +617,9 @@ export interface HomeroomBotActivity {
   /** While it is working: who it waits on (`them`, the viewer; `the group`; `time`, on hold until Monday), when it waits (services/homeroom-bot-progress.js). */
   waitingOn?: string;
   /** A `build_failed` ending: why the build stopped. */
-  stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other';
+  stopCause?: 'time' | 'restart' | 'restarts' | 'no_change' | 'unproposed' | 'no_start' | 'other'
+    // T2.9: the one decoder's other causes (services/bot-stop-cause.js).
+    | 'plan' | 'push' | 'push_permanent' | 'push_gave_up' | 'stopped';
   /**
    * A `held` ending: which of the bot's limits holds it back. #6156: the
    * project's builds (`builds_per_app`: it waits for the bot's turn) and its

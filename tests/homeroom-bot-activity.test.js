@@ -1449,3 +1449,28 @@ test('#6806: the bot\'s own post on a request does not queue a look', () => {
   // it did: the issue moved, so it is read.
   assert.equal(homeroomBot.classifyIssue({ issue: issueAt(ownPostMs + 1000), lastRun }).reason, 'changed');
 });
+
+// T2.12 (19 Nov 2026): a card about its request's newest look says what the
+// request's stored work state says; an older look's card keeps its own.
+test('T2.12: a card on the newest look reads its request\'s stored row', () => {
+  const act = require('../src/services/homeroom-bot-activity');
+  const asked = { run_id: 40, verdict: 'question' };
+  assert.equal(act.outcomeFor(asked, null), 'question', 'no row: the run says it');
+  // The question was answered and its reply is being read: the card works.
+  assert.equal(act.outcomeFor(asked, { stage: 'reading', line: { code: 'reply' }, runId: 40 }), null);
+  // A newer look than this card's: the row is not about it.
+  assert.equal(act.outcomeFor(asked, { stage: 'reading', runId: 41 }), 'question');
+  assert.equal(act.outcomeFor({ ...asked, next_at: '2026-11-19T10:00:00Z' }, { stage: 'reading', runId: 40 }), 'question');
+  // A stop and a hand-back by the row's words.
+  const built = { run_id: 40, verdict: 'ready', build_ok: false, build_error: 'no plan could be written' };
+  assert.equal(act.outcomeFor(built, { stage: 'planning', line: { code: 'retry_plan' }, runId: 40 }), null, 'its plan is tried again');
+  assert.equal(act.outcomeFor(built, { stage: 'stopped', reason: 'build_failed', runId: 40 }), 'build_failed');
+  assert.equal(act.outcomeFor({ run_id: 40, verdict: 'empty' }, { stage: 'waiting_for_you', why: 'needs_detail', cause: 'blocked', runId: 40 }), 'blocked');
+  assert.equal(act.outcomeFor({ run_id: 40, verdict: 'ready', proposal_session_id: 9, proposal_status: 'archived' },
+    { stage: 'stopped', reason: 'change_closed', runId: 40 }), 'closed');
+  // A build that became a change keeps its ending while a second look on the
+  // same card reads (B4, WP1): work still going never undoes a change's state.
+  const proposedRun = { run_id: 40, verdict: 'ready', build_ok: true, proposal_session_id: 9, proposal_status: 'promoted', told: false };
+  assert.equal(act.outcomeFor(proposedRun, { stage: 'reading', runId: 40 }), 'checking');
+  assert.equal(act.outcomeFor({ ...proposedRun, told: true }, { stage: 'building', runId: 40 }), 'proposed');
+});

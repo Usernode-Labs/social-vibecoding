@@ -93,6 +93,12 @@ export async function createPrProposedNotifications(
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
       )
+        -- T2.6: somebody asked to approve it ("ready to try", change_ready,
+        -- rung with this ping when its row opens) hears that one alone.
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications n
+           WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'change_ready'
+        )
         -- Only once its stored work state opens it for votes (above).
         AND EXISTS (
           SELECT 1 FROM work_states ws

@@ -30,27 +30,44 @@ const BODIES = [
   // #6306: nothing is left to build; the ask already works.
   ['needs_you', 'done', {}, 'Already works. Propose to close it, or tell me what\'s missing.'],
   ['needs_you', 'platform', {}, 'This is about Homeroom itself. Move it to Homeroom\'s own board?'],
+  // T2.10 (19 Nov 2026): a person verdict that is not its requester's own
+  // decision says what it waits on.
+  ['needs_you', 'decide_setup', {}, 'This needs setup outside the app before I can build it.'],
+  ['needs_you', 'decide_person', {}, 'This changes data the app already stores, so a person has to build it.'],
+  ['needs_you', 'elsewhere', {}, 'This looks like it belongs to another project. Move it there?'],
+  ['needs_you', 'wrong_project', {}, 'This looks like it was filed on the wrong project. Propose to close it?'],
+  ['needs_you', 'close', {}, 'There\'s nothing for me to build. Propose to close it?'],
   ['ready', 'ready', {}, 'Ready to try. Try it, and approve it if you\'re happy.'],
   ['ready', 'ready_group', { waiting: 'you and @ada' }, 'Ready to try. It goes live once you and @ada say yes.'],
   ['ready', 'ready_group', { waiting: '@ada' }, 'Ready to try. It needs one more yes, from @ada.'],
   ['ready', 'ready_broken', { ready: { broken: ['Search'] } }, 'Built, but one thing isn\'t working yet. Try it to see.'],
   ['ready', 'ready_broken', { ready: { broken: ['Search', 'Sort', 'Filter'] } }, 'Built, but 3 things aren\'t working yet. Try it to see.'],
-  ['stopped', 'build_time', {}, 'Stopped: it took longer than I\'m allowed. Tap Try again.'],
-  ['stopped', 'build_restart', {}, 'Stopped: Homeroom restarted while I was building. Tap Try again.'],
-  ['stopped', 'build_no_change', {}, 'Stopped: I ended up with no changes to show. Tap Try again.'],
-  ['stopped', 'build_not_proposed', {}, 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.'],
-  ['stopped', 'build_no_start', {}, 'Stopped: I couldn\'t get started. Tap Try again.'],
-  ['stopped', 'build_other', {}, 'Stopped: something went wrong while I was building. Tap Try again.'],
+  // T2.9 (19 Nov 2026): a request's stop names what its page offers (Ask
+  // Homeroom bot to build this): no request has a Try again.
+  ['stopped', 'build_time', {}, 'Stopped: it took longer than I\'m allowed. Ask me to build it again on its page.'],
+  ['stopped', 'build_restart', {}, 'Stopped: Homeroom restarted while I was building. Ask me to build it again on its page.'],
+  ['stopped', 'build_no_change', {}, 'Stopped: I ended up with no changes to show. Ask me to build it again on its page.'],
+  ['stopped', 'build_not_proposed', {}, 'Stopped: I built it but couldn\'t put it up for a vote. Ask me to build it again on its page.'],
+  ['stopped', 'build_no_start', {}, 'Stopped: I couldn\'t get started. Ask me to build it again on its page.'],
+  ['stopped', 'build_other', {}, 'Stopped: something went wrong while I was building. Ask me to build it again on its page.'],
   // #6313: the plan could not be written; nothing was built, and the bot is
-  // trying again by itself, so no tap is asked for.
+  // trying again by itself, so no tap is asked for. T2.9: only then.
   ['stopped', 'build_no_plan', {}, 'Stopped: I couldn\'t write the plan for it. I\'m trying again.'],
+  ['stopped', 'build_no_plan_stopped', {}, 'Stopped: I couldn\'t write the plan for it. Ask me to build it on its page.'],
+  // T2.9: a credit wait asks for nothing; a stop by a person names them; a
+  // failed read and a closed change say what they are.
+  ['stopped', 'build_credit', {}, 'Paused: I\'m out of building credit for now. I\'ll pick it up again by myself.'],
+  ['stopped', 'stopped_by', { stoppedBy: 'ada', said: 'stopped_by' }, 'Stopped by @ada.'],
+  ['stopped', 'look_failed', {}, 'Stopped: I couldn\'t read it. Ask me to build it on its page.'],
+  ['stopped', 'change_closed', {}, 'Stopped: its change was closed. Ask me to build it again on its page.'],
   // #6267: the build finished and GitHub refused the upload.
   ['stopped', 'build_push', {}, 'Built, but GitHub refused the upload. I\'ll try again soon.'],
   ['stopped', 'build_push_permanent', {}, 'Built, but GitHub wouldn\'t take the upload. Reply to try again.'],
   ['stopped', 'build_push_gave_up', {}, 'Built, but GitHub kept refusing the upload. Reply to send it.'],
   ['stopped', 'update_failed', {}, 'Stopped: I couldn\'t update it. It\'s as it was.'],
   ['stopped', 'needs_look', {}, 'Stopped: it\'s built, but a person needs to look at it before you can try it.'],
-  ['stopped', 'checks', {}, 'Stopped: its checks still fail. A person needs to look.'],
+  // T2.9: the change's Testing card offers Let it try again.
+  ['stopped', 'checks', {}, 'Stopped: its checks still fail. You can let me try once more.'],
   ['on_hold', 'allowance', {}, 'On hold until Monday: your building time for this week is used up.'],
   ['on_hold', 'paused', {}, 'On hold until Monday: I\'ve used my budget for this week.'],
   ['on_hold', 'slots', {}, 'Waiting for a slot: all of this project\'s are in use. I\'ll start when one frees.'],
@@ -72,6 +89,8 @@ const FIRST_VERSION = [
   // 14 Oct 2026 (newcomer run eight): a first version goes live without a vote.
   // 15 Oct 2026: and Try again finishes it from what was built.
   ['stopped', 'build_not_proposed', 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.'],
+  // T2.9: a first version's stop is said under its Try again, in its maker's chat.
+  ['stopped', 'build_time', 'Stopped: it took longer than I\'m allowed. Tap Try again.'],
   ['live', 'live_first', 'Your first version is live. Open Plant Pal to try it.'],
   ['live', 'live_first_soon', 'Your first version is going live now. Open Plant Pal in a few minutes to try it.'],
 ];
@@ -82,6 +101,8 @@ const ASKS = {
   question: 'Question for you', questions: 'Questions for you', followup_ask: 'Question for you', plan: 'Plan to approve',
   decide: 'Your decision', decide_others: 'Waiting on @ada and @ben', blocked: 'Needs more detail', empty: 'Needs more detail',
   done: 'Already works', platform: 'Move it to Homeroom\'s board?',
+  decide_setup: 'Needs setup first', decide_person: 'Needs a person', elsewhere: 'Another project?',
+  wrong_project: 'Wrong project?', close: 'Close it?',
 };
 const labelOf = (moment, said) => (moment === 'needs_you' ? ASKS[said] : LABELS[moment]);
 
@@ -255,7 +276,7 @@ test('rows written before "one story" keep reading, as the moments they are', ()
     ['hrbot:ready_group:Supper Club', 'Ready to try', 'Ready to try. It goes live once the group says yes.'],
     ['hrbot:ready_broken:Flat 4B Chores', 'Ready to try', 'Built, but something isn\'t working yet. Try it to see.'],
     ['hrbot:stopped:Plant Pal', 'Stopped', 'Stopped: I couldn\'t update it. It\'s as it was.'],
-    ['hrbot:stopped_build:Plant Pal', 'Stopped', 'Stopped: something went wrong while I was building. Tap Try again.'],
+    ['hrbot:stopped_build:Plant Pal', 'Stopped', 'Stopped: something went wrong while I was building. Ask me to build it again on its page.'],
     ['hrbot:stopped_blocked:Plant Pal', 'Needs you', 'I can\'t build it as written. Add detail and I\'ll look again.'],
     ['hrbot:stopped_person:Plant Pal', 'Needs you', 'This needs your decision before I build it.'],
     ['hrbot:stopped_empty:Plant Pal', 'Needs you', 'I couldn\'t find anything to build. Add detail and I\'ll look again.'],

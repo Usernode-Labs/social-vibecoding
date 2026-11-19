@@ -61,6 +61,9 @@ const CAUSE_LINES: Record<string, string> = {
   no_change_could_not: 'messages:bot.track.line.stopped.no_change_could_not',
   no_start: 'messages:bot.track.line.stopped.no_start',
   build_failed: 'messages:bot.track.line.stopped.build_failed',
+  // T2.9: the one decoder's other causes (services/bot-stop-cause.js).
+  plan: 'messages:bot.track.line.stopped.plan',
+  stopped: 'messages:bot.track.line.stopped.stopped',
 };
 
 // Papote #3: what a request waits on, naming who it waits on, for a page
@@ -114,6 +117,9 @@ export function trackLine(track: BotTrack): string {
   }
   if (work.stage === 'waiting_for_you' && track.waitingFor && work.why && NAMED_WAITING_LINES[work.why]) {
     return translate(NAMED_WAITING_LINES[work.why], { username: track.waitingFor });
+  }
+  if (work.stage === 'stopped' && track.cause === 'stopped' && track.causeBy) {
+    return translate('messages:bot.track.line.stopped.stoppedBy', { username: track.causeBy });
   }
   if (work.stage === 'stopped' && track.cause && CAUSE_LINES[track.cause]) return translate(CAUSE_LINES[track.cause]);
   return say(lineWords(work)) || trackStateWord(track);

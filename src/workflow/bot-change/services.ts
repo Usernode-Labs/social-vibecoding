@@ -73,6 +73,48 @@ export function botChangeServices({ pool, config }: Deps): Record<string, WorkHa
       },
     },
 
+    // T1.9: a fix round lost twice: the change is handed to its requester
+    // (their Needs you, the note on the request, their DM), once per head.
+    [WORK.handOff]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/homeroom-bot').handOffLostFix(pool, config, {
+          sessionId: Number(input.sessionId), head: String(input.head),
+        });
+        return { said: !!out?.said, why: out?.why ?? null, runId: out?.runId ?? null };
+      },
+    },
+
+    // T1.7: a conflict with main the sync could not resolve: handed to its
+    // requester, once per head.
+    [WORK.conflict]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/homeroom-bot').handOffConflict(pool, config, {
+          sessionId: Number(input.sessionId), head: input.head == null ? null : String(input.head),
+          files: Array.isArray(input.files) ? input.files.map(String) : [],
+          // T1.7: an approved merge GitHub held until Homeroom stopped asking.
+          stuck: input.stuck === true, why: input.why == null ? null : String(input.why),
+        });
+        return { said: !!out?.said, why: out?.why ?? null, runId: out?.runId ?? null };
+      },
+    },
+
+    // T1.10: merged, and its deploy failed: one line on its request, naming
+    // whoever asked for it.
+    [WORK.deployFailed]: {
+      maxAttempts: 5,
+      backoffMs: backoff,
+      async run({ input }): Promise<Json> {
+        const out = await legacy('services/homeroom-bot').tellDeployFailed(pool, config, {
+          sessionId: Number(input.sessionId), message: input.message == null ? null : String(input.message),
+        });
+        return { said: !!out?.said, why: out?.why ?? null };
+      },
+    },
+
     // Merged: the bot's other work on the same request stops, bounded to
     // what had started before the merge (homeroom-bot.js).
     [WORK.merged]: {

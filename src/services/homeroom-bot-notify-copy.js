@@ -51,6 +51,13 @@ const NEEDS_YOU_ASKS = Object.freeze({
   // #6306: nothing is left to build; the ask already works.
   done: 'Already works',
   platform: 'Move it to Homeroom\'s board?',
+  // T2.10 (19 Nov 2026): what a person verdict waits on, when it is not
+  // the requester's own decision.
+  decide_setup: 'Needs setup first',
+  decide_person: 'Needs a person',
+  elsewhere: 'Another project?',
+  wrong_project: 'Wrong project?',
+  close: 'Close it?',
 });
 
 // Older moment names (rows and senders from before), as the moment they are.
@@ -62,10 +69,16 @@ const MOMENT_ALIASES = Object.freeze({
 // Every variant (`said`) each moment has.
 const SAID_BY_MOMENT = Object.freeze({
   needs_you: Object.freeze(['question', 'questions', 'followup_ask', 'plan', 'plan_first', 'decide', 'decide_others',
-    'blocked', 'empty', 'done', 'platform']),
+    'blocked', 'empty', 'done', 'platform',
+    // T2.10: the other hand-backs of a person verdict (bot-stop-cause.js).
+    'decide_setup', 'decide_person', 'elsewhere', 'wrong_project', 'close']),
   ready: Object.freeze(['ready', 'ready_group', 'ready_first', 'ready_broken']),
   stopped: Object.freeze(['build_time', 'build_restart', 'build_no_change', 'build_not_proposed', 'build_no_start',
-    'build_other', 'build_no_plan', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed']),
+    'build_other', 'build_no_plan', 'build_push', 'build_push_permanent', 'build_push_gave_up', 'update_failed', 'needs_look', 'checks', 'first_failed',
+    // T2.9 (19 Nov 2026): the one decoder's causes with words of their own
+    // (bot-stop-cause.js): a plan that is not tried again, a credit wait, a
+    // stop by a person, a read that failed, a closed change.
+    'build_no_plan_stopped', 'build_credit', 'stopped_by', 'look_failed', 'change_closed']),
   // 16 Oct 2026: `slots`, a build held because the project's changes waiting
   // for votes are as many as it may have (homeroom-bot.js WAITING_PER_APP),
   // rings once; #6156: `builds`, because its builds are (BUILDS_PER_APP).
@@ -148,6 +161,8 @@ const BUILD_CAUSES = Object.freeze({
   // #6313: the plan could not be written; nothing was built, and the bot is
   // trying again by itself.
   plan: 'build_no_plan',
+  // T2.9: OpenRouter's credit ran out; a person stopped it.
+  credit: 'build_credit', stopped: 'stopped_by',
 });
 
 function oneLine(value, max) {
@@ -272,6 +287,9 @@ function botNotificationDetail(metadata) {
   // Taken on: who has it now.
   const takenBy = oneLine(metadata.takenBy, 60);
   if (takenBy) out.k = takenBy;
+  // T2.9: stopped by: who stopped it.
+  const stoppedBy = oneLine(metadata.stoppedBy, 60);
+  if (stoppedBy && said === 'stopped_by') out.x = stoppedBy;
   const count = positiveInt(metadata.count);
   if (count) out.c = Math.min(count, 999);
   const broken = brokenCount(metadata);
@@ -313,6 +331,7 @@ function parseBotDetail(detail) {
       oneMore: raw.o === 1 || raw.o === true,
       doneBy: oneLine(raw.y, 60),
       takenBy: oneLine(raw.k, 60),
+      stoppedBy: oneLine(raw.x, 60),
       count: positiveInt(raw.c),
       broken: positiveInt(raw.b),
       issueNumber: positiveInt(raw.i),
@@ -344,6 +363,15 @@ function parseBotDetail(detail) {
   };
 }
 
+/**
+ * Pure (T2.9): how a stopped build is started again, as its page offers it:
+ * a first version's Try again under its stop in its maker's chat, else the
+ * request's own "Ask Homeroom bot to build this" (`what` it is asked to do).
+ */
+function again(d, what = 'build it again') {
+  return d.firstVersion ? 'Tap Try again.' : `Ask me to ${what} on its page.`;
+}
+
 /** Pure: the push body for one moment's variant (section 2.2's words). */
 function bodyFor(d) {
   const app = d.appName || 'the project';
@@ -355,6 +383,13 @@ function bodyFor(d) {
     case 'plan_first': return 'My plan for your first version is ready. Tap Build it if it looks right.';
     case 'decide': return 'This needs your decision before I build it.';
     case 'decide_others': return `This needs a decision from ${d.deciders || d.waiting || 'someone else'} before I build it.`;
+    // T2.10 (19 Nov 2026): a person verdict that is not its requester's own
+    // decision says what it waits on (bot-stop-cause.js handBackOf).
+    case 'decide_setup': return 'This needs setup outside the app before I can build it.';
+    case 'decide_person': return 'This changes data the app already stores, so a person has to build it.';
+    case 'elsewhere': return 'This looks like it belongs to another project. Move it there?';
+    case 'wrong_project': return 'This looks like it was filed on the wrong project. Propose to close it?';
+    case 'close': return 'There\'s nothing for me to build. Propose to close it?';
     case 'blocked': return 'I can\'t build it as written. Add detail and I\'ll look again.';
     case 'empty': return 'I couldn\'t find anything to build. Add detail and I\'ll look again.';
     case 'done': {
@@ -381,28 +416,41 @@ function bodyFor(d) {
       if (d.broken > 1) return `Built, but ${d.broken} things aren't working yet. Try it to see.`;
       if (d.broken === 1) return 'Built, but one thing isn\'t working yet. Try it to see.';
       return 'Built, but something isn\'t working yet. Try it to see.';
-    case 'build_time': return 'Stopped: it took longer than I\'m allowed. Tap Try again.';
-    case 'build_restart': return 'Stopped: Homeroom restarted while I was building. Tap Try again.';
-    case 'build_no_change': return 'Stopped: I ended up with no changes to show. Tap Try again.';
+    // T2.9 (19 Nov 2026): a stop names what its page offers. A first
+    // version's stop is said in its maker's chat, under its Try again; any
+    // other request's opens the request, whose page offers "Ask Homeroom bot
+    // to build this" (no request has a Try again).
+    case 'build_time': return `Stopped: it took longer than I'm allowed. ${again(d)}`;
+    case 'build_restart': return `Stopped: Homeroom restarted while I was building. ${again(d)}`;
+    case 'build_no_change': return `Stopped: I ended up with no changes to show. ${again(d)}`;
     // 14 Oct 2026 (newcomer run eight): a first version goes live without a
     // vote, so one built and not proposed is said as not live yet. 15 Oct
     // 2026: Try again finishes it from what was built, so it says so.
     case 'build_not_proposed': return d.firstVersion
       ? 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.'
-      : 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.';
-    case 'build_no_start': return 'Stopped: I couldn\'t get started. Tap Try again.';
+      : `Stopped: I built it but couldn't put it up for a vote. ${again(d)}`;
+    case 'build_no_start': return `Stopped: I couldn't get started. ${again(d)}`;
     // #6267: the build finished; the upload to GitHub did not. The platform
     // retries a temporary refusal itself, so the first needs no tap.
     case 'build_push': return 'Built, but GitHub refused the upload. I\'ll try again soon.';
     case 'build_push_permanent': return 'Built, but GitHub wouldn\'t take the upload. Reply to try again.';
     case 'build_push_gave_up': return 'Built, but GitHub kept refusing the upload. Reply to send it.';
-    case 'build_other': return 'Stopped: something went wrong while I was building. Tap Try again.';
+    case 'build_other': return `Stopped: something went wrong while I was building. ${again(d)}`;
     // #6313: nothing was built, so it is never said as "while I was building",
-    // and no tap is asked for a retry that is already coming.
+    // and no tap is asked for a retry that is already coming. T2.9: only a
+    // retry that is coming says so (homeroom-bot-dm.js saidOf).
     case 'build_no_plan': return 'Stopped: I couldn\'t write the plan for it. I\'m trying again.';
+    case 'build_no_plan_stopped': return `Stopped: I couldn't write the plan for it. ${again(d, 'build it')}`;
+    // T2.9: OpenRouter's credit ran out. Nothing to tap: it starts again by itself.
+    case 'build_credit': return 'Paused: I\'m out of building credit for now. I\'ll pick it up again by myself.';
+    // A person's Stop is no failure, and asks for nothing.
+    case 'stopped_by': return d.stoppedBy ? `Stopped by @${d.stoppedBy}.` : 'Stopped by a person.';
+    case 'look_failed': return `Stopped: I couldn't read it. ${again(d, 'build it')}`;
+    case 'change_closed': return `Stopped: its change was closed. ${again(d)}`;
     case 'update_failed': return 'Stopped: I couldn\'t update it. It\'s as it was.';
     case 'needs_look': return 'Stopped: it\'s built, but a person needs to look at it before you can try it.';
-    case 'checks': return 'Stopped: its checks still fail. A person needs to look.';
+    // T2.9: the change's Testing card offers Let it try again (#6284).
+    case 'checks': return 'Stopped: its checks still fail. You can let me try once more.';
     case 'first_failed': return 'Stopped: I couldn\'t start building your first version. You can still post a request on its page.';
     case 'low': return 'You\'re close to this week\'s building time.';
     case 'allowance': return 'On hold until Monday: your building time for this week is used up.';

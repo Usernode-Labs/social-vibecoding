@@ -304,7 +304,17 @@ test('provider failures surface as coded errors and a stop is not disguised', as
   const refused = mayor.createClient({
     apiKey: 'k', model: 'm/x', fetchImpl: fakeFetch({ error: { message: 'no' } }, { status: 402 }).fetchImpl,
   });
-  await assert.rejects(refused.streamChat({ messages: [] }), (err) => err.code === 'billing' && err.status === 402);
+  // T1.3: OpenRouter's 402 is out of credit (`credit_out`, which the chat
+  // notes as an outage), unless its body asks only for a shorter reply.
+  await assert.rejects(refused.streamChat({ messages: [] }), (err) => err.code === 'credit_out' && err.status === 402);
+  const shorter = mayor.createClient({
+    apiKey: 'k', model: 'm/x', fetchImpl: fakeFetch({ error: { message: 'This request requires more credits, or fewer max_tokens. You requested up to 4000 tokens, but can only afford 900.' } }, { status: 402 }).fetchImpl,
+  });
+  await assert.rejects(shorter.streamChat({ messages: [] }), (err) => err.code === 'billing' && err.status === 402);
+  const inBody402 = mayor.createClient({
+    apiKey: 'k', model: 'm/x', fetchImpl: fakeFetch({ error: { code: 402, message: 'Insufficient credits' } }).fetchImpl,
+  });
+  await assert.rejects(inBody402.streamChat({ messages: [] }), (err) => err.code === 'credit_out');
 
   const inBody = mayor.createClient({
     apiKey: 'k', model: 'm/x', fetchImpl: fakeFetch({ error: { code: 429, message: 'slow down' } }).fetchImpl,

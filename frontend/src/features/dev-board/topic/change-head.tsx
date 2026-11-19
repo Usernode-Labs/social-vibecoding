@@ -57,7 +57,7 @@ import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
 import { ActionButton, StatusPill, TitleContent, TitleEditButton, VoteButton, isVoteSpec } from '../card/dev-card';
-import type { ActionSpec, DevCardModel, TitleSpec } from '../card/model';
+import type { ActionSpec, DevCardModel, StatusPillState, TitleSpec } from '../card/model';
 import { useThreadHeadFit } from './thread-head-fit';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { shortDate } from '../../../lib/timestamp';
@@ -93,6 +93,14 @@ function host(id: string): Element | null {
 }
 
 /**
+ * T2.3: the pill a change's header wears: the stored row's words while that
+ * row is not up for a vote (AppView._workPill), else the vote's own pill.
+ */
+export function headPill(v: Pick<ChangeThreadView, 'pill' | 'status'>): StatusPillState | null {
+  return v.pill || v.status || null;
+}
+
+/**
  * The sheet's header: what this is, its status, its category, and everything
  * else behind ⋯. When the change has a technical half (`detailsId`, the same
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
@@ -115,10 +123,13 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
 }): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
+  // T2.3: the header's pill is the stored row's words while that row is not
+  // up for a vote (AppView._workPill), else the vote's own pill.
+  const pill = headPill(v);
   // #6431: beside the Homeroom bot page this bar is not drawn at all (app.css),
   // and the column's heading carries its pill and its rows instead. Publishing
   // them is all this does there; nowhere else does it publish anything.
-  usePanelHead({ kind: 'change', pill: v.status || null, menuKey: menuKey || null });
+  usePanelHead({ kind: 'change', pill, menuKey: menuKey || null });
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
   // s34): what it is in a small line over the change's title, with this menu.
   const frame = isFrameSkin(useLiveSkin());
@@ -144,9 +155,9 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec
       <div className="min-w-0 flex-1 dev-thread-bar-text">
         <div className="flex min-w-0 items-center gap-2">
           <div className="messages-thread-kicker min-w-0" data-change-kicker="">{title}</div>
-          {v.status ? (
-            <span className="shrink-0" data-change-status={v.status.key}>
-              <StatusPill s={v.status} inline />
+          {pill ? (
+            <span className="shrink-0" data-change-status={pill.key}>
+              <StatusPill s={pill} inline />
             </span>
           ) : null}
         </div>
@@ -1108,6 +1119,8 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   // page and under it on a narrow one (./thread-rail.tsx). The frame's looks
   // have their own context column, so they draw none.
   const rail = frame ? null : host('gc-thread-rail');
+  // T2.3: the pill the header wears (headPill), which the frame's Status repeats.
+  const pill = headPill(v);
   const railSteps = useMemo(() => changeRail({
     id,
     author: v.author || null,
@@ -1119,7 +1132,9 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
     merge: v.merge || null,
     fixNote: v.testing?.authorNote || null,
     liveAt: v.liveAt || null,
-  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes, v.merge, v.liveAt]);
+    // T2.3: the change's stored row words the last step, as it words the foot.
+    work: v.work || null,
+  }), [id, v.author, v.at, body.plan, v.testing, v.status, v.votes, v.merge, v.liveAt, v.work]);
   // The standard look and the brand look draw the card the thread design
   // agreed (./thread-card.tsx): a kicker, the summary and whose words it is,
   // the picture, and a foot that says where it stands. A step of the
@@ -1209,9 +1224,9 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
               column over Votes and Tested, with its final counted vote
               beside the word once live, as the standard bar's pill has it.
               No five-stop line: the standard page has none for a change. */}
-          {frame && v.status ? (
+          {frame && pill ? (
             <div className="dev-change-status">
-              <TopicFrameStatus label={t('project:frame.topic.status')} pill={{ word: dotLine([v.status.label, liveTally(v.status)?.text]), kind: pillKind(v.status, v.votes) }} />
+              <TopicFrameStatus label={t('project:frame.topic.status')} pill={{ word: dotLine([pill.label, liveTally(pill)?.text]), kind: pillKind(pill, v.votes) }} />
             </div>
           ) : null}
           {v.codeMissing ? <CodeMissingNotice /> : null}

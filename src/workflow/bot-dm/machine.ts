@@ -5,6 +5,8 @@
 //                            │
 //                            └──the model could not answer──▶ trying_later ──60 s, 3 min, 10 min──▶ answering
 //
+//   ...out of OpenRouter's credit (`credit`) ──CreditBack──▶ answering (each such message, once)
+//
 // What they write is an event in the transaction that stores it
 // (routes/conversations.js, through conversations.sendMessage), so an answer
 // owed outlives the web process that took the message. Their messages are
@@ -29,10 +31,24 @@
 // message's answer started beside it, and nothing would know what it had
 // done. A try waiting to be asked again is dropped and says so (dm.stopped);
 // so does an answer that deferred, or failed for good, after the Stop.
+//
+// 19 Nov 2026 (T1.3's follow-up): an answer that ended on OpenRouter's credit
+// (homeroom-bot-mayor.js: its "out of building credit" line, a later try
+// that met it again, or the last try's "I'll answer it here once credit is
+// back") is kept in `credit`, with the messages that rode on it. The credit
+// sweep's return of credit (openrouter-credit.js sweep → platform.ts
+// botCreditBack → bot-lane CreditBack) messages each instance keeping one
+// (CreditBack), and each is answered once, on the answer's own path, after
+// the messages waiting in `queue`: a later try's turn, under keys of the
+// round's own (`msg:<id>:r<n>`, the reply's `hrbot-mayor-<id>-r<n>`). Any
+// other end of a message's answer (answered, failed for good, stopped)
+// drops it, so a message answered in between is never answered twice, and
+// a second CreditBack finds nothing to answer.
 
 import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, Machine, Outcome, TransitionContext, Tx, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { DEFER_DELAYS_MS, DM, HELLO_KINDS, dmKey } from '../rules/bot-replies.ts';
+import { BOT_LANE } from '../rules/bot-loop.ts';
 
 export const MACHINE = DM;
 export { dmKey };
@@ -61,12 +77,14 @@ interface Note { kind: string; status: 'pending' | 'done' | 'failed' | 'exhauste
 // which messages it owes as well (answerOwed), oldest first.
 // `stop`: the person stopped this answer (task 2148): its work ends its turn
 // and says so, and nothing is asked again for it.
-interface Owed { messageId: number; conversationId: number; attempt: number; also?: number[]; stop?: true }
+// `resume`: the answer owed once credit came back, in that CreditBack's round
+// (Data.rounds): its tries' keys are the round's own.
+interface Owed { messageId: number; conversationId: number; attempt: number; also?: number[]; stop?: true; resume?: number }
 export interface Data {
   userId: number;
   // Messages written and not answered yet, oldest first.
   queue: Owed[];
-  // The one being answered (its work `msg:<id>[:d<n>]`).
+  // The one being answered (its work `msg:<id>[:r<n>][:d<n>]`).
   current: Owed | null;
   // The one whose answer is asked again when the timer fires.
   later: Owed | null;
@@ -76,6 +94,14 @@ export interface Data {
   // Taps decided (action id → choice): a second is refused.
   taps: Record<string, string>;
   notes: Record<string, Note>;
+  // Version 2 (19 Nov 2026). Messages whose answer ended on OpenRouter's
+  // credit, oldest first, each with what rode on it: answered once credit
+  // is back (CreditBack).
+  credit?: Owed[];
+  // Those answers, owed since credit came back: taken after `queue`.
+  resume?: Owed[];
+  // CreditBacks that owed an answer: each one's round number.
+  rounds?: number;
 }
 export type DState = { name: Name; data: Data } | { name: typeof NONE; data: null };
 type Live = Extract<DState, { data: Data }>;
@@ -133,8 +159,12 @@ const EVENTS = {
       messageId: int(p?.messageId, 'messageId'), at: new Date(at).toISOString(),
     };
   },
+  // OpenRouter's credit is back (the bot's lane, told by the credit sweep):
+  // each message whose answer ended on it is answered once.
+  CreditBack: (p: any) => ({ userId: int(p?.userId, 'userId') }),
 };
-// Never StopRequested: a Stop with no instance has nothing to stop.
+// Never StopRequested: a Stop with no instance has nothing to stop. Nor
+// CreditBack: an instance that kept nothing owes nothing.
 const CREATE = ['Wrote', 'Tapped', 'Greet', 'MailOwed'];
 
 // ── Moves ───────────────────────────────────────────────────────────────
@@ -142,7 +172,10 @@ const CREATE = ['Wrote', 'Tapped', 'Greet', 'MailOwed'];
 const step = (name: Name, data: Data, more: Omit<Outcome<DState>, 'next'> = {}): Outcome<DState> => ({ next: { name, data }, ...more });
 const created = (e: Event<any>): Data => ({ userId: e.payload.userId, queue: [], current: null, later: null, done: 0, taps: {}, notes: {} });
 const live = (s: DState, e: Event<any>): Data => (s.name === NONE ? created(e) : (s as Live).data);
-const answerKey = (o: Owed) => `msg:${o.messageId}${o.attempt ? `:d${o.attempt}` : ''}`;
+// A try's own suffix: its round once credit came back, its later try.
+const tryOf = (o: Owed) => `${o.resume ? `:r${o.resume}` : ''}${o.attempt ? `:d${o.attempt}` : ''}`;
+const answerKey = (o: Owed) => `msg:${o.messageId}${tryOf(o)}`;
+const byId = (a: Owed, b: Owed) => a.messageId - b.messageId;
 
 // At most this many earlier messages ride on one answer: the newest of them.
 const MAX_ALSO = 5;
@@ -162,16 +195,67 @@ function answer(d: Data, o: Owed, more: Omit<Outcome<DState>, 'next'> = {}): Out
     { kind: WORK.answer, key, input: {
       userId: d.userId, conversationId: o.conversationId, messageId: o.messageId, attempt: o.attempt, key,
       ...(o.also?.length ? { also: o.also } : {}),
+      ...(o.resume ? { resume: o.resume } : {}),
     } }];
   return step('answering', { ...d, current: o, later: null }, { ...more, work, timer: null });
 }
 
-// The next message waiting, or nothing to do.
+// The next message waiting, then an answer owed since credit came back, or
+// nothing to do.
 function next(d: Data, more: Omit<Outcome<DState>, 'next'> = {}): Outcome<DState> {
   const [first, ...rest] = d.queue;
   const base = { ...d, current: null, later: null };
   if (first) return answer({ ...base, queue: rest }, first, more);
+  const [owed, ...left] = d.resume || [];
+  if (owed) return answer({ ...base, resume: left }, owed, more);
   return step('idle', base, { ...more, timer: null });
+}
+
+// ── Out of credit ───────────────────────────────────────────────────────
+
+const without = (list: Owed[] | undefined, gone: number[]) => (list || []).filter((q) => !gone.includes(q.messageId));
+
+// What `cur`'s answer ending does to the messages kept for credit. Ended on
+// credit (`credit`): kept, with the messages that rode on it (owed by it
+// alone from now on). Any other end (answered, failed for good, stopped,
+// asked again for another reason): it and what rode on it are dropped from
+// both lists, so nothing answered is answered again. A resume of it that
+// credit's return owes already stays owed (credit came back while it was
+// answered), carrying what rides on it.
+function creditEnd(d: Data, cur: Owed, credit: boolean): Data {
+  const riding = cur.also || [];
+  if (!credit) {
+    const gone = [cur.messageId, ...riding];
+    if (!d.credit?.length && !d.resume?.length) return d;
+    return { ...d, credit: without(d.credit, gone), resume: without(d.resume, gone) };
+  }
+  const kept: Owed = {
+    messageId: cur.messageId, conversationId: cur.conversationId, attempt: 0, ...(riding.length ? { also: riding } : {}),
+  };
+  const resume = without(d.resume, riding).map((q) => (q.messageId !== cur.messageId || !riding.length ? q
+    : { ...q, also: [...new Set([...(q.also || []), ...riding])].sort((a, b) => a - b) }));
+  return { ...d, credit: [...without(d.credit, [cur.messageId, ...riding]), kept].sort(byId), resume };
+}
+
+// Credit is back: every message kept for it is owed its answer, once, in a
+// round of its own (its keys). One already owed keeps its place. Nothing kept,
+// nothing to do: a second CreditBack answers nothing again. Idle, the first
+// starts now; a try of one of them waiting on its clock gives way to it
+// (credit is back, so nothing is gained by waiting); an answer under way, or
+// another message's try waiting, goes first.
+function creditBack(s: DState): Outcome<DState> {
+  const d = (s as Live).data;
+  const name = s.name as Name;
+  const owed = d.credit || [];
+  if (!owed.length) return step(name, d);
+  const round = (d.rounds || 0) + 1;
+  const have = new Set((d.resume || []).map((q) => q.messageId));
+  const resume = [...(d.resume || []),
+    ...owed.filter((o) => !have.has(o.messageId)).map((o) => ({ ...o, attempt: 0, resume: round }))].sort(byId);
+  const moved: Data = { ...d, credit: [], resume, rounds: round };
+  if (name === 'idle') return next(moved);
+  if (name === 'trying_later' && d.later && owed.some((o) => o.messageId === d.later!.messageId)) return next(moved);
+  return step(name, moved);
 }
 
 function wrote(s: DState, e: Event<any>): Outcome<DState> {
@@ -197,8 +281,11 @@ const tryAgain = (s: DState): Outcome<DState> => {
 function answered(status: 'done' | 'failed' | 'exhausted') {
   return (s: DState, e: Event<WorkResultPayload>, _f: Facts, ctx: TransitionContext): Outcome<DState> => {
     const cur = (s as Live).data.current!;
-    const d: Data = { ...(s as Live).data, done: Math.max((s as Live).data.done || 0, cur.messageId) };
     const laterAsked = Number((e.payload.result as any)?.later) || 0;
+    // Ended on OpenRouter's credit: kept to be answered once it is back.
+    // Never a stopped answer, nor one that failed for good.
+    const credit = status === 'done' && !cur.stop && (e.payload.result as any)?.credit === true;
+    const d: Data = creditEnd({ ...(s as Live).data, done: Math.max((s as Live).data.done || 0, cur.messageId) }, cur, credit);
     // Stopped by the person. Its work said so when it ended the turn; one
     // that failed for good instead, or deferred before it saw the Stop, is
     // said here, under the key of the try that will now never run, and
@@ -209,13 +296,19 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
     }
     if (status !== 'done') {
       // Failed for good: they hear the bot could not answer, once.
-      const key = `sorry:${cur.messageId}`;
-      const sorry: WorkRequest = { kind: WORK.sorry, key, input: { userId: d.userId, messageId: cur.messageId, conversationId: cur.conversationId, attempt: cur.attempt } };
+      const key = `sorry:${cur.messageId}${cur.resume ? `:r${cur.resume}` : ''}`;
+      const sorry: WorkRequest = { kind: WORK.sorry, key, input: {
+        userId: d.userId, messageId: cur.messageId, conversationId: cur.conversationId, attempt: cur.attempt,
+        ...(cur.resume ? { resume: cur.resume } : {}),
+      } };
       const withNote = d.notes[key] ? d : { ...d, notes: { ...d.notes, [key]: { kind: WORK.sorry, status: 'pending' as const } } };
       return next(withNote, d.notes[key] ? {} : { work: [sorry] });
     }
     const later = laterAsked;
-    if (later > 0 && later <= DEFER_DELAYS_MS.length && !d.queue.length) {
+    // Credit came back while this answer met its 402 (CreditBack owes its
+    // resume already): no wait on the clock, its resume answers it in turn.
+    const resumed = credit && (d.resume || []).some((q) => q.messageId === cur.messageId);
+    if (later > 0 && later <= DEFER_DELAYS_MS.length && !d.queue.length && !resumed) {
       const o: Owed = { ...cur, attempt: later };
       return step('trying_later', { ...d, current: null, later: o },
         { timer: { at: new Date(ctx.now.getTime() + DEFER_DELAYS_MS[later - 1]!), event: { type: 'TryAgain' } } });
@@ -233,9 +326,12 @@ function answered(status: 'done' | 'failed' | 'exhausted') {
 // The one line a stopped answer says when no turn is there to say it
 // (dm.stopped, under the key of try `o`), once; then the next message.
 function stoppedLine(d: Data, o: Owed): Outcome<DState> {
-  const key = `stopped:${o.messageId}${o.attempt ? `:d${o.attempt}` : ''}`;
+  const key = `stopped:${o.messageId}${tryOf(o)}`;
   if (d.notes[key]) return next(d);
-  const work: WorkRequest = { kind: WORK.stopped, key, input: { userId: d.userId, messageId: o.messageId, conversationId: o.conversationId, attempt: o.attempt } };
+  const work: WorkRequest = { kind: WORK.stopped, key, input: {
+    userId: d.userId, messageId: o.messageId, conversationId: o.conversationId, attempt: o.attempt,
+    ...(o.resume ? { resume: o.resume } : {}),
+  } };
   return next({ ...d, notes: { ...d.notes, [key]: { kind: WORK.stopped, status: 'pending' as const } } }, { work: [work] });
 }
 
@@ -257,10 +353,11 @@ const stopAnswering = {
 };
 const stopTryingLater = {
   guard: (s: DState, e: Event<any>, f: Facts, ctx: TransitionContext): Check => stopFor((s as Live).data.later)(s, e, f, ctx),
-  // The try is dropped with its timer, and one line says so.
+  // The try is dropped with its timer, and one line says so. Stopped, it is
+  // not answered once credit is back either.
   to: (s: DState): Outcome<DState> => {
     const d = (s as Live).data;
-    return stoppedLine({ ...d, later: null }, d.later!);
+    return stoppedLine(creditEnd({ ...d, later: null }, d.later!, false), d.later!);
   },
 };
 
@@ -343,6 +440,9 @@ function result(status: 'done' | 'failed' | 'exhausted') {
 
 const route = (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer'));
 const timer = (e: Event<any>): Check => (e.source.kind === 'timer' ? ok() : reject('timer_only'));
+// CreditBack: the bot's lane's message (bot-lane CreditBack), or the system.
+const fromLane = (e: Event<any>): Check => ((e.source.kind === 'message' && e.source.from?.machine === BOT_LANE)
+  || e.source.kind === 'system' ? ok() : reject('not_the_lane'));
 
 async function readFacts(tx: Tx, event: Event<any>): Promise<Facts> {
   if (event.type !== 'Tapped') return NO_FACTS;
@@ -358,10 +458,15 @@ export function botDm(): Machine<DState, Facts> {
       (ctx.key === dmKey(e.payload.userId) ? ok() : reject('key_mismatch')),
     to,
   });
-  const always = { Tapped: { guard: tapGuard, to: tapped }, Greet: keyed(greet), MailOwed: keyed(mailOwed), ...works };
+  const always = {
+    Tapped: { guard: tapGuard, to: tapped }, Greet: keyed(greet), MailOwed: keyed(mailOwed), CreditBack: keyed(creditBack), ...works,
+  };
   return defineMachine<DState, Facts>({
     name: MACHINE,
-    version: 1,
+    // 2 (19 Nov 2026): the messages kept for credit (`credit`, `resume`,
+    // `rounds`, Owed.resume) and CreditBack. An older release leaves the
+    // instances this one wrote, and their work, alone.
+    version: 2,
     events: EVENTS,
     create: CREATE,
     // What web appends: a person's DM, an action tapped, a greeting a route owes, and the
@@ -370,7 +475,9 @@ export function botDm(): Machine<DState, Facts> {
     web: ['Wrote', 'Tapped', 'Greet', 'MailOwed', 'StopRequested'],
     decode: (row) => ({ name: row.state, data: row.data } as DState),
     facts: (tx: Tx, _state: DState, event: Event<any>) => readFacts(tx, event),
-    authorize: { Wrote: route, TryAgain: timer, Tapped: route, Greet: route, MailOwed: route, StopRequested: route },
+    authorize: {
+      Wrote: route, TryAgain: timer, Tapped: route, Greet: route, MailOwed: route, StopRequested: route, CreditBack: fromLane,
+    },
     reply: async (_tx, event) => {
       if (event.type === 'Tapped') return { ok: true, choice: (event.payload as any).choice } as Json;
       // A Stop that was taken: an answer, or a try that waited, is being stopped.
@@ -378,7 +485,10 @@ export function botDm(): Machine<DState, Facts> {
       return undefined;
     },
     transitions: {
-      [NONE]: { Wrote: keyed(wrote), Tapped: always.Tapped, Greet: always.Greet, MailOwed: always.MailOwed, StopRequested: { ignore: 'not_answering' } },
+      [NONE]: {
+        Wrote: keyed(wrote), Tapped: always.Tapped, Greet: always.Greet, MailOwed: always.MailOwed,
+        StopRequested: { ignore: 'not_answering' }, CreditBack: { ignore: 'nothing_owed' },
+      },
       idle: { Wrote: keyed(wrote), TryAgain: { ignore: 'not_waiting' }, StopRequested: { ignore: 'not_answering' }, ...always },
       answering: { Wrote: keyed(wrote), TryAgain: { ignore: 'answering' }, StopRequested: stopAnswering, ...always },
       trying_later: { Wrote: keyed(wrote), TryAgain: { to: tryAgain }, StopRequested: stopTryingLater, ...always },

@@ -11,9 +11,9 @@
  * stream under the card keeps those.
  */
 
-import { lineWords, stageWords, type Phrase, type Stage, type WorkState } from '../../../lib/work-state';
+import { lineWords, stageWords, type Phrase, type Stage, type Standing, type WorkState } from '../../../lib/work-state';
 import type { RequestSpecCard } from './request-model';
-import { changePhase, fixStanding, stageNote, type GateLike } from './card-model';
+import { changePhase, fixStanding, stageNote, type ChangePhase, type GateLike } from './card-model';
 import type { ThreadItem } from './thread-model';
 
 /** Which glyph a step's marker wears. */
@@ -253,6 +253,14 @@ export interface ChangeRailInput {
   fixNote?: string | null;
   /** When it went live. */
   liveAt?: string | null;
+  /**
+   * The change's stored work state (its own `work_states` row, the proposal
+   * read's `work`), the one every list and the card's foot read
+   * (./card-model.ts storedFoot). While it is not up for a vote, its words
+   * title the last step, so the timeline never says "Up for a vote" while
+   * the foot says "Taking screenshots".
+   */
+  work?: Standing | null;
 }
 
 /** The pills that only count votes: the step says "Up for a vote", and the foot has the count. */
@@ -387,6 +395,50 @@ export function changeRail(input: ChangeRailInput): RailStep[] {
       });
     }
   }
+  return withStoredNow(steps, input.work || null, phase, input.merge || null);
+}
+
+/** The phases a change's own status settles: merged, merging, a stalled release, closed. */
+const SETTLED_PHASES: ReadonlySet<ChangePhase> = new Set<ChangePhase>(['live', 'closed', 'going', 'stuck']);
+
+/**
+ * T2.3 (19 Nov 2026): the last step worded from the change's stored work
+ * state, as its foot is (./card-model.ts storedFoot), whenever that row is
+ * not up for a vote. The live gates still decide which events stand behind
+ * it (Tested, Tests failed, Voted) and what a press opens; the row decides
+ * what it is waiting on now. Its checks passed and only the screenshots are
+ * left reads "Taking screenshots"; a sync with main, an update on its way,
+ * GitHub's hold or a check being fixed say so too, never "Up for a vote".
+ * Only while the change is open: once it is live, closed or merging, the
+ * phase's own step stands (its date, its pill).
+ */
+function withStoredNow(steps: RailStep[], work: Standing | null, phase: ChangePhase, merge: GateLike | null = null): RailStep[] {
+  if (!work || !work.stage || work.stage === 'up_for_vote') return steps;
+  // Merged, merging, a stalled release or closed: the change's own status
+  // is newer than any row, and its step already says so.
+  if (SETTLED_PHASES.has(phase)) return steps;
+  const at = steps.findIndex((s) => s.now);
+  if (at < 0) return steps;
+  const stage = work.stage;
+  const shots = stage === 'checking' && work.line?.code === 'shots';
+  // Approved, and GitHub holds its merge (the Merging card): the row titles
+  // the step, and its note stays the card's own account ("GitHub is now
+  // building and scanning the release images, which usually takes about 6
+  // minutes"), which says more than the row's line and is the only place
+  // the card look shows it while the step layer is shut.
+  const held = stage === 'going_live' && phase === 'approved' && !!merge && merge.note.length > 0 && !!steps[at].note;
+  steps[at] = {
+    ...steps[at],
+    icon: shots ? 'shots' : STAGE_ICON[stage] || 'working',
+    title: stage === 'stopped' ? { id: 'core:work.stage.stopped' } : stageWords(work, { yours: true }),
+    tone: stage === 'stopped' ? 'bad' : stage === 'live' ? 'ok' : stage === 'closed' ? 'muted' : null,
+    busy: BUSY.has(stage),
+    // The row's second line; a stop of the bot's fixes keeps the card's own
+    // words for who fixes it now, which the row has no line for.
+    note: held ? steps[at].note
+      : lineWords(work) || (stage === 'stopped' && phase === 'failed' ? steps[at].note : null) || stageNote(work),
+    noteTone: stage === 'stopped' ? 'bad' : ASKS.has(stage) ? 'act' : 'plain',
+  };
   return steps;
 }
 

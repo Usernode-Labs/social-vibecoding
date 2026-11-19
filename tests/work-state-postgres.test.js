@@ -331,7 +331,9 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.deepEqual(await ws.pushesOf(pool, await ws.refresh(pool, [req(20)])), []);
 
     // Closed without going live: it stopped, and rings, owing no email.
-    await pool.query("UPDATE chat_sessions SET status = 'closed' WHERE id = $1", [up.id]);
+    // T2.1 (19 Nov 2026): a closed change session is 'archived' (set aside,
+    // withdrawn or voted down); no change session is ever 'closed'.
+    await pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id = $1", [up.id]);
     const stopped = await ws.refresh(pool, [req(20)]);
     assert.deepEqual([stopped[0].state.stage, stopped[0].bell], ['stopped', 'stopped']);
     await ws.pushesOf(pool, stopped);

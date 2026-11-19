@@ -271,5 +271,58 @@ test('#6860: the request\'s card settles in the page\'s own words, never "Buildi
 
   const src = read('frontend/src/features/dev-board/topic/request-plan.tsx');
   assert.match(src, /href=\{changeHref\(slug, plan\.change\.id, plan\.change\.number\)\}/, 'a built plan names its change and opens it');
-  assert.match(src, /settledLine=\{settled \? \(/, 'a settled card says what became of it inside it');
+  assert.match(src, /settledLine=\{worked \? \([\s\S]*?\) : settled \? \(/, 'a settled card says what became of it inside it');
+});
+
+// T2.4 (19 Nov 2026): once Build it is pressed, the card says what the
+// request's stored work state says, as every other surface does: a build
+// waiting its turn, held behind the project's build limit or waiting for
+// building credit is not "Building it", and a change still checking is not
+// "Up for a vote".
+test('T2.4: a pressed plan reads the request\'s stored work state', async () => {
+  assert.deepEqual(plan.stateFromWork({ stage: 'building', line: { code: 'held_builds' } }), { state: 'building', reason: null });
+  assert.deepEqual(plan.stateFromWork({ stage: 'checking', line: { code: 'shots' } }), { state: 'built', reason: null });
+  assert.deepEqual(plan.stateFromWork({ stage: 'up_for_vote' }), { state: 'built', reason: null });
+  assert.deepEqual(plan.stateFromWork({ stage: 'going_live' }), { state: 'live', reason: null });
+  assert.deepEqual(plan.stateFromWork({ stage: 'stopped', reason: 'change_closed' }), { state: 'stopped', reason: 'change_closed' });
+  assert.deepEqual(plan.stateFromWork({ stage: 'stopped', reason: 'look_failed' }), { state: 'stopped', reason: 'build_failed' });
+  assert.equal(plan.stateFromWork({ stage: 'waiting_for_you', why: 'question' }), null, 'a question since says nothing of the plan');
+  assert.equal(plan.stateFromWork(null), null);
+
+  // The read: a stored row held behind the build limit is the card's state and words.
+  const held = {
+    app_id: 9, item_kind: 'request', item_ref: 78, issue_number: 78, stage: 'building', line: { code: 'held_builds' },
+    standing: {}, slug: 'usernode-2d5619',
+  };
+  const pool = fakePool({ run: builtRun });
+  const inner = pool.query.bind(pool);
+  pool.query = async (sql, params) => (/FROM work_states ws/.test(sql) ? { rows: [held] } : inner(sql, params));
+  const read1 = await plan.readPlan(pool, { app, issueNumber: 78 });
+  assert.equal(read1.plan.state, 'building');
+  assert.deepEqual(read1.plan.work.words.stage, { id: 'core:work.stage.readyToBuild' });
+  assert.deepEqual(read1.plan.work.words.line, { id: 'core:work.line.heldBuilds' });
+
+  // The card says the row's words, with no spinner and no "· building".
+  const card = loadTsx('frontend/src/features/dev-board/topic/request-plan.tsx');
+  const view = card.planFromRead(read1);
+  assert.equal(card.planCardState(view), 'closed');
+  assert.deepEqual(card.planWorkLineOf(view), [{ id: 'core:work.stage.readyToBuild' }, { id: 'core:work.line.heldBuilds' }]);
+  assert.deepEqual(card.planSubOf(view, 78), { id: 'project:topic.request.botPlan.subPressed', values: { number: '78' } });
+  assert.equal(message('project:topic.request.botPlan.subPressed', { number: '78' }), 'Plan for #78');
+
+  // A build under way keeps "Building it".
+  const going = card.planFromRead({ plan: { ...read1.plan, work: { ...read1.plan.work, line: { code: 'starting' } } } });
+  assert.equal(card.planWorkLineOf(going), null);
+  assert.equal(card.planCardState(going), 'built');
+
+  // A change still taking its screenshots is not "Up for a vote".
+  const shots = { ...held, stage: 'checking', line: { code: 'shots' } };
+  const pool2 = fakePool({ run: { ...builtRun, build_ok: true, proposal_session_id: 500 }, change: { id: 500, status: 'promoted', pr_number: 11373 } });
+  const inner2 = pool2.query.bind(pool2);
+  pool2.query = async (sql, params) => (/FROM work_states ws/.test(sql) ? { rows: [shots] } : inner2(sql, params));
+  const read2 = await plan.readPlan(pool2, { app, issueNumber: 78 });
+  assert.equal(read2.plan.state, 'built');
+  assert.deepEqual(read2.plan.change, { id: 500, number: 11373 });
+  assert.deepEqual(card.planWorkLineOf(card.planFromRead(read2)),
+    [{ id: 'core:work.stage.shots' }, { id: 'core:work.line.shots' }]);
 });

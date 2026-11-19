@@ -758,7 +758,7 @@ export type ChangeMergeView = ChangeGateView & {
    * the release images: Homeroom's own tries say nothing a reader needs, so
    * the card leaves them out. `github_wait` (busy or refused) keeps them.
    */
-  hold?: 'github_checks' | 'github_wait' | 'failing' | 'merging';
+  hold?: 'github_checks' | 'github_wait' | 'failing' | 'merging' | 'stuck';
 };
 
 /** #4455: what a change's page says about the change itself, as the thread's root post. */
@@ -771,6 +771,12 @@ export interface ChangeThreadView {
    * built or closed (AppView._changeThreadView).
    */
   status: StatusPillState | null;
+  /**
+   * T2.3: the pill the header draws: `status`, unless the change is open and
+   * its stored row (`work`) is not up for a vote, when it is that row's
+   * words (AppView._workPill). Absent from an older view: then `status`.
+   */
+  pill?: StatusPillState | null;
   category: string | null;
   author: string;
   at: string | null;

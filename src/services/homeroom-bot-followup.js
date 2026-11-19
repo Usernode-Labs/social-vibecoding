@@ -594,7 +594,9 @@ function revisionFailedText({ why, canRevise = true }) {
       + 'asked for on it, as many as it may. A person can make the next one. The change is as it was.';
   }
   const words = require('./homeroom-bot-dm').updateFailedWords(why, 'this change', 'bot');
-  return `${words} The change is as it was. Reply here (or on the GitHub issue) and it will try again.`;
+  // T1.15: a reply is read as an ask only when it says what to change, so
+  // the note asks for that ("ok" or "why did it stop?" starts nothing).
+  return `${words} The change is as it was. Reply here (or on the GitHub issue) with what to change and it will try again.`;
 }
 
 /**
@@ -1263,6 +1265,37 @@ function whySentence(why) {
 // own people are the requester and the project's members.
 const CHECKS_TAKE_OVER = 'The person who asked for it, or any member of this project, can take it from here.';
 
+/**
+ * T1.9: a change whose fix rounds were lost twice (bot-change gave up
+ * waiting for one): its requester takes it from here. Pure.
+ */
+function fixLostText({ failing = true } = {}) {
+  return failing
+    ? `Homeroom bot can't get this change past its checks on its own: the tries at fixing them didn't finish. ${CHECKS_TAKE_OVER}`
+    : `Homeroom bot can't get this change working on its own: the tries at fixing it didn't finish. ${CHECKS_TAKE_OVER}`;
+}
+
+/**
+ * T1.7: a change that conflicts with main where the sync could not resolve
+ * it: its requester takes it from here. `files`: what conflicted. Pure.
+ */
+function conflictHandOffText({ files = [] } = {}) {
+  const list = (Array.isArray(files) ? files : []).filter((f) => typeof f === 'string' && f).slice(0, 3);
+  const where = list.length ? ` (${list.map((f) => clipText(f, 120)).join(', ')}${files.length > list.length ? ' and more' : ''})` : '';
+  return `Homeroom bot can't bring this change up to date with main on its own: it conflicts with main${where}, `
+    + `and the sync couldn't resolve it. ${CHECKS_TAKE_OVER}`;
+}
+
+/**
+ * T1.7: an approved change GitHub held until Homeroom stopped asking (its
+ * required checks never finished, or keep failing on a head level with
+ * main). `why` says which. Pure.
+ */
+function mergeStuckText({ why = null } = {}) {
+  const said = typeof why === 'string' && why.trim() ? clipText(why.trim(), 200) : 'GitHub kept holding its merge';
+  return `Homeroom bot can't get this change live on its own: it's approved, but ${said}. ${CHECKS_TAKE_OVER}`;
+}
+
 function checksPersonText({ why, failingCount = 0, broken = [] }) {
   const said = whySentence(why);
   const tried = Array.isArray(broken) ? broken : [];
@@ -1563,6 +1596,9 @@ module.exports = {
   repliesSince,
   readThrough,
   replyFailedText,
+  fixLostText,
+  conflictHandOffText,
+  mergeStuckText,
   checksRetryText,
   failingNowLines,
   runFollowUpTurn,

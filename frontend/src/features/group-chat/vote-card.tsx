@@ -59,6 +59,15 @@ export function voteFacts(t: T, vote: VoteView | null | undefined): string[] {
   if (!vote) return [];
   if (vote.status === 'merged') return [t('chat:group.voteCard.merged')];
   if (vote.status === 'merging') return [t('chat:group.voteCard.merging')];
+  // T2.12: not open for votes, by the change's stored row: where it stands
+  // in that row's words ("Taking screenshots · Tests passed: only the before
+  // and after screenshots are left"), and the viewer's own vote.
+  if (vote.work && vote.work.stage) {
+    const said = [t(vote.work.stage.id, vote.work.stage.values), ...(vote.work.line ? [t(vote.work.line.id, vote.work.line.values)] : [])];
+    if (vote.myVote === 'yes') said.push(t('chat:group.voteCard.youVotedYes'));
+    else if (vote.myVote === 'no') said.push(t('chat:group.voteCard.youVotedNo'));
+    return said;
+  }
   const facts: string[] = [];
   const yes = vote.yes ?? 0;
   const needed = vote.needed ?? 1;

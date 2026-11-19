@@ -118,6 +118,14 @@ export interface WorkState {
   change?: StandingChange | null;
   asks?: StandingAsks | null;
   said?: StandingSaid | null;
+  /**
+   * T2.9, T2.10 (19 Nov 2026): why it stopped, or what its hand-back waits
+   * on, as the one decoder stored it (services/bot-stop-cause.js): a stop's
+   * cause ('plan', 'credit', 'stopped', 'look_failed', ...) or a hand-back's
+   * ('requester', 'others', 'platform', 'other_project', 'wrong_project',
+   * 'close', 'operator_work', 'destructive_db', 'blocked', 'empty').
+   */
+  cause?: string | null;
 }
 
 /**
@@ -339,6 +347,7 @@ export function normalizeWorkState(input: unknown): WorkState | null {
     ...(change ? { change } : {}),
     ...(asks ? { asks } : {}),
     ...(said ? { said } : {}),
+    ...(CODE.test(text(row.cause)) ? { cause: text(row.cause) } : {}),
   };
 }
 
@@ -397,6 +406,23 @@ export function voteNews(push: WorkStatePush): { sessionId: number; open: boolea
   if (!sessionId) return null;
   if (standing.change) return { sessionId, open: voteOpen(standing) };
   return standing.kind === 'change' ? { sessionId, open: standing.stage === 'up_for_vote' && !isSettled(standing) } : null;
+}
+
+/**
+ * T2.12 (19 Nov 2026): whether a push MOVED a change's vote, opened or
+ * closed, against `seen` (the caller's own Map of session id to whether its
+ * vote was open, which this updates). A change first heard of counts as
+ * moved; a push that only moves its line ("About 3 min left") does not, so a
+ * screen that reads itself again on vote news reads once per move, not once
+ * per push.
+ */
+export function voteMoved(push: unknown, seen: Map<number, boolean>): boolean {
+  if (!isWorkStatePush(push)) return false;
+  const news = voteNews(push);
+  if (!news) return false;
+  const before = seen.get(news.sessionId);
+  seen.set(news.sessionId, news.open);
+  return before !== news.open;
 }
 
 /**

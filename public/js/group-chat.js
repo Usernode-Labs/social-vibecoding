@@ -4791,6 +4791,15 @@ const GroupChat = {
     const preview = pr.staging_url ? { kind: 'live', url: String(pr.staging_url) }
       : pr.staging_building ? { kind: 'building' }
         : pr.staging_error ? { kind: 'unavailable' } : null;
+    // T2.12 (19 Nov 2026): the change's stored work state (the proposal
+    // row's `work`, services/work-state.js), the one every list and its page
+    // read. While it is not up for a vote (its screenshots, a sync with main,
+    // an update on its way, a hold on its merge) the card says that in the
+    // row's words, not a tally that asks for a vote.
+    const work = pr.work && typeof pr.work === 'object' ? pr.work : null;
+    const words = work && work.stage && work.stage !== 'up_for_vote'
+      && typeof AppView !== 'undefined' && typeof AppView._standingWords === 'function'
+      ? AppView._standingWords({ ...work, mine: true }) : null;
     return {
       sessionId: id,
       number,
@@ -4802,6 +4811,7 @@ const GroupChat = {
       myVote: pr.my_vote === 'yes' || pr.my_vote === 'no' ? pr.my_vote : null,
       checks,
       preview,
+      ...(words ? { work: { stage: words.stage, line: words.line || null } } : {}),
     };
   },
 

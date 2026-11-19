@@ -643,6 +643,20 @@ async function reviewCapture({
   return withCheckIssues({ ...parsed, costUsd, ms, by: 'model', ...retried }, capture);
 }
 
+/**
+ * T1.13: the line a change's description carries when its review stopped
+ * because the reviewer failed (STOPS.reviewerError), or null. A change none
+ * of whose rounds was reviewed says so; one reviewed before its reviewer
+ * failed says its last check did not run. Pure.
+ */
+function unreviewedLine(state) {
+  if (!state || state.stop !== STOPS.reviewerError) return null;
+  const reviewed = (Array.isArray(state.rounds) ? state.rounds : []).some((r) => r && r.verdict);
+  return reviewed
+    ? 'Not fully reviewed: Homeroom bot\'s last check of its screens didn\'t run (its reviewer failed), so look at them before you vote.'
+    : 'Not reviewed: Homeroom bot\'s check of its screens didn\'t run (its reviewer failed), so look at them before you vote.';
+}
+
 // ── Storing a round's screenshots ────────────────────────────────────────
 
 /**
@@ -971,6 +985,12 @@ async function runReviewLoop({
         if (!rev?.ok) {
           entry.reviewerError = clip(rev?.error || 'the reviewer failed', 300);
           stopWith(STOPS.reviewerError, rev?.error);
+          // T1.13: the change still goes up for its vote (a reviewer that
+          // failed never blocks it), and why is kept here and on its run;
+          // its description says the review did not run (unreviewedLine).
+          log.warn('bot-review', 'The reviewer failed; the change goes on without its review', {
+            round, error: clip(rev?.error || 'the reviewer failed', 300),
+          });
           // eslint-disable-next-line no-await-in-loop
           await save();
           break;
@@ -1369,6 +1389,7 @@ module.exports = {
   fixBrowserLines,
   callReviewer,
   reviewCapture,
+  unreviewedLine,
   MIN_REVIEW_RETRY_MS,
   storeRoundShots,
   artifactIdsOf,

@@ -42,6 +42,8 @@ const clean = ${JSON.stringify(CLEAN)};
 const duplicate = ${JSON.stringify(DUPLICATE_JSON)};
 const fixing = /do not parse|no longer parse|defined more than once/.test(prompt);
 const mode = process.env.STUB_MODE || 'broken';
+// T1.7: a turn the provider ended (a 402, say): it changes nothing, exits 1.
+if (mode === 'fail') { console.error('API Error: 402 Insufficient credits'); process.exit(1); }
 const content = mode === 'clean' ? clean
   : mode === 'duplicate' ? duplicate
   : mode === 'fix' && fixing ? clean : broken;
@@ -183,4 +185,20 @@ test('a second turn that fixes the file lets the sync through', (t) => {
   assert.equal(ran.prompts.length, 2);
   assert.match(ran.result, /sync_result=resolved/);
   assert.equal(fs.readFileSync(path.join(fx.ws, FILE), 'utf8'), CLEAN);
+});
+
+// T1.7: a provider's error in the conflict-resolution turn was reported as
+// a conflict nobody could resolve, and nothing tried again until main moved.
+// The turn failed: no sync_result, the turn's exit code, the branch as it was.
+test('a conflict turn that fails writes no sync_result and exits with its code', (t) => {
+  const fx = fixture(t);
+  const ran = sync(fx, { STUB_MODE: 'fail' });
+  assert.equal(ran.code, 1, ran.out);
+  assert.equal(ran.prompts.length, 1, 'the resolution turn only');
+  assert.ok(ran.result, 'a result line is still written');
+  assert.doesNotMatch(ran.result, /sync_result=/, 'not a conflict: the sync could not run');
+  assert.match(ran.result, /cc_exit=1/);
+  assert.match(ran.out, /the conflict-resolution turn failed \(exit 1\)/);
+  assert.equal(git(fx.ws, 'rev-parse', 'HEAD'), fx.branchHead, 'HEAD is unchanged');
+  assert.equal(git(fx.ws, 'status', '--porcelain'), '', 'the merge was aborted');
 });

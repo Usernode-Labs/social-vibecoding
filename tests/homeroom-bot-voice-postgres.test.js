@@ -1431,7 +1431,10 @@ test('#6614: queued work puts a plain yes first, and its answer ends the exchang
   assert.equal(second.outcome, 'replied');
   assert.equal(seen.length, 0, 'the model is not called for the yes');
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].content, voice.AFFIRMED_ACK_TEXT);
+  // T1.15 (19 Nov 2026): the yes promises "I'll tell you here" only when a
+  // tell_me_when keeps that promise. This fix was queued with none, so the
+  // answer is a plain thanks.
+  assert.equal(sent[0].content, voice.AFFIRMED_PLAIN_TEXT);
   const botMeta = sent[0].metadata.homeroomBot;
   assert.equal(botMeta.suggest, undefined);
   assert.equal(botMeta.actions, undefined);

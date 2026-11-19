@@ -66,6 +66,7 @@
 
 import { createStore } from '../../lib/plain-store.js';
 import { sharedJson } from '../../lib/shared-read';
+import { voteMoved } from '../../lib/work-state';
 import { voteSavedStore } from '../dev-board/card/cards-store';
 import { landKeepingPlace } from '../dev-board/workshop/place-store';
 import { navStore } from '../nav/nav-store.js';
@@ -486,6 +487,38 @@ export function loadCommunities(force = false): Promise<void> {
     }
   })();
   return loading;
+}
+
+/**
+ * T2.12 (19 Nov 2026): Home's Needs you count, the tab's badge and the
+ * sidebar re-read what waits on you when a `work_state` push says a change
+ * opened or closed for votes (lib/work-state.ts voteMoved), rather than at
+ * the next visit to Home or a pull. The counts are read fresh (request
+ * 6500), Home's tiles with them (home-pins-store.ts refreshHomePins, which
+ * reads the scope too); a burst of pushes reads once. True when the push was
+ * vote news. Signed out it reads nothing.
+ */
+export const VOTE_NEWS_COUNTS_MS = 800;
+let voteNewsTimer: ReturnType<typeof setTimeout> | null = null;
+// Whether each change's vote was open, as the pushes heard said: a push that
+// only moves a line ("About 3 min left") reads nothing.
+const votesHeard = new Map<number, boolean>();
+export function onVoteNews(detail: unknown): boolean {
+  if (!voteMoved(detail, votesHeard)) return false;
+  if (voteNewsTimer !== null) return true;
+  voteNewsTimer = setTimeout(() => {
+    voteNewsTimer = null;
+    const w = window as any;
+    if (!w.App?.user) return;
+    const pins = w.UsernodeReact?.homePins;
+    if (pins && typeof pins.refresh === 'function') void pins.refresh({ force: true });
+    else void loadCommunities(true);
+  }, VOTE_NEWS_COUNTS_MS);
+  return true;
+}
+if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+  // app.js dispatches every work_state push as this event (its `detail`).
+  window.addEventListener('homeroom-bot-work-changed', (event) => { onVoteNews((event as CustomEvent).detail); });
 }
 
 /**

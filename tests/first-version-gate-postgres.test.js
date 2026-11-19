@@ -211,13 +211,21 @@ test('the first version skips the vote; the bot\'s later changes wait for a pers
     )).rows.map((r) => Number(r.user_id));
     assert.deepEqual(await pinged(first), [], 'nor by its row: it goes live without a vote');
 
-    // A later change of the bot's is owed, counted and pinged as before.
+    // A later change of the bot's is owed and counted as before. T2.6 (19 Nov
+    // 2026): when its stored row opens for votes, the people whose yes it
+    // needs are told it is ready to try (change_ready, from votePings). That
+    // ping is what asks them, so the digest leaves it out for a day and the
+    // "new proposal" ping skips them.
     const later = await proposal(club, bot);
     await run(club, 2, later);
     assert.equal(await owed(ada), 1);
     assert.equal(await owed(sam), 1);
-    assert.ok((await digest()).some((r) => r.user_id === sam.id));
-    assert.deepEqual(await pinged(later), [Number(sam.id)], 'asked once its row opened for votes');
+    const told = async (id) => (await settleWorkStates(pool), await pool.query(
+      `SELECT user_id FROM notifications WHERE session_id = $1 AND kind = 'change_ready' ORDER BY id`, [id],
+    )).rows.map((r) => Number(r.user_id));
+    assert.ok((await told(later)).includes(Number(sam.id)), 'told it is ready to try once its row opened for votes');
+    assert.ok(!(await digest()).some((r) => r.user_id === sam.id), 'so the digest does not ask again');
+    assert.ok(!(await pinged(later)).includes(Number(sam.id)), 'nor the "new proposal" ping');
     assert.deepEqual(await notifications.createPrProposedNotifications(pool, { appId: club.id, sessionId: later, proposerId: bot.id }), [],
       'and never twice');
   });

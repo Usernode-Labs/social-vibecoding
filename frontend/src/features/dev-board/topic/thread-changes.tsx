@@ -861,6 +861,9 @@ function ChangeBlock({ item, plan = null, request, onChanged, sole = false }: {
     merge: view.v.merge || null,
     fixNote: view.v.testing?.authorNote || null,
     liveAt: view.v.liveAt || item.liveAt || null,
+    // T2.3: the change's stored row, so the request's timeline ends on the
+    // words the change's foot says, never "Up for a vote" while it is not.
+    work: view.v.work || null,
   }) : '';
   useEffect(() => { publishLead(thread.page, leadText ? JSON.parse(leadText) : null); }, [leadText, thread.page]);
   useEffect(() => () => publishLead(thread.page, null), [thread.page]);

@@ -764,3 +764,37 @@ test('"Waiting for approval" is a quiet grey tint, never a filled chip', () => {
   const working = AppView._inProgressChipSpec(baseIssue({ in_progress: ip({ sessions: [sess()] }) }));
   assert.match(working.cls, /bg-sky-500\/10/);
 });
+
+// ── T2.5 (19 Nov 2026): a change in review says its stored row's words ──
+//
+// Any promoted or merging change of a person's read "Waiting for approval"
+// (and "Waiting for votes" on the Workshop's row) while its own stored row
+// said it was taking its screenshots, syncing with main or failing its
+// tests. The list carries the change's row with its session (routes/
+// issues.js reviewWorkBySession), and the chip and the row say that.
+test('T2.5: a change in review wears its stored row\'s words, not "Waiting for approval"', () => {
+  const AppView = makeAppView();
+  const ip = (over) => ({ count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], sessions: [], target: null, ...over });
+  const shots = {
+    stage: 'checking', line: { code: 'shots' }, voteOpen: false,
+    words: { stage: { id: 'core:work.stage.shots' }, stageOthers: { id: 'core:work.stage.shots' }, line: { id: 'core:work.line.shots' } },
+  };
+  const st = AppView._issueWorkState(baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted', work: shots })] }) }));
+  assert.equal(st.key, 'in_review', 'it is still the change in review');
+  assert.equal(st.label, 'Taking screenshots · maya');
+  assert.equal(st.spinner, true);
+  // Up for a vote: the vote's own words.
+  const open = { ...shots, stage: 'up_for_vote', line: null, voteOpen: true, words: { stage: { id: 'core:work.stage.upForVote' }, line: null } };
+  assert.equal(AppView._issueWorkState(baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted', work: open })] }) })).label,
+    'Waiting for approval · maya');
+  // No row of the change's own: the request's standing, when that change is its lead.
+  const lead = AppView._issueWorkState(baseIssue({
+    in_progress: ip({ sessions: [sess({ sessionId: 100, status: 'promoted' })] }),
+    standing: { ...shots, change: { id: 100, voteOpen: false } },
+  }));
+  assert.equal(lead.label, 'Taking screenshots · maya');
+  // The Workshop's row says it too.
+  const brief = AppView._workshopBrief('issue', baseIssue({ in_progress: ip({ sessions: [sess({ status: 'promoted', work: shots })] }) }), null);
+  assert.ok(brief.tags.some((t) => t.label === 'Taking screenshots · maya'), JSON.stringify(brief.tags));
+  assert.ok(!brief.tags.some((t) => /Waiting for votes/.test(t.label)));
+});

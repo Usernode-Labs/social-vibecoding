@@ -3635,6 +3635,10 @@
     "text": "Plan for #{{number}} · building",
     "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it: the bot is building what the plan describes. It replaces the line that said the plan waits for Build it. {{number}} is the request's number."
   },
+  "topic.request.botPlan.subPressed": {
+    "text": "Plan for #{{number}}",
+    "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it, while its build waits (its turn, one of the project's limits, or building credit): the card itself says what it waits for. {{number}} is the request's number."
+  },
   "topic.request.botPlan.settled.vote": {
     "text": "Up for a vote",
     "description": "On a request's page, the line Homeroom bot's plan card says once its build finished and made a change: the change waits for the group's votes, in the same words the rest of the page says for the request."

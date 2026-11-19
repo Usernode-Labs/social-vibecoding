@@ -8659,6 +8659,10 @@
     "text": "GitHub's checks failed",
     "description": "The large figure on the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main. \"GitHub\" is a product name and stays as it is."
   },
+  "page.merge.figure.stuck": {
+    "text": "Stuck going live",
+    "description": "A change's page, the Merging card's headline: the change was approved, but GitHub's required checks never passed after many tries, so Homeroom stopped trying to merge it for now."
+  },
   "page.merge.figure.merging": {
     "text": "Merging now",
     "description": "The large figure on the Merging card of a change's page while the merge itself is under way."
@@ -8674,6 +8678,10 @@
   "page.merge.label.failing": {
     "text": "Merging: GitHub's checks failed",
     "description": "Accessible description of the progress bar on the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main."
+  },
+  "page.merge.label.stuck": {
+    "text": "Merging: stuck",
+    "description": "A change's page, the Merging card's accessible label: the merge is stuck because GitHub's required checks never passed after many tries."
   },
   "page.merge.label.merging": {
     "text": "Merging now",
@@ -8694,6 +8702,10 @@
   "page.merge.note.failing": {
     "text": "GitHub's required checks failed again after Homeroom brought the change up to date with main. Its author has to fix them, and it merges once they pass.",
     "description": "The line under the Merging card of a change's page when GitHub's own required checks failed again after Homeroom brought the change up to date with main. \"GitHub\" is a product name and \"main\" is the name of the project's main line of code; both stay as they are. \"Its author\" is the person who made the change."
+  },
+  "page.merge.note.stuck": {
+    "text": "Approved, but GitHub's required checks never passed after 15 tries, so Homeroom stopped asking. It tries again once the change or main moves.",
+    "description": "A change's page, the note on the Merging card when the merge is stuck: the change was approved, GitHub's required checks never finished or kept failing after 15 tries, and Homeroom tries the merge again once the change gets a new version or the project's main code changes."
   },
   "page.testing.figure.skipped": {
     "text": "Not tested",

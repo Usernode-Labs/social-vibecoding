@@ -525,7 +525,7 @@ test('a change its shots show failing goes back to the bot first; once that roun
   assert.equal(rules.checksDue({ ...fine, looked: false }), null, 'a change whose shots are all fine never asks for a round');
 
   const src = read('src/services/homeroom-bot-dm.js');
-  assert.match(src, /if \(approval && !broken\.length\) \{\n\s+await noteApproversReady/,
+  assert.match(src, /if \(approval && !broken\.length && openNow\) \{\n\s+await noteApproversReady/,
     'nobody else is asked to approve a change part of which does not work');
   const botSrc = read('src/services/homeroom-bot.js');
   assert.match(botSrc, /cs\.shots_state, cs\.shots_detail/, 'the fix round reads the shots on the head');

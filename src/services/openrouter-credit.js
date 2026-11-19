@@ -29,6 +29,9 @@ const log = require('./logger');
 const KEY_WARN = 'homeroom_bot_credit_warn_cents';
 const KEY_URGENT = 'homeroom_bot_credit_urgent_cents';
 const KEY_STATE = 'homeroom_bot_credit_state';
+// T1.4: hours a pause may stand before the admins are told again.
+const KEY_STALE_HOURS = 'homeroom_bot_credit_stale_hours';
+const DEFAULT_STALE_HOURS = 6;
 
 // $500, then $200.
 const DEFAULT_WARN_CENTS = 50000;
@@ -38,6 +41,12 @@ const DEFAULT_URGENT_CENTS = 20000;
 // that still shows a few cents must not lift the pause.
 const BACK_CENTS = 2500;
 const BACK_AFTER_MS = 5 * 60 * 1000;
+// T1.4: an outage the balance read cannot lift (no figure: an unlimited bot
+// key and no management key, or a read that failed) is probed with one tiny
+// request on the bot's key, the first time once it has stood PROBE_BASE_MS,
+// then doubling to PROBE_CEILING_MS. A probe that gets through lifts it.
+const PROBE_BASE_MS = 15 * 60 * 1000;
+const PROBE_CEILING_MS = 2 * 60 * 60 * 1000;
 
 const BOT_USERNAME = 'homeroom_bot';
 
@@ -52,7 +61,7 @@ async function readSettings(pool) {
   try {
     ({ rows } = await pool.query(
       'SELECT key, value FROM platform_settings WHERE key = ANY($1)',
-      [[KEY_WARN, KEY_URGENT, KEY_STATE]],
+      [[KEY_WARN, KEY_URGENT, KEY_STATE, KEY_STALE_HOURS]],
     ));
   } catch (err) {
     log.warn('openrouter-credit', 'platform_settings read failed', { err: err.message });
@@ -67,9 +76,11 @@ async function readSettings(pool) {
     const parsed = JSON.parse(map.get(KEY_STATE) || 'null');
     if (parsed && typeof parsed === 'object') state = parsed;
   } catch {}
+  const stale = num(map.get(KEY_STALE_HOURS), DEFAULT_STALE_HOURS);
   return {
     warnCents: num(map.get(KEY_WARN), DEFAULT_WARN_CENTS),
     urgentCents: num(map.get(KEY_URGENT), DEFAULT_URGENT_CENTS),
+    staleHours: stale > 0 ? stale : DEFAULT_STALE_HOURS,
     state,
   };
 }
@@ -81,6 +92,71 @@ async function writeSetting(pool, key, value) {
      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
     [key, value],
   );
+}
+
+// The bot's own OpenRouter key, or null (none stored, or not valid).
+async function botApiKey(pool, config) {
+  const { rows: [botRow] = [] } = await pool.query(
+    'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
+  );
+  if (!botRow) return null;
+  const credentialStore = require('./credential-store');
+  const key = { provider: 'openrouter', purpose: 'coding_agent' };
+  const meta = await credentialStore.readMetadata({ pool, userId: botRow.id, ...key });
+  if (!meta || meta.status !== 'valid') return null;
+  return (await credentialStore.readSecret({
+    pool, userId: botRow.id, ...key, dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
+  })) || null;
+}
+
+// T1.4: how long the probe's one request may take.
+const PROBE_TIMEOUT_MS = 20000;
+
+/**
+ * T1.4: one tiny request on the bot's key (one token of the helper model,
+ * through the platform's chat client, openrouter-mayor.js, which carries the
+ * no-training rule every model request does): 'ok' (it got through: credit
+ * is back), 'credit' (still OpenRouter's 402 for credit) or 'unknown' (no
+ * key, or any other answer). Never throws.
+ */
+async function probe(pool, config, deps = {}) {
+  try {
+    const apiKey = await botApiKey(pool, config);
+    if (!apiKey) return 'unknown';
+    const model = await require('./helper-model').current(config, { pool });
+    const client = (deps.mayor || require('./openrouter-mayor')).createClient({
+      apiKey, apiBase: config.openrouterApiBase, origin: config.openrouterOrigin, model,
+      billingPath: 'platform', timeoutMs: PROBE_TIMEOUT_MS, imageFallback: false,
+      ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+    });
+    try {
+      await client.streamChat({ chatMessages: [{ role: 'user', content: 'ok' }], maxTokens: 1 });
+      return 'ok';
+    } catch (err) {
+      return err?.code === 'credit_out' ? 'credit' : 'unknown';
+    }
+  } catch (err) {
+    log.warn('openrouter-credit', 'The credit probe failed', { err: err.message });
+    return 'unknown';
+  }
+}
+
+/** Pure: whether an outage the balance read did not lift is due a probe now. */
+function probeDue(outage, now = Date.now()) {
+  if (!outage?.since) return false;
+  const since = Date.parse(outage.since);
+  if (!Number.isFinite(since) || now - since < PROBE_BASE_MS) return false;
+  const probes = Math.max(0, Number(outage.probes) || 0);
+  const last = outage.probedAt ? Date.parse(outage.probedAt) : NaN;
+  if (!Number.isFinite(last)) return true;
+  return now - last >= Math.min(PROBE_CEILING_MS, PROBE_BASE_MS * 2 ** Math.max(0, probes - 1));
+}
+
+/** Pure: whether an outage has stood `staleHours` since it began or was last said to be. */
+function staleDue(outage, staleHours = DEFAULT_STALE_HOURS, now = Date.now()) {
+  if (!outage?.since) return false;
+  const from = Date.parse(outage.staleAt || outage.since);
+  return Number.isFinite(from) && now - from >= Math.max(1, Number(staleHours) || DEFAULT_STALE_HOURS) * 60 * 60 * 1000;
 }
 
 /**
@@ -104,25 +180,13 @@ async function readBalance(pool, config) {
     }
   }
   try {
-    const { rows: [botRow] = [] } = await pool.query(
-      'SELECT id FROM users WHERE username = $1 AND is_synthetic = TRUE', [BOT_USERNAME],
-    );
-    if (botRow) {
-      const credentialStore = require('./credential-store');
-      const key = { provider: 'openrouter', purpose: 'coding_agent' };
-      const meta = await credentialStore.readMetadata({ pool, userId: botRow.id, ...key });
-      if (meta && meta.status === 'valid') {
-        const apiKey = await credentialStore.readSecret({
-          pool, userId: botRow.id, ...key, dataKey: config.dataEncryptionKey, expectedRevision: meta.revision,
-        });
-        if (apiKey) {
-          const info = await require('./openrouter-client').validateKey(apiKey, {
-            baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin,
-          });
-          // An unlimited key has no figure of its own: the account's counts.
-          if (Number.isFinite(info?.limitRemaining)) out.keyCents = Math.max(0, Math.round(info.limitRemaining * 100));
-        }
-      }
+    const apiKey = await botApiKey(pool, config);
+    if (apiKey) {
+      const info = await require('./openrouter-client').validateKey(apiKey, {
+        baseUrl: config.openrouterApiBase, origin: config.openrouterOrigin,
+      });
+      // An unlimited key has no figure of its own: the account's counts.
+      if (Number.isFinite(info?.limitRemaining)) out.keyCents = Math.max(0, Math.round(info.limitRemaining * 100));
     }
   } catch (err) {
     log.warn('openrouter-credit', 'Could not read the bot key\'s remaining credit', { err: err.message });
@@ -202,23 +266,79 @@ function outageSet(state, { words = null, now = Date.now() } = {}) {
   return { ...s, outage: { since: new Date(now).toISOString(), words: words ? String(words).slice(0, 300) : null } };
 }
 
-/**
- * Whether a turn ended on OpenRouter's 402 for credit (an outage), rather
- * than on the refusal that asks only for a smaller reply. Pure. `result` is
- * a turn's result, as the bot's turns return it.
- */
-function creditOut(result) {
-  if (!result || typeof result !== 'object') return false;
-  if (result.agentErrorCode === 'insufficient_credits') return true;
-  if (result.agentErrorCode === 'insufficient_credits_max_tokens') return false;
+// One text's verdict: OpenRouter's out of credit ('credit'), its refusal
+// that asks only for a shorter reply ('max_tokens'), or neither (null).
+function textVerdict(text) {
+  const t = String(text == null ? '' : text).trim();
+  if (!t) return null;
   const { classifyProviderError } = require('../agents/codex-openrouter');
-  const texts = [result.error, result.lastResultText]
-    .map((t) => String(t || '')).filter(Boolean);
-  for (const text of texts) {
-    if (classifyProviderError(text).code === 'insufficient_credits') return true;
+  const code = classifyProviderError(t).code;
+  if (code === 'insufficient_credits_max_tokens') return 'max_tokens';
+  if (code === 'insufficient_credits') return 'credit';
+  return null;
+}
+
+// The runtime's own error notice where an answer should be (Claude Code
+// writes "API Error: 402 ..." as its final message): only that line is read,
+// never the model's own words, so a plan about a 402 page is no outage.
+function noticeOf(text) {
+  if (typeof text !== 'string' || !text.trim()) return null;
+  try {
+    return require('./agent-result-text').agentApiFailure(text)?.line || null;
+  } catch {
+    return null;
   }
-  return result.providerRequest?.providerErrorStatus === 402
-    || result.providerErrorStatus === 402;
+}
+
+const TEXT_FIELDS = ['error', 'agentError', 'body', 'detail', 'message', 'providerError', 'words'];
+const STATUS_FIELDS = ['status', 'statusCode', 'httpStatus', 'providerErrorStatus'];
+
+function verdictOf(what, depth) {
+  if (what == null || depth > 3) return null;
+  if (typeof what === 'string') return textVerdict(what);
+  if (typeof what !== 'object') return null;
+  // The Codex harness's own classification (agents/codex-openrouter.js
+  // emitError), which a 402 with an empty reply carries and nothing else.
+  for (const code of [what.agentErrorCode, what.errorCode, what.code]) {
+    if (code === 'insufficient_credits') return 'credit';
+    if (code === 'insufficient_credits_max_tokens') return 'max_tokens';
+  }
+  const verdicts = [];
+  for (const k of TEXT_FIELDS) {
+    const v = what[k];
+    if (typeof v === 'string') verdicts.push(textVerdict(v));
+    else if (v && typeof v === 'object') verdicts.push(verdictOf(v, depth + 1));
+  }
+  const notice = noticeOf(what.lastResultText);
+  if (notice) verdicts.push(textVerdict(notice));
+  // A routed turn ({ error, result }), a turn's own result.
+  for (const k of ['result', 'routed']) {
+    if (what[k] && typeof what[k] === 'object') verdicts.push(verdictOf(what[k], depth + 1));
+  }
+  if (verdicts.includes('max_tokens')) return 'max_tokens';
+  if (verdicts.includes('credit')) return 'credit';
+  const statuses = [
+    ...STATUS_FIELDS.map((k) => what[k]),
+    what.providerRequest?.providerErrorStatus, what.providerRequest?.httpStatus, what.response?.status,
+  ];
+  return statuses.some((v) => Number(v) === 402) ? 'credit' : null;
+}
+
+/**
+ * T1.3: the one test of "OpenRouter's credit ran out", for every turn the
+ * bot runs (a read, a plan, a build, a revise, a checks fix, the chat, the
+ * voice, look_into). Pure. `what` may be:
+ *   - a provider's error text ("API Error: 402 ...", an HTTP body);
+ *   - an HTTP failure ({ status: 402, body }, or an error a client threw);
+ *   - a turn's result ({ agentErrorCode, agentError, error, lastResultText,
+ *     providerErrorStatus, providerRequest }), or a routed turn
+ *     ({ error, result }).
+ * The 402 that asks only for a shorter reply ("requires more credits, or
+ * fewer max_tokens") is not an outage: a smaller request gets through. A
+ * model's own reply is read only where the runtime wrote its error notice.
+ */
+function creditOut(what) {
+  return verdictOf(what, 0) === 'credit';
 }
 
 // ── What admins are told ───────────────────────────────────────────────
@@ -235,10 +355,14 @@ function detailToken(event, days = 0) {
   return `credit:${event.type}:${threshold}:${balance}:${d}`;
 }
 
-async function tellAdmins(pool, deps, detail) {
+// The admins' alert for an outage (mobile-push-policy.js and the drawer
+// read it back).
+const OUT_DETAIL = 'credit:out';
+
+async function tellAdmins(pool, deps, detail, { since = null } = {}) {
   const notifications = deps.notifications ? deps.notifications() : require('./notifications');
   const created = await notifications.createPlatformIncidentNotifications(pool, {
-    detail, dedupePrefix: detail, since: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    detail, dedupePrefix: detail, since: since || new Date(Date.now() - 24 * 60 * 60 * 1000),
   });
   await Promise.all((created || []).map((r) => notifications.hydrateAndPush(pool, r)));
 }
@@ -253,8 +377,8 @@ async function tellAdmins(pool, deps, detail) {
 async function sweep(pool, config, deps = {}) {
   const out = { balanceCents: null, events: [], staging: deps.staging ?? isStaging() };
   try {
-    const { warnCents, urgentCents, state } = await readSettings(pool);
-    const read = await readBalance(pool, config);
+    const { warnCents, urgentCents, staleHours, state } = await readSettings(pool);
+    const read = deps.readBalance ? await deps.readBalance() : await readBalance(pool, config);
     out.balanceCents = read.balanceCents;
     const dailyCents = await dailySpendCents(pool, deps);
     let next = stateOf(state);
@@ -276,9 +400,39 @@ async function sweep(pool, config, deps = {}) {
             log.warn('openrouter-credit', 'Could not warn the admins about credit', { err: err.message }));
         }
       }
-      if (decided.events.some((e) => e.type === 'back')) {
-        await require('../workflow/platform.ts').botCreditBack()
-          .catch((err) => log.warn('openrouter-credit', 'Could not tell the bot\'s lane credit is back', { err: err.message }));
+    }
+    // T1.4: an outage the read did not lift (no figure at all: the read
+    // failed, or the bot's key is unlimited and no management key is set) is
+    // probed, after a back-off, with one tiny request; one that gets through
+    // lifts it. A figure below BACK_CENTS is believed: no probe then.
+    const now = deps.now ? deps.now() : Date.now();
+    if (next.outage && read.balanceCents == null && probeDue(next.outage, now)) {
+      const probed = deps.probe ? await deps.probe() : await probe(pool, config);
+      out.probe = probed;
+      if (probed === 'ok') {
+        next = { ...next, outage: null };
+        out.events = [...out.events, { type: 'back' }];
+      } else {
+        next = { ...next, outage: { ...next.outage, probedAt: new Date(now).toISOString(), probes: (Number(next.outage.probes) || 0) + 1 } };
+      }
+    }
+    if (out.events.some((e) => e.type === 'back')) {
+      await (deps.platform ? deps.platform() : require('../workflow/platform.ts')).botCreditBack()
+        .catch((err) => log.warn('openrouter-credit', 'Could not tell the bot\'s lane credit is back', { err: err.message }));
+    }
+    // T1.4: a pause that has stood `staleHours` (a setting, 6 by default) is
+    // told again: one incident and one alert each time it does.
+    if (next.outage && staleDue(next.outage, staleHours, now)) {
+      const hours = Math.round((now - Date.parse(next.outage.since)) / 3600000);
+      next = { ...next, outage: { ...next.outage, staleAt: new Date(now).toISOString() } };
+      out.stale = hours;
+      await require('./platform-incidents').record(pool, {
+        kind: require('./platform-incidents').KINDS.CREDIT_OUT,
+        detail: { why: `Homeroom bot has been paused for credit for ${hours} hours`, outcome: 'still_out' },
+      }).catch(() => {});
+      if (!out.staging) {
+        await tellAdmins(pool, deps, OUT_DETAIL, { since: new Date(now - 60 * 60 * 1000) }).catch((err) =>
+          log.warn('openrouter-credit', 'Could not tell the admins the credit pause goes on', { err: err.message }));
       }
     }
     await writeSetting(pool, KEY_STATE, JSON.stringify(next));
@@ -320,8 +474,13 @@ async function status(pool) {
   };
 }
 
-/** Record that a turn found credit gone: one outage in the state, one incident. */
-async function noteOutage(pool, { words = null } = {}) {
+/**
+ * Record that a turn found credit gone: one outage in the state, one
+ * incident, and (T1.5) the full admins told at once, as the low and urgent
+ * warnings are, never in the next day's digest. Resolves the outage
+ * ({ since, fresh }), or null when it could not be recorded.
+ */
+async function noteOutage(pool, { words = null } = {}, deps = {}) {
   try {
     const { state } = await readSettings(pool);
     const before = stateOf(state);
@@ -332,15 +491,22 @@ async function noteOutage(pool, { words = null } = {}) {
         kind: require('./platform-incidents').KINDS.CREDIT_OUT,
         detail: { why: words ? String(words).slice(0, 300) : 'OpenRouter credit ran out' },
       });
+      if (!(deps.staging ?? isStaging())) {
+        await tellAdmins(pool, deps, OUT_DETAIL).catch((err) =>
+          log.warn('openrouter-credit', 'Could not tell the admins credit ran out', { err: err.message }));
+      }
     }
+    return { since: next.outage?.since || null, fresh: !before.outage };
   } catch (err) {
     log.warn('openrouter-credit', 'Could not record the credit outage', { err: err.message });
+    return null;
   }
 }
 
 module.exports = {
-  KEY_WARN, KEY_URGENT, KEY_STATE,
-  DEFAULT_WARN_CENTS, DEFAULT_URGENT_CENTS, BACK_CENTS, BACK_AFTER_MS,
-  decide, creditOut, daysLeft, outageSet, detailToken,
-  readBalance, sweep, status, noteOutage, isStaging,
+  KEY_WARN, KEY_URGENT, KEY_STATE, KEY_STALE_HOURS,
+  DEFAULT_WARN_CENTS, DEFAULT_URGENT_CENTS, DEFAULT_STALE_HOURS, BACK_CENTS, BACK_AFTER_MS,
+  PROBE_BASE_MS, PROBE_CEILING_MS, OUT_DETAIL,
+  decide, creditOut, daysLeft, outageSet, detailToken, probeDue, staleDue,
+  readBalance, probe, sweep, status, noteOutage, isStaging,
 };

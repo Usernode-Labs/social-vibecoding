@@ -45,7 +45,7 @@ import { flushSync } from 'react-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { sharedJson } from '../../lib/shared-read';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
-import { withoutClosedVote } from '../../lib/work-state';
+import { voteMoved, withoutClosedVote } from '../../lib/work-state';
 import { WORK_CHANGED_EVENT } from '../messages/bot-shared';
 import {
   publishVoteSaved,
@@ -381,14 +381,30 @@ voteSavedStore.subscribe(() => {
 
 // 11 Nov 2026 (one model): a change whose vote a `work_state` push says
 // closed leaves the feed at once (lib/work-state.ts withoutClosedVote), and
-// the feed is read again.
+// the feed is read again. T2.12 (19 Nov 2026): so is any other vote news, a
+// change that just OPENED for votes among it: the feed lists it without the
+// page being left and opened again. A burst of pushes reads it once.
+let voteNewsTimer: ReturnType<typeof setTimeout> | null = null;
+export const VOTE_NEWS_READ_MS = 400;
+// Whether each change's vote was open, as the pushes this page heard said.
+const votesHeard = new Map<number, boolean>();
+/** Whether a work_state push moved a change's vote, opened or closed (lib/work-state.ts voteMoved). */
+export function isVoteNews(detail: unknown): boolean {
+  return voteMoved(detail, votesHeard);
+}
 if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
   window.addEventListener(WORK_CHANGED_EVENT, (event) => {
     const state = workshopStore.get();
     const feed = withoutClosedVote(state.feed, (event as CustomEvent).detail);
-    if (feed === state.feed) return;
-    workshopStore.set({ feed });
-    void workshopController.refreshNeeds();
+    if (feed !== state.feed) workshopStore.set({ feed });
+    // Heard every time, so what each change's vote was stays current.
+    const news = isVoteNews((event as CustomEvent).detail);
+    if (feed === state.feed && !news) return;
+    if (!workshopStore.get().open || voteNewsTimer !== null) return;
+    voteNewsTimer = setTimeout(() => {
+      voteNewsTimer = null;
+      void workshopController.refreshNeeds();
+    }, VOTE_NEWS_READ_MS);
   });
 }
 

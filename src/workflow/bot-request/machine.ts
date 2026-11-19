@@ -24,7 +24,7 @@ import { NONE, defineMachine, ok, reject } from '../kernel/index.ts';
 import type { Check, Event, Json, MessageRequest, Outcome, Push, TransitionContext, WorkRequest, WorkResultPayload } from '../kernel/index.ts';
 import { toUser } from '../pushes.ts';
 import {
-  BOT_LANE, BOT_REQUEST, CHECKS_REASON, KEPT_WHILE_QUIET_REASONS, LANE_KEY, READ_AGAIN_REASON,
+  BOT_LANE, BOT_REQUEST, CHECKS_REASON, CREDIT_WAIT_REASON, KEPT_WHILE_QUIET_REASONS, LANE_KEY, PLAN_RETRY_REASON, READ_AGAIN_REASON,
   THROWN_HOLD_MS, THROWN_TRIES, backoffMs, lookCardKey, parseRequestKey, readSlotOf, requestKey,
 } from '../rules/bot-loop.ts';
 import { BOT_CHANGE, botChangeKey } from '../rules/bot-notes.ts';
@@ -58,6 +58,11 @@ export interface Owed {
   // look threw THROWN_TRIES times in a row (`cooldown`). Absent on a hold
   // stored before it was recorded (readers infer it: progress holdOf).
   heldFor?: HoldReason | null;
+  // A debt the bot owed itself while a look or a build ran, with its own
+  // wait (#6859's plan retry, a few minutes on): not taken before then,
+  // counted from when it was owed. It moves onto the backoff once nothing
+  // runs (queue), so the queue row's wait says it.
+  notBefore?: string | null;
 }
 export type HoldReason = 'allowance' | 'cooldown';
 // A look under way: its work `look:<n>`, the slot the lane granted it, the
@@ -110,6 +115,10 @@ export type RState = { name: Name; data: Data } | { name: typeof NONE; data: nul
 type Live = Extract<RState, { data: Data }>;
 
 const LOOKING: ReadonlySet<string> = new Set(['reading', 'following_up']);
+// The debts kept while a look or a build runs, besides a person's ask: an
+// ask for its change, a fix bot-change asked, and the bot's own retries
+// owed from inside the work under way (#6859, #6867). Taken once it ends.
+const AFTER_WORK_REASONS: ReadonlySet<string> = new Set([CHECKS_REASON, 'voice_update', PLAN_RETRY_REASON, CREDIT_WAIT_REASON]);
 
 // ── Events ──────────────────────────────────────────────────────────────
 
@@ -160,8 +169,9 @@ const EVENTS = {
   },
   // A ready verdict's build is owed (the look's own act, or Build it).
   BuildOwed: (p: any) => ({ ...request(p), runId: int(p?.runId, 'runId') }),
-  // bot-build: the build it asked for ended.
-  BuildEnded: (p: any) => ({ id: int(p?.id, 'id'), outcome: optText(p?.outcome, 20) || 'done' }),
+  // bot-build: the build it asked for ended. `credit`: it stopped because
+  // OpenRouter's credit ran out (its result's creditOut), so the lane pauses.
+  BuildEnded: (p: any) => ({ id: int(p?.id, 'id'), outcome: optText(p?.outcome, 20) || 'done', credit: p?.credit === true }),
   // bot-change: its change's checks fail on `head`; a fix round is asked.
   FixAsked: (p: any) => ({ ...request(p), sessionId: int(p?.sessionId, 'sessionId'), head: optSha(p?.head) }),
   // bot-change, once its change merged: work it had started stops, and
@@ -242,9 +252,24 @@ function current(b: Build): Build {
   return heldFor === 'overlap' ? { ...kept, heldUntil: null } : kept;
 }
 
+// A debt's own wait (notBefore), owed while something ran, moved onto the
+// backoff the queue row says and the lane reads (wait_until): the later of
+// the two holds. One already past is dropped.
+function settleWait(d: Data, ctx: TransitionContext): Data {
+  const o = d.owed;
+  if (!o || !('notBefore' in o)) return d;
+  const { notBefore, ...owed } = o;
+  const at = notBefore ? Date.parse(notBefore) : NaN;
+  if (!Number.isFinite(at) || at <= ctx.now.getTime()) return { ...d, owed };
+  const until = d.backoff ? Date.parse(d.backoff.until) : NaN;
+  if (Number.isFinite(until) && until >= at) return { ...d, owed };
+  return { ...d, owed, backoff: { failures: d.backoff?.failures || 0, until: new Date(at).toISOString(), reason: owed.reason.slice(0, 64) } };
+}
+
 // Owed and waiting for a slot: the lane hears, and the instance's clock is
 // set for a hold or a backoff ending.
-function queue(d: Data, ctx: TransitionContext, more: Omit<Outcome<RState>, 'next'> = {}): Outcome<RState> {
+function queue(d0: Data, ctx: TransitionContext, more: Omit<Outcome<RState>, 'next'> = {}): Outcome<RState> {
+  const d = settleWait(d0, ctx);
   const until = waitUntil(d);
   const due = until && until.getTime() > ctx.now.getTime() ? { at: until, event: { type: 'Due' } } : null;
   return step('queued', d, { ...more, timer: due, messages: [...(more.messages || []), look(d)] });
@@ -285,10 +310,18 @@ function owed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
   // A fix asked by bot-change is a debt like the rest, at its priority.
   if (s.name === 'reading' || s.name === 'following_up' || s.name === 'building') {
     // While a look runs or a build is owed, only a person's ask, an ask for
-    // its change, or a fix waits for after it: the refresh's own finds are
-    // read again by the next refresh, from what the look recorded.
-    if (p.priority !== 0 && p.reason !== CHECKS_REASON && p.reason !== 'voice_update') return step(s.name as Name, d);
-    return step(s.name as Name, { ...d, owed: merged(d.owed, p, ctx) });
+    // its change, a fix, or a debt the bot owes itself from inside the work
+    // under way (a failed plan's one retry, a request a build left waiting
+    // for credit: both owed from the build, while this is `building`) waits
+    // for after it: the refresh's own finds are read again by the next
+    // refresh, from what the look recorded.
+    if (p.priority !== 0 && !AFTER_WORK_REASONS.has(p.reason)) return step(s.name as Name, d);
+    const o = merged(d.owed, p, ctx);
+    // Its own wait counts from now, and holds it once the work has ended;
+    // never a person's ask it merged into, which goes first.
+    const wait = Number(p.waitMs) || 0;
+    const own = wait > 0 && o.priority !== 0 && o.reason === p.reason;
+    return step(s.name as Name, { ...d, owed: own ? { ...o, notBefore: later(ctx, wait).toISOString() } : o });
   }
   // #6859: a debt the bot owes itself may be held a while before the lane
   // takes it (its own wait, as a refused look's: never a hold for the
@@ -515,7 +548,10 @@ function buildOwed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext):
 function buildEnded(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {
   const d = s.data;
   if (!d.build || d.build.runId !== e.payload.id) return step(s.name, d);
-  return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', { ran: true }, d.appId)], push: workChanged(d.slot?.person) });
+  // T1.2: a build that ran out of OpenRouter's credit pauses the lane as a
+  // plan's does (#6867), so no further build is granted only to fail.
+  const lane: Record<string, Json> = e.payload.credit ? { ran: true, credit: true } : { ran: true };
+  return rest({ ...d, build: null, slot: null }, ctx, { messages: [toLane('Released', lane, d.appId)], push: workChanged(d.slot?.person) });
 }
 
 // The build's start reported: requested from bot-build (it tells this
@@ -718,7 +754,9 @@ export function botRequest(deps: Deps = { staging: false }) {
       if (e.type !== 'Owed' || after.name === NONE) return undefined;
       const d = (after as Live).data;
       const queued = after.name === 'queued';
-      return { queued, looking: LOOKING.has(after.name),
+      // `owed`: a look is owed after this, waiting its turn or kept for when
+      // the look or build under way ends (the bot's own retries: T1.1).
+      return { queued, looking: LOOKING.has(after.name), owed: !!d.owed,
         jobKey: queued ? lookCardKey(d.appId, d.issueNumber, d.n + 1) : null };
     },
     project: async (tx, before, after) => {

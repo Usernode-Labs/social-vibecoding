@@ -364,7 +364,10 @@ async function runSyncWork(config, pool, {
     // upstream", a worker that died) merged nothing and decided nothing: it
     // failed, and is never recorded as a conflict with no files. What it
     // spent is still billed, once.
-    if (!result.syncResult && (result.fatalError || (result.exitCode != null && result.exitCode !== 0))) {
+    // T1.7: so did one whose conflict turn failed (run-cc.sh writes no
+    // sync_result then, and exits with the turn's code: `ccExit` is it).
+    if (!result.syncResult && (result.fatalError || (result.exitCode != null && result.exitCode !== 0)
+        || (result.ccExit != null && result.ccExit !== 0))) {
       await steps.once('after:spend', () => deps.limits.recordSystemSpend(pool, Math.round((result.costUsd || 0) * 100)));
       throw Object.assign(new Error(result.fatalError
         ? `The sync could not run: ${String(result.fatalError).slice(0, 200)}`

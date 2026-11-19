@@ -461,3 +461,20 @@ function loadGroupChat() {
   vm.runInContext(`${gcJs}\nglobalThis.__M = { GroupChat };`, sandbox);
   return sandbox.__M.GroupChat;
 }
+
+// T2.12 (19 Nov 2026): _voteView carries the change's stored row's words
+// (the proposal row's `work`) only while that row is not up for a vote.
+test('T2.12: _voteView carries the stored row\'s words while the change is not up for a vote', () => {
+  const { AppView, GroupChat } = loadVoteModules([], []);
+  AppView.voteState = { bySession: {}, byPrNumber: {}, majority: 2, activeUsers: 2 };
+  const promoted = { id: 5, status: 'promoted', yes_count: 1, no_count: 0 };
+  const shots = {
+    stage: 'checking', line: { code: 'shots' },
+    words: { stage: { id: 'core:work.stage.shots' }, stageOthers: { id: 'core:work.stage.shots' }, line: { id: 'core:work.line.shots' } },
+  };
+  const held = GroupChat._voteView({ ...promoted, work: shots });
+  assert.deepEqual(JSON.parse(JSON.stringify(held.work)), { stage: { id: 'core:work.stage.shots' }, line: { id: 'core:work.line.shots' } });
+  const open = GroupChat._voteView({ ...promoted, work: { stage: 'up_for_vote', words: { stage: { id: 'core:work.stage.upForVote' }, line: null } } });
+  assert.equal(open.work, undefined, 'up for a vote: the tally');
+  assert.equal(GroupChat._voteView(promoted).work, undefined, 'no row: the tally');
+});

@@ -1050,6 +1050,26 @@ async function affirmedAck(pool, { app, place, bot, row, speaker }) {
 }
 
 /**
+ * T1.15: whether `speaker` has a promise waiting here (tell_me_when, stored
+ * in homeroom_bot_followups for this place), which is what keeps "I'll tell
+ * you here when it's ready". Best-effort: a failed read promises nothing.
+ */
+async function promiseWaiting(pool, { app, place, speaker }) {
+  if (!app?.id || !speaker?.id || !place?.type || !(Number(place.ref) > 0)) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT 1 FROM homeroom_bot_followups
+        WHERE user_id = $1 AND app_id = $2 AND state = 'waiting' AND place_type = $3 AND place_ref = $4
+        LIMIT 1`,
+      [Number(speaker.id), Number(app.id), String(place.type), Number(place.ref)],
+    );
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Run one turn in one place (the bot-voice machine's `voice.turn` work):
  * read what was said there since `through`, answer the people who wrote to
  * the bot (or say nothing), and record it. `turnKey` is the work item's: a
@@ -1207,8 +1227,11 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   // line back and no buttons; the bot then says nothing until the work's
   // result arrives.
   if (await affirmedAck(pool, { app, place, bot, row: last.message, speaker: last.speaker })) {
+    // T1.15: "I'll tell you here when it's ready" is a promise only a stored
+    // tell_me_when keeps (thread-followups.js); without one, a plain thanks.
+    const promised = await promiseWaiting(pool, { app, place, speaker: last.speaker });
     const sent = await say(pool, {
-      app, place, bot, text: AFFIRMED_ACK_TEXT, answer, mark, suggest: false,
+      app, place, bot, text: promised ? AFFIRMED_ACK_TEXT : AFFIRMED_PLAIN_TEXT, answer, mark, suggest: false,
       extra: { affirmed: { messageId: Number(last.message.id) } }, deps,
     });
     record.replyId = sent?.id || null;
@@ -2325,6 +2348,11 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   } catch (err) {
     record.error = mayor.codeOf(err);
     log.warn('homeroom-bot-voice', 'A turn\'s model failed', { app: app.slug, place, err: clip(err.message, 200) });
+    // T1.3: OpenRouter's credit ran out (openrouter-mayor.js credit_out):
+    // one outage noted, which tells the admins at once.
+    if (record.error === 'credit_out') {
+      await require('./openrouter-credit').noteOutage(pool, { words: 'a thread answer met OpenRouter\'s 402 for credit' }).catch(() => null);
+    }
   } finally {
     try { await platform?.close?.(); } catch { /* closing a grant never fails a turn */ }
     record.inputTokens = t.usage.inputTokens;
@@ -2351,7 +2379,9 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
   if (text && (ctx.revised || ctx.offer)) text = notDoneYet(text);
   if (!text) {
     // Nothing to say came back. Somebody who wrote to it hears that, once.
-    text = 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
+    // T1.3: out of credit, asking again in a minute cannot help, so it says
+    // what is true: nothing here tries again by itself.
+    text = record.error === 'credit_out' ? CREDIT_TEXT : 'Sorry, I couldn\'t answer just now. Ask me again in a minute.';
     record.outcome = 'fallback';
   }
   // Only beside words it still says: a cut claim, a "not done yet" or the
@@ -3188,7 +3218,12 @@ const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_vo
 // #6614: when the bot says work is under way, its first button is a plain
 // yes in the person's words, and the answer to it is one short line.
 const AFFIRMATION = 'Sounds good';
+// T1.3: a thread's answer that met OpenRouter's 402 for credit.
+const CREDIT_TEXT = 'I\'m out of building credit right now, so I couldn\'t answer this. An admin has been told; '
+  + 'ask me again once it\'s back.';
 const AFFIRMED_ACK_TEXT = 'Thanks, I\'ll tell you here when it\'s ready.';
+// T1.15: the same yes, with no promise stored to keep.
+const AFFIRMED_PLAIN_TEXT = 'Thanks.';
 
 /** Pure: whether the reply's last sentence asks something. */
 function asksQuestion(text) {
@@ -3805,6 +3840,22 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     return settle('done', { issueNumber: n }, n
       ? `Filed as request ${requestMd(domainOf(deps), full.slug, n)}${here.builds ? '. I\'ll start on it, and the chip on the message shows how it goes.' : ', for the group.'}`
       : 'Filed.');
+  }
+  if (offer.kind === 'try_again' && args.restart === true && !(Number(args.sessionId) > 0)) {
+    // T1.15: Try again under a failure note on a request starts it again
+    // without the chat's model: the same ask its page's "Ask Homeroom bot to
+    // build this" makes (homeroom-bot-dm.js askBotToBuild), first in the
+    // queue, paid from their building time.
+    const full = await mayorModule(deps).findApp(pool, app.slug);
+    const out = await dmModule(deps).askBotToBuild(pool, {
+      app: full || app, user,
+      issueNumber: Number(args.issueNumber), deps,
+    });
+    if (!out?.ok) {
+      return settle('failed', { error: out?.code || 'refused' }, out?.code === 'already_building'
+        ? 'I\'m already on it.' : `I couldn't start it again just now: ${String(out?.error || 'it was refused')}`);
+    }
+    return settle('done', { issueNumber: Number(args.issueNumber) }, 'Trying again now. I\'ll say here how it goes.');
   }
   if (offer.kind === 'try_again') {
     // #6284: the same grant the change's Testing card makes.
@@ -4455,6 +4506,8 @@ module.exports = {
   affirmedAck,
   AFFIRMATION,
   AFFIRMED_ACK_TEXT,
+  AFFIRMED_PLAIN_TEXT,
+  promiseWaiting,
   retireThreadSuggestions,
   decideOffer,
   actOnOffer,

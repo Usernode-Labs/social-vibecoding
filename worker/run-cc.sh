@@ -316,6 +316,21 @@ if [ "$MODE" = "sync" ]; then
     echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync sync_result=conflict conflict_files=$CONFLICT_FILES_CSV"
     exit 0
   }
+  # T1.7: the model's turn itself failed (a provider's error, a 402, a
+  # process that died): it decided nothing about the conflict, so the merge
+  # is aborted and NO sync_result is written. The run exits with the turn's
+  # code, which the host reads as a sync that could not run and tries again
+  # after its back-off (services/sync-main.js), never as a conflict nobody
+  # can resolve until main moves.
+  sync_abort_failed() {
+    echo "__USERNODE_WARN__ $1"
+    git merge --abort 2>&1 || echo "__USERNODE_WARN__ merge --abort failed"
+    AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+    BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
+    SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+    echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=0 mode=sync"
+    exit "$CC_EXIT"
+  }
   # Every file the merge touched or the model edited, NUL-separated for
   # names with spaces.
   SYNC_PARSE_LIST_FILE=""
@@ -405,6 +420,9 @@ Do not run git commands. I will commit and push for you after you finish editing
       claude --print --dangerously-skip-permissions --verbose \
         --model "$MODEL" --output-format stream-json -p "$SYNC_PROMPT"
       CC_EXIT=$?
+      if [ "$CC_EXIT" -ne 0 ]; then
+        sync_abort_failed "the conflict-resolution turn failed (exit $CC_EXIT); aborting merge"
+      fi
 
       # Sanity check: any conflict markers left? If yes, the merge is
       # not resolvable — abort cleanly so the next attempt starts from
@@ -436,6 +454,9 @@ Where a key is defined more than once, leave exactly one definition, keeping the
         claude --print --dangerously-skip-permissions --verbose \
           --model "$MODEL" --output-format stream-json -p "$SYNC_FIX_PROMPT"
         CC_EXIT=$?
+        if [ "$CC_EXIT" -ne 0 ]; then
+          sync_abort_failed "the parse-fix turn failed (exit $CC_EXIT); aborting merge"
+        fi
 
         if grep -rlE --exclude-dir='.git' '^(<<<<<<<|>>>>>>>)( |$)' . 2>/dev/null | grep -q .; then
           for f in $SYNC_PARSE_FILES; do sync_add_conflict_file "$f"; done

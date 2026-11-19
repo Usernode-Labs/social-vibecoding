@@ -365,7 +365,9 @@ test('the change bar publishes the page\'s pill and its ⋯ key for the column b
   const src = read('frontend/src/features/dev-board/topic/change-head.tsx');
   // The bar itself does not change: the column's heading draws the pill and
   // the rows beside the bot page, and this is what tells it which.
-  assert.match(src, /usePanelHead\(\{ kind: 'change', pill: v\.status \|\| null, menuKey: menuKey \|\| null \}\);/);
+  // T2.3: the pill is the header's own (headPill: the stored row's words while
+  // it is not up for a vote, else the vote's).
+  assert.match(src, /const pill = headPill\(v\);\s*(?:\/\/[^\n]*\n\s*)*usePanelHead\(\{ kind: 'change', pill, menuKey: menuKey \|\| null \}\);/);
   // A change's number was a button in its own bar, and that bar goes beside
   // the bot page; the column's heading still links "Change #N" to its page.
   const store = read('frontend/src/features/side-panel/head-store.ts');

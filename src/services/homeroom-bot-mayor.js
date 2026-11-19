@@ -381,9 +381,16 @@ function retryAct(err, key) {
   return !(status >= 400 && status < 500 && status !== 408 && status !== 429);
 }
 // Its DM answer's key: what it sends in answer to message `id` (`attempt`: a
-// later try's), so it is said once whichever path says it.
-function answerKey(id, attempt = 0) {
-  return `hrbot-mayor-${Number(id)}${attempt ? `-d${Number(attempt)}` : ''}`;
+// later try's), so it is said once whichever path says it. `resume`: the
+// answer owed once OpenRouter's credit came back (the bot-dm machine's
+// CreditBack round), whose tries have keys of their own.
+function answerKey(id, attempt = 0, resume = 0) {
+  return `hrbot-mayor-${Number(id)}${resume ? `-r${Number(resume)}` : ''}${attempt ? `-d${Number(attempt)}` : ''}`;
+}
+// The key of the turn answering `message` with `deps` (its later try, its
+// round once credit came back).
+function turnKey(message, deps) {
+  return answerKey(message.id, deps?.deferAttempt || 0, deps?.resume || 0);
 }
 // #3733: the bot's key does not work. Asking again cannot help until an
 // admin fixes it, so this never says to try again.
@@ -393,6 +400,21 @@ const KEY_TEXT = 'I can\'t reach my model right now because my access to it isn\
 // on its own (DEFER_DELAYS_MS). Nothing in it asks them to send it again.
 const DEFERRED_TEXT = 'I can\'t reach my model right now, so I couldn\'t answer yet. I\'ll answer this here in a minute or two; '
   + 'you don\'t need to send it again.';
+// T1.3: OpenRouter's credit ran out (a 402 for credit, openrouter-mayor.js
+// `credit_out`): no key error and nothing an admin must fix in the key. The
+// turn is asked again on its own (DEFER_DELAYS_MS), as a busy provider's is,
+// and the admins were told at once (openrouter-credit.js noteOutage).
+const CREDIT_TEXT = 'I\'m out of building credit right now, so I couldn\'t answer yet. I\'ll try again here in a few minutes, '
+  + 'and an admin has been told; you don\'t need to send it again.';
+// Its last try, still out of credit: nothing more is tried on the clock, and
+// the message is answered once credit is back (the bot-dm machine keeps it,
+// told through onCredit, and answers it on CreditBack).
+const CREDIT_GAVE_UP_TEXT = 'I\'m still out of building credit, so I couldn\'t answer your message above yet. '
+  + 'I\'ll answer it here once credit is back.';
+// The same, when that answer also owed their earlier messages (owedNote):
+// the answer once credit is back owes them too.
+const CREDIT_GAVE_UP_OWED_TEXT = 'I\'m still out of building credit, so I couldn\'t answer your message above, '
+  + 'or the ones you sent before it that I said I\'d come back to. I\'ll answer them all here once credit is back.';
 // The last of those tries failed too.
 const DEFERRED_GAVE_UP_TEXT = 'I still couldn\'t reach my model to answer your message above. Ask me again when you\'re ready.';
 // 31 Oct 2026: the same, when that answer also owed their earlier messages
@@ -3998,18 +4020,32 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   // #11 (WP3): a withdrawal or a report done before the model failed is
   // said, so it is never asked for, and done, twice. The template states
   // what was done, so it goes through the reply check as a reply would.
-  if (ctx.withdrew || ctx.reported) {
+  // T1.11: and whatever else the turn did that stays (the Stop watch's
+  // list: a request started, a change revised, a draft's change saved),
+  // never denied by the answer that could not be written.
+  const alsoDid = botStop.doneSentences(t.ctx?.deps?.stop?.did ?? ctx.deps?.stop?.did,
+    { skip: /^(?:withdrawn |filed your report|sent your report)/ });
+  if (ctx.withdrew || ctx.reported || alsoDid.length) {
     const done = [
       ctx.withdrew ? `I withdrew the ${ctx.withdrew.projectName} proposal${ctx.withdrew.title ? ` "${ctx.withdrew.title}"` : ''}.` : '',
       // #6566: the report's own number, so it is never asked for twice.
       ctx.reported ? (Number(ctx.reported.number) > 0
         ? `${ctx.reported.repeat ? 'Already filed' : 'Filed'} as #${ctx.reported.number} on Homeroom's requests board.`
         : 'I sent your report to the Homeroom team.') : '',
+      ...alsoDid,
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: await claims.checkedNote(pool, ctx, done), cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
   const fromRecords = await recordsAnswer(pool, ctx);
   if (fromRecords) return { fallback: 'records', ...fromRecords, defer: false };
+  // T1.3: out of OpenRouter's credit: one outage noted (the admins hear at
+  // once), one honest line, and the turn asked again on its own. No plain
+  // answer is tried: it would meet the same 402.
+  if (error === 'credit_out') {
+    await (t.ctx?.deps?.credit || require('./openrouter-credit')).noteOutage(pool, { words: 'a chat answer met OpenRouter\'s 402 for credit' })
+      .catch(() => null);
+    return { fallback: 'credit', text: CREDIT_TEXT, cards: [], defer: true };
+  }
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
   const plain = await plainAnswer(t, history, { later: deferrable });
   // #6583: the plain answer is checked as the rounds' answer is, with no
@@ -4110,8 +4146,9 @@ async function turn(pool, config, { bot, user, settings, conversationId, message
   const dm = dmModule(deps);
   // #3707: every answer quotes the message it answers, so with several in
   // flight each one points at its own. #3772: a later try at the same
-  // message (deferAttempt) answers under a key of its own.
-  const key = answerKey(message.id, deps.deferAttempt || 0);
+  // message (deferAttempt), and the answer owed once credit came back
+  // (resume), each answer under a key of its own.
+  const key = turnKey(message, deps);
   // B4: every one of these answers what they just wrote, so it rings as a reply.
   const say = (content, extra = {}) => dm.sendDm(pool, {
     bot, userId: user.id, content, idempotencyKey: key, replyToId: message.id, moment: 'reply', ...extra,
@@ -4788,16 +4825,30 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   state.recorded = true;
   // The bot's own weekly cap counts it too, as its other turns do.
   await turnEngine.chargeTurn(pool, bot.id, t.usage.costUsd, { what: 'a DM turn', category: 'homeroom-bot-mayor' });
+  // The turn ended on OpenRouter's credit (a try asked again, or its last
+  // try's line): its DM machine keeps the message, told through onCredit,
+  // and answers it once credit is back (bot-dm CreditBack).
+  const creditOut = fallback === 'credit';
+  if (creditOut && typeof deps.onCredit === 'function') deps.onCredit();
   if (defer) {
     // #3772: asked again on its own (the DM machine's timer, told through
     // onLater). A later try says nothing until it has an answer, and the
     // last one says it could not.
     const next = (deps.deferAttempt || 0) + 1;
-    if (next > DEFER_DELAYS_MS.length) return say(ctx.owed ? DEFERRED_GAVE_UP_OWED_TEXT : DEFERRED_GAVE_UP_TEXT);
+    // The answer owed once credit came back met the 402 again: nothing more
+    // is said (what was said last promised the answer) and nothing is tried
+    // on the clock; the next return of credit answers it.
+    if (creditOut && deps.resume) return null;
+    if (next > DEFER_DELAYS_MS.length) {
+      return say(creditOut ? (ctx.owed ? CREDIT_GAVE_UP_OWED_TEXT : CREDIT_GAVE_UP_TEXT)
+        : ctx.owed ? DEFERRED_GAVE_UP_OWED_TEXT : DEFERRED_GAVE_UP_TEXT);
+    }
     if (typeof deps.onLater === 'function') deps.onLater(next);
-    if (deps.deferAttempt) return null;
+    // A later try, and every try of the answer owed once credit came back,
+    // say nothing until they have an answer.
+    if (deps.deferAttempt || deps.resume) return null;
   }
-  if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return sayHere(text);
+  if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred' || fallback === 'credit') return sayHere(text);
   if (fallback) return sayHere(text, { objects: cards, metadata: { kind: 'chat' } });
   // P1: what the turn looked at, as one line above the words (lookedMeta).
   const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
@@ -4826,7 +4877,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     try {
       await sendProjectOffer(pool, {
         bot, user, message, brief: ctx.newProjectBrief,
-        key: `${answerKey(message.id, deps.deferAttempt || 0)}-project`, deps,
+        key: `${turnKey(message, deps)}-project`, deps,
       });
     } catch (err) {
       log.warn('homeroom-bot-mayor', 'Could not put the New project card under the reply', {
@@ -4872,7 +4923,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
   if (caps.design?.offered) {
     return sendDesignOffer(pool, {
       bot, user, conversationId, message, design: caps.design.design || {}, offer: caps.design.offered,
-      text: withoutEmDashes(text), key: answerKey(message.id, deps.deferAttempt || 0), deps,
+      text: withoutEmDashes(text), key: turnKey(message, deps), deps,
     });
   }
   // 2 Nov 2026: a reply that ends in an offer keeps both. Up to two more
@@ -5245,7 +5296,7 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
       bot,
       userId: user.id,
       content: body,
-      idempotencyKey: `hrbot-mayor-${message.id}${keySuffix}`,
+      idempotencyKey: `${turnKey(message, deps)}${keySuffix}`,
       replyToId: message.threadRootId || message.thread_root_id ? null : message.id,
       ...(message.threadRootId || message.thread_root_id ? { threadRootId: message.threadRootId || message.thread_root_id } : {}),
       metadata: {
@@ -5327,7 +5378,9 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     bot,
     userId: user.id,
     content: body,
-    idempotencyKey: `hrbot-mayor-${message.id}${keySuffix}`,
+    // The turn's own key: a later try's offer, or one made once credit came
+    // back, is never taken for the first try's line under the message's key.
+    idempotencyKey: `${turnKey(message, deps)}${keySuffix}`,
     // It quotes the message it answers, and that quote is where the
     // request's later news finds what it started from (#3707,
     // homeroom-bot-dm.js requestStart); in a thread opened for the draft,
@@ -7966,6 +8019,9 @@ module.exports = {
   BUSY_TEXT,
   BROKEN_TEXT,
   KEY_TEXT,
+  CREDIT_TEXT,
+  CREDIT_GAVE_UP_TEXT,
+  CREDIT_GAVE_UP_OWED_TEXT,
   PLAIN_NOTE,
   TOOLS,
   MAX_OFFERS,
@@ -7995,6 +8051,7 @@ module.exports = {
   progressText,
   buildWords,
   retryPlan,
+  fallbackAnswer,
   retryAct,
   normalizeCalls,
   myWork,

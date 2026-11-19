@@ -52,8 +52,10 @@ test('a plan its requester said Build it to gets a short note, not a second card
   assert.doesNotMatch(live.retryCommentText(), /linked here/);
 });
 
-test('built: "I built this. It\'s up for a vote: {title}", no pull request number', () => {
-  assert.equal(live.proposalHomeroomText({ title: 'Dark mode' }), 'I built this. It\'s up for a vote: Dark mode');
+// T1.15 (19 Nov 2026): said right after the promote, while the change is
+// still checking: its vote is not open yet, so the words say when it opens.
+test('built: "I built this: {title}. Its vote opens once …", no pull request number', () => {
+  assert.equal(live.proposalHomeroomText({ title: 'Dark mode' }), 'I built this: Dark mode. Its vote opens once its tests and screenshots are done.');
   assert.equal(live.proposalText({ link: 'https://homeroom.example/plant-pal/dev/changes/12', prNumber: 12 }),
     'Homeroom bot built this. It\'s up for a vote: https://homeroom.example/plant-pal/dev/changes/12');
   assert.doesNotMatch(live.proposalHomeroomText({ title: 'Dark mode' }), /PR #|proposal/);

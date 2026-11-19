@@ -180,7 +180,10 @@ test('a change\'s page: Status is a pill under its label, with no five-stop line
   assert.equal(page.changeStop, undefined, 'the five stops are the request page\'s; the standard change page has none');
   const src = read(CHANGE);
   assert.doesNotMatch(src, /changeStop|changes:track\./);
-  assert.match(src, /\{frame && v\.status \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus label=\{t\('project:frame\.topic\.status'\)\} pill=\{\{ word: dotLine\(\[v\.status\.label, liveTally\(v\.status\)\?\.text\]\), kind: pillKind\(v\.status, v\.votes\) \}\} \/>/, 'the word and, once live, its final counted vote: what the standard bar\'s pill says');
+  // T2.3: the pill is the header's own (headPill: the stored row's words
+  // while the change is not up for a vote, else the vote's).
+  assert.match(src, /const pill = headPill\(v\);/);
+  assert.match(src, /\{frame && pill \? \(\s*<div className="dev-change-status">\s*<TopicFrameStatus label=\{t\('project:frame\.topic\.status'\)\} pill=\{\{ word: dotLine\(\[pill\.label, liveTally\(pill\)\?\.text\]\), kind: pillKind\(pill, v\.votes\) \}\} \/>/, 'the word and, once live, its final counted vote: what the standard bar\'s pill says');
   assert.match(src, /useSideStack\(frame, `\[data-change-root="\$\{id \?\? ''\}"\] > \[data-image-viewer-scope\]`, \['\.dev-change-status', '\.dev-change-pair'\]\);/);
   const html = renderComponent(FRAME, 'TopicFrameStatus', { label: 'Status', pill: { word: '✓ Live', kind: 'ok' } }, { cache: false });
   assert.equal(html, '<section class="fr-sec" data-topic-status=""><div class="fr-sechead"><h2 class="fr-cap">Status</h2></div><div class="fr-card"><div class="fr-status"><div class="fr-btnrow"><span class="fr-pill fr-ok" data-kind="ok">✓ Live</span></div></div></div></section>');

@@ -176,7 +176,7 @@ test('without a sender it is the system line it always was', async () => {
 test('every live post names the bot as its sender', () => {
   const src = read('src/services/homeroom-bot.js');
   const posts = [...src.matchAll(/live\.post\(\{([\s\S]*?)\}\)/g)].map((m) => m[1]);
-  assert.equal(posts.length, 4, 'looking, a verdict, a follow-up, a checks hand-off');
+  assert.equal(posts.length, 6, 'looking, a verdict, a follow-up, a checks hand-off, a change handed over (T1.7, T1.9), a deploy that failed (T1.10)');
   for (const args of posts) assert.match(args, /sender: bot/);
 });
 

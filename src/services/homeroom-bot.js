@@ -2289,7 +2289,8 @@ async function lastRunsByIssue(pool, appId) {
             go_ahead_decides, go_ahead_blocker,
             (mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL
              AND (live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL)
-             AND created_at > NOW() - make_interval(days => $2)) AS live_building,
+             AND created_at > NOW() - make_interval(days => $2)
+             AND build_finish->>'credit_wait_at' IS NULL) AS live_building,
             -- Failed runs that read this same thread (RETRY_FAILED_REASON).
             (SELECT count(*)::int FROM homeroom_bot_runs f
               WHERE f.app_id = r.app_id AND f.issue_number = r.issue_number AND f.verdict = 'failed'
@@ -3957,6 +3958,36 @@ function describeStop(result) {
 }
 
 /**
+ * T1.3: whether a failed turn ran out of OpenRouter's credit
+ * (openrouter-credit.js creditOut): its error, as the platform wrote it (a
+ * routed error code, the provider's notice), and what the worker read of how
+ * the turn ended (`turn`: the Codex harness's agentErrorCode, a 402 status).
+ * An error that quotes the model's reply (`unparseable: …`) is never read as
+ * a provider's words; its turn still is.
+ */
+function creditOutOf(error, turn = null) {
+  const credit = require('./openrouter-credit');
+  const text = typeof error === 'string' && !error.startsWith('unparseable:') ? error : null;
+  if (text && credit.creditOut(text)) return true;
+  return !!turn && typeof turn === 'object' && credit.creditOut(turn);
+}
+
+// One outage's key (openrouter-credit.js noteOutage), so a line said for it
+// is said once: its start, else the day.
+function outageKey(outage) {
+  const at = outage?.since ? Date.parse(outage.since) : NaN;
+  return Number.isFinite(at) ? String(at) : new Date().toISOString().slice(0, 10);
+}
+
+// T1.14: an empty reply the worker or the provider explains: its process
+// left no exit marker (oom_killed, container_gone, turn_process_gone,
+// probe_unobservable), or the provider's own error code ended it. Either is
+// the platform failing under the turn, never the model's answer.
+function emptyReplyIsInfra(result) {
+  return !!(result && (result.markerlessCause || result.agentErrorCode));
+}
+
+/**
  * Clear a turn record nothing owns any more (#2737).
  *
  * `chat_sessions.active_turn` is what makes a session refuse a new turn.
@@ -4178,7 +4209,12 @@ async function reuseHeldVerdict(pool, config, {
     acted = done?.acted ?? null;
     if (Number.isInteger(done?.build)) look.out.build = done.build;
   } catch (err) {
+    durableSteps.rethrowStop(err, 'acting on a verdict');
     log.error('homeroom-bot', 'Acting on a reused verdict failed', { app: app.slug, issueNumber, err: err.message });
+    // T1.12: thrown on, so the look's act step is tried again (its verdict is
+    // kept: the step it was decided in), and a look whose every try fails is
+    // owed again as a fault, never ended "ready" with nothing queued.
+    throw err;
   }
   return { ran: true, verdict: 'ready', runId, reused: Number(held.id), ...(acted ? { acted } : {}) };
 }
@@ -4290,7 +4326,10 @@ async function planFromEarly(pool, config, {
       if (went) acted = 'build_queued';
     }
   } catch (err) {
+    durableSteps.rethrowStop(err, 'acting on a verdict');
     log.error('homeroom-bot', 'Acting on a first version\'s plan from Make it failed', { app: app.slug, issueNumber, err: err.message });
+    // T1.12: tried again, as a read's act is.
+    throw err;
   }
   return { ran: true, verdict: 'ready', runId, early: true, ...(acted ? { acted } : {}) };
 }
@@ -4415,8 +4454,17 @@ async function runTriage(pool, config, {
   // its conversation): then the run is written as a failed read, which the
   // refresh counts like any (FAILED_TRIAGE_TRIES), so one request cannot
   // keep the lane pausing for ever. Neither is a benchmark case.
-  const recordFailure = async (error, extra = {}, { infra = false, recorded = false } = {}) => {
+  const recordFailure = async (error, extra = {}, { infra = false, recorded = false, turn = null } = {}) => {
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
+    // T1.3: OpenRouter's credit ran out under the turn (its error, or what
+    // the worker read of how it ended: the Codex harness's
+    // insufficient_credits). An outage, not a failed read: no run is
+    // written, the request keeps its debt and its tries, and the look ends
+    // as `credit` (lookOutcome: the lane pauses until credit is back).
+    if (creditOutOf(error, turn)) {
+      log.warn('homeroom-bot', 'A look stopped: OpenRouter\'s credit ran out', { app: app.slug, issueNumber, followUp: followUpTurn });
+      return { ran: false, reason: 'credit', detail: clip(String(error || 'insufficient_credits'), 300) };
+    }
     const lastFault = Number(item.faults || 0) + 1 >= loopRules.FAULT_TRIES;
     if (infra && !recorded && !lastFault) {
       look.fault();
@@ -5179,7 +5227,7 @@ async function runTriage(pool, config, {
     // refuses this one (session_busy): a wait. Nothing here clears it: a
     // turn whose owner is gone is the orphan sweep's, by its record.
     const code = String(routed.error);
-    return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:') });
+    return recordFailure(code, { sessionId: session.id }, { infra: INFRA_ERRORS.has(code) || code.startsWith('dispatch:'), turn: result });
   }
   const text = String(result.lastResultText || '');
   let parsed = parseVerdict(text, { overlapCandidates, issueNumber });
@@ -5206,9 +5254,14 @@ async function runTriage(pool, config, {
       // Otherwise say WHY it was empty. The worker's watch state already
       // knows — it was simply being thrown away, which left 21 of the first
       // 225 runs recorded as `(empty reply)` and nothing else.
+      // T1.14: an empty reply the worker or the provider explains (its
+      // process died with no marker: oom_killed, container_gone; or the
+      // provider's own error code) is the platform's, not the model's: the
+      // infra path keeps the request's tries, pauses the lane and is no
+      // benchmark case. Out of credit is said apart (recordFailure).
       return recordFailure(`unparseable: (empty reply) ${describeStop(result)}`, {
         sessionId: session.id, costUsd, ...usage,
-      });
+      }, { infra: emptyReplyIsInfra(result), turn: result });
     }
     // A reply that IS the runtime's provider error (gas-lock #2, 2026-10-04:
     // "API Error: 400 messages[6]: tool messages must include a non-empty
@@ -5222,7 +5275,7 @@ async function runTriage(pool, config, {
     if (apiFailure) {
       return recordFailure(`provider: ${apiFailure.line}`, {
         sessionId: session.id, costUsd, ...usage,
-      }, { infra: true, recorded: true });
+      }, { infra: true, recorded: true, turn: result });
     }
     // The reply decided in words and never wrote its block (14 of the 19
     // failed triages in the week to 2026-10-06: "Small, bounded, no schema
@@ -5368,6 +5421,12 @@ async function runTriage(pool, config, {
     } catch (err) {
       durableSteps.rethrowStop(err, 'acting on a verdict');
       log.error('homeroom-bot', 'Acting on a live verdict failed', { app: app.slug, issueNumber, err: err.message });
+      // T1.12: an act that threw used to be logged and dropped: the run said
+      // ready, nothing was queued, and the request ended "Stopped: the build
+      // didn't start". Thrown on, the look's act step is tried again (the
+      // verdict is its own step, kept), and a look whose every try fails is
+      // owed again as a fault (bot-request lookEnded).
+      throw err;
     }
   }
   return { ran: true, verdict: parsed.verdict, runId, ...(acted ? { acted } : {}) };
@@ -5614,7 +5673,8 @@ async function runLiveBuild({ pool, config, id, input = {}, steps, deps = {} }) 
   // arguments buildOne made, as they are.
   if (deps.inProcessArgs) {
     const a = deps.inProcessArgs;
-    return { acted: await buildLive({ ...a, deps: { ...a.deps, durable: steps } }) };
+    const acted = await buildLive({ ...a, deps: { ...a.deps, durable: steps } });
+    return { acted, ...(acted === 'credit_wait' ? { creditOut: true } : {}) };
   }
   const args = input.args || {};
   const { rows: [run] = [] } = await pool.query(
@@ -5634,7 +5694,9 @@ async function runLiveBuild({ pool, config, id, input = {}, steps, deps = {} }) 
     ...args, pool, config, bot, app, repo, runId: Number(run.id), issueNumber: Number(run.issue_number),
     settings, deps: buildDeps, postedAt: [],
   });
-  return { acted };
+  // T1.2: a build that stopped on OpenRouter's 402 for credit says so, and
+  // its request's instance pauses the lane (bot-build's BuildEnded `credit`).
+  return { acted, ...(acted === 'credit_wait' ? { creditOut: true } : {}) };
 }
 
 /**
@@ -5643,14 +5705,19 @@ async function runLiveBuild({ pool, config, id, input = {}, steps, deps = {} }) 
  * (the kernel's `lease_lost`) is said to be the restarts' doing.
  */
 async function recordLostLiveBuild({ pool, config, id, error = null }) {
-  const why = error?.code === 'lease_lost'
-    ? ABANDONED_LIVE_REASON
-    : `the build could not finish (${clip(error?.message || 'it failed', 200)})`;
+  // T1.6: a person's Stop is not a failure: it is recorded, and said, as
+  // stopped by them (`stopped: by @<username>`, which the one cause decoder
+  // reads as "Stopped by @<username>"), never as a build that went wrong.
+  const stoppedBy = stopperOf(error);
+  const why = stoppedBy ? `stopped: by @${stoppedBy}`
+    : error?.code === 'lease_lost'
+      ? ABANDONED_LIVE_REASON
+      : `the build could not finish (${clip(error?.message || 'it failed', 200)})`;
   const { rows: [run] = [] } = await pool.query(
     `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, live_build_waiting_at = NULL
       WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL
       RETURNING id, app_id, issue_number, build_session_id`,
-    [Number(id), clip(`lost: ${error?.message || 'the build failed'}`, MAX_ERROR_CHARS)],
+    [Number(id), clip(stoppedBy ? why : `lost: ${error?.message || 'the build failed'}`, MAX_ERROR_CHARS)],
   );
   if (!run) return 'recorded_already';
   if (run.build_session_id) await putAwayRecoveredSession(pool, { id: run.build_session_id }, { archive: true });
@@ -5665,6 +5732,17 @@ async function recordLostLiveBuild({ pool, config, id, error = null }) {
   if (settings) await botConfigs().abandonSideBuilds(pool, run.id, why).catch(() => {});
   log.warn('homeroom-bot', 'A live build was lost', { runId: run.id, said, why });
   return said;
+}
+
+// T1.6: who stopped a build, when a person did (bot-build's Stop: its
+// error's `by`, or its "Stopped by <username>" from before it carried one).
+// Null for anything else, the platform's own Stop included.
+function stopperOf(error) {
+  if (error?.code !== 'stopped') return null;
+  const by = typeof error.by === 'string' && error.by.trim() ? error.by.trim()
+    : (/^Stopped by (\S+)$/.exec(String(error.message || '')) || [])[1] || null;
+  const name = by ? by.replace(/^@/, '') : null;
+  return name && /^[A-Za-z0-9_.-]{1,64}$/.test(name) && name !== 'the' ? name : null;
 }
 
 /**
@@ -5939,7 +6017,9 @@ async function runFollowUp(pool, config, {
     const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
     if (asks.length) {
-      await asksFailed(error, { refund: !!opts.infra || REFUSAL_ERRORS.has(error) });
+      // T1.3: a turn that ran out of OpenRouter's credit was no try either:
+      // its asks wait for the look the request is owed once credit is back.
+      await asksFailed(error, { refund: !!opts.infra || REFUSAL_ERRORS.has(error) || out?.reason === 'credit' });
       if (!others.length) return out;
     }
     // #4610: a reply turn that failed used to post nothing, so the person
@@ -6247,7 +6327,7 @@ async function runFollowUp(pool, config, {
   if (turn.routed?.error) {
     const code = String(turn.routed.error);
     return fail(code, spent, {
-      infra: !!turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'),
+      infra: !!turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'), turn: result,
     });
   }
 
@@ -6267,10 +6347,11 @@ async function runFollowUp(pool, config, {
   // A failed turn is never a revision (followup.headMoved); this says why.
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
-    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent);
+    // T1.3: its turn's own result is read for OpenRouter's 402 for credit.
+    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent, { turn: result });
     return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, {
       ...spent, unreadableReply: unreadableReplyOf(result.lastResultText),
-    });
+    }, { turn: result });
   }
 
   let runId = null;
@@ -7184,7 +7265,14 @@ async function runChecksFix(pool, config, {
   if (code && !turn.stopped && (turn.infra || INFRA_ERRORS.has(code) || code.startsWith('dispatch:'))) {
     // The platform's fault: the queue row is kept and retried, and the head
     // is not marked, so the retry can still fix it.
-    return recordFailure(code, { proposalSessionId: session.id, lookKind: 'fix', ...spent }, { infra: true });
+    return recordFailure(code, { proposalSessionId: session.id, lookKind: 'fix', ...spent }, { infra: true, turn: result });
+  }
+  // T1.3: the turn ran out of OpenRouter's credit. Nobody is handed the
+  // checks and the head is not marked looked at: the fix keeps its debt, and
+  // the request is taken up again once credit is back (recordFailure says
+  // `credit`, which the look ends on).
+  if (!turn.stopped && creditOutOf(code, result)) {
+    return recordFailure(code || 'insufficient_credits', { proposalSessionId: session.id, lookKind: 'fix', ...spent }, { turn: result });
   }
 
   const parsed = turn.stopped || code ? null : followup.parseFollowUp(result.lastResultText);
@@ -7641,13 +7729,15 @@ async function queuePlanRetry(pool, { app, issueNumber, runId, error }) {
   if (read?.read_reason === PLAN_RETRY_REASON) return false;
   try {
     // Its own key, so a restart that says this run's failure again queues it
-    // once; `queued` is the instance's answer, false when a look already
-    // runs (which takes it after) or when it never arrived.
+    // once. The instance's answer: `queued` when it waits its turn, `owed`
+    // when it is kept for once the build saying this ends (T1.1: this runs
+    // inside that build, while the request is `building`); neither when it
+    // never arrived.
     const owed = await platform().botOwedAndWait({
       appId: app.id, issueNumber, reason: PLAN_RETRY_REASON, priority: 2,
       key: `plan_retry:${runId}`, source: PLAN_RETRY_REASON, waitMs: PLAN_RETRY_AFTER_MS,
     });
-    return owed?.queued === true;
+    return owed?.queued === true || owed?.owed === true;
   } catch (err) {
     log.warn('homeroom-bot', 'Could not queue the read that tries a failed plan again', {
       app: app?.slug, issueNumber, runId, err: err.message,
@@ -7772,11 +7862,150 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   // really owed. A second failure in a row is not tried a third time by
   // itself: the words ask for a reply (or Restart build) instead.
   const retrying = await queuePlanRetry(pool, { app, issueNumber, runId, error: built.error });
+  // T1.15: "Reply here and I'll try again" was kept only when the chat's
+  // model read the reply as an ask. The note now carries a Try again card
+  // for its requester, whose tap starts the request again (the voice's
+  // try_again act, askBotToBuild), and its Homeroom copy names it. GitHub's
+  // copy, with no card, keeps the reply.
+  const card = live.retryCardFits(built.error, { firstVersion, retrying })
+    ? await retryCardFor(pool, { app, issueNumber, runId }) : null;
+  // T1.15: a newer plan posted while this built was promised "I'll finish
+  // it, then update the change"; there is no change, and its poster hears so.
+  if (built.sessionId) {
+    await require('./homeroom-bot-plan-updates').followNewerPlanAfterFailure(pool, {
+      app, issueNumber, buildSessionId: built.sessionId, bot,
+    }).catch(() => null);
+  }
   // Said once per run, whatever brought the build here again (its key), and
   // only when it says something new (bot-post.js, the failure rule).
-  await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying }),
-    { dm: { reason: built.error, retrying } });
+  await say('build_failed', live.buildFailedText(built.error, { firstVersion, retrying }), {
+    dm: { reason: built.error, retrying },
+    ...(card ? {
+      card,
+      homeroomText: require('./homeroom-bot-words').firstPerson(
+        live.buildFailedText(built.error, { firstVersion, retrying, tapToRetry: true })),
+    } : {}),
+  });
   return 'build_failed';
+}
+
+/**
+ * T1.9: a fix of a change's failing checks that bot-change asked for twice
+ * and lost both times (the bot's round never answered for that head). It
+ * used to be given up on with nobody told. Its requester is handed it now,
+ * as a round that could not fix them hands it: a run that looked at the
+ * head (`person`, a hand-off: their Needs you), and the note on the request
+ * and in the change's discussion, which reaches them as a stop. Resolves
+ * { said, why, runId }. Throws on a failure a retry can cure.
+ */
+async function handOffLostFix(pool, config, { sessionId, head }, deps = {}) {
+  return handOffChange(pool, config, { sessionId, head, kind: 'fix_lost' }, deps);
+}
+
+/**
+ * T1.7: a change of the bot's that conflicts with main, which the sync's
+ * own resolution turn could not resolve. The bot has no turn that resolves
+ * a conflict, so its requester is handed it (as handOffLostFix hands a lost
+ * fix): a hand-off run (their Needs you) and the note, once per head.
+ */
+async function handOffConflict(pool, config, { sessionId, head = null, files = [], stuck = false, why = null }, deps = {}) {
+  return handOffChange(pool, config, { sessionId, head, kind: stuck ? 'stuck' : 'conflict', files, why }, deps);
+}
+
+// The hand-off those make: `kind` 'fix_lost', 'conflict' or 'stuck' (an
+// approved merge GitHub held until Homeroom stopped asking: `why`).
+async function handOffChange(pool, config, { sessionId, head = null, kind, files = [], why: held = null }, deps = {}) {
+  const { rows: [s] = [] } = await pool.query(
+    `SELECT id, app_id, status, pr_number, check_state, linked_issues, created_from_issue_number, reviewed_head_sha
+       FROM chat_sessions WHERE id = $1`, [Number(sessionId)]);
+  if (!s || !(s.status === 'promoted' || (kind === 'stuck' && s.status === 'merging'))) return { said: false, why: 'not_up' };
+  const issues = (Array.isArray(s.linked_issues) ? s.linked_issues : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const issueNumber = Number(s.created_from_issue_number) > 0 ? Number(s.created_from_issue_number) : (issues[0] || null);
+  if (!issueNumber) return { said: false, why: 'no_request' };
+  const { rows: [app] = [] } = await pool.query(
+    'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [Number(s.app_id)]);
+  const repo = app ? parseRepo(app.repo_url) : null;
+  if (!app || !repo) return { said: false, why: 'gone' };
+  const bot = deps.bot || await ensureBotUser(pool, config);
+  head = head || (s.reviewed_head_sha ? String(s.reviewed_head_sha).toLowerCase() : null);
+  if (!head) return { said: false, why: 'no_head' };
+  const conflict = kind === 'conflict';
+  const stuck = kind === 'stuck';
+  const failing = !conflict && !stuck && String(s.check_state || '') === 'failing';
+  const why = stuck ? `it's approved, but it couldn't go live: ${held || 'GitHub kept holding its merge'}`
+    : conflict ? 'it conflicts with main, and the sync couldn\'t resolve it on its own'
+      : failing ? 'the tries at fixing its checks didn\'t finish' : 'the tries at fixing it didn\'t finish';
+  // Once per head: a run already recorded for this head is this hand-off's.
+  const { rows: [had] = [] } = await pool.query(
+    `SELECT id FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND proposal_session_id = $3 AND checks_head_sha = $4 AND look_kind = 'hand_off'
+      ORDER BY id DESC LIMIT 1`,
+    [app.id, issueNumber, s.id, String(head)],
+  );
+  const runId = had ? Number(had.id) : await insertRunRow(pool, {
+    appId: app.id, issueNumber, mode: 'live', verdict: 'person', reason: why, lookKind: 'hand_off',
+    proposalSessionId: s.id, checksHeadSha: String(head), charged: false, readReason: CHECKS_REASON,
+  });
+  const github = deps.github || require('./github');
+  const text = stuck ? followup.mergeStuckText({ why: held })
+    : conflict ? followup.conflictHandOffText({ files }) : followup.fixLostText({ failing });
+  const posted = await live.post({
+    pool, github, ws: liveDeps(deps).ws, app, repo, issueNumber,
+    kind: stuck ? 'merge_stuck' : conflict ? 'conflict_person' : 'followup_person', runId, text,
+    sender: bot, senderId: bot.id, notifications: deps.notifications || null,
+    proposalSessionId: s.id, strict: true,
+    dm: failing
+      ? { reason: `its checks are failing: ${why}`, checks: true, failing: 0, sessionId: s.id }
+      : { reason: conflict || stuck ? why : `part of it does not work yet: ${why}` },
+  });
+  log.info('homeroom-bot', stuck ? 'Handed an approved change whose merge GitHub kept holding to its requester'
+    : conflict ? 'Handed a change that conflicts with main to its requester'
+      : 'Handed a change whose fix rounds were lost to its requester', {
+    app: app.slug, issueNumber, sessionId: s.id, head, runId,
+  });
+  return { said: !!posted, why: null, runId };
+}
+
+/**
+ * T1.10: one of the bot's changes merged and its production deploy failed
+ * (merge-followups toFailed, through bot-change): its request says so once,
+ * tagging whoever asked for it, as its "It's live" will once a deploy
+ * succeeds. Resolves { said, why }. Throws on a failure a retry can cure.
+ */
+async function tellDeployFailed(pool, config, { sessionId, message = null }, deps = {}) {
+  const { rows: [s] = [] } = await pool.query(
+    `SELECT id, app_id, status, pr_title, linked_issues, created_from_issue_number
+       FROM chat_sessions WHERE id = $1`, [Number(sessionId)]);
+  if (!s) return { said: false, why: 'gone' };
+  const issues = (Array.isArray(s.linked_issues) ? s.linked_issues : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  const issueNumber = Number(s.created_from_issue_number) > 0 ? Number(s.created_from_issue_number) : (issues[0] || null);
+  if (!issueNumber) return { said: false, why: 'no_request' };
+  const { rows: [app] = [] } = await pool.query(
+    'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [Number(s.app_id)]);
+  const repo = app ? parseRepo(app.repo_url) : null;
+  if (!app || !repo) return { said: false, why: 'gone' };
+  const bot = deps.bot || await ensureBotUser(pool, config);
+  const who = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+  const text = live.deployFailedText({ title: s.pr_title || null });
+  const posted = await live.post({
+    pool, github: deps.github || require('./github'), ws: liveDeps(deps).ws, app, repo, issueNumber, kind: 'deploy_failed',
+    text, sender: bot, senderId: bot.id, notifications: deps.notifications || null, strict: true,
+    version: `change-${Number(s.id)}`,
+    ...(who?.username ? { mentions: [who.username] } : {}),
+  });
+  log.info('homeroom-bot', 'Said a merged change did not go live', { app: app.slug, issueNumber, sessionId: s.id, message });
+  return { said: !!posted, why: null };
+}
+
+// T1.15: the Try again card under a failed build's note, for its requester
+// on Homeroom (null without one: GitHub's reply is the only way then).
+async function retryCardFor(pool, { app, issueNumber, runId }) {
+  const who = await require('./homeroom-bot-dm').requesterOf(pool, app.id, issueNumber).catch(() => null);
+  if (!(Number(who?.userId) > 0)) return null;
+  return {
+    kind: 'try_again', forUserId: Number(who.userId),
+    args: { issueNumber: Number(issueNumber), restart: true, ...(Number(runId) > 0 ? { runId: Number(runId) } : {}) },
+  };
 }
 
 // ── Try again finishes a first version that was built (15 Oct 2026) ─────
@@ -11919,10 +12148,20 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
   if (r?.reason === 'interrupted') return { outcome: 'interrupted', carried: r.carried || null, ...extra };
   // #6867: a look whose turn ended on OpenRouter's 402 for credit is an
   // outage, not a fault: it keeps its debt and its tries, and the lane
-  // pauses until credit is back.
+  // pauses until credit is back. T1.3: a read, a follow-up or a checks fix
+  // that recordFailure found out of credit says so itself (`credit`).
   const creditWords = o.error || r?.detail || null;
-  if (creditWords && require('./openrouter-credit').creditOut({ error: creditWords })) {
-    await require('./openrouter-credit').noteOutage(pool, { words: creditWords }).catch(() => {});
+  if (r?.reason === 'credit' || (creditWords && require('./openrouter-credit').creditOut({ error: creditWords }))) {
+    const outage = await require('./openrouter-credit').noteOutage(pool, { words: creditWords }).catch(() => null);
+    // T1.3: a look a person asked for (a reply, Run now, an ask on its
+    // change) hears one line on the request, once an outage: the request
+    // keeps its debt, and the lane takes it up again once credit is back.
+    if (Number(item.priority) === 0) {
+      await L.once('credit_note', () => postThreadNote({
+        pool, ws: liveDeps(deps).ws, app, issueNumber: Number(item.issue_number), kind: 'credit_wait', bot,
+        text: live.buildCreditText(), version: `credit-${outageKey(outage)}`,
+      }).then(() => true).catch(() => false));
+    }
     return { outcome: 'credit', words: String(creditWords).slice(0, 300), ...extra };
   }
   if (r?.reason === 'budget') {
@@ -12537,6 +12776,13 @@ module.exports = {
   isRecoveredBotSession,
   runLiveBuild,
   recordLostLiveBuild,
+  stopperOf,
+  handOffLostFix,
+  handOffConflict,
+  tellDeployFailed,
+  creditOutOf,
+  emptyReplyIsInfra,
+  retryCardFor,
   liveBuildInput,
   liveBuildNonce,
   // #4662: put a live run back in line with its kept plan, markdown and HTML.

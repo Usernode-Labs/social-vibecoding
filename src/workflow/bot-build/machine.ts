@@ -47,7 +47,7 @@ export interface Data {
   requestedAt: string;
   endedAt?: string;
   result?: Json;
-  error?: { message: string; code: string | null } | null;
+  error?: { message: string; code: string | null; by?: string } | null;
   lost?: boolean;
 }
 type S = State<Data>;
@@ -91,9 +91,14 @@ async function readFacts(tx: Tx, e: Event<any>, key: string): Promise<Facts> {
 }
 
 // Its end, told to whoever asked (a live build's request instance).
+// `credit`: the build stopped because OpenRouter's credit ran out (its run's
+// result says creditOut), which pauses the bot's lane (T1.2).
 function told(d: Data, outcome: string): MessageRequest[] {
   if (!d.replyTo) return [];
-  return [{ to: d.replyTo, event: { type: 'BuildEnded', payload: { target: d.target, id: d.id, nonce: d.nonce ?? null, outcome, stoppedBy: d.stoppedBy ?? null } as Json } }];
+  const credit = outcome === 'done' && !!d.result && typeof d.result === 'object' && (d.result as any).creditOut === true;
+  return [{ to: d.replyTo, event: { type: 'BuildEnded', payload: {
+    target: d.target, id: d.id, nonce: d.nonce ?? null, outcome, stoppedBy: d.stoppedBy ?? null, ...(credit ? { credit: true } : {}),
+  } as Json } }];
 }
 
 const runResult = (e: Event<any>) => (e.payload as WorkResultPayload).workKey === 'run';
@@ -138,8 +143,10 @@ export function botBuild() {
         StopRequested: {
           to: (s, e, f, ctx): Outcome<S> => {
             const by = e.payload.by ?? e.actor ?? null;
+            // `by`: the person who stopped it, for where the build is read
+            // ("stopped: by @<username>", never as a failure: T1.6).
             const d: Data = { ...s.data, stoppedBy: by || 'the platform', endedAt: ctx.now.toISOString(),
-              error: { message: by ? `Stopped by ${by}` : 'Stopped', code: 'stopped' } };
+              error: { message: by ? `Stopped by ${by}` : 'Stopped', code: 'stopped', ...(by ? { by } : {}) } };
             const work: WorkRequest[] = [{ kind: WORK.lost, key: 'lost', input: { target: d.target, id: d.id, nonce: d.nonce ?? null, error: d.error } as Json }];
             if (f.sessionId) work.push(turnStop({ sessionId: f.sessionId, machine: MACHINE, key: ctx.key, kinds: [WORK.run], workKey: 'run', by, release: true }, 'stop'));
             return { next: { name: 'failed', data: d }, cancel: [{ kind: WORK.run, key: 'run' }], work, messages: told(d, 'stopped') };

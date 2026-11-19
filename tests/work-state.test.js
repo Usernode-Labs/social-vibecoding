@@ -670,3 +670,268 @@ test('a change whose row opens for votes asks its voters, once, and nothing else
     assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /createPrProposedNotifications\(/, file);
   }
 });
+
+// ── Track 2 of the architecture pass (19 Nov 2026) ──────────────────────
+
+// T2.1: a closed change session is 'archived', never 'closed'. A request
+// whose bot change was closed read "Not started yet"; a person's change for
+// it was skipped whenever the bot's newest proposal had any status.
+test('T2.1: a closed bot change stops its request; a person\'s change beside it is where it stands', () => {
+  const built = { verdict: 'ready', build_ok: true, run_proposal: 500, proposal_session_id: 500, proposal_at: ago(20) };
+  const out = derive({ ...built, proposal_status: 'archived', proposal_closed_at: ago(5) });
+  assert.deepEqual([out.stage, out.reason, out.whoseMove], ['stopped', 'change_closed', 'requester']);
+  assert.equal(ws.stageSays(out), 'Stopped: its change was closed');
+  // Taken back to Underway, with nobody's change for it: worked on again.
+  for (const status of ['active', 'paused']) {
+    const again = derive({ ...built, proposal_status: status });
+    assert.deepEqual([again.stage, again.whoseMove], ['building', 'builder'], status);
+  }
+  // A person's change up for a vote beside the bot's closed (or unpromoted) one.
+  for (const status of ['archived', 'active', 'paused']) {
+    const theirs = derive({
+      ...built, proposal_status: status, lc_id: 600, lc_status: 'promoted', lc_by: 'maya',
+      lc_facts: { id: 600, status: 'promoted', check_state: 'passing', promoted_at: ago(10) },
+    });
+    assert.equal(theirs.stage, 'up_for_vote', `beside a bot change ${status}`);
+  }
+  // The bot's own old build session is not a person's change.
+  assert.equal(derive({ ...built, proposal_status: 'archived', lc_id: 77, lc_status: 'paused', lc_by: null }).reason, 'change_closed');
+  // A newer look decides first: a question asked since.
+  const asked = derive({ ...built, proposal_status: 'archived', verdict: 'question', run_proposal: null });
+  assert.deepEqual([asked.stage, asked.why], ['waiting_for_you', 'question']);
+  // A request closed with it is closed.
+  assert.equal(derive({ ...built, proposal_status: 'archived', request_closed: true }).stage, 'closed');
+  // The App tab's steps say Stopped for a first version whose change closed.
+  const progress = require('../src/services/homeroom-bot-progress');
+  assert.equal(progress.firstVersionStageOf(derive({ ...built, proposal_status: 'archived', first_version: true })), 'stopped');
+});
+
+// T2.2: a build that ran out of building credit leaves its request owed in
+// the bot's queue (credit_wait); a failed plan's read is owed too
+// (plan_retry). Its session (archived, paused) is not where it stands.
+test('T2.2: a credit wait is Ready to build, waiting for credit; a plan read again is Trying the plan again', () => {
+  const waited = { verdict: 'ready', build_ok: null, build_session_id: 80, queue_id: 9, enqueued_at: ago(3) };
+  for (const buildStatus of ['archived', 'paused', 'active']) {
+    const out = derive({ ...waited, build_status: buildStatus, queue_reason: 'credit_wait' });
+    assert.deepEqual([out.stage, out.line], ['building', { code: 'credit_wait' }], buildStatus);
+    assert.equal(ws.says(out), 'Ready to build · Waiting for building credit. Homeroom bot picks this up again by itself.');
+    assert.equal(ws.busyNow(out), false, 'nothing of the bot\'s runs this minute');
+    assert.deepEqual(ws.botWorkOf(out), { what: 'queued', since: out.since }, 'asking the bot again is refused: it is the bot\'s');
+    assert.equal(ws.placeFor(out, { requester: true }), 'waiting');
+  }
+  const retry = derive({ ...waited, build_status: 'archived', queue_reason: 'plan_retry' });
+  assert.deepEqual([retry.stage, retry.line], ['planning', { code: 'retry_plan' }]);
+  assert.equal(ws.lineSays(retry), 'Trying the plan again');
+  const progress = require('../src/services/homeroom-bot-progress');
+  assert.equal(progress.firstVersionStageOf(derive({ ...waited, build_status: 'paused', queue_reason: 'credit_wait' })), 'build_queued');
+});
+
+// T2.9: a plan that could not be written reads as tried again until its
+// retry is queued (or the grace is up), never as a stop for a moment.
+test('T2.9: a failed plan the bot reads again by itself is never a stop on the way', () => {
+  const failed = { verdict: 'ready', build_ok: false, build_error: 'no plan could be written (the turn ended)', build_session_id: 81, build_last_activity: ago(2) };
+  assert.deepEqual(derive(failed).line, { code: 'retry_plan' });
+  assert.equal(derive({ ...failed, build_last_activity: ago(30) }).stage, 'stopped', 'no retry came: stopped');
+  assert.equal(derive({ ...failed, run_read_reason: 'plan_retry' }).stage, 'stopped', 'the retry itself failed: stopped');
+});
+
+test('T2.9: one decoder of a stop, read by the note, the track, the standing, the stage and the push', () => {
+  const decode = require('../src/services/bot-stop-cause');
+  const dm = require('../src/services/homeroom-bot-dm');
+  const track = require('../src/services/homeroom-bot-track');
+  const cases = [
+    ['the build ran past its time limit (finished after a restart)', 'time', 'time', 'build_time'],
+    ['the build was restarted in the middle of each of its last 3 tries', 'restarts', 'restarts', 'build_restart'],
+    ['the change was built but could not be proposed: nope', 'unproposed', 'unproposed', 'build_not_proposed'],
+    ["couldn't push the build's commit (gave up)", 'push_gave_up', 'not_pushed', 'build_push_gave_up'],
+    ['no plan could be written (the turn ended)', 'plan', 'plan', 'build_no_plan_stopped'],
+    ['credit_wait', 'credit', 'credit', 'build_credit'],
+    ['stopped: by @maya', 'stopped', 'stopped', 'stopped_by'],
+    ['something odd', 'other', 'build_failed', 'build_other'],
+  ];
+  for (const [error, cause, trackCode, said] of cases) {
+    assert.equal(decode.buildCause(error).cause, cause, error);
+    assert.equal(dm.buildFailedCause(error).cause, cause, `the note reads the same: ${error}`);
+    assert.equal(track.buildStopWhy(error), trackCode, `the track reads the same: ${error}`);
+    const stored = decode.causeOf({ next: { stage: 'stopped', reason: 'build_failed' }, run: { build_error: error } });
+    assert.equal(decode.saidOfCause(stored), said, `the push says the same: ${error}`);
+  }
+  assert.equal(decode.buildCause('stopped: by @maya').by, 'maya');
+  assert.equal(dm.buildFailedCause('stopped: by @maya').by, 'maya');
+  // The DM's words for the two new causes, and no Try again for either.
+  assert.match(dm.buildFailedWords('credit_wait'), /building credit/);
+  assert.equal(dm.buildFailedWords('stopped: by @maya'), '@maya stopped me while I was building this.');
+  for (const reason of ['credit_wait', 'stopped: by @maya']) {
+    const said = dm.dmText('build_failed', { reason }, { appName: 'Plate', firstVersion: true, threaded: true });
+    assert.doesNotMatch(said, /Try again/, `nothing to tap: ${reason}`);
+  }
+  // A failed read, a fix stopped, a closed change and a stall.
+  for (const [reason, cause, sayIt] of [['look_failed', 'look_failed', 'look_failed'], ['fix_stopped', 'fix_stopped', 'checks'],
+    ['change_closed', 'change_closed', 'change_closed'], ['stalled', 'stalled', 'build_no_start']]) {
+    const c = decode.causeOf({ next: { stage: 'stopped', reason }, run: {} });
+    assert.equal(c.cause, cause);
+    assert.equal(ws.bellSaid('stopped', { stage: 'stopped', reason, standing: { cause } }), sayIt);
+  }
+  assert.equal(decode.causeOf({ next: { stage: 'stopped', reason: 'look_failed' }, run: { error: 'the read timed out' } }).cause, 'time');
+  // A row from before the cause was stored says its reason, never "while I was building".
+  assert.equal(ws.bellSaid('stopped', { stage: 'stopped', reason: 'look_failed' }), 'look_failed');
+  assert.equal(ws.bellSaid('stopped', { stage: 'stopped', reason: 'change_closed' }), 'change_closed');
+  // The stage word says a plan and a person's stop.
+  assert.equal(ws.stageSays({ stage: 'stopped', reason: 'build_failed', standing: { cause: 'plan' } }), 'Stopped: the plan couldn\'t be written');
+  assert.equal(ws.stageSays({ stage: 'stopped', reason: 'build_failed', cause: 'stopped', causeNames: ['maya'] }), 'Stopped by @maya');
+  // A stop its requester made rings them nothing.
+  const item = { stage: 'stopped', reason: 'build_failed', standing: { cause: 'stopped', causeNames: ['maya'] } };
+  assert.equal(ws.quietBell('stopped', { requester_username: 'maya' }, item), true);
+  assert.equal(ws.quietBell('stopped', { requester_username: 'ben' }, item), false);
+});
+
+// T2.10, T2.11: what a person verdict waits on, and a build found impossible
+// as written, are causes of their own: the stage, the pill and the push say them.
+test('T2.10, T2.11: a hand-back says who or what it waits on', () => {
+  const decode = require('../src/services/bot-stop-cause');
+  const decide = { stage: 'waiting_for_you', why: 'decide' };
+  const kind = (run, extra = {}) => decode.causeOf({ next: decide, run, handBack: decode.handBackOf({ run, ...extra }) });
+  assert.deepEqual(kind({}), { cause: 'requester' });
+  assert.deepEqual(kind({}, { deciders: ['ada'] }), { cause: 'others', names: ['ada'] });
+  assert.deepEqual(kind({ go_ahead_blocker: 'operator_work' }), { cause: 'operator_work' });
+  assert.deepEqual(kind({ go_ahead_blocker: 'destructive_db' }, { deciders: ['ada'] }), { cause: 'destructive_db' });
+  assert.deepEqual(kind({ about_platform: true }), { cause: 'platform' });
+  assert.deepEqual(kind({}, { offers: [{ kind: 'move_request' }] }), { cause: 'other_project' });
+  assert.deepEqual(kind({ wrong_project: true }), { cause: 'wrong_project' });
+  assert.deepEqual(kind({}, { offers: [{ kind: 'close_request' }] }), { cause: 'close' });
+  const words = (cause, names = []) => ws.stageSays({ ...decide, standing: { cause, causeNames: names } });
+  assert.equal(words('requester'), 'Waiting for you to decide');
+  assert.equal(words('others', ['ada']), 'Waiting for @ada to decide');
+  assert.equal(words('others', ['ada', 'ben']), 'Waiting for the project\'s admins to decide');
+  assert.equal(words('operator_work'), 'Waiting on setup outside the app');
+  assert.equal(words('platform'), 'About Homeroom itself: put it on Homeroom\'s board?');
+  assert.equal(ws.stageSays({ ...decide, standing: { cause: 'platform' } }, { yours: false }), 'About Homeroom itself');
+  assert.equal(words('wrong_project'), 'Filed on the wrong project: close it?');
+  const bell = (cause) => ws.bellSaid('needs_you', { ...decide, standing: { cause } });
+  assert.deepEqual(['requester', 'others', 'operator_work', 'destructive_db', 'platform', 'other_project', 'wrong_project', 'close'].map(bell),
+    ['decide', 'decide_others', 'decide_setup', 'decide_person', 'platform', 'elsewhere', 'wrong_project', 'close']);
+  // T2.11: blocked is not empty.
+  const detail = { stage: 'waiting_for_you', why: 'needs_detail' };
+  const blocked = decode.causeOf({ next: detail, run: { build_error: 'blocked: needs a payment provider' } });
+  assert.deepEqual(blocked, { cause: 'blocked' });
+  assert.equal(ws.bellSaid('needs_you', { ...detail, standing: blocked }), 'blocked');
+  assert.equal(ws.bellSaid('needs_you', { ...detail, standing: { cause: 'empty' } }), 'empty');
+  assert.equal(ws.stageSays({ ...detail, standing: blocked }), 'Can\'t be built as written: add detail');
+  // The standing carries it, with the names (who decides, who stopped it).
+  const standing = ws.requestStandingOf({
+    row: { run_id: 40 }, runs: [{ verdict: 'person', go_ahead_blocker: null }], next: decide, deciders: ['ada'],
+  });
+  assert.deepEqual([standing.cause, standing.causeNames, standing.runId], ['others', ['ada'], 40]);
+  const shaped = ws.shapeOf({ appId: 1, kind: 'request', ref: 7, issueNumber: 7, ...decide, standing });
+  assert.deepEqual(shaped.words.stage, { id: 'core:work.handBack.others', values: { username: 'ada' } });
+  assert.deepEqual([shaped.cause, shaped.causeNames, shaped.runId], ['others', ['ada'], 40]);
+});
+
+// T1.7 (Track 1): an approved change GitHub's checks never let through.
+test('a merge stuck on GitHub\'s checks is Stuck going live, and says it waits for a move', () => {
+  const out = ws.deriveChange({
+    status: 'promoted', check_state: 'passing', promoted_at: ago(60),
+    integration_block_reasons: ['github_checks_failing', 'github_stuck'],
+  }, { now: NOW });
+  assert.deepEqual([out.stage, out.line], ['going_live', { code: 'github_stuck' }]);
+  assert.equal(ws.says(out), 'Stuck going live · GitHub\'s checks never passed. It waits until the change or main moves.');
+});
+
+// T2.12: a first version's shots hold it as anybody's change's do.
+test('T2.12: a first version still being shot is Taking screenshots, not Going live', () => {
+  const fresh = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString();
+  const change = {
+    status: 'promoted', check_state: 'passing', first_version: true, promoted_at: ago(20), checks_at: fresh,
+    reviewed_head_sha: 'abc', checks_commit_sha: 'abc',
+    shots_state: 'exploring', shots_run_id: 4, shots_detail: { headSha: 'abc' }, shots_updated_at: fresh,
+  };
+  assert.deepEqual(ws.deriveChange(change, { now: NOW }).line, { code: 'shots' });
+  assert.deepEqual(ws.deriveChange({ ...change, shots_state: 'verified' }, { now: NOW }).line, { code: 'first_version' });
+});
+
+// T2.7: each row says when it next moves by time alone; the sweep reads
+// those, not every open row.
+test('T2.7: a row\'s due time is when it moves by time alone', () => {
+  const at = (iso) => Date.parse(iso);
+  const starting = { stage: 'building', line: { code: 'starting' } };
+  assert.equal(at(ws.dueOf({ state: starting, row: { run_at: ago(5) }, now: NOW })), at(ago(5)) + 15 * 60 * 1000);
+  const reply = { stage: 'reading', line: { code: 'reply', soon: true } };
+  assert.equal(at(ws.dueOf({ state: reply, row: { reply_at: ago(1) }, now: NOW })), at(ago(1)) + 2 * 60 * 1000);
+  assert.equal(ws.dueOf({ state: reply, row: { reply_at: ago(1), queue_id: 3 }, now: NOW }), null, 'a queued read moves by its marks');
+  const until = new Date(NOW.getTime() + 3 * 60 * 60 * 1000).toISOString();
+  assert.equal(at(ws.dueOf({ state: { stage: 'reading', line: { code: 'on_hold', until } }, now: NOW })), at(until) + 1000);
+  const claimed = { stage: 'building', line: { code: 'claimed', by: 'maya' } };
+  assert.equal(at(ws.dueOf({ state: claimed, row: { claimed_by: 'maya', claimed_at: ago(60) }, now: NOW })), at(ago(60)) + 7 * 24 * 60 * 60 * 1000);
+  assert.equal(ws.dueOf({ state: claimed, row: { claimed_by: null }, now: NOW }), null, 'a person building their change does not lapse');
+  assert.equal(at(ws.dueOf({ state: { stage: 'checking', line: { code: 'checks_running', minutes: 4 } }, now: NOW })), NOW.getTime() + 60 * 1000);
+  const expires = new Date(NOW.getTime() + 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(at(ws.dueOf({ state: { stage: 'waiting_for_you', why: 'decide' }, offers: [{ expiresAt: expires }], now: NOW })), at(expires) + 1000);
+  assert.equal(ws.dueOf({ state: { stage: 'stopped', reason: 'build_failed' }, now: NOW }), null, 'a stop moves only by its records');
+  assert.equal(ws.dueOf({ state: { stage: 'closed' }, offers: [{ expiresAt: expires }], now: NOW }), null);
+  // A change's shots hold its vote 45 minutes at most.
+  const fresh = new Date(NOW.getTime() - 5 * 60 * 1000).toISOString();
+  const shots = { status: 'promoted', checks_at: fresh, reviewed_head_sha: 'abc', shots_state: 'exploring', shots_run_id: 4, shots_detail: { headSha: 'abc' }, shots_updated_at: fresh };
+  assert.equal(at(ws.dueOf({ state: { stage: 'checking', line: { code: 'shots' } }, change: shots, now: NOW })), at(fresh) + 45 * 60 * 1000 + 1000);
+  // Never in the past: a due already passed is read on the next pass.
+  assert.equal(at(ws.dueOf({ state: starting, row: { run_at: ago(60) }, now: NOW })), NOW.getTime() + 30 * 1000);
+});
+
+test('T2.7: a request that moves in or out of a line marks its project\'s waiting ones', async () => {
+  const marks = [];
+  const db = { async query(sql, params) { marks.push([sql.includes('work_state_mark'), params && params[2]]); return { rows: [] }; } };
+  await ws.markPlaces(db, [
+    { kind: 'request', appId: 3, ref: 7, prev: { stage: 'reading', line: { code: 'queued', place: 1 } }, state: { stage: 'reading', line: null } },
+    { kind: 'request', appId: 3, ref: 8, prev: { stage: 'checking' }, state: { stage: 'checking', line: { code: 'shots' } } },
+    { kind: 'request', appId: 4, ref: 2, prev: { stage: 'going_live' }, state: { stage: 'live' } },
+    { kind: 'change', appId: 3, ref: 50, prev: null, state: { stage: 'up_for_vote' } },
+  ]);
+  assert.deepEqual(marks, [[true, ['queued', 'held_builds', 'held_waiting']], [true, ['first_version_wait']]]);
+  // The sweep reads the due rows and a few still moving, never every stopped row.
+  const src = fs.readFileSync(path.join(ROOT, 'src/services/work-state.js'), 'utf8');
+  assert.match(src, /standing \? 'dueAt'/);
+  assert.match(src, /ws\.stage IN \('reading', 'planning', 'building', 'checking', 'up_for_vote', 'going_live'\)/);
+});
+
+// T2.8: one bad item is undone alone, and the bells of the rest still ring.
+test('T2.8: a batch that throws is derived again item by item, each in a savepoint', async () => {
+  const said = [];
+  const db = {
+    async query(sql, params) {
+      said.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
+      if (/SELECT it\.app_id/.test(sql) && Array.isArray(params?.[1]) && params[1].includes(13)) throw new Error('bad item');
+      return { rows: [] };
+    },
+  };
+  const out = await ws.refreshUnits(db, [{ appId: 1, issueNumber: 12 }, { appId: 1, issueNumber: 13 }]);
+  assert.equal(out.failed.length, 1);
+  assert.deepEqual(out.failed[0].item, { appId: 1, issueNumber: 13 });
+  assert.ok(said.filter((s) => s === 'SAVEPOINT work_state_unit').length >= 3, 'the batch, then each item');
+  assert.ok(said.includes('ROLLBACK TO SAVEPOINT'), 'the failed unit is undone alone');
+});
+
+test('T2.8: a mark that keeps failing goes to the back of the line, then is parked', async () => {
+  const calls = [];
+  const pool = {
+    async connect() {
+      return {
+        release() {},
+        async query(sql) {
+          calls.push(sql.trim().split(/\s+/).slice(0, 3).join(' '));
+          if (/^DELETE FROM work_state_dirty/.test(sql.trim())) return { rows: [{ app_id: 1, issue_number: 13, session_id: null }] };
+          if (/SELECT it\.app_id/.test(sql)) throw new Error('bad item');
+          return { rows: [] };
+        },
+      };
+    },
+  };
+  const marked = () => calls.filter((c) => c.startsWith('SELECT work_state_mark($1,')).length;
+  for (let i = 1; i < ws.DRAIN_TRIES; i++) {
+    const out = await ws.drainDirty(pool);
+    assert.deepEqual([out.taken, out.failed, out.parked], [1, 1, []]);
+    assert.equal(marked(), i, 'put back at the end of the line');
+  }
+  const last = await ws.drainDirty(pool);
+  assert.deepEqual(last.parked, ['r:1:13']);
+  assert.equal(marked(), ws.DRAIN_TRIES - 1, 'parked: not marked again');
+  assert.ok(calls.includes('COMMIT'), 'the rest of the pass commits');
+});
