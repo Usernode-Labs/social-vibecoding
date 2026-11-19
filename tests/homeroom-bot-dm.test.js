@@ -1071,7 +1071,7 @@ test('#6752: a wrong-project DM says where it belongs, and folds the close offer
   assert.equal(out.card.details, live.wrongProjectReason(wrong));
   assert.deepEqual(out.metadata.answers, ['Propose to close', 'Tell me what\'s missing']);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /dm\.wrongProject \? require\('\.\/homeroom-bot-live'\)\.wrongProjectReason\(dm\.wrongProject\) : dm\.reason/);
+  assert.match(src, /reason: dm\.reason, runId,\n\s+\/\/ #6752: the wrong-project reason names the project it belongs to\.\n\s+\.\.\.\(dm\.wrongProject \? \{ reason: require\('\.\/homeroom-bot-live'\)\.wrongProjectReason\(dm\.wrongProject\) \} : \{\}\),/);
 });
 
 test('#4239: a request about Homeroom itself says so, and offers the move instead of Go ahead', () => {
@@ -1081,7 +1081,10 @@ test('#4239: a request about Homeroom itself says so, and offers the move instea
   assert.match(text, /This is about Homeroom itself rather than Ear Trainer, so no change to Ear Trainer can do it: The header is drawn by Homeroom\.$/);
   assert.doesNotMatch(text, /\u2014/);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/services/homeroom-bot-dm.js'), 'utf8');
-  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !dm\.done && !dm\.wrongProject\n\s+&& !\(kind === 'person' && \(dm\.platform \|\| dm\.goAheadDecides === false \|\| personDeciders\(dm\)\.length\)\)\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
+  assert.match(src, /\.\.\.\(STUCK_ACTIONS\[kind\] && !dm\.done\n\s+&& !\(kind === 'person' && \(dm\.platform \|\| dm\.goAheadDecides === false \|\| personDeciders\(dm\)\.length\)\)\n\s+\? \{ actions: STUCK_ACTIONS\[kind\], status: 'open' \} : \{\}\),/);
+  // #6752: a request filed on the wrong project keeps none of them anyway:
+  // its close vote is the offer folded into the same message.
+  assert.match(src, /if \(dm\.wrongProject && STUCK_ACTIONS\[kind\]\) \{\n\s+delete metadata\.actions;\n\s+delete metadata\.status;\n\s+\}/);
   assert.match(src, /const offerKind = kind === 'person' && dm\.platform \? 'move_request'/);
 });
 

@@ -2380,7 +2380,7 @@ async function relayIssuePost({
     // message offers the move instead. Nor to a requester who does not
     // decide on the project: theirs would be read to the same answer.
     // Nor under a request that is done already: the close offer follows.
-    ...(STUCK_ACTIONS[kind] && !dm.done && !dm.wrongProject
+    ...(STUCK_ACTIONS[kind] && !dm.done
       && !(kind === 'person' && (dm.platform || dm.goAheadDecides === false || personDeciders(dm).length))
       ? { actions: STUCK_ACTIONS[kind], status: 'open' } : {}),
     // B7: a change ready to try, as a card with its buttons: whether it is
@@ -2428,15 +2428,21 @@ async function relayIssuePost({
   };
   if (!metadata.said) delete metadata.said;
   if (!metadata.waiting) delete metadata.waiting;
+  // #6752: a request filed on the wrong project offers the close vote
+  // instead (its folded offer below), not a Go ahead that would build it.
+  if (dm.wrongProject && STUCK_ACTIONS[kind]) {
+    delete metadata.actions;
+    delete metadata.status;
+  }
   // One story: an offer is folded into the verdict that gives its reason,
   // so one verdict is one message and rings once (homeroom-bot-move.js).
   const move = require('./homeroom-bot-move');
   const offerKind = kind === 'person' && dm.platform ? 'move_request'
     : (kind === 'person' || kind === 'empty') && (dm.done || dm.explanation || dm.wrongProject) ? 'close_request' : null;
   const offer = offerKind ? await move.foldOffer(pool, {
-    kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle,
+    kind: offerKind, userId: requester.userId, app, issueNumber, title: requester.issueTitle, reason: dm.reason, runId,
     // #6752: the wrong-project reason names the project it belongs to.
-    reason: dm.wrongProject ? require('./homeroom-bot-live').wrongProjectReason(dm.wrongProject) : dm.reason, runId,
+    ...(dm.wrongProject ? { reason: require('./homeroom-bot-live').wrongProjectReason(dm.wrongProject) } : {}),
   }) : null;
   if (offer) Object.assign(metadata, offer.metadata);
   // Step 3: its card is written with the message (sendDm `card`).
