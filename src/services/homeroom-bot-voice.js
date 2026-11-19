@@ -71,6 +71,10 @@ const claims = require('./reply-claims');
 // #6534: pictures and files the bot may put under its reply in a thread.
 const threadPictures = require('./homeroom-bot-thread-tools/pictures');
 const threadAttachments = require('./homeroom-bot-thread-attachments');
+// One definition each, in modules that load nothing of the bot's.
+const { domainOf } = require('./homeroom-bot-move');
+const { requestMd } = require('./homeroom-bot-overlap');
+const { appRow } = require('./homeroom-bot-reply-status');
 
 // A burst is one turn (the bot-voice machine settles it): its rule's.
 const { SETTLE_MS, SETTLE_CAP_MS } = replyRules;
@@ -180,17 +184,6 @@ function chatModule(deps) { return deps.chatSvc || require('./homeroom-bot-chat'
 // thread-tool module but pictures (tests/homeroom-bot-prod-debug.test.js).
 function steerModule(deps) { return deps.steer || require('./homeroom-bot-steer'); }
 function workflowModule(deps) { return deps.replies || require('../workflow/platform.ts'); }
-
-// Where links point: the platform's own domain, as the mayor's own posts use it.
-function domainOf(deps) {
-  return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
-}
-
-/** Pure: a request named by its number, as a markdown link a chat renders tappable. */
-function requestMd(domain, appSlug, issueNumber) {
-  const link = require('./homeroom-bot-move').requestLink(domain, appSlug, issueNumber);
-  return `[#${Number(issueNumber)}](${link})`;
-}
 
 /** A change's page, as a markdown link: the one that lands on its request when it has one. */
 function changeMd(domain, appSlug, row) {
@@ -676,17 +669,6 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
 // (ws.js handleMessage → workflow/platform.ts insertHeard). The machine
 // settles the burst and asks for a turn (runTurn), which decides with the
 // gate whether the bot was spoken to.
-
-async function appRow(pool, appId) {
-  const { rows } = await pool.query(
-    // With what the access checks read (app-access.js ACCESS_COLUMNS).
-    `SELECT id, slug, name, repo_url, created_by, self_hosted, community_id,
-            collab_visibility, view_visibility, moderation_suspended_at
-       FROM apps WHERE id = $1`,
-    [Number(appId)],
-  );
-  return rows[0] || null;
-}
 
 async function personRow(pool, userId) {
   if (!userId) return null;

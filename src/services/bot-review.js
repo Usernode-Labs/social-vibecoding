@@ -1329,6 +1329,7 @@ function summaryOf(review) {
 }
 
 module.exports = {
+  num,
   MAX_ISSUES,
   SEVERITIES,
   STOPS,

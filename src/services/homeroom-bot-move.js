@@ -48,6 +48,7 @@ function repoOf(app) {
   return repoRef.ownerRepo(app?.repo_url);
 }
 
+// Where links point: the platform's own domain, as the mayor's own posts use it.
 function domainOf(deps) {
   return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
 }
@@ -919,6 +920,7 @@ module.exports = {
   foldOffer,
   foldedOfferSent,
   DONE_ACTIONS,
+  domainOf,
   requestLink,
   movedFooter,
   copiedFooter,
