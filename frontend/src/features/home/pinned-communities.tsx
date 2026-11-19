@@ -94,12 +94,89 @@ export function CommunityTileFace({ slug, name, iconUrl, iconEmoji, iconColor }:
   );
 }
 
-export function PinTile({ pin, votes, editing, faded = false, detail, onUnpin, onPin }: {
+/** How many brand backgrounds a community's own logo is drawn from (app.css `--wip-scene-1` to `-6`). */
+const LOGO_SCENES = 6;
+
+/** A community's scene, 1 to LOGO_SCENES: always the same one for the same community. */
+export function communityScene(slug: string): number {
+  // FNV-1a, so slugs that differ by a letter land on different scenes.
+  let h = 0x811c9dc5;
+  for (let i = 0; i < slug.length; i += 1) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return ((h >>> 3) % LOGO_SCENES) + 1;
+}
+
+/** A small repeatable generator: the same numbers for the same seed. */
+function logoRandom(slug: string): () => number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < slug.length; i += 1) { h ^= slug.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return () => {
+    h = (h + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** How many glows a community's logo is drawn from (app.css `--wip-logo-orb-1` to `-4`). */
+const LOGO_ORBS = 4;
+
+/**
+ * A COMMUNITY'S OWN LOGO (19 Nov 2026, third drawing, from the picture the
+ * product owner supplied), where a look tells a community from the apps it
+ * holds: a square of one soft glow, a deep colour at its heart opening to a
+ * light one at its edge. Four glows (violet to cyan, green, pink to orange,
+ * amber to yellow), and the heart sits a little off the middle, one of nine
+ * places. Which glow and where come from the community's slug, so a
+ * community always has the same one. It is a drawing, not a stored picture:
+ * a community has no logo of its own yet, and its app's icon is the app's
+ * (`CommunityApps` draws that one, small).
+ */
+export function CommunityLogo({ slug }: { slug: string; name?: string }) {
+  const next = logoRandom(slug);
+  const orb = Math.floor(next() * LOGO_ORBS) + 1;
+  const at = (n: number) => `${30 + Math.floor(n * 3) * 20}%`;
+  return (
+    <span
+      className={`${FACE} home-community-logo`}
+      data-scene={String(communityScene(slug))}
+      data-orb={String(orb)}
+      style={{ ['--logo-x' as string]: at(next()), ['--logo-y' as string]: at(next()) }}
+      aria-hidden="true"
+    />
+  );
+}
+
+/**
+ * THE APPS A COMMUNITY HOLDS, as small icons in a row: one today (a community
+ * and its app are one-to-one), then two places for the ones to come, each a
+ * small square of one of the logo's glows.
+ * Hidden unless a look places it (Standard (WIP)'s cards, app.css).
+ */
+export function CommunityApps({ slug, name, iconUrl, iconEmoji }: {
+  slug: string; name: string; iconUrl?: string | null; iconEmoji?: string | null;
+}) {
+  const app = { slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
+  const orb = Math.floor(logoRandom(slug)() * LOGO_ORBS) + 1;
+  return (
+    <span className="hidden home-community-apps" data-home-community-apps="" aria-hidden="true">
+      <span className="app-icon-tile home-community-app" data-icon={appIconKind(app as any)}>
+        <AppIconContent app={app as any} />
+      </span>
+      {/* The places for the apps to come wear the two glows after the community's own (CommunityLogo), so the three differ. */}
+      <span className="home-community-app-slot" data-orb={String((orb % LOGO_ORBS) + 1)} />
+      <span className="home-community-app-slot" data-orb={String(((orb + 1) % LOGO_ORBS) + 1)} />
+    </span>
+  );
+}
+
+export function PinTile({ pin, votes, editing, faded = false, detail, community = false, onUnpin, onPin }: {
   pin: Omit<HomePin, 'member'>;
   votes: number;
   editing: boolean;
   faded?: boolean;
   detail?: PinActivity;
+  /** Draw the community's own logo as the tile's face, and its app's icon small in a row of apps. */
+  community?: boolean;
   onUnpin?: () => void;
   onPin?: () => void;
 }) {
@@ -111,6 +188,7 @@ export function PinTile({ pin, votes, editing, faded = false, detail, onUnpin, o
       className={faded ? `${TILE} opacity-60` : TILE}
       data-home-community={pin.slug}
       data-home-community-pinned={faded ? undefined : ''}
+      data-home-community-scene={community ? String(communityScene(pin.slug)) : undefined}
       onClick={(event) => { if (editing) { event.preventDefault(); return; } openHub(event, pin.slug); }}
     >
       {/* z-[1] (#6372): the tile's own hit area (un-touch-target's ::after)
@@ -119,7 +197,9 @@ export function PinTile({ pin, votes, editing, faded = false, detail, onUnpin, o
           this wrapper, not the discs: the wiggle's transform makes it a
           stacking context a disc's own z-index cannot leave. */}
       <span className={editing ? `${FACE_WRAP} ${WIGGLE}` : FACE_WRAP}>
-        <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />
+        {community
+          ? <CommunityLogo slug={pin.slug} name={pin.name} />
+          : <CommunityTileFace slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} iconColor={pin.iconColor} />}
         {votes > 0 && !editing ? <span className={VOTES} data-home-community-votes={String(votes)} aria-hidden="true">{votes > 99 ? '99+' : votes}</span> : null}
         {editing && onUnpin ? (
           <button
@@ -143,6 +223,7 @@ export function PinTile({ pin, votes, editing, faded = false, detail, onUnpin, o
         ) : null}
       </span>
       <span className={NAME}>{pin.name}</span>
+      {community ? <CommunityApps slug={pin.slug} name={pin.name} iconUrl={pin.iconUrl} iconEmoji={pin.iconEmoji} /> : null}
       {detail ? <CommunityDetail detail={detail} /> : null}
       {votes > 0 ? <span className="sr-only">{tc('communities:row.toVote', { count: votes })}</span> : null}
     </a>
@@ -188,6 +269,10 @@ function CommunityDetail({ detail }: { detail: PinActivity }) {
         <span className="hidden home-community-line" data-home-community-meta="">
           {t('home:communities.members', { count: members, formatted: members.toLocaleString() })}
         </span>
+      ) : null}
+      {/* What it is, in its own words: drawn where a look's card has room for it (Standard (WIP), app.css). */}
+      {detail.description ? (
+        <span className="hidden home-community-desc" data-home-community-desc="">{detail.description}</span>
       ) : null}
       <span className="hidden" data-home-community-detail="" data-quiet={quiet ? '' : undefined}>
         {quiet ? (

@@ -99,6 +99,18 @@
     "text": "Joined",
     "description": "Small-caps heading on the Communities page over the communities the person is a member of but has not pinned. An adjective: communities they have joined."
   },
+  "page.showAll_one": {
+    "text": "Show all {{count}} community",
+    "description": "Accessible label of the heading over a group of communities (Pinned or Joined) on the Communities page, in the Standard (WIP) look, while the group is folded to its first rows: pressing the heading unfolds the rest. {{count}} is how many communities the group has."
+  },
+  "page.showAll_other": {
+    "text": "Show all {{count}} communities",
+    "description": "Accessible label of the heading over a group of communities (Pinned or Joined) on the Communities page, in the Standard (WIP) look, while the group is folded to its first rows: pressing the heading unfolds the rest. {{count}} is how many communities the group has."
+  },
+  "page.showLess": {
+    "text": "Show less",
+    "description": "Accessible label of the heading over a group of communities (Pinned or Joined) on the Communities page, in the Standard (WIP) look, once the group has been unfolded: pressing the heading folds it back to its first rows."
+  },
   "page.editLabel": {
     "text": "Edit your pinned communities",
     "description": "Accessible name of the Edit button beside a heading on the Communities page: lets the person unpin pinned communities and pin joined ones. \"Edit\" is a verb."

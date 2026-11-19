@@ -156,3 +156,15 @@ entry for it would fill the cache on install and never be read back out.
 There is no step here about editing `public/index.html`. That file is
 generated from `frontend/` and gitignored — the vendor README's equivalent
 step predates the React shell and must not be copied across.
+
+## `bg/` — the brand kit's six backgrounds
+
+`bg/sky.webp`, `bg/halftone.webp`, `bg/dream.webp`, `bg/stars.webp`,
+`bg/stripes.webp` and `bg/collage.webp` are the six backgrounds of Baked
+Design Studio's Homeroom brand guidelines (`baked.design/brand/homeroom/`,
+which needs a sign-in; its files are under `/brand/homeroom/bg/`), saved on
+19 Nov 2026 and committed verbatim: each 1076 × 600 WebP, 5 to 26 KB, no
+re-encoding. Standard (WIP) draws one across the top of each pinned
+community's card on the Communities page (app.css, `--wip-scene-1` to `-6`).
+They are decoration loaded by the stylesheet when that page is drawn, so
+they are not in `public/sw.js`'s precache list.

@@ -5779,6 +5779,12 @@ html[data-skin-wip] {
   --wip-tag-run-bg: var(--wip-mark-1-bg);
   --wip-tag-run-ink: var(--wip-mark-1-ink);
   --wip-tray: color-mix(in srgb, var(--wip-ink) 5%, transparent); /* a column's ground on the board: a soft tint the cards sit on */
+  /* A very soft card inside a card (a community on the Communities page): a faint tint of the ink and no edge; a step deeper under the pointer. */
+  --wip-soft-bg: color-mix(in srgb, var(--wip-ink) 3%, transparent);
+  --wip-soft-bg-on: color-mix(in srgb, var(--wip-ink) 6%, transparent);
+  /* The Communities page's own ground: the page's unless a config names another. */
+  --wip-page-bg-communities: var(--wip-page-bg);
+  --wip-soft-line: color-mix(in srgb, var(--wip-ink) 6%, transparent); /* a rule inside a card (over a community's week): softer than the card's hairline */
   --wip-card-line-hover: color-mix(in srgb, var(--wip-ink) 15%, transparent); /* a card's edge under the pointer: a shade deeper, not the ink */
   --wip-thumb: 6rem;          /* a change's picture in a list: a thumbnail at its side */
   --wip-hero-pad: 1.25rem;
@@ -5895,8 +5901,50 @@ html[data-skin-wip] {
   --wip-cta-to: #0062cc;
   --wip-cta-ink: #ffffff;
   --wip-cta-glow: color-mix(in srgb, var(--accent) 40%, transparent);
+  /* The button on a label that folds its section: a quiet pill on the card's colour unless a config draws it its own way. */
+  --wip-fold-h: 1.625rem;
+  --wip-fold-bg: var(--wip-card-bg);
+  --wip-fold-bg-on: var(--wip-card-bg);
+  --wip-fold-ink: var(--wip-ink);
+  --wip-fold-edge: inset 0 0 0 1px var(--wip-card-line);
+  --wip-fold-edge-down: var(--wip-fold-edge);
+  --wip-fold-press: scale(0.98);
+  /* The page's own top action (New project on Home, New community on Communities) is the filled action unless a config draws it its own way. */
+  --wip-top-cta-bg: linear-gradient(135deg, var(--wip-cta-from), var(--wip-cta-via) 50%, var(--wip-cta-to));
+  --wip-top-cta-ink: var(--wip-cta-ink);
+  --wip-top-cta-weight: 600;
+  --wip-top-cta-edge: 0 10px 15px -3px var(--wip-cta-glow), 0 4px 6px -4px var(--wip-cta-glow), inset 0 0 0 1px rgb(255 255 255 / 0.2);
+  --wip-top-cta-edge-down: var(--wip-top-cta-edge);
+  --wip-top-cta-lift: translateY(-1px);
+  --wip-top-cta-press: scale(0.98);
   /* A panel's row of items (Needs you) */
   --wip-item-radius: var(--wip-radius-inner);
+  /* A pinned card's scene: the band's height, how far the icon rises onto it, and the brand kit's six backgrounds it takes in turn. */
+  --wip-scene-band: 4.75rem;
+  --wip-scene-icon-rise: -2.25rem;
+  --wip-scene-1: url('/brand/bg/sky.webp');
+  --wip-scene-2: url('/brand/bg/halftone.webp');
+  --wip-scene-3: url('/brand/bg/dream.webp');
+  --wip-scene-4: url('/brand/bg/stars.webp');
+  --wip-scene-5: url('/brand/bg/collage.webp');
+  --wip-scene-6: url('/brand/bg/stripes.webp');
+  /* A community's logo: the four glows, each from its heart's colour to its edge's (the product owner's picture, 19 Nov 2026). */
+  --wip-logo-orb-1: rgb(100 28 246) 0%, rgb(34 166 253) 65%, rgb(12 219 249) 90%;
+  --wip-logo-orb-2: rgb(70 178 73) 0%, rgb(160 226 115) 65%, rgb(196 242 129) 90%;
+  --wip-logo-orb-3: rgb(251 25 152) 0%, rgb(251 108 52) 65%, rgb(250 137 16) 90%;
+  --wip-logo-orb-4: rgb(254 176 43) 0%, rgb(253 215 87) 65%, rgb(255 231 103) 90%;
+  /* The same four, soft: each colour two thirds of the way to white, for a community's own logo. */
+  --wip-logo-soft-1: rgb(203 185 252) 0%, rgb(181 225 254) 65%, rgb(174 243 253) 100%;
+  --wip-logo-soft-2: rgb(193 229 194) 0%, rgb(223 245 208) 65%, rgb(235 251 213) 100%;
+  --wip-logo-soft-3: rgb(254 178 221) 0%, rgb(254 206 187) 65%, rgb(253 216 175) 100%;
+  --wip-logo-soft-4: rgb(255 228 184) 0%, rgb(254 241 199) 65%, rgb(255 247 204) 100%;
+  /* One of a community's apps, small, in the row of them. */
+  --wip-app-chip: 1.5rem;
+  --wip-app-chip-radius: 0.375rem;
+  /* A card on the Communities page's shelf (a drawing to compare): its width, and under 1024px. */
+  --wip-shelf-card: 19rem;
+  --wip-shelf-card-narrow: 7.5rem;
+  --wip-face: 1.375rem;        /* a person's face on a card's foot */
   --wip-item-icon: 2.25rem;
   --wip-item-icon-radius: 0.5625rem; /* 9px, the same quarter of a small icon's side */
   --wip-ink: var(--text-primary);
@@ -5921,6 +5969,7 @@ html[data-skin-wip] {
   --wip-ok: var(--state-ok);
   /* Widths */
   --wip-search-w: 24rem;
+  --wip-topbar-pad-phone: 1.75rem; /* above the search row on a phone: the header covers its first 8px */
 }
 /* ── Token configs ──────────────────────────────────────────
    The rule above is the config called Current. Another config is the same
@@ -5960,6 +6009,23 @@ html[data-skin-wip][data-wip-tokens="brand"] {
   --wip-cta-to: #000000;
   --wip-cta-ink: #fffeea;
   --wip-cta-glow: rgb(0 0 0 / 0.22);
+  /* The page's top action is the brand look's sun pill (asked 19 Nov 2026): yellow, an ink outline and a hard edge under it that a press takes up. */
+  /* Communities stands on the kit's green, pale (asked 19 Nov 2026): the page is told apart from Home's cream at a glance. */
+  --wip-page-bg-communities: #eef5e9;
+  --wip-top-cta-bg: #ffee6f;
+  --wip-top-cta-ink: #121a0e;
+  --wip-top-cta-weight: 700;
+  --wip-top-cta-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
+  --wip-top-cta-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
+  --wip-top-cta-lift: none;
+  --wip-top-cta-press: translateY(2px);
+  /* The fold button is the brand look's outlined pill, the sun pill's quiet sibling: white, an ink outline and a hard edge under it; yellow under the pointer. */
+  --wip-fold-bg: #ffffff;
+  --wip-fold-bg-on: #ffee6f;
+  --wip-fold-ink: #121a0e;
+  --wip-fold-edge: inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e;
+  --wip-fold-edge-down: inset 0 0 0 1px #121a0e, 0 0 0 #121a0e;
+  --wip-fold-press: translateY(2px);
   --wip-pill-bg: #3090e1;
   --wip-pill-ink: #000000;
   --wip-count-bg: #ffee6f;
@@ -5994,6 +6060,16 @@ html[data-skin-wip][data-wip-tokens="brand"].dark {
   --wip-cta-to: #ffee6f;
   --wip-cta-ink: #000000;
   --wip-cta-glow: rgb(255 238 111 / 0.18);
+  /* In the dark the sun pill is a shade deeper and has no edge, as the brand look's is. */
+  --wip-page-bg-communities: #0c120b; /* the same green, a breath of it on black */
+  --wip-top-cta-bg: #f3d920;
+  --wip-top-cta-edge: 0 0 0 transparent;
+  --wip-top-cta-edge-down: 0 0 0 transparent;
+  --wip-fold-bg: #171715;
+  --wip-fold-bg-on: #2a2a25; /* a step lighter under the pointer: cream words would not read on the yellow */
+  --wip-fold-ink: #fffeea;
+  --wip-fold-edge: inset 0 0 0 1px rgb(255 254 234 / 0.4);
+  --wip-fold-edge-down: inset 0 0 0 1px rgb(255 254 234 / 0.4);
   --wip-count-line: transparent;
   --lit-ink: #fffeea;
   --lit-tint: rgb(255 254 234 / 0.1);
@@ -6208,6 +6284,33 @@ html[data-skin-wip] .wip-card[data-tone="goal"] {
 }
 .wip-head-more:hover > .wip-head-chevron { background-color: var(--wip-head-disc); }
 .wip-head-chevron-glyph { width: 0.875rem; height: 0.875rem; }
+/* A label that folds its section says so on a small button after its words
+   (asked 19 Nov 2026): the words of what a press does and the chevron, in
+   the config's own outlined pill. The label and the button are one thing to
+   press; a press takes the button down onto its edge. */
+.wip-head-more:has(> .wip-fold-pill) { gap: 0.625rem; padding-block: 0.1875rem; }
+.wip-fold-pill {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--wip-fold-h);
+  padding-inline: 0.625rem 0.5rem;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-fold-bg);
+  box-shadow: var(--wip-fold-edge);
+  font-family: var(--wip-font, inherit);
+  font-size: var(--wip-body-size);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  text-decoration: none;
+  color: var(--wip-fold-ink);
+  transition: transform 150ms, box-shadow 150ms, background-color 150ms;
+}
+.wip-head-more:hover > .wip-fold-pill { background-color: var(--wip-fold-bg-on); }
+.wip-head-more:active > .wip-fold-pill { box-shadow: var(--wip-fold-edge-down); transform: var(--wip-fold-press); }
 /* Rows: one thing a line, a hairline between them. */
 .wip-rows { display: grid; min-width: 0; margin-top: 0.25rem; overflow: hidden; }
 .wip-rows > li { min-width: 0; }
@@ -6437,6 +6540,12 @@ html[data-skin-wip] .wip-filterbar > select {
   padding: 0.75rem var(--wip-gutter) 0;
 }
 @media (min-width: 768px) { .wip-topbar { padding-top: 1.75rem; } }
+/* On a phone the row comes out from under the header when it is pulled down:
+   it keeps a clear step below the header's edge, which overlaps the top of
+   the row (asked 19 Nov 2026; the field stood 5px under it). */
+@media (max-width: 767.98px) {
+  html[data-skin-wip] #home-search-bar > .wip-topbar { padding-top: var(--wip-topbar-pad-phone); }
+}
 .wip-search { width: 100%; max-width: var(--wip-search-w); }
 /* A project tile's sentence and its line of facts (app-grid.tsx). */
 .app-card-desc {
@@ -7824,6 +7933,7 @@ html[data-skin-wip] {
   --wip-nav-on-count-ink: #18181b;
   --wip-nav-row-h: 2.5rem;
   --wip-nav-row-radius: 0.75rem;
+  --wip-nav-tab-inset: 0.375rem; /* round a tab on the phone's bar: what keeps the lit pill off the bar's edges */
   /* Sunrise's own glyphs (the kit's 24px strokes, @/components/ui/kit-icons.ts), as masks the row's ink fills. */
   --wip-nav-ic-home: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z'/%3E%3C/svg%3E");
   --wip-nav-ic-spark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m11 3 1.9 5.1L18 10l-5.1 1.9L11 17l-1.9-5.1L4 10l5.1-1.900z'/%3E%3Cpath d='M19 15v4M17 17h4'/%3E%3C/svg%3E");
@@ -7954,6 +8064,13 @@ html[data-skin-wip] #platform-tabs .platform-rail-settings-glyph {
 html[data-skin-wip] #platform-tabs :is(#platform-tab-home, #platform-tab-ai, #platform-tab-messages, #platform-tab-workshop, #platform-tab-me) .platform-tab-glyph > *,
 html[data-skin-wip] #platform-tabs .platform-rail-settings-glyph > * { opacity: 0; }
 html[data-skin-wip] #platform-tabs :is(.platform-rail-votes, .platform-tab-votes, .platform-tab-badge) { min-width: var(--wip-nav-count); height: var(--wip-nav-count); padding: 0 6px; font-size: 11px; font-weight: 700; }
+/* On a phone's bar the tab you are on is a pill inside the bar, not a block of it (asked 19 Nov 2026): every tab keeps a step clear of the bar's edges and of its neighbours, so the yellow touches none of them. */
+@media (max-width: 767.98px) {
+  html[data-skin-wip] #platform-tabs .platform-tab { margin: var(--wip-nav-tab-inset) calc(var(--wip-nav-tab-inset) / 2); }
+  html[data-skin-wip] #platform-tabs .platform-tab:first-child,
+  html[data-skin-wip] #platform-tabs #platform-tab-home { margin-inline-start: var(--wip-nav-tab-inset); }
+  html[data-skin-wip] #platform-tabs #platform-tab-me { margin-inline-end: var(--wip-nav-tab-inset); }
+}
 @media (min-width: 768px) {
   html[data-skin-wip] #platform-tabs {
     top: 0;
@@ -8180,6 +8297,518 @@ html[data-skin-wip][data-wip-tokens="highlighter"].dark {
 /* The place you are on carries a thin bar of the set's accent at its start. */
 @media (min-width: 768px) {
   html[data-skin-wip][data-wip-tokens] #platform-tabs :is(.platform-tab, .platform-rail-settings, .platform-rail-community:not([data-rail-open]), .dev-ws-place, .platform-rail-sub)[aria-current="page"] { box-shadow: inset 3px 0 0 var(--wip-nav-accent); }
+}
+/* THE PAGE'S TOP ACTION (New project on Home, New community on Communities)
+   is drawn from its own tokens, which are the filled action's unless the
+   config names others. */
+html[data-skin-wip] :is(#home-new-project-top, #communities-new-top) {
+  background: var(--wip-top-cta-bg);
+  color: var(--wip-top-cta-ink);
+  font-weight: var(--wip-top-cta-weight);
+  box-shadow: var(--wip-top-cta-edge);
+}
+html[data-skin-wip] :is(#home-new-project-top, #communities-new-top):hover { transform: var(--wip-top-cta-lift); }
+html[data-skin-wip] :is(#home-new-project-top, #communities-new-top):active {
+  box-shadow: var(--wip-top-cta-edge-down);
+  transform: var(--wip-top-cta-press);
+}
+/* The hub's "All in Workshop", beside Recently live, is the same button: the way to the rest of a section reads as one everywhere under the look. */
+html[data-skin-wip] #dev-workshop [data-ws-recent-all] {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--wip-fold-h);
+  padding-inline: 0.625rem 0.5rem;
+  border-radius: var(--wip-radius-pill);
+  background-color: var(--wip-fold-bg);
+  box-shadow: var(--wip-fold-edge);
+  font-size: var(--wip-body-size);
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  color: var(--wip-fold-ink);
+  transition: transform 150ms, box-shadow 150ms, background-color 150ms;
+}
+html[data-skin-wip] #dev-workshop [data-ws-recent-all]:hover { background-color: var(--wip-fold-bg-on); }
+html[data-skin-wip] #dev-workshop [data-ws-recent-all]:active { box-shadow: var(--wip-fold-edge-down); transform: var(--wip-fold-press); }
+/* ── THE COMMUNITIES TAB'S PAGE (features/communities/index.tsx) ──────────
+   Drawn as Home is, from the same tokens and the same kit: the page's own
+   ground and typeface, the whole width, a short search field with the filled
+   action at the row's end, each group a label on the page and one card. From
+   1024px a community is a row as a pinned project is (its icon, its name and
+   how many members); narrower it is the icon and, under it, the name. */
+html[data-skin-wip] #communities-screen {
+  background-color: var(--wip-page-bg-communities);
+  font-family: var(--wip-font);
+  --accent: var(--wip-ink-action);
+}
+html[data-skin-wip] #communities-screen .home-column { max-width: none; }
+html[data-skin-wip][data-wip-tokens] body:has(#communities-screen:not(.hidden)) {
+  background-color: var(--wip-page-bg-communities);
+  background-image: none;
+}
+/* The search row is on a phone too under the look (asked 19 Nov 2026), as
+   Home's is: the field, then New community as the filled action at its end,
+   a clear step under the header. */
+html[data-skin-wip] #communities-screen .communities-top {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: var(--wip-topbar-pad-phone) var(--wip-gutter) 0;
+}
+html[data-skin-wip] #communities-screen .communities-search { flex: 1 1 auto; min-width: 0; }
+@media (min-width: 768px) {
+  html[data-skin-wip] #communities-screen .communities-top { padding: 1.75rem var(--wip-gutter) 0; }
+  html[data-skin-wip] #communities-screen .communities-search { flex: 0 1 var(--wip-search-w); }
+  html[data-skin-wip] #communities-screen .communities-top > .wip-cta { margin-inline-start: auto; }
+}
+html[data-skin-wip] #communities-search-input { border-radius: var(--wip-radius-inner); }
+/* A group's label is Home's: one row gap above every group after the first, the config's label tokens. */
+html[data-skin-wip] #communities-screen section ~ section > .home-area-label { padding-top: var(--wip-row-gap); }
+html[data-skin-wip][data-wip-tokens] #communities-screen .home-area-label > span:first-child {
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+  text-decoration-line: underline;
+  text-decoration-color: var(--wip-label-mark);
+  text-decoration-thickness: 0.42em;
+  text-underline-offset: -0.16em;
+  text-decoration-skip-ink: none;
+}
+/* A GROUP IS ONE CARD WITH EVERY COMMUNITY IN IT (asked 19 Nov 2026, after
+   a round with a card for each): the look's card, the same air on its four
+   sides as Pinned projects has, and each community a very soft card inside it:
+   a faint tint and no edge. The pointer on it deepens the tint a step;
+   nothing moves. */
+html[data-skin-wip] #communities-screen .communities-grid { padding: var(--wip-cell-pad); gap: var(--wip-col-gap); }
+html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) {
+  padding: var(--wip-cell-pad) 0.25rem;
+  border-radius: var(--wip-radius-inner);
+  background-color: var(--wip-soft-bg);
+  transition: background-color 150ms ease;
+}
+/* On a phone four stand across: the side padding is given to the name, and two lines are held for it so a row's cells are one height. */
+@media (max-width: 639.98px) {
+  html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) { padding-inline: 2px; }
+  html[data-skin-wip] #communities-screen .communities-grid > :is(a, button) > .line-clamp-2 { min-height: 2.4em; }
+}
+@media (hover: hover) {
+  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) .communities-grid > :is(a, button):hover { background-color: var(--wip-soft-bg-on); }
+}
+/* A community's icon is the look's: a rounded square on the tile colour with one soft shadow, and no ring of its own colour. */
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > span:first-child > span:first-child {
+  padding: 0;
+  border-radius: var(--wip-icon-radius);
+  box-shadow: none;
+}
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile {
+  border-color: transparent;
+  border-radius: var(--wip-icon-radius);
+  background-color: var(--wip-icon-tile);
+  box-shadow: inset 0 0 0 1px var(--wip-icon-edge), var(--wip-icon-shadow);
+}
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
+  font-size: var(--wip-title-size-mid);
+  line-height: 1.25;
+  font-weight: var(--wip-title-weight);
+  color: var(--wip-ink);
+}
+@media (max-width: 639.98px) {
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > .line-clamp-2 { font-size: var(--wip-title-size-phone); line-height: 1.2; }
+}
+/* Home's sheen: one band of light crosses the icon when the pointer comes
+   over its card. Only where a pointer hovers, never while the cards are
+   being arranged, and not with reduced motion. */
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile { position: relative; }
+@media (hover: hover) {
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile::after {
+    content: "";
+    position: absolute;
+    inset: -20% auto -20% 0;
+    width: 60%;
+    pointer-events: none;
+    background: linear-gradient(105deg, transparent 0%, var(--wip-sheen) 50%, transparent 100%);
+    transform: translateX(-180%) skewX(-12deg);
+  }
+  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) .communities-grid [data-home-community]:hover .app-icon-tile::after {
+    transform: translateX(280%) skewX(-12deg);
+    transition: transform var(--wip-sheen-time) ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
+}
+html[data-skin-wip]:where([data-motion="reduce"]) #communities-screen .communities-grid [data-home-community] .app-icon-tile::after { content: none; }
+/* The votes waiting there: the look's count, ringed in the card's own colour. */
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community-votes] {
+  background-color: var(--wip-count-bg);
+  color: var(--wip-count-ink);
+  box-shadow: 0 0 0 2px var(--wip-card-bg);
+}
+/* FROM 1024px A CELL SAYS WHAT IS GOING ON THERE, as the brand look's cards
+   do (asked 19 Nov 2026): the icon beside the name and how many members,
+   what it says it is, then, under a hairline, this week: the faces of a few who were there with
+   how many, how many changes went live, or that it was quiet. */
+@media (min-width: 1024px) {
+  html[data-skin-wip] #communities-screen .communities-grid {
+    grid-template-columns: repeat(var(--wip-cols), minmax(0, 1fr));
+    gap: var(--wip-col-gap);
+  }
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto auto auto 1fr;
+    column-gap: var(--wip-tile-gap);
+    row-gap: 0.125rem;
+    align-items: start;
+    padding: var(--wip-cell-pad);
+    text-align: start;
+  }
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .app-icon-tile {
+    /* Home's own icon: its size, its corner and its glyph (asked 19 Nov 2026). */
+    width: var(--wip-icon);
+    height: var(--wip-icon);
+    font-size: var(--wip-icon-glyph);
+  }
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community] > .line-clamp-2 {
+    grid-area: 1 / 2;
+    align-self: end;
+    font-size: var(--wip-title-size);
+  }
+  /* With no line of facts yet, the name stands beside the icon's middle. */
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community]:not(:has(> [data-home-community-meta])) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community-meta] {
+    display: block;
+    grid-area: 2 / 2;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--wip-body-size);
+    line-height: 1.0625rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--wip-ink-muted);
+  }
+  /* What it is, in its own words, under the head: two lines at most (asked 19 Nov 2026). */
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community-desc] {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    grid-area: 3 / 1 / auto / -1;
+    min-width: 0;
+    margin-top: 0.625rem;
+    font-size: var(--wip-body-size);
+    line-height: 1.0625rem;
+    color: var(--wip-ink-soft);
+    overflow-wrap: anywhere;
+  }
+  html[data-skin-wip] #communities-screen .communities-grid [data-home-community-detail] {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    grid-area: 4 / 1 / auto / -1;
+    align-self: end;
+    min-width: 0;
+    margin-top: var(--wip-cell-pad);
+    padding-top: var(--wip-cell-pad);
+    border-top: 1px solid var(--wip-soft-line);
+  }
+  html[data-skin-wip] #communities-screen .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+    min-height: var(--wip-face);
+    font-size: var(--wip-body-size);
+    line-height: 1.0625rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--wip-ink-soft);
+  }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-words {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-glyph {
+    flex: none;
+    width: var(--wip-face);
+    height: 0.9375rem;
+    color: var(--wip-ink-muted);
+  }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-quiet { color: var(--wip-ink-muted); }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-news,
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-news > .home-community-glyph { font-weight: 600; color: var(--wip-mark-2-ink); }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-people .dev-ws-hero-face {
+    width: var(--wip-face);
+    height: var(--wip-face);
+    margin-inline-end: -0.375rem;
+    overflow: hidden;
+    font-size: 0.625rem;
+    box-shadow: 0 0 0 2px var(--wip-card-bg);
+  }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
+  html[data-skin-wip] #communities-screen .communities-grid .home-community-people .dev-ws-hero-face > img { width: 100%; height: 100%; object-fit: cover; }
+}
+/* JOINED IS A LIST (19 Nov 2026), as Home's Recent threads are. One
+   community a line: its logo small, its name, how many members (or what it
+   says it is, with the members at the row's end) and this week at the end.
+   A hairline between two rows, two columns from 1024px and three from
+   1280px, and no card or tint of its own. */
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 var(--wip-row-gap);
+  padding: 0.25rem var(--wip-card-pad);
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid > [data-home-community] {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: var(--wip-tile-gap);
+  row-gap: 0.125rem;
+  min-height: 0;
+  padding: var(--wip-cell-pad) 0.25rem;
+  border-radius: 0;
+  background-color: transparent;
+  box-shadow: inset 0 -1px 0 var(--wip-soft-line);
+  text-align: start;
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child { grid-area: 1 / 1 / span 2; align-self: center; }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] > span:first-child > span:first-child { border-radius: var(--wip-item-icon-radius); }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] .app-icon-tile {
+  width: var(--wip-item-icon);
+  height: var(--wip-item-icon);
+  border-radius: var(--wip-item-icon-radius);
+  font-size: 1.125rem;
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community] > .line-clamp-2 {
+  grid-area: 1 / 2;
+  align-self: end;
+  min-height: 0;
+  -webkit-line-clamp: 1;
+  line-clamp: 1;
+  font-size: var(--wip-title-size);
+  line-height: 1.25;
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> :is([data-home-community-meta], [data-home-community-desc]))) > .line-clamp-2 { grid-row: 1 / span 2; align-self: center; }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community-desc],
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community-meta] {
+  display: block;
+  grid-area: 2 / 2;
+  align-self: start;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--wip-body-size);
+  line-height: 1.0625rem;
+  color: var(--wip-ink-muted);
+}
+/* With a sentence of its own, the members go to the row's end, over the week. */
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community]:has(> [data-home-community-desc]) > [data-home-community-meta] { grid-area: 1 / 3; align-self: end; text-align: end; }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community-detail] {
+  display: flex;
+  flex-direction: row;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  grid-area: 2 / 3;
+  align-self: start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid [data-home-community]:not(:has(> [data-home-community-desc])) > [data-home-community-detail] { grid-row: 1 / span 2; align-self: center; }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid :is(.home-community-people, .home-community-news, .home-community-quiet) {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 0;
+  font-size: var(--wip-body-size);
+  line-height: 1.0625rem;
+  white-space: nowrap;
+  color: var(--wip-ink-muted);
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-news { font-weight: 600; color: var(--wip-mark-2-ink); }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-glyph { flex: none; width: 0.9375rem; height: 0.9375rem; }
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face {
+  width: var(--wip-face);
+  height: var(--wip-face);
+  margin-inline-end: -0.375rem;
+  overflow: hidden;
+  font-size: 0.625rem;
+  box-shadow: 0 0 0 2px var(--wip-card-bg);
+}
+html[data-skin-wip] #communities-body #communities-joined-section .communities-grid .home-community-people .dev-ws-hero-face:last-child { margin-inline-end: 0; }
+@media (hover: hover) {
+  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) #communities-joined-section .communities-grid > [data-home-community]:hover { background-color: var(--wip-soft-bg); }
+}
+@media (min-width: 1024px) {
+  html[data-skin-wip] #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+/* PINNED IS A SHELF (19 Nov 2026): one row of cards that moves sideways,
+   each a card on the page with the cell described above inside it (the
+   logo, the name, the members, what it says it is and this week). So the
+   few you chose are large and the many you are in are a list. */
+html[data-skin-wip] #communities-body #communities-pinned-section > .wip-card {
+  background-color: transparent;
+  box-shadow: none;
+}
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid {
+  display: flex;
+  gap: var(--wip-card-gap);
+  padding: 0 0 var(--wip-cell-pad);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: thin;
+}
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > :is(a, button) {
+  flex: 0 0 var(--wip-shelf-card);
+  scroll-snap-align: start;
+  padding: var(--wip-card-pad);
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-soft-line);
+}
+/* A PINNED CARD OPENS ON A PICTURE FROM THE BRAND KIT (asked 19 Nov 2026):
+   a band across its top with one of the kit's six backgrounds (the sky, the
+   halftone sun, the dream, the stars, the ruled paper, the torn collage;
+   public/brand/bg, whose README says where they came from), each
+   community its own. The icon stands half on the band, and the words are on
+   the card's own ground under it, so nothing is read over a picture. */
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding-top: calc(var(--wip-scene-band) + var(--wip-cell-pad));
+}
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community]::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: -1;
+  height: var(--wip-scene-band);
+  pointer-events: none;
+  background: var(--wip-scene-1) center / cover no-repeat;
+}
+/* Which one is the community's own (pinned-communities.tsx `communityScene`), three on from its logo's, so the logo stands out on it and a reordered shelf keeps every card's picture. */
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="1"]::before { background-image: var(--wip-scene-4); }
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="2"]::before { background-image: var(--wip-scene-5); }
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="3"]::before { background-image: var(--wip-scene-6); }
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="4"]::before { background-image: var(--wip-scene-1); }
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="5"]::before { background-image: var(--wip-scene-2); }
+html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community][data-home-community-scene="6"]::before { background-image: var(--wip-scene-3); }
+@media (min-width: 1024px) {
+  html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > [data-home-community] > span:first-child { margin-top: var(--wip-scene-icon-rise); }
+}
+@media (max-width: 1023.98px) {
+  html[data-skin-wip] #communities-body #communities-pinned-section .communities-grid > :is(a, button) { flex-basis: var(--wip-shelf-card-narrow); }
+}
+@media (hover: hover) {
+  html[data-skin-wip] #communities-screen #communities-body:not([data-editing]) #communities-pinned-section .communities-grid > :is(a, button):hover { background-color: var(--wip-card-bg); box-shadow: inset 0 0 0 1px var(--wip-card-line); }
+}
+@media (min-width: 1280px) {
+  html[data-skin-wip] #communities-body #communities-joined-section .communities-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* A COMMUNITY'S OWN LOGO, AND ITS APPS (asked 19 Nov 2026). A community is
+   not its app: its face on this page is a logo of its own (a square of one
+   soft glow, deep at its heart and light at its edge, always the same one
+   for the same community; pinned-communities.tsx `CommunityLogo`),
+   and the app's icon is one small icon in a row of the community's apps,
+   with two places after it for the apps to come. */
+/* SOFT (asked 19 Nov 2026): the glow in its pale tints, spread wide, with a faint edge and no lift of its own. */
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo {
+  border-color: transparent;
+  background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-1));
+  box-shadow: inset 0 0 0 1px var(--wip-soft-line);
+}
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="2"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-2)); }
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="3"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-3)); }
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-logo[data-orb="4"] { background-image: radial-gradient(85% 85% at var(--logo-x, 50%) var(--logo-y, 50%), var(--wip-logo-soft-4)); }
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app,
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot {
+  flex: none;
+  width: var(--wip-app-chip);
+  height: var(--wip-app-chip);
+  border-radius: var(--wip-app-chip-radius);
+}
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  font-size: 0.875rem;
+  box-shadow: inset 0 0 0 1px var(--wip-icon-edge);
+}
+/* The places for the apps to come are small squares of the logo's glows (asked 19 Nov 2026). */
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-1)); }
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="2"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-2)); }
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="3"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-3)); }
+html[data-skin-wip] #communities-screen .communities-grid [data-home-community] .home-community-apps > .home-community-app-slot[data-orb="4"] { background-image: radial-gradient(50% 50% at 50% 50%, var(--wip-logo-orb-4)); }
+/* Where a community is a card (from 1024px), its apps end the card's foot, on this week's line. */
+@media (min-width: 1024px) {
+  html[data-skin-wip] #communities-screen #communities-pinned-section .communities-grid [data-home-community] > .home-community-apps {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    grid-area: 4 / 1 / auto / -1;
+    justify-self: end;
+    align-self: end;
+  }
+}
+/* EVERY COMMUNITY THERE IS TO JOIN, under Joined, as Home lists them (asked
+   19 Nov 2026): the same section (features/home/communities-to-join.tsx)
+   in the same order Home gives it, Featured first as a row of its own and
+   then the list under its label and one filter line. */
+html[data-skin-wip] #communities-all-section { display: flex; flex-direction: column; }
+html[data-skin-wip] #communities-all-section > [data-home-join-featured] {
+  order: -1;
+  padding-top: var(--wip-row-gap);
+  padding-bottom: 0;
+}
+html[data-skin-wip] #communities-screen #communities-all-section > .home-area-label { padding-top: var(--wip-row-gap); }
+html[data-skin-wip] #communities-all-section select { border-radius: var(--wip-radius-inner); }
+html[data-skin-wip] #communities-all-section [class*="rounded-[20px]"] { border-radius: var(--wip-radius-card); }
+html[data-skin-wip] #communities-all-section [data-guest-card-cover][style]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  filter: var(--wip-cover-lift);
+}
+html[data-skin-wip][data-wip-tokens] #communities-all-section [data-home-join-featured] > h3 {
+  font-family: var(--wip-label-font);
+  font-size: var(--wip-label-size);
+  font-weight: var(--wip-label-weight);
+  letter-spacing: var(--wip-label-track);
+  text-transform: var(--wip-label-case);
+  color: var(--wip-label-ink);
+  text-decoration-line: underline;
+  text-decoration-color: var(--wip-label-mark);
+  text-decoration-thickness: 0.42em;
+  text-underline-offset: -0.16em;
+  text-decoration-skip-ink: none;
+}
+/* Discover is a card of the look, and what it says is in the look's inks. */
+html[data-skin-wip] #communities-screen .communities-discover {
+  padding: var(--wip-card-pad);
+  border-radius: var(--wip-card-radius);
+  background-color: var(--wip-card-bg);
+  box-shadow: inset 0 0 0 1px var(--wip-card-line), var(--wip-card-shadow);
+}
+html[data-skin-wip] #communities-screen :is(.communities-discover-text, .communities-note) { color: var(--wip-ink-muted); }
+html[data-skin-wip] #communities-screen .communities-discover-text > b {
+  font-size: var(--wip-title-size);
+  font-weight: var(--wip-title-weight);
+  color: var(--wip-ink);
 }
 /* END OF STANDARD (WIP). */
 /* Its hero's two slow movements (named here, outside the block its guard reads rule by rule). */

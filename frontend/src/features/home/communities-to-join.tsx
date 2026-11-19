@@ -59,7 +59,7 @@ export function joinOrder(apps: readonly GuestApp[], sort: GuestSort = 'trending
   return [...featured, ...sortApps(apps, sort).filter((a) => !first.has(a.slug))];
 }
 
-export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction }: {
+export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, query, onRetry, headingAction, ids }: {
   /** The public directory, or null while it loads. */
   apps: GuestApp[] | null;
   /** The directory could not be read: say so, with a way to try again. */
@@ -73,6 +73,8 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
   onRetry?: () => void;
   /** A control at the end of the heading's row: the visitor's search button (../guest/guest-discover.tsx). */
   headingAction?: ReactNode;
+  /** The section's and its Featured label's ids where it is drawn a second time in the document (the Communities page): Home's own stay Home's. */
+  ids?: { section: string; featured: string };
 }) {
   const t = useMessages('home');
   const ta = useMessages('auth');
@@ -159,7 +161,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
     // The id is the signed-in Home's (the tours and the declared checks find
     // it); the landing draws the same section signed out, in the same
     // document, so it goes without one there.
-    <section id={signedIn ? 'home-join-section' : undefined} data-home-join-section="" className="px-3 pb-6" aria-busy={apps ? undefined : true}>
+    <section id={ids ? ids.section : signedIn ? 'home-join-section' : undefined} data-home-join-section="" className="px-3 pb-6" aria-busy={apps ? undefined : true}>
       <SectionHeading action={headingAction}>{heading}</SectionHeading>
       {!query && kinds.length ? (
         <div className={oneLine ? 'wip-filterbar' : undefined}>
@@ -189,7 +191,7 @@ export function CommunitiesToJoin({ apps, failed = false, exclude, signedIn, que
       ) : null}
       {featured.length ? (
         <div data-home-join-featured="" className="pb-4">
-          <h3 id={signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
+          <h3 id={ids ? ids.featured : signedIn ? 'home-join-featured-label' : 'guest-join-featured-label'} className={`${SMALL_CAPS_LABEL} px-1 pb-2`}>
             {kind ? t('home:join.featuredKind', { kind: ta(`auth:guest.category.${kind}`) })
               : wip ? t('home:join.featuredAppsCommunities') : t('home:join.featured')}
           </h3>

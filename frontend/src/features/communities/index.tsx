@@ -63,13 +63,22 @@ import {
   homePinsActivityStore, homePinsStore, loadHomePinsActivity, refreshHomePins, setHomePin,
   type HomePin,
 } from '../home/home-pins-store';
+import { CommunitiesToJoin, readDirectory } from '../home/communities-to-join';
+import type { GuestApp } from '../guest/guest-data';
 import { SectionHeading } from '../home/panels/ui';
 import { ActionTile, HEAD_ACTION, NeedsTile, PinTile, useWide } from '../home/pinned-communities';
 import { matchesQuery } from '../home/use-home-query';
-import { WipCard, WipCta } from '../home/wip-kit';
+import { WipCard, WipCta, WipHeadMore } from '../home/wip-kit';
 import { communityScopeStore } from '../workshop/community-scope';
 
 const GRID = 'communities-grid grid grid-cols-4 gap-x-1 gap-y-4 px-1 pt-2 pb-2';
+
+/**
+ * How many communities a group shows folded under Standard (WIP): three rows
+ * of four, as Home's Pinned projects holds three rows. The group's label
+ * unfolds the rest and folds them back (the kit's WipHeadMore).
+ */
+const FOLD_AT = 12;
 
 // The router's door (App.navigateToCommunities): each visit reads the pins,
 // the joined list and the votes waiting again, so a community joined or a
@@ -98,6 +107,8 @@ export function CommunitiesScreen() {
   const state = useStoreState(homePinsStore);
   const [query, setQuery] = useState('');
   const [editing, setEditing] = useState(false);
+  // Standard (WIP): which groups are unfolded past their first rows.
+  const [open, setOpen] = useState<{ pinned: boolean; joined: boolean }>({ pinned: false, joined: false });
   const { badgeNeeds } = useStoreState(communityScopeStore) as { badgeNeeds?: number };
   const needs = Math.max(0, Number(badgeNeeds) || 0);
   // The look, read after mount only (useSkin): the prerender knows none.
@@ -111,15 +122,35 @@ export function CommunitiesScreen() {
   const wide = useWide();
   // THE CARDS (Drea's review of #6699): in the brand look on a wide screen
   // each community says what is going on there. Read only where it is drawn.
-  const cards = brand && wide;
+  // Standard (WIP) says how many members on each tile, at every width it draws a row (app.css).
+  const cards = (brand && wide) || wip;
   const activity = useStoreState(homePinsActivityStore);
   const listKey = `${state.pins.map((p) => p.slug).join(',')}|${state.joined.map((c) => c.slug).join(',')}`;
   useEffect(() => {
     if (cards && shown && state.ready && listKey !== '|') void loadHomePinsActivity();
   }, [cards, shown, state.ready, listKey]);
   // Leaving the page ends an edit and a search: it opens as it was first seen.
-  useEffect(() => { if (!shown) { setEditing(false); setQuery(''); } }, [shown]);
+  useEffect(() => { if (!shown) { setEditing(false); setQuery(''); setOpen({ pinned: false, joined: false }); } }, [shown]);
   const q = query.trim();
+  // Standard (WIP): every community there is to join is listed here too, under
+  // Joined, as Home lists them (the same section, ../home/communities-to-join).
+  // Read when the page is first shown; `readDirectory` answers a later visit
+  // from the read already made.
+  const [directory, setDirectory] = useState<GuestApp[] | null>(null);
+  const [directoryFailed, setDirectoryFailed] = useState(false);
+  const [directoryAttempt, setDirectoryAttempt] = useState(0);
+  useEffect(() => {
+    if (!wip || !shown) return undefined;
+    let live = true;
+    setDirectoryFailed(false);
+    void readDirectory(directoryAttempt > 0).then((list) => {
+      if (!live) return;
+      if (list) setDirectory(list);
+      else { setDirectory(null); setDirectoryFailed(true); }
+    });
+    return () => { live = false; };
+  }, [wip, shown, directoryAttempt]);
+  const mine = useMemo(() => new Set([...state.joined.map((c) => c.slug), ...state.pins.map((p) => p.slug)]), [state.joined, state.pins]);
   useEffect(() => { if (q) setEditing(false); }, [q]);
 
   const pinned = useMemo(() => state.pins.filter((p) => matchesQuery(q, p.name, p.slug)), [state.pins, q]);
@@ -146,7 +177,26 @@ export function CommunitiesScreen() {
   const needsTile = !kit && needs > 0 && !q && !editing;
   // New community as a tile: where the look has no filled button for it, and
   // on a phone under every look (app.css hides whichever is not the width's).
-  const createTile = offerCreate && !q && !editing;
+  // Standard (WIP) has the filled button at every width (app.css shows the
+  // search row on a phone too), so it draws no tile.
+  const createTile = offerCreate && !q && !editing && !wip;
+  // Folded, a group shows its first rows; a search or an edit shows all of it.
+  const folds = wip && !q && !editing;
+  const pinnedShown = folds && !open.pinned ? pinned.slice(0, FOLD_AT) : pinned;
+  const joinedShown = folds && !open.joined ? joined.slice(0, FOLD_AT) : joined;
+  /** A group's label: the way to all of it while some are held back, and back again once they are out. */
+  const groupLabel = (key: 'pinned' | 'joined', words: string, count: number) => {
+    if (!folds || count <= FOLD_AT) return words;
+    return open[key] ? (
+      <WipHeadMore id={`communities-${key}-less`} direction="up" expanded label={t('communities:page.showLess')} pill={t('communities:page.showLess')} onClick={() => setOpen((o) => ({ ...o, [key]: false }))}>
+        {words}
+      </WipHeadMore>
+    ) : (
+      <WipHeadMore id={`communities-${key}-all`} direction="down" expanded={false} label={t('communities:page.showAll', { count })} pill={t('communities:page.showAll', { count })} onClick={() => setOpen((o) => ({ ...o, [key]: true }))}>
+        {words}
+      </WipHeadMore>
+    );
+  };
   const total = state.pins.length + state.joined.filter((c) => !state.pins.some((p) => p.slug === c.slug)).length;
   const showPinned = state.ready && (pinned.length > 0 || needsTile);
   const showJoined = state.ready && (joined.length > 0 || createTile);
@@ -205,17 +255,18 @@ export function CommunitiesScreen() {
 
         <section id="communities-pinned-section" className="px-3" hidden={!showPinned}>
           <SectionHeading action={editOn === 'pinned' ? edit : null}>
-            {t('communities:page.pinned')}
+            {groupLabel('pinned', t('communities:page.pinned'), pinned.length)}
           </SectionHeading>
           <WipCard on={wip}>
             <div className={GRID}>
               {needsTile ? <NeedsTile count={needs} /> : null}
-              {pinned.map((pin) => (
+              {pinnedShown.map((pin) => (
                 <PinTile
                   key={pin.slug}
                   pin={pin}
                   votes={state.owed[pin.slug] || 0}
                   editing={editing}
+                  community={wip}
                   detail={cards ? activity.bySlug[pin.slug] : undefined}
                   onUnpin={() => { void setHomePin(pin, false, say(pin.name)); }}
                 />
@@ -226,16 +277,17 @@ export function CommunitiesScreen() {
 
         <section id="communities-joined-section" className="px-3" hidden={!showJoined}>
           <SectionHeading action={editOn === 'joined' ? edit : null}>
-            {t('communities:page.joined')}
+            {groupLabel('joined', t('communities:page.joined'), joined.length)}
           </SectionHeading>
           <WipCard on={wip}>
             <div className={GRID}>
-              {joined.map((c) => (
+              {joinedShown.map((c) => (
                 <PinTile
                   key={c.slug}
                   pin={c}
                   votes={state.owed[c.slug] || 0}
                   editing={false}
+                  community={wip}
                   detail={cards ? activity.bySlug[c.slug] : undefined}
                   onPin={editing ? () => { void setHomePin({ ...c, member: true } as HomePin, true, say(c.name)); } : undefined}
                 />
@@ -277,29 +329,50 @@ export function CommunitiesScreen() {
           <p id="communities-not-saved" className="communities-note" role="status">{t('communities:page.notSaved')}</p>
         ) : null}
 
-        <section id="communities-discover-section" className="px-3">
-          <SectionHeading>{t('communities:page.discover.heading')}</SectionHeading>
-          <div className="communities-discover">
-            <p className="communities-discover-text">
-              <b>{t('communities:page.discover.title')}</b>
-              {t('communities:page.discover.text')}
-            </p>
-            {/* The shell's filled pill (the brand look draws it as its sun pill). */}
-            <Button
-              type="button"
-              id="communities-discover-btn"
-              layout="iconRow"
-              variant="pillAccent"
-              size="default"
-              ink="solid"
-              className="communities-discover-btn shrink-0 min-h-[44px]"
-              onClick={discover}
-            >
-              <SearchIcon className="w-[18px] h-[18px]" aria-hidden="true" />
-              {t('communities:page.discover.button')}
-            </Button>
-          </div>
-        </section>
+        {wip && state.ready ? (
+          <CommunitiesToJoin
+            apps={directory}
+            failed={directoryFailed}
+            exclude={mine}
+            signedIn
+            query={q}
+            ids={{ section: 'communities-all-section', featured: 'communities-all-featured-label' }}
+            onRetry={() => { setDirectory(null); setDirectoryAttempt((n) => n + 1); }}
+          />
+        ) : null}
+        {/* Discover leads to that list on Home; where the list is on this page there is nothing to lead to. */}
+        {wip ? null : (
+          <section id="communities-discover-section" className="px-3">
+            <SectionHeading>{t('communities:page.discover.heading')}</SectionHeading>
+            <div className="communities-discover">
+              <p className="communities-discover-text">
+                <b>{t('communities:page.discover.title')}</b>
+                {t('communities:page.discover.text')}
+              </p>
+              {/* Standard (WIP): the kit's filled action. Elsewhere the shell's filled pill (the brand look draws it as its sun pill). */}
+              {wip ? (
+                <WipCta id="communities-discover-btn" glyph={false} onClick={discover}>
+                  <SearchIcon className="wip-cta-glyph" aria-hidden="true" />
+                  {t('communities:page.discover.button')}
+                </WipCta>
+              ) : (
+                <Button
+                  type="button"
+                  id="communities-discover-btn"
+                  layout="iconRow"
+                  variant="pillAccent"
+                  size="default"
+                  ink="solid"
+                  className="communities-discover-btn shrink-0 min-h-[44px]"
+                  onClick={discover}
+                >
+                  <SearchIcon className="w-[18px] h-[18px]" aria-hidden="true" />
+                  {t('communities:page.discover.button')}
+                </Button>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );

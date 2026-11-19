@@ -169,7 +169,8 @@ test('every id the tour points at is one the shell ships', () => {
     'only the visible one of the two is measured');
   // Signed in only: the landing draws the same section, in the same
   // document, without the id.
-  assert.equal((read('frontend/src/features/home/communities-to-join.tsx').match(/<section id=\{signedIn \? 'home-join-section' : undefined\}/g) || []).length, 1);
+  // (The Communities page draws it a second time, under ids of its own.)
+  assert.equal((read('frontend/src/features/home/communities-to-join.tsx').match(/<section id=\{ids \? ids\.section : signedIn \? 'home-join-section' : undefined\}/g) || []).length, 1);
   assert.ok(read('dapp.json').includes('#home-create-tile'));
   // Home's own grid, the tile's home (React's; the Discover rail's cards are
   // `.app-card`s too, outside it).

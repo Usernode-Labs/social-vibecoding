@@ -184,3 +184,26 @@ test('the page\'s words are in the catalog, and say nothing of pinning to Home',
   assert.equal(message('project:menu.homeCommunity.add'), 'Pin community');
   assert.equal(message('home:membership.joinedPinned', { community: 'Orchard' }), 'Joined Orchard · pinned to Communities');
 });
+
+test('Standard (WIP) draws the page as Home is: its ground, cards with members and the week from 1024px, the kit\'s filled actions', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const page = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'features', 'communities', 'index.tsx'), 'utf8');
+  assert.match(css, /html\[data-skin-wip\] #communities-screen \{\s*background-color: var\(--wip-page-bg-communities\);/);
+  assert.match(css, /html\[data-skin-wip\] #communities-screen \.home-column \{ max-width: none; \}/);
+  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \{\s*grid-template-columns: repeat\(var\(--wip-cols\), minmax\(0, 1fr\)\);/);
+  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \[data-home-community-meta\] \{\s*display: block;/);
+  assert.match(css, /html\[data-skin-wip\] #communities-screen \.communities-grid \[data-home-community-detail\] \{\s*display: flex;/, 'and what happened there this week');
+  assert.match(page, /const cards = \(brand && wide\) \|\| wip;/, 'the members are read under the look at every width');
+  // A group folds to three rows of four; its label unfolds the rest and folds it back.
+  assert.match(page, /const FOLD_AT = 12;/);
+  assert.match(page, /const folds = wip && !q && !editing;/, 'a search or an edit shows all of a group');
+  assert.match(page, /<WipHeadMore id=\{`communities-\$\{key\}-all`\} direction="down" expanded=\{false\} label=\{t\('communities:page\.showAll', \{ count \}\)\}/);
+  assert.match(page, /<WipHeadMore id=\{`communities-\$\{key\}-less`\} direction="up" expanded label=\{t\('communities:page\.showLess'\)\}/);
+  // Every community there is to join is listed under Joined, by Home's own section under ids of its own.
+  assert.match(page, /ids=\{\{ section: 'communities-all-section', featured: 'communities-all-featured-label' \}\}/);
+  assert.match(page, /\{wip \? null : \(\s*<section id="communities-discover-section"/, 'Discover leads to that list, so it is not drawn where the list is');
+  assert.match(css, /html\[data-skin-wip\] #communities-all-section > \[data-home-join-featured\] \{\s*order: -1;/);
+  assert.match(page, /<WipCta id="communities-discover-btn" glyph=\{false\} onClick=\{discover\}>/);
+});
