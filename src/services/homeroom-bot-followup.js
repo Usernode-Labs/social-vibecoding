@@ -638,20 +638,6 @@ async function revisionCounts(pool, sessionId) {
   return { own: Number(rows[0]?.own || 0), asked: Number(rows[0]?.asked || 0) + handedOver, grants, openGrant };
 }
 
-/**
- * #6284: the line the change and the thread show when the bot stopped at its
- * own limit. `tries` is its own rounds plus the grants people spent.
- */
-function stoppedAtLimitText({ failingCount = 0, tries = MAX_REVISIONS, you = false } = {}) {
-  const who = you
-    ? 'You can let it try once more.'
-    : 'The person who asked for it or an admin can let it try again.';
-  const failing = failingCount > 0
-    ? `${failingCount} of this change's checks failed on its preview.`
-    : 'Its checks are failing on its preview.';
-  return `Checks failing · Homeroom bot stopped after ${tries} tries. ${who} ${failing}`;
-}
-
 /** #6284: the bot stopped at its own limit, as its own thread message. */
 function stoppedHandOffText({ failingCount = 0, tries = MAX_REVISIONS } = {}) {
   const failing = failingCount === 1
@@ -1574,7 +1560,6 @@ module.exports = {
   MAX_REVISIONS,
   MAX_ASKED_REVISIONS,
   revisionCounts,
-  stoppedAtLimitText,
   stoppedHandOffText,
   askedLimitText,
   MAX_SPEC_CHARS,

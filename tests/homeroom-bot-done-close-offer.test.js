@@ -358,9 +358,9 @@ test('#6321: a tap under the note, by any member, once', { timeout: 180000 }, as
     const { rows: [offer] } = await pool.query("SELECT *, user_id AS for_user_id FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1", [note.id]);
     return { note, offer };
   };
-  // A thread's offers are Homeroom bot's cards (bot_cards); one made before is still in its old table.
+  // A thread's offers are Homeroom bot's cards (bot_cards).
   const offerRow = async (id) => (await pool.query(
-    'SELECT status, result FROM bot_cards WHERE id = $1 UNION ALL SELECT status, result FROM homeroom_bot_voice_offers WHERE id = $1 LIMIT 1', [id])).rows[0];
+    'SELECT status, result FROM bot_cards WHERE id = $1', [id])).rows[0];
   const closeVotes = async (number) => (await pool.query(
     `SELECT created_by FROM issues WHERE app_id = $1 AND kind = 'close_issue' AND status = 'open' AND (payload->>'issueNumber')::int = $2`,
     [app.id, number],
@@ -470,7 +470,7 @@ test('#6321: a tap under the note, by any member, once', { timeout: 180000 }, as
         [app.id, bot.id, number],
       );
       const { rows: [offer] } = await pool.query(
-        `INSERT INTO homeroom_bot_voice_offers (app_id, kind, args, for_user_id, message_id) VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id) VALUES ('thread', $1, $2, $3, $4, $5) RETURNING id`,
         [app.id, kind, JSON.stringify({ issueNumber: number }), forUserId, message.id],
       );
       return Number(offer.id);

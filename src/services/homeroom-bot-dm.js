@@ -1677,17 +1677,6 @@ async function notePausedForWeek(pool, { settings, bot, userId, apps = [] }) {
   });
 }
 
-/**
- * WP1 (#9): a build of one of their requests was interrupted (a restart
- * took its worker, or cut its plan short) and the request was sent back to
- * be built again. Says nothing: the request's card and the tray say it is
- * building, as they did before. The caller stays, so a restart that does
- * need the person can be said here again. Resolves null.
- */
-async function noteBuildRestarted() {
-  return null;
-}
-
 
 // ── The request's news, in the DM ────────────────────────────────────────
 
@@ -5515,19 +5504,6 @@ async function typicalMinutes(pool) {
   return Math.min(60, Math.max(2, Math.round(Number(row.minutes))));
 }
 
-// WP-E: the same answer for a screen that asks every few seconds while a
-// first version is built (GET /api/apps/:slug), read at most every five
-// minutes per process. It is a median over thirty days; it does not move
-// faster than that.
-const TYPICAL_CACHE_MS = 5 * 60 * 1000;
-let typicalCache = null;
-async function typicalMinutesCached(pool, now = Date.now()) {
-  if (typicalCache && now - typicalCache.at < TYPICAL_CACHE_MS) return typicalCache.minutes;
-  const minutes = await typicalMinutes(pool);
-  typicalCache = { at: now, minutes };
-  return minutes;
-}
-
 /**
  * B8: a request somebody filed through Suggest an improvement (routes/feedback.js),
  * told to the bot the way its own filing from a DM is (homeroom-bot-mayor.js
@@ -7321,7 +7297,6 @@ module.exports = {
   hasOthers,
   TYPICAL_BUILD_MINUTES,
   typicalMinutes,
-  typicalMinutesCached,
   noteRequestFiled,
   botDoorFor,
   askBotToBuild,
@@ -7469,7 +7444,6 @@ module.exports = {
   setQuestionState,
   relayIssuePost,
   staleBuildNews,
-  noteBuildRestarted,
   CARD_ONLY,
   cardOnly,
   buildFailedCause,

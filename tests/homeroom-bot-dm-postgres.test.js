@@ -1153,28 +1153,6 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.ok((await dm.relayIssuePost({ pool, app, issueNumber: 3785, kind: 'proposal', runId: overtaken, postId: 37853, bot, dm: { link: 'https://x/1' } })).messageId);
   });
 
-  // WP1 (#9): a build a restart interrupted is started again. Its card and
-  // the tray say it is building; nothing else is sent ("Nothing you need to
-  // do." was the case for saying nothing).
-  await t.test('WP1 (#9): a build started again after a restart is not a message', async () => {
-    const kit = await user('kit');
-    await pool.query(
-      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 3786, $2, 'Reminders')`,
-      [app.id, kit.id],
-    );
-    const { rows: [run] } = await pool.query(
-      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict) VALUES ($1, 3786, 'live', 'ready') RETURNING id`, [app.id],
-    );
-    assert.equal(await dm.noteBuildRestarted(pool, { app, issueNumber: 3786, runId: run.id }), null);
-    const { rows } = await pool.query(
-      `SELECT m.id FROM conversation_messages m
-         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1
-        WHERE m.sender_id = $2`,
-      [kit.id, bot.id],
-    );
-    assert.deepEqual(rows, [], 'nothing reached her DM');
-  });
-
   await t.test('#4097 follow-up: where it is stuck it says what to tap, and only its newest message\'s suggestions stay live', async () => {
     await pool.query(
       `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title, first_version)

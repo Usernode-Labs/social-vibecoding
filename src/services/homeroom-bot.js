@@ -24,7 +24,7 @@
 // ── Shape ────────────────────────────────────────────────────────────────
 //
 // A QUEUE, not an hourly sweep. `refreshQueue` reads the GitHub issue cache
-// for every app every REFRESH_INTERVAL_MS and upserts one row per eligible
+// for every app every five minutes and upserts one row per eligible
 // issue into homeroom_bot_queue; the leader's work loop drains it. Draining
 // is PER APP in batches: the bot keeps one dev session per app, so every
 // issue of that app runs through the same warm worker container and pays
@@ -372,17 +372,11 @@ const DEFAULT_WEEKLY_LIMIT_CENTS = 15000;
 // Loop cadence. The loop is EVENT-DRIVEN: an issue filed, edited or
 // discussed on the platform calls noteIssueActivity, which queues that app's
 // issues and wakes the loop at once (its bot-request and bot-lane machines,
-// src/workflow/, whichever conductor runs their work). A pass drains
-// one batch; when it did work the next pass follows almost at once, and when
-// the queue was empty the loop sleeps until the next wake. The idle delay is
-// only a fallback poll for a wake that was lost, and REFRESH_INTERVAL_MS is
+// src/workflow/, whichever conductor runs their work). The bot-lane
+// machine's refresh, every five minutes (its REFRESH_EVERY_MS), is
 // the reconcile sweep for what no event can tell us — an issue opened or
 // commented on GitHub directly, a claim that expired — read through
 // github.fetchPublicIssues' own cache.
-const FIRST_PASS_DELAY_MS = 60 * 1000;
-const BUSY_PASS_DELAY_MS = 2 * 1000;
-const IDLE_PASS_DELAY_MS = 30 * 1000;
-const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 // One turn for a burst. People write a thought in two or three messages, or
 // a message and then a bare "@Homeroom bot" (PR #4584, 9 Oct 2026: a message
 // and its ping 2 seconds apart were answered twice, 23 seconds apart). A
@@ -391,8 +385,6 @@ const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 // (rules/bot-loop.ts READ_CANDIDATES_SQL); a wake that long after the message picks it up then
 // (wakeAfterSettle).
 const SETTLE_MS = 20 * 1000;
-// What wakes the loop for a person's words, and so waits to settle.
-const SETTLE_REASONS = new Set(['thread', 'proposal_thread']);
 // What a person asked for in their DM with the bot queues with one of these
 // (homeroom-bot-mayor.js, homeroom-bot-dm.js). One story per request: every
 // request gets a card in its requester's chat with the bot, however it was
@@ -455,8 +447,6 @@ const MAX_WAITING_PER_APP = 100;
 // in the first day, a median of 31 seconds apart, which is the idle poll.
 const BACKOFF_BASE_MS = 2 * 60 * 1000;
 const BACKOFF_CEILING_MS = 60 * 60 * 1000;
-// How far past one turn's budget a claimed queue row counts as abandoned.
-const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 // A build on the platform's own repository gets this many times a build's
 // clocks, its spec's and its build turn's (#3396). The repository is far
 // larger than any app's: its specs ran past 10 minutes, and a build ran out
@@ -9218,7 +9208,7 @@ function creatorChoiceNote(chosen, { bullets = [], requester = false, planShown 
 
 // #4175: a plan that could not be sent keeps its run waiting and is sent
 // again on a later wake, this many minutes after the attempt before (the
-// bot's sweeps run every REFRESH_INTERVAL_MS): four sends over about an
+// bot's sweeps run every five minutes): four sends over about an
 // hour. Until 8 October 2026 it was built at once, with nobody asked.
 const PLAN_SEND_RETRY_MINUTES = [5, 15, 40];
 const PLAN_SEND_ATTEMPTS = PLAN_SEND_RETRY_MINUTES.length + 1;
@@ -9761,7 +9751,7 @@ async function goAhead(pool, { runId, answers = [], planShown = true }) {
   // The tap is served by whichever Pod the person reached, and only the
   // leader runs the loop that starts the build: the local wake does nothing
   // anywhere else, and the build waited for the leader's next idle pass (up
-  // to IDLE_PASS_DELAY_MS; 43 s in run four, 13 Oct 2026). The bus wake
+  // to 30 seconds then; 43 s in run four, 13 Oct 2026). The bus wake
   // reaches the leader, as an issue event's does (noteIssueActivity).
   // Run five (13 Oct 2026): the wake only queued a pass, and a pass started
   // builds after its refresh (46 s from Submit to the spec). The build is
@@ -12999,9 +12989,6 @@ module.exports = {
   dmChatSummary,
   claimLiveBuild,
   DEFAULT_WEEKLY_LIMIT_CENTS,
-  REFRESH_INTERVAL_MS,
-  IDLE_PASS_DELAY_MS,
-  BUSY_PASS_DELAY_MS,
   BUILDS_PER_APP,
   WAITING_PER_APP,
   MAX_BUILDS_PER_APP,

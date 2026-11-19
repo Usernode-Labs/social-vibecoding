@@ -40,8 +40,8 @@
 // asked.
 //
 // Anything hard to undo is an offer the right person taps (File it,
-// Withdraw it, Propose to close), as in the DM: homeroom_bot_voice_offers,
-// and `decideOffer` for the tap.
+// Withdraw it, Propose to close), as in the DM: a bot_cards row of place
+// 'thread', and `decideOffer` for the tap.
 //
 // 17 Oct 2026: what a person writes reaches the place's workflow machine
 // (src/workflow/bot-voice/) in the transaction that stores it (ws.js), and
@@ -71,6 +71,10 @@ const claims = require('./reply-claims');
 // #6534: pictures and files the bot may put under its reply in a thread.
 const threadPictures = require('./homeroom-bot-thread-tools/pictures');
 const threadAttachments = require('./homeroom-bot-thread-attachments');
+// One definition each, in modules that load nothing of the bot's.
+const { domainOf } = require('./homeroom-bot-move');
+const { requestMd } = require('./homeroom-bot-overlap');
+const { appRow } = require('./homeroom-bot-reply-status');
 
 // A burst is one turn (the bot-voice machine settles it): its rule's.
 const { SETTLE_MS, SETTLE_CAP_MS } = replyRules;
@@ -180,17 +184,6 @@ function chatModule(deps) { return deps.chatSvc || require('./homeroom-bot-chat'
 // thread-tool module but pictures (tests/homeroom-bot-prod-debug.test.js).
 function steerModule(deps) { return deps.steer || require('./homeroom-bot-steer'); }
 function workflowModule(deps) { return deps.replies || require('../workflow/platform.ts'); }
-
-// Where links point: the platform's own domain, as the mayor's own posts use it.
-function domainOf(deps) {
-  return deps.domain !== undefined ? deps.domain : require('./caddy').USERNODE_DOMAIN;
-}
-
-/** Pure: a request named by its number, as a markdown link a chat renders tappable. */
-function requestMd(domain, appSlug, issueNumber) {
-  const link = require('./homeroom-bot-move').requestLink(domain, appSlug, issueNumber);
-  return `[#${Number(issueNumber)}](${link})`;
-}
 
 /** A change's page, as a markdown link: the one that lands on its request when it has one. */
 function changeMd(domain, appSlug, row) {
@@ -676,17 +669,6 @@ async function gate(pool, { app, place, row, bot, settings, speaker, deps = {} }
 // (ws.js handleMessage → workflow/platform.ts insertHeard). The machine
 // settles the burst and asks for a turn (runTurn), which decides with the
 // gate whether the bot was spoken to.
-
-async function appRow(pool, appId) {
-  const { rows } = await pool.query(
-    // With what the access checks read (app-access.js ACCESS_COLUMNS).
-    `SELECT id, slug, name, repo_url, created_by, self_hosted, community_id,
-            collab_visibility, view_visibility, moderation_suspended_at
-       FROM apps WHERE id = $1`,
-    [Number(appId)],
-  );
-  return rows[0] || null;
-}
 
 async function personRow(pool, userId) {
   if (!userId) return null;
@@ -1249,16 +1231,6 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
 // What a turn says when it could not answer at all (Q3: once, where it was asked).
 const SORRY_TEXT = 'Sorry, I couldn\'t answer that just now. Ask me again in a bit.';
 
-/** The newest message in `place`, or 0. */
-async function newestIn(pool, { app, place }) {
-  const thread = threadOf(place);
-  const { rows } = thread
-    ? await pool.query(
-      'SELECT MAX(id) AS id FROM chat_messages WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3', [app.id, thread.type, thread.ref])
-    : await pool.query('SELECT MAX(id) AS id FROM chat_messages WHERE app_id = $1 AND thread_type IS NULL', [app.id]);
-  return Number(rows[0]?.id) || 0;
-}
-
 /** Pure: the key a turn's reply is said once by (bot-post.js). */
 function replyKey(app, place, turnKey) {
   const botPost = require('./bot-post');
@@ -1273,7 +1245,12 @@ function replyKey(app, place, turnKey) {
  * For one release after step 4 (11 Nov 2026), a turn retried across it may
  * have posted its reply before keys: its message's turn mark (which every
  * reply still carries) is read too, read-only, when its key names none.
- * Remove TURN_MARK_SQL in the release after.
+ *
+ * 19 Nov 2026: that release has passed, but TURN_MARK_SQL still finds one
+ * post its key does not: a follow-up's report owed by a chat or a topic
+ * with no message left to answer is said in the change's thread (sayReport's
+ * `where`), so its key is that thread's and not the place's read here.
+ * Remove it once that read asks for the key the report was said by.
  */
 const TURN_MARK_SQL = `
   SELECT id, metadata FROM chat_messages
@@ -3206,23 +3183,20 @@ function quoteOf(message, username) {
 //
 // A thread's offers are Homeroom bot's cards (bot_cards, place 'thread',
 // their message in chat_message_id), each written with the message that
-// shows its buttons (step 3: ws.sendBotMessage's `card`). Those said before
-// the card store stay in homeroom_bot_voice_offers until they are answered
-// or 14 days old. Every card's id is above every older offer's (migration
-// bot-cards), so an id names one row: a thread card when bot_cards has it,
-// else an older offer. Read through OFFERS_SQL, in the older table's own
-// words.
+// shows its buttons (step 3: ws.sendBotMessage's `card`). Read through
+// OFFERS_SQL, in the words a thread's offers had before the card store
+// (message_id, for_user_id).
+//
+// 19 Nov 2026: the offers said before the card store stayed answerable in
+// their own table (homeroom_bot_voice_offers) until each was 14 days old.
+// The last of them is, so nothing here reads that table any more. A tap
+// under one of their messages finds no card and is refused as expired
+// (decideOffer), as an offer of that age was.
 const OFFERS_SQL = `(
   SELECT id, app_id, chat_message_id AS message_id, kind, args, user_id AS for_user_id, status, result,
-         created_at, decided_at, decided_key, expires_at, retired_reason, target_app_id, 'cards' AS store
+         created_at, decided_at, decided_key, expires_at, retired_reason, target_app_id
     FROM bot_cards WHERE place = 'thread'
-  UNION ALL
-  SELECT id, app_id, message_id, kind, args, for_user_id, status, result,
-         created_at, decided_at, decided_key, created_at + INTERVAL '14 days' AS expires_at, NULL AS retired_reason,
-         NULL::int AS target_app_id, 'voice' AS store
-    FROM homeroom_bot_voice_offers
 )`;
-const OFFER_TABLES = Object.freeze({ cards: 'bot_cards', voice: 'homeroom_bot_voice_offers' });
 
 // #6614: when the bot says work is under way, its first button is a plain
 // yes in the person's words, and the answer to it is one short line.
@@ -3590,7 +3564,8 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, offerId
     return refused(400, 'no_rows', 'Tick at least one project.');
   }
   const { rows: [message] } = await pool.query(
-    'SELECT id, metadata FROM chat_messages WHERE id = $1 AND app_id = $2', [Number(messageId), app.id],
+    `SELECT id, metadata, created_at <= NOW() - INTERVAL '14 days' AS aged
+       FROM chat_messages WHERE id = $1 AND app_id = $2`, [Number(messageId), app.id],
   );
   if (!message) return refused(404, 'no_such_offer', 'Nothing to decide here.');
   const idOf = (v) => (Number.isSafeInteger(Number(v)) && Number(v) > 0 ? Number(v) : null);
@@ -3599,11 +3574,21 @@ async function decideOffer(pool, config, { app, user: viewer, messageId, offerId
   if (named) {
     ({ rows: [offer] } = await pool.query(
       `SELECT o.id, o.kind, o.status, o.message_id, o.retired_reason, o.expires_at <= NOW() AS expired FROM ${OFFERS_SQL} o
-        WHERE o.id = $1 AND o.app_id = $2 ORDER BY o.store LIMIT 1`,
+        WHERE o.id = $1 AND o.app_id = $2 LIMIT 1`,
       [named, app.id],
     ));
     if (offer && offer.message_id != null && Number(offer.message_id) !== Number(message.id)) {
       return refused(409, 'not_this_message', 'That offer belongs to another message.');
+    }
+    // No card, under a message older than a card stays open: an offer said
+    // before the card store (OFFERS_SQL). What its own table answered at
+    // that age: expired while its buttons were up, decided once they had gone.
+    if (!offer && message.aged) {
+      const shown = message.metadata?.homeroomBot?.offer?.status;
+      if (shown === 'open') await markOfferMessage(pool, { app, messageId: Number(message.id), status: 'expired', deps });
+      return shown === 'open' || shown === 'expired'
+        ? refused(410, 'expired', 'That offer has expired.')
+        : refused(409, 'already_decided', 'That was already decided.');
     }
     if (!offer || offer.message_id == null) {
       // The note names an offer that is lost: its buttons go, for good.
@@ -3650,13 +3635,12 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
     `SELECT o.*, m.thread_type, m.thread_ref, m.id AS msg_id, a.slug AS app_slug
        FROM ${OFFERS_SQL} o JOIN chat_messages m ON m.id = o.message_id JOIN apps a ON a.id = o.app_id
       WHERE o.id = $1
-      ORDER BY o.store LIMIT 1`,
+      LIMIT 1`,
     [Number(offerId)],
   );
   if (!offer) return { decision: 'gone' };
-  const table = OFFER_TABLES[offer.store] || OFFER_TABLES.voice;
   const { rows: claimed } = await pool.query(
-    `UPDATE ${table} SET status = 'deciding', decided_key = $2
+    `UPDATE bot_cards SET status = 'deciding', decided_key = $2
       WHERE id = $1 AND (status = 'open' OR (status = 'deciding' AND decided_key = $2)) RETURNING id`,
     [offer.id, String(key)],
   );
@@ -3683,7 +3667,7 @@ async function actOnOffer(pool, config, { offerId, userId, choice, key, rows = n
   const messageId = Number(offer.msg_id);
   const settle = async (status, result, said) => {
     await pool.query(
-      `UPDATE ${table} SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
+      `UPDATE bot_cards SET status = $2, result = $3, decided_at = NOW() WHERE id = $1`,
       [offer.id, status, JSON.stringify({ ...(result || {}), ...(said ? { said } : {}) })],
     );
     await markOfferMessage(pool, { app, messageId, status, deps });

@@ -86,6 +86,7 @@ const crypto = require('crypto');
 const log = require('./logger');
 const stageCosts = require('./stage-costs');
 const repoRef = require('./repo-ref');
+const { num } = require('./bot-review');
 
 const GLM = 'z-ai/glm-5.3-flash';
 const OPUS = 'anthropic/claude-opus-5.5';
@@ -251,10 +252,6 @@ function httpError(status, error, extra = {}) {
 
 function modelIdRe() {
   return require('./homeroom-bot').MODEL_ID_RE;
-}
-
-function num(v) {
-  return v == null || !Number.isFinite(Number(v)) ? null : Number(v);
 }
 
 function iso(v) {
