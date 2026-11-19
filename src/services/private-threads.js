@@ -1035,25 +1035,95 @@ async function firstVersionRootFor(db, { userId, slug }) {
 }
 
 /**
- * The thread message `messageId` is in, in the person's OWN chat with the
- * bot: its first message's id (the message's own when it is one), or null
- * when it is no message of that chat (somebody else's, another chat's, or
- * none at all). The chat is resolved here, from the person and the bot.
+ * Where message `messageId` is in the person's OWN chat with the bot:
+ * { rootId, conversationId }, the thread it is in (its first message's id,
+ * the message's own when it is one) and the chat, or null when it is no
+ * message of that chat (somebody else's, another chat's, or none at all).
+ * The chat is resolved here, from the person and the bot.
  */
-async function threadOfMessage(db, { userId, botId, messageId }) {
+async function placeOfMessage(db, { userId, botId, messageId }) {
   const id = Number(messageId);
   if (!userId || !botId || !Number.isSafeInteger(id) || id <= 0 || id > 2147483647) return null;
   const low = Math.min(Number(userId), Number(botId));
   const high = Math.max(Number(userId), Number(botId));
   const { rows: [row] = [] } = await db.query(
-    `SELECT m.id, m.thread_root_id
+    `SELECT m.id, m.thread_root_id, m.conversation_id
        FROM conversation_messages m
        JOIN conversation_direct_pairs d ON d.conversation_id = m.conversation_id
       WHERE m.id = $1 AND d.user_low_id = $2 AND d.user_high_id = $3`,
     [id, low, high],
   );
   if (!row) return null;
-  return Number(row.thread_root_id) || Number(row.id);
+  return { rootId: Number(row.thread_root_id) || Number(row.id), conversationId: Number(row.conversation_id) };
+}
+
+/** The thread `messageId` is in, in the person's own chat with the bot (placeOfMessage), or null. */
+async function threadOfMessage(db, { userId, botId, messageId }) {
+  const at = await placeOfMessage(db, { userId, botId, messageId });
+  return at ? at.rootId : null;
+}
+
+// ── Read for the person's own connector (19 Nov 2026) ────────────────────
+//
+// mcp-tools.js get_bot_thread: an agent the person connected reads their
+// private threads with the bot, which no connector tool could (get_discussion
+// reads a project's threads only). Both reads are the app's own: the page
+// GET /api/conversations/:id/threads/:rootId answers (conversations.js
+// listThread, with its membership, block and threads rules), the list the
+// Homeroom bot page draws (ai-work.js privateFor) and History's finished
+// ones (ai-history.js historyFor). Each takes only `user`, so they read the
+// person's own chat and nobody else's; nothing here looks at isAdmin, so an
+// admin's connector reads no more than anybody's. Nothing is marked read.
+
+/**
+ * One of the person's private threads with the bot: { rootId, head, root,
+ * messages, nextBefore, discussion, read? }, where `head` is what the
+ * thread's bar says (stateOf) and the rest is listThread's page. `threadId`
+ * is the thread's first message, or any message in it. Null when it is no
+ * thread of their own chat with the bot: somebody else's, a group's, or
+ * none at all, alike.
+ */
+async function readOwnThread(pool, { user, threadId, before = null, limit = 50, deps = {} }) {
+  if (!user?.id) return null;
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const conversations = deps.conversations || require('./conversations');
+  const bot = deps.bot !== undefined ? deps.bot : await dm.botAccount(pool);
+  if (!bot?.id) return null;
+  const at = await placeOfMessage(pool, { userId: user.id, botId: bot.id, messageId: threadId });
+  if (!at) return null;
+  const page = await conversations.listThread(pool, user, at.conversationId, at.rootId, { before, limit });
+  if (!page || page.error || !page.root) return null;
+  const head = await stateOf(pool, { user, rootId: at.rootId, bot });
+  return { rootId: at.rootId, head, ...page };
+}
+
+/**
+ * The person's private threads with the bot, newest first: `active`, the
+ * ones the Homeroom bot page lists (open, and done this week), then
+ * `finished`, a page of History's (done before that, put away, or filed as
+ * a request that has since finished), with `replies` (rootId → its
+ * threadSummaries entry) for both and `next`, History's cursor for the page
+ * after. With `olderThan` (that cursor) only the next page of finished ones.
+ * A thread both read is listed once, as active.
+ */
+async function listOwnThreads(pool, { user, olderThan = null, limit = 20, deps = {} }) {
+  const none = { active: [], finished: [], replies: new Map(), next: null };
+  if (!user?.id) return none;
+  const dm = deps.dm || require('./homeroom-bot-dm');
+  const bot = deps.bot !== undefined ? deps.bot : await dm.botAccount(pool);
+  if (!bot?.id) return none;
+  const aiWork = deps.aiWork || require('./ai-work');
+  const aiHistory = deps.aiHistory || require('./ai-history');
+  const conversations = deps.conversations || require('./conversations');
+  const [active, past] = await Promise.all([
+    olderThan ? [] : aiWork.privateFor(pool, { user, deps: { bot } }),
+    aiHistory.historyFor(pool, { user, kind: 'solo', before: olderThan, limit, deps: { bot } }),
+  ]);
+  const listed = new Set(active.map((p) => Number(p.rootId)));
+  const finished = (past.rows || []).filter((row) => row.kind === 'solo' && !listed.has(Number(row.rootId)));
+  const ids = [...listed, ...finished.map((row) => Number(row.rootId))];
+  const replies = await conversations.threadSummaries(pool, user, ids);
+  return { active, finished, replies, next: past.next || null };
 }
 
 /**
@@ -1081,7 +1151,7 @@ async function whereFor(pool, { user, message = null, agentChat = null, devChat 
 module.exports = {
   EARLIER_TITLE, firstVersionTitle, kindTitle, threadForPost, ownThreadFor,
   unreadFor, unreadInChat, markThreadRead, markThreadUnread,
-  earlierRootFor, firstVersionRootFor, threadOfMessage, whereFor,
+  earlierRootFor, firstVersionRootFor, placeOfMessage, threadOfMessage, whereFor, readOwnThread, listOwnThreads,
   ownRoot, stateOf, fileIt, postIt, startThread, startLine, CHANGE_KINDS, MAX_TEXT, MAX_TITLE,
   ABOUT_KINDS, aboutLine, aboutTarget, startAbout, liftHold, holdsFor, aboutContext, threadHref,
   markDone, reopen, reopenOnReply, finishForRequest, autoTitle, rename,
