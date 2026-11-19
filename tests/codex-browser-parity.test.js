@@ -19,7 +19,7 @@ test('Codex build turns receive the same pinned Playwright MCP surface as Claude
 
 test('worker image pins the browser server and installs its matching Chromium', () => {
   const dockerfile = fs.readFileSync(path.join(__dirname, '..', 'worker/Dockerfile'), 'utf8');
-  assert.match(dockerfile, /ARG PLAYWRIGHT_MCP_VERSION=0\.0\.85/);
+  assert.match(dockerfile, /ARG PLAYWRIGHT_MCP_VERSION=0\.0\.86/);
   assert.match(dockerfile, /@playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
   assert.match(dockerfile, /npx playwright install --with-deps chromium/);
 });

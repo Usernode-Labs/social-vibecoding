@@ -193,7 +193,7 @@ COPY --from=esbuild-build /out/esbuild /usr/local/bin/esbuild
 # The Chromium is Playwright's own build (Chrome for Testing), which the image
 # audit cannot see as a distro package; scripts/security-*.js read its version
 # off the image and report the Chromium advisories that apply to it.
-ARG PLAYWRIGHT_MCP_VERSION=0.0.85
+ARG PLAYWRIGHT_MCP_VERSION=0.0.86
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \
