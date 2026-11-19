@@ -31,16 +31,19 @@ export const lookCardKey = (appId: number, issueNumber: number, n: number | null
 // Queue reasons the machines decide on (the rest are the callers' words).
 export const CHECKS_REASON = 'checks_failing';
 export const READ_AGAIN_REASON = 'read_again';
+// #6859: a plan that could not be written, read again by the bot itself.
+export const PLAN_RETRY_REASON = 'plan_retry';
 export const BUDGET_RETRY_REASON = 'budget_retry';
 export const RESTART_REASON = 'restart';
 export const BACKLOG_REASON = 'backlog';
 export const ADMIN_REASON = 'admin';
 // The debts a refresh keeps while their request is unchanged and nobody
-// else's: the bot's own (a failing check's, a read started over, a look
-// cut by the budget, an older release's restart) and an older request's
-// backlog read. A budget retry is one (trace L6: the refresh pruned it).
+// else's: the bot's own (a failing check's, a read started over, a failed
+// plan's read, a look cut by the budget, an older release's restart) and an
+// older request's backlog read. A budget retry is one (trace L6: the refresh
+// pruned it).
 export const KEPT_WHILE_QUIET_REASONS: ReadonlySet<string> = new Set([
-  RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, BACKLOG_REASON, BUDGET_RETRY_REASON,
+  RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, PLAN_RETRY_REASON, BACKLOG_REASON, BUDGET_RETRY_REASON,
 ]);
 
 // One turn for a burst: a request a person is still writing on (or on the
