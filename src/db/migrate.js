@@ -1951,6 +1951,10 @@ async function seedStagingBotWaitingRows(pool) {
       // set, no build session). Says Ready to build and "will build this
       // next", never "is building this".
       { number: 9106, title: 'Staging demo: a request the bot is ready to build', buildQueued: true },
+      // #6867: a request a build left owed because OpenRouter's credit ran
+      // out. Its row on the bot's tab and its own page say it waits for
+      // building credit and that the bot picks it up again by itself.
+      { number: 9119, title: 'Staging demo: a request waiting for building credit', creditWait: true },
     ];
     for (const d of demo) {
       await pool.query(
@@ -1976,6 +1980,22 @@ async function seedStagingBotWaitingRows(pool) {
                                WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = $3)`,
           [appId, d.number, d.verdict || 'ready', d.reason || null, d.held || null,
             d.cannot ? false : null, d.firstStep || null, d.cannot ? 'operator_work' : null],
+        );
+      }
+      if (d.creditWait) {
+        // #6867: the row the bot owes itself after a build found OpenRouter's
+        // credit gone. It waits, quietly, and nothing but the balance read
+        // starts it again: no run is written, so it is never in the bot's tray.
+        await pool.query(
+          `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+           VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+          [appId, d.number, userId, d.title],
+        );
+        await pool.query(
+          `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, enqueued_at)
+           SELECT $1, $2, 2, 'credit_wait', $3, NOW() - INTERVAL '1 day'
+            WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = $2)`,
+          [appId, d.number, userId],
         );
       }
       if (d.buildQueued) {

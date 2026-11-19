@@ -37,13 +37,16 @@ export const BUDGET_RETRY_REASON = 'budget_retry';
 export const RESTART_REASON = 'restart';
 export const BACKLOG_REASON = 'backlog';
 export const ADMIN_REASON = 'admin';
+// #6867: a request a build left owed because OpenRouter's credit ran out.
+// It waits for the balance read that lifts the bot's pause; nobody replies.
+export const CREDIT_WAIT_REASON = 'credit_wait';
 // The debts a refresh keeps while their request is unchanged and nobody
 // else's: the bot's own (a failing check's, a read started over, a failed
-// plan's read, a look cut by the budget, an older release's restart) and an
-// older request's backlog read. A budget retry is one (trace L6: the refresh
-// pruned it).
+// plan's read, a look cut by the budget, a build that ran out of credit, an
+// older release's restart) and an older request's backlog read. A budget
+// retry is one (trace L6: the refresh pruned it).
 export const KEPT_WHILE_QUIET_REASONS: ReadonlySet<string> = new Set([
-  RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, PLAN_RETRY_REASON, BACKLOG_REASON, BUDGET_RETRY_REASON,
+  RESTART_REASON, CHECKS_REASON, READ_AGAIN_REASON, PLAN_RETRY_REASON, CREDIT_WAIT_REASON, BACKLOG_REASON, BUDGET_RETRY_REASON,
 ]);
 
 // One turn for a burst: a request a person is still writing on (or on the

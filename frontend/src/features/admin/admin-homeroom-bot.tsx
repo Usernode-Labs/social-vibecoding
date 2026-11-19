@@ -1975,8 +1975,8 @@ function HomeroomBotSection() {
               payload?.credit
                 ? `${payload.credit.daysLeft != null ? `About ${payload.credit.daysLeft} days at this week's rate. ` : ''}Warns at ${dollarsFromCents(payload.credit.warnCents)} and ${dollarsFromCents(payload.credit.urgentCents)}.`
                 : undefined,
-              <a key="add" id="admin-homeroom-bot-credit-add" className={`${AdminUI.link} text-xs`}
-                href="https://openrouter.ai/settings/credits" target="_blank" rel="noreferrer">Add credit</a>)}
+              <a key="add" id="admin-homeroom-bot-credit-add" className={`${AdminUI.btn.link} text-xs`}
+                href="https://openrouter.ai/settings/credits">Add credit</a>)}
             {tile('You agree with it', agreement == null ? '–' : `${agreement}%`, 'admin-homeroom-bot-tile-agreement',
               totals && totals.rated ? `of ${totals.rated} rated` : 'nothing rated yet')}
           </div>
