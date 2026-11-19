@@ -1187,10 +1187,39 @@ function pickInProgressTarget(sessions, viewerId) {
   return null;
 }
 
+// T2.5 (19 Nov 2026): the stored work state of each change a request is in
+// review with (services/work-state.js, the change's own row), so the
+// Workshop list says where it stands ("Taking screenshots") rather than
+// "Waiting for votes" for every promoted or merging change. Only what any
+// viewer of the project may read: its stage, line, words and whether it is
+// open for votes. Map session id -> that; empty when none is stored or the
+// read fails (the list keeps its own words then). No row is made here: the
+// sweep and the machines write them.
+async function reviewWorkBySession(pool, rows) {
+  const ids = [...new Set((rows || [])
+    .filter((r) => r && (r.status === 'promoted' || r.status === 'merging'))
+    .map((r) => Number(r.id)).filter((id) => id > 0))];
+  const out = new Map();
+  if (!ids.length) return out;
+  try {
+    const stored = await require('../services/work-state').forChanges(pool, ids, { ensure: false });
+    for (const [id, row] of stored) {
+      if (!row || !row.stage) continue;
+      out.set(Number(id), {
+        stage: row.stage, line: row.line || null, words: row.words || null, voteOpen: row.voteOpen === true,
+      });
+    }
+  } catch (err) {
+    log.warn('issues', 'Could not read the stored work state of changes in review', { message: err.message });
+  }
+  return out;
+}
+
 // Compose one issue's `in_progress` field from its live linked sessions
 // and live claims (already expiry-filtered). Returns null when neither
-// exists — the FE treats null as "no chip".
-function composeInProgress(sessions, claims, viewerId) {
+// exists — the FE treats null as "no chip". `workBySession`
+// (reviewWorkBySession) adds each change's stored row, as `work`.
+function composeInProgress(sessions, claims, viewerId, workBySession = null) {
   const sess = sessions || [];
   const live = claims || [];
   if (!sess.length && !live.length) return null;
@@ -1229,6 +1258,8 @@ function composeInProgress(sessions, claims, viewerId) {
       // workedOnSql), or by this one.
       busy: s.worked_on === true || isSessionBusy(s.id),
       lastActivityAt: s.last_activity_at || null,
+      // T2.5: a change in review's stored row, when one was read.
+      ...(workBySession && workBySession.has(Number(s.id)) ? { work: workBySession.get(Number(s.id)) } : {}),
     }));
   return {
     count: sess.length,
@@ -2600,6 +2631,7 @@ function issueRoutes(config) {
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
         [app.id, IN_PROGRESS_PAUSED_WINDOW_DAYS]
       );
+      const reviewWork = await reviewWorkBySession(pool, inProgressRows);
       const inProgressByNumber = new Map();
       for (const r of inProgressRows) {
         const list = inProgressByNumber.get(r.n) || [];
@@ -2702,7 +2734,8 @@ function issueRoutes(config) {
           in_progress: composeInProgress(
             inProgressByNumber.get(issue.number),
             claimsByNumber.get(issue.number),
-            req.user.id
+            req.user.id,
+            reviewWork
           ),
           // The Homeroom bot reading or building this request right now
           // ({ what, since }), or null. Its own field: the bot is never
@@ -3121,7 +3154,7 @@ function issueRoutes(config) {
         const claims = claimRows
           .filter((c) => claimIsLive(c.claimed_at, lastAt, claimNow))
           .map((c) => ({ ...c, expires_at: claimExpiresAt(c.claimed_at, lastAt).toISOString() }));
-        issueFields.in_progress = composeInProgress(inProgressRows, claims, req.user.id)
+        issueFields.in_progress = composeInProgress(inProgressRows, claims, req.user.id, await reviewWorkBySession(pool, inProgressRows))
           || (IS_STAGING && req.query.demo === '1' ? stagingMockInProgress(req.user).get(number) : null)
           || null;
 
@@ -3789,6 +3822,7 @@ module.exports = {
   // "In progress" derivation pieces, exported for unit tests.
   pickInProgressTarget,
   composeInProgress,
+  reviewWorkBySession,
   IN_PROGRESS_PAUSED_WINDOW_DAYS,
   ISSUE_CLAIM_TTL_DAYS,
   // The staging mock requests, as this file's issue page reads them.

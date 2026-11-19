@@ -473,6 +473,13 @@ export interface RowBrief {
   /** One part per Yes it needs; `ask` when this viewer's vote is wanted. */
   vote: { yes: number; need: number; ask: boolean } | null;
   /**
+   * T2.5: the pill the row's vote line draws in place of the card's own,
+   * from the change's stored row while that row is not up for a vote
+   * ("Taking screenshots", "Syncing with main": AppView._workPill). Absent
+   * while it is, or with no row: the card's own pill.
+   */
+  pill?: StatusPillState | null;
+  /**
    * #5385: on a request Homeroom bot has in hand for the viewer, its track
    * (the Activity drawer's), whose step the What's happening row ends with.
    * What's happening's own rows only: the board's brief has none.

@@ -196,3 +196,20 @@ test('Admin merge is a row of the change\'s ⋯ menu alone; no transcript render
   assert.match(css, /\.gc-vote-card-facts \{[^}]*font-size: 13px;/);
   assert.doesNotMatch(css, /\.gc-vote-inline \{|\.gc-vote-btn-admin \{|\.gc-vote-voted-box \{/);
 });
+
+// T2.12 (19 Nov 2026): the card takes its change's stored row's words while
+// that row is not up for a vote (its screenshots, a sync with main, an
+// update on its way), rather than a tally asking for a vote it cannot take.
+test('T2.12: a change not open for votes says its stored row\'s words', () => {
+  const { voteFacts } = loadTsx(CARD);
+  const t = (id, values) => message(id, values);
+  const work = { stage: { id: 'core:work.stage.shots' }, line: { id: 'core:work.line.shots' } };
+  assert.deepEqual(voteFacts(t, facts({ work, myVote: 'yes' })),
+    ['Taking screenshots', 'Tests passed: only the before and after screenshots are left', 'You voted yes']);
+  assert.deepEqual(voteFacts(t, facts({ work: { stage: { id: 'core:work.stage.syncing' }, line: null } })), ['Syncing with main']);
+  const html = renderComponent(CARD, 'VoteCard', { msg: voteRow({ vote: facts({ work }) }) });
+  assert.match(html, /Taking screenshots/);
+  assert.doesNotMatch(html, /Needs 1 more yes/);
+  // Its button keeps the rule the preview's header shares: Vote until decided.
+  assert.match(html, />Vote</);
+});

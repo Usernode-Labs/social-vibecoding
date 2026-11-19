@@ -5794,3 +5794,27 @@ test('#6098: the request\'s ballot and its vote to close keep the button that wa
   assert.match(src, /refocusAfterVote\(box\.current, 'ballot-option', from, wasFocused\)/);
   assert.match(src, /refocusAfterVote\(box\.current, 'close-vote', from, wasFocused\)/);
 });
+
+// T2.5 (19 Nov 2026): a change row on the Workshop's list wears its stored
+// row's words while that row is not up for a vote (AppView._workPill, the
+// change page's header pill), and asks for no vote meanwhile; its Yes/No
+// stay where they are (the card's own).
+test('T2.5: a change row whose stored row is not up for a vote draws that row\'s pill', () => {
+  const AppView = makeAppView();
+  seed(AppView);
+  const shots = {
+    stage: 'checking', line: { code: 'shots' },
+    words: { stage: { id: 'core:work.stage.shots' }, stageOthers: { id: 'core:work.stage.shots' }, line: { id: 'core:work.line.shots' } },
+  };
+  const item = (work) => ({ id: 77, pr_number: 4577, status: 'promoted', check_state: 'passing', created_at: at(1), linked_issues: [], work });
+  const held = AppView._workshopBrief('proposal', item(shots), null);
+  assert.equal(held.pill.label, 'Taking screenshots');
+  assert.equal(held.vote.ask, false, 'nothing asks for a vote it cannot take yet');
+  const open = AppView._workshopBrief('proposal', item({ stage: 'up_for_vote', words: { stage: { id: 'core:work.stage.upForVote' }, line: null } }), null);
+  assert.equal(open.pill, undefined, 'up for a vote: the card\'s own pill');
+  assert.equal(open.vote.ask, true);
+  assert.equal(AppView._workshopBrief('proposal', item(null), null).pill, undefined);
+  // The row draws it in place of the card's pill.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'frontend/src/features/dev-board/workshop/work-row.tsx'), 'utf8');
+  assert.match(src, /<Votes card=\{card\} pill=\{b\.pill \|\| null\} \/>/);
+});

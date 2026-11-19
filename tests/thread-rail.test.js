@@ -320,3 +320,62 @@ test('#6807: a change waiting on a fix for its check ends on Fixing, with its li
   assert.equal(words(flaky[2].note), note);
   assert.equal(flaky[2].busy, true);
 });
+
+// T2.3 (19 Nov 2026): the change's stored row (its own work_states row)
+// words the last step while it is not up for a vote, as it words the foot
+// (card-model.ts storedFoot). The timeline said "Up for a vote" once its
+// checks passed while the foot said "Taking screenshots".
+test('T2.3: a change\'s timeline ends on its stored row\'s words while it is not up for a vote', () => {
+  const { changeRail, requestRail } = loadTsx(MODEL);
+  const gate = (over = {}) => ({ name: 'Votes', figure: '', tone: 'muted', done: false, note: [], ...over });
+  const input = {
+    id: 51, author: 'evan', at: '2026-11-13T15:16:00Z', plan: null,
+    testing: gate({ name: 'Tested', figure: 'All checks passed', tone: 'done', done: true }),
+    status: { key: 'needs_vote', label: 'Vote · 0/2', yes: 0, majority: 2 },
+    votes: gate({ figure: 'Needs 2 more yes', tone: 'ask', note: ['Any of the 63 members can give it.'] }),
+  };
+  const shots = changeRail({ ...input, work: standing({ stage: 'checking', line: { code: 'shots' } }) });
+  assert.deepEqual(names(shots), ['Built', 'Tested', 'Taking screenshots']);
+  const now = shots[shots.length - 1];
+  assert.equal(now.icon, 'shots');
+  assert.equal(words(now.note), 'Tests passed: only the before and after screenshots are left');
+  assert.equal(now.noteTone, 'plain', 'nobody is asked for anything');
+  assert.equal(now.busy, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(now.open)), { kind: 'votes', changeId: 51 }, 'a press still opens what it did');
+
+  const sync = changeRail({ ...input, work: standing({ stage: 'checking', line: { code: 'syncing' } }) });
+  assert.equal(names(sync).pop(), 'Syncing with main');
+  const update = changeRail({ ...input, work: standing({ stage: 'building', line: { code: 'update_queued' } }) });
+  assert.equal(names(update).pop(), 'Building');
+  assert.equal(words(update[update.length - 1].note), 'An update is on its way');
+  const held = changeRail({ ...input, work: standing({ stage: 'going_live', line: { code: 'github_checks' } }) });
+  assert.equal(names(held).pop(), 'Approved');
+  const fixing = changeRail({
+    ...input, testing: gate({ name: 'Testing', figure: 'Found a problem', tone: 'bad' }),
+    // The server words it (work-state.js phrasesOf): "Fixing", its line.
+    work: {
+      stage: 'checking', line: { code: 'fixing_check' },
+      words: { stage: { id: 'core:work.stage.fixing' }, stageOthers: { id: 'core:work.stage.fixing' }, line: { id: 'core:work.line.fixingCheck' } },
+    },
+  });
+  assert.deepEqual(names(fixing), ['Built', 'Tests failed', 'Fixing']);
+
+  // Up for a vote: the live vote's own step, with its tally's sentence.
+  const vote = changeRail({ ...input, work: standing({ stage: 'up_for_vote' }) });
+  assert.equal(names(vote).pop(), 'Up for a vote');
+  assert.equal(words(vote[vote.length - 1].note), 'Needs 2 more yes. Any of the 63 members can give it.');
+  // Merged: the change's own status is newer than any row.
+  const merged = changeRail({
+    ...input, status: { key: 'merged', label: '✓ Live', yes: 2, majority: 2 }, votes: gate({ tone: 'done', done: true }),
+    work: standing({ stage: 'checking', line: { code: 'shots' } }),
+  });
+  assert.equal(names(merged).pop(), 'Live');
+
+  // A request's page with one change: its lead carries the row, so the
+  // request's timeline ends on the same words.
+  const led = requestRail({
+    ...base, changes: [change()], standing: standing({ stage: 'up_for_vote', change: lead() }),
+    lead: { ...input, work: standing({ stage: 'checking', line: { code: 'shots' } }) },
+  });
+  assert.deepEqual(names(led), ['Asked', 'Built', 'Tested', 'Taking screenshots']);
+});

@@ -754,16 +754,28 @@ async function threadPage(db, { thread, viewerId = null, owner = null, repo = nu
   if (changeIds.length) {
     // #6594: a change whose votes are in is approved, not up for a vote.
     // Its stored work state says so (the same gate every merge decision
-    // takes); a merging change is past approval too.
+    // takes); a merging change is past approval too. T2.12 (19 Nov 2026):
+    // and whether each change is open for votes now, off its own row
+    // (work_states.vote_open), so a request's header never counts a rival
+    // change in its screenshots or catching up with main as up for a vote.
+    // Null where a change has no row of its own yet: the page reads its
+    // review state as before.
     const { rows: approved } = await db.query(
       `SELECT w.session_id FROM work_states w
         WHERE w.session_id = ANY($1::int[]) AND ${APPROVED_SQL('w')}`,
       [changeIds],
     );
     const approvedIds = new Set(approved.map((r) => Number(r.session_id)));
+    const { rows: stored } = await db.query(
+      `SELECT w.item_ref, w.vote_open FROM work_states w
+        WHERE w.item_kind = 'change' AND w.item_ref = ANY($1::int[])`,
+      [changeIds],
+    );
+    const openOf = new Map(stored.map((r) => [Number(r.item_ref), r.vote_open === true]));
     for (const item of items) {
       if (item.type !== 'change') continue;
       item.approved = approvedIds.has(item.id) || item.status === 'merging';
+      item.voteOpen = openOf.has(item.id) ? openOf.get(item.id) : null;
     }
     const { rows: disputed } = await db.query(
       `SELECT session_id, request_number FROM change_request_claims

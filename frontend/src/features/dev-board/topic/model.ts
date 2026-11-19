@@ -771,6 +771,12 @@ export interface ChangeThreadView {
    * built or closed (AppView._changeThreadView).
    */
   status: StatusPillState | null;
+  /**
+   * T2.3: the pill the header draws: `status`, unless the change is open and
+   * its stored row (`work`) is not up for a vote, when it is that row's
+   * words (AppView._workPill). Absent from an older view: then `status`.
+   */
+  pill?: StatusPillState | null;
   category: string | null;
   author: string;
   at: string | null;

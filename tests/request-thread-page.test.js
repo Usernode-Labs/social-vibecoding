@@ -1044,3 +1044,31 @@ test('#6439 an ended vote to close says how it ended and keeps its replies', () 
   assert.match(view('kept'), /Kept open\./);
   assert.match(view('elsewhere'), /Ended: the request closed another way\./);
 });
+
+// T2.5 (19 Nov 2026): a person's own session on a request dropped the stored
+// row's words whatever the row said: a request whose change was taking its
+// screenshots read "Somebody started on this" from a session that had
+// stopped moving. The person's sentence stands only where the row says the
+// same (somebody is building it) or that nobody has started.
+test('T2.5: a person\'s session no longer hides the stored row\'s words', () => {
+  const av = appView();
+  const session = (status) => ({
+    count: 1, users: ['maya'], peopleTotal: 1, mine: false, claims: [], target: null,
+    sessions: [{ sessionId: 100, username: 'maya', mine: false, status, busy: false, lastActivityAt: '2026-11-05T11:00:00Z' }],
+  });
+  const shots = av._requestStatusView(issue({
+    in_progress: session('paused'),
+    standing: standing('checking', { line: { code: 'shots' } }),
+  }));
+  assert.equal(shots.lead, 'Taking screenshots · Tests passed: only the before and after screenshots are left');
+  // The row says a person has it: their own sentence.
+  const theirs = av._requestStatusView(issue({
+    in_progress: session('active'),
+    standing: standing('building', { line: { code: 'claimed', by: 'maya' }, whoseMove: 'builder' }),
+  }));
+  assert.doesNotMatch(theirs.lead, /maya is building it/);
+  assert.match(theirs.lead, /maya/);
+  // Nobody has started on it, by the row: their sentence too.
+  const idle = av._requestStatusView(issue({ in_progress: session('active'), standing: standing('reading', { line: { code: 'waiting' } }) }));
+  assert.match(idle.lead, /maya/);
+});

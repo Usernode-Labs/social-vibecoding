@@ -6792,6 +6792,10 @@ const AppView = {
     return null;
   },
 
+  // The second lines of a request nobody has started on yet (work-state.js
+  // NOT_STARTED): waiting to be read, waiting its turn, on hold.
+  STANDING_NOT_STARTED: new Set(['waiting', 'queued', 'on_hold', 'cooldown', 'first_version_wait']),
+
   // A standing with no words (an older server) says its plain stage word.
   // Each id whole, for the language inventory; no mapping of whys or lines.
   STANDING_PLAIN_IDS: {
@@ -6904,9 +6908,17 @@ const AppView = {
     const s = standing;
     if (s.stage === 'live' || s.stage === 'going_live') return { says: true, words: AppView._standingWords(s), act: 'settled' };
     const code = s.line && s.line.code;
-    const idle = s.stage === 'reading' && code === 'waiting';
-    if (st && st.key !== 'bot' && (st.key !== 'in_review' || idle)) return { says: false, words: null, act: 'person' };
-    let act = 'start';
+    // T2.5 (19 Nov 2026): a person's own work (a session, a claim) says who
+    // has it only while the stored row says the same (somebody is building
+    // it: `claimed`, the builder's move) or that nobody has started on it.
+    // The row reads their claim and their change too (services/work-state.js),
+    // so a request whose change is checking or taking its screenshots says
+    // so, not "zura is working on it" from a session that stopped moving.
+    const idle = s.stage === 'reading' && AppView.STANDING_NOT_STARTED.has(code);
+    const theirs = s.stage === 'building' && (code === 'claimed' || s.whoseMove === 'builder');
+    const person = !!st && st.key !== 'bot';
+    if (person && (idle || theirs)) return { says: false, words: null, act: 'person' };
+    let act = person ? 'person' : 'start';
     if (s.stage === 'waiting_for_you') {
       act = s.line && s.line.outdated ? 'again'
         : s.why === 'plan' ? 'plan'
@@ -8174,6 +8186,11 @@ const AppView = {
       timeTitle: stamp.title,
       via,
       status: statusState && statusState.label ? statusState : null,
+      // T2.3: the pill beside "Change #N" as the header draws it: the vote's
+      // own (`status`) while the change's stored row is up for a vote, else
+      // that row's words (_workPill). `status` stays the live gates' for the
+      // phase the foot and the timeline read.
+      pill: AppView._workPill(item, statusState && statusState.label ? statusState : null),
       votes: AppView._changeVotesView(item, card),
       testing: AppView._changeTestingView(item),
       // #6563: the merge itself, as a third card under Votes and Tested. Null
@@ -8207,6 +8224,35 @@ const AppView = {
       // change has (_stackedOn): said in a notice above Votes and Testing,
       // with a door to the change it waits for.
       ...AppView._stackedView(kind, item),
+    };
+  },
+
+  // T2.3 (19 Nov 2026): the header pill of an open change, from its stored
+  // work state (the proposal read's `work`, services/work-state.js), the row
+  // its foot, its timeline and every list read. While that row is not up for
+  // a vote (its before & after shots are being taken, it syncs with main, an
+  // update is on its way, GitHub holds its merge, a check is being fixed,
+  // its tests fail) the pill says so in the row's own words, never "Vote ·
+  // 0/2". A change up for a vote, merged, merging or closed keeps the pill
+  // it had (`pill`), and so does a page with no row.
+  _workPill(item, pill) {
+    if (!pill || !item || item.status !== 'promoted') return pill;
+    const work = item.work && typeof item.work === 'object' ? item.work : null;
+    if (!work || !work.stage || work.stage === 'up_for_vote') return pill;
+    const words = AppView._standingWords({ ...work, mine: true });
+    if (!words) return pill;
+    const t = PlatformI18n.t;
+    const code = work.line && work.line.code;
+    const bad = work.stage === 'stopped'
+      || code === 'checks_failing' || code === 'github_checks_failing' || code === 'bot_fix_failed';
+    const busy = !bad && (work.stage === 'building' || work.stage === 'checking' || work.stage === 'going_live');
+    const title = words.line ? t(words.line.id, words.line.values || {}) : undefined;
+    return {
+      yes: pill.yes, no: pill.no, majority: pill.majority, advisory: 0, lock: false, reasons: [],
+      tier: 2, key: 'work_' + work.stage, label: t(words.stage.id, words.stage.values || {}),
+      tone: bad ? 'blocked' : work.stage === 'going_live' ? 'ok' : 'progress',
+      ...(busy ? { spinner: true } : {}),
+      ...(title ? { title } : {}),
     };
   },
 
@@ -13283,7 +13329,11 @@ const AppView = {
         // place of the card's @ chip: the work-state chip's own name. The
         // state, the person and how many more are one message; the viewer
         // (`ws.who` is 'you') is a message of its own, not a name.
-        const state = WORDS[ws.key] ? PlatformI18n.t(WORDS[ws.key]) : ws.label;
+        // T2.5: a change in review says where its stored row stands
+        // ("Taking screenshots · zura"), never "Waiting for votes" while it
+        // is not up for one.
+        const state = ws.rowWords ? PlatformI18n.t(ws.rowWords.stage.id, ws.rowWords.stage.values || {})
+          : WORDS[ws.key] ? PlatformI18n.t(WORDS[ws.key]) : ws.label;
         const person = ws.who && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
           ? ws.who : null;
         const more = ws.people > 1 ? ws.people - 1 : 0;
@@ -13344,10 +13394,14 @@ const AppView = {
       checkTags(it);
       if (preview) tags.push({ label: PlatformI18n.t('changes:workshop.row.tag.previewReadyVote'), short: PlatformI18n.t('changes:workshop.row.tag.previewReadyVoteShort'), tone: 'plain', glyph: 'eye' });
       const pill = AppView.statusPillState(it);
+      // T2.5: its pill is its stored row's words while that row is not up
+      // for a vote (_workPill, the change page's header pill).
+      const rowPill = AppView._workPill(it, pill);
       return {
         ...out, stage: 'vote',
         // A project's first version asks nobody's vote (D1).
-        vote: pill ? { yes: pill.yes, need: pill.majority, ask: !it.my_vote && !AppView.readOnly && it.first_version !== true } : null,
+        vote: pill ? { yes: pill.yes, need: pill.majority, ask: rowPill === pill && !it.my_vote && !AppView.readOnly && it.first_version !== true } : null,
+        ...(rowPill && rowPill !== pill ? { pill: rowPill } : {}),
       };
     }
     const busy = AppView._sessionBusy(it);
@@ -28013,9 +28067,16 @@ const AppView = {
     let clearAt = 0;
     let spinner = false;
     let tone = 'sky';
+    // T2.5: the words of the change a request is in review with, from that
+    // change's stored row (`work` on its in_progress session, read with the
+    // list: routes/issues.js), else the request's own row when that change is
+    // its lead. Null while it is up for a vote: then "Waiting for approval".
+    let rowWords = null;
     if (review.length) {
       key = 'in_review'; tone = 'violet';
       const s = pick(review); who = named(s); at = s.lastActivityAt;
+      rowWords = AppView._reviewRowWords(issue, s);
+      if (rowWords && rowWords.busy) spinner = true;
     } else if (active.length) {
       key = 'working';
       // Emerald + spinner only while a turn is genuinely running, which is
@@ -28063,7 +28124,7 @@ const AppView = {
     // The bot state names nobody: there is no person to name.
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
-    let label = PlatformI18n.t(LABEL_IDS[key]);
+    let label = rowWords ? PlatformI18n.t(rowWords.stage.id, rowWords.stage.values || {}) : PlatformI18n.t(LABEL_IDS[key]);
     if (namesAPerson && who) {
       // `who` is the viewer ('you') or a username; the chip says either.
       const person = who === 'you' ? PlatformI18n.t('changes:chips.work.you') : who;
@@ -28078,7 +28139,26 @@ const AppView = {
       botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
     });
-    return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note };
+    return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note, ...(rowWords ? { rowWords } : {}) };
+  },
+
+  // T2.5 (19 Nov 2026): the stored row's words for a change a request is in
+  // review with (a session of `issue.in_progress`), or null when that row is
+  // up for a vote, or there is none: { stage, line, busy }. The change's own
+  // row when the list carried it (`work`), else the request's standing when
+  // that change is the one it draws (its `change`).
+  _reviewRowWords(issue, session) {
+    if (!session) return null;
+    const own = session.work && typeof session.work === 'object' ? session.work : null;
+    const standing = AppView._issueStanding(issue);
+    const lead = standing && standing.change && Number(standing.change.id) === Number(session.sessionId) ? standing : null;
+    const work = own || lead;
+    if (!work || !work.stage || work.stage === 'up_for_vote') return null;
+    const words = AppView._standingWords({ ...work, mine: true });
+    if (!words) return null;
+    const code = work.line && work.line.code;
+    const bad = work.stage === 'stopped' || code === 'checks_failing' || code === 'github_checks_failing';
+    return { ...words, busy: !bad && (work.stage === 'building' || work.stage === 'checking' || work.stage === 'going_live') };
   },
 
   // The age a work-state sentence states, as the wording it needs and the

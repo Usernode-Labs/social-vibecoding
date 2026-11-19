@@ -1617,3 +1617,47 @@ test('both issue routes carry addressed_by, resolved in one extra query', async 
     server.close();
   }
 });
+
+// T2.5 (19 Nov 2026): a change a request is in review with carries its own
+// stored work state (services/work-state.js forChanges), so the Workshop
+// says where it stands rather than "Waiting for votes" for every promoted
+// or merging change. Only what any viewer may read; no row is made here.
+test('T2.5: in_progress carries the stored row of each change in review', async () => {
+  const { reviewWorkBySession } = require('../src/routes/issues');
+  const asked = [];
+  const pool = {
+    query: async (sql, params) => {
+      asked.push({ sql, params });
+      return {
+        rows: [{
+          app_id: 3, slug: 'demo', app_name: 'Demo', item_kind: 'change', item_ref: 41, issue_number: null, session_id: 41,
+          stage: 'checking', why: null, reason: null, line: { code: 'shots' }, whose_move: 'bot', requester_id: 9,
+          since: null, updated_at: null, vote_open: false, lead_change_id: null, standing: { asks: { question: { messageId: 5 } } },
+        }],
+      };
+    },
+  };
+  const rows = [
+    { id: 41, status: 'promoted', user_id: 9, username: 'maya' },
+    { id: 42, status: 'active', user_id: 9, username: 'maya' },
+  ];
+  const work = await reviewWorkBySession(pool, rows);
+  assert.equal(asked.length, 1, 'one read');
+  assert.deepStrictEqual(asked[0].params[0], [41], 'only the changes in review');
+  assert.doesNotMatch(asked[0].sql, /INSERT/i);
+  const w = work.get(41);
+  assert.equal(w.stage, 'checking');
+  assert.equal(w.voteOpen, false);
+  assert.equal(w.words.stage.id, 'core:work.stage.shots');
+  assert.equal(w.asks, undefined, 'nothing of its requester\'s');
+  assert.equal(w.requesterId, undefined);
+  const ip = composeInProgress(rows, [], 7, work);
+  const s41 = ip.sessions.find((s) => s.sessionId === 41);
+  const s42 = ip.sessions.find((s) => s.sessionId === 42);
+  assert.equal(s41.work.stage, 'checking');
+  assert.equal(s42.work, undefined, 'a change still being built carries none');
+  // A read that fails is no row.
+  const broken = await reviewWorkBySession({ query: async () => { throw new Error('down'); } }, rows);
+  assert.equal(broken.size, 0);
+  assert.equal((await reviewWorkBySession(pool, [{ id: 42, status: 'active' }])).size, 0);
+});

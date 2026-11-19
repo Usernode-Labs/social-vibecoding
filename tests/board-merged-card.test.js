@@ -323,3 +323,57 @@ test('#6490: a change page whose card was drawn before the merge steps past the 
   assert.match(live.status.label, /Live/);
 });
 
+
+// ── T2.3 (19 Nov 2026): the change page's header pill reads the stored row ──
+
+test('T2.3: an open change whose stored row is not up for a vote wears the row\'s words, never "Vote 0/2"', () => {
+  const { AppView } = stage({ status: 'promoted' });
+  AppView._placedCategoryFor = () => null;
+  AppView._categoryMeta = () => null;
+  AppView.externalAgentProduct = () => null;
+  AppView._changeTestingView = () => ({});
+  AppView._changeShotsView = () => null;
+  AppView._kudosOffered = () => false;
+  AppView._codeMissing = () => false;
+  AppView._stackedView = () => ({});
+  AppView._voteRoster = {};
+  const card = { pill: { state: { key: 'needs_vote', label: 'Vote · 0/2', tone: 'progress', yes: 0, majority: 2 } } };
+  const item = (work) => ({
+    id: 7, status: 'promoted', check_state: 'passing', category: { top: 'ui' }, yes_count: 0, votes_required: 2, work,
+  });
+  const view = (work) => AppView._changeThreadView('proposal', item(work), card, { hero: {} });
+  // Its tests passed and only the screenshots are left.
+  const shots = view({
+    stage: 'checking', line: { code: 'shots' },
+    words: { stage: { id: 'core:work.stage.shots' }, stageOthers: { id: 'core:work.stage.shots' }, line: { id: 'core:work.line.shots' } },
+  });
+  assert.equal(shots.pill.key, 'work_checking');
+  assert.equal(shots.pill.label, 'Taking screenshots');
+  assert.equal(shots.pill.title, 'Tests passed: only the before and after screenshots are left');
+  assert.equal(shots.pill.spinner, true);
+  assert.equal(shots.status.key, 'needs_vote', 'the live gates keep their own pill for the phase');
+  // Syncing with main, an update on its way, the hold on its merge.
+  assert.equal(view({ stage: 'checking', line: { code: 'syncing' }, words: { stage: { id: 'core:work.stage.syncing' }, line: null } }).pill.label, 'Syncing with main');
+  const update = view({ stage: 'building', line: { code: 'update_queued' }, words: { stage: { id: 'core:work.stage.building' }, line: { id: 'core:work.line.updateQueued' } } });
+  assert.equal(update.pill.label, 'Building');
+  assert.equal(update.pill.title, 'An update is on its way');
+  const hold = view({ stage: 'going_live', line: { code: 'github_checks' }, words: { stage: { id: 'core:work.stage.approved' }, line: { id: 'core:work.line.githubChecks' } } });
+  assert.equal(hold.pill.label, 'Approved');
+  assert.equal(hold.pill.tone, 'ok');
+  const failing = view({ stage: 'checking', line: { code: 'checks_failing', failing: 2 }, words: { stage: { id: 'core:work.stage.checking' }, line: { id: 'core:work.line.checksFailingCount', values: { count: 2 } } } });
+  assert.equal(failing.pill.tone, 'blocked');
+  assert.equal(failing.pill.title, '2 tests failing');
+  // Up for a vote, or no row: the vote's own pill.
+  const up = view({ stage: 'up_for_vote', words: { stage: { id: 'core:work.stage.upForVote' }, line: null } });
+  assert.equal(up.pill.key, 'needs_vote');
+  assert.equal(view(null).pill.key, 'needs_vote');
+});
+
+test('T2.3: a merged or merging change keeps its own pill whatever its row says', () => {
+  const { AppView } = stage({ status: 'merging' });
+  const pill = { key: 'merging', label: 'Going live', tone: 'progress' };
+  const work = { stage: 'checking', line: { code: 'shots' }, words: { stage: { id: 'core:work.stage.shots' }, line: null } };
+  assert.equal(AppView._workPill({ status: 'merging', work }, pill), pill);
+  assert.equal(AppView._workPill({ status: 'merged', work }, pill), pill);
+  assert.equal(AppView._workPill({ status: 'promoted', work }, null), null, 'no pill (being built, closed) stays none');
+});

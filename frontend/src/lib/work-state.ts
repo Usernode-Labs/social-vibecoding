@@ -400,6 +400,23 @@ export function voteNews(push: WorkStatePush): { sessionId: number; open: boolea
 }
 
 /**
+ * T2.12 (19 Nov 2026): whether a push MOVED a change's vote, opened or
+ * closed, against `seen` (the caller's own Map of session id to whether its
+ * vote was open, which this updates). A change first heard of counts as
+ * moved; a push that only moves its line ("About 3 min left") does not, so a
+ * screen that reads itself again on vote news reads once per move, not once
+ * per push.
+ */
+export function voteMoved(push: unknown, seen: Map<number, boolean>): boolean {
+  if (!isWorkStatePush(push)) return false;
+  const news = voteNews(push);
+  if (!news) return false;
+  const before = seen.get(news.sessionId);
+  seen.set(news.sessionId, news.open);
+  return before !== news.open;
+}
+
+/**
  * Pure: the Needs you feed's cards (GET /api/workshop/needs-feed, the
  * server's vote rows) less the Vote card of a change a push says is no
  * longer open for votes (merged, merging, held by GitHub or its shots,

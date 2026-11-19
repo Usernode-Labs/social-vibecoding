@@ -65,7 +65,7 @@ import { t as translate } from '../../../lib/i18n/runtime';
 import { useLiveSkin } from '../../../lib/skin';
 import { CategoryChip, ChatCount, ChecksBar, MenuTrigger, VoteButton } from '../card/dev-card';
 import { callAppView, itemHooks, LiveTally, openHref, RowBand, StatePill, voteSpecs } from '../card/fold';
-import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag } from '../card/model';
+import type { ActionSpec, DevCardModel, ListRow, RowBrief, RowTag, StatusPillState } from '../card/model';
 
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
@@ -218,8 +218,9 @@ function Tag({ t }: { t: RowTag }): ReactNode {
  * tags, at the row's far end, on every width — it never shares the tags'
  * line, so rows beside each other keep their pills lined up.
  */
-function Votes({ card }: { card: DevCardModel }): ReactNode {
-  const s = card.pill?.state || null;
+function Votes({ card, pill = null }: { card: DevCardModel; pill?: StatusPillState | null }): ReactNode {
+  // T2.5: the change's stored row's words while it is not up for a vote.
+  const s = pill || card.pill?.state || null;
   const specs = voteSpecs(card);
   if (!s && !specs) return null;
   return (
@@ -270,7 +271,7 @@ export function WorkRow({
   const chat = hasChat ? <ChatCount card={card} /> : null;
   // The Workshop tab's bar and Vote take a line of their own under the tags
   // (#4718), at the row's far end; the board's ride the band under it.
-  const votes = !board && b.vote ? <Votes card={card} /> : null;
+  const votes = !board && b.vote ? <Votes card={card} pill={b.pill || null} /> : null;
   const status = live || hasChip || hasChat || tags.length > 0;
   const menuKey = card.rail && card.rail.menuKey ? card.rail.menuKey : '';
   const specs = board && !live ? voteSpecs(card) : null;

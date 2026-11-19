@@ -65,6 +65,13 @@ export interface ThreadItem {
    * with this is not asked for a vote anywhere.
    */
   approved?: boolean;
+  /**
+   * T2.12 (19 Nov 2026), a change: whether it is open for votes now, off its
+   * own stored row (work_states.vote_open). False while its screenshots are
+   * taken, it syncs with main, an update is on its way or GitHub holds it;
+   * null (or absent) where it has no row yet, when its review state decides.
+   */
+  voteOpen?: boolean | null;
   /** #6139, a change underway: built, with its checks passing on its current head and nothing working on it. */
   ready?: boolean;
   /** A change underway that is built and checked, whether its checks pass or fail: its author may put it up for a vote. */
@@ -535,12 +542,15 @@ export function requestPill(
   // The standing's change while it is not open for votes (its checks, an
   // update on its way, a hold) is not drawn as up for one.
   const shut = work && work.change && !work.change.voteOpen ? work.change.id : null;
-  const review = layout.changes.filter((c) => c.state === 'review' && c.id !== shut).length;
+  // T2.12: and any other change whose own row says it is not open for votes
+  // (a rival in its screenshots, say) is no vote either.
+  const voting = (c: ThreadItem) => c.state === 'review' && c.id !== shut && c.voteOpen !== false;
+  const review = layout.changes.filter(voting).length;
   if (review >= 2 || (review >= 1 && close)) return { ...base, key: 'choosing', label: say('project:topic.thread.pill.choosing'), tone: 'neutral' };
   // #6594: a thread read with no standing says the same of its one change
   // in review, from the change's own row (threads.js `approved`).
   if (review === 1) {
-    const only = layout.changes.find((c) => c.state === 'review' && c.id !== shut);
+    const only = layout.changes.find(voting);
     if (only && only.approved) return approvedPill;
     return { ...base, key: 'vote', label: say('project:topic.thread.pill.vote'), tone: 'neutral' };
   }

@@ -93,6 +93,12 @@ export interface VoteView {
   checks: 'passing' | 'failing' | 'pending' | 'error' | 'skipped' | null;
   /** The preview: live at a URL, still building, or none to offer. */
   preview: { kind: 'live'; url: string } | { kind: 'building' } | { kind: 'unavailable' } | null;
+  /**
+   * T2.12: the change's stored row's words (services/work-state.js), only
+   * while that row is not up for a vote: its stage and second line, as phrase
+   * ids the server chose. Absent while it is open for votes, or with no row.
+   */
+  work?: { stage: { id: string; values?: Record<string, string | number> }; line: { id: string; values?: Record<string, string | number> } | null } | null;
 }
 
 /**

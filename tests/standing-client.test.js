@@ -305,3 +305,47 @@ test('the Homeroom bot tab draws a work_state push on the row it holds, and leav
   const live = fs.readFileSync(path.join(ROOT, 'frontend/src/features/ai/live.ts'), 'utf8');
   assert.match(live, /if \(isWorkStatePush\(event\)\) latest\.current\.apply\?\.\(event\);\s+if \(movesLists\(event, latest\.current\.showing\)\) reads\.ask\(\);/);
 });
+
+// T2.12 (19 Nov 2026): every change in a request's thread carries whether
+// it is open for votes, off its own stored row (threads.js `voteOpen`), so a
+// rival change taking its screenshots is not counted as a vote beside the
+// lead: the header said "Choosing" (or "Up for a vote") for it.
+test('T2.12: a rival change not open for votes is no vote in the request\'s header', () => {
+  const { requestPill, threadLayout } = loadTsx(THREAD);
+  const lead = { type: 'change', id: 51, number: 8, title: 'A', status: 'promoted', state: 'review', replies: 0, closes: [7], voteOpen: true };
+  const rival = { type: 'change', id: 52, number: 9, title: 'B', status: 'promoted', state: 'review', replies: 0, closes: [7] };
+  const layoutOf = (...changes) => threadLayout({ thread: { number: 7 }, items: [{ type: 'request', id: 7, number: 7, status: 'open' }, ...changes] }, { type: 'request', id: 7 });
+  const open = standing('up_for_vote', { change: change() });
+  assert.equal(requestPill(layoutOf(lead, rival), open).key, 'choosing', 'a rival with no row of its own still counts');
+  assert.equal(requestPill(layoutOf(lead, { ...rival, voteOpen: false }), open).key, 'vote', 'one in its screenshots does not');
+  assert.equal(requestPill(layoutOf(lead, { ...rival, voteOpen: true }), open).key, 'choosing');
+  // And the lead itself, with no standing to say so, by its own row.
+  assert.equal(requestPill(layoutOf({ ...lead, voteOpen: false }), null), null);
+  // threads.js reads it for every change, off its own row.
+  const src = fs.readFileSync(path.join(ROOT, 'src/services/threads.js'), 'utf8');
+  assert.match(src, /SELECT w\.item_ref, w\.vote_open FROM work_states w\s+WHERE w\.item_kind = 'change' AND w\.item_ref = ANY\(\$1::int\[\]\)/);
+  assert.match(src, /item\.voteOpen = openOf\.has\(item\.id\) \? openOf\.get\(item\.id\) : null;/);
+});
+
+// T2.12: the Communities feed reads itself again on any vote news, a change
+// that opened for votes among it; Home's count re-reads on the same.
+test('T2.12: vote news (opened or closed) is news to the feed and to Home\'s count', () => {
+  const { voteMoved } = loadTsx(LIB);
+  const seen = new Map();
+  const opened = push(standing('up_for_vote', { change: change() }));
+  const ticking = push(standing('up_for_vote', { line: { code: 'earlier_yes', count: 1 }, change: change() }));
+  const closed = push(standing('checking', { line: { code: 'shots' }, change: change({ voteOpen: false }) }));
+  const none = push(standing('reading', { line: { code: 'waiting' } }));
+  assert.equal(voteMoved(opened, seen), true, 'first heard of, open: news');
+  assert.equal(voteMoved(ticking, seen), false, 'only its line moved');
+  assert.equal(voteMoved(closed, seen), true, 'closed for votes');
+  assert.equal(voteMoved(closed, seen), false, 'and once only');
+  assert.equal(voteMoved(none, seen), false, 'a request with no change is no vote news');
+  assert.equal(voteMoved({ type: 'session_update' }, seen), false);
+  const feed = fs.readFileSync(path.join(ROOT, 'frontend/src/features/workshop/index.tsx'), 'utf8');
+  assert.match(feed, /return voteMoved\(detail, votesHeard\);/);
+  assert.match(feed, /const news = isVoteNews\(\(event as CustomEvent\)\.detail\);\s*if \(feed === state\.feed && !news\) return;/);
+  const scope = fs.readFileSync(path.join(ROOT, 'frontend/src/features/workshop/community-scope.ts'), 'utf8');
+  assert.match(scope, /window\.addEventListener\('homeroom-bot-work-changed', \(event\) => \{ onVoteNews\(\(event as CustomEvent\)\.detail\); \}\);/);
+  assert.match(scope, /if \(!voteMoved\(detail, votesHeard\)\) return false;/);
+});
