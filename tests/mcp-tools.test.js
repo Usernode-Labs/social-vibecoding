@@ -3386,6 +3386,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // The Homeroom bot's first-version configurations (routes/bot-configs.js):
     // the next blind pair to pick. Full platform admins only, like the rest.
     'get_bot_config_pair',
+    // 19 Nov 2026. The user's own private threads with Homeroom bot, through
+    // the services the conversation routes call (tests/mcp-bot-thread.test.js).
+    'get_bot_thread',
     // #3659. Which languages people's browsers ask for, and where the
     // translation step stands. Full platform admins only.
     'get_browser_languages',

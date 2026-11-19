@@ -2677,6 +2677,7 @@ module.exports = {
   listConversations,
   listMessages,
   listThread,
+  threadSummaries,
   getMessage,
   createDirect,
   createGroup,
