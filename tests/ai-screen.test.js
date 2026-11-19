@@ -192,8 +192,8 @@ test('each section groups its rows by project, and a project shows its first few
   assert.match(lists, /const ordered = freshStyle \? recentGroupsFirst\(freshFirst\(lines\)\) : foldFresh \? freshFirst\(lines\) : lines;/);
   assert.match(lists, /const held = hold && holding && drawn\.current \? holdOrder\(ordered, drawn\.current\) : ordered;/,
     'the new first, then the drawn order held');
-  assert.match(lists, /const \{ items, shown, hidden \} = groupRows\(dayHeads \? byDay\(g\.items\) : g\.items, first, open, !foldFresh\);/,
-    'the group draws through the pure order rule');
+  assert.match(lists, /const rows = dayHeads \? byDay\(g\.items\) : g\.items;\n\s+const \{ items, shown, hidden \} = kept \? openRows\(rows, kept\) : groupRows\(rows, first, false, !foldFresh\);/,
+    'the group draws through the pure order rules: folded, and opened with what was in sight kept');
   // 6 Nov 2026: the drawn rows carry their day divider, and the fold splits
   // the same drawn list (a day past the fold stays inside it).
   assert.match(lists, /const visible = hidden \? drawn\.slice\(0, shown\) : drawn;/);
@@ -205,6 +205,54 @@ test('each section groups its rows by project, and a project shows its first few
     'B07: a private idea under that heading does not say Only you again on its row');
   // One project picked: its chip names it, so its name is not said again.
   assert.match(read('frontend/src/features/ai/lines.ts'), /const heads = picked\.length !== 1;/);
+});
+
+// 19 Nov 2026 (Evan's recording): opening a project's Show more moved the
+// rows lifted above the fold (two new ones) down into the part that opens
+// from no height, so they vanished, the list jumped up, and they faded back
+// in; shutting, the folded rows were gone in a frame or two and left a blank
+// band that then closed.
+test('a project\'s Show more opens under the rows in sight and shuts without a blank band', () => {
+  const { groupRows, openRows, GROUP_FIRST } = loadTsx(MODEL);
+  // Eight rows, the fourth and fifth are new: folded, they join the first three.
+  const rows = Array.from({ length: 8 }, (_, i) => ({ key: `r${i + 1}`, fresh: i === 3 || i === 4 }));
+  const folded = groupRows(rows, GROUP_FIRST.busy, false);
+  const kept = folded.items.slice(0, folded.shown).map((r) => r.key);
+  assert.deepEqual(kept, ['r1', 'r2', 'r3', 'r4', 'r5']);
+  // Opened: the rows in sight stay where they were, the rest open under them.
+  const open = openRows(rows, kept);
+  assert.deepEqual(open.items.map((r) => r.key), ['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8']);
+  assert.deepEqual([open.shown, open.hidden], [5, 3], 'nothing that was in sight moves into the fold');
+
+  // A lifted row from further down stays lifted while open; the rest keep
+  // their own order under it.
+  const far = Array.from({ length: 8 }, (_, i) => ({ key: `f${i + 1}`, lit: i === 6 }));
+  const farFolded = groupRows(far, GROUP_FIRST.needs, false);
+  const farOpen = openRows(far, farFolded.items.slice(0, farFolded.shown).map((r) => r.key));
+  assert.deepEqual(farOpen.items.map((r) => r.key), ['f1', 'f2', 'f3', 'f4', 'f5', 'f7', 'f6', 'f8']);
+  assert.deepEqual([farOpen.shown, farOpen.hidden], [6, 2]);
+  // #6245 still holds: a row pressed while it is open was not in sight when
+  // it opened, so it keeps its place.
+  const pressed = far.map((r, i) => ({ ...r, lit: i === 7 }));
+  assert.deepEqual(openRows(pressed, farOpen.items.slice(0, farOpen.shown).map((r) => r.key)).items.map((r) => r.key),
+    ['f1', 'f2', 'f3', 'f4', 'f5', 'f7', 'f6', 'f8'], 'the pressed row stays where it was');
+  // A kept row that has gone is skipped, and one that came while open opens below.
+  const changed = openRows([...rows.filter((r) => r.key !== 'r2'), { key: 'r9' }], kept);
+  assert.deepEqual(changed.items.map((r) => r.key), ['r1', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9']);
+  assert.deepEqual([changed.shown, changed.hidden], [4, 4]);
+
+  // The list keeps what was in sight when Show more is pressed.
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  assert.match(lists, /const \[opened, setOpened\] = useState<Record<string, string\[\]>>\(\{\}\);/);
+  assert.match(lists, /if \(open\) delete next\[key\];\n\s+else next\[key\] = items\.slice\(0, shown\)\.map\(\(line\) => line\.key\);/);
+  // Both folds (a project's Show more and Not moving) open and shut on one
+  // curve for the height. Opening fades the rows in; shutting keeps them
+  // drawn while the clip closes over them, and hides them only at the end.
+  assert.match(lists, /const FOLD_OPEN = 'grid-rows-\[1fr\] opacity-100 \[transition:grid-template-rows_300ms_cubic-bezier\(0\.4,0,0\.2,1\),opacity_200ms_ease-out\]';/);
+  assert.match(lists, /const FOLD_SHUT = 'grid-rows-\[0fr\] opacity-0 \[transition:grid-template-rows_300ms_cubic-bezier\(0\.4,0,0\.2,1\),opacity_0s_linear_300ms\]';/);
+  assert.equal(lists.match(/className=\{`grid motion-reduce:transition-none \$\{(?:open|stillShown) \? FOLD_OPEN : FOLD_SHUT\}`\}/g).length, 2,
+    'a project\'s fold and the Not moving fold, each without motion under reduce motion');
+  assert.doesNotMatch(lists, /cubic-bezier\(0\.22,1,0\.36,1\)/, 'not the sharp ease-out that emptied a shutting fold at once');
 });
 
 // #6245 (4 Nov 2026, Evan): pressing a row past a project's first five slid
