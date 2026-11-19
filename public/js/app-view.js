@@ -6792,9 +6792,25 @@ const AppView = {
     return null;
   },
 
-  // The second lines of a request nobody has started on yet (work-state.js
-  // NOT_STARTED): waiting to be read, waiting its turn, on hold.
+  // The lists below are the one table's (src/services/work-stages.json),
+  // which a classic script cannot import: each is a copy that
+  // tests/work-stages-client.test.js holds equal to the table, so a stage or
+  // a line code added there and not here fails it.
+  //
+  // The second lines of a request nobody has started on yet (the table's
+  // `notStarted`): waiting to be read, waiting its turn, on hold.
   STANDING_NOT_STARTED: new Set(['waiting', 'queued', 'on_hold', 'cooldown', 'first_version_wait']),
+
+  // The second lines that say a change's tests fail (the table's `failing`):
+  // its own checks, GitHub's, or Homeroom bot's fix of them that failed. A
+  // pill or a chip on such a row is tinted as blocked and does not spin.
+  WORK_FAILING_LINES: new Set(['checks_failing', 'github_checks_failing', 'bot_fix_failed']),
+
+  // The stages whose chip or pill spins: the build, the checks or the merge
+  // is at it this minute (the table's stages the shell draws `busy`, less
+  // reading and planning: a row in either that a chip leads with is one
+  // nobody has started on or that waits for its requester's plan).
+  WORK_BUSY_STAGES: new Set(['building', 'checking', 'going_live']),
 
   // A standing with no words (an older server) says its plain stage word.
   // Each id whole, for the language inventory; no mapping of whys or lines.
@@ -6854,6 +6870,13 @@ const AppView = {
   // under way and does not spin; a person has one a claim or their own
   // change holds; a requester's private thread holds one for their plan
   // (_planHeld).
+  //
+  // The server reads the same row for the same question (work-state.js
+  // botWorkOf, the table's `bot`: what `issue.bot` carries, and what the
+  // Ask route refuses by). tests/work-stages-client.test.js asks both about
+  // every stage, line and why of the table; where they still answer
+  // differently it is listed in BOT_ON_DIFFERS below, so a new code that
+  // reads differently fails it, and so does an entry that came to agree.
   _botOn(issue) {
     if (!issue || issue.state === 'closed') return null;
     const s = AppView._issueStanding(issue);
@@ -6876,7 +6899,10 @@ const AppView = {
         if (s.whoseMove === 'builder') return null;
         if (code === 'held_builds') return on('queued', { held: true, turn: true });
         if (code === 'held_waiting') return on('queued', { held: true });
-        if (code === 'queued') return on('queued');
+        // T2.2: waiting for building credit is in the bot's queue, to pick up
+        // again by itself, as the server reads it (work-stages.json): it read
+        // as building, under a row that says Ready to build.
+        if (code === 'queued' || code === 'credit_wait') return on('queued');
         return on('building');
       case 'waiting_for_you':
         return s.why === 'plan' ? on('queued', { plan: true }) : null;
@@ -6884,6 +6910,27 @@ const AppView = {
         return null;
     }
   },
+
+  // Where _botOn still reads a row differently from the server's botWorkOf,
+  // by `stage/line code` (19 Nov 2026, review B5). Each keeps the page's
+  // reading, which agrees with the row's own words, and is a decision for
+  // whoever next touches the table's `bot`:
+  //   reading/queued, reading/first_version_wait: nobody asked the bot for
+  //     it; the server counts it as nobody's ("Not started yet"), the page
+  //     as the bot's to build next.
+  //   reading/reply: a reply about to be read is the server's nobody's
+  //     (`soon`), the page's "reading".
+  //   planning/retry_plan: the server says building, the page queued.
+  //   planning/planning_with_you: a build waiting behind the requester's
+  //     plan (`ready`) is the server's queued, the page's nobody's.
+  //   building/queued: a build waiting its turn is the server's building;
+  //     the page says it will build it, as the row's "Ready to build" does.
+  //   building/update_queued: the server's nobody's, the page's building.
+  BOT_ON_DIFFERS: Object.freeze([
+    'reading/queued', 'reading/first_version_wait', 'reading/reply',
+    'planning/retry_plan', 'planning/planning_with_you',
+    'building/queued', 'building/update_queued',
+  ]),
 
   // The one reading of a standing for the request's status card: whether its
   // sentence is the standing's own (`says`, in its `words`), and what the
@@ -8243,9 +8290,8 @@ const AppView = {
     if (!words) return pill;
     const t = PlatformI18n.t;
     const code = work.line && work.line.code;
-    const bad = work.stage === 'stopped'
-      || code === 'checks_failing' || code === 'github_checks_failing' || code === 'bot_fix_failed';
-    const busy = !bad && (work.stage === 'building' || work.stage === 'checking' || work.stage === 'going_live');
+    const bad = work.stage === 'stopped' || AppView.WORK_FAILING_LINES.has(code);
+    const busy = !bad && AppView.WORK_BUSY_STAGES.has(work.stage);
     const title = words.line ? t(words.line.id, words.line.values || {}) : undefined;
     return {
       yes: pill.yes, no: pill.no, majority: pill.majority, advisory: 0, lock: false, reasons: [],
@@ -28111,6 +28157,9 @@ const AppView = {
     // list: routes/issues.js), else the request's own row when that change is
     // its lead. Null while it is up for a vote: then "Waiting for approval".
     let rowWords = null;
+    // Homeroom bot's own chip word for the stage its stored row says
+    // (_botChipWords), when it has one.
+    let botLabelId = null;
     // The stored row's words when they are not a person's work (above).
     const over = review.length ? null : AppView._rowOverPerson(issue);
     let rowLeads = false;
@@ -28130,6 +28179,18 @@ const AppView = {
     } else if (bot) {
       key = 'bot'; spinner = true;
       at = bot.since || null;
+      // The one rule (frontend/src/lib/work-state.ts): the chip names
+      // Homeroom bot only in the stage the stored row says (_botChipWords).
+      // A row whose word is another stage's says that word, and spins only
+      // while that stage is under way: a request waiting for its plan's OK
+      // read "Homeroom bot will build this", spinning, over a row that said
+      // "Waiting for the plan to be OK'd".
+      const said = AppView._botChipWords(issue);
+      if (said && said.row) {
+        rowWords = said.row;
+        spinner = AppView.WORK_BUSY_STAGES.has(said.stage);
+        tone = spinner ? 'sky' : 'zinc';
+      } else if (said) botLabelId = said.id;
     } else if (over && (active.length || paused.length || claims.length)) {
       // Somebody's session or claim is there, and the row says where the
       // request stands: its words, quietly, naming nobody. The key stays the
@@ -28183,8 +28244,10 @@ const AppView = {
       // worked on now".
       paused: 'changes:chips.work.started',
       claimed: 'changes:chips.work.pickedUp',
-      bot: bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
-        : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding',
+      // With no stored row (an older payload, _issueStanding), what the bot
+      // is doing names the stage.
+      bot: botLabelId || (bot && bot.what === 'queued' ? 'changes:chips.work.botQueued'
+        : AppView._botWorkReading(bot) ? 'changes:chips.work.botReading' : 'changes:chips.work.botBuilding'),
     };
     // The bot state names nobody: there is no person to name.
     const namesAPerson = key === 'in_review' || key === 'working'
@@ -28201,6 +28264,7 @@ const AppView = {
 
     const note = AppView._workStateNote({
       key, who, at, clearAt, claimUsers, bot: bot ? (bot.what || 'building') : null,
+      botPlan: !!(bot && bot.plan),
       botMine: !!(bot && bot.mine),
       botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
@@ -28209,6 +28273,39 @@ const AppView = {
       key, label, tone, spinner, who, people, at, clearAt, tip: note, note,
       ...(rowWords ? { rowWords } : {}), ...(rowLeads ? { rowLeads: true } : {}),
     };
+  },
+
+  // The bot chip's words, by the stage word the request's stored row says
+  // (its `words`, as this viewer reads them): Homeroom bot named in that
+  // same stage. A stage word with no entry is said as the row says it
+  // (_botChipWords). Keyed by the table's own phrase ids
+  // (src/services/work-stages.json), which tests/work-stages-client.test.js
+  // holds them to.
+  BOT_CHIP_IDS: {
+    'core:work.stage.reading': 'changes:chips.work.botReading',
+    'core:work.stage.notStarted': 'changes:chips.work.botQueued',
+    'core:work.stage.planning': 'changes:chips.work.botPlanning',
+    'core:work.stage.building': 'changes:chips.work.botBuilding',
+    'core:work.stage.readyToBuild': 'changes:chips.work.botQueued',
+  },
+
+  // The one rule, for the chip of a request Homeroom bot is on (_botOn):
+  // `{ id }`, the chip's word naming the bot in the stage the stored row
+  // says (BOT_CHIP_IDS), or `{ row, stage }`, the row's own words where
+  // naming the bot would say another stage (a plan waiting for its OK).
+  // Null with no stored row: a standing rebuilt from an older payload's
+  // fields (_issueStanding) is not one, and the chip says what the bot is
+  // doing, as it always did.
+  _botChipWords(issue) {
+    if (!issue) return null;
+    const s = AppView._issueStanding(issue);
+    const stored = !!s && (s === issue.standing || (!!issue.track && s === issue.track.work));
+    if (!stored) return null;
+    const words = AppView._standingWords(s);
+    if (!words) return null;
+    const own = Object.prototype.hasOwnProperty.call(AppView.BOT_CHIP_IDS, words.stage.id)
+      ? AppView.BOT_CHIP_IDS[words.stage.id] : null;
+    return own ? { id: own } : { row: words, stage: s.stage };
   },
 
   // The one rule: the request's stored row, when it does not say what a
@@ -28230,7 +28327,7 @@ const AppView = {
     if (idle || theirs) return null;
     const words = AppView._standingWords(s);
     if (!words) return null;
-    return { ...words, busy: s.stage === 'building' || s.stage === 'checking' || s.stage === 'going_live' };
+    return { ...words, busy: AppView.WORK_BUSY_STAGES.has(s.stage) };
   },
 
   // T2.5 (19 Nov 2026): the stored row's words for a change a request is in
@@ -28248,8 +28345,11 @@ const AppView = {
     const words = AppView._standingWords({ ...work, mine: true });
     if (!words) return null;
     const code = work.line && work.line.code;
-    const bad = work.stage === 'stopped' || code === 'checks_failing' || code === 'github_checks_failing';
-    return { ...words, busy: !bad && (work.stage === 'building' || work.stage === 'checking' || work.stage === 'going_live') };
+    // Failing tests do not spin, whoever fixes them: the same lines the
+    // header pill tints (_workPill). Homeroom bot's fix that failed was
+    // missing here, so its chip spun under "Homeroom bot couldn't fix it".
+    const bad = work.stage === 'stopped' || AppView.WORK_FAILING_LINES.has(code);
+    return { ...words, busy: !bad && AppView.WORK_BUSY_STAGES.has(work.stage) };
   },
 
   // The age a work-state sentence states, as the wording it needs and the
@@ -28466,7 +28566,9 @@ const AppView = {
         ? t('changes:chips.workNote.bot.askedYou')
         : (s.botAskedBy ? t('changes:chips.workNote.bot.askedNamed', { name: s.botAskedBy }) : '');
       if (s.bot === 'queued') {
-        main = then(asked || t('changes:chips.workNote.bot.askedSomebody'), t('changes:chips.workNote.bot.startsSoon'));
+        // Its plan waits for an OK: it starts then, not when a builder frees.
+        const next = s.botPlan ? t('changes:chips.workNote.bot.afterPlan') : t('changes:chips.workNote.bot.startsSoon');
+        main = then(asked || t('changes:chips.workNote.bot.askedSomebody'), next);
       } else {
         main = asked
           ? then(asked, started(AppView.WORK_BOT_STARTED_IDS.it, doing))
