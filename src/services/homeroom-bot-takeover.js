@@ -582,16 +582,19 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
   // (bot-turn-failure.js) of the routed code and the worker's own account:
   // out of credit is an outage, noted once and said as one; the platform
   // failing under it is said as Homeroom's failure and counted.
+  // Read only once the turn is known to have failed (its routed error, or
+  // no answer and no push below): a turn that got through is never sorted.
   const turnFailure = require('./bot-turn-failure');
-  const sorted = turn.routed?.error || live.failedClaudeTurn(result) || result.fatalError
-    ? turnFailure.sort({ code: turn.routed?.error || null, turn: result }) : null;
-  if (sorted?.class === 'credit') {
+  const sortTurn = () => turnFailure.sort({ code: turn.routed?.error || null, turn: result });
+  const outOfCredit = async () => {
     await (deps.credit?.noteOutage ? deps.credit : require('./openrouter-credit'))
       .noteOutage(pool, { words: 'an update of a change met OpenRouter\'s 402 for credit' }).catch(() => null);
     return { ok: false, code: 'credit', error: CREDIT_WHY, costUsd, model };
-  }
+  };
   if (turn.routed?.error) {
     const code = String(turn.routed.error);
+    const sorted = sortTurn();
+    if (sorted.class === 'credit') return outOfCredit();
     log.warn('homeroom-bot-takeover', 'An update\'s turn failed', { sessionId: change.id, err: clip(code, 300) });
     // #6602: a change the bot has no runtime for is said as that, in words,
     // never as an answer that could not be read.
@@ -603,7 +606,7 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
     }
     if (code !== 'session_busy') {
       await turnFailure.recordPlatformIncident(pool, {
-        where: 'an update of a person\'s change', cause: sorted?.cause || code, detail: { appId: change.app_id ?? null, sessionId: change.id },
+        where: 'an update of a person\'s change', cause: sorted.cause || code, detail: { appId: change.app_id ?? null, sessionId: change.id },
       });
     }
     return {
@@ -621,7 +624,9 @@ async function updateOnce(pool, config, { row, steps, runTag, signal = null, dep
   if (!parsed && !moved) {
     // A provider's error where its answer should be, or a worker that went
     // from under it: the platform's, never "its answer could not be read".
-    if (sorted?.class === 'platform') {
+    const sorted = sortTurn();
+    if (sorted.class === 'credit') return outOfCredit();
+    if (sorted.class === 'platform') {
       await turnFailure.recordPlatformIncident(pool, {
         where: 'an update of a person\'s change', cause: sorted.cause, detail: { appId: change.app_id ?? null, sessionId: change.id },
       });
