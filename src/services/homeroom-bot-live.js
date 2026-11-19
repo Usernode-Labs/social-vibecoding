@@ -678,8 +678,13 @@ function retryCardFits(reason, { firstVersion = false, retrying = false } = {}) 
 // picks it up by itself once credit is added (its credit_wait read, kept by
 // the request's instance and granted once the lane's pause lifts: T1.1).
 // T1.15: GitHub's copy; Homeroom's is the bot's own words (firstPerson).
-function buildCreditText() {
-  return 'Homeroom bot is out of building credit right now. It will pick this up again by itself once credit is back.';
+// `queued: false`: the write that would bring the request back could not be
+// made (homeroom-bot.js recordLiveBuild), so nothing here promises it.
+function buildCreditText({ queued = true } = {}) {
+  return queued
+    ? 'Homeroom bot is out of building credit right now. It will pick this up again by itself once credit is back.'
+    : 'Homeroom bot is out of building credit right now, and it could not keep this request\'s place in line. '
+      + 'Once credit is back, reply here and it will build this.';
 }
 
 // A first version whose build did not finish is tried once more on its own,

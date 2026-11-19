@@ -1161,12 +1161,18 @@ function checksRevisedText({ failing = [], broken = [], skipped = [] } = {}) {
 
 // #4572: a fix that ran out of time is tried once more before a person is
 // asked (homeroom-bot.js runChecksFix), and it says so.
-function checksRetryText({ broken = false, failing = true, skipped = false } = {}) {
+function checksRetryText({ broken = false, failing = true, skipped = false, platform = false } = {}) {
+  // `platform`: Homeroom or its provider failed under the fix (review A2):
+  // said as that, never as the change's or the fix's own fault.
   if (skipped && !broken && !failing) {
-    return 'Homeroom bot ran out of time adding what this change\'s before and after screens need. It is trying once more.';
+    return platform
+      ? 'Homeroom bot could not finish adding what this change\'s before and after screens need because Homeroom had a problem on its side. It is trying once more.'
+      : 'Homeroom bot ran out of time adding what this change\'s before and after screens need. It is trying once more.';
   }
   const what = broken && !failing ? 'what didn\'t work on this change' : 'the failing checks on this change';
-  return `Homeroom bot ran out of time fixing ${what}. It is trying once more.`;
+  return platform
+    ? `Homeroom bot could not finish fixing ${what} because Homeroom had a problem on its side. It is trying once more.`
+    : `Homeroom bot ran out of time fixing ${what}. It is trying once more.`;
 }
 
 /**

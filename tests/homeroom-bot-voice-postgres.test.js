@@ -371,6 +371,62 @@ test('the voice on the real schema', { timeout: 180000 }, async (t) => {
     assert.ok(record.failures.includes('stand_in'), JSON.stringify(record.failures));
   });
 
+  // Review A1 (19 Nov 2026): the voice calls services/openrouter.js, which
+  // said `billing` for a 402, so its credit line could not be reached and it
+  // said "Ask me again in a minute" during an outage. Through the real
+  // client, answered as OpenRouter answered that day.
+  await t.test('A1: OpenRouter\'s real 402 through the real client is said as the credit line and recorded as one outage', async () => {
+    sent.length = 0;
+    const credit = require('../src/services/openrouter-credit');
+    const openrouter = require('../src/services/openrouter');
+    const place = { type: 'session', ref: change.id };
+    const requests = [];
+    const refused = {
+      chat: (args) => openrouter.streamChat({
+        ...args,
+        baseUrl: 'https://openrouter.test/api/v1',
+        fetchImpl: async (url) => {
+          requests.push(String(url));
+          return new Response(JSON.stringify({
+            error: {
+              message: 'This request would exceed your available credits given your current in-flight requests. '
+                + 'Retry after in-flight requests settle, or add credits.',
+              code: 402,
+            },
+          }), { status: 402, headers: { 'content-type': 'application/json' } });
+        },
+      }),
+    };
+    // No admin alert from a test: the outage itself is what is asserted.
+    const quiet = { ...credit, noteOutage: (p, what) => credit.noteOutage(p, what, { staging: true }) };
+    try {
+      const id = await say(evan, 'Is the header blue on the settings page too?', place);
+      const out = await turn(place, refused, { through: id - 1, key: 'credit-1', deps: { credit: quiet } });
+      assert.equal(out.outcome, 'fallback');
+      assert.equal(requests.length, 1, 'one request met the 402; it is not asked again');
+      assert.equal(sent.length, 1);
+      assert.match(sent[0].content, /^I'm out of building credit right now, so I couldn't answer this\./);
+      assert.doesNotMatch(sent[0].content, /Ask me again in a minute/);
+      const { rows: [record] } = await pool.query('SELECT outcome, error FROM homeroom_bot_voice_turns ORDER BY id DESC LIMIT 1');
+      assert.deepEqual({ outcome: record.outcome, error: record.error }, { outcome: 'fallback', error: 'credit_out' });
+      const { rows: [stored] } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [credit.KEY_STATE]);
+      assert.ok(JSON.parse(stored.value).outage?.since, 'the outage is in the one stored state');
+      assert.equal((await credit.creditState(pool)).out, true);
+      // Review B1: while it stands, the next turn asks the stored state first
+      // and sends no request at all.
+      sent.length = 0;
+      const next = await say(evan, 'And on the profile page?', place);
+      const again = await turn(place, refused, { through: next - 1, key: 'credit-2', deps: { credit: quiet } });
+      assert.equal(again.outcome, 'fallback');
+      assert.equal(requests.length, 1, 'the model is not called to meet the 402 again');
+      assert.match(sent[0].content, /^I'm out of building credit right now/);
+    } finally {
+      // The rest of this suite runs with credit.
+      await pool.query('DELETE FROM platform_settings WHERE key = $1', [credit.KEY_STATE]);
+      credit.forgetState(pool);
+    }
+  });
+
   await t.test('#6270: a stand-in followed by a real answer posts the real answer', async () => {
     sent.length = 0;
     const place = { type: 'session', ref: change.id };

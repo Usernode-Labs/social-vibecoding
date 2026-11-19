@@ -147,10 +147,11 @@ const RETRY_OUTPUT_TOKENS = CHAT_LIMITS.retryOutputTokens;
 // RETRY_WITHIN_MS young (retryPlan). These are the failures of a provider
 // that was busy or broke: #3725 left a rate limit (HTTP 429) out, so a busy
 // provider ended the turn at once, and asked each request again only once.
-const RETRYABLE_MODEL_ERRORS = new Set([
-  'timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error', 'output_limit',
-  'rate_limited', 'response_too_large', 'empty_answer',
-]);
+// Review B6: built from bot-turn-failure.js's lists, the one source of the
+// codes. What differs here is the chat turn's own: it also asks again a
+// reply that ran out of room or came back empty.
+const turnFailure = require('./bot-turn-failure');
+const RETRYABLE_MODEL_ERRORS = new Set([...turnFailure.PROVIDER_CODES, 'output_limit', 'empty_answer']);
 const MAX_ATTEMPTS = 3;
 // P1: a turn of sixteen rounds runs for minutes, and its later requests are
 // worth asking again too (it was 90 seconds, when a turn had six).
@@ -167,17 +168,15 @@ const MAX_RETRY_AFTER_WAIT_MS = 20_000;
 // The person's DM machine keeps the timer (src/workflow/bot-dm/).
 const { DEFER_DELAYS_MS } = require('../workflow/rules/bot-replies.ts');
 // The failures a later try can get past: the provider's, never the key's.
-const DEFERRABLE_ERRORS = new Set([
-  'rate_limited', 'timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response',
-  'stream_error', 'empty_answer', 'output_limit', 'response_too_large', 'no_reply',
-]);
+const DEFERRABLE_ERRORS = new Set([...turnFailure.PROVIDER_CODES, ...turnFailure.MODEL_SHORT_CODES]);
 // The wait before the second and the third attempt. A rate limit lifts in
 // seconds: asked again seconds later, the same message was answered.
 const RATE_LIMIT_WAITS_MS = [3_000, 8_000];
 const RETRY_WAITS_MS = [0, 1_500];
 // The bot's key: no retry and no other request gets past these. A 403 is
 // not one: OpenRouter also answers a flagged message with it.
-const KEY_ERRORS = new Set(['no_key', 'authentication', 'billing']);
+// (`key_unreadable` is not among them: a read that failed is asked again.)
+const KEY_ERRORS = new Set(turnFailure.KEY_CODES.filter((code) => code !== 'key_unreadable'));
 // When the rounds could not answer, one plain request (plainAnswer) while the
 // turn is this young, from this many of the conversation's newest messages.
 const PLAIN_WITHIN_MS = 300_000;
@@ -3844,9 +3843,10 @@ function retryPlan(err, { forced = false, elapsedMs = 0, attempt = 1, retryOutpu
 // try leaves it out. Every answer to Evan's thread that day ran out of output
 // or came back empty, and a fresh session sorted by latency sent all three
 // tries of 13010 back to the same provider.
+// The provider's codes less `network` (a route that could not be reached
+// names no provider to leave out), and a reply cut short or empty.
 const PROVIDER_FAILURES = new Set([
-  'output_limit', 'empty_answer', 'provider_error', 'provider_unavailable', 'invalid_response', 'stream_error',
-  'timeout', 'rate_limited', 'response_too_large',
+  ...turnFailure.PROVIDER_CODES.filter((code) => code !== 'network'), 'output_limit', 'empty_answer',
 ]);
 
 // At most this many are left out in one turn.
@@ -4313,10 +4313,22 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       log.warn('homeroom-bot-mayor', 'Could not read the key to answer a DM with', { userId: user.id, code: codeOf(err) });
     }
   }
+  // Review B1: asked before the model is. While the one stored outage
+  // stands (openrouter-credit.js creditState) no request is sent to meet the
+  // 402: the turn ends as one that met it, so it says its credit line, is
+  // tried again on its DM's clock and is kept for when credit is back.
+  if (t.apiKey && !error) {
+    const credit = deps.credit?.creditState ? deps.credit : require('./openrouter-credit');
+    if ((await credit.creditState(pool)).out) {
+      error = 'credit_out';
+      errorStatus = 402;
+      t.failures.push('context:credit_out');
+    }
+  }
   if (!t.apiKey) {
     error ||= 'no_key';
     if (error === 'no_key') log.warn('homeroom-bot-mayor', 'No key to answer a DM with', { userId: user.id });
-  } else {
+  } else if (error !== 'credit_out') {
     // Pictures (theirs, and a request's screenshots) only for a model that can
     // look at them, and no more in one turn than the shim's allowance.
     const imageInput = typeof deps.seesImages === 'boolean'
@@ -8051,6 +8063,7 @@ module.exports = {
   progressText,
   buildWords,
   retryPlan,
+  avoidProviders,
   fallbackAnswer,
   retryAct,
   normalizeCalls,

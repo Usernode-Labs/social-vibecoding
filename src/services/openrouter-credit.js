@@ -416,10 +416,6 @@ async function sweep(pool, config, deps = {}) {
         next = { ...next, outage: { ...next.outage, probedAt: new Date(now).toISOString(), probes: (Number(next.outage.probes) || 0) + 1 } };
       }
     }
-    if (out.events.some((e) => e.type === 'back')) {
-      await (deps.platform ? deps.platform() : require('../workflow/platform.ts')).botCreditBack()
-        .catch((err) => log.warn('openrouter-credit', 'Could not tell the bot\'s lane credit is back', { err: err.message }));
-    }
     // T1.4: a pause that has stood `staleHours` (a setting, 6 by default) is
     // told again: one incident and one alert each time it does.
     if (next.outage && staleDue(next.outage, staleHours, now)) {
@@ -436,7 +432,17 @@ async function sweep(pool, config, deps = {}) {
       }
     }
     await writeSetting(pool, KEY_STATE, JSON.stringify(next));
+    remember(pool, next);
     out.state = next;
+    // Told only once the cleared state is stored: the lane's pause is that
+    // stored outage, read on its every pass (bot-lane facts), so a wake-up
+    // sent before the write would find it still standing. And a wake-up
+    // that cannot be sent costs minutes, never the pause: the lane's own
+    // clock finds the outage gone (review A5).
+    if (out.events.some((e) => e.type === 'back')) {
+      await (deps.platform ? deps.platform() : require('../workflow/platform.ts')).botCreditBack()
+        .catch((err) => log.warn('openrouter-credit', 'Could not tell the bot\'s lane credit is back', { err: err.message }));
+    }
   } catch (err) {
     log.warn('openrouter-credit', 'The credit sweep failed', { err: err.message });
   }
@@ -474,6 +480,56 @@ async function status(pool) {
   };
 }
 
+// ── The one question: is credit out? ───────────────────────────────────
+//
+// Review B1 (19 Nov 2026): the outage was held in three places and nobody
+// asked before calling a model, so during an outage every turn outside the
+// lane (the chat, the thread voice, look_into, an investigation, a
+// takeover) made its own failing request and read the refusal its own way.
+// The stored state above is the one holder. `creditState` is how a turn
+// asks before it calls, and `noteOutage` how it reports a call that met the
+// 402. The lane reads the same row inside its transitions (bot-lane facts).
+
+// How long an answer is believed. Another process's note or sweep is seen
+// within this long; this process's own are seen at once (remember).
+const STATE_CACHE_MS = 5000;
+// Per pool, so a test's pool never answers for another's.
+const stateCache = new WeakMap();
+
+function remember(pool, state, now = Date.now()) {
+  if (!pool || typeof pool !== 'object') return;
+  const outage = stateOf(state).outage;
+  stateCache.set(pool, {
+    at: now,
+    value: outage ? { out: true, since: outage.since, words: outage.words || null } : { out: false, since: null, words: null },
+  });
+}
+
+/** Forget what was last read for `pool`, so the next ask reads the store (a test that changes the row itself). */
+function forgetState(pool) {
+  if (pool && typeof pool === 'object') stateCache.delete(pool);
+}
+
+/**
+ * Whether OpenRouter's credit is out right now, as last recorded:
+ * { out, since, words }. Cached a few seconds. A read that fails says "not
+ * out": a settings error must never stop the bot answering.
+ */
+async function creditState(pool, { maxAgeMs = STATE_CACHE_MS, now = Date.now() } = {}) {
+  const hit = pool && typeof pool === 'object' ? stateCache.get(pool) : null;
+  if (hit && now - hit.at < maxAgeMs) return hit.value;
+  try {
+    const { rows } = await pool.query('SELECT value FROM platform_settings WHERE key = $1', [KEY_STATE]);
+    let state = null;
+    try { state = JSON.parse(rows?.[0]?.value || 'null'); } catch { state = null; }
+    remember(pool, state, now);
+    return stateCache.get(pool)?.value || { out: false, since: null, words: null };
+  } catch (err) {
+    log.warn('openrouter-credit', 'Could not read whether credit is out', { err: err.message });
+    return { out: false, since: null, words: null };
+  }
+}
+
 /**
  * Record that a turn found credit gone: one outage in the state, one
  * incident, and (T1.5) the full admins told at once, as the low and urgent
@@ -486,6 +542,7 @@ async function noteOutage(pool, { words = null } = {}, deps = {}) {
     const before = stateOf(state);
     const next = outageSet(before, { words });
     if (next !== before) await writeSetting(pool, KEY_STATE, JSON.stringify(next));
+    remember(pool, next);
     if (!before.outage) {
       await require('./platform-incidents').record(pool, {
         kind: require('./platform-incidents').KINDS.CREDIT_OUT,
@@ -508,5 +565,6 @@ module.exports = {
   DEFAULT_WARN_CENTS, DEFAULT_URGENT_CENTS, DEFAULT_STALE_HOURS, BACK_CENTS, BACK_AFTER_MS,
   PROBE_BASE_MS, PROBE_CEILING_MS, OUT_DETAIL,
   decide, creditOut, daysLeft, outageSet, detailToken, probeDue, staleDue,
-  readBalance, probe, sweep, status, noteOutage, isStaging,
+  STATE_CACHE_MS,
+  readBalance, probe, sweep, status, noteOutage, creditState, forgetState, isStaging,
 };

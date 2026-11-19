@@ -743,6 +743,49 @@ test('#6409: a retry after running out of time says "The fix didn\'t pass; tryin
   assert.equal(h.calls.onProposal[0].text, followup.checksFixingAgainText());
 });
 
+// Review A2: one provider error used to hand the change to a person. A fix
+// the platform failed under (the runtime's own API error where its answer
+// should be, a worker that ran out of memory) gets the one retry a timeout
+// gets, and is said as Homeroom's failure, never the change's.
+for (const [name, result] of [
+  ['the runtime\'s API error', { agentHarness: 'claude', ccExit: 0, exitCode: 1, pushOk: false, sha: null, lastResultText: 'API Error: 503 {"error":{"message":"Provider returned error","code":503}}' }],
+  ['a worker that ran out of memory', { agentHarness: 'claude', exitCode: -1, markerlessCause: 'oom_killed', lastResultText: '' }],
+]) {
+  test(`a checks fix that ended on ${name} is tried once more, not handed to a person`, async (t) => {
+    const h = harness({ result });
+    const out = await run(t, h);
+    assert.deepEqual({ verdict: out.verdict, acted: out.acted }, { verdict: 'failed', acted: 'checks_retry' });
+    assert.equal(h.calls.posts.length, 0, 'nobody is handed the change');
+    const insert = insertOf(h);
+    assert.ok(insert.params.includes('its attempt to fix them failed on Homeroom\'s side'), 'the run says whose failure it was');
+    assert.ok(!insert.params.includes('wall clock'), 'and is no timeout');
+    assert.ok(!h.calls.queries.some((q) => /homeroom_bot_run_snapshots/.test(q.s)), 'a platform failure is no benchmark case');
+    const retry = h.calls.onProposal.find((p) => p.kind === 'checks_retry');
+    assert.equal(retry.text, followup.checksRetryText({ failing: true, platform: true }));
+    assert.match(retry.text, /because Homeroom had a problem on its side\. It is trying once more\./);
+    assert.doesNotMatch(retry.text, /ran out of time/);
+    assert.ok(h.look.out.owe.length > 0 || h.calls.queries.some((q) => /checks/.test(q.s)), 'the fix is still owed on this head');
+  });
+}
+
+test('a checks fix the platform failed under twice hands over saying so, and is counted as an incident', async (t) => {
+  const h = harness({
+    result: { agentHarness: 'claude', ccExit: 0, exitCode: 1, pushOk: false, sha: null, lastResultText: 'API Error: 503 {"error":{"message":"Provider returned error","code":503}}' },
+  });
+  const real = h.pool.query.bind(h.pool);
+  // Its one retry on this head is spent (checksRetried).
+  h.pool.query = async (sql, params) => {
+    if (/AND error = \$2 LIMIT 1/.test(String(sql))) return { rows: [{ one: 1 }] };
+    return real(sql, params);
+  };
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.posts.length, 1, 'one note hands it over');
+  assert.match(JSON.stringify(h.calls.posts[0]), /Homeroom had a problem on its side, not with this change/);
+  const incident = h.calls.queries.find((q) => /INSERT INTO events/.test(q.s) && /bot_turn_platform/.test(JSON.stringify(q.params)));
+  assert.ok(incident, 'the platform failure is counted');
+});
+
 // #6409: the bot's own fix landed and the new head still fails: a new
 // attempt, in its own words, because the earlier line was about the old head.
 test('#6409: a new failing head after the bot\'s fix landed says "trying once more"', async (t) => {
@@ -1084,7 +1127,7 @@ test('step 5: a fix round, a sync, a hand-off and a retry each record that they 
   await run(t, handOff);
   assert.equal(kindOf(handOff), 'hand_off');
   const src = read('src/services/homeroom-bot.js');
-  assert.match(src, /readReason: readReasonOf\(item\), lookKind: 'retry',\n\s+appId: app\.id, issueNumber, mode: runMode, verdict: 'failed',\n\s+reason: 'its attempt to fix them ran out of time'/);
+  assert.match(src, /readReason: readReasonOf\(item\), lookKind: 'retry',\n\s+appId: app\.id, issueNumber, mode: runMode, verdict: 'failed',\n\s+reason: platformFailed \? 'its attempt to fix them failed on Homeroom\\'s side' : 'its attempt to fix them ran out of time'/);
   assert.match(src, /recordFailure\(code, \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ infra: true, turn: result \}\)/);
   // T1.3: out of OpenRouter's credit is no hand-off and marks no head looked at.
   assert.match(src, /if \(!turn\.stopped && creditOutOf\(code, result\)\) \{\s*return recordFailure\(code \|\| 'insufficient_credits', \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ turn: result \}\);/);

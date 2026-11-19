@@ -515,6 +515,10 @@ const PLAN_RETRY_REASON = 'plan_retry';
 // gone on. It waits quietly, as a restart's row does, and the balance read
 // that lifts the pause lets the lane grant it again; nobody replies.
 const CREDIT_WAIT_REASON = 'credit_wait';
+// How often the write that queues a build's credit wait is tried, and the
+// wait before the second and third try (recordLiveBuild).
+const CREDIT_QUEUE_TRIES = 3;
+const CREDIT_QUEUE_WAIT_MS = 400;
 const PLAN_RETRY_AFTER_MS = 3 * 60 * 1000;
 // The queue reason of a request somebody asked the bot to build from its
 // page, or just filed on a project it builds on (homeroom-bot-dm.js
@@ -690,10 +694,9 @@ let triagePromptCache = null;
 // bootstrapped, the bot has no key or model, the ledger refused the turn.
 // Retrying the next issue would fail the same way, so the pass stops and
 // the loop idles; the queue row is kept for when the fault is cleared.
-const INFRA_ERRORS = new Set([
-  'backend_disabled', 'credential_required', 'model_required', 'invalid_base_url',
-  'agent_context_changed', 'session_busy', 'ledger_start_failed', 'not_a_codex_session',
-]);
+// The list is bot-turn-failure.js's, the one sort of a failed turn.
+const turnFailure = require('./bot-turn-failure');
+const INFRA_ERRORS = new Set(turnFailure.DISPATCH_CODES);
 
 // ── Settings ─────────────────────────────────────────────────────────────
 
@@ -3962,14 +3965,18 @@ function describeStop(result) {
  * (openrouter-credit.js creditOut): its error, as the platform wrote it (a
  * routed error code, the provider's notice), and what the worker read of how
  * the turn ended (`turn`: the Codex harness's agentErrorCode, a 402 status).
- * An error that quotes the model's reply (`unparseable: …`) is never read as
- * a provider's words; its turn still is.
+ * An error that quotes the model's reply (`unparseable: …`) or that the
+ * platform wrote itself (`session: …`, `worker: …`) is never read as a
+ * provider's words; its turn still is.
  */
 function creditOutOf(error, turn = null) {
-  const credit = require('./openrouter-credit');
-  const text = typeof error === 'string' && !error.startsWith('unparseable:') ? error : null;
-  if (text && credit.creditOut(text)) return true;
-  return !!turn && typeof turn === 'object' && credit.creditOut(turn);
+  // Review B1: the platform's own error text is never read as a provider's
+  // words (a "session: ... 402 ..." would have paused every project). Only a
+  // bare code (`insufficient_credits`) and the runtime's notice kept under
+  // `provider:` are; everything else is read from the turn's own fields.
+  const e = typeof error === 'string' ? error : '';
+  const providerText = e.startsWith('provider:') ? e.slice('provider:'.length) : null;
+  return turnFailure.sort({ code: e, turn, providerText }).class === 'credit';
 }
 
 // One outage's key (openrouter-credit.js noteOutage), so a line said for it
@@ -3984,7 +3991,7 @@ function outageKey(outage) {
 // probe_unobservable), or the provider's own error code ended it. Either is
 // the platform failing under the turn, never the model's answer.
 function emptyReplyIsInfra(result) {
-  return !!(result && (result.markerlessCause || result.agentErrorCode));
+  return !!turnFailure.turnPlatformCause(result);
 }
 
 /**
@@ -4449,12 +4456,12 @@ async function runTriage(pool, config, {
   // A platform fault (`infra`) is the platform's: the request keeps its
   // debt and its tries (trace L5), the lane pauses every grant, and no run
   // is written that a refresh would count as a failed read of the thread.
-  // Except when it is the request's FAULT_TRIES-th fault in a row, or a
-  // fault this request will always get (`recorded`: the provider refusing
-  // its conversation): then the run is written as a failed read, which the
-  // refresh counts like any (FAILED_TRIAGE_TRIES), so one request cannot
-  // keep the lane pausing for ever. Neither is a benchmark case.
-  const recordFailure = async (error, extra = {}, { infra = false, recorded = false, turn = null } = {}) => {
+  // Except when it is the request's FAULT_TRIES-th fault in a row: then the
+  // run is written as a failed read, which the refresh counts like any
+  // (FAILED_TRIAGE_TRIES), so one request (a provider refusing its
+  // conversation every time) cannot keep the lane pausing for ever. It is
+  // no benchmark case.
+  const recordFailure = async (error, extra = {}, { infra = false, turn = null } = {}) => {
     if (REFUSAL_ERRORS.has(error)) return recordRefusal(error);
     // T1.3: OpenRouter's credit ran out under the turn (its error, or what
     // the worker read of how it ended: the Codex harness's
@@ -4466,7 +4473,7 @@ async function runTriage(pool, config, {
       return { ran: false, reason: 'credit', detail: clip(String(error || 'insufficient_credits'), 300) };
     }
     const lastFault = Number(item.faults || 0) + 1 >= loopRules.FAULT_TRIES;
-    if (infra && !recorded && !lastFault) {
+    if (infra && !lastFault) {
       look.fault();
       log.warn('homeroom-bot', 'Triage failed on the platform', { app: app.slug, issueNumber, error });
       return { ran: false, reason: 'infra', detail: error, runId: null };
@@ -5267,15 +5274,18 @@ async function runTriage(pool, config, {
     // "API Error: 400 messages[6]: tool messages must include a non-empty
     // string tool_call_id") is the provider's failure, not the model's: it
     // is a platform fault, so the lane pauses, and it is no benchmark case.
-    // One this issue always gets cannot wedge the bot: the run it writes
-    // reads as unchanged at the next refresh, so the request is no longer
-    // owed, and counts toward FAILED_TRIAGE_TRIES on this thread like any
-    // failed read.
+    // Review A2: it is no failed read of the thread either. It used to be
+    // written as one at once, so two provider blips half an hour apart left
+    // a request unread until somebody wrote on it. The request keeps its
+    // debt and its tries and backs off (recordFailure's infra path). One
+    // this issue always gets still cannot wedge the bot: its FAULT_TRIES-th
+    // fault in a row is written as a failed read, which the refresh counts
+    // (FAILED_TRIAGE_TRIES) and reads as unchanged.
     const apiFailure = agentApiFailure(text);
     if (apiFailure) {
       return recordFailure(`provider: ${apiFailure.line}`, {
         sessionId: session.id, costUsd, ...usage,
-      }, { infra: true, recorded: true, turn: result });
+      }, { infra: true, turn: result });
     }
     // The reply decided in words and never wrote its block (14 of the 19
     // failed triages in the week to 2026-10-06: "Small, bounded, no schema
@@ -6002,13 +6012,13 @@ async function runFollowUp(pool, config, {
   // unless they were tried as often as they may be, and then the people who
   // asked hear so. A refusal or a platform fault never got going, so it is
   // not a try.
-  const asksFailed = async (error, { refund = false } = {}) => {
+  const asksFailed = async (error, { refund = false, why = null } = {}) => {
     const gaveUp = await voice.releaseAsks(pool, { runTag, refund }).catch(() => []);
     if (gaveUp.length) {
       // Owed by the places they asked in, and said by their work.
       await voice.reportFollowUp(pool, config, {
         app, session: reportSession, asks: gaveUp, runTag: `${runTag}-failed`, deps: voiceDeps,
-        outcome: { action: 'failed', why: replyFailedWhy(error) },
+        outcome: { action: 'failed', why: why || replyFailedWhy(error) },
       }).catch((err) => log.warn('homeroom-bot', 'Could not owe the people who asked a report', { app: app.slug, err: err.message }));
     }
     if (!refund) await requeueAsks();
@@ -6016,21 +6026,36 @@ async function runFollowUp(pool, config, {
   const fail = async (error, extra = {}, opts = {}) => {
     const out = await recordFailure(error, { proposalSessionId: proposal.id, threadSeenAt: seenThrough, ...extra }, opts);
     if (!opts.infra && out?.runId) await recordSnapshot(out.runId);
+    // Review A2: a platform failure (bot-turn-failure.js) is no try: the
+    // request keeps its debt and backs off, and its asks wait for the look
+    // that follows. Only its FAULT_TRIES-th in a row is written as a run
+    // (recordFailure): then it is said, as Homeroom's failure and never the
+    // change's, and counted as an incident.
+    const capped = !!opts.infra && !!out?.ran;
+    const why = capped ? turnFailure.PLATFORM_WHY : replyFailedWhy(error);
+    if (capped) {
+      await turnFailure.recordPlatformIncident(pool, {
+        where: 'a reply on its change', cause: turnFailure.sort({ code: error, turn: opts.turn || null }).cause,
+        detail: { appId: app.id, sessionId: proposal.id, issueNumber, runId: out.runId || null },
+      });
+    }
     if (asks.length) {
       // T1.3: a turn that ran out of OpenRouter's credit was no try either:
       // its asks wait for the look the request is owed once credit is back.
-      await asksFailed(error, { refund: !!opts.infra || REFUSAL_ERRORS.has(error) || out?.reason === 'credit' });
+      await asksFailed(error, {
+        refund: (!!opts.infra && !capped) || REFUSAL_ERRORS.has(error) || out?.reason === 'credit', why,
+      });
       if (!others.length) return out;
     }
     // #4610: a reply turn that failed used to post nothing, so the person
     // who wrote heard nothing at all. A wait (a refusal) is said where it
     // happens, and a platform fault is retried on its own row: neither is
     // this. One plain line, and whether it tries again on its own.
-    if (!opts.infra && !REFUSAL_ERRORS.has(error) && out?.ran && deps.ws) {
+    if ((!opts.infra || capped) && !REFUSAL_ERRORS.has(error) && out?.ran && deps.ws) {
       await postThreadNote({
         pool, ws: deps.ws, app, issueNumber, runId: out.runId || null, kind: 'followup_failed', bot, sessionId: noteSessionId,
         text: followup.replyFailedText({
-          why: replyFailedWhy(error), retrying: priorFailures + 1 < followup.MAX_REPLY_TRIES,
+          why, retrying: priorFailures + 1 < followup.MAX_REPLY_TRIES,
         }),
       });
     }
@@ -6348,10 +6373,15 @@ async function runFollowUp(pool, config, {
   const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
     // T1.3: its turn's own result is read for OpenRouter's 402 for credit.
-    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent, { turn: result });
+    // Review A2: and for the platform failing under it (a provider's error
+    // where an answer should be, a worker that ran out of memory): that
+    // spent one of the reply's two tries and was said as "something went
+    // wrong while it worked on it".
+    const infra = turnFailure.sort({ turn: result }).class === 'platform';
+    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent, { infra, turn: result });
     return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, {
       ...spent, unreadableReply: unreadableReplyOf(result.lastResultText),
-    }, { turn: result });
+    }, { infra, turn: result });
   }
 
   let runId = null;
@@ -7368,19 +7398,32 @@ async function runChecksFix(pool, config, {
   // counts toward MAX_REVISIONS. The second time out hands over as before.
   // Once across the look's attempts: the retry run this writes would read
   // as retried already to a resumed attempt.
-  if (turn.stopped && !await look.once('retried', () => checksRetried(pool, session.id, head))) {
+  // Review A2: and so is a fix the platform failed under (a provider's
+  // error where its answer should be, a worker that ran out of memory). One
+  // provider 5xx used to hand the change to a person.
+  const platformFailed = !turn.stopped && !code && !parsed && turnFailure.sort({ turn: result }).class === 'platform';
+  if ((turn.stopped || platformFailed) && !await look.once('retried', () => checksRetried(pool, session.id, head))) {
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),
       readReason: readReasonOf(item), lookKind: 'retry',
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed',
-      reason: 'its attempt to fix them ran out of time', error: checksRetryError(head),
+      reason: platformFailed ? 'its attempt to fix them failed on Homeroom\'s side' : 'its attempt to fix them ran out of time',
+      error: checksRetryError(head),
       threadSeenAt, model, durationMs: Date.now() - startedMs,
-      proposalSessionId: session.id, ...spent, budgetStop: 'wall clock',
+      proposalSessionId: session.id, ...spent, ...(platformFailed ? {} : { budgetStop: 'wall clock' }),
     });
-    await recordSnapshot(runId);
+    // A platform failure is no benchmark case (recordFailure).
+    if (!platformFailed) await recordSnapshot(runId);
     await dropRow();
-    await note('checks_retry', { runId, text: followup.checksRetryText({ broken: broken.length > 0, failing: failing.length > 0, skipped: skipped.length > 0 }) });
-    log.warn('homeroom-bot', 'Fix of its proposal\'s checks ran out of time; trying once more', {
+    await note('checks_retry', {
+      runId,
+      text: followup.checksRetryText({
+        broken: broken.length > 0, failing: failing.length > 0, skipped: skipped.length > 0, platform: platformFailed,
+      }),
+    });
+    log.warn('homeroom-bot', platformFailed
+      ? 'Fix of its proposal\'s checks failed on the platform; trying once more'
+      : 'Fix of its proposal\'s checks ran out of time; trying once more', {
       app: app.slug, issueNumber, sessionId: session.id, head, runId,
     });
     // Owed again once this look ends: the fix is still due on this head.
@@ -7390,8 +7433,17 @@ async function runChecksFix(pool, config, {
 
   // The turn could not fix them: one note, and a person takes it from here.
   const turnFailed = !turn.stopped && !code ? live.failedClaudeTurn(result) : null;
+  // The platform failed under its retry too: said as Homeroom's failure,
+  // never the change's, and counted.
+  if (platformFailed) {
+    await turnFailure.recordPlatformIncident(pool, {
+      where: 'a fix of its change\'s checks', cause: turnFailure.sort({ turn: result }).cause,
+      detail: { appId: app.id, sessionId: session.id, issueNumber },
+    });
+  }
   const why = turn.stopped ? 'its attempt to fix them ran out of time'
     : code ? `its attempt to fix them failed (${clip(code, 200)})`
+      : platformFailed ? `its attempt to fix them failed twice because ${turnFailure.PLATFORM_WHY}`
       : turnFailed ? `its attempt to fix them failed (${turnFailed})`
         : parsed?.action === 'person' ? parsed.reply
           : parsed ? 'its attempt to fix them changed nothing'
@@ -7620,6 +7672,10 @@ async function keepNoChange(pool, runId, noChange) {
  */
 function autoRetryable(built) {
   if (!built || built.ok || built.skipped || built.blocked || built.lostClaim || built.notProposed) return false;
+  // Review B6: a build that stopped for OpenRouter's credit did not fail.
+  // Its one automatic retry would meet the same 402 and be spent on it; it
+  // waits for credit instead (recordLiveBuild's credit branch).
+  if (built.creditOut) return false;
   // #6267: a build waiting for its upload was built; another try would pay
   // for it again and leave the saved commit behind.
   if (built.waitingToPush) return false;
@@ -7843,13 +7899,33 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     ).catch((err) => log.warn('homeroom-bot', 'Could not record that a build waited for credit', { runId, err: err.message }));
     const credit = require('./openrouter-credit');
     await credit.noteOutage(pool, { words: built.error || null });
-    try {
-      await platform().botOwed(pool, {
-        appId: app.id, issueNumber, reason: CREDIT_WAIT_REASON, priority: 2,
-        key: `credit_wait:${runId}`, source: CREDIT_WAIT_REASON,
+    // Review B6: the write that brings the request back once credit is. It
+    // was tried once, and its failure only logged, while the next line told
+    // the person the bot "will pick this up again by itself". It is keyed by
+    // the run, so asking again is safe; and when it cannot be written the
+    // person is told what is true and the failure is counted.
+    let queued = false;
+    for (let attempt = 1; attempt <= CREDIT_QUEUE_TRIES && !queued; attempt += 1) {
+      try {
+        await platform().botOwed(pool, {
+          appId: app.id, issueNumber, reason: CREDIT_WAIT_REASON, priority: 2,
+          key: `credit_wait:${runId}`, source: CREDIT_WAIT_REASON,
+        });
+        queued = true;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not queue a request that waited for credit', {
+          app: app?.slug, issueNumber, attempt, err: err.message,
+        });
+        if (attempt < CREDIT_QUEUE_TRIES) await new Promise((resolve) => { setTimeout(resolve, CREDIT_QUEUE_WAIT_MS * attempt); });
+      }
+    }
+    if (!queued) {
+      await turnFailure.recordPlatformIncident(pool, {
+        where: 'queueing a build that waits for credit', cause: 'queue_write_failed',
+        detail: { appId: app.id, issueNumber, runId },
       });
-    } catch (err) {
-      log.warn('homeroom-bot', 'Could not queue a request that waited for credit', { app: app?.slug, issueNumber, err: err.message });
+      await say('build_failed', live.buildCreditText({ queued: false }), { dm: { reason: built.error || 'credit' } });
+      return 'credit_wait';
     }
     await say('build_failed', live.buildCreditText(), { dm: { reason: CREDIT_WAIT_REASON } });
     return 'credit_wait';
@@ -12150,9 +12226,21 @@ async function lookOutcome(r, L, { pool, settings, bot, app, item, deps }) {
   // outage, not a fault: it keeps its debt and its tries, and the lane
   // pauses until credit is back. T1.3: a read, a follow-up or a checks fix
   // that recordFailure found out of credit says so itself (`credit`).
-  const creditWords = o.error || r?.detail || null;
-  if (r?.reason === 'credit' || (creditWords && require('./openrouter-credit').creditOut({ error: creditWords }))) {
-    const outage = await require('./openrouter-credit').noteOutage(pool, { words: creditWords }).catch(() => null);
+  // Review B1: only a look that said so itself. The look's free error text
+  // used to be read here as a provider's words too, where a bare "402" in
+  // any platform message would have paused every project.
+  if (r?.reason === 'credit') {
+    const creditWords = r.detail || o.error || 'insufficient_credits';
+    const credit = deps.credit || require('./openrouter-credit');
+    let outage = await credit.noteOutage(pool, { words: creditWords }).catch(() => null);
+    if (!outage) outage = await credit.noteOutage(pool, { words: creditWords }).catch(() => null);
+    // Review A5: the lane's pause is the stored outage. One that could not
+    // be stored pauses nothing, so the look ends as a platform fault: the
+    // request keeps its debt and backs off, and its next try notes it.
+    if (!outage) {
+      log.warn('homeroom-bot', 'A look met OpenRouter\'s 402 and the outage could not be recorded', { app: app?.slug, issueNumber: item.issue_number });
+      return { outcome: 'fault', error: 'credit_outage_unrecorded', ...extra };
+    }
     // T1.3: a look a person asked for (a reply, Run now, an ask on its
     // change) hears one line on the request, once an outage: the request
     // keeps its debt, and the lane takes it up again once credit is back.
@@ -12940,5 +13028,6 @@ module.exports = {
   },
   // A look's context, for a test that runs a look's steps itself.
   _newLookForTests: newLook,
+  _lookOutcomeForTests: lookOutcome,
   _runInLookForTests: (look, fn) => lookStore.run(look, fn),
 };

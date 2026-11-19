@@ -2187,6 +2187,13 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
       record.error = 'no_key';
       return { outcome: 'failed' };
     }
+    // Review B1: asked before the model is. While the one stored outage
+    // stands (openrouter-credit.js creditState) no request is sent to meet
+    // the 402: the turn ends as one that met it (the catch below), and says
+    // its credit line.
+    if ((await (deps.credit?.creditState ? deps.credit : require('./openrouter-credit')).creditState(pool)).out) {
+      throw Object.assign(new Error('OpenRouter\'s credit is out'), { code: 'credit_out', status: 402 });
+    }
     const facts = await factsFor(pool, { app, place, bot, settings, speaker, deps }).catch((err) => {
       t.failures.push(`context:facts:${mayor.codeOf(err)}`);
       return `Project: "${app.name || app.slug}".`;
@@ -2351,7 +2358,8 @@ async function converse(pool, cfg, { app, place, bot, settings, messages, fresh,
     // T1.3: OpenRouter's credit ran out (openrouter-mayor.js credit_out):
     // one outage noted, which tells the admins at once.
     if (record.error === 'credit_out') {
-      await require('./openrouter-credit').noteOutage(pool, { words: 'a thread answer met OpenRouter\'s 402 for credit' }).catch(() => null);
+      await (deps.credit?.noteOutage ? deps.credit : require('./openrouter-credit'))
+        .noteOutage(pool, { words: 'a thread answer met OpenRouter\'s 402 for credit' }).catch(() => null);
     }
   } finally {
     try { await platform?.close?.(); } catch { /* closing a grant never fails a turn */ }
