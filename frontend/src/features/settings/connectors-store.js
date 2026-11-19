@@ -23,7 +23,7 @@
  *   * `#connector-hint-status` — the read-only tip status, whose three
  *     mutually-exclusive explanations are prose this module composes.
  *
- * @typedef {{ id: string, title: string, detail: string, capabilities: string|null }} ConnectionView
+ * @typedef {{ id: string, title: string, label?: string|null, toolName?: string, detail: string, capabilities: string|null }} ConnectionView
  * @typedef {'working'|'unused'|'attention'|'none'} ToolStatusKey
  * @typedef {{ key: 'claude'|'chatgpt'|'codex'|'generic', status: ToolStatusKey, connections: ConnectionView[] }} ToolView
  * @typedef {{ phase: 'idle'|'loading'|'ready', tools: ToolView[] }} ConnectorsState

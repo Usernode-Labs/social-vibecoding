@@ -291,13 +291,12 @@ test('a column is one card: Waiting keeps its order toggle at its top, Done says
     'drawn like the shell’s other lists: the plane, 20px, one hairline');
 });
 
-test('By stage in the Workshop: the head is one row, the strip pins with it, and rows open beside the board', () => {
+test('All items in the Workshop: the head is one row, the strip pins with it, and rows open beside the board', () => {
   const AppView = makeAppView();
-  AppView._getWorkshopGroup = () => 'stage';
   const html = workshopHtml(AppView, 'all');
   assert.match(html, /<section class="dev-ws-pane" data-ws-pane=""><div class="dev-ws-pane-head"><div class="dev-ws-allbar" data-ws-allbar=""><div class="dev-ws-pagehead" data-ws-pagehead=""><button type="button" class="dev-ws-page-back un-touch-target" data-ws-page-back="" aria-label="Back to Workshop"/);
-  assert.match(html, /<div class="dev-ws-pagehead-text"><h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div class="dev-ws-group" role="tablist"[\s\S]*?<\/div><div id="dev-actions"/,
-    'no "Workshop" eyebrow, then the grouping, then the tools');
+  assert.match(html, /<div class="dev-ws-pagehead-text"><h2 class="dev-ws-pagehead-title">All items<\/h2><\/div><\/div><div id="dev-actions"/,
+    'no "Workshop" eyebrow and no grouping switch (request 6708), then the tools');
   assert.match(html, /<\/div><div id="dev-kanban-tabs" role="tablist" aria-label="Board columns" class="dev-kanban-stages">[\s\S]*?<\/div><\/div><div class="dev-ws-pane-body"><div class="dev-ws-board" data-ws-stage=""><div id="dev-kanban"/,
     'the strip is in the pinned head, the board in the body');
   assert.ok(!html.includes('data-ws-pagebar'), 'no back bar of its own above the pane');
