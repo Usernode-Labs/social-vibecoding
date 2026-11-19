@@ -1474,3 +1474,44 @@ test('T2.12: a card on the newest look reads its request\'s stored row', () => {
   assert.equal(act.outcomeFor(proposedRun, { stage: 'reading', runId: 40 }), 'checking');
   assert.equal(act.outcomeFor({ ...proposedRun, told: true }, { stage: 'building', runId: 40 }), 'proposed');
 });
+
+// The one rule (frontend/src/lib/work-state.ts): the stored row gives the
+// word on every surface. A request whose row said "Stopped: its tests still
+// fail" (Homeroom bot gave up fixing its change's tests) had no case in the
+// cards' mapping, so its card fell through to its run's own record and read
+// "Testing". The request's row here is the one the server stores and sends
+// (tests/lib/stored-row.js); the card is the server's own (cardOf), drawn by
+// the client's own component.
+test('a card whose request\'s row says the bot stopped fixing its tests says Stopped, never Testing', () => {
+  const { storedRow, storedChange } = require('./lib/stored-row');
+  const { message } = require('./lib/platform-i18n');
+  const row = {
+    message_id: 31, created_at: '2026-10-02T10:30:00Z', slug: 'ear-trainer', issue_number: 12,
+    run_id: 40, verdict: 'ready', build_ok: true, run_at: '2026-10-02T10:40:00Z',
+    proposal_session_id: 51, proposal_status: 'promoted', proposal_at: '2026-10-02T10:53:00Z',
+    // Neither the ready card nor the "needs a look" message has gone out.
+    told: false, needs_look: false,
+  };
+  const failing = storedChange({ id: 51, checks: { state: 'failing', phase: 'done', failing: 2 } });
+  // The fix's own look is the request's newest run, not this card's.
+  const stopped = storedRow({ stage: 'stopped', reason: 'fix_stopped', change: failing, runId: 44 });
+  assert.equal(stopped.words.stage.id, 'core:work.reason.fixStopped');
+  const card = activity.cardOf(row, null, { work: stopped });
+  assert.equal(card.state, 'done');
+  assert.equal(card.outcome, 'needs_look', 'not "checking"');
+  const html = draw({ card: JSON.parse(JSON.stringify(card)) });
+  assert.match(html, new RegExp(`data-bot-activity-eyebrow="">${message('messages:bot.state.stopped')}<`));
+  assert.ok(html.includes(message('messages:bot.state.line.needsLook')), html);
+  assert.ok(!html.includes(message('messages:bot.state.testing')), 'never Testing under a request that stopped');
+  // The same when this card's run is the request's newest.
+  assert.equal(activity.cardOf(row, null, { work: { ...stopped, runId: 40 } }).outcome, 'needs_look');
+  assert.equal(activity.outcomeFromWork(stopped), 'needs_look');
+  // Still being tested, by the row: Testing, as before.
+  const checking = storedRow({ stage: 'checking', change: storedChange({ id: 51, checks: { state: 'pending', phase: 'running', failing: null } }), runId: 40 });
+  const going = activity.cardOf(row, null, { work: checking });
+  assert.equal(going.outcome, 'checking');
+  assert.match(draw({ card: JSON.parse(JSON.stringify(going)) }), new RegExp(`data-bot-activity-eyebrow="">${message('messages:bot.state.testing')}<`));
+  // Another change than the one this card's run proposed: the card's own record.
+  const other = storedRow({ stage: 'stopped', reason: 'fix_stopped', change: storedChange({ id: 77 }), runId: 44 });
+  assert.equal(activity.cardOf(row, null, { work: other }).outcome, 'checking');
+});

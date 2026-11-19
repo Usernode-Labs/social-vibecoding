@@ -664,6 +664,11 @@ function outcomeFromWork(work) {
     if (work.reason === 'look_failed') return 'failed';
     if (work.reason === 'change_closed') return 'closed';
     if (work.reason === 'stalled') return 'stopped';
+    // Homeroom bot stopped fixing its change's failing tests: built, and a
+    // person has to look. It had no case here, so the card fell through to
+    // its run's own record and read "Testing" under a request every other
+    // screen called Stopped.
+    if (work.reason === 'fix_stopped') return 'needs_look';
     return null;
   }
   if (work.stage === 'waiting_for_you') {
@@ -806,6 +811,11 @@ function changeOutcomeOf(row, work) {
   // A first version whose checks passed goes live without a vote; one
   // GitHub holds once approved is going live too.
   if (work.stage === 'going_live') return 'going_live';
+  // The request's row says Stopped: Homeroom bot gave up fixing the change's
+  // tests. Nothing is being tested any more, whether or not the "needs a
+  // look" message has gone out yet (`needs_look`), and whichever look is the
+  // request's newest (the fix's own run, usually, not this card's).
+  if (work.stage === 'stopped' && work.reason === 'fix_stopped') return 'needs_look';
   if (change.voteOpen) return 'proposed';
   return row.needs_look ? 'needs_look' : 'checking';
 }
