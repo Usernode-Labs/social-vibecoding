@@ -5808,12 +5808,9 @@ const App = {
         // same treatment `activity` gets above, one pane deeper.
         else if (tab === 'board') {
           tab = 'dev'; parts[2] = 'dev'; parts[3] = null; boardView = 'workshop';
-          // TWO answers, not one: those columns are the `stage` grouping of the
-          // `all` TAB, and setting the grouping alone lands on the default tab,
-          // where the grouping control is not rendered at all.
+          // Those columns are the `all` TAB, which is the board by stage.
           if (typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
             AppView._overrideWorkshopTab('all');
-            AppView._overrideWorkshopGroup('stage');
           }
         }
         if (tab === 'dev') {
@@ -5856,7 +5853,6 @@ const App = {
             if ((sec === 'proposals' || sec === 'issues' || sec === 'changes')
                 && typeof AppView !== 'undefined' && AppView._overrideWorkshopTab) {
               AppView._overrideWorkshopTab('all');
-              AppView._overrideWorkshopGroup?.('stage');
             }
           }
         } else if (tab === 'group-chat') {

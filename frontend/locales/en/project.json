@@ -431,18 +431,6 @@
     "text": "By open items",
     "description": "Button above the list of categories on a project's All items page: lists the categories with the most open (not yet done) items first."
   },
-  "allItems.group.label": {
-    "text": "Group the board by",
-    "description": "Accessible name of the two tabs at the top of a project's All items page that choose how the items are grouped: by category or by stage. Group is a verb."
-  },
-  "allItems.group.category": {
-    "text": "By category",
-    "description": "Name of an icon tab at the top of a project's All items page: groups the items by what part of the project they are about. Read as the tab's tooltip and by screen readers."
-  },
-  "allItems.group.stage": {
-    "text": "By stage",
-    "description": "Name of an icon tab at the top of a project's All items page: groups the items into columns by how far along they are (open, in progress, voting, done). Read as the tab's tooltip and by screen readers."
-  },
   "boardEmpty.filtered": {
     "text": "Nothing here matches the current search and filters.",
     "description": "Note shown in place of the items on a project's Hub or All items page when the search box or the filters hide every item."
@@ -6555,10 +6543,6 @@
     "text": "Status",
     "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card in the context column that says where the request or the change stands."
   },
-  "frame.allItems.show": {
-    "text": "Show",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the two rows in the side column that choose whose items the list shows."
-  },
   "frame.place.general": {
     "text": "Where everyone in {{project}} talks.",
     "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title: what the channel is for, as the standard page's line says it."
@@ -6568,7 +6552,7 @@
     "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small label over the card beside the conversation that says how many members the channel reaches and holds its Mute button."
   },
   "frame.allItems.purpose": {
-    "text": "Every request and change in {{project}}, grouped by category or by stage.",
+    "text": "Every request and change in {{project}}, by stage.",
     "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title; {{project}} is the project's name."
   },
   "topic.change.gate.closesClosed": {
