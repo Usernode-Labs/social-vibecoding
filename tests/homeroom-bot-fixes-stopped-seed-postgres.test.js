@@ -7,7 +7,7 @@
 // staging copy cannot reach that state on its own (nothing there runs checks
 // or a model), so src/db/migrate.js seeds it. This pins what the seed writes
 // and what the two screens read back: the change's Testing card
-// (changeBotFix) and the Homeroom bot page's Needs you (requestStates).
+// (changeBotFix) and the Homeroom bot page's Needs you (its work state).
 //
 // The fixture's id is fixed because the declared start path names it, and it
 // sits above every real session id: a production clone that already held the
@@ -85,10 +85,14 @@ test('the staging stopped-fix fixture reaches the state the shots need', { timeo
     state: 'stopped', since: null, reason: null, head: 'staging-fixture-head', tries: 3, canTryAgain: true,
   });
 
-  // The Homeroom bot page's Needs you: the stopped state, not "checking".
-  const states = await progress.requestStates(pool, { userId: member.id });
-  assert.deepEqual(states.map((s) => [s.row.issue_number, s.state?.stage, s.row.fix_stopped]), [
-    [900095, 'fix_stopped', true],
+  // The Homeroom bot page's Needs you: the stopped state, not "checking",
+  // read off the request's stored work state (services/work-state.js) as
+  // the drain stores it.
+  await require('./lib/work-states').settleWorkStates(pool);
+  const ws = require('../src/services/work-state');
+  const mine = (await ws.forRequester(pool, member.id)).filter((w) => w.kind === 'request');
+  assert.deepEqual(mine.map((w) => [w.issueNumber, w.stage, w.reason]), [
+    [900095, 'stopped', 'fix_stopped'],
   ]);
 
   // The bot's own stop message in the change's discussion, with Let it try

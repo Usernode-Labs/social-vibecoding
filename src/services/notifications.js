@@ -1418,8 +1418,9 @@ async function hydrateNotifications(q, ids) {
 // session, so a re-promote (e.g. a PR that went stale then was proposed
 // again) doesn't re-spam people who were already pinged. `source_user_id`
 // is the proposer so the dropdown can render "@user proposed a PR…".
-// One copy (src/workflow/rules/proposal-notifications.ts), written by the
-// proposal machine when the proposal goes up for a vote. The audience is read
+// One copy (src/workflow/rules/proposal-notifications.ts), written when the
+// change's stored work state opens it for votes (services/work-state.js
+// votePings, 19 Nov 2026), and asking nobody before. The audience is read
 // through services/active-users.js and notification-preferences.js here, so a
 // test that stubs either still reaches it.
 function createPrProposedNotifications(pool, { appId, sessionId, proposerId }) {

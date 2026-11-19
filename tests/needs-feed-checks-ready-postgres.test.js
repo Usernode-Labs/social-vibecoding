@@ -232,24 +232,39 @@ test('a vote is asked only once the checks pass and it merges cleanly', { timeou
     await pool.query(`DELETE FROM chat_sessions WHERE id = $1`, [c.id]);
   });
 
-  await t.test('the new-proposal ping waits for the checks to pass', async () => {
+  // 19 Nov 2026 (docs/plans/bot-one-model.md): the ping is rung when the
+  // change's stored row opens for votes (work-state.js votePings, in the
+  // drain's transaction here), and reads that row rather than a predicate
+  // of its own, so it never asks for a vote Needs you does not list.
+  await t.test('the new-proposal ping waits until the change is open for votes', async () => {
     const notifications = require('../src/services/notifications');
     await pool.query(
       `INSERT INTO notification_preferences (user_id, app_id, category, enabled)
        VALUES ($1, $2, 'new_proposals', TRUE)
        ON CONFLICT DO NOTHING`, [ada.id, app.id]);
+    const asked = async (id) => (await pool.query(
+      `SELECT user_id FROM notifications WHERE session_id = $1 AND kind = 'pr_proposed' ORDER BY id`, [id],
+    )).rows.map((r) => Number(r.user_id));
+    const ask = (id) => notifications.createPrProposedNotifications(pool, { appId: app.id, sessionId: id, proposerId: bob.id });
     const c = await change(bob, 50, [7], { checkState: 'pending', checkPhase: 'testing' });
-    assert.deepEqual(await notifications.createPrProposedNotifications(pool, {
-      appId: app.id, sessionId: c.id, proposerId: bob.id,
-    }), [], 'nothing is asked while its tests run');
+    await settle();
+    assert.deepEqual(await asked(c.id), [], 'nothing is asked while its tests run');
+    assert.deepEqual(await ask(c.id), [], 'nor by asking outright: its row is not open for votes');
     await pool.query("UPDATE chat_sessions SET check_state = 'passing', check_phase = NULL WHERE id = $1", [c.id]);
-    const rows = await notifications.createPrProposedNotifications(pool, {
-      appId: app.id, sessionId: c.id, proposerId: bob.id,
-    });
-    assert.ok(rows.some((r) => Number(r.user_id) === Number(ada.id)), 'the opt-in stakeholder is asked once it is ready');
-    assert.deepEqual(await notifications.createPrProposedNotifications(pool, {
-      appId: app.id, sessionId: c.id, proposerId: bob.id,
-    }), [], 'and never a second time for the same change');
-    await pool.query('DELETE FROM chat_sessions WHERE id = $1', [c.id]);
+    await settle();
+    assert.deepEqual(await asked(c.id), [Number(ada.id)], 'the opt-in stakeholder is asked once its row opens, never its author');
+    assert.deepEqual(await ask(c.id), [], 'and never a second time for the same change');
+    // Its shots still being taken hold the vote, and so the ping.
+    const head = 'c'.repeat(40);
+    const held = await change(bob, 51, [7], { checkState: 'pending', checkPhase: 'testing' });
+    await pool.query(
+      `UPDATE chat_sessions SET reviewed_head_sha = $2, checks_commit_sha = $2, shots_state = 'exploring',
+              shots_run_id = $3, shots_detail = $4::jsonb, shots_updated_at = NOW(), checks_checked_at = NOW()
+        WHERE id = $1`,
+      [held.id, head, 'r'.repeat(32), JSON.stringify({ headSha: head, required: true })]);
+    await pool.query("UPDATE chat_sessions SET check_state = 'passing', check_phase = NULL WHERE id = $1", [held.id]);
+    await settle();
+    assert.deepEqual(await asked(held.id), [], 'its before & after shots are still being taken: not open for votes yet');
+    await pool.query('DELETE FROM chat_sessions WHERE id = ANY($1::int[])', [[c.id, held.id]]);
   });
 });

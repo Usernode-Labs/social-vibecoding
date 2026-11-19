@@ -72,5 +72,7 @@ test('New chat offers "I want to change an app live…" once a project of its ow
   const mayor = require('../src/services/homeroom-bot-mayor');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;
   assert.match(tool.description, /I want to change an app live/);
-  assert.match(tool.description, /Call it alone, and do not reply/);
+  // Step 6 (#6864): opening it loads the draft's tools into the same turn,
+  // so the change they asked for is made then, and replied to.
+  assert.match(tool.description, /It gives you the draft's tools for the rest of this turn: when they asked for a change, make it then, and reply\./);
 });

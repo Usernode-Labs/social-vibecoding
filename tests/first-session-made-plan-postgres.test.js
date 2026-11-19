@@ -56,7 +56,6 @@ let pool = null;
 require('../src/db/pool').getPool = () => pool;
 
 const bot = require('../src/services/homeroom-bot');
-const progress = require('../src/services/homeroom-bot-progress');
 const { appRoutes } = require('../src/routes/apps');
 const { tapsNow } = require('./lib/bot-replies');
 
@@ -137,7 +136,10 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
 
   const { madeAppOf, madeAppUrl, waitingPlan, madeLine } = loadTsx(MADE);
   // The made screen's own read: its URL, and what it takes from the answer.
+  // 19 Nov 2026: a filed first version stands where its request's stored
+  // work state says, read once the drain has run, as its clock does.
   const get = async () => {
+    await require('./lib/work-states').settleWorkStates(pool);
     const res = await fetch(`http://127.0.0.1:${listening.address().port}${madeAppUrl(app.slug)}`);
     assert.equal(res.status, 200);
     return res.json();
@@ -146,9 +148,10 @@ test('the made screen reads the waiting plan off the real GET /api/apps/:slug, f
   let card;
   await t.test('the bot\'s own plan path leaves the first version waiting on its creator', async () => {
     assert.equal(await bot.awaitGo(pool, { runId: run.id, app, issueNumber: 1, parsed: { plan: PLAN }, bot: homeroomBot }), 'waiting');
-    const state = (await progress.requestStates(pool, { userId: alex.id }))
-      .find((s) => Number(s.row.issue_number) === 1).state;
-    assert.deepEqual([state.stage, state.waitingOn], ['plan', 'them']);
+    // Where it stands: its stored work state, as the drain stores it.
+    await require('./lib/work-states').settleWorkStates(pool);
+    const [state] = await require('../src/services/work-state').forItems(pool, [{ appId: app.id, issueNumber: 1 }]);
+    assert.deepEqual([state.stage, state.why, state.whoseMove], ['waiting_for_you', 'plan', 'requester']);
     ({ rows: [card] } = await pool.query(
       `SELECT m.id, m.conversation_id, m.metadata->'homeroomBot' AS meta
          FROM homeroom_bot_dm_messages d JOIN conversation_messages m ON m.id = d.message_id

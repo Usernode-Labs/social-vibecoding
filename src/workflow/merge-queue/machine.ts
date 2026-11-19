@@ -28,7 +28,6 @@ import type { Check, DomainWrite, Event, Json, Machine, MessageRequest, Outcome,
 import { NO_FACTS, readFacts } from './facts.ts';
 import type { Candidate, Facts } from './facts.ts';
 import { forceWaivesChecks } from '../rules/merge-claim.ts';
-import { createPrProposedNotifications } from '../rules/proposal-notifications.ts';
 
 export const MACHINE = 'merge-queue';
 export const appKey = (appId: number) => `app:${appId}`;
@@ -340,20 +339,15 @@ export function mergeQueue(): Machine<QState, Facts> {
     writes: {
       // The card's "who acts" on a conflicting head (services/merge-requirements.js
       // integrationStep reads it): a description, decided by nothing. A head
-      // that has just become vote-ready gets its "new change to vote on"
-      // notice here (#6531): the queue is what learns it first.
+      // only a yes can move now (#6531) may open for votes: its "new change
+      // to vote on" notice goes out when its stored work state says it has
+      // (19 Nov 2026: services/work-state.js votePings, once this write's
+      // mark is drained), as every change's does.
       laneReasons: async (tx: Tx, w: any) => {
-        const { rows: [before] } = await tx.query(
-          'SELECT integration_block_reasons, user_id, app_id FROM chat_sessions WHERE id = $1', [w.sessionId]);
         await tx.query(
           `UPDATE chat_sessions SET integration_block_reasons = $2::jsonb
             WHERE id = $1 AND status = 'promoted' AND integration_block_reasons IS DISTINCT FROM $2::jsonb`,
           [w.sessionId, JSON.stringify(w.reasons || [])]);
-        const was = Array.isArray(before?.integration_block_reasons) ? before.integration_block_reasons.map(String) : [];
-        const now = (w.reasons || []).map(String);
-        if (now.includes('awaiting_approval') && !was.includes('awaiting_approval') && before) {
-          await createPrProposedNotifications(tx, { appId: Number(before.app_id), sessionId: w.sessionId, proposerId: before.user_id ?? null });
-        }
       },
     },
     reply: async (tx, event, after) => (after.name === NONE ? null : { state: after.name }),

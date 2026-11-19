@@ -1418,10 +1418,24 @@
     },
     {
       "source": "src/services/homeroom-bot-activity.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "9e0b66919203a2dd1972",
+      "count": 1,
+      "preview": "UNDER_WAY_RECORDS_SQL"
+    },
+    {
+      "source": "src/services/homeroom-bot-activity.js",
       "kind": "structural-template",
       "fingerprint": "0f0e957ffe84eb3a2597",
       "count": 1,
       "preview": "`WITH stamped AS ( SELECT d.message_id, d.app_id, d.issue_number, d.created_at, CASE WHEN m.metadata->'homeroomBot'->>'startedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}"
+    },
+    {
+      "source": "src/services/homeroom-bot-dm.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "a8e207df6e2ad51b3918",
+      "count": 1,
+      "preview": "FIRST_VERSION_TIMES_SQL"
     },
     {
       "source": "src/services/homeroom-bot-dm.js",
@@ -1478,20 +1492,6 @@
       "fingerprint": "fdb7e64ac3ee12ccb1f3",
       "count": 1,
       "preview": "`SELECT a.slug, a.name, ${require('./communities').audienceSql('a', '(SELECT COUNT(*) FROM community_members cm WHERE cm.community_id = a.community_id)')} AS au"
-    },
-    {
-      "source": "src/services/homeroom-bot-progress.js",
-      "kind": "structural-template",
-      "fingerprint": "4d178bc5a789829c1bc5",
-      "count": 1,
-      "preview": "`WITH mine AS ( SELECT r.app_id, r.issue_number, r.issue_title, r.first_version FROM homeroom_bot_requesters r WHERE r.user_id = $1 UNION SELECT q.app_id, q.iss"
-    },
-    {
-      "source": "src/services/homeroom-bot-progress.js",
-      "kind": "structural-template",
-      "fingerprint": "78c2595a6c02401a3e85",
-      "count": 1,
-      "preview": "`SELECT p.app_id, p.about_number FROM private_threads p WHERE p.user_id = $1 AND ${planHoldActiveSql('p')}`"
     },
     {
       "source": "src/services/homeroom-bot-reply-status.js",
@@ -2647,13 +2647,6 @@
       "fingerprint": "705b05523d11a84f1872",
       "count": 1,
       "preview": "GATE_SQL"
-    },
-    {
-      "source": "src/workflow/rules/proposal-notifications.ts",
-      "kind": "structural-template",
-      "fingerprint": "38c52b169fafc0016712",
-      "count": 1,
-      "preview": "`INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind) SELECT u, $2, $3, $4, 'pr_proposed' FROM UNNEST($1::int[]) AS u WHERE NOT EXISTS "
     },
     {
       "source": "src/workflow/shots/facts.ts",

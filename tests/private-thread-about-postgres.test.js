@@ -79,7 +79,6 @@ test('a private thread about a request or a change, and the hold, against the fu
   const rules = require('../src/workflow/rules/bot-loop.ts');
   const bot = require('../src/services/homeroom-bot');
   const aiWork = require('../src/services/ai-work');
-  const progress = require('../src/services/homeroom-bot-progress');
   const conversations = require('../src/services/conversations');
 
   const users = {};
@@ -311,12 +310,17 @@ test('a private thread about a request or a change, and the hold, against the fu
     assert.deepEqual([shaped.waiting[0].work.stage, shaped.waiting[0].work.line], ['planning', { code: 'planning_with_you' }]);
     assert.equal(aiWork.threadSays(shaped.waiting[0]), 'Planning · Planning it with you in a private thread');
 
-    // What she is told when she asks how far along it is.
+    // What she is told when she asks how far along it is: her own rows
+    // (homeroom-bot-mayor.js progressOf), the same stored work state.
     await pool.query(`INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 18, $2, 'Dark mode')`, [app.id, ada.id]);
-    const states = await progress.requestStates(pool, { userId: ada.id, settings: { mode: 'shadow', perPerson: 2 } });
-    const state18 = states.find((s) => Number(s.row.app_id) === app.id && Number(s.row.issue_number) === 18)?.state;
-    assert.equal(state18?.doing, progress.PLAN_WAIT);
-    assert.deepEqual(state18.waitingFor, { reason: 'awaiting_plan' });
+    const herRow = async () => {
+      const ws = require('../src/services/work-state');
+      await ws.refresh(pool, [{ appId: app.id, issueNumber: 18 }]);
+      return (await ws.forRequester(pool, ada.id))
+        .find((w) => w.kind === 'request' && Number(w.appId) === app.id && Number(w.issueNumber) === 18);
+    };
+    const state18 = await herRow();
+    assert.deepEqual([state18?.stage, state18?.line?.code, state18?.whoseMove], ['planning', 'planning_with_you', 'requester']);
 
     // A ready verdict waiting for its build slot waits too.
     await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 18', [app.id]);
@@ -344,10 +348,9 @@ test('a private thread about a request or a change, and the hold, against the fu
     const tab18 = tab.find((r) => Number(r.number) === 18);
     const shown = aiWork.arrange([{ ...tab18, change_status: null }], ada.id, new Date(), botUser.id, await aiWork.statesFor(pool, [tab18]));
     assert.equal(aiWork.threadSays(shown.waiting[0]), 'Planning · Planning it with you in a private thread');
-    const told = (await progress.requestStates(pool, { userId: ada.id, settings: { mode: 'shadow', perPerson: 2 } }))
-      .find((s) => Number(s.row.app_id) === app.id && Number(s.row.issue_number) === 18)?.state;
-    assert.equal(told?.doing, progress.PLAN_WAIT);
-    assert.equal(told.waitingOn, 'them');
+    const told = await herRow();
+    assert.deepEqual([told?.stage, told?.whoseMove], ['planning', 'requester']);
+    assert.equal(workState.says(told), 'Planning · Planning it with you in a private thread');
     // Her card under the message that asked for it, in the project's chat.
     assert.equal(require('../src/services/homeroom-bot-chat').cardStageOfWork(atLine), 'waiting_plan');
     // Without her hold the same build is in the bot's line, and says so.

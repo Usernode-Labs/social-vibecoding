@@ -12,7 +12,6 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const bot = require('../src/services/homeroom-bot');
-const progress = require('../src/services/homeroom-bot-progress');
 const activity = require('../src/services/homeroom-bot-activity');
 const dmSvc = require('../src/services/homeroom-bot-dm');
 
@@ -31,27 +30,22 @@ test('a request waits for its project\'s first version, unless it is the first v
   assert.equal(bot.FIRST_VERSION_HOLD, 'first_version_pending');
 });
 
-test('what a held request is doing, in the bot\'s words, and what it waits for', () => {
-  const holds = new Map([[11, 1]]);
-  const row = { app_id: 11, issue_number: 5, slug: 'flat-4b-chores', name: 'Flat 4B Chores' };
-  // Whatever else is in the way, the first version is what it waits for.
-  const busy = new Map([[11, [{ issueNumber: 1, since: new Date(), what: 'reading' }]]]);
-  assert.deepEqual(progress.queuedWait(row, { busy, queuePosition: 1, holds }), {
-    doing: 'waiting for the first version to go live; I\'ll start on this as soon as it does',
-    waitingFor: { reason: 'first_version_pending', number: 1 },
-  });
-  assert.deepEqual(progress.buildWait(row, { busy, holds }), {
-    doing: 'ready to build; I\'ll start as soon as the first version goes live',
-    waitingFor: { reason: 'first_version_pending', number: 1 },
-  });
+// 19 Nov 2026: what a held request is doing is its stored work state
+// (services/work-state.js), in the words every surface says it; the bot's
+// own account of it (requestStates' queuedWait) had no reader left.
+test('what a held request is doing, as every surface says it', () => {
+  const ws = require('../src/services/work-state');
+  const queued = { app_id: 11, issue_number: 5, queue_id: 3, enqueued_at: '2026-10-04T10:00:00Z' };
+  // The bot's own rule decides the hold (heldForFirstVersion, read by refresh).
+  const held = ws.derive({ ...queued, held_first_version: true });
+  assert.deepEqual([held.stage, held.line, held.whoseMove], ['reading', { code: 'first_version_wait' }, 'bot']);
+  assert.equal(ws.says(held), 'Not started yet · Waiting for the first version to go live');
   // The first version, an admin's Run now, and every other project read as before.
-  assert.equal(progress.queuedWait({ ...row, issue_number: 1 }, { queuePosition: 1, holds }).doing, progress.QUEUE_NEXT);
-  assert.equal(progress.queuedWait({ ...row, queue_reason: 'admin' }, { queuePosition: 1, holds }).doing, progress.QUEUE_NEXT);
-  assert.equal(progress.queuedWait({ ...row, app_id: 12 }, { queuePosition: 1, holds }).doing, progress.QUEUE_NEXT);
-  assert.equal(progress.buildWait({ ...row, app_id: 12 }, { holds }).doing, 'ready to build; its build starts next');
-  assert.deepEqual(progress.queuedWait(row, {}), {}, 'with nothing known, the stage\'s own words stand');
-  // Before the first version is filed it has no number to give.
-  assert.deepEqual(progress.firstVersionWait(row, new Map([[11, null]])), { reason: 'first_version_pending' });
+  const free = ws.derive({ ...queued, held_first_version: false });
+  assert.deepEqual([free.stage, free.line], ['reading', { code: 'queued' }]);
+  assert.equal(ws.says(free), 'Not started yet · Waiting its turn');
+  // A look under way is never held.
+  assert.equal(ws.derive({ ...queued, started_at: '2026-10-04T10:01:00Z', held_first_version: true }).line, null);
 });
 
 test('the card of a request filed or queued while the first version is not live says so, once', () => {
@@ -70,9 +64,7 @@ test('the card of a request filed or queued while the first version is not live 
   assert.equal(activity.cardText(ctx, dmSvc, { filed: true }), `${line}\n\nFiled. This card follows it from here.`);
   // A look that started is never held, whatever it is handed.
   assert.match(activity.cardText(ctx, dmSvc, { waitsForFirstVersion: true }), /I'm working on this now/);
-  for (const words of [activity.FIRST_VERSION_WAIT_WORDS, progress.FIRST_VERSION_WAIT, progress.FIRST_VERSION_BUILD_WAIT]) {
-    assert.doesNotMatch(words, /\u2014/, 'no em dash');
-  }
+  assert.doesNotMatch(activity.FIRST_VERSION_WAIT_WORDS, /\u2014/, 'no em dash');
 });
 
 function startDeps({ holds = new Map(), holdsThrow = false } = {}) {

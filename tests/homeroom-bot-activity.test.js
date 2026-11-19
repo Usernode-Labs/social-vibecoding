@@ -473,24 +473,46 @@ test('#6133: a look and a build both check the week, the look at startCard and t
 
 const progressSvc = require('../src/services/homeroom-bot-progress');
 
+// 19 Nov 2026 (docs/plans/bot-one-model.md): which of the person's requests
+// is under way is its stored work state (services/work-state.js), the row
+// every surface draws; requestStates' stages read the same records before.
+// Each stage of the bot's own step (progress.stageOf), as the work state
+// stores it (fromStage), with what the row it is derived from carries.
+const ws = require('../src/services/work-state');
+const stored = (stage, row = {}) => ({ kind: 'request', appId: 1, issueNumber: 3, ...ws.fromStage({ stage, since: '2026-10-02T11:50:00Z' }, row) });
+
 test('work under way is a look being read, or the plan and build its ready verdict started', () => {
-  const ws = require('../src/services/work-state');
-  for (const stage of activity.UNDER_WAY_STAGES) {
+  // The stages a card follows: the bot is at it this minute (busyNow), on
+  // the request's own look.
+  const under = ['reading', 'starting', 'planning', 'building', 'reviewing', 'proposing'];
+  for (const stage of under) {
     assert.ok(progressSvc.BUSY_STAGES.has(stage), `${stage}: the bot is working on it this minute`);
     assert.ok(progressSvc.IN_FLIGHT_STAGES.has(stage), `${stage}: it is in flight`);
-    // Every screen reads it as the bot's move (services/work-state.js).
-    assert.equal(ws.fromStage({ stage }, {}).whoseMove, 'bot', `${stage}: the bot's to do`);
+    const work = stored(stage);
+    assert.equal(work.whoseMove, 'bot', `${stage}: the bot's to do`);
+    assert.equal(activity.workUnderWay(work), true, `${stage}: under way`);
   }
   // Everything else the tray lists under Now is not a look of the request's
   // own: waiting in the queue, a ready verdict waiting its turn to be built,
   // a follow-up on its proposal, a merge, a project being set up. None of
   // them is given a card.
-  const others = [...progressSvc.IN_FLIGHT_STAGES].filter((stage) => !activity.UNDER_WAY_STAGES.includes(stage)).sort();
+  const others = [...progressSvc.IN_FLIGHT_STAGES].filter((stage) => !under.includes(stage)).sort();
   assert.deepEqual(others, ['build_queued', 'fix_queued', 'fixing', 'followup_queued', 'merging', 'queued', 'revising', 'setting_up']);
+  for (const stage of [...others, 'question', 'plan', 'held', 'stalled', 'checks', 'checks_failed', 'vote', 'fix_stopped']) {
+    const work = stage === 'setting_up' ? null : stored(stage, { check_state: 'passing' });
+    assert.equal(activity.workUnderWay(work), false, stage);
+  }
+  // A reply about to be read is not a look under way yet; one being read is.
+  assert.equal(activity.workUnderWay({ ...stored('reading'), line: { code: 'reply', soon: true } }), false);
+  assert.equal(activity.workUnderWay({ ...stored('reading'), line: { code: 'reply' } }), true);
+  // Somebody building it, a plan its requester writes, a change's own row.
+  assert.equal(activity.workUnderWay({ ...stored('building'), line: { code: 'claimed', by: 'ada' }, whoseMove: 'builder' }), false);
+  assert.equal(activity.workUnderWay({ ...stored('planning'), line: { code: 'planning_with_you' }, whoseMove: 'requester' }), false);
+  assert.equal(activity.workUnderWay({ ...stored('building'), kind: 'change' }), false);
 });
 
 test('a look being read is keyed as the loop keys its card; a plan or build by its run, begun when its look began', () => {
-  const reading = { stage: 'reading', since: '2026-10-02T11:50:00Z' };
+  const reading = stored('reading');
   const row = { queue_id: 345, started_at: '2026-10-02T11:50:00Z', queue_reason: 'new', run_id: 8, run_at: '2026-10-01T09:00:00Z' };
   assert.deepEqual(activity.pieceOf(row, reading), { key: 'hrbot-activity-345', startedAt: '2026-10-02T11:50:00.000Z' });
   assert.equal(activity.pieceOf(row, reading).key, activity.jobCardKey(345),
@@ -502,19 +524,59 @@ test('a look being read is keyed as the loop keys its card; a plan or build by i
   assert.equal(activity.pieceOf({ ...row, queue_id: null }, reading), null);
 
   const ran = { run_id: 9, run_at: '2026-10-02T12:00:00Z', run_duration_ms: 300000, queue_id: null, queue_reason: null };
-  for (const stage of ['starting', 'planning', 'building', 'proposing']) {
-    assert.deepEqual(activity.pieceOf(ran, { stage }), { key: 'hrbot-activity-run-9', startedAt: '2026-10-02T11:55:00.000Z' }, stage);
+  for (const stage of ['starting', 'planning', 'building', 'proposing', 'reviewing']) {
+    assert.deepEqual(activity.pieceOf(ran, stored(stage)), { key: 'hrbot-activity-run-9', startedAt: '2026-10-02T11:55:00.000Z' }, stage);
   }
-  assert.equal(activity.pieceOf({ ...ran, run_duration_ms: null }, { stage: 'building' }).startedAt, '2026-10-02T12:00:00.000Z');
-  assert.ok(activity.pieceOf(ran, { stage: 'planning' }, { quietReasons: ['app_again'] }),
+  assert.equal(activity.pieceOf({ ...ran, run_duration_ms: null }, stored('building')).startedAt, '2026-10-02T12:00:00.000Z');
+  assert.ok(activity.pieceOf(ran, stored('planning'), { quietReasons: ['app_again'] }),
     'a backlog pass that went on to build is work under way like any other');
-  assert.equal(activity.pieceOf({ ...ran, run_id: null }, { stage: 'building' }), null);
+  assert.equal(activity.pieceOf({ ...ran, run_id: null }, stored('building')), null);
 
-  for (const stage of ['queued', 'build_queued', 'question', 'held', 'stalled', 'revising', 'fixing', 'followup_queued', 'fix_queued', 'merging', 'checks', 'vote', 'setting_up']) {
-    assert.equal(activity.pieceOf({ ...row, ...ran }, { stage }), null, stage);
+  for (const stage of ['queued', 'build_queued', 'question', 'held', 'stalled', 'revising', 'fixing', 'followup_queued', 'fix_queued', 'merging', 'checks', 'vote']) {
+    assert.equal(activity.pieceOf({ ...row, ...ran }, stored(stage, { check_state: 'passing' })), null, stage);
   }
-  assert.equal(activity.pieceOf(ran, { stage: 'building', waitingOn: 'them' }), null);
+  assert.equal(activity.pieceOf(ran, { ...stored('building'), stage: 'waiting_for_you', why: 'plan', whoseMove: 'requester' }), null);
   assert.equal(activity.pieceOf(ran, null), null);
+  assert.equal(activity.pieceOf(null, stored('building')), null, 'no records to key it by');
+});
+
+test('catching up reads the person\'s stored work states, and keys each piece by its records', async () => {
+  const queries = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      return { rows: [
+        { app_id: 1, issue_number: 3, queue_id: 345, started_at: '2026-10-02T11:50:00Z', queue_reason: 'new', run_id: null },
+        { app_id: 1, issue_number: 4, queue_id: null, run_id: 9, run_at: '2026-10-02T12:00:00Z', run_duration_ms: 60000 },
+      ] };
+    },
+  };
+  const works = [
+    { ...stored('reading'), issueNumber: 3 },
+    { ...stored('planning'), issueNumber: 4 },
+    // Waiting its turn, and up for a vote: no piece of work under way.
+    { ...stored('queued'), issueNumber: 5 },
+    { ...stored('vote', { check_state: 'passing' }), issueNumber: 6 },
+  ];
+  const under = works.filter(activity.workUnderWay);
+  assert.deepEqual(under.map((w) => w.issueNumber), [3, 4]);
+  const records = await activity.underWayRecords(pool, under);
+  assert.deepEqual([...records.keys()], ['1#3', '1#4']);
+  assert.equal(queries.length, 1, 'one read for them all');
+  assert.deepEqual(queries[0].params, [[1, 1], [3, 4]]);
+  assert.match(queries[0].sql, /q\.id AS queue_id, q\.started_at, q\.reason AS queue_reason,\s+run\.id AS run_id, run\.created_at AS run_at, run\.duration_ms AS run_duration_ms/);
+  assert.match(queries[0].sql, /LEFT JOIN homeroom_bot_queue q ON q\.app_id = it\.app_id AND q\.issue_number = it\.issue_number/,
+    'the shared per-request record (requestRecordJoinsSql) the work state is derived from');
+  assert.deepEqual(activity.pieceOf(records.get('1#3'), under[0]), { key: 'hrbot-activity-345', startedAt: '2026-10-02T11:50:00.000Z' });
+  assert.deepEqual(activity.pieceOf(records.get('1#4'), under[1]), { key: 'hrbot-activity-run-9', startedAt: '2026-10-02T11:59:00.000Z' });
+  assert.deepEqual(await activity.underWayRecords(pool, []), new Map(), 'nothing under way reads nothing');
+  assert.equal(queries.length, 1);
+  // catchUpCards reads the person's own rows, never requestStates.
+  const src = read('src/services/homeroom-bot-activity.js');
+  const body = src.slice(src.indexOf('async function catchUpCards('), src.indexOf('// ── The staging demo ──'));
+  assert.match(body, /const works = \(await ws\.forRequester\(pool, userId\)\)\.filter\(workUnderWay\);/);
+  assert.match(body, /const records = await underWayRecords\(pool, works\);/);
+  assert.doesNotMatch(body, /requestStates/);
 });
 
 test('a request whose newest card has come to nothing yet is followed by it; one whose newest card ended is not', () => {

@@ -37,7 +37,7 @@ const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 const UNPROPOSED = 'the change was built but could not be proposed: Server is restarting';
 
-// A first version's request row (homeroom-bot-progress.js requestRows) whose
+// A first version's request record (homeroom-bot-progress.js REQUEST_RECORD_COLUMNS) whose
 // newest look went ahead and whose build came to nothing.
 const STOPPED_ROW = {
   app_id: 5, issue_number: 1, mode: 'live', verdict: 'ready', build_ok: false, build_error: UNPROPOSED,
@@ -79,13 +79,15 @@ const FV_ROW = {
   slug: 'club-votes', name: 'Club Votes', app_status: 'running', username: 'ada', conversation_id: 12,
 };
 
-function fakePool({ said = null, throws = false } = {}) {
+function fakePool({ said = null, throws = false, times = null } = {}) {
   const calls = [];
   return {
     calls,
     async query(sql, params) {
       calls.push({ sql: String(sql), params });
       if (/FROM homeroom_bot_first_versions f/.test(String(sql))) return { rows: [FV_ROW] };
+      // Its records' times (homeroom-bot-dm.js FIRST_VERSION_TIMES_SQL).
+      if (/AS queue_reason, run\.id AS run_id/.test(String(sql))) return { rows: times ? [times] : [] };
       if (/FROM homeroom_bot_dm_messages d/.test(String(sql))) {
         if (throws) throw new Error('read failed');
         return { rows: said ? [said] : [] };
@@ -95,18 +97,29 @@ function fakePool({ said = null, throws = false } = {}) {
   };
 }
 
-async function stateFor(row, { state = null, said = null, throws = false, viewerId = 7 } = {}) {
-  const pool = fakePool({ said, throws });
+// 19 Nov 2026 (docs/plans/bot-one-model.md): a filed first version stands
+// where its request's stored work state says (services/work-state.js), the
+// row the bot page reads. A build that came to nothing is stopped, build_failed.
+const work = (stage, extra = {}) => ({
+  kind: 'request', appId: 5, issueNumber: 1, stage, why: null, reason: null, line: null,
+  since: '2026-10-14T09:40:00.000Z', leadChangeId: null, ...extra,
+});
+const STOPPED = work('stopped', { reason: 'build_failed', whoseMove: 'requester' });
+
+async function stateFor(stored, { said = null, throws = false, viewerId = 7, times = null } = {}) {
+  const pool = fakePool({ said, throws, times });
+  const read = [];
   const out = await dm.firstVersionState(pool, 5, {
     viewerId,
-    progress: { ...progress, requestStates: async () => [{ row, state }] },
+    workState: { async forItems(_pool, items) { read.push(items); return stored ? [stored] : []; } },
   });
-  return { state: out, pool };
+  return { state: out, pool, read };
 }
 
 test('firstVersionState: a build that stopped says so, with where its maker was told', async () => {
   const said = { message_id: 901, conversation_id: 12, thread_root_id: 880 };
-  const { state, pool } = await stateFor(STOPPED_ROW, { said });
+  const { state, pool, read } = await stateFor(STOPPED, { said });
+  assert.deepEqual(read, [[{ appId: 5, issueNumber: 1 }]], 'its request\'s own stored row');
   assert.deepEqual(state, {
     userId: 7, creator: 'ada', conversationId: 12,
     step: 4, of: 7, line: 'stopped', question: false, ready: false,
@@ -118,30 +131,74 @@ test('firstVersionState: a build that stopped says so, with where its maker was 
   assert.match(asked.sql, /m\.deleted_at IS NULL/);
   assert.match(asked.sql, /ORDER BY d\.message_id DESC\s+LIMIT 1/, 'the newest');
   // Said in the main chat, not a thread: the message itself.
-  assert.deepEqual((await stateFor(STOPPED_ROW, { said: { ...said, thread_root_id: null } })).state.stopped,
+  assert.deepEqual((await stateFor(STOPPED, { said: { ...said, thread_root_id: null } })).state.stopped,
     { conversationId: 12, messageId: 901, threadRootId: null });
   // Never said in their chat, or a read that fails: still stopped, with no message to point at.
-  assert.deepEqual((await stateFor(STOPPED_ROW)).state.stopped, {});
-  const failed = await stateFor(STOPPED_ROW, { said, throws: true });
+  assert.deepEqual((await stateFor(STOPPED)).state.stopped, {});
+  const failed = await stateFor(STOPPED, { said, throws: true });
   assert.equal(failed.state.line, 'stopped');
   assert.deepEqual(failed.state.stopped, {});
   // Everyone reads Stopped, the maker and anybody else.
-  assert.equal((await stateFor(STOPPED_ROW, { said, viewerId: 9 })).state.line, 'stopped');
+  assert.equal((await stateFor(STOPPED, { said, viewerId: 9 })).state.line, 'stopped');
   // Nothing is under way: no phase and no steps to list.
   assert.equal(state.phase, undefined);
   assert.equal(state.steps, undefined);
 });
 
-test('firstVersionState: anything else that ended it is still no state, and Try again puts it back on its way', async () => {
-  for (const build_error of ['skipped: its request was closed', 'blocked: needs a payment provider']) {
-    assert.equal((await stateFor({ ...STOPPED_ROW, build_error })).state, null, build_error);
+test('firstVersionState: whatever stopped it, it says Stopped, as the bot page does', async () => {
+  // 19 Nov 2026: the App tab's own decider (firstVersionStopped on
+  // requestStates' row) said Stopped only for a build that came to nothing.
+  // The work state also stops a build that never started (stalled: the App
+  // tab said Building), Homeroom bot's fixing of its checks (fix_stopped: no
+  // step at all), a look that failed and a change that was closed (the
+  // starter template, as if nothing had happened).
+  for (const reason of ['build_failed', 'fix_stopped', 'look_failed', 'change_closed', 'stalled']) {
+    const { state } = await stateFor(work('stopped', { reason }));
+    assert.deepEqual([state.step, state.line, state.ready, state.question], [4, 'stopped', false, false], reason);
+    assert.deepEqual(state.stopped, {}, `${reason}: no message of its maker's chat to point at here`);
   }
-  assert.equal((await stateFor({ ...STOPPED_ROW, verdict: 'person', build_ok: null })).state, null, 'left to the group');
+});
+
+test('firstVersionState: anything else that ended it is still no state, and Try again puts it back on its way', async () => {
+  // The rows the bot leaves, as the work state derives them (work-state.js
+  // derive, the one decider): the same request the bot page shows.
+  const ws = require('../src/services/work-state');
+  const derived = (row) => ({ kind: 'request', appId: 5, issueNumber: 1, leadChangeId: null, ...ws.derive(row) });
+  assert.equal(derived(STOPPED_ROW).reason, 'build_failed', 'the row above is stopped to the bot page too');
+  assert.equal((await stateFor(derived(STOPPED_ROW))).state.line, 'stopped');
+  // Handed back to its maker for something the App tab has no line for, as
+  // before: found impossible as written (needs detail), left to them to
+  // decide, found already there.
+  const blocked = derived({ ...STOPPED_ROW, build_error: 'blocked: needs a payment provider' });
+  assert.deepEqual([blocked.stage, blocked.why], ['waiting_for_you', 'needs_detail']);
+  assert.equal((await stateFor(blocked)).state, null, 'blocked');
+  const person = derived({ ...STOPPED_ROW, verdict: 'person', build_ok: null });
+  assert.deepEqual([person.stage, person.why], ['waiting_for_you', 'decide']);
+  assert.equal((await stateFor(person)).state, null, 'left to the group');
+  assert.equal((await stateFor(work('waiting_for_you', { why: 'already_works' }))).state, null, 'already there');
+  // A build skipped because its request was closed; a request closed; live.
+  const skipped = derived({ ...STOPPED_ROW, build_error: 'skipped: its request was closed', request_closed: true });
+  assert.equal(skipped.stage, 'closed');
+  assert.equal((await stateFor(skipped)).state, null, 'skipped: closed');
+  assert.equal((await stateFor(work('live'))).state, null, 'live');
+  // A build skipped on a request still open (its plan waited a week for
+  // Build it): the work state says it waits to be read again, which these
+  // steps have no line for, so the app is what there is, as before.
+  const expired = derived({ ...STOPPED_ROW, build_error: 'skipped: nobody tapped Build it within a week' });
+  assert.deepEqual([expired.stage, expired.line?.code], ['reading', 'waiting']);
+  assert.equal((await stateFor(expired, { times: { run_id: 2027, run_at: '2026-10-14T09:10:00Z' } })).state, null, 'read, and nothing came of it');
   // Try again (homeroom-bot-mayor.js start_request) puts it first in the
   // bot's queue: it is read again, not stopped (the queue row is its stage).
-  const queued = await stateFor({ ...STOPPED_ROW, queue_id: 3 }, { state: { stage: 'queued', since: '2026-10-14T10:00:00Z' } });
-  assert.equal(queued.state.line, 'planning');
+  const again = derived({ ...STOPPED_ROW, queue_id: 3, enqueued_at: '2026-10-14T10:00:00Z' });
+  assert.deepEqual([again.stage, again.line?.code], ['reading', 'queued']);
+  const queued = await stateFor(again);
+  assert.deepEqual([queued.state.step, queued.state.line], [2, 'planning']);
   assert.equal(queued.state.stopped, undefined);
+  // Filed and not picked up yet (nothing recorded of it), or no row to read.
+  for (const stored of [work('reading', { line: { code: 'waiting' } }), null]) {
+    const next = await stateFor(stored);
+    assert.deepEqual([next.state.step, next.state.line, next.state.stopped], [2, 'planning', undefined], stored ? 'waiting' : 'no row');
+  }
 });
 
 // ── The routes ───────────────────────────────────────────────────────────

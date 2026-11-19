@@ -44,8 +44,8 @@
 //
 // ONE STORY WITH MAIN (29 Oct 2026). Where Homeroom bot works on a request
 // for them, the list it is in is the bot's own word on it: the stage its
-// answer to "how far along are you?" reads (homeroom-bot-progress.js
-// requestStates). Read off the request and its change alone, a plan waiting
+// answer to "how far along are you?" reads (its stored work state,
+// services/work-state.js). Read off the request and its change alone, a plan waiting
 // for Build it and a request held back for a build said "Not picked up
 // yet", or nothing at all, while the bot said otherwise in Main.
 //

@@ -154,7 +154,7 @@ function votesIn(row) {
 /**
  * Pure (#6531, 11 Nov 2026): a change that conflicts with main where only a
  * yes can move it (syncStand 'vote'). It is up for a vote, and so open for
- * votes, only while it could take one, as voteReadySql reads it: its checks
+ * votes, only while it could take one (vote_open): its checks
  * passed (or had nothing to test) on the head up for a vote, it is not its
  * project's first version, and its before & after shots are not still being
  * taken. Until then it is checking: its failing checks when they fail, else
@@ -426,7 +426,14 @@ function deriveFacts(row, { now = new Date() } = {}) {
 
   // A change somebody made for it, when Homeroom bot has none of its own:
   // that is where it stands, whatever an older look of the bot's said.
-  if (!status && row.lc_status) {
+  // 19 Nov 2026: never the session of the bot's own build that came to
+  // nothing (it links the request it builds: homeroom-bot-live.js), which
+  // stays paused until Try again proposes it or starts over. It read as
+  // Building, the builder's move, on every surface but the App tab, whose
+  // own decider said Stopped (tests/first-version-finish-postgres.test.js);
+  // its run says what came of it (handedBack, below).
+  const ownStoppedBuild = row.build_ok === false && Number(row.lc_id) > 0 && Number(row.lc_id) === Number(row.build_session_id);
+  if (!status && row.lc_status && !ownStoppedBuild) {
     // The change's own facts when refresh read them (CHANGE_FACTS_SQL: its
     // checks' head, its shots, an update on its way), so the request and
     // the change's own row read one stage; else the columns of the facts row.
@@ -1189,6 +1196,9 @@ async function upsert(db, key, next, { touch = false } = {}) {
       // Whether a vote on closing it was open: one opening retires its
       // Propose to close buttons (bot-cards.js retireFor).
       closeVote: !!prev.standing?.asks?.closeVote,
+      // Whether it was open for votes: a change that opens asks its voters
+      // (votePings).
+      voteOpen: prev.vote_open === true,
     } : null,
   };
 }
@@ -1858,12 +1868,51 @@ async function settleCards(db, changed, depth = 0) {
 }
 
 /**
+ * Pure (19 Nov 2026): whether a changed row is a change that has just
+ * opened for votes (its stored vote_open turned true), the moment its
+ * project's voters are asked to come and vote (votePings).
+ */
+function openedForVotes(row) {
+  return !!row && row.kind === 'change' && row.state?.voteOpen === true && !(row.prev && row.prev.voteOpen === true);
+}
+
+/**
+ * 19 Nov 2026 (docs/plans/bot-one-model.md, step 1's last reader): the "new
+ * proposal to vote on" ping, rung from the stored row as the requester's
+ * bell is: each changed change whose row just opened for votes asks its
+ * project's voters (workflow/rules/proposal-notifications.ts
+ * createPrProposedNotifications, which reads the same row and asks nobody
+ * twice), in `db`'s transaction, and resolves the pushes that tell their
+ * open tabs. It went out from the transitions that settled a change's
+ * checks or its conflict before, on a predicate of its own (#6402), and
+ * asked while its shots, an update on its way or GitHub still held the vote
+ * that Needs you did not list yet.
+ */
+async function votePings(db, changed) {
+  const pushes = [];
+  for (const row of changed || []) {
+    if (!openedForVotes(row)) continue;
+    const made = await require('./notifications').createPrProposedNotifications(db, {
+      appId: Number(row.appId), sessionId: Number(row.sessionId || row.ref), proposerId: row.state.requesterId ?? null,
+    });
+    for (const n of made || []) {
+      pushes.push({ kind: 'user', routing: { userId: Number(n.user_id) }, data: { type: 'notification_new', notificationId: Number(n.id) } });
+    }
+  }
+  return pushes;
+}
+
+/**
  * The pushes changed rows are carried by: their work_state, the bell of each
- * that rang, each ready one withdrawn, and the cards their move retired
- * (settleCards; `cards: false` leaves those to the caller).
+ * that rang, the voters asked about each change that opened for votes, each
+ * ready one withdrawn, and the cards their move retired (settleCards;
+ * `cards: false` leaves those to the caller).
  */
 async function pushesOf(db, changed, { cards = true } = {}) {
-  const pushes = [...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await withdrawReady(db, changed))];
+  const pushes = [
+    ...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await votePings(db, changed)),
+    ...(await withdrawReady(db, changed)),
+  ];
   return cards ? [...pushes, ...(await settleCards(db, changed))] : pushes;
 }
 

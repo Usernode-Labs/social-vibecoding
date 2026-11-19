@@ -49,6 +49,7 @@ require.cache[pushId] = { id: pushId, filename: pushId, loaded: true, exports: {
 const conversations = require('../src/services/conversations');
 const dm = require('../src/services/homeroom-bot-dm');
 const { OWN_WORK } = require('../src/services/lifecycle');
+const { settleWorkStates } = require('./lib/work-states');
 
 const UNPROPOSED = 'the change was built but could not be proposed: Server is restarting';
 
@@ -234,7 +235,11 @@ test('Try again finishes a first version that was built, through a real tap', { 
       WHERE conversation_id = $1 AND sender_id = $2 AND id > $3 ORDER BY id`,
     [conversationId, bot.id, afterId],
   )).rows;
-  const fv = () => dm.firstVersionState(pool, app.id, { viewerId: ada.id });
+  // 19 Nov 2026: where it stands is its request's stored work state, read
+  // once the drain has run, as its clock does. Its stopped build's session,
+  // still paused and linking the request, is not a change of somebody's
+  // building it (work-state.js deriveFacts): it says Stopped there too.
+  const fv = async () => (await settleWorkStates(pool), dm.firstVersionState(pool, app.id, { viewerId: ada.id }));
   // Each case starts from a request with nothing up: an earlier case's
   // proposal is withdrawn, as a closed proposal leaves it.
   const clear = () => pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE app_id = $1 AND status <> 'archived'`, [app.id]);

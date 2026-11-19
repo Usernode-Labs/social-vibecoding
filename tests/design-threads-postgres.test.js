@@ -21,13 +21,13 @@
 //      join_required. 1 Nov 2026: the design stays the thread's after it:
 //      the bot changes it on (a plan may be posted again, phase C2).
 //   5. 1 Nov 2026 (threads, one loop C1): any private thread can hold a
-//      design. Main Chat's draw_screen hands the turn to the design bot: in
-//      a "+" thread it draws version 1 there (write_screen, the project's
-//      own stylesheets put in from main, its code read with list_source and
-//      read_source); in Main Chat it opens a "+"-style thread first, says so
-//      in Main in one line, and draws there; a thread off their own message
-//      gets its private_threads row with its first version. A picture they
-//      sent is described for a model that reads text only.
+//      design. Step 6 (#6864): the chat's start_design loads the design into
+//      the same turn, which draws it itself: in a "+" thread it draws version
+//      1 there (write_screen, the project's own stylesheets put in from main,
+//      its code read with list_source and read_source); with no thread it
+//      opens one first, says so in one line, and draws there; a thread off
+//      their own message gets its private_threads row with its first version.
+//      A picture they sent is described for a model that reads text only.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/design-threads-postgres.test.js
 
@@ -89,6 +89,22 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
   const conversations = require('../src/services/conversations');
   const designs = require('../src/services/design-threads');
   const designBot = require('../src/services/design-bot');
+  const mayorTurn = require('../src/services/homeroom-bot-mayor');
+  // Step 6 (#6864): every message in a design thread is the chat's own turn,
+  // which holds the design as a capability; its section is a system message
+  // of its own (THIS THREAD'S DESIGN).
+  const section = (messages) => (messages || [])
+    .filter((m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('THIS THREAD\'S DESIGN'))
+    .map((m) => m.content).join('\n');
+  const designTurn = (message, {
+    design: held, conversationId, threadRootId, chat, settings: given = { mode: 'on', perPerson: 2 }, extra = {},
+  }) => mayorTurn.runDmTurn(pool, config, {
+    bot, user: ada, settings: given, conversationId: conversationId || held?.conversationId, message,
+    deps: {
+      ...deps, apiKey: 'sk-test', openMcp: async () => null, seesImages: false,
+      threadRootId: threadRootId || held?.rootId, ...(held ? { threadDesign: held } : {}), chat, ...extra,
+    },
+  });
 
   async function user(username, { synthetic = false } = {}) {
     const { rows: [row] } = await pool.query(
@@ -185,35 +201,31 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     const message = asked.message;
     assert.equal((await designs.threadOf(pool, { userId: ada.id, conversationId: design.conversationId, message })).rootId, design.rootId);
     const seen = [];
-    const sent = await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: design.conversationId, message, design,
-      deps: {
-        ...deps, apiKey: 'sk-test',
-        chat: scripted([
-          [['edit_design', { edits: [{ find: 'not in it', replace: 'x' }], note: 'nothing' }]],
-          [['edit_design', { edits: [{ find: '<button class="save">', replace: '<button class="save" style="background:#16a34a">' }], note: 'A green Save button' }]],
-          [['reply', { text: 'Done: Save is green now.' }]],
-        ], seen),
-      },
+    const sent = await designTurn(message, {
+      design, settings,
+      chat: scripted([
+        [['edit_design', { edits: [{ find: 'not in it', replace: 'x' }] }]],
+        [['edit_design', { edits: [{ find: '<button class="save">', replace: '<button class="save" style="background:#16a34a">' }] }]],
+        [['reply', { text: 'Done: Save is green now.', summary: 'A green Save button' }]],
+      ], seen),
     });
-    const prompt = seen[0][0].content;
+    const prompt = section(seen[0]);
     assert.match(prompt, /THE CURRENT VERSION \(version 1\), its whole HTML:\n<!doctype html>/);
     assert.match(seen[0][seen[0].length - 1].content, /^\[Pinned on version 1 at 20% across, 40% down, on <button> "Save"\]\nmake the save button green$/);
     assert.match(JSON.stringify(seen[1]), /its find is not in the HTML/, 'the model is told an edit did not apply');
     const { rows: [answer] } = await pool.query('SELECT content, thread_root_id, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
     assert.equal(answer.thread_root_id, design.rootId, 'answered in the thread');
-    assert.equal(answer.content, 'Version 2: A green Save button.\n\nDone: Save is green now.');
+    assert.equal(answer.content, 'Done: Save is green now.\n\nVersion 2: A green Save button.', 'its answer, then the version it saved');
     assert.equal(answer.metadata.homeroomBot.designVersion, 2);
     const v2 = await designs.versionOf(pool, { userId: ada.id, rootId: design.rootId });
     assert.equal(v2.version, 2);
     assert.match(v2.html, /<button class="save" style="background:#16a34a">Save<\/button>/);
+    assert.equal((await designs.designFor(pool, { userId: ada.id, rootId: design.rootId })).versions[1].note, 'A green Save button',
+      'the version\'s note is the reply\'s one summary');
     // A turn that changes nothing makes no version.
     const again = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'what do you think?', thread_root_id: design.rootId })).message;
     design = await designs.designFor(pool, { userId: ada.id, rootId: design.rootId });
-    await designBot.answer(pool, config, {
-      bot, user: ada, settings, conversationId: design.conversationId, message: again, design,
-      deps: { ...deps, apiKey: 'sk-test', chat: scripted([[['reply', { text: 'It reads well.' }]]]) },
-    });
+    await designTurn(again, { design, settings, chat: scripted([[['reply', { text: 'It reads well.' }]]]) });
     assert.equal((await designs.designFor(pool, { userId: ada.id, rootId: design.rootId })).latest, 2);
   });
 
@@ -249,26 +261,29 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     const twice = await designs.proposeDesign(pool, config, { user: ada, rootId: design.rootId, deps });
     assert.deepEqual([twice.ok, twice.number, twice.planVersion], [true, filed.number, 2]);
     const late = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'one more change', thread_root_id: design.rootId })).message;
-    const after = await designBot.answer(pool, config, {
-      bot, user: ada, settings: { mode: 'on' }, conversationId: design.conversationId, message: late,
-      design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }),
-      deps: {
-        ...deps, apiKey: 'sk-test',
-        chat: scripted([
-          [['edit_design', { edits: [{ find: 'Plant list</h1>', replace: 'My plants</h1>' }], note: 'A new heading' }]],
-          [['reply', { text: 'Renamed it.' }]],
-        ]),
-      },
+    const after = await designTurn(late, {
+      design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }), settings: { mode: 'on' },
+      chat: scripted([
+        [['edit_design', { edits: [{ find: 'Plant list</h1>', replace: 'My plants</h1>' }] }]],
+        [['reply', { text: 'Renamed it.', summary: 'A new heading' }]],
+      ]),
     });
-    assert.match((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [after.messageId])).rows[0].content, /^Version 3: A new heading\./);
-    // Put away, the bot changes it no more.
+    assert.equal((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [after.messageId])).rows[0].content,
+      'Renamed it.\n\nVersion 3: A new heading.');
+    // Put away, the turn changes it no more: it is told so, with no design
+    // tools, and answers as any thread.
     await pool.query(`UPDATE private_threads SET state = 'dropped' WHERE root_message_id = $1`, [design.rootId]);
     const gone = (await conversations.sendMessage(pool, ada, design.conversationId, { content: 'and another', thread_root_id: design.rootId })).message;
-    const closed = await designBot.answer(pool, config, {
-      bot, user: ada, settings: { mode: 'on' }, conversationId: design.conversationId, message: gone,
-      design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }),
-      deps: { ...deps, apiKey: 'sk-test', chat: async () => { throw new Error('not called'); } },
+    const told = [];
+    const closed = await designTurn(gone, {
+      design: await designs.designFor(pool, { userId: ada.id, rootId: design.rootId }), settings: { mode: 'on' },
+      chat: async (request) => {
+        told.push(request);
+        return { content: '', toolCalls: [{ id: 'r1', type: 'function', function: { name: 'reply', arguments: JSON.stringify({ text: designBot.CLOSED_TEXT }) } }] };
+      },
     });
+    assert.match(told[0].messages[0].content, /It cannot be changed in this turn\. If they ask you to change it, say so: "This thread was put away/);
+    assert.ok(!told[0].tools.some((tool) => tool.function.name === 'edit_design'), 'no design tools');
     assert.match((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [closed.messageId])).rows[0].content, /was put away/);
 
     // Sam's own design of a project he has not joined is filed nowhere.
@@ -350,7 +365,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
   const settingsOn = { mode: 'on', perPerson: 2 };
   const SCREEN = '<main class="seeds"><h1>Swap seeds</h1><div class="card">Tomatoes</div></main>';
 
-  await t.test('a "+" thread holds a design: the chat\'s draw_screen hands version 1 to the design bot', async () => {
+  await t.test('a "+" thread holds a design: the chat\'s start_design draws version 1 in the same turn', async () => {
     const started = await privateThreads.startThread(pool, { user: ada, project: 'dt-seed-swap', kind: 'design', deps });
     assert.equal(started.ok, true, JSON.stringify(started));
     const asked = (await conversations.sendMessage(pool, ada, started.conversationId, {
@@ -365,27 +380,31 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
         ...drawDeps, apiKey: 'sk-test', threadRootId: started.rootId,
         threadDraft: { kind: 'ask', appSlug: 'dt-seed-swap', appName: 'Seed swap', changeKind: 'design' },
         chat: scripted([
-          [['draw_screen', { what: 'The seeds they can swap, as cards', title: 'Swap list', project: 'dt-seed-swap' }]],
+          [['start_design', { what: 'The seeds they can swap, as cards', title: 'Swap list', project: 'dt-seed-swap' }]],
           [['list_source', {}], ['read_source', { path: 'public/styles.css' }], ['read_source', { path: '.env' }]],
-          [['write_screen', { title: 'Swap list', size: 'phone', html: SCREEN, note: 'The swap list' }]],
-          [['reply', { text: 'Here is a first go.' }]],
+          [['write_screen', { title: 'Swap list', size: 'phone', html: SCREEN }]],
+          [['reply', { text: 'Here is a first go.', summary: 'The swap list' }]],
         ], seen),
       },
     });
-    // The Mayor's round, then the design bot's own prompt.
+    // Step 6: the chat's round starts it; the design's section is added to
+    // the same turn from the next round.
     assert.equal(seen[0][0].role, 'system');
-    assert.match(seen[1][0].content, /This thread has no screen yet\. It is for a screen of the app Seed swap\./);
-    assert.match(seen[1][0].content, /WHAT YOU WERE ASKED TO DRAW\nThe seeds they can swap, as cards/);
+    assert.equal(section(seen[0]), '', 'not before it starts');
+    assert.match(section(seen[1]), /This thread has no screen yet\. It is for a screen of the app Seed swap\./);
+    assert.match(section(seen[1]), /WHAT YOU WERE ASKED TO DRAW\nThe seeds they can swap, as cards/);
     // #6257: the first drawing may ask first, so its last line says so; the
     // clear brief here still draws in the turn (the next scripted call).
-    assert.match(seen[1][0].content, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
-    const results = seen[2].filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content));
+    assert.match(section(seen[1]), /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+    // The third request also carries start_design's own result (round one):
+    // the reads are the last three tool results, from round two.
+    const results = seen[2].filter((m) => m.role === 'tool').map((m) => JSON.parse(m.content)).slice(-3);
     assert.deepEqual(results[0].files.map((f) => f.path), ['public/index.html', 'public/styles.css', 'public/app.js'], 'secret paths are never listed');
     assert.match(results[1].text, /1: \.seeds \{ color: #166534; \}/);
     assert.match(results[2].error, /holds secrets/);
     const { rows: [answer] } = await pool.query('SELECT content, thread_root_id, metadata FROM conversation_messages WHERE id = $1', [sent.messageId]);
     assert.equal(answer.thread_root_id, started.rootId, 'drawn in the thread');
-    assert.equal(answer.content, 'Version 1: The swap list.\n\nHere is a first go.');
+    assert.equal(answer.content, 'Here is a first go.\n\nVersion 1: The swap list.');
     assert.equal(answer.metadata.homeroomBot.designVersion, 1);
     assert.equal(answer.metadata.homeroomBot.designTitle, 'Swap list');
     const drawn = await designs.designFor(pool, { userId: ada.id, rootId: started.rootId });
@@ -398,24 +417,21 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.doesNotMatch(v1.html, /cdn\.test/, 'never another site\'s');
     assert.match(v1.html, /<body><main class="seeds"><h1>Swap seeds<\/h1>/);
 
-    // Now the thread holds a design: its next message is the design bot's,
-    // which reads the version with the stylesheet left empty, and keeps it.
+    // Now the thread holds a design: its next message's turn has it from the
+    // start, and reads the version with the stylesheet left empty, and keeps it.
     const next = (await conversations.sendMessage(pool, ada, started.conversationId, { content: 'add a swap button', thread_root_id: started.rootId })).message;
     const held = await designs.threadOf(pool, { userId: ada.id, conversationId: started.conversationId, message: next });
     assert.equal(held.rootId, started.rootId);
     const seen2 = [];
-    await designBot.answer(pool, config, {
-      bot, user: ada, settings: settingsOn, conversationId: started.conversationId, message: next, design: held,
-      deps: {
-        ...drawDeps, apiKey: 'sk-test',
-        chat: scripted([
-          [['edit_design', { edits: [{ find: 'Tomatoes</div>', replace: 'Tomatoes <button class="swap">Swap</button></div>' }], note: 'A Swap button' }]],
-          [['reply', { text: 'Added.' }]],
-        ], seen2),
-      },
+    await designTurn(next, {
+      design: held, conversationId: started.conversationId, settings: settingsOn, extra: drawDeps,
+      chat: scripted([
+        [['edit_design', { edits: [{ find: 'Tomatoes</div>', replace: 'Tomatoes <button class="swap">Swap</button></div>' }] }]],
+        [['reply', { text: 'Added.', summary: 'A Swap button' }]],
+      ], seen2),
     });
-    assert.match(seen2[0][0].content, /<style data-design-sheet="public\/styles\.css"><\/style>/, 'the model reads the stylesheet as one empty block');
-    assert.doesNotMatch(seen2[0][0].content, /#166534/);
+    assert.match(section(seen2[0]), /<style data-design-sheet="public\/styles\.css"><\/style>/, 'the model reads the stylesheet as one empty block');
+    assert.doesNotMatch(section(seen2[0]), /#166534/);
     const v2 = await designs.versionOf(pool, { userId: ada.id, rootId: started.rootId });
     assert.equal(v2.version, 2);
     assert.match(v2.html, /<style data-design-sheet="public\/styles\.css">\.seeds \{ color: #166534; \}/, 'and the version keeps it');
@@ -437,9 +453,9 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
       deps: {
         ...drawDeps, ...where, apiKey: 'sk-test',
         chat: scripted([
-          [['draw_screen', { what: 'A calendar of when to sow each seed', title: 'Seed calendar' }]],
-          [['write_screen', { title: 'Seed calendar', size: 'desktop', html: '<h1>Sow in March</h1>', note: 'A calendar' }]],
-          [['reply', { text: 'A first calendar.' }]],
+          [['start_design', { what: 'A calendar of when to sow each seed', title: 'Seed calendar' }]],
+          [['write_screen', { title: 'Seed calendar', size: 'desktop', html: '<h1>Sow in March</h1>' }]],
+          [['reply', { text: 'A first calendar.', summary: 'A calendar' }]],
         ]),
       },
     });
@@ -463,8 +479,8 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
       deps: {
         ...drawDeps, apiKey: 'sk-test',
         chat: scripted([
-          [['draw_screen', { what: 'A list of seeds', title: 'Seed list' }]],
-          [['write_screen', { title: 'Seed list', size: 'phone', html: '<h1>Seeds</h1>', note: 'A list' }]],
+          [['start_design', { what: 'A list of seeds', title: 'Seed list' }]],
+          [['write_screen', { title: 'Seed list', size: 'phone', html: '<h1>Seeds</h1>' }]],
           [['reply', { text: 'A first list.' }]],
         ]),
       },
@@ -493,7 +509,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
       deps: {
         ...drawDeps, apiKey: 'sk-test',
         chat: scripted([
-          [['draw_screen', { what: 'A design to work on together', title: 'Design' }]],
+          [['start_design', { what: 'A design to work on together', title: 'Design' }]],
           [['reply', { text: 'What is the app for, and what should this screen do?' }]],
         ], seen),
       },
@@ -503,7 +519,7 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.ok(rootId, 'the question is in the new thread');
     assert.equal(answer.content, 'What is the app for, and what should this screen do?', 'the question, with no version line');
     assert.equal(answer.metadata?.homeroomBot?.designVersion, undefined, 'no version under it');
-    assert.match(seen[1][0].content, /FIRST SCREEN: Before you draw/, 'the designer was told to ask first');
+    assert.match(section(seen[1]), /FIRST SCREEN: Before you draw/, 'the design section says to ask first');
     assert.equal(seen.length, 2, 'and no forced write_screen came after the question');
     assert.equal(await designs.designFor(pool, { userId: ada.id, rootId }), null, 'no design row, no version');
     const { rows: [{ n }] } = await pool.query(
@@ -523,17 +539,18 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
         ...drawDeps, apiKey: 'sk-test', threadRootId: rootId,
         threadDraft: { kind: 'ask', changeKind: 'design' },
         chat: scripted([
-          [['draw_screen', { what: 'A seed swap app, listing the seeds I can swap with a Swap button on each', title: 'Swap list' }]],
-          [['write_screen', { title: 'Swap list', size: 'phone', html: SCREEN, note: 'The swap list' }]],
-          [['reply', { text: 'Here is a first go.' }]],
+          [['start_design', { what: 'A seed swap app, listing the seeds I can swap with a Swap button on each', title: 'Swap list' }]],
+          [['write_screen', { title: 'Swap list', size: 'phone', html: SCREEN }]],
+          [['reply', { text: 'Here is a first go.', summary: 'The swap list' }]],
         ], seen2),
       },
     });
-    assert.doesNotMatch(seen2[1][0].content, /FIRST SCREEN/, 'it asks once, then draws from the answer');
+    assert.ok(section(seen2[1]), 'the design is started');
+    assert.doesNotMatch(section(seen2[1]), /FIRST SCREEN/, 'it asks once, then draws from the answer');
     const held = await designs.designFor(pool, { userId: ada.id, rootId });
     assert.equal(held.latest, 1, 'the thread now holds version 1');
     assert.equal((await pool.query('SELECT content FROM conversation_messages WHERE id = $1', [drawn.messageId])).rows[0].content,
-      'Version 1: The swap list.\n\nHere is a first go.');
+      'Here is a first go.\n\nVersion 1: The swap list.');
   });
 
   await t.test('a thread off their own message gets its row with its first version; a picture is described for a text-only model', async () => {
@@ -550,24 +567,26 @@ test('design threads against the full schema', { timeout: 120000 }, async (t) =>
     assert.deepEqual([room.threadId, room.kind, room.app], [null, 'idea', null]);
     assert.equal(await designs.draftingThread(pool, { userId: sam.id, botId: bot.id, rootId: root.id }), null, 'nobody else\'s');
     const seen = [];
-    await designBot.draw(pool, config, {
+    // Step 6: the turn starts the design (start_design) in her thread, and
+    // the design says her picture in words for a model that reads text.
+    await mayor.runDmTurn(pool, config, {
       bot, user: ada, settings: settingsOn, conversationId: opened.conversationId, message: asked,
-      ask: { app: null, title: 'Seed map', brief: 'A map of who has which seeds' },
       deps: {
         ...drawDeps, apiKey: 'sk-test', threadRootId: root.id, pictureModelSeesImages: true,
         chat: scripted([
+          [['start_design', { what: 'A map of who has which seeds', title: 'Seed map' }]],
           (req) => {
             assert.equal(req.model, mayor.DEFAULT_MODEL, 'the cheap model that reads pictures');
             assert.match(JSON.stringify(req.messages), /data:image\/png;base64,iVBORw==/);
             return [['describe_pictures', { pictures: ['A hand-drawn map with three pins and a list under it.'] }]];
           },
-          [['write_screen', { title: 'Seed map', size: 'phone', html: '<h1>Seed map</h1>', note: 'A first map' }]],
-          [['reply', { text: 'Drawn from your sketch.' }]],
+          [['write_screen', { title: 'Seed map', size: 'phone', html: '<h1>Seed map</h1>' }]],
+          [['reply', { text: 'Drawn from your sketch.', summary: 'A first map' }]],
         ], seen),
       },
     });
-    assert.match(JSON.stringify(seen[1]), /they attached the picture sketch\.png, which you cannot see\. A model that reads pictures says it shows: A hand-drawn map with three pins and a list under it\./);
-    assert.doesNotMatch(JSON.stringify(seen[1]), /base64/, 'the text-only model gets words, not the picture');
+    assert.match(section(seen[2]), /THE PICTURES THEY SENT, which you cannot see[^\n]*\n- sketch\.png: A hand-drawn map with three pins and a list under it\./);
+    assert.doesNotMatch(JSON.stringify(seen[2]), /base64/, 'the text-only model gets words, not the picture');
     const { rows: [row] } = await pool.query('SELECT kind, state, user_id FROM private_threads WHERE root_message_id = $1', [root.id]);
     assert.deepEqual(row, { kind: 'idea', state: 'open', user_id: ada.id }, 'its row, made with its first version');
     assert.equal((await designs.designFor(pool, { userId: ada.id, rootId: root.id })).latest, 1);

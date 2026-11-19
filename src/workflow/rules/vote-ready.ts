@@ -17,28 +17,20 @@
 // approve". Everything else that conflicts is Homeroom's to catch up and stays
 // under Waiting & in progress.
 //
-// The predicate itself is one copy here, so the SQL readers cannot drift:
-// services/vote-ready.js re-exports it with the pure `syncWaits(row)` test
-// for facts rows, and services/workshop-overview.js (OWED_PROPOSALS_WHERE,
-// and so every count, the feed and OWED_BY_COMMUNITY_SQL),
-// services/vote-digest.js and the proposal machine's proposed/ready
-// notification read it.
+// 19 Nov 2026 (docs/plans/bot-one-model.md): whether a change is ready to
+// be voted on is its stored work state's (work_states.vote_open,
+// services/work-state.js, which derives it with the pure syncWaits and
+// syncStand of services/vote-ready.js beside the rest of what holds a vote).
+// Every list, count and notification that asks for a vote reads that row:
+// routes/workshop-overview.js OWED_PROPOSALS_WHERE (and so every count, the
+// feed and OWED_BY_COMMUNITY_SQL), services/vote-digest.js, and the "new
+// proposal to vote on" ping (rules/proposal-notifications.ts). The SQL
+// predicate the ping read before (voteReadySql, with syncWaitSql) had no
+// other reader, and is gone. What stays here is the one SQL test a list
+// still reads off the change itself: awaitingYesSql, which the Workshop uses
+// to word a conflict only a yes can move.
 
 import { checkedAlias } from './vote-predicate.ts';
-
-/**
- * The boolean SQL predicate "session alias `cs` waits to sync with main":
- * the checks are deferred until it merges cleanly, or a conflict with main
- * was recorded, or a measured merge did not come out clean. `NULL`
- * (`unknown`) is not a wait: a change nobody measured keeps today's
- * behaviour.
- */
-export function syncWaitSql(sessionAlias = 'cs'): string {
-  const cs = checkedAlias(sessionAlias);
-  return `(${cs}.check_phase = 'deferred'
-     OR ${cs}.merge_conflict_state IN ('conflict', 'failed')
-     OR ${cs}.integration_merges_clean = FALSE)`;
-}
 
 /**
  * #6531 (9 Nov 2026): the boolean SQL predicate "session alias `cs` conflicts
@@ -50,15 +42,4 @@ export function awaitingYesSql(sessionAlias = 'cs'): string {
   const cs = checkedAlias(sessionAlias);
   return `(${cs}.integration_merges_clean = FALSE
      AND COALESCE(${cs}.integration_block_reasons, '[]'::jsonb) ? 'awaiting_approval')`;
-}
-
-/**
- * The boolean SQL predicate "session alias `cs` is ready for a vote": its
- * checks passed or were skipped, and it either waits only for a yes on a
- * conflict (awaitingYesSql) or does not wait to sync with main at all.
- */
-export function voteReadySql(sessionAlias = 'cs'): string {
-  const cs = checkedAlias(sessionAlias);
-  return `(${cs}.check_state IN ('passing', 'skipped')
-     AND (${awaitingYesSql(cs)} OR NOT COALESCE(${syncWaitSql(cs)}, FALSE)))`;
 }

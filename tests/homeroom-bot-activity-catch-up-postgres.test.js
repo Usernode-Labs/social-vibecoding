@@ -186,7 +186,10 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
   const asAda = { id: ada.id, username: ada.username, isAdmin: false, hasPlatformAccess: true };
   const asSam = { id: sam.id, username: sam.username, isAdmin: false, hasPlatformAccess: true };
   const asLee = { id: lee.id, username: lee.username, isAdmin: false, hasPlatformAccess: false };
-  const catchUp = (who) => activity.catchUpCards(pool, { user: who, settings });
+  // 19 Nov 2026: which work is under way is each request's stored work
+  // state, read once the drain has run, as its clock does within seconds.
+  const catchUpNow = (who) => activity.catchUpCards(pool, { user: who, settings });
+  const catchUp = async (who) => (await settleWorkStates(pool), catchUpNow(who));
   /** The bot's activity cards in `who`'s DM with it, oldest first. */
   async function cardMessages(who) {
     const { rows } = await pool.query(
@@ -484,7 +487,8 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     const before = (await cardMessages(ada)).length;
     const shareBox = await firstVersion('share-box', ada, 'A share box');
     const share = await queued(shareBox, 1);
-    const both = await Promise.all([catchUp(asAda), catchUp(asAda), catchUp(asAda)]);
+    await settleWorkStates(pool);
+    const both = await Promise.all([catchUpNow(asAda), catchUpNow(asAda), catchUpNow(asAda)]);
     assert.equal(both.reduce((sum, r) => sum + r.added, 0), 1);
     const added = (await cardMessages(ada)).slice(before);
     assert.deepEqual(added.map((m) => m.idempotency_key), [`hrbot-activity-${share.id}`]);
@@ -521,6 +525,7 @@ test('the Homeroom bot DM gives work already under way its activity card: once, 
     // gets no card since 5 Nov 2026); ada asks, naming him every way she can.
     const garden = await firstVersion('sam-garden', sam, 'A garden planner');
     await queued(garden, 1);
+    await settleWorkStates(pool);
     const adas = (await cardMessages(ada)).length;
     for (const query of [`?user_id=${sam.id}`, `?userId=${sam.id}`, `?username=${sam.username}`]) {
       const asked = await post(asAda, `/api/conversations/homeroom-bot/activity${query}`,

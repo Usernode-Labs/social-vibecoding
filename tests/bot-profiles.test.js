@@ -8,12 +8,17 @@
 //
 // What this pins:
 //   1. Every kind has a profile; every project-thread place type has a kind;
-//      a message in a person's chat is private or design. 14 Nov 2026: Main
-//      Chat is gone, and so is its kind `main`: every message there is in a
-//      thread, and no tool exists only to open one from Main.
-//   2. No surface offers a tool its kinds' profiles do not list, and every
-//      rule a profile names is one the voice's gate runs.
-//   3. The surfaces' limits are their profiles' (nothing changed in value).
+//      a message in a person's chat is private. 14 Nov 2026: Main Chat is
+//      gone, and so is its kind `main`: every message there is in a thread,
+//      and no tool exists only to open one from Main. Step 6 (19 Nov 2026):
+//      a design and a live draft are the private profile's capabilities,
+//      not kinds of their own.
+//   2. No surface offers a tool its kinds' profiles (and, in a private
+//      thread, the capabilities' lists) do not list, and every rule a
+//      profile names is one the voice's gate runs.
+//   3. The surfaces' limits are their profiles' (nothing changed in value),
+//      and a private thread's turn grows to a capability's only while it is
+//      loaded.
 //   4. The entry runs each kind on its surface, and the callers use it.
 //
 // Run with: node --test tests/bot-profiles.test.js
@@ -27,16 +32,26 @@ const profiles = require('../src/services/bot-profiles');
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('every thread kind has its profile, and every place its kind', () => {
-  assert.deepEqual(profiles.KINDS, ['private', 'design', 'draft', 'request', 'change', 'channel', 'reply']);
+  assert.deepEqual(profiles.KINDS, ['private', 'request', 'change', 'channel', 'reply']);
   assert.ok(!('main' in profiles.PROFILES), 'Main Chat\'s profile is retired');
+  for (const kind of ['design', 'draft']) assert.ok(!(kind in profiles.PROFILES), `step 6: ${kind} is a capability, not a kind`);
   for (const kind of profiles.KINDS) {
     const p = profiles.profileOf(kind);
     assert.equal(p.kind, kind);
-    assert.ok(['chat', 'design', 'draft', 'thread'].includes(p.surface), kind);
-    // A draft's tools are its own (live-draft-bot.js TOOLS), none of src/services/bot-tools/.
-    assert.ok(['main', 'design', 'thread', 'draft'].includes(p.scope), kind);
+    assert.ok(['chat', 'thread'].includes(p.surface), kind);
+    assert.ok(['main', 'thread'].includes(p.scope), kind);
     assert.ok(p.tools.length && p.limits && p.prompt, kind);
   }
+  // Step 6: what a private thread's turn adds by the thread's state. A
+  // draft's tools are its own (live-draft-bot.js TOOLS), none of src/services/bot-tools/.
+  assert.deepEqual(profiles.profileOf('private').capabilities, ['design', 'draft']);
+  for (const name of profiles.profileOf('private').capabilities) {
+    const cap = profiles.capabilityOf(name);
+    assert.equal(cap.capability, name);
+    assert.ok(['design', 'draft'].includes(cap.scope), name);
+    assert.ok(cap.tools.length && cap.limits && cap.prompt, name);
+  }
+  assert.throws(() => profiles.capabilityOf('elsewhere'), /no capability elsewhere/);
   for (const [type, kind] of Object.entries({ issue: 'request', session: 'change', chat: 'channel', category: 'channel', message: 'reply' })) {
     assert.equal(profiles.kindOfPlace({ type, ref: 1 }), kind, type);
     assert.ok(profiles.profileOf(kind).places.includes(type));
@@ -45,9 +60,11 @@ test('every thread kind has its profile, and every place its kind', () => {
   assert.equal(profiles.kindInChat({}), 'private', 'never Main: a message in no other thread is its own thread\'s first');
   assert.equal(profiles.kindInChat({ threadRootId: 9 }), 'private');
   assert.equal(profiles.kindInChat({ threadRequest: { appId: 1, issueNumber: 2 } }), 'private', 'a request card\'s thread from before');
-  assert.equal(profiles.kindInChat({ design: { rootId: 9 } }), 'design');
-  assert.equal(profiles.kindInChat({ draft: { id: 3 } }), 'draft');
-  assert.equal(profiles.kindInChat({ draft: { id: 3 }, design: { rootId: 9 } }), 'draft', 'an open draft holds its thread');
+  assert.equal(profiles.kindInChat({ threadDesign: { rootId: 9 } }), 'private', 'a design thread is private, with the design capability');
+  assert.equal(profiles.kindInChat({ threadLiveDraft: { id: 3 } }), 'private');
+  assert.deepEqual(profiles.capabilitiesInChat({}), []);
+  assert.deepEqual(profiles.capabilitiesInChat({ threadDesign: { rootId: 9 } }), ['design']);
+  assert.deepEqual(profiles.capabilitiesInChat({ threadLiveDraft: { id: 3 }, threadDesign: { rootId: 9 } }), ['design', 'draft']);
   assert.throws(() => profiles.profileOf('elsewhere'), /no thread kind elsewhere/);
 });
 
@@ -65,17 +82,27 @@ test('no surface offers a tool its profile does not list, and every rule named i
   for (const name of mayorTools) assert.ok(chat.includes(name), `private: ${name}`);
   // What Main could do, a thread still can: draft a request, start a
   // project, draw a screen, answer a question. Only the tool that opened a
-  // thread from Main is gone.
-  for (const name of ['offer_request', 'offer_new_project', 'draw_screen', 'answer_question', 'my_work', 'close_thread', 'reply']) {
+  // thread from Main is gone. Step 6: a screen is started (start_design),
+  // never handed to a designer, and a waiting plan is changed (change_plan).
+  for (const name of ['offer_request', 'offer_new_project', 'start_design', 'answer_question', 'change_plan', 'my_work', 'close_thread', 'reply']) {
     assert.ok(mayorTools.includes(name) && chat.includes(name), name);
   }
   assert.ok(!mayorTools.includes('start_project_thread') && !chat.includes('start_project_thread'));
-  const design = profiles.profileOf('design').tools;
-  for (const t of require('../src/services/design-bot').TOOLS) assert.ok(design.includes(t.function.name), `design: ${t.function.name}`);
-  const draft = profiles.profileOf('draft').tools;
+  assert.ok(!mayorTools.includes('draw_screen') && !chat.includes('draw_screen'), 'nothing hands a screen to a designer');
+  // Step 6: a capability lists exactly what its session offers the turn.
+  const design = profiles.capabilityOf('design').tools;
+  const designTools = require('../src/services/design-bot').TOOLS.map((t) => t.function.name);
+  for (const name of designTools) assert.ok(design.includes(name), `design: ${name}`);
+  for (const name of design) assert.ok(designTools.includes(name), `design lists ${name}, which its session offers`);
+  const draft = profiles.capabilityOf('draft').tools;
   const draftTools = require('../src/services/live-draft-bot').TOOLS.map((t) => t.function.name);
   for (const name of draftTools) assert.ok(draft.includes(name), `draft: ${name}`);
-  for (const name of draft) assert.ok(draftTools.includes(name), `draft lists ${name}, which its bot offers`);
+  for (const name of draft) assert.ok(draftTools.includes(name), `draft lists ${name}, which its session offers`);
+  // The chat's own reply, close_thread and offer_request serve both: no
+  // capability declares a second one.
+  for (const name of ['reply', 'close_thread', 'offer_request']) {
+    assert.ok(!design.includes(name) && !draft.includes(name), `${name} is the chat's own`);
+  }
   for (const kind of ['request', 'change', 'channel', 'reply']) {
     const speaks = profiles.profileOf(kind).speaks;
     assert.deepEqual(speaks.slice(0, profiles.THREAD_CHECKS.length), profiles.THREAD_CHECKS, `${kind}: the common checks first`);
@@ -95,9 +122,10 @@ test('#6384: a plan is read in the chat, on a request and on a change, and nowhe
   for (const kind of ['private', 'request', 'change']) {
     assert.ok(profiles.profileOf(kind).tools.includes('get_spec'), kind);
   }
-  for (const kind of ['channel', 'reply', 'design']) {
+  for (const kind of ['channel', 'reply']) {
     assert.ok(!profiles.profileOf(kind).tools.includes('get_spec'), `${kind} posts no plans`);
   }
+  assert.ok(!profiles.capabilityOf('design').tools.includes('get_spec'), 'the design adds no plan reads of its own');
   const voice = require('../src/services/homeroom-bot-voice');
   const names = (place) => voice.toolsFor(place, { platform: true }).map((t) => t.function.name);
   for (const type of ['issue', 'session']) assert.ok(names({ type, ref: 1 }).includes('get_spec'), type);
@@ -152,32 +180,34 @@ test('#6358: a design turn draws a whole screen within its budget', () => {
   );
   const design = require('../src/services/design-bot');
   assert.equal(design.DESIGN_OUTPUT_TOKENS, 16000);
-  assert.equal(design.DESIGN_RETRY_OUTPUT_TOKENS, 32000);
-  assert.equal(design.DESIGN_REQUEST_TIMEOUT_MS, 180_000);
-  const src = read('src/services/design-bot.js');
-  assert.match(src, /retryOutputTokens: DESIGN_RETRY_OUTPUT_TOKENS,/);
-  assert.match(src, /timeoutMs: DESIGN_REQUEST_TIMEOUT_MS,/);
+  // Step 6: the chat's turn asks with the design's room and clock while its
+  // tools are loaded (turnLimits), and with its own otherwise.
+  assert.deepEqual(profiles.turnLimits(['design']), { rounds: 16, outputTokens: 16000, retryOutputTokens: 32000, requestTimeoutMs: 180_000 });
+  assert.deepEqual(profiles.turnLimits([]), { rounds: 16, outputTokens: 8000, retryOutputTokens: 16000, requestTimeoutMs: 90_000 });
+  assert.deepEqual(profiles.turnLimits(['draft']).rounds, 18);
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /maxOutputTokens: room\.outputTokens, retryOutputTokens: room\.retryOutputTokens, timeoutMs: room\.requestTimeoutMs,/);
+  assert.match(src, /const room = loaded\(\)\.length \? turnLimits\(loaded\(\)\) : null;/);
 });
 
 test('the one entry runs each kind on its surface, and the callers use it', async () => {
   const threadBot = require('../src/services/thread-bot');
   const ran = [];
   const deps = {
-    mayor: { runDmTurn: async (_p, _c, args) => { ran.push(['chat', args.conversationId]); return 'chat'; } },
-    designBot: { answer: async (_p, _c, args) => { ran.push(['design', args.design.rootId]); return 'design'; } },
-    draftBot: { answer: async (_p, _c, args) => { ran.push(['draft', args.draft.id]); return 'draft'; } },
+    mayor: { runDmTurn: async (_p, _c, args) => { ran.push(['chat', args.conversationId, !!args.deps?.threadDesign]); return 'chat'; } },
     voice: { runTurn: async (_p, _c, args) => { ran.push(['thread', args.place.type]); return 'thread'; } },
   };
   await assert.rejects(threadBot.answer({}, {}, { kind: 'main', conversationId: 5, deps }), /no thread kind main/);
   assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 5, deps }), 'chat');
-  assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 6, deps }), 'chat');
-  assert.equal(await threadBot.answer({}, {}, { kind: 'design', design: { rootId: 9 }, deps }), 'design');
-  assert.equal(await threadBot.answer({}, {}, { kind: 'draft', draft: { id: 3 }, deps }), 'draft');
+  // Step 6: a design thread is the same private turn, told its design.
+  assert.equal(await threadBot.answer({}, {}, { kind: 'private', conversationId: 6, deps: { ...deps, threadDesign: { rootId: 9 } } }), 'chat');
+  await assert.rejects(threadBot.answer({}, {}, { kind: 'design', design: { rootId: 9 }, deps }), /no thread kind design/);
+  await assert.rejects(threadBot.answer({}, {}, { kind: 'draft', draft: { id: 3 }, deps }), /no thread kind draft/);
   assert.equal(await threadBot.answer({}, {}, { kind: 'request', place: { type: 'issue', ref: 4 }, deps }), 'thread');
-  assert.deepEqual(ran, [['chat', 5], ['chat', 6], ['design', 9], ['draft', 3], ['thread', 'issue']]);
+  assert.deepEqual(ran, [['chat', 5, false], ['chat', 6, true], ['thread', 'issue']]);
   await assert.rejects(threadBot.answer({}, {}, { kind: 'nowhere', deps }), /no thread kind/);
   const dm = read('src/services/homeroom-bot-dm.js');
-  assert.match(dm, /require\('\.\/thread-bot'\)\.answer\(pool, config, \{ kind: 'design',/);
+  assert.doesNotMatch(dm, /kind: 'design',|kind: 'draft',/, 'nothing routes a private thread to another speaker');
   assert.match(dm, /kind: require\('\.\/bot-profiles'\)\.kindInChat\(turnDeps\)/);
   assert.match(read('src/workflow/bot-voice/services.ts'), /legacy\('services\/thread-bot'\)\.answer\(pool, config, \{\s+kind: legacy\('services\/bot-profiles'\)\.kindOfPlace\(input\.place\)/);
 });

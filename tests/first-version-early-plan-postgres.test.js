@@ -23,6 +23,7 @@ const express = require('express');
 const { Pool } = require('pg');
 
 const { loadTsx } = require('./lib/render-tsx');
+const { settleWorkStates } = require('./lib/work-states');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
   || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
@@ -150,7 +151,10 @@ test('a first version planned at Make it: answered on the made screen, built wit
   });
   const base = `http://127.0.0.1:${listening.address().port}`;
   const { madeAppOf, madeAppUrl, askedQuestions, answersUrl } = loadTsx(MADE);
+  // 19 Nov 2026: a filed first version stands where its request's stored
+  // work state says, read once the drain has run, as its clock does.
   const read = async (slug) => {
+    await settleWorkStates(pool);
     const res = await fetch(`${base}${madeAppUrl(slug)}`);
     assert.equal(res.status, 200);
     return madeAppOf(await res.json()).firstVersion;

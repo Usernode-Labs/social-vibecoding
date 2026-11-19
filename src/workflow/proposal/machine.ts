@@ -55,7 +55,7 @@ import type {
 } from '../kernel/index.ts';
 import { boardMoved, chatLine, issueUpdate, sessionUpdate, threadChanged, toUser, voteUpdate } from '../pushes.ts';
 import { createChangeClosedNotification, settleDecidedChange } from '../rules/change-notifications.ts';
-import { createConnectorSubmittedNotification, createPrProposedNotifications, createStalePrNotification } from '../rules/proposal-notifications.ts';
+import { createConnectorSubmittedNotification, createStalePrNotification } from '../rules/proposal-notifications.ts';
 import { invalidateHeadMoveSql } from '../rules/summary-freshness.ts';
 import { claimRefusal } from '../rules/merge-claim.ts';
 import { APPROVER_NO_WINDOW_WORDS } from '../rules/governance-gate.ts';
@@ -2044,10 +2044,11 @@ const WRITES = {
       if (a) ctx.push(voteUpdate({ sessionId: w.sessionId, appId: a.id, appSlug: a.slug, merged: false, headMoved: true }));
     }
   },
-  // The vote requests, and the owner's "your agent put it up" when their
-  // agent did.
+  // The owner's "your agent put it up" when their agent did. The vote
+  // requests are the change's stored work state's (19 Nov 2026): they go
+  // out when its row opens for votes (services/work-state.js votePings),
+  // which this move's own refresh does when its checks have already passed.
   proposed: async (tx: Tx, w: any, ctx: WriteContext) => {
-    named(ctx, await createPrProposedNotifications(tx, { appId: w.appId, sessionId: w.sessionId, proposerId: w.proposerId ?? null }));
     if (w.viaAgent) {
       named(ctx, await createConnectorSubmittedNotification(tx, { userId: w.proposerId, appId: w.appId, sessionId: w.sessionId, detail: 'submitted' }));
     }

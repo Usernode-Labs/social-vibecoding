@@ -88,9 +88,18 @@ test('a tool call is noted only when it left something that stays, in plain word
   note('offer_request', { title: 'Dark mode' }, { ok: true });
   note('comment_on_request', { number: 3 }, { ok: true, drafted: 'x' });
   note('reply', { text: 'hi' }, { ok: true });
-  // A screen drawn is saved only with the design turn's answer.
+  // A screen drawn is saved only with the turn's answer (step 6: the chat's
+  // own turn, which a stopped one never sends), and a draft's edits only
+  // by apply_changes.
+  note('start_design', { what: 'a list' }, { ok: true });
   note('write_screen', { html: '<p>x</p>' }, { ok: true });
-  note('draw_screen', { what: 'a list' }, { ok: true });
+  note('edit_design', { edits: [] }, { ok: true });
+  note('edit_file', { path: 'a.js' }, { ok: true });
+  note('write_file', { path: 'a.js' }, { ok: true });
+  note('search_code', { text: 'x' }, { hits: [] });
+  note('read_file', { path: 'a.js' }, { text: 'x' });
+  note('apply_changes', { summary: 'x' }, { saved: false, error: 'Nothing changed this turn.' });
+  note('change_plan', {}, { ok: true, drafted: 'their change', shown: 'x' });
   assert.deepEqual(did, []);
   // A call that was refused did nothing.
   note('start_request', { project: 'seed-swap', number: 7 }, { ok: false, error: 'Nothing was started.' });
@@ -126,6 +135,9 @@ test('a tool call is noted only when it left something that stays, in plain word
   assert.deepEqual(each('look_into', {}, { ok: true, running: true, project: 'Seed swap' }), { did: 'sent a helper to look into Seed swap', stays: 'it finishes on its own' });
   assert.equal(each('look_into', {}, { ok: true, summary: 'It sorts by date.' }), undefined, 'a look that finished is a read');
   assert.deepEqual(each('make_pictures', {}, { ok: true }), { did: 'made the pictures you asked for', stays: 'they are not shown here' });
+  // Step 6: a live draft's change saved, and a plan put back to be planned again.
+  assert.deepEqual(each('apply_changes', {}, { saved: true, preview: 'restarted' }), { did: 'saved a change to the live draft', stays: 'it stays in the draft' });
+  assert.deepEqual(each('change_plan', {}, { ok: true, said: 'Thanks.' }), { did: 'asked for a new plan', stays: 'it is planned again' });
 
   // A tool this module does not know: its effect cannot be named, and cannot
   // be ruled out, so the line says neither "nothing" nor what.
@@ -135,11 +147,13 @@ test('a tool call is noted only when it left something that stays, in plain word
   assert.deepEqual(botStop.noteDone([], 'start_request', null, null), []);
 });
 
-test('every tool the chat, its thread tools and the design bot offer is one whose effect is known', () => {
+test('every tool the chat, its thread tools and its capabilities offer is one whose effect is known', () => {
   const names = new Set([
     ...mayor.TOOLS.map((t) => t.function.name),
     ...mayor.PLATFORM_TOOLS,
+    // Step 6: the design's and the live draft's tools, in the chat's own turn.
     ...designBot.TOOLS.map((t) => t.function.name),
+    ...require('../src/services/live-draft-bot').TOOLS.map((t) => t.function.name),
   ]);
   // The thread tools, as a person's own chat is offered them (the admin's
   // own are behind confirm cards and are left as not known: see below).
@@ -369,10 +383,14 @@ test('a stopped turn is recorded with what it cost and no error, and its line is
   // anything is sent; the second pass never swallows it.
   assert.equal((src.match(/if \(stoppedNow\(\)\) return sayStopped\(\);/g) || []).length, 2);
   assert.match(src, /\} catch \(err\) \{\n\s+if \(botStop\.isStop\(err\)\) throw err;\n\s+\/\/ The first answer, less what it should not have said, still goes\./);
-  // The design bot's turn the same way.
+  // Step 6: a design or a draft is the chat's own turn, so this one Stop
+  // covers it. No turn of their own is left to stop, and a stopped turn
+  // saves no version: it is saved only on the way to the reply, after this.
   const design = read('src/services/design-bot.js');
-  assert.match(design, /if \(deps\.stop\?\.signal\?\.aborted\) \{\n\s+await mayor\.recordTurn\(pool, \{[\s\S]{0,400}?error: null, failures: t\.failures, fallback: 'stopped',/);
-  assert.match(design, /return say\(botStop\.stoppedText\(deps\.stop\.did\)\);/);
+  assert.doesNotMatch(design, /recordTurn|chargeTurn|runRounds/, 'the design runs no turn of its own');
+  assert.doesNotMatch(read('src/services/live-draft-bot.js'), /recordTurn|chargeTurn|runRounds/, 'nor does the draft');
+  const tail = src.slice(src.indexOf('// Stopped during its rounds, or as they ended'));
+  assert.ok(tail.indexOf('if (stoppedNow()) return sayStopped();') < tail.indexOf('caps.design.save('), 'stopped before any version is saved');
   // A look sent to read the code is waited for only until the Stop.
   const look = read('src/services/homeroom-bot-thread-tools/look-into.js');
   assert.match(look, /while \(row && row\.state === 'running' && Date\.now\(\) < until && !signal\?\.aborted\) \{/);

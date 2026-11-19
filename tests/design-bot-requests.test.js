@@ -14,8 +14,11 @@
 //      exist, and nothing is read.
 //   5. get_request sends the number and asks for no screenshots; a number
 //      that is not a positive whole one is refused.
-//   6. The grant is opened once, and closed once, and only when a board was
-//      read; without one the turn still answers.
+//   6. The grant is the turn's own (step 6, #6864: the chat's turn opens one
+//      and the design reads through it), opened once and closed once;
+//      without one the turn still answers.
+// Step 6: every turn here is the chat's own (homeroom-bot-mayor.js
+// runDmTurn), in a thread that holds a design (tests/lib/design-chat-turn.js).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -50,7 +53,8 @@ test('the design bot is offered both board readers, and they count as reading', 
   assert.ok(names.includes('list_requests'));
   assert.ok(names.includes('get_request'));
   assert.equal(names.indexOf('list_requests') > names.indexOf('offer_project'), true, 'appended after offer_project');
-  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'reply']);
+  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan'],
+    'the chat\'s own reply ends a design turn');
   assert.equal(designBot.ACT_TOOLS.some((t) => t.function.name === 'list_requests'), false);
   assert.equal(designBot.ACT_TOOLS.some((t) => t.function.name === 'get_request'), false);
   for (const name of ['list_requests', 'get_request']) {
@@ -63,17 +67,7 @@ test('the design bot is offered both board readers, and they count as reading', 
   assert.deepEqual(designBot.TOOLS.find((t) => t.function.name === 'get_request').function.parameters.required, ['number']);
 });
 
-const call = (name, args, id = `c${name}`) => ({ id, function: { name, arguments: JSON.stringify(args) } });
-
-function scripted(steps, seen = []) {
-  let i = 0;
-  return async (req) => {
-    seen.push(structuredClone(req.messages));
-    const step = steps[Math.min(i, steps.length - 1)];
-    i += 1;
-    return typeof step === 'string' ? { content: step, toolCalls: [] } : { content: step.content || '', toolCalls: step.calls };
-  };
-}
+const { designChatTurn, call } = require('./lib/design-chat-turn');
 
 // `threadApp`: the project the design's thread belongs to (surface 'new': null).
 // `apps`: what findApp resolves, by the name the model passed.
@@ -83,85 +77,67 @@ function boardTurn(steps, {
   surface = 'app', threadApp = HOMEROOM, canView = true, apps = { homeroom: HOMEROOM, ear: EAR, locked: LOCKED }, openMcp,
   design = null, current = null, planTarget = null, requestSpecs = null,
 } = {}) {
-  const sent = [];
-  const seen = [];
   const opened = [];
   const closes = [];
   const calls = [];
-  const versions = [];
-  const turns = [];
-  const offers = [];
-  const realThreads = require('../src/services/design-threads');
+  // Step 6: the chat's own turn opens one read grant for the turn, and the
+  // design reads the board through it (design-bot.js openSession `grant`).
+  // This one serves no tools of its own, so the design's readers are used.
   const platform = openMcp === undefined ? {
     async call(name, args) { calls.push({ name, args }); return { text: `answer from ${name}` }; },
     async close() { closes.push(true); },
   } : null;
+  // A thread that holds a design: one with no version yet, when none is given.
+  const held = design || {
+    threadId: 7, rootId: 500, state: 'open', number: null, latest: 0, versions: [],
+    app: threadApp ? { slug: threadApp.slug, name: threadApp.name } : null,
+    title: 'Main screen', surface, route: null, width: 390, height: 844,
+  };
   // #6682: the real checkRequestOffer needs the project lookups a draft makes
   // (findApp, the block check, the member check); everything else is empty.
-  const pool = {
-    async query(sql, params = []) {
-      const text = String(sql);
-      if (/FROM apps\s+WHERE slug = LOWER\(\$1\) OR LOWER\(name\) = LOWER\(\$1\)/.test(text)) {
-        const q = String(params[0] || '').trim().toLowerCase();
-        const app = Object.values(apps).find((a) => a.slug === q || String(a.name).toLowerCase() === q);
-        return {
-          rows: app ? [{
-            ...app, view_visibility: 'public', collab_visibility: 'public',
-            community_id: app.slug === 'locked' ? 55 : null,
-          }] : [],
-        };
-      }
-      if (/FROM apps\s+WHERE id = ANY/.test(text)) return { rows: [] };
-      return { rows: [] };
-    },
+  const answer = (text, params) => {
+    if (/FROM apps\s+WHERE slug = LOWER\(\$1\) OR LOWER\(name\) = LOWER\(\$1\)/.test(text)) {
+      const q = String(params[0] || '').trim().toLowerCase();
+      const app = Object.values(apps).find((a) => a.slug === q || String(a.name).toLowerCase() === q);
+      return {
+        rows: app ? [{
+          ...app, view_visibility: 'public', collab_visibility: 'public',
+          community_id: app.slug === 'locked' ? 55 : null,
+        }] : [],
+      };
+    }
+    return undefined;
   };
-  const dm = { async sendDm(_pool, args) { sent.push(args); return { messageId: 900 + sent.length }; } };
-  const deps = {
-    chat: scripted(steps, seen), apiKey: 'sk-test', seesImages: false, sleep: async () => {},
-    dm,
-    // #6682: the plan card's sender reads its own dm under dmSvc.
-    dmSvc: dm,
-    mayor: Object.assign(Object.create(mayor), {
-      async recordTurn(_pool, args) { turns.push(args); }, async turnsLastHour() { return 0; },
+  const turn = designChatTurn(steps, {
+    design: held, current, surface, answer, config: { port: 3000 },
+    ask: 'check recent issues on Homeroom',
+    room: { rootId: 500, threadId: 7, conversationId: 41, kind: 'ask', app: threadApp, about: null },
+    mayorOverrides: {
       async findApp(_pool, name) {
         const q = String(name || '').toLowerCase();
         return Object.values(apps).find((a) => a.slug === q || String(a.name).toLowerCase() === q) || null;
       },
-      // #6682: the request draft is the real one; its card is captured here.
-      async offer(_pool, args) { offers.push(args); return { messageId: 950 + offers.length }; },
       // The code readers are not what this suite pins: they only spend the
       // reading budget.
       async listSource() { return { ok: true, files: [] }; },
       async canView() { return canView; },
-    }),
-    designThreads: {
-      ...realThreads,
-      surfaceFor: () => surface,
-      validHtml: () => true,
-      async versionOf() { return current; },
-      async ensureDesign() { return { threadId: 7, title: 'Main screen', app: threadApp || HOMEROOM }; },
-      async addVersion(_pool, args) { versions.push(args); return { version: 1 }; },
-      bareNote: require('../src/services/design-threads').bareNote,
-      versionLine: (version, note) => `Version ${version} · ${note}`,
-      async noteVersionMessage() {},
+    },
+    threads: {
+      async ensureDesign() { return { threadId: 7, rootId: 500, title: 'Main screen', app: threadApp || HOMEROOM }; },
+      async addVersion(_pool, args) { turn.versionArgs.push(args); return { version: 1 }; },
       async planTargetOf() { return planTarget; },
     },
-    track: { async tracksForRequests() { return new Map(); } },
-    openMcp: async (options) => { opened.push(options); return openMcp === undefined ? platform : openMcp(); },
-    ...(requestSpecs ? { requestSpecs } : {}),
-  };
-  const run = designBot.answer(pool, { port: 3000 }, {
-    bot: { id: 2, username: 'homeroom_bot' },
-    user: { id: 9, username: 'evan' },
-    settings: { mode: 'live' },
-    conversationId: 41,
-    message: { id: 71, content: 'check recent issues on Homeroom' },
-    design,
-    thread: { rootId: 500, threadId: 7, app: threadApp },
-    handoff: false,
-    deps,
+    deps: {
+      openMcp: async (options) => { opened.push(options); return openMcp === undefined ? platform : openMcp(); },
+      ...(requestSpecs ? { requestSpecs } : {}),
+    },
   });
-  return { run, sent, seen, opened, closes, calls, versions, turns, offers, platform };
+  // A request draft goes out through the chat's own offer, as a card under
+  // the reply (bot_cards: `card.kind` file_request); the design's plan card is
+  // post_design.
+  const offers = () => turn.sent.filter((m) => m.card?.kind === 'file_request');
+  const plans = () => turn.sent.filter((m) => m.card?.kind === 'post_design');
+  return { ...turn, versions: turn.versionArgs, turns: turn.recorded, opened, closes, calls, offers, plans, platform };
 }
 
 /** The result the model was handed for the tool call with `id`. */
@@ -203,8 +179,7 @@ test('a design with no project says to name one, and reads nothing', async () =>
     { calls: [call('reply', { text: 'Which project do you mean? I can read any project you can see.' })] },
   ], { surface: 'new', threadApp: null });
   await turn.run;
-  assert.deepEqual(turn.calls, []);
-  assert.deepEqual(turn.opened, [], 'no grant is opened for nothing');
+  assert.deepEqual(turn.calls, [], 'nothing is read');
   assert.match(toolResult(turn.seen, 'clist_requests').error, /Name a project/);
   assert.equal(turn.sent.length, 1);
 });
@@ -218,7 +193,6 @@ test('a project they cannot see answers as one that does not exist, and is not r
     await turn.run;
     if (!canView) {
       assert.deepEqual(turn.calls, []);
-      assert.deepEqual(turn.opened, []);
       assert.equal(toolResult(turn.seen, 'clist_requests').error, 'No project they can see is called that.');
     } else {
       assert.deepEqual(turn.calls, [{ name: 'list_requests', args: { slug: 'ear' } }]);
@@ -252,7 +226,7 @@ test('get_request sends its number, never asks for screenshots, and refuses a ba
   }
 });
 
-test('the grant is opened once for the turn and closed after it, only when a board was read', async () => {
+test('the turn\'s own grant is opened once and closed after it, and the design reads through it', async () => {
   const read = boardTurn([
     { calls: [call('list_requests', {})] },
     { calls: [call('get_request', { number: 1 })] },
@@ -262,14 +236,9 @@ test('the grant is opened once for the turn and closed after it, only when a boa
   assert.equal(read.opened.length, 1, 'opened once, not once a call');
   assert.equal(read.opened[0].userId, 9);
   assert.equal(read.opened[0].imageInput, false);
-  assert.equal(read.opened[0].rateSubject, 'hrbot-design-9');
+  assert.equal(read.opened[0].rateSubject, 'hrbot-dm-9', 'the chat turn\'s own grant');
   assert.equal(read.calls.length, 2);
-  assert.equal(read.closes.length, 1, 'closed after the turn');
-
-  const replyOnly = boardTurn([{ calls: [call('reply', { text: 'Nothing to look up.' })] }]);
-  await replyOnly.run;
-  assert.deepEqual(replyOnly.opened, [], 'never opened when no board was read');
-  assert.deepEqual(replyOnly.closes, []);
+  assert.equal(read.closes.length, 1, 'closed after the turn, once');
 });
 
 test('without a grant the board cannot be read, and the turn still answers', async () => {
@@ -279,6 +248,7 @@ test('without a grant the board cannot be read, and the turn still answers', asy
   ], { openMcp: async () => null });
   await turn.run;
   assert.deepEqual(turn.calls, []);
+  assert.equal(turn.opened.at(-1).rateSubject, 'hrbot-design-9', 'the design tried a grant of its own');
   assert.equal(toolResult(turn.seen, 'clist_requests').error, 'Requests cannot be read right now.');
   assert.equal(turn.sent.length, 1);
   assert.match(turn.sent[0].content, /cannot read the requests/);
@@ -437,18 +407,18 @@ const REQUEST_ARGS = {
   doneWhen: ['The drawing uses the project\'s own classes.'],
 };
 
-test('offer_request is a design tool, and it sits with the offer tools', () => {
+test('offer_request in a design thread is the chat\'s own, beside the design\'s offers', () => {
+  // Step 6 (#6864): the design adds no offer_request of its own; the chat's
+  // serves it, with notTheDesign for a request on the design's own project.
   const names = designBot.TOOLS.map((t) => t.function.name);
-  assert.ok(names.includes('offer_request'));
-  assert.equal(names.indexOf('offer_request') > names.indexOf('offer_project'), true, 'after the design\'s own cards');
-  assert.equal(names.indexOf('offer_request') < names.indexOf('list_requests'), true, 'with the offer tools');
-  const tool = designBot.TOOLS.find((t) => t.function.name === 'offer_request').function;
+  assert.ok(!names.includes('offer_request'), 'not a second copy');
+  const tool = mayor.TOOLS.find((t) => t.function.name === 'offer_request').function;
   assert.equal(tool.parameters.additionalProperties, false);
   assert.doesNotMatch(tool.description, /—/);
-  assert.match(tool.description, /not this design/);
-  assert.match(tool.description, /never use offer_plan/i);
   assert.match(designBot.TOOLS.find((t) => t.function.name === 'offer_plan').function.description,
     /Only this design: never for another request/);
+  assert.match(designBot.TOOLS.find((t) => t.function.name === 'offer_plan').function.description,
+    /They approve the design \(lgtm, looks good, that's it\) or ask you to build, implement, file or post it/);
 });
 
 test('in a design thread for project A, the bot offers a request on project B, not the plan card', async () => {
@@ -458,26 +428,39 @@ test('in a design thread for project A, the bot offers a request on project B, n
   ], { design: DESIGN, current: { version: 4, html: '<main><p>Now</p></main>' } });
   await turn.run;
   assert.equal(toolResult(turn.seen, 'o1').ok, true);
-  assert.equal(turn.offers.length, 1, 'one card, through the chat turn\'s own offer');
-  assert.equal(turn.offers[0].offer.kind, undefined, 'a request draft, never a plan');
-  assert.equal(turn.offers[0].offer.app.slug, 'ear');
-  assert.equal(turn.offers[0].offer.title, REQUEST_ARGS.title);
-  assert.match(turn.offers[0].text, /file on Ear Trainer/);
-  assert.deepEqual(turn.sent, [], 'no post_design card, and no separate answer');
+  assert.equal(turn.offers().length, 1, 'one card, through the chat turn\'s own offer');
+  assert.equal(turn.offers()[0].card.appId, EAR.id);
+  assert.match(turn.offers()[0].content, /Keep drawn screens close to the project's real styles/);
+  assert.match(turn.offers()[0].content, /file on Ear Trainer/);
+  assert.deepEqual(turn.plans(), [], 'no post_design card');
+  assert.equal(turn.sent.length, 1, 'and no separate answer');
   assert.deepEqual(turn.versions, [], 'nothing filed or saved');
 });
 
 test('from a design thread about another project, the request can be filed on Homeroom', async () => {
-  const ear = { ...DESIGN, app: EAR, title: 'Ear Trainer drill' };
+  const ear = { ...DESIGN, app: { slug: 'ear', name: 'Ear Trainer' }, title: 'Ear Trainer drill' };
   const turn = boardTurn([
     { calls: [call('offer_request', { ...REQUEST_ARGS, project: 'Homeroom' }, 'o1')] },
     { calls: [call('reply', { text: 'Here is the request I\'d file on Homeroom. Tap File it to file it under your name.' }, 'r1')] },
   ], { design: ear, threadApp: EAR, current: { version: 4, html: '<main><p>Now</p></main>' } });
   await turn.run;
   assert.equal(toolResult(turn.seen, 'o1').ok, true);
-  assert.equal(turn.offers.length, 1);
-  assert.equal(turn.offers[0].offer.app.slug, 'homeroom', 'Homeroom\'s own app is offered like any other');
-  assert.deepEqual(turn.sent, []);
+  assert.equal(turn.offers().length, 1);
+  assert.equal(turn.offers()[0].card.appId, HOMEROOM.id, 'Homeroom\'s own app is offered like any other');
+  assert.deepEqual(turn.plans(), []);
+});
+
+test('step 6: a request on the design\'s own project goes back to offer_plan, unless it is something else', async () => {
+  const turn = boardTurn([
+    { calls: [call('offer_request', { ...REQUEST_ARGS, project: 'Homeroom' }, 'o1')] },
+    { calls: [call('offer_request', { ...REQUEST_ARGS, project: 'Homeroom', notTheDesign: true }, 'o2')] },
+    { calls: [call('reply', { text: 'Here is the request I\'d file on Homeroom.' }, 'r1')] },
+  ], { design: DESIGN, current: { version: 4, html: '<main><p>Now</p></main>' } });
+  await turn.run;
+  assert.match(toolResult(turn.seen, 'o1').error, /To file this design, offer it with offer_plan/);
+  assert.equal(toolResult(turn.seen, 'o2').ok, true, 'something that is not this design is offered as a request');
+  assert.equal(turn.offers().length, 1);
+  assert.ok(turn.offered[0].includes('offer_request'));
 });
 
 test('a project they cannot file on is refused with the membership error, and no card is offered', async () => {
@@ -489,7 +472,7 @@ test('a project they cannot file on is refused with the membership error, and no
   const result = toolResult(turn.seen, 'o1');
   assert.equal(result.ok, false);
   assert.match(result.error, /not a member of Locked Project/);
-  assert.deepEqual(turn.offers, [], 'nothing is offered');
+  assert.deepEqual(turn.offers(), [], 'nothing is offered');
   assert.equal(turn.sent.length, 1, 'the turn still answers');
 });
 
@@ -502,8 +485,8 @@ test('one reply holds one kind of card: a request and the design are never offer
   await requestFirst.run;
   assert.equal(toolResult(requestFirst.seen, 'o1').ok, true);
   assert.match(toolResult(requestFirst.seen, 'p1').error, /one kind of card/);
-  assert.equal(requestFirst.offers.length, 1, 'the request goes out');
-  assert.deepEqual(requestFirst.sent, [], 'and the plan does not');
+  assert.equal(requestFirst.offers().length, 1, 'the request goes out');
+  assert.deepEqual(requestFirst.plans(), [], 'and the plan does not');
 
   const designFirst = boardTurn([
     { calls: [call('offer_plan', { target: 'new' }, 'p1')] },
@@ -513,7 +496,7 @@ test('one reply holds one kind of card: a request and the design are never offer
   await designFirst.run;
   assert.equal(toolResult(designFirst.seen, 'p1').ok, true);
   assert.match(toolResult(designFirst.seen, 'o1').error, /one kind of card/);
-  assert.deepEqual(designFirst.offers, [], 'no request draft');
+  assert.deepEqual(designFirst.offers(), [], 'no request draft');
   assert.equal(designFirst.sent.length, 1, 'the design\'s own card goes out');
   assert.equal(designFirst.sent[0].card.kind, 'post_design');
 });
@@ -522,7 +505,9 @@ test('the prompt lets the bot offer an ordinary request, and never tells the per
   const prompt = designBot.designPrompt({ username: 'evan', design: DESIGN, version: 4, html: '<p>x</p>' });
   assert.match(prompt, /offered with\n {2}offer_request, on the project they name, Homeroom included/);
   assert.match(prompt, /offer_plan is only for this design, never for another request/);
+  assert.match(prompt, /offer_request never for this design: its card cannot carry the design/);
   assert.match(prompt, /Never tell them to file it themselves/);
-  // The line above it still says the bot itself posts and files nothing.
-  assert.match(prompt, /- You never post, file or make anything yourself: when they say it looks good,\n {2}or ask to post it, offer it with offer_plan/);
+  // The line above it still says the bot itself posts and files nothing,
+  // and that approving the design files it with offer_plan (#6864).
+  assert.match(prompt, /- You never post, file or make anything yourself\. When they approve the design \(lgtm, looks good, that's it,\n {2}ship it\) or ask you to build, implement, file or post it, offer it with offer_plan/);
 });

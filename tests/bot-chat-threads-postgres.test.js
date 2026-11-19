@@ -706,12 +706,12 @@ test('the bot\'s turn is always in a thread: Main\'s profile, its tool and its w
   // A first version's thread is told what it is, and its request once filed.
   assert.match(prompts[3], /- It is the thread of the first version of Plant Pal \(project "plant-pal"\)/);
   assert.match(prompts[3], /request_detail with project "plant-pal" and number 1\./);
-  assert.match(prompts[3], /Do not call draw_screen in this thread\./);
+  assert.match(prompts[3], /Do not call start_design in this thread\./);
   // Earlier chat: what was said before, still theirs to write in.
   assert.match(prompts[4], /- It is their Earlier chat thread: what you and they said before every conversation here became a thread of\n  its own\./);
   // A thread started with New thread can do what Main could.
   assert.match(prompts[2], /offer it as a request with offer_request/);
-  assert.match(prompts[2], /call draw_screen: it is drawn here, in this thread/);
+  assert.match(prompts[2], /call start_design: you draw it here, in this thread/);
   assert.match(prompts[2], /offer_new_project so a card with the name and what it will do shows under your reply/);
   assert.match(prompts[2], /unless they ask about everything, or nothing has been asked for in this thread yet\./,
     '"where do things stand?" as a new thread\'s first words is about everything, as it was in Main');
@@ -721,12 +721,14 @@ test('the bot\'s turn is always in a thread: Main\'s profile, its tool and its w
 test('a first version\'s thread holds no design, and a draft leaves a thread that is not its own as it is', async () => {
   const mayor = require('../src/services/homeroom-bot-mayor');
   const refused = await mayor.runTool(null, { user: { id: 9 }, settings: {}, deps: { threadRootId: 5, threadKind: 'first_version' } },
-    'draw_screen', { what: 'A home screen', title: 'Home' });
+    'start_design', { what: 'A home screen', title: 'Home' });
   assert.equal(refused.ok, false);
   assert.match(refused.error, /^No screen is drawn in a first version's thread\. Tell them to start a new thread/);
-  const ctx = { user: { id: 9 }, settings: {}, deps: { threadRootId: 5, threadKind: 'ask' } };
-  assert.equal((await mayor.runTool(null, ctx, 'draw_screen', { what: 'A home screen', title: 'Home' })).ok, true);
-  assert.deepEqual(ctx.drawScreen, { app: null, title: 'Home', brief: 'A home screen' });
+  // Step 6: anywhere else, the design is loaded into the turn itself.
+  const loaded = [];
+  const ctx = { user: { id: 9 }, settings: {}, deps: { threadRootId: 5, threadKind: 'ask' }, loadDesign: async (args) => { loaded.push(args); return { ok: true }; } };
+  assert.equal((await mayor.runTool(null, ctx, 'start_design', { what: 'A home screen', title: 'Home' })).ok, true);
+  assert.deepEqual(loaded, [{ app: null, title: 'Home', brief: 'A home screen' }]);
   assert.match(read('src/services/homeroom-bot-mayor.js'),
     /AND p\.root_message_id = m\.thread_root_id AND p\.user_id = \$2 AND p\.state = 'open'\n(?:\s+--[^\n]*\n)+\s+AND p\.kind NOT IN \('hello', 'first_version', 'earlier', 'note'\)`/);
 });

@@ -341,7 +341,7 @@ test('a checking change words its wait: about N min left, or waiting to sync wit
   assert.deepEqual([onYes.stage, onYes.line], ['up_for_vote', { code: 'conflict_on_yes' }]);
   assert.equal(ws.lineSays(onYes), 'Conflicts with main: Homeroom resolves it once you approve');
   assert.equal(ws.voteOpenOf(onYes), true);
-  // ...but only once it could take one, as voteReadySql reads it: its checks
+  // ...but only once it could take one: its checks
   // passed on the head up for a vote, it is not a first version, and its
   // shots are not still being taken. Until then it is checking, never open
   // for votes.
@@ -597,4 +597,76 @@ test('#6821: a change whose votes are in and waits to sync reads Syncing with ma
   const asRequest = derive({ proposal_status: 'promoted', ...facts, votes_in: true });
   assert.equal(ws.voteOpenOf(asRequest), false);
   assert.notEqual(asRequest.stage, 'up_for_vote');
+});
+
+// 19 Nov 2026 (docs/plans/bot-one-model.md, step 1's last reader): the
+// session of the bot's own build that came to nothing links the request it
+// built (homeroom-bot-live.js), and stays paused until Try again proposes it
+// or starts over. It read as "a change somebody made for it": Building, the
+// builder's move, while the App tab's own decider said Stopped. Its run says
+// what came of it.
+test('the bot\'s own stopped build is stopped, never a change somebody is building', () => {
+  const stopped = {
+    verdict: 'ready', build_ok: false, build_error: 'the change was built but could not be proposed: Server is restarting',
+    build_session_id: 88, lc_id: 88, lc_status: 'paused', lc_by: null, first_version: true,
+  };
+  const out = derive(stopped);
+  assert.deepEqual([out.stage, out.reason, out.whoseMove], ['stopped', 'build_failed', 'requester']);
+  const blocked = derive({ ...stopped, build_error: 'blocked: needs a payment provider' });
+  assert.deepEqual([blocked.stage, blocked.why], ['waiting_for_you', 'needs_detail']);
+  // A change of somebody else's for it, or a build of the bot's that has not
+  // come to anything yet, is still where it stands.
+  const other = derive({ ...stopped, lc_id: 99 });
+  assert.deepEqual([other.stage, other.whoseMove], ['building', 'builder']);
+  assert.equal(derive({ ...stopped, lc_id: 99, lc_by: 'maya' }).line.code, 'claimed');
+  assert.equal(derive({ ...stopped, build_ok: true }).stage, 'building', 'built, its proposal not recorded yet');
+});
+
+// 19 Nov 2026: the "new proposal to vote on" ping is rung from the stored
+// row, as the requester's bell is: when a change's row opens for votes
+// (vote_open turns true), never on a predicate of its own inside the
+// transition that settled its checks.
+test('a change whose row opens for votes asks its voters, once, and nothing else does', async () => {
+  const notifications = require('../src/services/notifications');
+  const asked = [];
+  const real = notifications.createPrProposedNotifications;
+  notifications.createPrProposedNotifications = async (_db, args) => {
+    asked.push(args);
+    return [{ id: 901, user_id: 5 }, { id: 902, user_id: 6 }];
+  };
+  const db = { async query() { return { rows: [] }; } };
+  try {
+    const opened = {
+      appId: 3, kind: 'change', ref: 41, sessionId: 41,
+      state: { stage: 'up_for_vote', voteOpen: true, requesterId: 9 }, prev: { stage: 'checking', voteOpen: false },
+    };
+    const pushes = await ws.pushesOf(db, [opened], { cards: false });
+    assert.deepEqual(asked, [{ appId: 3, sessionId: 41, proposerId: 9 }], 'its author is the proposer, left out');
+    assert.deepEqual(pushes.filter((p) => p.data?.type === 'notification_new'), [
+      { kind: 'user', routing: { userId: 5 }, data: { type: 'notification_new', notificationId: 901 } },
+      { kind: 'user', routing: { userId: 6 }, data: { type: 'notification_new', notificationId: 902 } },
+    ], 'their open tabs hear of each row');
+    // A first row already open (the sweep seeding one) asks too; one that
+    // stays open, is not open, or is a request's row asks nothing.
+    asked.length = 0;
+    await ws.pushesOf(db, [
+      { ...opened, ref: 42, sessionId: 42, prev: null },
+      { ...opened, ref: 43, sessionId: 43, prev: { stage: 'up_for_vote', voteOpen: true } },
+      { ...opened, ref: 44, sessionId: 44, state: { stage: 'going_live', voteOpen: false, requesterId: 9 } },
+      { ...opened, ref: 45, sessionId: 45, state: { stage: 'checking', voteOpen: false, requesterId: 9 } },
+      { ...opened, kind: 'request', ref: 7, issueNumber: 7, sessionId: 46 },
+    ], { cards: false });
+    assert.deepEqual(asked.map((a) => a.sessionId), [42]);
+  } finally {
+    notifications.createPrProposedNotifications = real;
+  }
+  // The ping reads the same row: open for votes, and nothing of its own.
+  const rule = fs.readFileSync(path.join(ROOT, 'src/workflow/rules/proposal-notifications.ts'), 'utf8');
+  assert.match(rule, /SELECT 1 FROM work_states ws\s+WHERE ws\.app_id = \$2 AND ws\.item_kind = 'change' AND ws\.item_ref = \$3 AND ws\.vote_open/);
+  assert.doesNotMatch(rule, /voteReadySql|firstVersionSql/);
+  // Nothing else rings it: not the transitions that settle a change's checks
+  // or its conflict, nor a manifest PR's route.
+  for (const file of ['src/workflow/proposal/machine.ts', 'src/workflow/preview/machine.ts', 'src/workflow/merge-queue/machine.ts', 'src/services/rename-pr.js']) {
+    assert.doesNotMatch(fs.readFileSync(path.join(ROOT, file), 'utf8'), /createPrProposedNotifications\(/, file);
+  }
 });

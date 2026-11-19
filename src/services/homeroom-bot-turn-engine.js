@@ -3,7 +3,8 @@
 // One engine for Homeroom bot's in-process model turns (5 Nov 2026, step 1 of
 // one bot per thread): the chat (homeroom-bot-mayor.js), the voice in
 // request, change and chat threads (homeroom-bot-voice.js), the design bot
-// (design-bot.js) and the look at each project before a request is filed on
+// (design-bot.js; step 6, 19 Nov 2026: a capability of the chat's own turn now,
+// with no rounds of its own) and the look at each project before a request is filed on
 // several (homeroom-bot-already-done.js). Each used to count its rounds, pick
 // its last round's tools, keep its calls and results, and record its spend in
 // a loop of its own, with the same mechanics written four ways.

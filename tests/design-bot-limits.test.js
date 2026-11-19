@@ -16,6 +16,7 @@ const path = require('node:path');
 
 const mayor = require('../src/services/homeroom-bot-mayor');
 const designBot = require('../src/services/design-bot');
+const profiles = require('../src/services/bot-profiles');
 
 const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
@@ -49,8 +50,8 @@ test('#6358: a cut-off design draw is asked again with the design retry allowanc
     toolChoice: 'auto',
     where: 'd1',
     maxOutputTokens: designBot.DESIGN_OUTPUT_TOKENS,
-    retryOutputTokens: designBot.DESIGN_RETRY_OUTPUT_TOKENS,
-    timeoutMs: designBot.DESIGN_REQUEST_TIMEOUT_MS,
+    retryOutputTokens: profiles.DESIGN_LIMITS.retryOutputTokens,
+    timeoutMs: profiles.DESIGN_LIMITS.requestTimeoutMs,
   });
 
   assert.equal(res.content, 'The whole page is here.');
@@ -62,37 +63,38 @@ test('#6358: a cut-off design draw is asked again with the design retry allowanc
   for (const request of sent) assert.equal('retryOutputTokens' in request, false, 'never sent to the model');
 });
 
-test('#6358: the design turn passes its profile\'s allowance, retry and clock to askModel', () => {
+test('#6358: the design turn passes its profile\'s allowance, retry and clock to askModel', async () => {
   assert.equal(designBot.DESIGN_OUTPUT_TOKENS, 16_000);
-  assert.equal(designBot.DESIGN_RETRY_OUTPUT_TOKENS, 32_000);
-  assert.equal(designBot.DESIGN_REQUEST_TIMEOUT_MS, 180_000);
-  const src = read('src/services/design-bot.js');
-  assert.match(src, /maxOutputTokens: DESIGN_OUTPUT_TOKENS,/);
-  assert.match(src, /retryOutputTokens: DESIGN_RETRY_OUTPUT_TOKENS,/);
-  assert.match(src, /timeoutMs: DESIGN_REQUEST_TIMEOUT_MS,/);
+  assert.deepEqual([profiles.DESIGN_LIMITS.retryOutputTokens, profiles.DESIGN_LIMITS.requestTimeoutMs], [32_000, 180_000]);
+  // Step 6: the chat's own turn asks with them while the design is loaded.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /maxOutputTokens: room\.outputTokens, retryOutputTokens: room\.retryOutputTokens, timeoutMs: room\.requestTimeoutMs,/);
   // The picture-look request keeps its own short allowance.
-  assert.match(src, /maxOutputTokens: Math\.min\(PICTURE_TOKENS \* pictures\.length \+ 200, DESIGN_OUTPUT_TOKENS\)/);
+  assert.match(read('src/services/design-bot.js'), /maxOutputTokens: Math\.min\(PICTURE_TOKENS \* pictures\.length \+ 200, DESIGN_OUTPUT_TOKENS\)/);
+  // And a whole turn shows it: a design thread's request has the design's
+  // room and clock; an ordinary thread's has the chat's.
+  const asked = [];
+  const rooms = (req) => { asked.push([req.maxOutputTokens, req.timeoutMs]); return { content: '', toolCalls: [callOf('reply', { text: 'Fine.' })] }; };
+  const design = { latest: 1, rootId: 500, threadId: 7, state: 'open', surface: 'app', title: 'Recipes', width: 390, height: 844, app: { slug: 'recipebot', name: 'RecipeBot' }, versions: [] };
+  await appTurn([rooms], { design, current: { version: 1, html: '<main>Recipes</main>' }, handoff: false }).run;
+  await designChatTurn([rooms]).run;
+  assert.deepEqual(asked, [[16_000, 180_000], [8_000, 90_000]]);
 });
 
 // ── #6681: the check and the look before a version is shown ──────────────
 
-const designThreads = require('../src/services/design-threads');
+const { designChatTurn } = require('./lib/design-chat-turn');
 
 const callOf = (name, args, id = `c${name}`) => ({ id, function: { name, arguments: JSON.stringify(args) } });
 
-/** A design turn on an app surface, with a scripted model and no database. `design`/`current` are a later turn's thread. */
+/**
+ * A design turn on an app surface, with a scripted model and no database:
+ * step 6, the chat's own turn, which starts the design (start_design) as the
+ * chat's hand-off once did, unless `design`/`current` are a later turn's
+ * thread.
+ */
 function appTurn(steps, { deps: extra = {}, design = null, current = null, handoff = true, pictures = [] } = {}) {
-  const sent = [];
-  const seen = [];
-  const versions = [];
-  const recorded = [];
-  let i = 0;
-  const chat = async (req) => {
-    seen.push(structuredClone(req.messages));
-    const step = steps[Math.min(i, steps.length - 1)];
-    i += 1;
-    return typeof step === 'string' ? { content: step, toolCalls: [] } : { content: step.content || '', toolCalls: step.calls };
-  };
+  const app = { id: 5, slug: 'recipebot', name: 'RecipeBot' };
   const entry = {
     found: { app: { id: 5, slug: 'recipebot' }, repo: { owner: 'o', repo: 'recipebot' } },
     path: 'public/index.html',
@@ -101,55 +103,31 @@ function appTurn(steps, { deps: extra = {}, design = null, current = null, hando
       + '<script>tailwind.config = { theme: { extend: { colors: { paper: "#f7f1e6" } } } }</script>'
       + '</head><body><main class="paper">Recipes</main></body></html>',
   };
-  const deps = {
-    apiKey: 'sk-test', seesImages: false, sleep: async () => {}, chat,
-    linkedCss: '',
-    dm: { async sendDm(_pool, args) { sent.push(args); return { messageId: 900 + sent.length }; } },
-    mayor: Object.assign(Object.create(mayor), {
-      async recordTurn(_pool, args) { recorded.push(args); },
-      async turnsLastHour() { return 0; },
-      async botKey() { return 'sk-test'; },
+  const start = { calls: [callOf('start_design', { what: 'The recipes home screen', title: 'Recipes' })] };
+  const turn = designChatTurn(handoff && !design ? [start, ...steps] : steps, {
+    design, current, surface: 'app', config: { selfAppSlug: 'homeroom' },
+    ask: 'Draw the recipes home screen',
+    room: { rootId: 500, threadId: 7, conversationId: 41, kind: 'ask', app, about: null },
+    // The pictures they sent, as the design reads them (picturesOf).
+    answer: (text) => (pictures.length && /FROM conversation_message_attachments/.test(text) && /kind = 'image'/.test(text)
+      ? { rows: pictures } : undefined),
+    mayorOverrides: {
       async sourceRepo() { return entry.found; },
       async findApp() { return entry.found.app; },
       async canView() { return true; },
-      SECRET_PATH_RE: mayor.SECRET_PATH_RE,
-    }),
-    github: {
-      async getFileContent(_o, _r, p) { return p === 'public/index.html' ? entry.html : null; },
     },
-    designThreads: {
-      ...designThreads,
-      surfaceFor: () => 'app',
-      async versionOf() { return current; },
-      async ensureDesign() { return { threadId: 7, title: 'Recipes', app: { id: 5, slug: 'recipebot', name: 'RecipeBot' } }; },
-      async addVersion(_pool, args) { versions.push(args); return { version: versions.length }; },
-      async noteVersionMessage() {},
-      bareNote: designThreads.bareNote,
-      versionLine: designThreads.versionLine,
+    threads: {
+      async ensureDesign() { return { threadId: 7, rootId: 500, title: 'Recipes', app }; },
+      async addVersion(_pool, args) { turn.versionArgs.push(args); return { version: turn.versionArgs.length }; },
     },
-    designCapture: {
-      async renderDesign() { return { ok: false, reason: 'no_render' }; },
+    deps: {
+      linkedCss: '',
+      github: { async getFileContent(_o, _r, p) { return p === 'public/index.html' ? entry.html : null; } },
+      designCapture: { async renderDesign() { return { ok: false, reason: 'no_render' }; } },
+      ...extra,
     },
-    ...extra,
-  };
-  const pool = {
-    async query(sql) {
-      if (pictures.length && /conversation_message_attachments/i.test(String(sql))) return { rows: pictures };
-      return { rows: [] };
-    },
-  };
-  const run = designBot.answer(pool, { selfAppSlug: 'homeroom' }, {
-    bot: { id: 2, username: 'homeroom_bot' },
-    user: { id: 9, username: 'evan' },
-    settings: { mode: 'live' },
-    conversationId: 41,
-    message: { id: 71, content: 'Draw the recipes home screen' },
-    thread: { rootId: 500, threadId: 7, conversationId: 41, app: { id: 5, slug: 'recipebot', name: 'RecipeBot' } },
-    design,
-    handoff,
-    deps,
   });
-  return { run, sent, seen, versions, recorded };
+  return { ...turn, versions: turn.versionArgs };
 }
 
 test('#6681: a version whose classes mostly match nothing, or whose icon has no size, is sent back once', async () => {
@@ -213,7 +191,7 @@ test('#6681: the look is held once and skipped when no render can be made', asyn
   ]);
   await turn.run;
   const failures = turn.recorded.flatMap((r) => r.failures || []);
-  assert.ok(failures.includes('d2:look_skipped'), 'the failed render is recorded');
+  assert.ok(failures.includes('d3:look_skipped'), 'the failed render is recorded (its reply is the turn\'s third round, after start_design)');
   assert.equal(failures.filter((f) => /look_skipped$/.test(f)).length, 1, 'the look is tried once');
   assert.equal(turn.versions.length, 1, 'the version is shown without the look');
 });

@@ -262,15 +262,29 @@ const FV_ROW = {
   slug: 'plant-pal', name: 'Plant Pal', app_status: 'running', username: 'maya', conversation_id: 12,
 };
 
+// 19 Nov 2026 (docs/plans/bot-one-model.md): where it stands is its
+// request's stored work state (services/work-state.js), the row the bot page
+// reads, as each stage below reaches it; its queue row's reason is a record.
+const WORK = Object.freeze({
+  queued: { stage: 'reading', line: { code: 'queued', place: 1 } },
+  reading: { stage: 'reading' },
+  question: { stage: 'waiting_for_you', why: 'question' },
+  plan: { stage: 'waiting_for_you', why: 'plan' },
+  planning: { stage: 'planning' },
+  build_queued: { stage: 'building', line: { code: 'queued', place: 1 } },
+  starting: { stage: 'building', line: { code: 'starting' } },
+});
+
 async function stateWith(stage, queueReason, viewerId = null) {
   const dm = require('../src/services/homeroom-bot-dm');
-  const progress = require('../src/services/homeroom-bot-progress');
-  const pool = fakePool([[FV_ROW], []]);
+  // The first version's record, then its records' times (its queue row's reason).
+  const pool = fakePool([[FV_ROW], [{ queue_reason: queueReason }]]);
   return dm.firstVersionState(pool, 5, {
     viewerId,
-    progress: {
-      ...progress,
-      requestStates: async () => [{ row: { app_id: 5, issue_number: 1, queue_reason: queueReason }, state: { stage } }],
+    workState: {
+      async forItems() {
+        return [{ kind: 'request', appId: 5, issueNumber: 1, why: null, reason: null, line: null, leadChangeId: null, ...WORK[stage] }];
+      },
     },
   });
 }
@@ -287,9 +301,12 @@ test('a plan its creator asked to change stays on the plan\'s step while it is r
   // The first read of the description is still step 2.
   const first = await stateWith('reading', 'new');
   assert.deepEqual([first.step, first.line], [2, 'planning']);
-  // A question the new read asks waits on them, as any question does.
+  // A question the new read asks waits on its creator, as any question
+  // does (the work state's waiting_for_you is always theirs): said to them,
+  // and "Planning it" to anybody else.
   const asked = await stateWith('question', 'plan_change', 7);
-  assert.deepEqual([asked.step, asked.line], [2, 'planning'], 'a question in the record, not one waiting on them');
+  assert.deepEqual([asked.step, asked.line, asked.question], [2, 'question', true]);
+  assert.deepEqual([(await stateWith('question', 'plan_change', 99)).line], ['planning']);
   // The new plan, once it is sent, is the plan's own step again, and waits
   // on its creator: said for whoever reads it (buildLineOf).
   const sent = await stateWith('plan', 'plan_change');
@@ -299,8 +316,8 @@ test('a plan its creator asked to change stays on the plan\'s step while it is r
   // Changed in changePlan, read here: the reason they agree on.
   const src = read('src/services/homeroom-bot-dm.js');
   assert.match(src, /enqueueFront\(pool, \{ appId: app\.id, issueNumber, userId: user\.id, reason: 'plan_change' \}\)/);
-  assert.match(src, /const replanning = found\.row\?\.queue_reason === 'plan_change'\s+&& \(found\.state\.stage === 'queued' \|\| found\.state\.stage === 'reading'\);/);
-  assert.match(read('src/services/homeroom-bot-progress.js'), /q\.reason AS queue_reason,/);
+  assert.match(src, /const replanning = times\.queue_reason === 'plan_change' && \(stageNow === 'queued' \|\| stageNow === 'reading'\);/);
+  assert.match(src, /SELECT q\.reason AS queue_reason, run\.id AS run_id,/);
 });
 
 test('"Write a plan" names one wait: the plan waiting on its creator is their turn', async () => {

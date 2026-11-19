@@ -37,12 +37,17 @@ test('the design bot offers a plan and a project as cards, its tools last, and n
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Plant pal' }, title: 'List', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
   });
-  assert.match(prompt, /You never post, file or make anything yourself: when they say it looks good,\n {2}or ask to post it, offer it with offer_plan/);
+  // #6864: approving it (lgtm, implement, file it) is offer_plan too.
+  assert.match(prompt, /You never post, file or make anything yourself\. When they approve the design \(lgtm, looks good, that's it,\n {2}ship it\) or ask you to build, implement, file or post it, offer it with offer_plan/);
   assert.match(prompt, /offer it with offer_plan and project when they name an existing project to put it on, and with offer_project\n {2}only when they want a new project/);
-  const src = read('src/services/design-bot.js');
-  assert.match(src, /if \(offered && !changed && !error\) \{\n {4}return mayor\.sendDesignOffer\(/, 'the card is the turn\'s answer');
+  // Step 6: the chat's own turn sends the card, as the answer or under the
+  // version the same turn made.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /if \(caps\.design\?\.offered\) \{\n {4}return sendDesignOffer\(pool, \{/, 'the card is the turn\'s answer');
   assert.match(src, /key: `hrbot-design-offer-\$\{message\.id\}`/, 'or follows the version the same turn made');
-  assert.match(src, /if \(design && !\['open', 'posted', 'filed'\]\.includes\(design\.state\)\) return say\(CLOSED_TEXT\);/, 'a posted design is still worked on');
+  assert.match(read('src/services/design-bot.js'),
+    /if \(design && !\['open', 'posted', 'filed'\]\.includes\(design\.state\)\) return \{ refused: CLOSED_TEXT, why: 'closed' \};/,
+    'a posted design is still worked on');
 });
 
 test('a new-project design\'s plan says it was drawn with Homeroom\'s own stylesheets', () => {
@@ -153,7 +158,7 @@ test('a new project\'s thread: its turns know what it is for, and a new one is t
   assert.ok(mayor.TOOLS.some((t) => t.function.name === 'offer_new_project'));
   const fresh = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'any', state: 'open' } } });
   assert.match(fresh, /call\n  offer_new_project so a card with the name and what it will do shows under your reply/);
-  assert.match(fresh, /call draw_screen: it is drawn here, in this thread/);
+  assert.match(fresh, /call start_design: you draw it here, in this thread/);
   // A thread opened for one before keeps its own words.
   const prompt = mayor.systemPrompt({ username: 'ada', thread: { draft: { kind: 'ask', changeKind: 'project', state: 'open' } } });
   assert.match(prompt, /It is the private thread you opened for a NEW project, which does not exist yet\./);
@@ -310,7 +315,7 @@ test('#6151: the design bot is told where a filed design\'s request stands; an u
   const prompt = designBot.designPrompt({ username: 'evan', design: { ...base, state: 'filed', number: 14 }, version: 4, html: '<p>x</p>', filed });
   assert.match(prompt, /\nFILED: this design is request #14 on Ear Trainer\. Homeroom bot: building \(its next step: checks\)\.\n/);
   assert.match(prompt, /- Asked whether it will be built, or when: say Homeroom bot builds it from the plan and where it stands now\.\n {2}Never say it cannot be built or that someone else has to start it, unless the line above says a person must decide\./);
-  assert.match(prompt, /- You never post, file or make anything yourself: when they say it looks good,/, 'its own role is as it was');
+  assert.match(prompt, /- You never post, file or make anything yourself\. When they approve the design/, 'its own role is as it was');
   assert.ok(prompt.indexOf('FILED:') < prompt.indexOf('THE CURRENT VERSION'));
   // Posted as the plan on a request, it is that request's.
   const posted = await designBot.filedOf({}, { design: { ...base, state: 'posted', number: 14 }, project, settings: { mode: 'live' }, deps });
@@ -512,13 +517,16 @@ test('#6355: a version line says "Version N:" once, and the note does not repeat
   assert.equal(designs.bareNote('rows in the markup'), 'rows in the markup');
   assert.equal(designs.versionLine(5, 'Version 5: rows in the markup, no script'), 'Version 5: rows in the markup, no script.');
   assert.equal(designs.versionLine(5, 'Version 5: Version 5: x'), 'Version 5: x.');
-  assert.equal(designs.versionLine(5, 'version 4 - x; Version 4: y'), 'Version 5: x; y.');
+  // Step 6 (#6864): one summary, said as it was written: never split on "; "
+  // and joined again from edits' notes.
+  assert.equal(designs.versionLine(5, 'version 4 - x; y'), 'Version 5: x; y.');
   assert.equal(designs.versionLine(3, 'Version 3:'), 'Version 3.');
   assert.equal(designs.versionLine(3, 'Version 3: A green Save button.'), 'Version 3: A green Save button.');
   const src = read('src/services/design-bot.js');
   assert.doesNotMatch(src, /it names the version/);
-  assert.match(src, /What it is, in a few plain words\. Leave out the version number: the thread adds it\./);
-  assert.match(src, /What changed, in a few plain words\. Leave out the version number: the thread adds it\./);
-  assert.match(src, /notes\.push\(threads\.bareNote\(screen\.note\)\)/, 'a written screen\'s note is stored bare');
-  assert.match(src, /notes\.push\(threads\.bareNote\(clip\(args\.note, 120\)\)\)/, 'an edit\'s note is stored bare');
+  assert.doesNotMatch(src, /notes\.push\(|notes\.join\('; '\)/, 'no note per edit, and none joined');
+  // The reply's one summary, told to leave the number out.
+  const reply = require('../src/services/homeroom-bot-mayor').DESIGN_REPLY_TOOL.function.parameters.properties;
+  assert.match(reply.summary.description, /written once for the whole version, at most\s+200 characters, with no version number/);
+  assert.match(reply.text.description, /Never write a version number for the version you saved/);
 });

@@ -2487,26 +2487,42 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(flat.status, 'open');
   });
 
-  await t.test('1 Nov 2026: draw_screen ends the turn and hands it to the designer, for the project it names', async () => {
+  await t.test('step 6: start_design loads the design into this same turn, for the project it names, and the turn answers', async () => {
     await pool.query('DELETE FROM homeroom_bot_dm_turns WHERE user_id = $1', [ada.id]);
-    const handed = [];
+    const roomed = [];
+    const opening = [];
     const seen = [];
-    const designBot = { async draw(_pool, _config, args) { handed.push(args); return { messageId: 4242 }; } };
+    // The design capability itself is design-bot.js's (its own suites): here
+    // it is a session that draws nothing, so what the turn does with
+    // start_design can be pinned against the real database.
+    const session = {
+      capability: 'design', prompt: 'THIS THREAD\'S DESIGN\n(the design section)', projectName: 'Note board',
+      started: true, firstDrawing: true, offered: null, card: null,
+      owns: () => false, tools: () => [], offerFor: () => ({ notes: [] }), version: () => 1, changed: () => false,
+      shown: () => false, facts: () => ({ design: true, drew: false }), filterClaims: (found) => found,
+      endNote: () => null, holdReply: async () => null, notDrawn: () => null, async close() {},
+    };
+    const designBot = {
+      ...require('../src/services/design-bot'),
+      async roomFor(_pool, args) { roomed.push(args); return { room: { rootId: 1, threadId: null, app: null }, opened: false }; },
+      async openSession(_pool, _config, args) { opening.push(args); return session; },
+    };
     const sent = await turn('the note cards look cramped, can you show me something roomier?', scripted([
-      [['draw_screen', { what: 'Roomier note cards', title: 'Note cards', project: 'note-board' }]],
-      [['reply', { text: 'never sent' }]],
+      [['start_design', { what: 'Roomier note cards', title: 'Note cards', project: 'note-board' }]],
+      [['reply', { text: 'Which do you want first: bigger cards or fewer on a row?' }]],
     ], seen), { deps: { designBot } });
-    assert.deepEqual(sent, { messageId: 4242 }, 'the designer answers');
-    assert.equal(seen.length, 1, 'no round after it, and no reply of its own');
-    assert.equal(handed.length, 1);
-    assert.deepEqual([handed[0].ask.app.slug, handed[0].ask.title, handed[0].ask.brief], ['note-board', 'Note cards', 'Roomier note cards']);
-    assert.equal(handed[0].message.content, 'the note cards look cramped, can you show me something roomier?');
-    const ctx = { user: ada };
-    assert.equal((await mayor.drawScreen(pool, ctx, { what: 'x', title: 'X', project: 'no-such-project' })).ok, false, 'a project she cannot see is no draw');
-    assert.equal(ctx.drawScreen, undefined);
-    assert.equal((await mayor.drawScreen(pool, ctx, { what: '', title: 'X' })).ok, false, 'it says what to draw');
-    assert.equal((await mayor.drawScreen(pool, ctx, { what: 'A seed calendar', title: 'Calendar' })).ok, true);
-    assert.deepEqual(ctx.drawScreen, { app: null, title: 'Calendar', brief: 'A seed calendar' }, 'or a new project\'s');
+    assert.equal(seen.length, 2, 'the turn goes on after it, and replies itself');
+    // `scripted` keeps each whole request, so its messages are `.messages`.
+    assert.ok(seen[1].messages.some((m) => m.role === 'system' && m.content === session.prompt), 'with the design section');
+    assert.equal(roomed.length, 1);
+    assert.deepEqual([roomed[0].app.slug, roomed[0].title], ['note-board', 'Note cards']);
+    assert.deepEqual([opening[0].brief, opening[0].started, opening[0].openedAt], ['Roomier note cards', true, 1]);
+    assert.equal((await read(sent)).content, 'Which do you want first: bigger cards or fewer on a row?');
+    const ctx = { user: ada, loadDesign: async (args) => ({ ok: true, args }) };
+    assert.equal((await mayor.startDesign(pool, ctx, { what: 'x', title: 'X', project: 'no-such-project' })).ok, false, 'a project she cannot see is no draw');
+    assert.equal((await mayor.startDesign(pool, ctx, { what: '', title: 'X' })).ok, false, 'it says what to draw');
+    assert.deepEqual((await mayor.startDesign(pool, ctx, { what: 'A seed calendar', title: 'Calendar' })).args,
+      { app: null, title: 'Calendar', brief: 'A seed calendar' }, 'or a new project\'s');
   });
 
   // Homeroom bot parity, P1 and P2: what the reply looked at, and the card

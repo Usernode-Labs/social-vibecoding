@@ -66,11 +66,15 @@ const DOING_WORDS: Record<string, string> = {
   designing: 'messages:thread.botWorking.designing',
   drafting: 'messages:thread.botWorking.drafting',
   writing: 'messages:thread.botWorking.writing',
+  // #6864: a live draft's code, changed in the chat's own turn.
+  changing_draft: 'messages:thread.botWorking.changingDraft',
 };
 
 /** What the card says the bot is doing: "Reading request #12", or "Thinking" for nothing (or a kind it does not know). */
 export function botDoingLine(t: Translate, doing: BotDoing | null | undefined): string {
   if (doing?.kind === 'request' && doing.number) return t('messages:thread.botWorking.request', { number: doing.number });
+  // #6864: "Drawing version 4", the version the drawing is saved as.
+  if (doing?.kind === 'drawing' && doing.version) return t('messages:thread.botWorking.drawingVersion', { version: doing.version });
   // #6354: "Opening the Homeroom bot page as it is now".
   if (doing?.kind === 'capturing') {
     return doing.page

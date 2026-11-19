@@ -2,20 +2,28 @@
 
 // Homeroom bot's thread kinds, each with its profile (docs/plans/bot-one-model.md,
 // step 5). A thread is the unit the bot answers in: a thread of a person's
-// chat with it (a private thread, a design thread; 14 Nov 2026: Main Chat is
-// gone, and so is its kind `main`: every message there is in a thread), or a
-// project's thread (a request's, a change's, its chat or a topic, a reply
-// thread). Each kind's
-// profile is data: the surface that runs its turn on the turn engine, the
-// scope of the tools it offers (src/services/bot-tools/), the tools it may
-// offer, its limits, the prompt section it speaks from, and, on a project's
-// thread, when it speaks (`speaks`, the rules src/services/homeroom-bot-
-// voice.js gate runs in this order). The surfaces read their limits from
-// here; tests/bot-profiles.test.js holds each surface to its profile.
+// chat with it (a private thread; 14 Nov 2026: Main Chat is gone, and so is
+// its kind `main`: every message there is in a thread), or a project's
+// thread (a request's, a change's, its chat or a topic, a reply thread).
+// Each kind's profile is data: the surface that runs its turn on the turn
+// engine, the scope of the tools it offers (src/services/bot-tools/), the
+// tools it may offer, its limits, the prompt section it speaks from, and, on
+// a project's thread, when it speaks (`speaks`, the rules src/services/
+// homeroom-bot-voice.js gate runs in this order). The surfaces read their
+// limits from here; tests/bot-profiles.test.js holds each surface to its
+// profile.
+//
+// Step 6 (19 Nov 2026): one agent per private thread. A private thread had
+// three speakers (the chat, the designer, the live draft's bot), picked by
+// the thread's state before any model read the message. It has one now: the
+// private profile, which gains a CAPABILITY by the thread's state (a design
+// it holds or starts, a live draft open in it). That capability's tools, its
+// prompt section and its limits are added to the chat's own turn, and only
+// in those threads (CAPABILITIES below).
 //
 // When the bot speaks is unchanged (decision 9): today's rules, written down.
 
-const KINDS = Object.freeze(['private', 'design', 'draft', 'request', 'change', 'channel', 'reply']);
+const KINDS = Object.freeze(['private', 'request', 'change', 'channel', 'reply']);
 
 // A project's thread kind, by the place type the chat stores it under.
 const PLACE_KIND = Object.freeze({ issue: 'request', session: 'change', chat: 'channel', category: 'channel', message: 'reply' });
@@ -56,6 +64,9 @@ const THREAD_LIMITS = Object.freeze({
   continueMinutes: 30,
 });
 
+// The design capability (design-bot.js openSession): its limits, which the
+// turn's grow to once its tools are loaded. Its rounds count from the round
+// the design opened in (drawByRound, readUntilRound).
 const DESIGN_LIMITS = Object.freeze({
   rounds: 12,
   drawByRound: 8,
@@ -72,11 +83,11 @@ const DESIGN_LIMITS = Object.freeze({
   editsPerCall: 16,
 });
 
-// A private thread with an open live draft (services/live-drafts.js): the
-// bot changes the draft's code while its preview runs beside the chat. An
-// answer reads some code, edits, saves (the preview restarts) and replies;
-// a save that stops the app is fixed in the same turn, so it may save a few
-// times.
+// The draft capability (live-draft-bot.js openSession): a private thread
+// with an open live draft (services/live-drafts.js), whose code the turn
+// changes while its preview runs beside the chat. It reads some code,
+// edits, saves (the preview restarts) and replies; a save that stops the
+// app is fixed in the same turn, so it may save a few times.
 const DRAFT_LIMITS = Object.freeze({
   rounds: 18,
   appliesPerTurn: 3,
@@ -91,15 +102,19 @@ const DRAFT_LIMITS = Object.freeze({
 const CHAT_TOOLS = Object.freeze([
   'progress', 'my_work', 'request_detail', 'my_projects', 'list_source', 'read_source', 'get_spec', 'answer_question',
   'revise_proposal', 'comment_on_request', 'start_request', 'offer_request', 'offer_move_request',
-  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'draw_screen', 'open_app_preview', 'close_thread',
-  'report_problem', 'offer_new_project', 'reply',
+  'offer_copy_request', 'offer_close_request', 'withdraw_proposal', 'start_design', 'open_app_preview', 'close_thread',
+  'report_problem', 'offer_new_project', 'change_plan', 'reply',
 ]);
+// What each capability adds to the private profile's tools (step 6). The
+// design's reads of its project's code and board are its own: they read the
+// design's project unless another is named, and stop once its reading is
+// over. The chat's own reply, close_thread and offer_request serve it.
 const DESIGN_TOOLS = Object.freeze([
-  'write_screen', 'edit_design', 'list_source', 'read_source', 'reply', 'read_plan', 'compare_versions',
-  'make_pictures', 'close_thread', 'offer_plan', 'offer_project', 'offer_request', 'list_requests', 'get_request', 'capture_page',
+  'write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan', 'compare_versions',
+  'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
 ]);
 const DRAFT_TOOLS = Object.freeze([
-  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes', 'reply',
+  'list_files', 'search_code', 'read_file', 'edit_file', 'write_file', 'apply_changes',
 ]);
 // Every project thread offers these; each kind adds its own.
 const THREAD_TOOLS = Object.freeze([
@@ -121,16 +136,11 @@ const PROFILES = Object.freeze({
   // before (decision 10): the chat's turn, told which thread it is in.
   // `scope: 'main'` is the tools' scope (src/services/bot-tools/), which
   // kept its name: the tools of the person's own chat with the bot.
+  // Step 6: every message in a private thread is this profile's turn, with
+  // the capabilities the thread's state gives it (CAPABILITIES).
   private: profile('private', {
     surface: 'chat', scope: 'main', prompt: 'private', limits: CHAT_LIMITS, tools: CHAT_TOOLS, threadTools: true, platformReads: true,
-  }),
-  design: profile('design', {
-    surface: 'design', scope: 'design', prompt: 'design', limits: DESIGN_LIMITS, tools: DESIGN_TOOLS,
-  }),
-  // A private thread whose live draft is open: every message there is the
-  // draft bot's (services/live-draft-bot.js) while it stays open.
-  draft: profile('draft', {
-    surface: 'draft', scope: 'draft', prompt: 'draft', limits: DRAFT_LIMITS, tools: DRAFT_TOOLS,
+    capabilities: Object.freeze(['design', 'draft']),
   }),
   request: profile('request', {
     surface: 'thread', scope: 'thread', prompt: 'request', places: ['issue'], limits: THREAD_LIMITS,
@@ -163,6 +173,18 @@ const PROFILES = Object.freeze({
   }),
 });
 
+// Step 6: what a private thread's turn adds by the thread's state. Each is
+// loaded only where it applies (a thread that holds a design, or a turn that
+// starts one with start_design; a thread whose live draft is open, or a turn
+// that opens one with open_app_preview), so an ordinary chat costs what it
+// did: its tools, its prompt section (`prompt`) and its limits, which the
+// turn's rounds, room and clock grow to while it is loaded. `scope` is its
+// tools' scope (src/services/bot-tools/; a draft's tools are its own).
+const CAPABILITIES = Object.freeze({
+  design: Object.freeze({ capability: 'design', scope: 'design', prompt: 'design', limits: DESIGN_LIMITS, tools: DESIGN_TOOLS }),
+  draft: Object.freeze({ capability: 'draft', scope: 'draft', prompt: 'draft', limits: DRAFT_LIMITS, tools: DRAFT_TOOLS }),
+});
+
 /** A thread kind's profile; throws for a kind there is none of. */
 function profileOf(kind) {
   const found = PROFILES[kind];
@@ -182,18 +204,52 @@ function profileOfPlace(place) {
 }
 
 /**
- * The kind of a thread in a person's chat with the bot, by what the chat
- * found it to be: a design thread, else a private thread (a request card's
- * thread from before among them). 14 Nov 2026: there is no Main Chat, so a
- * message is always in one or the other; one in no other thread is its own
- * thread's first (homeroom-bot-dm.js messageThread).
+ * The kind of a thread in a person's chat with the bot: always private (a
+ * request card's thread from before among them). 14 Nov 2026: there is no
+ * Main Chat; a message in no other thread is its own thread's first
+ * (homeroom-bot-dm.js messageThread). Step 6: a design or a live draft in
+ * the thread is a capability of its turn (capabilitiesInChat), never a kind.
  */
-function kindInChat({ design = null, draft = null } = {}) {
-  if (draft) return 'draft';
-  return design ? 'design' : 'private';
+function kindInChat() {
+  return 'private';
+}
+
+/** A capability's profile data (CAPABILITIES); throws for one there is none of. */
+function capabilityOf(name) {
+  const found = CAPABILITIES[name];
+  if (!found) throw new Error(`bot-profiles: no capability ${name}`);
+  return found;
+}
+
+/**
+ * Step 6: the capabilities a private thread's turn starts with, by what the
+ * chat found in the thread (homeroom-bot-dm.js answerUserMessage):
+ * `threadDesign` (a design it holds) and `threadLiveDraft` (a live draft
+ * open in it). A turn may load one as it runs (start_design,
+ * open_app_preview).
+ */
+function capabilitiesInChat({ threadDesign = null, threadLiveDraft = null } = {}) {
+  return [...(threadDesign ? ['design'] : []), ...(threadLiveDraft ? ['draft'] : [])];
+}
+
+/**
+ * Step 6: the limits a private thread's turn runs with while `loaded` (the
+ * capabilities its tools are loaded for): each the larger of the chat's and
+ * theirs, so a turn grows only where a capability needs it.
+ */
+function turnLimits(loaded = []) {
+  const caps = (Array.isArray(loaded) ? loaded : []).map(capabilityOf);
+  const most = (key) => Math.max(CHAT_LIMITS[key] || 0, ...caps.map((c) => c.limits[key] || 0));
+  return {
+    rounds: most('rounds'),
+    outputTokens: most('outputTokens'),
+    retryOutputTokens: most('retryOutputTokens'),
+    requestTimeoutMs: most('requestTimeoutMs'),
+  };
 }
 
 module.exports = {
-  KINDS, PLACE_KIND, CHAT_LIMITS, THREAD_LIMITS, DESIGN_LIMITS, DRAFT_LIMITS, THREAD_CHECKS, PROFILES,
-  profileOf, kindOfPlace, profileOfPlace, kindInChat,
+  KINDS, PLACE_KIND, CHAT_LIMITS, THREAD_LIMITS, DESIGN_LIMITS, DRAFT_LIMITS, THREAD_CHECKS, PROFILES, CAPABILITIES,
+  CHAT_TOOLS, DESIGN_TOOLS, DRAFT_TOOLS,
+  profileOf, kindOfPlace, profileOfPlace, kindInChat, capabilityOf, capabilitiesInChat, turnLimits,
 };

@@ -72,6 +72,8 @@ export interface BotDoing {
   project?: string;
   /** #6354: the page Homeroom is opening to copy (kind 'capturing'). */
   page?: string;
+  /** #6864: the design version a drawing is saved as (kind 'drawing'): "Drawing version 4". */
+  version?: number;
 }
 
 /**
@@ -87,10 +89,12 @@ export function botDoingOf(raw: unknown): BotDoing | null {
   if (!kind) return null;
   const number = Number(value.number);
   const project = typeof value.project === 'string' ? value.project.replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+  const version = Number(value.version);
   return {
     kind,
     ...(Number.isSafeInteger(number) && number > 0 ? { number } : {}),
     ...(project ? { project } : {}),
+    ...(Number.isSafeInteger(version) && version > 0 ? { version } : {}),
   };
 }
 
