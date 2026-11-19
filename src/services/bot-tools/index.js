@@ -7,5 +7,6 @@ const registry = require('./registry');
 
 require('./source');
 require('./platform');
+require('./artifact');
 
 module.exports = registry;

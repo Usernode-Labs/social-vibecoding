@@ -10,6 +10,7 @@ import { t as translate } from '../../lib/i18n/runtime';
 import { buttonVariants } from '@/components/ui/button';
 
 import { firstSpecScreen, type SpecScreen } from '../../lib/spec-html';
+import { ArtifactFrame } from '../artifact/frame';
 import { lineWords, stageWords, type Stage } from '../../lib/work-state';
 import { BotActivityCard, ActivityLink, spanText } from './bot-activity';
 import { requestKey } from './bot-request';
@@ -404,13 +405,11 @@ export function DrawnSide({ screen, side, label }: { screen: SpecScreen; side: '
   return (
     <div ref={box} className="relative w-full overflow-hidden rounded-lg bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900" style={{ aspectRatio: PICTURE_RATIO }} role="img" aria-label={label}>
       {scale ? (
-        <iframe
-          sandbox=""
-          referrerPolicy="no-referrer"
-          tabIndex={-1}
-          aria-hidden="true"
+        <ArtifactFrame
+          mode="static"
+          inert
           title={label}
-          srcDoc={side === 'before' ? screen.before : screen.after}
+          doc={side === 'before' ? screen.before : screen.after}
           className="pointer-events-none absolute start-0 top-0 origin-top-left border-0"
           style={{ width: screen.width, height: screen.height, transform: `scale(${scale}) translate(${-x}px, ${-y}px)` }}
         />

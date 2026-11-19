@@ -383,13 +383,6 @@ test('#6153: the Vote under a request\'s up-for-a-vote line goes once its vote i
   const dm = require('../src/services/homeroom-bot-dm');
   assert.equal(dm.buildingLine, undefined);
   assert.equal(dm.upForVoteLine, undefined);
-  const { planHtml, planDesignVersion } = require('../src/services/design-threads');
-  const design = { title: 'Home', route: '/', width: 390, height: 844 };
-  assert.equal(planDesignVersion(planHtml({ design, title: 'Design: Home', notes: '', after: '<p>new</p>', version: 4 })), 4, 'a new screen');
-  assert.equal(planDesignVersion(planHtml({ design, title: 'Design: Home', notes: '', before: '<p>was</p>', after: '<p>new</p>', version: 7 })), 7,
-    'a captured one, beside version 1');
-  assert.equal(planDesignVersion('A plan a person wrote, version 3 of it.'), null);
-  assert.equal(planDesignVersion(null), null);
 });
 
 test('the routes the old doors wrote to stay same-origin writes, and the head\'s copy is unchanged', () => {

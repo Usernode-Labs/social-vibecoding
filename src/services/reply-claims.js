@@ -193,6 +193,9 @@ function newProjectDoorShown(t) {
   const draft = t.deps?.threadDraft || null;
   if (draft?.kind === 'ask' && draft.changeKind === 'project') return true;
   const design = t.deps?.threadDesign || null;
+  // Artifacts: only a design's thread draws the door (private-threads.js
+  // stateOf); a plain page is never made into a project.
+  if (design && (design.artifactKind || 'design') !== 'design') return false;
   return !!(design && !design.app?.slug && design.surface !== 'platform');
 }
 
@@ -207,6 +210,15 @@ const NO_CONTROL_CLAIM = /\b(?:from|on) your (?:side|end)\b|\bI\s+(?:can['’]?t
 // blue", "here's the new version": done now. Not "In version 2 I made the
 // header blue", which tells of a version before.
 const DESIGN_DONE = /\bI(?:'ve| have)\s+(?:just\s+|now\s+)?(?:changed|updated|made|moved|added|removed|swapped|replaced|redrawn|drawn|redesigned|reworked)\b|\bI\s+(?:just|now)\s+(?:changed|updated|made|moved|added|removed|swapped|replaced|redrew|drew|redesigned|reworked)\b|\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?(?:version|screen|design)\b/i;
+
+// Artifacts, stage 2: a thread's plain page, said done now in the same
+// words a design is ("I've added the totals", "here's the new version"),
+// or as the page itself ("here's the page", "the page now shows them").
+const PAGE_DONE = new RegExp([
+  DESIGN_DONE.source,
+  String.raw`\bhere(?:'s| is) (?:the|your) (?:new |next |updated )?page\b`,
+  String.raw`\bthe page (?:now )?(?:shows|has)\b`,
+].join('|'), 'i');
 
 // Step 6 (#6864, 6): a thread whose live draft is open, answered by the
 // chat's own turn: "I've made the button bigger", "I changed it", "it's
@@ -500,6 +512,16 @@ const CLAIMS = Object.freeze([
     said: 'says you changed or drew the design',
   },
   {
+    // Artifacts, stage 2: a thread's plain page (artifact-session.js), said
+    // to be written or changed with nothing written or changed this turn.
+    kind: 'page_done',
+    proof: 'turn',
+    re: PAGE_DONE,
+    applies: (t) => !!t.page,
+    turn: (t) => !!t.drew,
+    said: 'says you wrote or changed the page',
+  },
+  {
     // Step 6 (#6864, 6): a live draft's change, said with none saved.
     kind: 'draft_done',
     proof: 'turn',
@@ -615,7 +637,8 @@ function mentions(text, { receipt = null } = {}) {
 // off the surface's own turn context: offer, started, workBusy, batchQueued,
 // revised, recentRevision, described, withdrew, reported, lookRunning,
 // followedUp, steered, pictures, attached, closedThread; and, on
-// a design thread, design, drew, filedDesign, designBuilds; with a live draft
+// a design thread, design, drew, filedDesign, designBuilds; in a plain
+// page's thread (artifacts), page, drew; with a live draft
 // open (step 6), liveDraft, draftSaved; on the voice,
 // readChanges.
 
@@ -1430,7 +1453,15 @@ function repairNote(problems, { tools = null } = {}) {
   // 1 Nov 2026: a screen said to be drawing with nothing drawn.
   // Step 6: with the design tools loaded it draws now; else start_design
   // gives it them first (homeroom-bot-mayor.js).
-  const drawWith = offered('write_screen') ? 'write_screen (or edit_design)' : null;
+  // A design's thread (capture_page is the design kind's alone), where the generic
+  // write and edit draw the screen (stage 3).
+  const drawWith = offered('capture_page') ? 'write_artifact (or edit_artifact)' : null;
+  // Artifacts: a plain page's thread writes and changes it with its own tools.
+  const pageDone = kinds.has('page_done')
+    ? (offered('edit_artifact')
+      ? ' Nothing in the page was written or changed this turn. Change it with edit_artifact (or write it with write_artifact), then reply; or say plainly that nothing changed.'
+      : ' Nothing in the page was changed, so do not say it was.')
+    : '';
   const drawing = kinds.has('drawing') || kinds.has('design_done')
     ? (drawWith
       ? ` You have not drawn anything this turn. Call ${drawWith} now, then reply.`
@@ -1462,7 +1493,7 @@ function repairNote(problems, { tools = null } = {}) {
     onlyLookups ? '' : 'Nothing this turn did, and nothing in the stored records, shows that yet.',
     onlyLookups ? '' : canDoLine,
     onlyLookups ? '' : 'Answer them again without that claim, and keep the rest of what you said.',
-    `${promised}${drafted}${newProject}${shortBrief}${drawing}${draftDone}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
+    `${promised}${drafted}${newProject}${shortBrief}${drawing}${pageDone}${draftDone}${noControl}${notBuilt}${unread}${unknown}${unknownProject} Then call reply again.]`,
   ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 }
 

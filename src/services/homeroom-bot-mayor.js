@@ -506,6 +506,8 @@ const THREAD_STATUS_LINES = Object.freeze([
  */
 function designThreadLines(design, { refused = null } = {}) {
   if (!design) return [];
+  // Artifacts, stage 2: the thread's artifact is a plain page.
+  if (design.artifactKind === 'page') return require('./artifact-session').threadLines(design, { refused });
   const of = design.app?.slug
     ? `of the screen of project "${design.app.slug}"`
     : design.surface === 'platform'
@@ -1206,7 +1208,7 @@ const TOOLS = [
       // Step 6 (#6864): it hands nothing over. It gives this turn the design
       // tools, and the turn draws the screen and says the version it saved.
       name: 'start_design',
-      description: 'Start drawing a screen with them, as a design in this thread: it gives you the design tools (write_screen, edit_design, capture_page and the rest) and the design\'s rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
+      description: 'Start drawing a screen with them, as a design in this thread: it gives you the design tools (write_artifact, edit_artifact, capture_page and the rest) and the design\'s rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
       parameters: {
         type: 'object',
         properties: {
@@ -1219,6 +1221,11 @@ const TOOLS = [
       },
     },
   },
+  // Artifacts, stage 2 (docs/plans/artifacts.md): a page written with them,
+  // kept in this thread. Defined once (src/services/bot-tools/artifact.js);
+  // it loads the artifact capability for the rest of the turn
+  // (artifact-session.js startPage).
+  ...botTools.toolsFor(['write_artifact'], 'main'),
   {
     type: 'function',
     function: {
@@ -1348,6 +1355,9 @@ const REPLY_TOOL = TOOLS.find((tool) => tool.function.name === 'reply');
 // once for the version this turn saved, which the version line says after
 // "Version N:" (design-threads.js versionLine): never joined from the edits'
 // own notes, never cut mid-word.
+// Artifacts: the chat's tools that start a thread's artifact, offered only
+// while none is loaded in the turn.
+const STARTS_ARTIFACT = new Set(['start_design', 'write_artifact']);
 const DESIGN_REPLY_TOOL = Object.freeze({
   type: 'function',
   function: {
@@ -2113,7 +2123,7 @@ function goesOnAfter(text, { rounds, limit, nudged = 0, messages = 0 }) {
  * is the project's name when the caller knows it; `version` (step 6) the
  * design version a drawing or an edit is saved as ("Drawing version 4").
  */
-function doingFor(name, args = {}, { project = null, version = null } = {}) {
+function doingFor(name, args = {}, { project = null, version = null, kind = null } = {}) {
   const v = Number.isSafeInteger(Number(version)) && Number(version) > 0 ? Number(version) : null;
   switch (name) {
     case 'progress':
@@ -2150,6 +2160,14 @@ function doingFor(name, args = {}, { project = null, version = null } = {}) {
     }
     case 'edit_design':
       return v ? { kind: 'drawing', version: v } : { kind: 'designing' };
+    // Artifacts: the generic write and edit. A design's are its drawing, as
+    // write_screen and edit_design were (stage 3); a plain page's, "Writing".
+    case 'write_artifact':
+      if (kind === 'design') return v ? { kind: 'drawing', version: v } : { kind: 'drawing' };
+      return { kind: 'writing' };
+    case 'edit_artifact':
+      if (kind === 'design') return v ? { kind: 'drawing', version: v } : { kind: 'designing' };
+      return { kind: 'writing' };
     case 'offer_request':
       return { kind: 'drafting' };
     case 'reply':
@@ -2188,7 +2206,7 @@ function sayDoing(pool, ctx, name, args = {}) {
       else if (caps.draft?.owns?.(name)) project = caps.draft.projectName || null;
     }
     const version = caps.design?.owns?.(name) ? caps.design.version(name) : null;
-    const what = doingFor(name, args, { project, version });
+    const what = doingFor(name, args, { project, version, kind: caps.design?.owns?.(name) ? caps.design.kind || null : null });
     if (what === undefined) return;
     // #6405: once the turn has named a step, a tool with no name of its own
     // leaves that step up, rather than dropping the card back to "Thinking".
@@ -3239,6 +3257,9 @@ async function startDesign(pool, ctx, args = {}) {
         + '(New thread) and ask for the screen there: you will draw it in that thread.',
     };
   }
+  // Artifacts, stage 2: a thread holds one artifact, and a page's thread is
+  // not where a screen is drawn.
+  if (require('./artifact-session').holdsPage(ctx)) return { ok: false, error: require('./artifact-session').NO_SCREEN_TEXT };
   if (ctx.caps?.design) return { ok: true, note: 'The design tools are yours already: draw or change the screen with them, then reply.' };
   // 15 Nov 2026 (#6683): a screen of another project is not drawn into a
   // thread whose design is of its own project.
@@ -3657,6 +3678,7 @@ async function runTool(pool, ctx, name, args) {
       }
       case 'comment_on_request': return await commentOnRequest(pool, ctx, args);
       case 'start_design': return await startDesign(pool, ctx, args);
+      case 'write_artifact': return await require('./artifact-session').startPage(pool, ctx, args);
       case 'open_app_preview': return await openAppPreview(pool, ctx, args);
       case 'change_plan': return await changePlanTool(pool, ctx, args);
       case 'close_thread': return await closeThread(pool, ctx);
@@ -3665,6 +3687,9 @@ async function runTool(pool, ctx, name, args) {
         // #6523: the New project button is the bot's to offer, in a private
         // thread that is an idea for a project of its own.
         if (!ctx.deps.threadRootId) return { ok: false, error: 'Only in a private thread with no project.' };
+        // Artifacts: a thread that holds a page is never made into a project
+        // (homeroom-bot-dm.js threadForProject refuses it).
+        if (require('./artifact-session').holdsPage(ctx)) return { ok: false, error: require('./artifact-session').NO_PROJECT_TEXT };
         ctx.newProjectOffer = true;
         // #6781: the make screen opens from the brief and name the bot agreed
         // here, never from the person's first line alone.
@@ -4407,16 +4432,19 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       const sections = [];
       // The rounds, room and clock grow to a capability's while it is loaded
       // (bot-profiles.js turnLimits), its rounds counted from where it opened.
-      const loaded = () => [...(caps.design ? ['design'] : []), ...(caps.draft ? ['draft'] : [])];
+      // Artifacts, stage 2: `caps.design` is the session of the thread's
+      // artifact, whatever its kind (artifact-session.js open): a design's,
+      // or a plain page's, each by the capability it names.
+      const loaded = () => [...(caps.design ? [caps.design.capability || 'design'] : []), ...(caps.draft ? ['draft'] : [])];
       const grow = (name, openedAt) => {
         const extra = require('./bot-profiles').capabilityOf(name).limits.rounds;
         turnRounds.limit = Math.max(turnRounds.limit, openedAt + extra);
       };
-      const openDesign = async ({ design, room, app = null, brief = null, started = false, openedAt = 0 }) => {
+      const openDesign = async ({ design, room, app = null, brief = null, started = false, openedAt = 0, kind = null }) => {
         try {
-          return await designBot.openSession(pool, config, {
+          return await (deps.artifactSession || require('./artifact-session')).open(pool, config, {
             bot, user, settings, conversationId, message, design, room, app, brief, started, openedAt, t, imageInput,
-            defer: platformNames, otherOffer: () => !!ctx.offer, grant: platform, deps,
+            defer: platformNames, otherOffer: () => !!ctx.offer, grant: platform, deps, kind,
           });
         } catch (err) {
           t.failures.push(`context:design:${codeOf(err)}`);
@@ -4459,7 +4487,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         grow('design', turnRounds.rounds);
         return {
           ok: true, version: opened.version(),
-          note: `The design tools are yours for the rest of this turn, and its rules follow. Draw it now (write_screen, or capture_page for one of Homeroom's own pages and then edit_design), then reply once: it is saved as version ${opened.version()}.`,
+          note: `The design tools are yours for the rest of this turn, and its rules follow. Draw it now (write_artifact, or capture_page for one of Homeroom's own pages and then edit_artifact), then reply once: it is saved as version ${opened.version()}.`,
         };
       };
       // open_app_preview: the draft capability, loaded for the rest of this turn.
@@ -4474,7 +4502,22 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         grow('draft', turnRounds.rounds);
         return { ok: true };
       };
-      if (caps.design) grow('design', 0);
+      // write_artifact: the artifact capability, loaded for the rest of this
+      // turn in the thread it is in, for the plain kind (a page).
+      ctx.loadArtifact = async ({ kind = 'page', title = null }) => {
+        const got = await designBot.roomFor(pool, { bot, user, message, title, kind, deps });
+        if (!got) return { ok: false, error: (deps.artifactSession || require('./artifact-session')).NO_THREAD_TEXT };
+        const held = await designThreads.designFor(pool, { userId: user.id, rootId: got.room.rootId }).catch(() => null);
+        if (held) return { ok: false, error: 'This thread holds a design or a page already. Say so.' };
+        const opened = await openDesign({ design: null, room: got.room, started: true, openedAt: turnRounds.rounds, kind });
+        if (opened.refused) return { ok: false, error: `${opened.refused} Say so.` };
+        caps.design = opened;
+        if (got.opened) ctx.replyRoot = got.room.rootId;
+        sections.push(opened.prompt);
+        grow(opened.capability, turnRounds.rounds);
+        return { ok: true };
+      };
+      if (caps.design) grow(caps.design.capability || 'design', 0);
       if (caps.draft) grow('draft', 0);
       const messages = [
         {
@@ -4507,11 +4550,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
       const toolsFor = (rounds) => {
         const own = (name) => !!(caps.design?.owns(name) || caps.draft?.owns(name));
         const base = baseTools
-          .filter((tl) => !own(tl.function.name) && !(caps.design && tl.function.name === 'start_design'))
+          // A thread holds one artifact: with one loaded, nothing starts another.
+          .filter((tl) => !own(tl.function.name) && !(caps.design && STARTS_ARTIFACT.has(tl.function.name)))
           .map((tl) => {
             if (!caps.design) return tl;
             if (tl.function.name === 'reply') return DESIGN_REPLY_TOOL;
-            if (tl.function.name === 'offer_request') return DESIGN_OFFER_REQUEST_TOOL;
+            // The design's own project is filed with offer_plan; a plain page files nothing.
+            if (tl.function.name === 'offer_request' && caps.design.capability === 'design') return DESIGN_OFFER_REQUEST_TOOL;
             return tl;
           });
         return [...base, ...(caps.design ? caps.design.tools(rounds) : []), ...(caps.draft ? caps.draft.tools() : [])];
@@ -4883,6 +4928,8 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     ...(ctx.liveWork ? { liveWork: ctx.liveWork } : {}),
     // Step 6: the live draft this reply's change was saved to.
     ...(caps.draft ? caps.draft.meta() : {}),
+    // Artifacts, stage 2: a version shown again under this reply (show_artifact).
+    ...(typeof caps.design?.meta === 'function' ? caps.design.meta() : {}),
   };
   // #6783: a New project offer that carried a brief is its own card under the
   // reply, sent once the reply is in (both below). A card that cannot be sent

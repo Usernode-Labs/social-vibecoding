@@ -18,29 +18,38 @@
  *      that would load from an address (an image, an @import, a url() in a
  *      style, an SVG reference) is taken out too, so the policy below never
  *      has to refuse it: a refusal is a console error on the chat's page.
- *   2. Drawn in a frame with scripts OFF (`REPLY_SANDBOX`: no allow-scripts,
- *      no forms, no top navigation) whose content security policy loads
- *      nothing (`replyCsp`): no image, font, stylesheet or request from
- *      anywhere but this site's own font and data: URLs. A style in it can
- *      only paint inside the frame's box, so it cannot lay anything over
- *      the chat.
+ *   2. Drawn in the one frame every page the bot writes is drawn in
+ *      (../artifact/frame.tsx), static: nothing of the fragment's runs, no
+ *      forms, no top navigation, an origin of its own, under the one policy
+ *      (../artifact/policy.ts) with no origin named, so it loads nothing:
+ *      no image, font, stylesheet or request from anywhere, only data:
+ *      URLs. A style in it can only paint inside the frame's box, so it
+ *      cannot lay anything over the chat.
  *   3. Coloured by the chat's own tokens (`REPLY_TOKENS`), read off the
  *      bubble when the frame is drawn and again when the theme changes, so
  *      the fragment is in the chat's light and dark and its font.
  *
- * The frame is same-origin (allow-same-origin) only so this side can measure
- * it and read what was tapped. Nothing runs in it to make use of that.
+ * Artifacts, stage 1: the frame is NOT same-origin any more. It was
+ * (allow-same-origin), only so this side could measure it and read what was
+ * tapped. Homeroom's own helper inside the frame says both now
+ * (../artifact/frame-doc.ts: `size`, with the boxes of its links and
+ * summaries), let run by a nonce made new for each frame: the one frame's
+ * `helper` mode (../artifact/policy.ts), never its static one. The fragment
+ * has no script of its own left to run. Its font is written into the document
+ * as data, since a frame with an origin of its own cannot fetch this
+ * site's.
  *
  * ── The row keeps its gestures ────────────────────────────────────────
  *
  * The frame takes no pointer events. A press on it is the row's, so a long
  * press still opens the message's sheet and a drag still scrolls the chat; a
- * tap is looked up in the frame (`elementFromPoint`) and a link there is
- * opened by a link of the chat's own, so the shell's handlers (the app's
- * system-browser road, NavLink) treat it as they treat a link in the words.
- * A summary toggles its details. A link reached with the keyboard or a screen
- * reader is activated inside the frame, and that click is forwarded the same
- * way.
+ * tap is looked up among the boxes the frame's helper reported and a link
+ * there is opened, in the same tick, by a link of the chat's own, so the
+ * shell's handlers (the app's system-browser road, NavLink) treat it as
+ * they treat a link in the words. A summary toggles its details (the helper
+ * does it, asked by a message). A link reached with the keyboard or a screen
+ * reader is activated inside the frame, and the helper forwards that click
+ * the same way.
  *
  * ── Size ──────────────────────────────────────────────────────────────
  *
@@ -53,6 +62,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 
 import { useMessages } from '../../lib/i18n/react';
+import { ArtifactFrame } from '../artifact/frame';
 import type { ConversationMessage } from './types';
 
 /** The colour names the fragment is written with (homeroom-bot-mayor.js REPLY_HTML_DESCRIPTION), each set from a token of the chat's, with a light fallback. */
@@ -69,24 +79,6 @@ export const REPLY_TOKENS: ReadonlyArray<readonly [name: string, token: string, 
   ['--red', '--state-blocked', '#dc2626'],
   ['--orange', '--state-admin', '#b45309'],
 ] as const);
-
-/** Scripts off: same-origin only so the chat can measure the frame and read a tap; popups so a link can open. */
-export const REPLY_SANDBOX = 'allow-same-origin allow-popups allow-popups-to-escape-sandbox';
-
-/** The content security policy the fragment is drawn under: nothing loads but this site's font and data: URLs. */
-export function replyCsp(origin: string): string {
-  return [
-    "default-src 'none'",
-    "style-src 'unsafe-inline'",
-    'img-src data:',
-    `font-src data: ${origin}`,
-    "script-src 'none'",
-    "connect-src 'none'",
-    "frame-src 'none'",
-    "form-action 'none'",
-    "base-uri 'none'",
-  ].join('; ');
-}
 
 // What DOMPurify keeps: HTML and SVG, a <style> block, less everything that
 // would load, submit, play, animate or look tappable without being a link.
@@ -221,17 +213,46 @@ const BASE_CSS = [
   'summary{cursor:pointer}',
 ].join('');
 
-/** Pure: the document the cleaned fragment is drawn in. `origin` is this site's. */
-export function replyFrameDoc(clean: string, look: ReplyLook, origin: string): string {
+// The brand skin's Geist is this site's own file. The frame has an origin of
+// its own and may load nothing, so the file is read once here and written
+// into each document as data.
+const GEIST_PATH = '/fonts/geist/Geist-Variable.woff2';
+let geistData: string | null = null;
+let geistRead: Promise<string | null> | null = null;
+/** Pure: whether a font stack names Geist. */
+export function wantsGeist(font: string): boolean {
+  return /\bgeist\b/i.test(font);
+}
+/** Geist as a data: URL, read once for the visit; null when it cannot be read. */
+export function readGeist(): Promise<string | null> {
+  if (geistData) return Promise.resolve(geistData);
+  if (!geistRead) {
+    geistRead = fetch(GEIST_PATH, { credentials: 'same-origin' })
+      .then((res) => (res.ok ? res.blob() : null))
+      .then((blob) => (blob ? new Promise<string | null>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result.replace(/^data:[^;,]*/, 'data:font/woff2') : null);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      }) : null))
+      .then((data) => { geistData = data; return data; })
+      .catch(() => null);
+  }
+  return geistRead;
+}
+
+/**
+ * Pure: the page the cleaned fragment is drawn as, before the frame puts its
+ * policy and helper in (../artifact/frame-doc.ts artifactFrameDoc). `geist`
+ * is the brand font as a data: URL, when the look names it and it was read.
+ */
+export function replyFrameDoc(clean: string, look: ReplyLook, geist: string | null = null): string {
   const vars = Object.entries(look.vars).map(([name, value]) => `${name}:${cssValue(value)}`).join(';');
   const font = cssValue(look.font);
-  // The brand skin's Geist is this site's own file; the frame does not inherit the page's @font-face.
-  const face = /\bgeist\b/i.test(font)
-    ? `@font-face{font-family:'Geist';src:url('${cssValue(origin)}/fonts/geist/Geist-Variable.woff2') format('woff2');font-weight:100 900;font-style:normal;font-display:swap}`
+  const face = wantsGeist(font) && geist && /^data:font\/woff2;base64,[A-Za-z0-9+/=]+$/.test(geist)
+    ? `@font-face{font-family:'Geist';src:url('${geist}') format('woff2');font-weight:100 900;font-style:normal;font-display:swap}`
     : '';
-  const csp = replyCsp(origin).replace(/"/g, '&quot;');
   return '<!doctype html><html><head><meta charset="utf-8">'
-    + `<meta http-equiv="Content-Security-Policy" content="${csp}">`
     + `<style>${face}:root{${vars};color-scheme:${look.dark ? 'dark' : 'light'}}`
     + `body{color:var(--ink);font-family:${font};font-size:${cssValue(look.size)};line-height:1.4}`
     + `${BASE_CSS}</style></head><body><div class="reply" dir="auto">${clean}</div></body></html>`;
@@ -285,13 +306,24 @@ function openAsLink(host: HTMLElement, href: string, like: { metaKey?: boolean; 
   }
 }
 
-/** The link or summary a tap at (x, y) on the page lands on inside `frame`, if any. */
-function tappedIn(frame: HTMLIFrameElement, x: number, y: number): Element | null {
-  const doc = frame.contentDocument;
-  if (!doc) return null;
-  const box = frame.getBoundingClientRect();
-  const hit = doc.elementFromPoint(x - box.left, y - box.top);
-  return hit?.closest?.('a[href], summary') || null;
+/** A link's or a summary's box inside the frame, as its helper reports it (href null: a summary). */
+export interface ReplyHit { x: number; y: number; w: number; h: number; href: string | null }
+
+/** Pure: the boxes a frame's `size` message names, read defensively. */
+export function replyHits(value: unknown): ReplyHit[] {
+  const out: ReplyHit[] = [];
+  for (const entry of Array.isArray(value) ? value.slice(0, 300) : []) {
+    const hit = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+    const [x, y, w, h] = [Number(hit.x), Number(hit.y), Number(hit.w), Number(hit.h)];
+    if (![x, y, w, h].every(Number.isFinite) || !(w > 0) || !(h > 0)) continue;
+    out.push({ x, y, w, h, href: typeof hit.href === 'string' ? hit.href : null });
+  }
+  return out;
+}
+
+/** Pure: the link or summary a press at (x, y) of the frame's own box lands on, if any. */
+export function hitAt(hits: readonly ReplyHit[], x: number, y: number): ReplyHit | null {
+  return hits.find((hit) => x >= hit.x && x <= hit.x + hit.w && y >= hit.y && y <= hit.y + hit.h) || null;
 }
 
 /**
@@ -310,61 +342,57 @@ export function BotHtmlReply({ html, fallback, className = '', onSized }: {
   const clean = useMemo(() => cleanReplyHtml(html), [html]);
   const host = useRef<HTMLDivElement | null>(null);
   const frame = useRef<HTMLIFrameElement | null>(null);
+  const hits = useRef<ReplyHit[]>([]);
   const look = useLookKey();
   const [doc, setDoc] = useState<string | null>(null);
   const [height, setHeight] = useState<number>(() => HEIGHTS.get(html) || 0);
 
-  // Before the first paint, so the frame is drawn with the bubble's own tokens.
+  // Before the first paint, so the frame is drawn with the bubble's own
+  // tokens. A look that names the brand font waits for it to be read once
+  // (the words are drawn meanwhile), so the frame is drawn one time.
   useLayoutEffect(() => {
-    if (!clean || !host.current) return;
-    setDoc(replyFrameDoc(clean, lookOf(host.current), window.location.origin));
+    if (!clean || !host.current) return undefined;
+    const found = lookOf(host.current);
+    if (!wantsGeist(found.font) || geistData) {
+      setDoc(replyFrameDoc(clean, found, geistData));
+      return undefined;
+    }
+    let live = true;
+    void readGeist().then((geist) => { if (live) setDoc(replyFrameDoc(clean, found, geist)); });
+    return () => { live = false; };
   }, [clean, look]);
 
-  // Measured once it has loaded, again when its font arrives and when the bubble's width changes.
+  // What the frame's helper says: its height (again when its font arrives,
+  // a summary opens or the bubble's width changes) with the boxes of its
+  // links, and a link activated inside it. Only the frame drawn here is
+  // believed.
   useEffect(() => {
     const el = frame.current;
     const box = host.current;
     if (!doc || !el || !box) return undefined;
-    let live = true;
-    const timers: number[] = [];
-    const measure = () => {
-      if (!live) return;
-      const reply = el.contentDocument?.querySelector('.reply');
-      if (!reply) return;
-      const h = Math.min(MAX_REPLY_HEIGHT, Math.max(16, Math.ceil(reply.getBoundingClientRect().height)));
-      HEIGHTS.set(html, h);
-      setHeight((was) => (was === h ? was : h));
+    const ask = () => {
+      try { el.contentWindow?.postMessage({ __artifact: 'measure', selector: '.reply' }, '*'); } catch { /* the frame is gone */ }
     };
-    // A link reached with the keyboard or a screen reader is activated in the frame.
-    const onFrameClick = (event: Event) => {
-      const target = event.target as Element | null;
-      const a = target?.closest?.('a[href]') as HTMLAnchorElement | null;
-      if (!a) return;
-      event.preventDefault();
-      openAsLink(box, a.getAttribute('href') || '', event as unknown as globalThis.MouseEvent);
-    };
-    let wired: Document | null = null;
-    const onLoad = () => {
-      measure();
-      const inner = el.contentDocument;
-      if (inner && inner !== wired) {
-        wired?.removeEventListener('click', onFrameClick);
-        inner.addEventListener('click', onFrameClick);
-        wired = inner;
-        inner.fonts?.ready?.then(measure).catch(() => {});
+    const onMessage = (event: MessageEvent) => {
+      if (!el.contentWindow || event.source !== el.contentWindow) return;
+      const data = event.data as { __artifact?: string; height?: number; hits?: unknown; href?: string } | null;
+      if (!data || typeof data !== 'object') return;
+      if (data.__artifact === 'size') {
+        const h = Math.min(MAX_REPLY_HEIGHT, Math.max(16, Math.ceil(Number(data.height) || 0)));
+        hits.current = replyHits(data.hits);
+        HEIGHTS.set(html, h);
+        setHeight((was) => (was === h ? was : h));
+      } else if (data.__artifact === 'link' && typeof data.href === 'string' && linkable(data.href)) {
+        // A link reached with the keyboard or a screen reader, activated in the frame.
+        openAsLink(box, data.href, {});
       }
-      timers.push(window.setTimeout(measure, 300));
     };
-    el.addEventListener('load', onLoad);
-    if (el.contentDocument?.readyState === 'complete' && el.contentDocument.querySelector('.reply')) onLoad();
-    const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => measure());
-    resize?.observe(box);
+    window.addEventListener('message', onMessage);
+    el.addEventListener('load', ask);
+    ask();
     return () => {
-      live = false;
-      el.removeEventListener('load', onLoad);
-      wired?.removeEventListener('click', onFrameClick);
-      resize?.disconnect();
-      for (const id of timers) window.clearTimeout(id);
+      window.removeEventListener('message', onMessage);
+      el.removeEventListener('load', ask);
     };
   }, [doc, html]);
 
@@ -375,34 +403,29 @@ export function BotHtmlReply({ html, fallback, className = '', onSized }: {
 
   if (!clean) return <>{fallback}</>;
 
+  const hitOf = (event: MouseEvent<HTMLDivElement>): ReplyHit | null => {
+    const el = frame.current;
+    if (!el || !height) return null;
+    const box = el.getBoundingClientRect();
+    return hitAt(hits.current, event.clientX - box.left, event.clientY - box.top);
+  };
   // A tap on the answer: a link in it opens, a summary toggles. Anything else is the row's.
   const onClick = (event: MouseEvent<HTMLDivElement>) => {
     const el = frame.current;
-    if (!el || !height || !host.current) return;
-    const hit = tappedIn(el, event.clientX, event.clientY);
-    if (!hit) return;
+    const hit = hitOf(event);
+    if (!el || !hit || !host.current) return;
     event.preventDefault();
-    if (hit.matches('summary')) {
-      const details = hit.parentElement;
-      if (details && details.tagName.toLowerCase() === 'details') {
-        details.toggleAttribute('open');
-        window.setTimeout(() => {
-          const reply = el.contentDocument?.querySelector('.reply');
-          if (!reply) return;
-          const h = Math.min(MAX_REPLY_HEIGHT, Math.max(16, Math.ceil(reply.getBoundingClientRect().height)));
-          HEIGHTS.set(html, h);
-          setHeight(h);
-        }, 0);
-      }
+    if (hit.href == null) {
+      const box = el.getBoundingClientRect();
+      try { el.contentWindow?.postMessage({ __artifact: 'tap', x: event.clientX - box.left, y: event.clientY - box.top }, '*'); } catch { /* the frame is gone */ }
       return;
     }
-    openAsLink(host.current, hit.getAttribute('href') || '', event);
+    if (linkable(hit.href)) openAsLink(host.current, hit.href, event);
   };
   // A pointer over a link shows it is one.
   const onMove = (event: MouseEvent<HTMLDivElement>) => {
-    const el = frame.current;
-    if (!el || !host.current || !height) return;
-    host.current.style.cursor = tappedIn(el, event.clientX, event.clientY) ? 'pointer' : '';
+    if (!host.current) return;
+    host.current.style.cursor = hitOf(event) ? 'pointer' : '';
   };
 
   const measured = height > 0;
@@ -414,15 +437,15 @@ export function BotHtmlReply({ html, fallback, className = '', onSized }: {
       {/* The words, until the frame has its size: never an empty bubble. */}
       {measured ? null : fallback}
       {doc ? (
-        <iframe
-          ref={frame}
+        <ArtifactFrame
+          frameRef={frame}
+          mode="helper"
+          html={doc}
+          site={false}
           title={t('messages:row.botHtml.frameTitle')}
-          sandbox={REPLY_SANDBOX}
-          referrerPolicy="no-referrer"
-          srcDoc={doc}
           className={measured ? 'block w-full border-0 bg-transparent' : 'pointer-events-none absolute inset-x-0 top-0 block w-full border-0 bg-transparent opacity-0'}
           style={{ height: measured ? height : 1, pointerEvents: 'none', colorScheme: scheme }}
-          aria-hidden={measured ? undefined : true}
+          ariaHidden={!measured}
           tabIndex={measured ? undefined : -1}
         />
       ) : null}

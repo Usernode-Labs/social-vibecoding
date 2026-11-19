@@ -5,8 +5,8 @@
  * the plan named for it (../../lib/spec-html.ts specChangeCrops), never the
  * whole screen shrunk to a fifth. A change that is on one side only says
  * "Not there before" or "Gone after" on the other. The frames are the
- * plan's sandboxed, script-free ones (`sandbox=""`); nothing is measured in
- * them.
+ * one frame every page the bot writes is drawn in, static (`sandbox=""`,
+ * ../artifact/frame.tsx); nothing is measured in them.
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -15,6 +15,7 @@ import { ChevronDownIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { specChangeCrops, type SpecChangeCrop } from '../../lib/spec-html';
+import { ArtifactFrame } from '../artifact/frame';
 
 // A crop is drawn at most this much of its real size, and no taller than this.
 const MAX_SCALE = 0.9;
@@ -50,13 +51,11 @@ function CropSide({ crop, side, label }: { crop: SpecChangeCrop; side: 'before' 
     <div ref={box} className="relative w-full overflow-hidden rounded-lg bg-white shadow-[inset_0_0_0_1px_var(--app-sheet-line)] dark:bg-zinc-900"
       style={{ height: height || 120 }} role="img" aria-label={label} data-plan-crop={side}>
       {scale ? (
-        <iframe
-          sandbox=""
-          referrerPolicy="no-referrer"
-          tabIndex={-1}
-          aria-hidden="true"
+        <ArtifactFrame
+          mode="static"
+          inert
           title={label}
-          srcDoc={side === 'before' ? screen.before : screen.after}
+          doc={side === 'before' ? screen.before : screen.after}
           className="pointer-events-none absolute start-0 top-0 origin-top-left border-0"
           style={{ width: screen.width, height: screen.height, transform: `scale(${scale}) translate(${-x}px, ${-y}px)` }}
         />

@@ -1502,7 +1502,7 @@ function chatRoutes(config) {
         [req.user.id, att.user_id]
       )).rows.length) return res.status(404).end();
       res.set('Content-Type', 'text/html; charset=utf-8');
-      res.set('Content-Security-Policy', 'sandbox allow-scripts');
+      res.set('Content-Security-Policy', require('../services/artifact-policy').ATTACHMENT_VIEW_CSP);
       res.set('Referrer-Policy', 'no-referrer');
       res.set('X-Content-Type-Options', 'nosniff');
       res.set('Content-Disposition', attachmentDisposition('inline', att.filename || 'file.html'));

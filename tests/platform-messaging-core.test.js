@@ -212,7 +212,9 @@ test('attachment path owns raw parsing and enforces retained private access', ()
   assert.match(routeSource, /MAX_CONVERSATION_ATTACHMENT_BYTES = 200 \* 1024 \* 1024/);
   assert.match(routeSource, /MAX_USER_ATTACHMENT_BYTES = 500 \* 1024 \* 1024/);
   assert.match(routeSource, /Cache-Control', 'private, no-store'/);
-  assert.match(routeSource, /Content-Security-Policy', 'sandbox allow-scripts'/);
+  // Artifacts, stage 1: the route shares the one policy module's constant.
+  assert.match(routeSource, /Content-Security-Policy', require\('\.\.\/services\/artifact-policy'\)\.ATTACHMENT_VIEW_CSP\)/);
+  assert.equal(require('../src/services/artifact-policy').ATTACHMENT_VIEW_CSP, 'sandbox allow-scripts');
   assert.doesNotMatch(routeSource, /allow-same-origin/);
 });
 

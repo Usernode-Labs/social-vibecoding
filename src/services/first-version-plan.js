@@ -487,6 +487,8 @@ async function runEarlyPlan(pool, { appId, steps = null }, deps = {}) {
  * design) draws it. It asks nothing, so the bot builds it at once.
  */
 function designPlan(design, version) {
+  // Artifacts: only a design is a project's first screen; a plain page has no plan here.
+  if (design && !require('./design-threads').isDesign(design)) return null;
   const title = String(design?.title || 'its first screen').replace(/\s+/g, ' ').trim().slice(0, 120);
   return {
     bullets: [

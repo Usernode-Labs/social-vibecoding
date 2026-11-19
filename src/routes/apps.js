@@ -1358,6 +1358,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       if (req.body.design != null) {
         fromDesign = await homeroomBotDm.designForProject(pool, { user: req.user, design: req.body.design, brief: req.body.brief });
         if (!fromDesign.ok) return res.status(fromDesign.status).json({ error: fromDesign.error });
+        // Artifacts: only a design is made into a project; a plain page stays in its thread.
+        if (!require('../services/design-threads').isDesign(fromDesign.design)) return res.status(409).json({ error: 'not_a_design' });
         if (template !== appTemplates.DEFAULT_TEMPLATE) return res.status(400).json({ error: 'A project made from a design starts from no template.' });
         req.body = { ...req.body, brief: fromDesign.brief };
       }
