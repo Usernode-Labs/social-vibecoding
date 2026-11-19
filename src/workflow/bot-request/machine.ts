@@ -121,19 +121,24 @@ const optInt = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as
 const optText = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
 const optTime = (v: unknown) => (typeof v === 'string' && Number.isFinite(Date.parse(v)) ? new Date(v).toISOString() : null);
 const optSha = (v: unknown) => (typeof v === 'string' && /^[0-9a-f]{40}$/i.test(v) ? v.toLowerCase() : null);
+// How long a debt may be held before the lane takes it: an hour at most.
+const WAIT_MAX_MS = 60 * 60 * 1000;
+const optWait = (v: unknown) => (Number.isFinite(v) && (v as number) > 0 ? Math.min(WAIT_MAX_MS, Math.floor(v as number)) : 0);
 const request = (p: any) => ({ appId: int(p?.appId, 'appId'), issueNumber: int(p?.issueNumber, 'issueNumber') });
 
 const EVENTS = {
   // Something owes the request a look. `priority` 0 is a person's ask (it
   // goes first, and clears a hold); the refresh's are 1 (new), 2 (changed),
-  // 3 (a failed read tried once more), 4 (an older request).
+  // 3 (a failed read tried once more), 4 (an older request). `waitMs` holds
+  // it this long before the lane may take it (#6859: a plan read again a few
+  // minutes after it could not be written).
   Owed: (p: any) => {
     const reason = optText(p?.reason, 40);
     if (!reason) throw new Error('reason is required');
     const priority = Number.isInteger(p?.priority) && p.priority >= 0 && p.priority <= 9 ? p.priority as number : 2;
     return {
       ...request(p), reason, priority, payer: optInt(p?.payer), requestedBy: optInt(p?.requestedBy),
-      changedBy: optText(p?.changedBy, 40), threadSeenAt: optTime(p?.threadSeenAt),
+      changedBy: optText(p?.changedBy, 40), threadSeenAt: optTime(p?.threadSeenAt), waitMs: optWait(p?.waitMs),
     };
   },
   // The refresh: the request is no longer owed a look (closed, held by a
@@ -285,7 +290,15 @@ function owed(s: RState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
     if (p.priority !== 0 && p.reason !== CHECKS_REASON && p.reason !== 'voice_update') return step(s.name as Name, d);
     return step(s.name as Name, { ...d, owed: merged(d.owed, p, ctx) });
   }
-  return queue({ ...d, owed: merged(d.owed, p, ctx) }, ctx);
+  // #6859: a debt the bot owes itself may be held a while before the lane
+  // takes it (its own wait, as a refused look's: never a hold for the
+  // payer's week, so nothing about it says "on hold"). A look under way or a
+  // build takes it when it ends anyway.
+  const wait = Number(p.waitMs) || 0;
+  const held: Data = wait > 0
+    ? { ...d, backoff: { failures: 0, until: later(ctx, wait).toISOString(), reason: String(p.reason).slice(0, 64) } }
+    : d;
+  return queue({ ...held, owed: merged(d.owed, p, ctx) }, ctx);
 }
 
 function notOwed(s: Live, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<RState> {

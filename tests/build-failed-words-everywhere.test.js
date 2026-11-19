@@ -108,8 +108,12 @@ test('the run\'s own record is never the sentence anybody reads', () => {
   assert.match(announce, /await recordLiveBuild\(pool, runId, built/);
   assert.match(announce, /log\.warn\('homeroom-bot', 'Live build did not become a proposal', \{[\s\S]*?error: built\.error/);
   // #6313: what it says also knows whether the bot is already trying the
-  // failure again (homeroom-bot.js retriesItself), for the words and the DM.
-  assert.match(announce, /say\('build_failed', live\.buildFailedText\(built\.error, \{ firstVersion, retrying: retriesItself\(built\.error\) \}\),\s*\{ dm: \{ reason: built\.error, retrying: retriesItself\(built\.error\) \} \}\)/);
+  // failure again, for the words and the DM. #6859: that is the answer of
+  // the read it queues for itself, never the cause alone (since #6806 the
+  // bot's own post queues nothing).
+  assert.match(announce, /const retrying = await queuePlanRetry\(pool, \{ app, issueNumber, runId, error: built\.error \}\);/);
+  assert.match(announce, /say\('build_failed', live\.buildFailedText\(built\.error, \{ firstVersion, retrying \}\),\s*\{ dm: \{ reason: built\.error, retrying \} \}\)/);
+  assert.doesNotMatch(announce, /retriesItself/, 'the promise is never made from the cause alone');
   assert.match(read('frontend/src/features/admin/admin-homeroom-bot.tsx'), /Live build did not become a proposal: \$\{why\}\./);
 });
 
