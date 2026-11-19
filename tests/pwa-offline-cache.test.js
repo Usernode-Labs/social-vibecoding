@@ -807,7 +807,11 @@ async function until(check, what) {
   assert.fail(`timed out waiting for ${what}`);
 }
 // The worker's messages, copied out of its realm so deepEqual compares data.
-const posted = (h) => h.messages.map((m) => ({ ...m }));
+// `network-answered` (the network did answer, behind a saved copy the worker
+// served) asks the page to re-read nothing, so it is counted on its own and
+// these lists hold only what the page must act on.
+const posted = (h) => h.messages.filter((m) => m.type !== 'network-answered').map((m) => ({ ...m }));
+const answeredPosts = (h) => h.messages.filter((m) => m.type === 'network-answered').length;
 // Did the worker answer yet? Never awaits the answer itself.
 function watch(promise) {
   const state = { settled: false, value: undefined };
@@ -840,7 +844,7 @@ test('a fresh read with a saved copy is answered from it once the network misses
   await until(() => answer.settled, 'the saved copy');
   assert.deepEqual(await answer.value.json(), { fake: 'saved' });
   assert.ok(answer.value.headers.get('sw-cached-at'), 'marked as the saved copy, as the offline fallback is');
-  assert.equal(h.messages.length, 0, 'nothing to correct yet');
+  assert.equal(h.messages.length, 0, 'nothing to correct yet, and the network has not answered');
 
   // The request kept going. Its answer is stored, and the page is told.
   held.resolve(harness.json({ fake: 'current' }));
@@ -851,6 +855,7 @@ test('a fresh read with a saved copy is answered from it once the network misses
   assert.deepEqual(await (await cache.match(keys[0])).json(), { fake: 'current' },
     'the late answer replaces the saved copy under the usual rules');
   assert.deepEqual(posted(h), [{ type: 'api-updated', url: `${harness.ORIGIN}/api/private-fixture`, scope: harness.A }]);
+  assert.equal(answeredPosts(h), 1, 'the page hears the network did answer, so a slow link is not taken for a dead one');
 
   // The page's re-pull after that correction waits longer for the network,
   // so a body that changes on every answer cannot loop, and on the deadline
@@ -885,7 +890,7 @@ test('a fresh boot read waits the shorter boot deadline, and a refresh shuts tha
   held.resolve(harness.json({ apps: ['saved'] }));
   await until(() => pulled.settled, 'the pull');
   await h.drain();
-  assert.equal(h.messages.length, 0, 'an identical late answer posts nothing');
+  assert.deepEqual(posted(h), [], 'an identical late answer asks for no re-read');
 
   // The deadlines keep their order: a working link answers first.
   assert.ok(FRESH_BOOT_API_TIMEOUT_MS >= 1500 && FRESH_BOOT_API_TIMEOUT_MS < FRESH_API_TIMEOUT_MS);
@@ -903,7 +908,7 @@ test('a fresh read the network answers in time is the network\'s answer, exactly
   assert.equal(answer.value.headers.get('sw-cached-at'), null);
   await h.drain();
   assert.equal(timers.live().length, 0, 'the deadline is cancelled');
-  assert.equal(h.messages.length, 0, 'the page already has this answer');
+  assert.equal(h.messages.length, 0, 'the page already has this answer, and read-timeout counts it there');
 });
 
 test('with no saved copy a fresh read waits for the network, however long it takes', async () => {
@@ -974,7 +979,30 @@ test('a late refusal retires the copy the page was shown, and tells the page', a
       ? [{ type: 'api-updated', url: `${harness.ORIGIN}/api/private-fixture`, scope: harness.A }] : [],
     tells ? 'the page re-reads instead of keeping a copy it may no longer see'
       : 'a server error says nothing about the copy on screen');
+    assert.equal(answeredPosts(h), tells ? 1 : 0, tells ? 'a refusal is still the network answering'
+      : 'a server that is down is no answer');
   });
+});
+
+test('late network answers behind saved copies are told at most once every two seconds', async () => {
+  const { h, timers, held } = await savedCopyWorker();
+  const first = watch(h.get(harness.A));
+  await until(() => timers.live().length === 1, 'the first deadline');
+  timers.fire();
+  await until(() => first.settled, 'the first saved copy');
+  held.resolve(harness.json({ fake: 'saved' }));
+  await h.drain();
+  assert.equal(answeredPosts(h), 1);
+
+  const next = deferred();
+  h.setNetwork(() => next.promise);
+  const second = watch(h.get(harness.A));
+  await until(() => timers.live().length === 1, 'the second deadline');
+  timers.fire();
+  await until(() => second.settled, 'the second saved copy');
+  next.resolve(harness.json({ fake: 'saved' }));
+  await h.drain();
+  assert.equal(answeredPosts(h), 1, 'a burst of late answers is one message, not one per read');
 });
 
 test('only answers that speak about the copy retire it on screen', () => {

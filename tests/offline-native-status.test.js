@@ -69,27 +69,29 @@ async function goOnline(api, requests) {
   await flush();
 }
 
-test('the header says "Connecting…" while Homeroom does not answer, and holds it 10 s once shown', async (t) => {
-  const { api, requests, status } = setup(t);
+test('the header says "Connecting…" while Homeroom does not answer, and holds it 3 s once shown', async (t) => {
+  const { api, engine, requests, status } = setup(t);
+  assert.equal(engine.MIN_SHOWN_MS, 3000);
+  assert.equal(engine.FLAP_SHOWN_MS, 10_000);
   assert.equal(status(), 'online');
   await goOffline(t, api, requests);
   assert.equal(api.isOffline(), true);
   assert.equal(status(), 'connecting');
 
-  t.mock.timers.tick(3000);
+  t.mock.timers.tick(1000);
   await goOnline(api, requests);
   assert.equal(api.isOffline(), false, 'the offline state itself moves at once, so queued writes go');
-  assert.equal(status(), 'connecting', 'what is shown lingers');
-  t.mock.timers.tick(6999);
+  assert.equal(status(), 'connecting', 'what is shown lingers, briefly');
+  t.mock.timers.tick(1999);
   assert.equal(status(), 'connecting');
   t.mock.timers.tick(1);
-  assert.equal(status(), 'online', 'gone 10 s after it was shown');
+  assert.equal(status(), 'online', 'gone 3 s after it was shown');
 });
 
-test('a link that flaps keeps the status up for a minute the second time', async (t) => {
+test('a link that flaps keeps the status up 10 s the second time, never a minute', async (t) => {
   const { api, requests, status } = setup(t);
   await goOffline(t, api, requests);
-  t.mock.timers.tick(10_000);
+  t.mock.timers.tick(3000);
   await goOnline(api, requests);
   assert.equal(status(), 'online', 'shown long enough already: it goes at once');
 
@@ -97,17 +99,17 @@ test('a link that flaps keeps the status up for a minute the second time', async
   await goOffline(t, api, requests);
   assert.equal(status(), 'connecting');
   await goOnline(api, requests);
-  t.mock.timers.tick(30_000);
-  assert.equal(status(), 'connecting', 'back within two minutes: held longer');
-  t.mock.timers.tick(30_000);
-  assert.equal(status(), 'online');
+  t.mock.timers.tick(5000);
+  assert.equal(status(), 'connecting', 'back within two minutes: held a little longer');
+  t.mock.timers.tick(5000);
+  assert.equal(status(), 'online', 'and gone 10 s after it was shown (the 19 Nov retest saw a full minute)');
 });
 
 test('going offline again during the hold cancels the hide', async (t) => {
   const { api, requests, status } = setup(t);
   await goOffline(t, api, requests);
   await goOnline(api, requests);
-  t.mock.timers.tick(5000);
+  t.mock.timers.tick(1000);
   await goOffline(t, api, requests);
   t.mock.timers.tick(20_000);
   assert.equal(status(), 'connecting', 'the pending hide was cancelled');
@@ -125,7 +127,7 @@ test('the phone saying it has no network reads "No internet", and a network back
   requests[requests.length - 1].resolve({ ok: true });
   await flush();
   assert.equal(api.isOffline(), false);
-  t.mock.timers.tick(10_000);
+  t.mock.timers.tick(3000);
   assert.equal(status(), 'online', 'and gone once it answers, after the hold');
 });
 

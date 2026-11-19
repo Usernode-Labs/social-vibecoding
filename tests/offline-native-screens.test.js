@@ -169,3 +169,23 @@ test('offline, an item whose own read had no answer keeps its page instead of dr
   assert.match(view, /_noAnswerNow\(\) \{[\s\S]*?Offline\.isOffline\(\)[\s\S]*?online === false/);
   assert.match(message('changes:page.notSavedYetThread'), /isn’t saved on this phone yet/);
 });
+
+// The second follow-up (19 Nov 2026 retest): on the slow link the worker gave
+// up after its 4 s deadline and served saved copies, so the page saw no
+// network answer and took the link for a dead one. The worker's late network
+// answers and the events socket's frames count as the network answering.
+test('the worker says when the network answered behind a saved copy, and the page counts it', () => {
+  const sw = read('public/sw.js');
+  assert.match(sw, /if \(res && res\.status > 0 && res\.status < 500 && served\.fromCache\) noteNetworkAnswered\(event\);/,
+    'only behind a copy it served: an answer the page received itself is counted by read-timeout');
+  assert.match(sw, /const NETWORK_ANSWERED_GAP_MS = 2000;[\s\S]*?if \(now - networkAnsweredAt < NETWORK_ANSWERED_GAP_MS\) return;/, 'at most once every two seconds');
+  assert.match(sw, /notifyClients\(\{ type: 'network-answered' \}\)/);
+  const page = read('frontend/src/lib/service-worker.ts');
+  assert.match(page, /data\.type === 'network-answered'[\s\S]*?Offline\?\.answered\?\.\(\)/);
+});
+
+test('a frame on the events socket counts as the network answering', () => {
+  const app = read('public/js/app.js');
+  const handler = app.slice(app.indexOf('App.eventsWs.onmessage = (event) => {'), app.indexOf('JSON.parse(event.data)', app.indexOf('App.eventsWs.onmessage = (event) => {')));
+  assert.match(handler, /window\.Offline\?\.answered\?\.\(\)/);
+});
