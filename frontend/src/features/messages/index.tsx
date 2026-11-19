@@ -96,7 +96,7 @@ import { BotWorkingCard, typingBesides, workingBot } from './bot-working';
 import { DesignPane, DesignViewSwitch, isDesignRoot, isDesignThread, setDesignView, useDesignView } from './design-pane';
 import { openPreview, usePreview } from '../ai/preview';
 import { NewThreadPanel, startedThreadTitle, useNewThread } from './new-thread';
-import { issueRefHref } from './channels';
+import { isBotMention, issueRefHref } from './channels';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
 import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
@@ -2176,6 +2176,19 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
   // which the store opens instead (store.openThread, loadReplyThread): no
   // thread of this chat's is drawn for it, even for the moment that takes.
   if (botChat && kind === 'direct' && requestPageOf(root)) return null;
+  // #6863: alone in the bot tab's column, a private thread is one compact
+  // sheet of three cards, drawn as a public thread is (app.css "A PRIVATE
+  // THREAD WITH THE BOT IS ONE COMPACT SHEET"). Its head holds the bot's
+  // round picture: the conversation's peer carries the platform's `bot`
+  // flag, and a roster that only names the bot's handle is marked the same
+  // way. With neither, the tile falls back to the thread's initials.
+  const sheet = alone && botChat;
+  const other = active
+    ? active.peer && active.peer.id !== meId
+      ? active.peer
+      : active.members.find((member) => isBotMention(member.username)) || null
+    : null;
+  const face = sheet && other ? (other.bot ? other : { ...other, bot: true }) : null;
   const rootMeta = botChat && root?.sender.bot ? root.metadata?.homeroomBot || null : null;
   // #6071 follow-up: a thread from the bot's "+" is named by what it is for
   // and its project, never as a request it is not.
@@ -2257,6 +2270,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
       aria-label={t('messages:replies.paneName')}
       data-reply-thread={rootId}
+      data-bot-sheet={sheet ? '' : undefined}
     >
       {/* #5691: the divider between the chat and this thread, dragged to
           trade room between them (and stepped by the arrow keys). It is
@@ -2280,6 +2294,9 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
             <ChevronLeftIcon aria-hidden="true" />
           </button>
         ) : null}
+        {/* #6863: the sheet's head card opens on the other member's round
+            picture, the way a public thread's head opens on its face. */}
+        {sheet ? <span data-reply-avatar=""><UserAvatar user={face} title={aloneTitle || undefined} size="lg" shape="circle" /></span> : null}
         {alone ? (
           // 1 Nov 2026: the thread alone in the column, under its own name
           // and the line that says it is theirs alone.
@@ -2348,7 +2365,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
             wrote, not on the bot's "New thread." line (Main Chat left that
             line out too, #6250). The root still names the thread; it is only
             not drawn. */}
-        {root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} /> : null}
+        {root && !(botChat && isPlusThreadOpener(root)) ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} /> : null}
         {/* An error stands in place of the thread (#5219 review): with one,
             the count line would say "No replies yet", which is a different
             answer to the same question, so it waits. */}
@@ -2393,7 +2410,7 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
           const line = firstUnread && !newLineDrawn && message.id >= firstUnread
             ? <NewMessagesDivider key="unread-line" ref={unreadLine} /> : null;
           if (line) newLineDrawn = true;
-          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} focused={flashId === message.id} planCardId={isPlanMessage(message) ? cardId || flatPlans.cardOf.get(message.id) || null : null} />;
+          const row = <MessageRow key={message.clientKey || message.id} message={{ ...message, threadRootId: message.threadRootId || rootId }} conversationId={conversationId} grouped={grouped && !divider} channels={channels} kind={kind} inThread botChat={botChat} flat={sheet} focused={flashId === message.id} planCardId={isPlanMessage(message) ? cardId || flatPlans.cardOf.get(message.id) || null : null} />;
           return divider || line ? <Fragment key={message.clientKey || message.id}>{divider}{line}{row}</Fragment> : row;
         })}
         {threadWorking ? <BotWorkingCard typist={threadWorking} /> : null}

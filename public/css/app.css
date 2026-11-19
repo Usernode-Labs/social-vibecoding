@@ -18543,6 +18543,128 @@ html:not([data-side-strip]):not([data-side-corner]) body:has(#ai-screen:not(.hid
 html[data-side-strip] #ai-screen .ai-main-pane .messages-layout[data-bot-threads] > .messages-reply-pane :is(.chat-transcript, .chat-status, .chat-composer-bar) {
   padding-inline-end: var(--ai-edge, 0px);
 }
+/* A PRIVATE THREAD WITH THE BOT IS ONE COMPACT SHEET (19 Nov 2026, #6863).
+   The thread alone in the Homeroom bot tab's column — the DM-style thread,
+   a request's or a design's — was the chat's own shape: a small head, the
+   bot's answers as narrow centred rows and the viewer's as bubbles, and a
+   floating pill for the reply box. It is now drawn as a public thread is
+   (a request's page): three cards on the column's ground — a head with the
+   other member's round picture, the thread's name and the lock line as a
+   pill; the replies, every one the flat named row a channel draws, in their
+   own card; and the reply box, in the public thread's bar, as the card at
+   the foot. The cards are the public thread's own (`--thread-card`, its
+   edge and radius, "THE CARDS" below), at most 446px wide and centred in
+   whatever the column is drawn at, so the whole sheet is one screenful and
+   the reply box stays visible. Only the standard and brand looks draw a
+   public thread this way; a frame look keeps its own thread, so nothing
+   here applies under one. Messages, a project's channel threads and a
+   community's thread pane are untouched: only the bot tab's column marks
+   its pane `data-bot-sheet`.
+
+   The 720px gutter `[data-bot-threads]` above gives the transcript, the
+   status line and the composer bar is replaced here by this sheet's own
+   width, by specificity rather than by editing that rule (tests/ai-screen
+   pins it). The scroller keeps the phone's keyboard, stick-to-bottom, the
+   unread line and earlier-page loading: it is the same element, restyled. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] {
+  --thread-card: var(--thread-card-look, var(--dc-sheet-fill));
+  --thread-card-solid: var(--thread-card-solid-look, var(--dc-sheet-solid));
+  --thread-card-edge: var(--thread-card-edge-look, inset 0 0 0 1px var(--app-sheet-line), 0 1px 2px rgba(0, 0, 0, 0.05));
+  --thread-card-r: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  box-sizing: border-box;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > :is(.messages-thread-header, .messages-thread-scroll, .chat-status, .messages-composer, [data-private-thread], [data-live-draft]) {
+  width: 100%;
+  max-width: 446px;
+  margin-inline: auto;
+  box-sizing: border-box;
+}
+/* THE HEAD CARD: the round face, the thread's name and its lock badge, with
+   Preview, ⋯ and ✕ where they were, at the card's top right. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header {
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 10px 10px 10px 14px;
+  padding-inline-end: calc(10px + var(--ai-edge, 0px));
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-reply-avatar] {
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+/* The lock line is the head's badge: "Only you can see this thread", in the
+   accent's quiet neighbour, never a bar across the name. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-header [data-private-thread-sub] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--messages-surface-2);
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+/* THE DISCUSSION CARD: the replies scroll inside it, drawn as a public
+   thread's rows — face, name and time on the left whoever said it, the
+   words beneath, pictures as thumbnails. It takes the room between the two
+   other cards and never grows the sheet past the screen. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-inline: 0;
+  padding-block: 6px 8px;
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message {
+  padding: 8px 16px;
+  gap: 12px;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message-self .messages-message-head {
+  justify-content: flex-start;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-thread-scroll .messages-message-image {
+  max-width: min(240px, 100%);
+}
+/* THE REPLY CARD: the public thread's bar and box, at the sheet's foot, always
+   visible — the replies above scroll, this does not. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer {
+  flex: 0 0 auto;
+  padding-inline: 0;
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card,
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card:focus-within {
+  border-radius: var(--thread-card-r);
+  background: var(--thread-card);
+  box-shadow: var(--thread-card-edge);
+}
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > .messages-composer > .messages-composer-card:focus-within {
+  box-shadow: var(--thread-card-edge), 0 0 0 2px var(--accent);
+}
+/* "Jump to latest" floats over the foot: it hangs between the discussion
+   card and the status line, where the sheet's gaps would otherwise count it
+   as a row of its own. */
+html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] > [data-transcript-overlay] {
+  margin-block: -6px;
+}
+/* A phone's drawer draws the same sheet, full width less its 12px margins. */
+@media (max-width: 767px) {
+  html:is(:not([data-skin]), [data-skin="brand"]) #ai-screen .messages-layout[data-bot-threads] > .messages-reply-pane[data-bot-sheet] {
+    gap: 10px;
+    padding: 8px 12px 12px;
+  }
+}
 /* A request or a change opened from the list: the side panel in Main's
    place, and Main back when the panel closes. It is drawn as this page's
    own column, not as a panel of its own (29 Oct 2026): Main's width, edge
