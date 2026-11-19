@@ -342,7 +342,8 @@ const ACTIONS = {
     placeholders: { url: link('The reset link, valid for 30 minutes') },
     required: BOTH('url'),
     englishOnly: false,
-    sample: { url: 'https://app.onhomeroom.com/#reset/sample' },
+    // The address sendPasswordResetMail builds, so the preview shows the real one.
+    sample: { url: 'https://app.onhomeroom.com/#reset-password/sample' },
     values: (payload) => ({ url: url(payload.url) }),
   },
 
