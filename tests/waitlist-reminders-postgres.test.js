@@ -113,6 +113,26 @@ test('who is owed a reminder, the claim, the stop link and the template version,
     const lastOld = await signup({ released: ago(60), r1: ago(4.01) });
     const both = await signup({ released: ago(30), r1: ago(20), r2: ago(10) });
 
+    // A linked signup follows its account's address (request 6480).
+    const movedUser = await user('moved_address', 'moved.new@example.test');
+    const moved = await signup({ email: 'moved.old@example.test', linked: movedUser });
+    const removedUser = await user('removed_address', null);
+    const removed = await signup({ email: 'removed.old@example.test', linked: removedUser });
+    const movedCodeUser = await user('moved_code', 'moved.code.new@example.test');
+    const movedCode = await signup({ email: 'moved.code.old@example.test', linked: movedCodeUser });
+    await otp('moved.code.new@example.test', ago(1));
+    const oldBouncedUser = await user('old_bounced', 'old.bounced.new@example.test');
+    const oldBounced = await signup({ email: 'old.bounced.old@example.test', linked: oldBouncedUser });
+    const newBouncedUser = await user('new_bounced', 'New.Bounced.New@example.test');
+    const newBounced = await signup({ email: 'new.bounced.old@example.test', linked: newBouncedUser });
+    const complainedUser = await user('complained', 'complained.new@example.test');
+    const complained = await signup({ email: 'complained.old@example.test', linked: complainedUser });
+    await pool.query(`INSERT INTO mail_suppressions (recipient, reason) VALUES
+      ('old.bounced.old@example.test', 'bounce'), ('new.bounced.new@example.test', 'bounce'),
+      ('complained.old@example.test', 'complaint')`);
+    // Unlinked, though an account has another address: the row's, as before.
+    const unlinked = await signup({ email: 'unlinked@example.test' });
+
     const owed = await pool.query(reminders.OWED_SQL.replace('LIMIT $1', 'LIMIT 1000'));
     const by = new Map(owed.rows.map((r) => [Number(r.id), Number(r.reminder)]));
     assert.equal(by.get(owedFirst), 1, 'two days after the admit');
@@ -121,7 +141,12 @@ test('who is owed a reminder, the claim, the stop link and the template version,
     assert.equal(by.get(oldSession), 1, 'a session from before the admit, unused since, is not either');
     assert.equal(by.get(lastOwed), 2);
     assert.equal(by.get(lastOld), 2);
+    assert.equal(by.get(moved), 1, 'an account that changed its address is still owed one, at the new address');
+    assert.equal(by.get(oldBounced), 1, 'a bounce at the address it left does not silence the new one');
+    assert.equal(by.get(unlinked), 1);
     for (const [id, why] of [
+      [removed, 'its account has no address any more'], [movedCode, 'asked for a code at its new address since'],
+      [newBounced, 'its new address bounced'], [complained, 'marked a reminder at its old address as spam'],
       [tooSoon, 'under two days'], [notAdmitted, 'not admitted'], [followed, 'followed its link'],
       [coded, 'asked for a code since'], [keptCode, 'a code kept by the sweep'], [signedIn, 'a session since'],
       [stillUsing, 'a session used since'], [stopped, 'stopped them'], [bounced, 'a bounced address'],
@@ -221,6 +246,34 @@ test('who is owed a reminder, the claim, the stop link and the template version,
     const account = await reminders.remindNow(config, pool, oldSession);
     assert.equal(account.reminder, 1);
     assert.equal(sent.at(-1).url, 'https://app.onhomeroom.com/?login=1', 'an account gets the sign-in form');
+
+    // ── A linked signup: the account's address now, never the one it left ──
+    const before = sent.length;
+    const movedOldToken = reminders.stopToken(moved, 'moved.old@example.test', config.sessionSecret);
+    assert.deepEqual(await reminders.remindItem(config, pool, { signupId: moved, reminder: 1 }), { said: 'sent' });
+    assert.equal(sent.length, before + 1);
+    assert.equal(sent.at(-1).to, 'moved.new@example.test');
+    assert.ok(!sent.slice(before).some((m) => m.to === 'moved.old@example.test'), 'nothing to the address it left');
+    assert.equal(sent.at(-1).url, 'https://app.onhomeroom.com/?login=1');
+    const { rows: [movedDelivery] } = await pool.query(
+      "SELECT status FROM mail_deliveries WHERE kind = 'waitlist_reminder' AND recipient = 'moved.new@example.test'");
+    assert.equal(movedDelivery.status, 'sent');
+    assert.deepEqual(await reminders.remindItem(config, pool, { signupId: removed, reminder: 1 }), { said: 'settled' }, 'no address: nothing claimed');
+    await assert.rejects(reminders.remindNow(config, pool, removed), { code: 'no_email' });
+    await assert.rejects(reminders.remindNow(config, pool, newBounced), { code: 'suppressed' });
+    await assert.rejects(reminders.remindNow(config, pool, complained), { code: 'suppressed' });
+    await assert.rejects(reminders.remindNow(config, pool, movedCode), { code: 'signed_in' });
+    assert.equal(sent.length, before + 1);
+    // The address is read at each send: removed after the first, no last one.
+    await pool.query("UPDATE waitlist_signups SET released_at = $2, reminder_1_sent_at = $3 WHERE id = $1", [moved, ago(8), ago(5)]);
+    assert.ok((await pool.query(reminders.OWED_SQL.replace('LIMIT $1', 'LIMIT 1000'))).rows.some((r) => Number(r.id) === moved));
+    await pool.query('UPDATE users SET email = NULL, email_confirmed = FALSE WHERE id = $1', [movedUser]);
+    assert.ok(!(await pool.query(reminders.OWED_SQL.replace('LIMIT $1', 'LIMIT 1000'))).rows.some((r) => Number(r.id) === moved));
+    assert.equal(await reminders.claim(pool, moved, 2, { manual: true }), null);
+    // A stop link mailed to the old address, and the new mail's, are one link.
+    assert.ok(JSON.stringify(sent.at(-1)).includes(`w=${moved}&t=${movedOldToken}`), 'the new mail carries the row\'s own link');
+    assert.equal(await reminders.stopLinkWorks(config, pool, { signupId: moved, token: movedOldToken }), true);
+    assert.equal(await reminders.stop(config, pool, { signupId: moved, token: movedOldToken }), true);
 
     // ── The stop link ──
     const stopRow = (await pool.query('SELECT id, email FROM waitlist_signups WHERE id = $1', [codedBefore])).rows[0];

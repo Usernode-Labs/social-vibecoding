@@ -24,6 +24,15 @@
 // below), an address on the bounce and complaint list (mail_suppressions), a
 // phone-only row (no email; Homeroom sends no texts yet, #4096).
 //
+// WHERE. A row linked to an account is mailed at that account's address as it
+// is when the reminder goes (TO_SQL), never the one saved when the person
+// joined the list: somebody who changed their address is reminded at the new
+// one, and somebody whose account has no address any more gets none (request
+// 6480). A row with no linked account is mailed at its own address. The
+// bounce and complaint list is checked for the address the reminder goes to;
+// a spam complaint from the row's own address still stops them, a bounce
+// there does not. A sign-in code asked for at either address counts.
+//
 // HOW. The waitlist-reminders clock (src/workflow/clock/services.ts) lists
 // the rows owed one (owedTargets), at most PER_RUN a run, each a target of
 // its own; its item (remindItem) claims the reminder and sends it. The claim
@@ -43,8 +52,9 @@
 // (config.mailReplyTo, PLATFORM_MAIL_REPLY_TO).
 //
 // THE STOP LINK. Most of these people have no account, so the link is keyed
-// to the waitlist row: an HMAC of the row's id and address under the
-// session secret (stopToken). GET /mail/reminders/stop shows a page with one
+// to the waitlist row: an HMAC of the row's id and its own stored address
+// under the session secret (stopToken), whatever address the reminder went
+// to, so a link mailed to an address the account has since left still works. GET /mail/reminders/stop shows a page with one
 // button, so a link scanner that opens every URL in a mail stops nothing;
 // POST, the button or a mail client's own one-click unsubscribe (RFC 8058,
 // `List-Unsubscribe-Post`), stamps `reminders_stopped_at`
@@ -94,18 +104,30 @@ function notSent(delivery) {
 
 // ── The rules, in SQL ──────────────────────────────────────────────────
 
+// The address a row's reminder goes to: its linked account's address now, or
+// NULL when that account has none; the row's own when no account is linked.
+const TO_SQL = `(CASE WHEN w.linked_user_id IS NULL THEN w.email
+         ELSE (SELECT NULLIF(lower(btrim(ua.email)), '') FROM users ua WHERE ua.id = w.linked_user_id) END)`;
+
+// Whether nothing may be sent: the address the reminder goes to bounced or
+// complained, or the row's own address complained.
+const SUPPRESSED_SQL = `EXISTS (SELECT 1 FROM mail_suppressions ms
+                    WHERE ms.recipient = lower(${TO_SQL})
+                       OR (ms.recipient = lower(w.email) AND ms.reason = 'complaint'))`;
+
 // A row a reminder may go to at all.
 const REACHABLE_SQL = `w.released_at IS NOT NULL
    AND w.email IS NOT NULL
+   AND ${TO_SQL} IS NOT NULL
    AND w.reminders_stopped_at IS NULL
    AND NOT EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id)
-   AND NOT EXISTS (SELECT 1 FROM mail_suppressions ms WHERE ms.recipient = lower(w.email))`;
+   AND NOT ${SUPPRESSED_SQL}`;
 
 // Whether the row signed in since it was let in (the top of this file).
 const SIGNED_IN_SQL = `(w.release_link_followed_at IS NOT NULL
    OR w.release_code_asked_at IS NOT NULL
    OR EXISTS (SELECT 1 FROM mail_deliveries d
-               WHERE d.recipient = w.email AND d.kind = 'otp' AND d.created_at >= w.released_at)
+               WHERE d.recipient IN (w.email, ${TO_SQL}) AND d.kind = 'otp' AND d.created_at >= w.released_at)
    OR EXISTS (SELECT 1 FROM sessions s
                WHERE w.linked_user_id IS NOT NULL AND s.user_id = w.linked_user_id
                  AND (s.created_at > w.released_at OR s.last_seen_at > w.released_at)))`;
@@ -146,9 +168,9 @@ const DUE_COUNT_SQL = `SELECT COUNT(*) FILTER (WHERE w.reminder_1_sent_at IS NUL
      AND (${FIRST_DUE_SQL} OR ${LAST_DUE_SQL})`;
 const DUE_LIST_LIMIT = 50;
 
-// What a claim hands the send: the address, whether it has an account, its
-// prefill token and its language.
-const CLAIMED_SQL = `w.id, w.email, w.released_at, w.linked_user_id, w.more_token,
+// What a claim hands the send: the row's address and the one the reminder
+// goes to, whether it has an account, its prefill token and its language.
+const CLAIMED_SQL = `w.id, w.email, ${TO_SQL} AS to_email, w.released_at, w.linked_user_id, w.more_token,
     (w.linked_user_id IS NOT NULL OR EXISTS (SELECT 1 FROM users ua WHERE ua.email = w.email)) AS has_account,
     (SELECT u.locale FROM users u WHERE u.id = w.linked_user_id OR u.email = w.email
       ORDER BY (u.id = w.linked_user_id) DESC NULLS LAST LIMIT 1) AS recipient_locale`;
@@ -183,10 +205,10 @@ const UNCLAIM_LAST_SQL = `UPDATE waitlist_signups
    WHERE id = $1 AND reminder_2_sent_at = $2::timestamptz`;
 
 // One row's reminder state, for "Send a reminder now" and its refusals.
-const STATE_SQL = `SELECT w.id, w.email, w.released_at, w.reminder_1_sent_at, w.reminder_2_sent_at,
+const STATE_SQL = `SELECT w.id, w.email, ${TO_SQL} AS to_email, w.released_at, w.reminder_1_sent_at, w.reminder_2_sent_at,
          w.reminders_stopped_at,
          EXISTS (SELECT 1 FROM test_waitlist_releases t WHERE t.signup_id = w.id) AS test_release,
-         EXISTS (SELECT 1 FROM mail_suppressions ms WHERE ms.recipient = lower(w.email)) AS suppressed,
+         ${SUPPRESSED_SQL} AS suppressed,
          ${SIGNED_IN_SQL} AS signed_in
     FROM waitlist_signups w
    WHERE w.id = $1`;
@@ -275,6 +297,8 @@ async function deliver(config, pool, claimed, reminder) {
   const mail = require('./mail');
   const hasAccount = !!claimed.has_account;
   const kind = KINDS[reminder];
+  // A claim kept by an item from before to_email existed has only the row's.
+  const to = claimed.to_email || claimed.email;
   let link = null;
   if (!hasAccount) {
     // A failed mint drops the link, not the reminder: the button still
@@ -286,7 +310,7 @@ async function deliver(config, pool, claimed, reminder) {
     }
   }
   const { rows: [{ at }] } = await pool.query('SELECT clock_timestamp() AS at');
-  await mail.sendWaitlistReminderMail(config, claimed.email, {
+  await mail.sendWaitlistReminderMail(config, to, {
     last: reminder === 2,
     hasAccount,
     moreToken: claimed.more_token || null,
@@ -307,7 +331,7 @@ async function deliver(config, pool, claimed, reminder) {
         WHERE recipient = $1 AND kind = $2 AND created_at >= $3
         ORDER BY id DESC
         LIMIT 1`,
-      [claimed.email, kind, at],
+      [to, kind, at],
     ));
   } catch (err) {
     log.warn('waitlist-reminders', 'Reminder sent, its delivery not read', { signupId: Number(claimed.id), message: err.message });
@@ -407,6 +431,7 @@ async function remindNow(config, pool, signupId) {
   if (!row || row.test_release) throw new ReminderRefused('not_found', 'Waitlist entry not found.', 404);
   if (!row.released_at) throw new ReminderRefused('not_admitted', 'This signup has not been admitted, so there is nothing to remind them of.', 422);
   if (!row.email) throw new ReminderRefused('no_email', 'This signup has no email address, so no reminder can go to it.', 422);
+  if (!row.to_email) throw new ReminderRefused('no_email', 'Their account has no email address any more, so no reminder can go to it.', 422);
   if (row.signed_in) throw new ReminderRefused('signed_in', 'They have signed in since they were admitted, so they need no reminder.');
   if (row.reminders_stopped_at) throw new ReminderRefused('stopped', 'They stopped these reminders from the link in one.');
   if (row.reminder_1_sent_at && row.reminder_2_sent_at) throw new ReminderRefused('had_both', 'They have had both reminders already. There is no third.');
@@ -431,6 +456,8 @@ module.exports = {
   DEFAULT_REPLY_TO,
   NOT_SENT,
   notSent,
+  TO_SQL,
+  SUPPRESSED_SQL,
   REACHABLE_SQL,
   SIGNED_IN_SQL,
   FIRST_DUE_SQL,

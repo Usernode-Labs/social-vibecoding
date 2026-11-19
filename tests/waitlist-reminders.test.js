@@ -48,7 +48,13 @@ test('owed: admitted with an address, not a test release, not stopped, not suppr
   assert.match(sql, /w\.email IS NOT NULL/, 'a phone-only row gets none');
   assert.match(sql, /w\.reminders_stopped_at IS NULL/);
   assert.match(sql, /NOT EXISTS \(SELECT 1 FROM test_waitlist_releases t WHERE t\.signup_id = w\.id\)/);
-  assert.match(sql, /NOT EXISTS \(SELECT 1 FROM mail_suppressions ms WHERE ms\.recipient = lower\(w\.email\)\)/);
+  // Suppression follows the address the reminder goes to (TO_SQL); a spam
+  // complaint from the row's own address still counts, a bounce there does not.
+  assert.ok(sql.includes(`NOT EXISTS (SELECT 1 FROM mail_suppressions ms
+                    WHERE ms.recipient = lower(${reminders.TO_SQL})
+                       OR (ms.recipient = lower(w.email) AND ms.reason = 'complaint'))`));
+  assert.ok(sql.includes(`AND ${reminders.TO_SQL} IS NOT NULL`), 'an account with no address now gets none');
+  assert.ok(reminders.SIGNED_IN_SQL.includes(`d.recipient IN (w.email, ${reminders.TO_SQL})`), 'a code asked for at either address');
   assert.match(sql, /AND NOT \(w\.release_link_followed_at IS NOT NULL/);
   assert.match(reminders.SIGNED_IN_SQL, /w\.release_code_asked_at IS NOT NULL/);
   assert.match(reminders.SIGNED_IN_SQL, /d\.kind = 'otp' AND d\.created_at >= w\.released_at/);
@@ -127,6 +133,39 @@ test('the clock sends only when the Reminders setting is On; Dry run, the defaul
     { target: 'waitlist-reminder:4:1', input: { signupId: 4, reminder: 1 } },
     { target: 'waitlist-reminder:9:2', input: { signupId: 9, reminder: 2 } },
   ]);
+});
+
+test('the address: a linked signup\'s is its account\'s now, an unlinked one\'s is the row\'s', () => {
+  assert.match(reminders.TO_SQL, /CASE WHEN w\.linked_user_id IS NULL THEN w\.email/);
+  assert.match(reminders.TO_SQL, /SELECT NULLIF\(lower\(btrim\(ua\.email\)\), ''\) FROM users ua WHERE ua\.id = w\.linked_user_id/);
+  for (const sql of [reminders.CLAIM_FIRST_SQL, reminders.CLAIM_LAST_SQL, reminders.STATE_SQL]) {
+    assert.ok(sql.includes(`${reminders.TO_SQL} AS to_email`), 'the claim and the state read it');
+  }
+});
+
+test('a linked signup\'s reminder goes to the account\'s address, under the row\'s own stop link', async (t) => {
+  const sent = capture(t);
+  const row = { ...NEW_ROW, email: 'old@example.test', to_email: 'now@example.test', has_account: true, linked_user_id: 3 };
+  const pool = rowPool({ row });
+  const seen = [];
+  const query = pool.query.bind(pool);
+  pool.query = async (sql, params) => { if (/FROM mail_deliveries\s+WHERE recipient = \$1/.test(sql)) seen.push(params); return query(sql, params); };
+  assert.deepEqual(await reminders.remindItem(CONFIG, pool, { signupId: 5, reminder: 1 }), { said: 'sent' });
+  assert.equal(sent[0].email, 'now@example.test');
+  assert.equal(seen[0][0], 'now@example.test', 'its delivery is read at the address it went to');
+  // The link is the row's (its id and stored address), so one already mailed
+  // to the old address and this one both stop the same row.
+  assert.equal(sent[0].stopUrl, reminders.stopUrl(CONFIG, { id: 5, email: 'old@example.test' }));
+  // A claim kept from before this rule has no to_email: the row's address.
+  const kept = rowPool({ row: NEW_ROW });
+  await reminders.remindItem(CONFIG, kept, { signupId: 5, reminder: 1 });
+  assert.equal(sent[1].email, 'new@example.test');
+});
+
+test('Send a reminder now refuses a signup whose account has no address any more', async () => {
+  const pool = rowPool({ row: { ...NEW_ROW, stateRow: { id: 5, email: 'old@example.test', to_email: null, released_at: new Date(), signed_in: false } } });
+  await assert.rejects(reminders.remindNow(CONFIG, pool, 5), { code: 'no_email', status: 422 });
+  assert.equal(pool.state.claims, 0);
 });
 
 // ── Claim, send, give back ──────────────────────────────────────────────
@@ -247,7 +286,7 @@ test('the item does nothing unless reminders are On, and its steps keep the clai
 test('Send a reminder now sends the next one, and refuses one signed in, stopped, or done with both', async (t) => {
   const sent = capture(t);
   const base = {
-    id: 5, email: 'new@example.test', released_at: new Date(), reminder_1_sent_at: null, reminder_2_sent_at: null,
+    id: 5, email: 'new@example.test', to_email: 'new@example.test', released_at: new Date(), reminder_1_sent_at: null, reminder_2_sent_at: null,
     reminders_stopped_at: null, test_release: false, suppressed: false, signed_in: false,
   };
   const refused = async (stateRow, code) => {
