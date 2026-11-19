@@ -3584,9 +3584,9 @@
       "expectSelector": "link[rel='manifest']"
     },
     {
-      "name": "Offline banner element ships in the shell (#487)",
+      "name": "The header's connection status ships in the shell (#487)",
       "path": "/",
-      "expectSelector": "#offline-banner"
+      "expectSelector": "#connection-status"
     },
     {
       "name": "PR-import: self-app dev proposals view loads with the flag on (#687)",
@@ -4078,10 +4078,10 @@
       "expectText": "Another agent"
     },
     {
-      "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
+      "name": "Offline: the header says it is connecting (#1021)",
       "path": "/?shot=offline",
-      "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
-      "expectText": "Reconnecting to Homeroom. Showing saved content"
+      "expectSelector": "body.is-offline #connection-status:not(.hidden)",
+      "expectText": "Connecting…"
     },
     {
       "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",
