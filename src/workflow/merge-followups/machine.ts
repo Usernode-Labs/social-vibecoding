@@ -172,12 +172,20 @@ const EVENTS = {
   // carried to main has changed (absent from a message sent before).
   CarrierDelivered: (p: any) => ({ sha: sha(p?.sha, 'sha'), mergeSha: sha(p?.mergeSha, 'mergeSha') }),
   CarrierDeployFailed: (p: any) => ({ message: text(p?.message) || 'the deploy failed' }),
+  // T1.10: its clock, NOT_LIVE_ALERT_MS after the merge: still not live, an
+  // incident for the admins.
+  NotLiveYet: () => ({}),
   RetryDelivery: () => ({}),
   RetryFollowup: (p: any) => {
     if (typeof p?.workKey !== 'string' || !p.workKey) throw new Error('workKey is required');
     return { workKey: p.workKey as string };
   },
 };
+
+// T1.10: a merge still not live this long after it merged is an incident
+// (the admins' Unexpected events and their alerts): a deploy that keeps
+// failing, or one nothing ever asked for.
+export const NOT_LIVE_ALERT_MS = 6 * 60 * 60 * 1000;
 
 // How far before a merge a recorded boot still counts as possibly after it.
 const BOOT_CLOCK_MARGIN_MS = 5 * 60 * 1000;
@@ -263,6 +271,10 @@ function toFailed(e: Event<any>, data: Data, message: string, x: Extra = {}): Ou
   const d = { ...data, failure: message };
   const writes = [...(x.writes || [])];
   if (d.role === 'merge') writes.push(chat(e, d.appId, d.sessionId, failureLine(d, message)));
+  // T1.10: a change of the Homeroom bot's: whoever asked for it hears it is
+  // merged and not live yet (its change machine says it once), not only the
+  // change's own discussion.
+  writes.push(toBotChange(d.sessionId, 'DeployFailed', { message: message.slice(0, 300) }));
   const messages = [...(x.messages || []), ...d.included.map((id) => ({
     to: { machine: MACHINE, key: sessionKey(id) }, event: { type: 'CarrierDeployFailed', payload: { message } },
   }))];
@@ -429,9 +441,28 @@ function merged(e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<MFStat
   }
   // The platform's own app has no deploy here to wait for, and a deploy
   // that builds its own image does not need the preview: either way it goes
-  // at once.
-  const out = outcome('delivering', d, x);
+  // at once. T1.10: its clock looks again once it should long be live.
+  const out = { ...outcome('delivering', d, x), timer: notLiveClock(d) };
   return app.selfHosted || !reuse ? andTeardown(out) : out;
+}
+
+// T1.10: the merge's own clock (nothing else here sets one).
+const notLiveClock = (d: Data) => ({ at: new Date(Date.parse(d.mergedAt) + NOT_LIVE_ALERT_MS), event: { type: 'NotLiveYet' } });
+
+// T1.10: still not live NOT_LIVE_ALERT_MS after its merge: one incident.
+function notLiveYet(s: MFState, _e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<MFState> {
+  const d = (s as Going).data;
+  if (d.followups.notLive) return { next: s };
+  const hours = Math.round((ctx.now.getTime() - Date.parse(d.mergedAt)) / 3600000);
+  const followups = { ...d.followups, notLive: { kind: 'incident.notLive', input: null, status: 'done' as const } };
+  return {
+    next: { name: (s as Going).name, data: { ...d, followups } },
+    writes: [{
+      type: 'event', userId: null, appId: d.appId, sessionId: d.sessionId, eventType: 'platform_incident',
+      metadata: { kind: 'merge_not_live', prNumber: d.prNumber, mergeSha: d.mergeSha, hours: Math.max(0, hours),
+        why: d.failure ? `merged, and its deploy failed: ${d.failure.slice(0, 200)}` : 'merged, and not live yet' },
+    }],
+  };
 }
 
 // Why a carried change can no longer be included: INCLUDED_CANDIDATES_SQL's
@@ -728,8 +759,11 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
     // merge closes are looked at twice, and their close proposals are told
     // by message once the close is confirmed. 9: a merge off main looks for
     // the merge that carried it there (carried.find), and a change goes live
-    // with its carrier's merge commit (CarrierDelivered's mergeSha).
-    version: 9,
+    // with its carrier's merge commit (CarrierDelivered's mergeSha). 10
+    // (T1.10): a merge's own clock (NotLiveYet) raises an incident when it
+    // is not live NOT_LIVE_ALERT_MS on, and a failed deploy tells the bot's
+    // change machine (DeployFailed).
+    version: 10,
     events: EVENTS,
     create: ['Merged', 'Included'],
     // What web appends: the platform's own merges deployed, as the web process that
@@ -757,6 +791,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
       CarrierDeployFailed: ownMessage,
       RetryDelivery: admin,
       RetryFollowup: admin,
+      NotLiveYet: (e) => (e.source.kind === 'timer' ? ok() : reject('not_the_clock')),
     },
     transitions: {
       [NONE]: {
@@ -787,6 +822,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         RolledBack: { ignore: 'not_live' },
         RetryDelivery: { ignore: 'not_failed' },
         RetryFollowup: retryFollowup,
+        NotLiveYet: { to: notLiveYet },
       },
       deploy_failed: {
         ...created,
@@ -797,6 +833,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         CarrierDelivered: { guard: fromCarrier, to: (s, e, f, ctx) => carrierLive(e, (s as Going).data, ctx) },
         CarrierDeployFailed: { ignore: 'already_failed' },
         RolledBack: { ignore: 'not_live' },
+        NotLiveYet: { to: notLiveYet },
         RetryDelivery: {
           guard: (s) => ((s as Going).data.role === 'merge' && !(s as Going).data.selfHosted ? ok() : reject('carrier_delivers')),
           // Asked of app-delivery again (also for a merge whose own deploy,
@@ -818,6 +855,7 @@ export function mergeFollowups(deps: MachineDeps): Machine<MFState, Facts> {
         CarrierDelivered: { ignore: 'already_live' },
         CarrierDeployFailed: { ignore: 'already_live' },
         RetryDelivery: { ignore: 'already_live' },
+        NotLiveYet: { ignore: 'already_live' },
         // #6233: a later complete rollout does not carry it.
         RolledBack: rolledBack,
         RetryFollowup: retryFollowup,

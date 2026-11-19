@@ -92,6 +92,15 @@ function notes() {
     holds.goingText({ asker: 'evan' }),
     holds.goingText({ asker: 'evan', holders: held }),
     dm.updateFailedWords('budget: wall clock', 'this change', 'bot'),
+    // Architecture pass, track 1 (19 Nov 2026).
+    live.buildCreditText(),
+    live.buildFailedText('the turn produced no change', { tapToRetry: true }),
+    live.deployFailedText({ title: 'Dark mode' }),
+    live.deployFailedText({}),
+    followup.fixLostText({ failing: true }),
+    followup.fixLostText({ failing: false }),
+    followup.conflictHandOffText({ files: ['src/a.js'] }),
+    followup.mergeStuckText({ why: 'its required checks on GitHub never finished' }),
   ];
 }
 

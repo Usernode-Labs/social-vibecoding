@@ -40,7 +40,13 @@ const FIRST_PERSON = Object.freeze([
   [/can say Go ahead in a chat with Homeroom bot, or reply here\./, 'can say Go ahead in a chat with me, or reply here.'],
   [/Homeroom bot couldn't find anything to build in this request:/, 'I couldn\'t find anything to build in this request:'],
   [/Homeroom bot built this\. It's up for a vote:/, 'I built this. It\'s up for a vote:'],
+  // #6867, T1.15: a build or a look that ran out of OpenRouter's credit
+  // (live.buildCreditText).
+  [/Homeroom bot is out of building credit right now\. It will pick this up again by itself once credit is back\./,
+    'I\'m out of building credit right now. I\'ll pick this up again by myself once credit is back.'],
   [/Homeroom bot's change for this is live:/, 'My change for this is live:'],
+  // T1.10: merged, and its deploy failed (live.deployFailedText).
+  [/^Homeroom bot's change for this merged/, 'My change for this merged'],
   [/Homeroom bot will build this when one of its (\d+|several|many) changes (on|across)/, 'I\'ll build this when one of my $1 changes $2'],
   // #6156: held for its turn among the project's builds (live.heldText).
   [/Homeroom bot will build this when one of the (\d+|several|many) changes it is building on/, 'I\'ll build this when one of the $1 changes I\'m building on'],
@@ -83,6 +89,10 @@ const FIRST_PERSON = Object.freeze([
   [/It is trying once more\./, 'I\'m trying once more.'],
   [/Homeroom bot can't get this change working on its own:/, 'I can\'t get this change working on my own:'],
   [/Homeroom bot can't get this change past its checks on its own:/, 'I can\'t get this change past its checks on my own:'],
+  // T1.7: a conflict the sync could not resolve (followup.conflictHandOffText).
+  [/Homeroom bot can't bring this change up to date with main on its own:/, 'I can\'t bring this change up to date with main on my own:'],
+  // T1.7: an approved merge GitHub held until Homeroom stopped asking (followup.mergeStuckText).
+  [/Homeroom bot can't get this change live on its own:/, 'I can\'t get this change live on my own:'],
   // #6234: the fix's start line (homeroom-bot-followup.js checksFixingText).
   [/^Homeroom bot is (fixing|adding) /, 'I\'m $1 '],
   [/It will say here when it's done\./, 'I\'ll say here when it\'s done.'],

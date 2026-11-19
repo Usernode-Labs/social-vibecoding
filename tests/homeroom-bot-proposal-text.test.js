@@ -330,10 +330,10 @@ test('a document-only change is worded as a document, not as a build', () => {
   assert.equal(live.proposalText({ link: 'https://x/change/1', docOnly: true }),
     'Homeroom bot wrote a plan document for this. It adds a written plan; nothing changes in the app. It\'s up for a vote: https://x/change/1');
   assert.equal(live.proposalHomeroomText({ title: 'Image generation plan', docOnly: true }),
-    'This adds a written plan; nothing changes in the app. It\'s up for a vote: Image generation plan');
+    'This adds a written plan; nothing changes in the app: Image generation plan. Its vote opens once its tests and screenshots are done.');
   assert.equal(live.proposalText({ link: 'https://x/change/1' }),
     'Homeroom bot built this. It\'s up for a vote: https://x/change/1', 'an ordinary change, as before');
-  assert.equal(live.proposalHomeroomText({ title: 'Image generation' }), 'I built this. It\'s up for a vote: Image generation');
+  assert.equal(live.proposalHomeroomText({ title: 'Image generation' }), 'I built this: Image generation. Its vote opens once its tests and screenshots are done.');
 });
 
 test('#6209: a plan waiting for Build it says plainly that nothing is built yet', () => {

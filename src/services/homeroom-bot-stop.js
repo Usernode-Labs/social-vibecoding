@@ -162,6 +162,11 @@ const LASTING = Object.freeze({
   // A request's plan put back in the queue to be planned again (change_plan).
   change_plan: (_args, result) => (result?.ok && !result.drafted
     ? { did: 'asked for a new plan', stays: 'it is planned again' } : null),
+  // T1.11: a reply with a live draft open saves the draft's changes not yet
+  // saved before it is taken (live-draft-bot.js beforeReply: `applied`), so
+  // a Stop right after it has saved a change.
+  reply: (_args, result) => (result?.applied?.saved
+    ? { did: 'saved a change to the live draft', stays: 'it stays in the draft' } : null),
 });
 
 // The tools that change nothing that lasts when they run: a read, or
@@ -172,7 +177,7 @@ const LASTING = Object.freeze({
 // is said by the design (design-bot.js roomFor, `add`).
 const NOTHING = new Set([
   'progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'comment_on_request', 'offer_request',
-  'offer_move_request', 'offer_copy_request', 'offer_close_request', 'start_design', 'offer_new_project', 'reply',
+  'offer_move_request', 'offer_copy_request', 'offer_close_request', 'start_design', 'offer_new_project',
   'offer_options', 'ask_questions', 'show_table', 'show_change', 'start_investigation', 'stop_and_redo',
   'write_screen', 'edit_design', 'compare_versions', 'offer_plan', 'offer_project', 'capture_page',
   'search_code', 'edit_file', 'write_file',
@@ -205,6 +210,19 @@ function noteDone(did, tool, args, result) {
     if (!did.some((d) => d.unsure)) did.push({ unsure: true });
   }
   return did;
+}
+
+/**
+ * T1.11: what a turn had done that stays, as sentences ("I've started work
+ * on request #12."), from the Stop watch's list (`did`), for an answer that
+ * could not be written (homeroom-bot-mayor.js fallbackAnswer). `skip` leaves
+ * out what the caller says in its own words. Pure.
+ */
+function doneSentences(did, { skip = null } = {}) {
+  if (!Array.isArray(did)) return [];
+  return did
+    .filter((d) => d && typeof d.did === 'string' && d.did && !(skip && skip.test(d.did)))
+    .map((d) => `I've ${d.did}.`);
 }
 
 const NOTHING_TEXT = 'Stopped. Nothing was filed or changed.';
@@ -241,4 +259,5 @@ module.exports = {
   knows,
   noteDone,
   stoppedText,
+  doneSentences,
 };

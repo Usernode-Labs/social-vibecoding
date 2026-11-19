@@ -839,7 +839,7 @@ test('"revise" that pushed nothing is a failure, said plainly, and nothing is re
   // 5 Oct 2026: plain words and how to start it again, never the run's record
   // (tests/homeroom-bot-revision-failed.test.js).
   assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: it ended up with no changes to show. '
-    + 'The change is as it was. Reply here (or on the GitHub issue) and it will try again.');
+    + 'The change is as it was. Reply here (or on the GitHub issue) with what to change and it will try again.');
   // The requester hears it in their DM, with the change's card; the record goes with it to be read, never quoted.
   assert.deepEqual(h.calls.posts[0].dm, {
     reason: 'the turn produced no change', canRevise: true, sessionId: 5001,
@@ -864,7 +864,7 @@ test('a GLM follow-up whose agent failed is no revision: its push is never recon
   assert.equal(insertOf(h).params[18], 'revise: the turn failed (the agent exited with code 1), so its change was not kept');
   assert.equal(h.calls.posts[0].kind, 'followup_failed');
   assert.equal(h.calls.posts[0].text, 'Homeroom bot couldn\'t update this change: something went wrong during the update. '
-    + 'The change is as it was. Reply here (or on the GitHub issue) and it will try again.');
+    + 'The change is as it was. Reply here (or on the GitHub issue) with what to change and it will try again.');
   assert.doesNotMatch(h.calls.posts[0].text, /exited|code 1|not kept|turn/, 'the run\'s record stays on the run');
   assert.equal(h.calls.exec[0].opts.discardFailedTurn, true, 'run-cc.sh is asked to commit and push nothing from a failed turn');
 

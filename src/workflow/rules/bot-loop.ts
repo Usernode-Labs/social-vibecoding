@@ -312,7 +312,9 @@ export const SLOTS_IN_USE_SQL = `
 // who it is for ($1: the bot's user id, for its changes). Only the apps
 // the bot acts on ($2: every app but these paused slugs), only what is not
 // held for its payer's week or backed off, not a request whose live build
-// waits or runs, not one its project's first version holds, not one its
+// waits or runs (one that stopped for OpenRouter's credit holds nothing: its
+// credit_wait read is what takes it up again, T1.1), not one its project's
+// first version holds, not one its
 // requester is working on with the bot (planHoldSql), and settled. With
 // each, the version that last wrote its request (READ_SLOTS_SINCE).
 export const READ_CANDIDATES_SQL = `
@@ -360,6 +362,7 @@ export const READ_CANDIDATES_SQL = `
           AND b.mode = 'live' AND b.verdict = 'ready' AND b.build_ok IS NULL AND b.proposal_session_id IS NULL
           AND (b.live_build_waiting_at IS NOT NULL OR b.build_session_id IS NOT NULL)
           AND b.created_at > NOW() - make_interval(days => ${ABANDONED_LIVE_WINDOW_DAYS})
+          AND b.build_finish->>'credit_wait_at' IS NULL
      )
      AND (fu.id IS NOT NULL OR q.reason = '${ADMIN_REASON}' OR NOT EXISTS (
        SELECT 1 FROM homeroom_bot_first_versions fv

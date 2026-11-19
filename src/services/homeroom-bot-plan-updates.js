@@ -61,6 +61,15 @@ function buildingText({ poster, version, fromVersion } = {}) {
     + `I'll finish it, then update the change to follow v${Number(version)}.`;
 }
 
+/**
+ * 2b. T1.15: the build case 2 promised to finish did not: there is no
+ * change to update, and the newer plan is said to be unbuilt. Pure.
+ */
+function unbuiltText({ poster, version, fromVersion } = {}) {
+  return `${at(poster)}the build of ${versionName(fromVersion)} didn't finish, so there's no change to update to `
+    + `v${Number(version)}: nothing has been built from it yet.`;
+}
+
 /** 3. Up for a vote: the update is queued at once. */
 function queuedText({ author, pr, version, fromVersion, building = false } = {}) {
   const name = changeName(pr);
@@ -449,11 +458,48 @@ async function followNewerPlan(pool, { app, issueNumber, sessionId, bot = null, 
   }
 }
 
+/**
+ * T1.15: a build that failed after case 2 said "I'll finish it, then update
+ * the change to follow v2" (followNewerPlan runs only for a build that
+ * became a proposal): the person who posted the newer plan hears what
+ * became of it, once. Only where that line was said. Never throws; resolves
+ * the line's message, or null.
+ */
+async function followNewerPlanAfterFailure(pool, { app, issueNumber, buildSessionId, bot = null }, deps = {}) {
+  try {
+    const n = Number(issueNumber);
+    const sid = num(buildSessionId);
+    if (!app || !num(app.id) || !num(n) || !sid) return null;
+    const built = await builtFromOf(pool, sid);
+    const newer = await newerPlanFor(pool, { appId: app.id, issueNumber: n, sessionId: sid, from: built }, deps);
+    if (!newer) return null;
+    const botPost = require('./bot-post');
+    const promised = botPost.keyOf({
+      kind: KIND, subject: botPost.requestSubject(app.id, n), version: `building-${num(newer.sessionId) || 0}-v${Number(newer.version)}`,
+    });
+    const { rows } = await pool.query(
+      "SELECT 1 FROM bot_posts WHERE said_key = $1 AND outcome = 'said' LIMIT 1", [promised],
+    );
+    if (!rows.length) return null;
+    return await postLine(pool, {
+      app, issueNumber: n, stage: 'unbuilt', planSessionId: newer.sessionId, version: newer.version, bot,
+      content: unbuiltText({ poster: newer.author, version: newer.version, fromVersion: built ? built.version : null }),
+    }, deps);
+  } catch (err) {
+    log.warn('homeroom-bot-plan-updates', 'Could not say what became of a newer plan after a failed build', {
+      appId: app && app.id, issueNumber, err: err.message,
+    });
+    return null;
+  }
+}
+
 module.exports = {
   KIND,
   changeName,
   waitingText,
   buildingText,
+  unbuiltText,
+  followNewerPlanAfterFailure,
   queuedText,
   askRequesterText,
   planFrom,

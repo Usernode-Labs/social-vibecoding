@@ -1085,7 +1085,9 @@ test('step 5: a fix round, a sync, a hand-off and a retry each record that they 
   assert.equal(kindOf(handOff), 'hand_off');
   const src = read('src/services/homeroom-bot.js');
   assert.match(src, /readReason: readReasonOf\(item\), lookKind: 'retry',\n\s+appId: app\.id, issueNumber, mode: runMode, verdict: 'failed',\n\s+reason: 'its attempt to fix them ran out of time'/);
-  assert.match(src, /recordFailure\(code, \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ infra: true \}\)/);
+  assert.match(src, /recordFailure\(code, \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ infra: true, turn: result \}\)/);
+  // T1.3: out of OpenRouter's credit is no hand-off and marks no head looked at.
+  assert.match(src, /if \(!turn\.stopped && creditOutOf\(code, result\)\) \{\s*return recordFailure\(code \|\| 'insufficient_credits', \{ proposalSessionId: session\.id, lookKind: 'fix', \.\.\.spent \}, \{ turn: result \}\);/);
 });
 
 // Step 4 (11 Nov 2026): whether a checks note or a hand-off says something

@@ -149,7 +149,9 @@ test('still running: no sync, the hold says so, and the clock retries', () => {
 test('no sync for a head level with main, or one on its author\'s fork', () => {
   const level = refusedBy(machine(), merging(), { githubChecks: 'failing' }, { integrationBehindBy: 0 });
   assert.deepEqual(syncWork(level), [], 'nothing to bring in: it waits for main to move');
-  assert.deepEqual(held(level), ['github_checks']);
+  // T1.7: no sync can make GitHub check a level head again, so it is said as
+  // failing at once (it was 'github_checks', "being run again", for ever).
+  assert.deepEqual(held(level), ['github_checks_failing']);
   const fork = refusedBy(machine(), merging(), { githubChecks: 'failing' }, { forkHead: true });
   assert.deepEqual(syncWork(fork), [], 'an author\'s fork is theirs to bring up to date');
 });
@@ -196,7 +198,7 @@ test('the hold is written and cleared as one set: a new head starts without it',
   const headMoved = src.slice(src.indexOf('  headMoved: async'), src.indexOf('  approvalsCleared: async'));
   assert.ok(headMoved.includes(strip), 'a head move clears the hold of the head it replaced');
   const { GITHUB_HOLD_REASONS, SYNC_REASONS } = require('../src/workflow/proposal/machine.ts');
-  assert.deepEqual([...GITHUB_HOLD_REASONS], ['github_busy', 'github_refused', 'github_checks', 'github_checks_failing']);
+  assert.deepEqual([...GITHUB_HOLD_REASONS], ['github_busy', 'github_refused', 'github_checks', 'github_checks_failing', 'github_stuck']);
   assert.ok(SYNC_REASONS.has('github_checks'));
   assert.match(read('src/services/sync-main.js'), /\['github_checks', 'github_checks'\]/);
   assert.match(read('src/workflow/proposal/facts.ts'), /cs\.integration_behind_by/);
@@ -321,4 +323,45 @@ test('the change page: its badge, its status title and the Merging card say the 
   for (const text of Object.values(changes).map((v) => v.text).filter((t) => /GitHub's/.test(t))) {
     assert.doesNotMatch(text, /—/, 'no em dashes');
   }
+});
+
+// T1.7: required checks that never finish, or fail on a head already level
+// with main, were asked about every REFUSAL_RETRY_MS for ever. One head is
+// held MAX_HELD_TRIES times at most.
+test('T1.7: a held head is tried MAX_HELD_TRIES times, then held until it or main moves, said and raised once', () => {
+  const { MAX_HELD_TRIES } = require('../src/workflow/proposal/machine.ts');
+  const m = machine();
+  const at = (tries) => merging({ refused: { head: SHA('7'), main: SHA('4'), kind: 'blocked', checks: 'pending', retryAt: '2026-11-09T18:45:00Z',
+    since: '2026-11-09T17:00:00Z', tries } });
+  const first = refusedBy(m, merging(), { githubChecks: 'pending' });
+  assert.equal(first.next.data.refused.tries, 1);
+  const again = refusedBy(m, at(3), { githubChecks: 'pending' });
+  assert.equal(again.next.data.refused.tries, 4, 'counted across the head\'s repeat refusals');
+  assert.ok(again.next.data.refused.retryAt);
+  assert.equal(again.next.data.refused.since, '2026-11-09T17:00:00Z', 'the first try is kept');
+  const stuck = refusedBy(m, at(MAX_HELD_TRIES - 1), { githubChecks: 'pending' });
+  assert.equal(stuck.next.data.refused.tries, MAX_HELD_TRIES);
+  assert.equal(stuck.next.data.refused.retryAt, null, 'held until the head or main moves');
+  const holdWrite = (stuck.writes || []).find((w) => w.type === 'mergeHeld');
+  assert.equal(holdWrite.reason, 'github_checks', 'its own reason stays, for the card');
+  assert.equal(holdWrite.also, 'github_stuck', 'and the distinct one beside it');
+  const incident = (stuck.writes || []).find((w) => w.type === 'event');
+  assert.equal(incident.eventType, 'platform_incident');
+  assert.equal(incident.metadata.kind, 'merge_stuck');
+  assert.equal(incident.metadata.tries, MAX_HELD_TRIES);
+  const told = (stuck.writes || []).find((w) => w.type === 'line' && /could not go live/.test(w.content));
+  assert.ok(told, 'its author is told in its discussion');
+  assert.match(told.content, /<@3>/);
+  const bot = (stuck.writes || []).find((w) => w.type === 'botChange');
+  assert.equal(bot.event, 'MergeStuck', 'and, for the bot\'s change, whoever asked for it');
+  // Below the cap nothing of that is written.
+  assert.ok(!(again.writes || []).some((w) => w.type === 'event' || w.type === 'botChange'));
+});
+
+test('T1.7: the stuck reason is cleared with the rest of the hold', () => {
+  const src = read('src/workflow/proposal/machine.ts');
+  const mergeHeld = src.slice(src.indexOf('  mergeHeld: async'), src.indexOf('  // The once-records of the platform'));
+  assert.ok(mergeHeld.includes("- 'github_checks_failing' - 'github_stuck'"));
+  const headMoved = src.slice(src.indexOf('  headMoved: async'), src.indexOf('  approvalsCleared: async'));
+  assert.ok(headMoved.includes("- 'github_checks_failing' - 'github_stuck'"));
 });

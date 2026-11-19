@@ -87,6 +87,27 @@ class OpenRouterMayorError extends Error {
   }
 }
 
+// The most of a refusal's body read, to tell OpenRouter's two 402s apart.
+const MAX_ERROR_BODY_CHARS = 2000;
+
+// T1.3: a 402 is out of credit (`credit_out`), unless its body asks only
+// for a shorter reply ("requires more credits, or fewer max_tokens"), which
+// stays the key's billing refusal it was. openrouter-credit.js creditOut is
+// the one classifier.
+function refusalCode(status, body = '') {
+  if (status === 402 && require('./openrouter-credit').creditOut({ status, body: String(body || '') })) return 'credit_out';
+  return providerErrorCode(status);
+}
+
+async function refusalBody(response) {
+  try {
+    const text = await response.text();
+    return String(text || '').slice(0, MAX_ERROR_BODY_CHARS);
+  } catch {
+    return '';
+  }
+}
+
 function modelLabel(modelId) {
   const id = String(modelId || '').trim();
   return id.startsWith(MODEL_LABEL_PREFIX) ? id : `${MODEL_LABEL_PREFIX}${id}`;
@@ -537,8 +558,10 @@ function createClient({
         response = await post({ ...payload, provider: plain });
       }
       if (!response.ok) {
+        // Only a 402's body is read: it is what tells out of credit apart.
+        const refused = response.status === 402 ? await refusalBody(response) : '';
         throw new OpenRouterMayorError(
-          providerErrorCode(response.status),
+          refusalCode(response.status, refused),
           `Mayor model request failed (HTTP ${response.status})`,
           { status: response.status },
         );
@@ -554,7 +577,7 @@ function createClient({
       if (completion?.error) {
         const status = Number(completion.error.code);
         throw new OpenRouterMayorError(
-          Number.isInteger(status) ? providerErrorCode(status) : 'provider_error',
+          Number.isInteger(status) ? refusalCode(status, completion.error.message) : 'provider_error',
           'The Mayor model reported an error',
           { status: Number.isInteger(status) ? status : null },
         );

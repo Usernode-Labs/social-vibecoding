@@ -53,6 +53,8 @@ const MAX_NOTES_CHARS = 6000;
 const MAX_SUMMARY_CHARS = 2400;
 const MAX_LINE_CHARS = 200;
 const MAX_FILES_KEPT = 40;
+// T1.3: what a look that met OpenRouter's 402 for credit says (the bot's words).
+const CREDIT_ERROR = 'I\'m out of building credit right now, so the look didn\'t run. Ask me again once it\'s back.';
 const FILES_SHOWN = 5;
 const MAX_PROGRESS_LINES = 600;
 // The words a look's reply ends with, which this module reads.
@@ -473,8 +475,22 @@ async function lookInto(pool, config, { user, app, question, notes = null, since
   if (ran?.stopped || ran?.stoppedBy) {
     return { ok: false, code: 'time', error: 'It ran out of time before it finished.', costUsd, ms, model };
   }
+  // T1.3: OpenRouter's credit ran out under the look (its error, or what the
+  // worker read of how it ended): an outage, noted once (the admins hear at
+  // once), and said as one, never as findings.
+  const credit = require('../openrouter-credit');
+  if (routed && (credit.creditOut({ error: routed.error || null }) || credit.creditOut(result))) {
+    await credit.noteOutage(pool, { words: 'a look met OpenRouter\'s 402 for credit' }).catch(() => null);
+    return { ok: false, code: 'credit', error: CREDIT_ERROR, costUsd, ms, model };
+  }
   if (!routed || routed.error) {
     log.warn('homeroom-bot-look', 'A look\'s turn failed', { app: app.slug, err: clip(routed?.error || 'no result', 300) });
+    return { ok: false, code: 'failed', error: 'The look did not finish just now.', costUsd, ms, model };
+  }
+  // T1.3: a reply that IS the runtime's provider error ("API Error: …") is
+  // a turn that failed, never what the look found.
+  if (require('../agent-result-text').agentApiFailure(result.lastResultText)) {
+    log.warn('homeroom-bot-look', 'A look\'s turn ended on a provider error', { app: app.slug });
     return { ok: false, code: 'failed', error: 'The look did not finish just now.', costUsd, ms, model };
   }
   const text = [result.lastResultText, ...(Array.isArray(result.answerParts) ? result.answerParts : [])]

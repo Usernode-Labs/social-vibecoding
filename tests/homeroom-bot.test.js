@@ -294,14 +294,17 @@ test('a failed read is tried once more, a while later, then left until something
 
 test('the last run says whether a live build is waiting or under way, as the read lane reads it', () => {
   const q = SRC.slice(SRC.indexOf('async function lastRunsByIssue'), SRC.indexOf('async function refreshApp'));
-  assert.match(q, /\(mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL\s+AND \(live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL\)\s+AND created_at > NOW\(\) - make_interval\(days => \$2\)\) AS live_building/);
+  assert.match(q, /\(mode = 'live' AND verdict = 'ready' AND build_ok IS NULL AND proposal_session_id IS NULL\s+AND \(live_build_waiting_at IS NOT NULL OR build_session_id IS NOT NULL\)\s+AND created_at > NOW\(\) - make_interval\(days => \$2\)\s+AND build_finish->>'credit_wait_at' IS NULL\) AS live_building/);
   assert.match(q, /\[appId, ABANDONED_LIVE_WINDOW_DAYS\]/, 'past the abandoned-build sweep\'s window, a run holds nothing');
   // The lane reads its candidates with rules/bot-loop.ts READ_CANDIDATES_SQL,
   // whose window is the same constant's value written into the statement.
   const lane = rules.READ_CANDIDATES_SQL;
   assert.equal(rules.ABANDONED_LIVE_WINDOW_DAYS, bot.ABANDONED_LIVE_WINDOW_DAYS, 'one window on both sides');
-  assert.match(lane, new RegExp(`AND b\\.mode = 'live' AND b\\.verdict = 'ready' AND b\\.build_ok IS NULL AND b\\.proposal_session_id IS NULL\\s+AND \\(b\\.live_build_waiting_at IS NOT NULL OR b\\.build_session_id IS NOT NULL\\)\\s+AND b\\.created_at > NOW\\(\\) - make_interval\\(days => ${rules.ABANDONED_LIVE_WINDOW_DAYS}\\)`),
+  assert.match(lane, new RegExp(`AND b\\.mode = 'live' AND b\\.verdict = 'ready' AND b\\.build_ok IS NULL AND b\\.proposal_session_id IS NULL\\s+AND \\(b\\.live_build_waiting_at IS NOT NULL OR b\\.build_session_id IS NOT NULL\\)\\s+AND b\\.created_at > NOW\\(\\) - make_interval\\(days => ${rules.ABANDONED_LIVE_WINDOW_DAYS}\\)\\s+AND b\\.build_finish->>'credit_wait_at' IS NULL`),
     'the same condition, word for word');
+  // T1.1: a build that stopped for OpenRouter's credit holds nothing on either
+  // side, so the credit_wait read it left owed is granted once credit is back.
+  assert.match(q, /build_finish->>'credit_wait_at' IS NULL/);
   const refresh = SRC.slice(SRC.indexOf('async function refreshApp('), SRC.indexOf('async function refreshQueue('));
   assert.match(refresh, /verdict\.reason === 'unchanged' \|\| verdict\.reason === 'held' \|\| verdict\.reason === 'building'\) quiet\.push\(n\)/,
     'a row the bot queued for itself on it is kept, as on an unchanged request');
@@ -866,8 +869,11 @@ test('an empty reply with no stop behind it records WHY it was empty', async () 
       outputTokens: 0,
     },
   });
+  // T1.14: an empty reply the provider's own code explains is the
+  // platform's, recorded as a failed read only on its FAULT_TRIES-th fault in
+  // a row (and never a benchmark case); this is that one.
   const out = await bot.runTriage(pool, {}, {
-    bot: BOT, app: APP, item: ITEM, mode: 'shadow',
+    bot: BOT, app: APP, item: { ...ITEM, faults: 2 }, mode: 'shadow',
     settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
   });
   assert.equal(out.verdict, 'failed');
@@ -876,6 +882,43 @@ test('an empty reply with no stop behind it records WHY it was empty', async () 
   assert.match(insert.params[18], /rate_limit/);
   assert.match(insert.params[18], /provider_overloaded/);
   assert.match(insert.params[18], /429 Too Many Requests/);
+});
+
+test('T1.14: an empty reply its provider or its worker explains is a platform fault, not the model\'s failure', async () => {
+  for (const result of [
+    { lastResultText: '', agentErrorCode: 'rate_limited', agentError: '429 Too Many Requests', agentExit: 1 },
+    { lastResultText: '', markerlessCause: 'oom_killed' },
+  ]) {
+    const { pool, deps, calls } = triageHarness({ sessionId: 745, result });
+    const out = await bot.runTriage(pool, {}, {
+      bot: BOT, app: APP, item: ITEM, mode: 'shadow', settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
+    });
+    assert.equal(out.ran, false, JSON.stringify(result));
+    assert.equal(out.reason, 'infra');
+    assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no failed read is written');
+  }
+  assert.equal(bot.emptyReplyIsInfra({ lastResultText: '' }), false, 'an empty reply nothing explains is still the model\'s');
+});
+
+test('T1.3: a read that ran out of OpenRouter\'s credit writes no run and ends as credit', async () => {
+  for (const result of [
+    { lastResultText: '', agentErrorCode: 'insufficient_credits', agentError: 'Insufficient credits', agentExit: 1 },
+    { lastResultText: 'API Error: 402 {"error":{"message":"Insufficient credits"}}' },
+  ]) {
+    const { pool, deps, calls } = triageHarness({ sessionId: 746, result });
+    const out = await bot.runTriage(pool, {}, {
+      bot: BOT, app: APP, item: { ...ITEM, faults: 2 }, mode: 'shadow', settings: { turnSeconds: 3600, turnInputTokens: 10_000_000 }, deps,
+    });
+    assert.equal(out.ran, false, JSON.stringify(result));
+    assert.equal(out.reason, 'credit');
+    assert.ok(out.detail);
+    assert.ok(!calls.queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'not a failed read');
+  }
+  // A max_tokens 402 asks only for a shorter reply: not an outage.
+  assert.equal(bot.creditOutOf('provider: API Error: 402 This request requires more credits, or fewer max_tokens. You requested up to 32000 tokens, but can only afford 1000.'), false);
+  // A model's reply quoted in an error is never read as the provider's.
+  assert.equal(bot.creditOutOf('unparseable: the 402 page needs a fix', { lastResultText: 'the 402 page needs a fix' }), false);
+  assert.equal(bot.creditOutOf('unparseable: (empty reply) [code=insufficient_credits]', { agentErrorCode: 'insufficient_credits' }), true);
 });
 
 test('describeStop reports what is known and admits when nothing is', () => {

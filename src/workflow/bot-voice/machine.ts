@@ -215,7 +215,13 @@ const reported = (s: VState, e: Event<any>): Outcome<VState> => owe(s, e, {
 // answers there (homeroom-bot-holds.js decide) counts it as said only once
 // it is certain to be.
 const held = (s: VState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outcome<VState> => {
-  const key = `held:${e.payload.mentionId}:${e.payload.kind}`;
+  // T1.8: an answer whose post ran out of tries was settled as failed (its
+  // pending row removed: heldPostFailed), so the refresh decides it again;
+  // it is owed once more, under a key of its own. Once: a second failure
+  // keeps its row, which reads as said.
+  const first = `held:${e.payload.mentionId}:${e.payload.kind}`;
+  const before = live(s, e).notes[first];
+  const key = before && (before.status === 'exhausted' || before.status === 'failed') ? `${first}:again` : first;
   const out = owe(s, e, {
     kind: WORK.post, key,
     input: { appId: e.payload.appId, issueNumber: e.payload.place.ref, kind: e.payload.kind, text: e.payload.text,
@@ -224,6 +230,9 @@ const held = (s: VState, e: Event<any>, _f: Facts, ctx: TransitionContext): Outc
   if (!out.work?.length) return out;
   return { ...out, writes: [{ type: 'heldPost', appId: e.payload.appId, issueNumber: e.payload.place.ref, kind: e.payload.kind, mentionId: e.payload.mentionId, at: ctx.now.toISOString() }] };
 };
+
+// A held answer's work key: `held:<mention>:<kind>`, or its second try's.
+const HELD_KEY = /^held:(\d+):(going_ahead|held_by_person)(:again)?$/;
 
 // A note's result, kept (so the same work owed again is owed once). An act
 // that failed for good is settled as failed and said (`offer:<id>:failed`),
@@ -235,6 +244,16 @@ function noteResult(status: Note['status']) {
     to: (s: VState, e: Event<WorkResultPayload>): Outcome<VState> => {
       const d = (s as Live).data;
       const notes = { ...d.notes, [e.payload.workKey]: { ...d.notes[e.payload.workKey]!, status } };
+      // T1.8: a held answer whose post failed for good is not left pending:
+      // a pending row reads as said (homeroom-bot-holds.js answers), and the
+      // mention would never be answered. Its row goes (when nothing of it
+      // went out), so the next refresh decides it again; once.
+      const h = HELD_KEY.exec(e.payload.workKey);
+      if (status !== 'done' && e.payload.kind === WORK.post && h && !h[3] && d.place.type === 'issue') {
+        return step(s.name as Name, { ...d, notes }, {
+          writes: [{ type: 'heldPostFailed', appId: d.appId, issueNumber: d.place.ref, kind: h[2], mentionId: Number(h[1]) }],
+        });
+      }
       const m = /^offer:(\d+)$/.exec(e.payload.workKey);
       if (status === 'done' || e.payload.kind !== WORK.act || !m) return step(s.name as Name, { ...d, notes });
       const key = `${e.payload.workKey}:failed`;
@@ -325,6 +344,16 @@ export function botVoice(): Machine<VState, Facts> {
            VALUES ($1, $2, $3, $4, 'issue', $5, $6::int, $6::int, $7)
            ON CONFLICT (said_key) DO NOTHING`,
           [`${w.kind}:${subject}:${version}`, w.kind, subject, version, w.appId, w.issueNumber, w.at]);
+      },
+      // T1.8: its post failed for good: the pending row goes, unless part of
+      // it went out (a message, a GitHub comment), which reads as said.
+      heldPostFailed: async (tx, w) => {
+        const subject = `request:${Number(w.appId)}-${Number(w.issueNumber)}`;
+        const version = `mention-${Number(w.mentionId)}`;
+        await tx.query(
+          `DELETE FROM bot_posts
+            WHERE said_key = $1 AND outcome = 'pending' AND chat_message_id IS NULL AND github_comment_id IS NULL`,
+          [`${w.kind}:${subject}:${version}`]);
       },
     },
     transitions: {

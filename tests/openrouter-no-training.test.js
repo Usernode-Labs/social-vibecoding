@@ -246,7 +246,7 @@ const NOT_SENDERS = new Map([
   ['src/services/homeroom-bot-mayor.js', 'sends through openrouter.js and openrouter-mayor.js'],
   ['src/services/llm.js', 'sends through openrouter.js'],
   ['src/services/model-costs.js', 'names the catalog URL in a comment'],
-  ['src/services/openrouter-credit.js', 'OpenRouter\'s credit and key management APIs (GET /credits, GET /key), no model request'],
+  ['src/services/openrouter-credit.js', 'OpenRouter\'s credit and key management APIs (GET /credits, GET /key); its credit probe sends through openrouter-mayor.js'],
   ['src/services/openrouter-managed-keys.js', 'OpenRouter\'s key management API, no model request'],
   ['src/services/small-change.js', 'sends through openrouter.js'],
   ['src/services/worker.js', 'hands the base to the worker, whose listeners send'],

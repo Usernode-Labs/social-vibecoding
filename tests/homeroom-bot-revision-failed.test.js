@@ -35,7 +35,7 @@ const policy = require('../src/services/mobile-push-policy');
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const DASH = /—/;
-const RETRY = 'The change is as it was. Reply here (or on the GitHub issue) and it will try again.';
+const RETRY = 'The change is as it was. Reply here (or on the GitHub issue) with what to change and it will try again.';
 
 // The run's own records (homeroom-bot.js runFollowUp), and what the DM and
 // the post on the change each say about it.

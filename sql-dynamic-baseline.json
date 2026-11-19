@@ -2609,7 +2609,7 @@
     {
       "source": "src/workflow/proposal/machine.ts",
       "kind": "structural-template",
-      "fingerprint": "544ee2c7d0aeeaeb2da5",
+      "fingerprint": "651608e153017528c9d9",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET reviewed_head_sha = CASE WHEN $3 = 'reviewed' THEN $1 ELSE reviewed_head_sha END, imported_pr_head_sha = CASE WHEN $3 = 'imported' THE"
     },

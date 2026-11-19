@@ -825,7 +825,7 @@ export async function botOwed(db: Db, p: {
 // The same, waiting briefly for its instance's answer (bot-request's reply:
 // queued with its look's card key, or a look already runs). Null when the
 // answer is not in yet.
-export async function botOwedAndWait(p: Parameters<typeof botOwed>[1]): Promise<{ queued: boolean; looking: boolean; jobKey: string | null } | null> {
+export async function botOwedAndWait(p: Parameters<typeof botOwed>[1]): Promise<{ queued: boolean; looking: boolean; owed?: boolean; jobKey: string | null } | null> {
   if (!runtime) throw new Error('The workflow runtime is not running in this process');
   const out = await runtime.appendAndWait(BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'Owed',

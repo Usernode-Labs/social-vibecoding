@@ -23,6 +23,14 @@
 // The pull request's row records the merge (merged, merge_commit_sha, the
 // head it merged). Asking again for a merged one answers the same merge, so
 // a retried attempt after a lost answer is not a second merge.
+//
+// T1.7: main moves (step 5) before the row says merged, so a process that
+// dies between them used to leave a retry that found main already holding
+// the tree (`alreadyOnMain`) and closed the change. The intended merge is
+// checkpointed on the row before the compare-and-swap (merge_commit_sha and
+// merged_head_sha, with `merged` still false: native-pulls.js shows neither
+// for an open pull request), and a retry that finds main at that commit, or
+// past it, records the merge it made and answers it.
 
 const log = require('./logger');
 const gitHost = require('./git-host');
@@ -74,6 +82,18 @@ async function squashMerge({ owner, repo, number, pinnedSha = null }) {
   const dir = await repoMirror.ensureMirror(owner, repo, { fresh: true });
   const head = await repoMirror.resolveBranch(dir, row.head_branch);
   const base = await repoMirror.resolveBranch(dir, row.base_branch);
+  // T1.7: an attempt that moved main and died before recording it: main is
+  // at the merge it checkpointed (or past it, another merge on top), so that
+  // merge happened, and is recorded and answered now.
+  const pending = pendingMerge(row);
+  if (pending && base && (!pinnedSha || pending.head === String(pinnedSha).toLowerCase())
+      && (base === pending.sha || await repoMirror.isAncestor(dir, pending.sha, base).catch(() => false))) {
+    await recordMerged(app, row, pending.sha, pending.head);
+    log.info('native-merge', 'Proposal merged by an attempt whose answer was lost', {
+      app: app.slug, number: row.number, mergeSha: pending.sha, main: base,
+    });
+    return { sha: pending.sha, merged: true, message: 'Pull Request successfully merged' };
+  }
   // The branch is not on the git host while main is: the proposal's code did
   // not come across from GitHub (services/code-missing.js). Refused with that
   // reason and its code, never worded as "not mergeable", which the merge
@@ -121,6 +141,12 @@ async function squashMerge({ owner, repo, number, pinnedSha = null }) {
   ], { input: messageFor(row) });
   const mergeSha = stdout.trim().toLowerCase();
 
+  // T1.7: the merge it is about to make, kept before main moves, so an
+  // attempt whose answer is lost is recognised by the next one.
+  await db().query(
+    `UPDATE native_pulls SET merge_commit_sha = $3, merged_head_sha = $4, updated_at = NOW()
+      WHERE app_id = $1 AND number = $2 AND merged = FALSE`, [app.id, row.number, mergeSha, head]);
+
   try {
     await gitHost.casUpdateRef({ owner, name: repo }, dir, row.base_branch, base, mergeSha);
   } catch (err) {
@@ -128,13 +154,25 @@ async function squashMerge({ owner, repo, number, pinnedSha = null }) {
     throw err;
   }
 
+  await recordMerged(app, row, mergeSha, head);
+  log.info('native-merge', 'Proposal merged', { app: app.slug, number: row.number, head, mergeSha });
+  return { sha: mergeSha, merged: true, message: 'Pull Request successfully merged' };
+}
+
+// T1.7: the merge an earlier attempt checkpointed and may have made, or null.
+function pendingMerge(row) {
+  const sha = String(row?.merge_commit_sha || '').toLowerCase();
+  const head = String(row?.merged_head_sha || '').toLowerCase();
+  if (row?.merged || !/^[0-9a-f]{40}$/.test(sha) || !/^[0-9a-f]{40}$/.test(head)) return null;
+  return { sha, head };
+}
+
+async function recordMerged(app, row, mergeSha, head) {
   await db().query(
     `UPDATE native_pulls
         SET merged = TRUE, merged_at = NOW(), merge_commit_sha = $3, merged_head_sha = $4,
             state = 'closed', closed_at = NOW(), updated_at = NOW()
       WHERE app_id = $1 AND number = $2`, [app.id, row.number, mergeSha, head]);
-  log.info('native-merge', 'Proposal merged', { app: app.slug, number: row.number, head, mergeSha });
-  return { sha: mergeSha, merged: true, message: 'Pull Request successfully merged' };
 }
 
-module.exports = { squashMerge, _messageFor: messageFor };
+module.exports = { squashMerge, _messageFor: messageFor, _pendingMerge: pendingMerge };

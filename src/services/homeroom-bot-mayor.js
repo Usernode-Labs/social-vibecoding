@@ -393,6 +393,15 @@ const KEY_TEXT = 'I can\'t reach my model right now because my access to it isn\
 // on its own (DEFER_DELAYS_MS). Nothing in it asks them to send it again.
 const DEFERRED_TEXT = 'I can\'t reach my model right now, so I couldn\'t answer yet. I\'ll answer this here in a minute or two; '
   + 'you don\'t need to send it again.';
+// T1.3: OpenRouter's credit ran out (a 402 for credit, openrouter-mayor.js
+// `credit_out`): no key error and nothing an admin must fix in the key. The
+// turn is asked again on its own (DEFER_DELAYS_MS), as a busy provider's is,
+// and the admins were told at once (openrouter-credit.js noteOutage).
+const CREDIT_TEXT = 'I\'m out of building credit right now, so I couldn\'t answer yet. I\'ll try again here in a few minutes, '
+  + 'and an admin has been told; you don\'t need to send it again.';
+// Its last try, still out of credit: nothing more is tried by itself.
+const CREDIT_GAVE_UP_TEXT = 'I\'m still out of building credit, so I couldn\'t answer your message above. '
+  + 'Ask me again once an admin has added more.';
 // The last of those tries failed too.
 const DEFERRED_GAVE_UP_TEXT = 'I still couldn\'t reach my model to answer your message above. Ask me again when you\'re ready.';
 // 31 Oct 2026: the same, when that answer also owed their earlier messages
@@ -3998,18 +4007,32 @@ async function fallbackAnswer(pool, t, { error, errorStatus = null, history }) {
   // #11 (WP3): a withdrawal or a report done before the model failed is
   // said, so it is never asked for, and done, twice. The template states
   // what was done, so it goes through the reply check as a reply would.
-  if (ctx.withdrew || ctx.reported) {
+  // T1.11: and whatever else the turn did that stays (the Stop watch's
+  // list: a request started, a change revised, a draft's change saved),
+  // never denied by the answer that could not be written.
+  const alsoDid = botStop.doneSentences(t.ctx?.deps?.stop?.did ?? ctx.deps?.stop?.did,
+    { skip: /^(?:withdrawn |filed your report|sent your report)/ });
+  if (ctx.withdrew || ctx.reported || alsoDid.length) {
     const done = [
       ctx.withdrew ? `I withdrew the ${ctx.withdrew.projectName} proposal${ctx.withdrew.title ? ` "${ctx.withdrew.title}"` : ''}.` : '',
       // #6566: the report's own number, so it is never asked for twice.
       ctx.reported ? (Number(ctx.reported.number) > 0
         ? `${ctx.reported.repeat ? 'Already filed' : 'Filed'} as #${ctx.reported.number} on Homeroom's requests board.`
         : 'I sent your report to the Homeroom team.') : '',
+      ...alsoDid,
     ].filter(Boolean).join(' ');
     return { fallback: 'done', text: await claims.checkedNote(pool, ctx, done), cards: ctx.cards.slice(0, MAX_CARDS), defer: false };
   }
   const fromRecords = await recordsAnswer(pool, ctx);
   if (fromRecords) return { fallback: 'records', ...fromRecords, defer: false };
+  // T1.3: out of OpenRouter's credit: one outage noted (the admins hear at
+  // once), one honest line, and the turn asked again on its own. No plain
+  // answer is tried: it would meet the same 402.
+  if (error === 'credit_out') {
+    await (t.ctx?.deps?.credit || require('./openrouter-credit')).noteOutage(pool, { words: 'a chat answer met OpenRouter\'s 402 for credit' })
+      .catch(() => null);
+    return { fallback: 'credit', text: CREDIT_TEXT, cards: [], defer: true };
+  }
   if (KEY_ERRORS.has(error) && errorStatus !== 403) return { fallback: 'key', text: KEY_TEXT, cards: [], defer: false };
   const plain = await plainAnswer(t, history, { later: deferrable });
   // #6583: the plain answer is checked as the rounds' answer is, with no
@@ -4793,11 +4816,13 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
     // onLater). A later try says nothing until it has an answer, and the
     // last one says it could not.
     const next = (deps.deferAttempt || 0) + 1;
-    if (next > DEFER_DELAYS_MS.length) return say(ctx.owed ? DEFERRED_GAVE_UP_OWED_TEXT : DEFERRED_GAVE_UP_TEXT);
+    if (next > DEFER_DELAYS_MS.length) {
+      return say(fallback === 'credit' ? CREDIT_GAVE_UP_TEXT : ctx.owed ? DEFERRED_GAVE_UP_OWED_TEXT : DEFERRED_GAVE_UP_TEXT);
+    }
     if (typeof deps.onLater === 'function') deps.onLater(next);
     if (deps.deferAttempt) return null;
   }
-  if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred') return sayHere(text);
+  if (fallback === 'key' || fallback === 'broken' || fallback === 'deferred' || fallback === 'credit') return sayHere(text);
   if (fallback) return sayHere(text, { objects: cards, metadata: { kind: 'chat' } });
   // P1: what the turn looked at, as one line above the words (lookedMeta).
   const looked = await lookedMeta(pool, ctx, Date.now() - t.startedMs);
@@ -7966,6 +7991,8 @@ module.exports = {
   BUSY_TEXT,
   BROKEN_TEXT,
   KEY_TEXT,
+  CREDIT_TEXT,
+  CREDIT_GAVE_UP_TEXT,
   PLAIN_NOTE,
   TOOLS,
   MAX_OFFERS,
@@ -7995,6 +8022,7 @@ module.exports = {
   progressText,
   buildWords,
   retryPlan,
+  fallbackAnswer,
   retryAct,
   normalizeCalls,
   myWork,

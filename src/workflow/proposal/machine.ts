@@ -74,6 +74,13 @@ export const sessionKey = (sessionId: number) => `session:${sessionId}`;
 // branch and code missing from the git host keep their record until the head
 // or main moves. Keep equal to the merge queue's SWEEP_MS (a test pins it).
 export const REFUSAL_RETRY_MS = 4 * 60 * 1000;
+// T1.7: the most times the queue asks GitHub to merge one held head (an
+// hour at REFUSAL_RETRY_MS). Required checks that never finish, or that fail
+// on a head already level with main, were asked about for ever. Past this
+// the head is held until it or main moves ('github_stuck' beside its own
+// reason), an incident is raised, and its author (and, for the bot's change,
+// whoever asked for it) is told.
+export const MAX_HELD_TRIES = 15;
 
 export const WORK = Object.freeze({
   open: 'review.open',
@@ -206,7 +213,8 @@ export interface Data {
   // `since` (#6563): when the queue FIRST met this hold on this head, kept
   // across the repeat refusals of one head (`at` is the last try), so the
   // page can say how long it has waited and call an unusually long one out.
-  refused?: { head: string | null; main: string | null; kind: string; at?: string; retryAt?: string | null; checks?: GithubChecks | null; since?: string } | null;
+  // `tries` (T1.7): how many times this head has been held so far.
+  refused?: { head: string | null; main: string | null; kind: string; at?: string; retryAt?: string | null; checks?: GithubChecks | null; since?: string; tries?: number } | null;
   // #6546: GitHub's required checks failed on this approved change and it was
   // brought up to date with main so they run again on today's main: once per
   // approval epoch (a clean sync keeps the votes, so the epoch stays), so a
@@ -311,7 +319,9 @@ export const GITHUB_CHECKS_SYNC = 'github_checks';
 // 'github_checks': its required checks are still running, or failed and are
 // being run again; 'github_checks_failing': they failed again after that.
 // The SQL writes (mergeHeld, headMoved) spell the same four out.
-export const GITHUB_HOLD_REASONS = Object.freeze(['github_busy', 'github_refused', 'github_checks', 'github_checks_failing']);
+// 'github_stuck' (T1.7): beside one of those, the head was held
+// MAX_HELD_TRIES times and is not asked about again until it or main moves.
+export const GITHUB_HOLD_REASONS = Object.freeze(['github_busy', 'github_refused', 'github_checks', 'github_checks_failing', 'github_stuck']);
 // The platform's syncs for a failing check: once per head, the keys recorded
 // beside it (services/fixed-check-sync.js).
 const CHECK_SYNCS: ReadonlySet<string> = new Set(['fixed_check', 'bot_fix', 'bot_handoff']);
@@ -1147,32 +1157,54 @@ function attempted(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext, dep
       // simply meet it again, so it comes back on the sweep and the card says
       // it is waiting on GitHub. A conflict, a draft, a wrong base or code
       // missing from the git host stays held until the head or main moves.
-      const retryAt = kind === 'github_busy' || (kind === 'blocked' && !r?.codeMissing)
+      let retryAt = kind === 'github_busy' || (kind === 'blocked' && !r?.codeMissing)
         ? new Date(ctx.now.getTime() + REFUSAL_RETRY_MS).toISOString()
         : null;
       // #6563: how long this head has been held. A repeat refusal of the same
       // head keeps the first try; a new head, a cleared record or a refusal
       // that is not retried starts the clock again.
+      const heldBefore = !!(s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.retryAt);
       const since = retryAt
-        ? (s.data.refused && s.data.refused.head === f.row!.head && s.data.refused.retryAt
-          ? (s.data.refused.since || s.data.refused.at || ctx.now.toISOString())
+        ? (heldBefore
+          ? (s.data.refused!.since || s.data.refused!.at || ctx.now.toISOString())
           : ctx.now.toISOString())
         : undefined;
       // Failed once more after Homeroom already brought this approval's head
       // up to date with main: its own, not a run against an older main.
-      const failedAgain = checks === 'failing' && githubChecksTried(s.data, f.row!);
+      // T1.7: or failed on a head already level with main, which no sync can
+      // make GitHub check again: said as failing at once, never as running.
+      const failedAgain = checks === 'failing' && (githubChecksTried(s.data, f.row!) || f.row!.integrationBehindBy === 0);
+      // T1.7: one head is held MAX_HELD_TRIES times at most (tries counted
+      // across its repeat refusals), then held until it or main moves.
+      const tries = retryAt ? (heldBefore ? (Number(s.data.refused!.tries) || 1) + 1 : 1) : undefined;
+      const stuck = !!retryAt && Number(tries) >= MAX_HELD_TRIES;
       if (retryAt) {
-        writes.push({ type: 'mergeHeld', sessionId: s.data.sessionId,
-          reason: kind === 'github_busy' ? 'github_busy'
-            : checks ? (failedAgain ? 'github_checks_failing' : 'github_checks')
-              : 'github_refused' });
+        const reason = kind === 'github_busy' ? 'github_busy'
+          : checks ? (failedAgain ? 'github_checks_failing' : 'github_checks')
+            : 'github_refused';
+        writes.push({ type: 'mergeHeld', sessionId: s.data.sessionId, reason, ...(stuck ? { also: 'github_stuck' } : {}) });
+      }
+      if (stuck) {
+        retryAt = null;
+        const owner = f.row!.userId ? `<@${f.row!.userId}>` : 'Its author';
+        const what = checks === 'pending' ? 'its required checks on GitHub never finished'
+          : checks === 'failing' ? 'its required checks on GitHub keep failing'
+            : kind === 'github_busy' ? 'GitHub stayed busy' : 'GitHub kept refusing it';
+        writes.push(line(e, s.data, `${prLabel(f.row!)} is approved, but it could not go live: ${what} after ${tries} tries. `
+          + `${owner}: Homeroom stops asking until the change or main moves.`));
+        writes.push({ type: 'event', userId: null, appId: s.data.appId, sessionId: s.data.sessionId, eventType: 'platform_incident',
+          metadata: { kind: 'merge_stuck', prNumber: f.row!.prNumber ?? null, head: f.row!.head ?? null, refusal: kind, checks, tries: Number(tries),
+            why: what } });
+        // The bot's change: whoever asked for it is handed it (a change of
+        // anybody else's writes nothing).
+        writes.push(toBotChange(s.data.sessionId, 'MergeStuck', { head: f.row!.head ?? null, why: what }));
       }
       const out = backToReview(s, e, f, ctx, deps, {
         outcome: 'refused', extra: { kind, ...(checks ? { checks } : {}) }, line: said ? null : (r?.message || null), writes,
         push: { mergeFailed: true, resolving: kind === 'conflict' },
         refused: kind === 'base_moved' ? null : {
           head: f.row!.head, main: f.row!.integrationMain, kind, at: ctx.now.toISOString(), retryAt, checks,
-          ...(since ? { since } : {}),
+          ...(since ? { since } : {}), ...(tries ? { tries } : {}),
         },
       });
       return checks === 'failing' ? githubChecksSyncNow(out, f, ctx) : out;
@@ -1469,6 +1501,14 @@ function synced(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
       const owner = f.row!.userId ? `<@${f.row!.userId}>` : 'the session owner';
       writes.push({ type: 'line', eventId: e.id, appId: d.appId, sessionId: d.sessionId, msgType: 'conflict', metadata: null,
         content: `PR #${f.row!.prNumber} conflicts with main and could not be resolved automatically. ${owner}: the conflict needs resolving on its branch before it can merge.` });
+      // T1.7: on one of the Homeroom bot's changes that ping reached the bot
+      // and nobody acted: the change sat at "Waiting to sync with main". Its
+      // change machine hands it to whoever asked for it (their Needs you and
+      // a note), once per head. A change of anybody else's writes nothing.
+      writes.push(toBotChange(d.sessionId, 'ConflictUnresolved', {
+        head: r.headBefore ?? sync.head ?? null,
+        files: (Array.isArray(r?.conflictFiles) ? r.conflictFiles : []).slice(0, 20).map(String),
+      }));
     }
   }
   return step({ name: s.name, data: d } as Live, {
@@ -2097,7 +2137,7 @@ const WRITES = {
             -- #6546: GitHub held the merge of the head this one replaced; that
             -- says nothing about the new head, which GitHub checks anew.
             integration_block_reasons = CASE WHEN integration_block_reasons IS NULL THEN NULL
-              ELSE integration_block_reasons - 'github_busy' - 'github_refused' - 'github_checks' - 'github_checks_failing' END
+              ELSE integration_block_reasons - 'github_busy' - 'github_refused' - 'github_checks' - 'github_checks_failing' - 'github_stuck' END
       WHERE id = $2`, [w.to, w.sessionId, w.column, !!w.keepVotes, !!w.fixOnly]),
   approvalsCleared: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET approval_epoch = approval_epoch + 1 WHERE id = $1', [w.sessionId]),
@@ -2134,9 +2174,9 @@ const WRITES = {
   // alone; the queue's laneReasons rewrite leaves them alone.
   mergeHeld: async (tx: Tx, w: any) => tx.query(
     `UPDATE chat_sessions
-        SET integration_block_reasons = (COALESCE(integration_block_reasons, '[]'::jsonb) - 'github_busy' - 'github_refused' - 'github_checks' - 'github_checks_failing')
-              || jsonb_build_array($2::text)
-      WHERE id = $1`, [w.sessionId, w.reason]),
+        SET integration_block_reasons = (COALESCE(integration_block_reasons, '[]'::jsonb) - 'github_busy' - 'github_refused' - 'github_checks' - 'github_checks_failing' - 'github_stuck')
+              || jsonb_build_array($2::text) || CASE WHEN $3::text IS NULL THEN '[]'::jsonb ELSE jsonb_build_array($3::text) END
+      WHERE id = $1`, [w.sessionId, w.reason, w.also ?? null]),
   // The once-records of the platform's own syncs, written with the sync.
   bootFailureClaim: async (tx: Tx, w: any) => tx.query(
     'UPDATE chat_sessions SET boot_failure_sync_head = $2 WHERE id = $1', [w.sessionId, w.head]),
