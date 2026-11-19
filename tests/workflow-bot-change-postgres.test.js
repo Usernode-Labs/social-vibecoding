@@ -22,7 +22,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine } = require('../src/workflow/kernel/index.ts');
-const { botChange, sessionKey, MACHINE, WORK, FIX_ROUNDS } = require('../src/workflow/bot-change/machine.ts');
+const { botChange, sessionKey, MACHINE, WORK, FIX_ROUNDS, FIX_ANSWER_MS } = require('../src/workflow/bot-change/machine.ts');
 const { toBotChange, writeBotChange } = require('../src/workflow/rules/bot-notes.ts');
 const { READY_HOLD_MS } = require('../src/workflow/rules/bot-readiness.ts');
 const workState = require('../src/services/work-state');
@@ -310,9 +310,11 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.deepEqual(calls(WORK.fix).map((c) => c.input.head), [s.head]);
     assert.match(calls(WORK.fix)[0].key, new RegExp(`^fix:${s.head.slice(0, 12)}:v\\d+$`));
     assert.equal(calls(WORK.ready).length, 0, 'no card while the bot fixes it');
-    // No clock of its own, and no read of the bot's queue: its request's
-    // instance (bot-request) answers how the round it asked for ended.
-    assert.equal(i.deadline_at, null, 'it waits for its request\'s answer');
+    // No read of the bot's queue: its request's instance (bot-request)
+    // answers how the round it asked for ended. Review 3e: its clock is only
+    // a backstop, FIX_ANSWER_MS away, for an answer that never comes.
+    assert.equal(i.deadline_event.type, 'FixUnanswered', 'it waits for its request\'s answer, with a backstop');
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - Date.now() - FIX_ANSWER_MS) < 5 * 60 * 1000);
     assert.equal(FIX_ROUNDS, 2);
     // The round was lost (its look ended without it, bug 3; a release took
     // it, bug 4): asked once more.
@@ -504,7 +506,7 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     work.answer.set(WORK.fix, { queued: true });
     await tell(s, 'ShotsSettled');
     assert.equal((await inst(s)).state, 'with_the_bot');
-    assert.equal((await inst(s)).deadline_at, null, 'with the bot: no clock until something tells it to look');
+    assert.equal((await inst(s)).deadline_event.type, 'FixUnanswered', 'with the bot: only its backstop clock (review 3e)');
     await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [s.id]));
     // A look while it is being merged (another verdict) arms its clock.
     await tell(s, 'Verdict', { head: s.head, state: 'passing' });

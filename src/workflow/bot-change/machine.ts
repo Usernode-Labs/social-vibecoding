@@ -72,6 +72,15 @@ export const FIX_LOOK_MS = 10 * 60 * 1000;
 // again for that head: it is asked when it is next needed (a new verdict,
 // its shots, a promote), as a refusal is (design-bot-loop Q1).
 export const FIX_ROUNDS = 2;
+// Review 3e (19 Nov 2026): how long a change waits with the bot for the
+// answer to the round it asked for before it asks again. Its request's
+// instance answers every round it was asked for (it ends each look with an
+// answer or keeps the debt), so this is only a backstop for a path that
+// someday does not: asked again, the same round (the request's instance
+// holds one debt per change, so a round still owed is not doubled), never
+// counted as a lost one, so a long credit outage that holds the bot's lane
+// hands nobody the change. Long enough for a lane held for hours.
+export const FIX_ANSWER_MS = 6 * 60 * 60 * 1000;
 // The outcomes of a round that did not look at the head.
 const LOST: ReadonlySet<string> = new Set(['lost', 'requeued']);
 
@@ -141,6 +150,9 @@ const EVENTS = {
   Live: session,
   Closed: (p: any) => ({ ...session(p), reason: text(p?.reason, 64) }),
   Look: () => ({}),
+  // The clock, when the round it asked the bot for went unanswered for
+  // FIX_ANSWER_MS: asked again (`head`: the head the round was asked about).
+  FixUnanswered: (p: any) => ({ head: optSha(p?.head) }),
   // Its stored work state opened it for votes, or says it is a first
   // version ready to try (services/work-state.js botChangesOpened, in the
   // transaction that stored the row). Only "look now": the row is read again.
@@ -232,7 +244,8 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
   // checks passed, what is due is what its shots show.) This is the
   // machine's own decision, whatever its row says of the vote.
   if (due && !(fixHere && (fixHere.refused || fixHere.gaveUp))) {
-    if (fixHere?.asked) return at('with_the_bot', { timer: null });
+    // Still waiting for the bot's answer: its backstop clock keeps running.
+    if (fixHere?.asked) return at('with_the_bot', {});
     return askFix(d, due.head, fixHere?.lost || 0, ctx, extra);
   }
   // Not ready to try, by its stored work state: its checks still run or
@@ -293,7 +306,25 @@ function decide(s: Live | null, f: Facts, ctx: TransitionContext, base: Data, ex
 function askFix(base: Data, head: string, lost: number, ctx: TransitionContext, extra: { push?: Push[] } = {}): Outcome<BState> {
   const work: WorkRequest[] = [{ kind: WORK.fix, key: `fix:${shortSha(head)}:v${ctx.version + 1}`, input: { sessionId: base.sessionId, head } }];
   const d = asked({ ...base, fix: { head, asked: true, lost, refused: null, gaveUp: false } }, work);
-  return step('with_the_bot', d, { work, push: extra.push, timer: null });
+  // 3e: a backstop, in case the answer never comes (FIX_ANSWER_MS).
+  const timer = { at: new Date(ctx.now.getTime() + FIX_ANSWER_MS), event: { type: 'FixUnanswered', payload: { head } } };
+  return step('with_the_bot', d, { work, push: extra.push, timer });
+}
+
+/**
+ * 3e: the round it asked for went unanswered for FIX_ANSWER_MS. While the
+ * same head is still due a round and the bot was asked for it, it is asked
+ * again, as the same round (its lost count stands); anything else (a new
+ * head, an answer that came, the change no longer up) decides as any look.
+ */
+function unanswered(s: Live, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<BState> {
+  const fix = s.data.fix;
+  const row = f.row;
+  const due = row && row.status === 'promoted' ? checksDue({ ...row, looked: f.looked, fix_revised: f.fixRevised }) : null;
+  if (fix && fix.asked && due && due.head === fix.head && (!e.payload.head || e.payload.head === fix.head)) {
+    return askFix(s.data, fix.head, fix.lost, ctx);
+  }
+  return decide(s, f, ctx, s.data);
 }
 
 // The bot's answer about the round it was asked for: looked at the head
@@ -333,6 +364,7 @@ function look(s: BState, e: Event<any>, f: Facts, ctx: TransitionContext): Outco
   if (NEWS.has(e.type) && d.fix?.refused) d = { ...d, fix: { ...d.fix, refused: null } };
   const push = e.type === 'Proposed' && fromProposal(e) ? tray(f) : undefined;
   if (live && live.name === 'with_the_bot' && (e.type === 'FixRoundEnded' || e.type === 'FixRefused')) return answered(live, e, f, ctx);
+  if (live && live.name === 'with_the_bot' && e.type === 'FixUnanswered') return unanswered(live, e, f, ctx);
   return decide(live && live.name !== 'closed' ? live : null, f, ctx, d, { push });
 }
 
@@ -534,7 +566,7 @@ export function botChange(): Machine<BState, Facts> {
   const works = { WorkSucceeded: workResult('done'), WorkFailed: workResult('failed'), WorkExhausted: workResult('exhausted') };
   const looks = {
     Proposed: { to: look }, Verdict: { to: look }, ShotsSettled: { to: look }, FixRoundEnded: { to: look }, FixRefused: { to: look }, Look: { to: look },
-    VoteOpened: { to: look },
+    VoteOpened: { to: look }, FixUnanswered: { to: look },
     PreviewStopped: { to: stopped },
     Merged: { to: merged },
     DeployFailed: { to: deployFailed },
@@ -548,7 +580,8 @@ export function botChange(): Machine<BState, Facts> {
   };
   const ended = {
     Proposed: { ignore: 'ended' }, Verdict: { ignore: 'ended' }, ShotsSettled: { ignore: 'ended' }, FixRoundEnded: { ignore: 'ended' }, FixRefused: { ignore: 'ended' },
-    Look: { ignore: 'ended' }, VoteOpened: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' }, Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
+    Look: { ignore: 'ended' }, VoteOpened: { ignore: 'ended' }, FixUnanswered: { ignore: 'ended' }, PreviewStopped: { ignore: 'ended' },
+    Merged: { ignore: 'ended' }, Live: { ignore: 'ended' },
     DeployFailed: { ignore: 'ended' }, ConflictUnresolved: { ignore: 'ended' }, MergeStuck: { ignore: 'ended' },
     Closed: { ignore: 'ended' }, Voted: { ignore: 'ended' }, RetryFollowup: retryFollowup, ...works,
   };
@@ -558,6 +591,7 @@ export function botChange(): Machine<BState, Facts> {
     ...looks,
     Proposed: { ignore: 'merged' }, Verdict: { ignore: 'merged' }, ShotsSettled: { ignore: 'merged' },
     FixRoundEnded: { ignore: 'merged' }, FixRefused: { ignore: 'merged' }, Look: { ignore: 'merged' }, VoteOpened: { ignore: 'merged' },
+    FixUnanswered: { ignore: 'merged' },
     PreviewStopped: { ignore: 'merged' },
     ConflictUnresolved: { ignore: 'merged' }, MergeStuck: { ignore: 'merged' },
   };
@@ -588,6 +622,8 @@ export function botChange(): Machine<BState, Facts> {
     // instance version 3 wrote is read as it is (its `told` epoch stands, so
     // nothing is said twice). A rollback past it lowers them:
     // UPDATE wf_instances SET machine_version = 3 WHERE machine = 'bot-change'.
+    // Also new in 4 (review 3e): a round asked of the bot that goes
+    // unanswered for FIX_ANSWER_MS is asked again (FixUnanswered, its clock).
     version: 4,
     events: EVENTS,
     create: CREATE,
@@ -619,6 +655,7 @@ export function botChange(): Machine<BState, Facts> {
       Live: fromMachine('merge-followups'),
       Closed: fromMachine('proposal'),
       Look: timer,
+      FixUnanswered: timer,
       VoteOpened: (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer')),
       Voted: (e: Event<any>): Check => (e.source.kind === 'route' || e.source.kind === 'system' ? ok() : reject('not_a_producer')),
       RetryFollowup: admin,

@@ -1637,7 +1637,10 @@ requires a run of the bot's that proposed the session.
     stopped is not asked again for that head (the next verdict, settle or promote asks when
     it is needed); one lost (its look ended without it, or failed for good) is asked once more; lost
     again, a change whose checks pass is ready to try saying what does not work, and one
-    whose checks fail is left as it was (nobody is told). A bot that is off, not
+    whose checks fail is left as it was (nobody is told). While it waits for that answer
+    a backstop clock runs (review 3e): unanswered for six hours (`FIX_ANSWER_MS`), the
+    same round is asked again (`FixUnanswered`), never counted as lost, so a long outage
+    of the bot's lane hands nobody the change. A bot that is off, not
     working on the app, or facing a failure that looks like the platform's (which it tells
     the requester itself) does not take it, and says why in the result; the next verdict
     or settle asks again. A fix result about a head the change has left settles nothing.
