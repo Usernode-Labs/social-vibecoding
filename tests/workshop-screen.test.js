@@ -1058,7 +1058,8 @@ test('#4486: the one-row head and the pipeline pin together under the project’
   // Both live in the pane head, which is what pins (position: sticky, under
   // the tabs at the measured offset), so the column names stay on screen.
   const head = workshopTsx.slice(workshopTsx.indexOf('<div className="dev-ws-pane-head">'), workshopTsx.indexOf('<div className="dev-ws-pane-body">'));
-  assert.match(head, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack[\s\S]*?eyebrow=\{false\}[\s\S]*?<GroupStrip group=\{group\} \/>[\s\S]*?<DevActionsRow/);
+  assert.match(head, /<div className="dev-ws-allbar" data-ws-allbar="">\s*<PageBack[\s\S]*?eyebrow=\{false\}[\s\S]*?<DevActionsRow/);
+  assert.doesNotMatch(head, /GroupStrip/, 'no grouping switch between them (request 6708)');
   assert.match(head, /\{group === 'stage' \? <StageStrip \/> : null\}/);
   assert.match(appCss, /\.dev-ws-pane-head \{\s*position: sticky; top: 0; z-index: 20;/);
   assert.match(appCss, /#dev-workshop \.dev-ws-pane-head \{\s*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\);/);

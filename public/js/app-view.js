@@ -264,7 +264,7 @@ const AppView = {
   // Board VIEW MODE was a second surface for something the lander already
   // contains. What retired is the mode and its standalone surface, not the
   // columns: `#app/<slug>/board` and the old `?view=kanban` both resolve onto
-  // that pane (see _readWorkshopGroupOverride below and the alias block in
+  // that pane (see _workshopTabParam below and the alias block in
   // app.js's restoreFromHash), exactly as `/activity` resolves onto the
   // Workshop itself.
   VIEW_MODES: ['workshop'],
@@ -288,19 +288,16 @@ const AppView = {
   // two board-shaped overviews that already resolved onto it before it
   // retired. The table above sends all five to the same mode, which is what
   // stops anyone landing nowhere; this names the three whose viewer also
-  // wanted the COLUMNS, so _getWorkshopGroup can open them there. 'list' and
+  // wanted the COLUMNS, so _workshopTab can open All items for them. 'list' and
   // 'feed' are not here: the Workshop replaced those, and its default pane is
   // the one they resolve to.
   RETIRED_BOARD_VIEW_MODES: ['kanban', 'pm', 'report'],
-  // ── Reaching the retired Board: it takes TWO answers, not one ────────
+  // ── Reaching the retired Board ──────────────────────────────────────
   //
-  // The board's columns are the Workshop's stage pane, and that pane is one
-  // grouping of ONE TAB: `_workshopTab()` has to say 'all' and
-  // `_getWorkshopGroup()` has to say 'stage'. Setting the grouping alone leaves
-  // the lander on its default tab, where the grouping control is not even
-  // rendered — which is the whole of the bug this pair of helpers fixes. Both
-  // resolvers consult both, so the translation lives in one place instead of
-  // being half-applied in two.
+  // The board's columns are the Workshop's All items page, so the one answer
+  // a board link needs is the tab: `_workshopTab()` has to say 'all'. (It took
+  // two while All items had a second pane, by category; request 6708 removed
+  // it.)
   //
   // Was this page opened by the retired Board view's own deep link?
   _retiredBoardLink() {
@@ -335,8 +332,8 @@ const AppView = {
   // `?view=` on the page URL wins for one paint — a deep link to a layout —
   // and is retired the moment the viewer chooses (see _setViewMode). With one
   // mode left it can only ever resolve to 'workshop'; `?view=kanban` is
-  // honoured as a request for the STAGE PANE instead, in
-  // _readWorkshopGroupOverride below, which is where those columns live now.
+  // honoured as a request for ALL ITEMS instead, in
+  // _workshopTabParam below, which is where those columns live now.
   _viewModeUrlOverride: undefined,
   _readViewModeOverride() {
     if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
@@ -372,113 +369,24 @@ const AppView = {
     AppView._reactDevBoard()?.publishViewMode(next);
   },
 
-  // ── How the Workshop groups the board below its summary ─────────────
+  // ── All items is the board by stage, and nothing else (request 6708) ─
   //
-  // Two panes under one tab strip: the model's drafted CATEGORIES (what the
-  // Workshop has always shown) or the board's own STAGES — the kanban
-  // columns, rendered in place. The stage pane is not a second board: it is
-  // the same `<DevKanban/>` reading the same published view model, nested
-  // inside the Workshop's React tree. See
-  // frontend/src/features/dev-board/workshop/group-mode-store.ts.
+  // All items had two panes under a "By category" / "By stage" switch: the
+  // model's drafted categories, or the board's own stages, the kanban
+  // columns rendered in place by the same `<DevKanban/>` from the same
+  // published view model. The switch is gone and the stage pane is the page.
   //
-  // NO LONGER ADDITIVE — this pane IS the board. It arrived as a second way
-  // to reach those columns while the Board view mode still owned the first;
-  // that mode and its segment in the Improve panel have since retired, so the
-  // stage pane is the only way in and `#app/<slug>/board` resolves onto it.
-  // The two surfaces could never be on screen together anyway, because
-  // `_repaintDevBody` gives #dev-body to one at a time; what changed is that
-  // the other one is no longer reachable.
+  // So there is nothing to choose and nothing to remember. A choice stored
+  // while the switch existed (localStorage `devWorkshopGroup`) and a link that
+  // asks for a pane (`?group=category`, `?group=theme`) are never read: both
+  // land on the board, as `?group=stage`, `?view=kanban` and
+  // `#app/<slug>/board` always did.
   //
-  // localStorage, like VIEW_MODE_KEY: which way you read the board is a
-  // lasting preference, not a scratch narrowing that should quietly expire.
-  WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
-  WORKSHOP_GROUPS: ['category', 'stage'],
-  // #2332 spelled this pane 'theme' for one release, on the argument that it
-  // groups by what the work is ABOUT while a category is what KIND of work it
-  // is. That split is gone: there is ONE grouping and it is a category, which
-  // is what this file's own chip tooltip had been saying all along.
-  //
-  // The stored value and `?group=` are both public surfaces, so the retired
-  // spelling keeps resolving rather than falling back to the default: a
-  // viewer who chose the pane under #2332 opens on it, and a link from that
-  // release still lands where it did. Read-time only, like every other
-  // migration here — the current spelling is written on the next tap.
-  WORKSHOP_GROUP_ALIASES: { theme: 'category' },
-  _migrateWorkshopGroup(v) {
-    if (AppView.WORKSHOP_GROUPS.includes(v)) return v;
-    return AppView.WORKSHOP_GROUP_ALIASES[v] || null;
-  },
-  // `?group=stage`, mirroring `?view=` above — resolved once and cached, so a
-  // deep link can reach a pane that is otherwise only a click away. It is
-  // what the declared check for the stage pane navigates to: a check run
-  // starts with an empty localStorage and would otherwise always land on
-  // category and assert nothing.
-  //
-  // It answers for the RETIRED Board view's deep link too. `?view=kanban`
-  // asked for a mode that no longer exists, and the pane it was asking for is
-  // this one, so the old parameter resolves here rather than going quietly
-  // nowhere — the same courtesy `#app/<slug>/board` gets from the alias block
-  // in app.js. An explicit `?group=` wins when both are present, because that
-  // is the parameter still being offered.
-  _workshopGroupUrlOverride: undefined,
-  _readWorkshopGroupOverride() {
-    if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
-    try {
-      const v = AppView._migrateWorkshopGroup(new URLSearchParams(location.search).get('group'));
-      AppView._workshopGroupUrlOverride = v
-        || (AppView._retiredBoardLink() ? 'stage' : null);
-    } catch { AppView._workshopGroupUrlOverride = null; }
-    return AppView._workshopGroupUrlOverride;
-  },
-  // The retired Board ROUTE's landing, and the only caller that sets this
-  // override without a query parameter: `#app/<slug>/board` resolves onto the
-  // Workshop with the stage pane up (see app.js's restoreFromHash). Transient
-  // exactly as `?group=` is — it does NOT write the stored preference, and a
-  // tap on "By category" clears it through _setWorkshopGroup — so following an
-  // old board link shows those columns without re-deciding how this viewer
-  // reads the board from then on.
-  _overrideWorkshopGroup(group) {
-    const next = AppView._migrateWorkshopGroup(group);
-    if (!next) return;
-    AppView._workshopGroupUrlOverride = next;
-  },
-  _getWorkshopGroup() {
-    try {
-      const override = AppView._readWorkshopGroupOverride();
-      if (override) return override;
-      const stored = AppView._migrateWorkshopGroup(
-        window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY)
-      );
-      if (stored) return stored;
-      // THE RETIRED BOARD PREFERENCE, carried across rather than dropped.
-      // `RETIRED_VIEW_MODES` already stops a stored 'kanban' landing on a mode
-      // that no longer exists, but on its own it forgets the thing the viewer
-      // actually chose: they picked the COLUMNS, and migrating them to the
-      // Workshop's default pane hands them the categories instead. The rule
-      // that table exists for is "the nearest surviving surface", and for the
-      // Board that surface is this pane — so a viewer who last left the Dev
-      // screen on the Board still opens on the columns.
-      //
-      // Only when they have expressed no grouping preference of their own,
-      // which the return above has already established, and read-time like
-      // every other migration here: nothing is written back, so the day they
-      // do choose a pane, that choice is what persists.
-      if (AppView._storedBoardPreference()) return 'stage';
-      return 'category';
-    } catch { return 'category'; }
-  },
-  _setWorkshopGroup(mode) {
-    const next = AppView._migrateWorkshopGroup(mode) || 'category';
-    // An explicit tap retires the URL override, exactly as `_setViewMode`
-    // does — otherwise `?group=` would keep winning over every later click.
-    AppView._workshopGroupUrlOverride = null;
-    try { window.localStorage.setItem(AppView.WORKSHOP_GROUP_KEY, next); } catch {}
-    // Publish BEFORE the repaint so the pane swaps in the same frame as the
-    // tab's pressed state; `_repaintBoardSurface` then publishes the view
-    // model the newly shown pane reads. Both stores flush synchronously.
-    AppView._reactDevBoard()?.publishWorkshopGroup(next);
-    AppView._repaintBoardSurface();
-  },
+  // The React side still has the pane's store
+  // (frontend/src/features/dev-board/workshop/group-mode-store.ts) and the
+  // category lanes behind it. Nothing here publishes to that store, so it
+  // rests on its default, which is the stage pane.
+  _getWorkshopGroup() { return 'stage'; },
   // #482: kanban filter-bar state. The active object always reflects the
   // CURRENT app; it is (re)loaded per slug from localStorage whenever the
   // board mounts (_repaintDevBody) and written back on every change
@@ -13493,17 +13401,16 @@ const AppView = {
     try {
       const v = new URLSearchParams(window.location.search).get('ws');
       // A retired `?view=kanban` asked for the board's columns, which live in
-      // the All items tab — the other half of the answer is the grouping, in
-      // _readWorkshopGroupOverride above. An explicit `?ws=` wins, because that
-      // is the parameter still being offered.
+      // the All items tab. An explicit `?ws=` wins, because that is the
+      // parameter still being offered.
       AppView._workshopTabUrlOverride = AppView._isWorkshopPlace(v)
         ? v
         : (AppView._retiredBoardLink() ? 'all' : null);
     } catch { AppView._workshopTabUrlOverride = null; }
     return AppView._workshopTabUrlOverride;
   },
-  // The retired Board ROUTE's landing, the tab half. `#app/<slug>/board` calls
-  // this and _overrideWorkshopGroup together (see app.js's restoreFromHash);
+  // The retired Board ROUTE's landing. `#app/<slug>/board` calls this (see
+  // app.js's restoreFromHash);
   // transient exactly as `?ws=` is, and a tap on another tab clears it through
   // _setWorkshopTab.
   _overrideWorkshopTab(tab) {
@@ -13529,9 +13436,8 @@ const AppView = {
       // way back to the tab it hangs off above it.
       if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
-      // columns live in, for the same reason _getWorkshopGroup gives them the
-      // pane: migrating the retired mode without carrying what it MEANT would
-      // hand them a digest where they had chosen a worklist.
+      // columns live in: migrating the retired mode without carrying what it
+      // MEANT would hand them a digest where they had chosen a worklist.
       if (AppView._storedBoardPreference()) return 'all';
       return 'status';
     } catch { return 'status'; }
@@ -13779,7 +13685,7 @@ const AppView = {
   _setWorkshopTab(key) {
     // The plan is gone once it is built, so the page reopens on the hub.
     const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
-    // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
+    // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
@@ -15923,22 +15829,17 @@ const AppView = {
       // Seeded on every repaint, not once at mount: `_repaintDevBody` tears
       // the Workshop host down and rebuilds it on every view-mode change, so
       // there is no single mount to seed from.
-      const group = AppView._getWorkshopGroup();
-      react.publishWorkshopGroup(group);
-      // The "By stage" pane renders the board's own columns. Built ONLY when
-      // that pane is up: `_kanbanView()` buckets, orders and filters every
-      // card on the board, which is real work to do for a pane nobody is
-      // looking at. `_lastKanbanView` is shared with the standalone board on
-      // purpose — it is what a mobile column tab republishes from, and the
-      // two surfaces are never mounted at the same time.
+      // All items is the board's own columns (request 6708: the one view),
+      // so its view model is built on every repaint. `_lastKanbanView` is
+      // shared with the standalone board on purpose: it is what a mobile
+      // column tab republishes from, and the two surfaces are never mounted
+      // at the same time.
       //
       // BEFORE the mount below, unlike the Workshop's own publish: the board
       // renders from INSIDE the Workshop's tree, so a kanban store still
       // holding the previous board would paint one frame of it.
-      if (group === 'stage') {
-        AppView._lastKanbanView = AppView._kanbanView();
-        react.publishKanban(AppView._lastKanbanView);
-      }
+      AppView._lastKanbanView = AppView._kanbanView();
+      react.publishKanban(AppView._lastKanbanView);
       react.mountWorkshop(el);
       react.publishWorkshop(AppView._workshopView());
     }

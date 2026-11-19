@@ -1,42 +1,17 @@
 /**
- * How the Workshop groups the board below its summary: by the model's drafted
- * CATEGORIES, or by the board's own STAGES — the kanban columns, rendered in
- * place rather than on a screen of their own.
+ * Which pane All items draws: the board's own STAGES, the kanban columns
+ * rendered in place. It was a choice between that and the model's drafted
+ * CATEGORIES until request 6708 made the stage board the one view.
  *
- * ── Why the board can simply be rendered here ──────────────────────────
+ * The stage pane is not a second board: `DevWorkshop` reads
+ * `devWorkshopStore`, `DevKanban` reads `devKanbanStore`
+ * (../card/cards-store.ts), and the pane is the SAME `<DevKanban/>` nested in
+ * the Workshop's tree, so the mobile column tabs, the filter bar and every
+ * card action work unchanged. `#dev-kanban` and `#dev-kanban-tabs` are
+ * rendered by that component and are unique.
  *
- * Both surfaces were already React components fed by module-global stores:
- * `DevWorkshop` reads `devWorkshopStore`, `DevKanban` reads `devKanbanStore`
- * (../card/cards-store.ts). Neither owns its own fetching. So the "By stage"
- * pane is not a second board — it is the SAME `<DevKanban/>`, reading the same
- * published view model, nested inside the Workshop's tree. Nothing is
- * duplicated and nothing is re-derived, which is why the mobile column tabs,
- * the filter bar and every card action keep working unchanged.
- *
- * `#dev-kanban` and `#dev-kanban-tabs` are rendered by that component and are
- * therefore unique either way: the Board VIEW MODE replaces `#dev-body`'s
- * contents outright (`_repaintDevBody`), so `#dev-workshop` does not exist
- * while the standalone board does, and vice versa. The two can never be on
- * screen at once.
- *
- * ── Why a store, and not just `useState` ───────────────────────────────
- *
- * Deliberately mirrors ../view-mode-store.ts, for its reason: app-view.js has
- * to KNOW which pane is showing, because `_rerenderWorkshop()` publishes the
- * kanban view model only when the stage pane is up — building it on every
- * Workshop repaint would bucket, order and filter the whole board for a pane
- * nobody is looking at. Read that file's header for the store mechanics; the
- * split of responsibilities is identical:
- *
- *   * the PREFERENCE (localStorage `devWorkshopGroup`) lives in app-view.js,
- *     in `_getWorkshopGroup()` / `_setWorkshopGroup()`;
- *   * this store is a MIRROR of that value for rendering;
- *   * a tab click calls `AppView._setWorkshopGroup(mode)`, which persists,
- *     publishes here, and repaints through `_repaintBoardSurface()`.
- *
- * Seeding happens on every `_rerenderWorkshop()` rather than once at mount,
- * because the Workshop host is torn down and rebuilt by `_repaintDevBody()`
- * whenever the view mode changes — so there is no single mount to seed from.
+ * The value lives in a module-global store, as ../view-mode-store.ts does,
+ * from when app-view.js chose the pane and had to know which was up.
  */
 
 import { useSyncExternalStore } from 'react';
@@ -48,17 +23,17 @@ export const WORKSHOP_GROUPS = ['category', 'stage'] as const;
 export type WorkshopGroup = (typeof WORKSHOP_GROUPS)[number];
 
 /**
- * Category is the default: it is what the Workshop has always shown, and the
- * stage pane is the board a viewer can already reach from the view strip.
+ * Stage is the default, and in the product the only value (request 6708).
  *
- * #2332 spelled it 'theme' for one release, on the argument that this pane
- * groups by what the work is ABOUT while a category is what KIND of work it
- * is. That split is gone — there is ONE grouping now and it is called a
- * category, which is what the card chip's own tooltip had been saying all
- * along. 'theme' is kept as the legacy spelling for the release that shipped
- * it, so nobody's stored preference or link resolves to nothing.
+ * All items is the board by stage: its "By category" / "By stage" switch is
+ * gone, app-view.js no longer stores or reads a choice, and nothing in the
+ * product publishes to this store, so it rests here. The category pane and
+ * this store are kept for now, unreached; a suite that still draws the
+ * category lanes publishes 'category' itself.
+ *
+ * 'theme' is #2332's spelling of 'category', still resolved for that.
  */
-export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'category';
+export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'stage';
 
 /** Spellings retired along the way, still honoured so a preference survives. */
 const LEGACY_GROUPS: Record<string, WorkshopGroup> = { theme: 'category' };
@@ -94,10 +69,8 @@ export function getWorkshopGroupStore(): WorkshopGroupStore {
 }
 
 /**
- * Publish the active grouping.
- *
- * Called from `AppView._setWorkshopGroup()` and, to seed, from
- * `AppView._rerenderWorkshop()` before it publishes the view.
+ * Publish the active grouping. No product code calls this since request
+ * 6708; an unknown value is the default, the stage pane.
  */
 export function publishWorkshopGroup(mode: string): void {
   const next = migrateWorkshopGroup(mode) || DEFAULT_WORKSHOP_GROUP;
