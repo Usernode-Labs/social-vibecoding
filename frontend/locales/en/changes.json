@@ -815,6 +815,10 @@
     "text": "This page isn’t saved on this phone yet. It will open when you’re back online.",
     "description": "A short notice (toast) when someone opens a request's or a group decision's page while Homeroom cannot be reached and the page was never saved on this device. The page opens by itself once the connection is back."
   },
+  "page.slowToAnswer": {
+    "text": "Homeroom is taking a while to answer. This page will open when it does.",
+    "description": "A short notice (toast) when someone opens a change's, a request's or a group decision's page while the phone is online but Homeroom did not answer in time (a slow connection, or a server error). The page keeps waiting and opens by itself once Homeroom answers."
+  },
   "page.about.change": {
     "text": "About this change",
     "description": "Heading over the description on a change's page (a change is work on the project that is being built, voted on or already live). \"Change\" is a noun."

@@ -5524,6 +5524,9 @@ const AppView = {
     let concluded = false;
     let itemDone = false;
     let ok = false;
+    // The item's own read had no answer at all (_fetchTopicItem's
+    // ITEM_UNANSWERED), which the miss branch does not read as "no such item".
+    let unanswered = false;
     let finish;
     const settled = new Promise((resolve) => { finish = resolve; });
     // Their threads need no item to mount — the request's and the
@@ -5591,9 +5594,12 @@ const AppView = {
       // a read that found nothing had no answer, which is not "no such
       // item". The page keeps its skeleton, says once that it is not saved
       // on this phone yet, and opens when Homeroom answers again, rather
-      // than dropping the reader on the Workshop.
-      if (AppView._noAnswerNow()) {
-        note('failure', { errorCode: 'offline' });
+      // than dropping the reader on the Workshop. So too online, when the
+      // item's own read had no answer (a slow link that ran out its time, a
+      // server error): it says Homeroom is slow and tries again.
+      const offlineNow = AppView._noAnswerNow();
+      if (unanswered || offlineNow) {
+        note('failure', { errorCode: offlineNow ? 'offline' : 'network' });
         AppView._dropTopicSwap();
         AppView._openChangeWhenOnline(content, ref, AppView._devTopic);
         finish();
@@ -5650,7 +5656,8 @@ const AppView = {
     // One read for this item, always: it refreshes a row the lists answered
     // with and is what paints a cold open.
     Promise.resolve(AppView._fetchTopicItem(ref)).then((row) => {
-      ok = !!row;
+      unanswered = row === AppView.ITEM_UNANSWERED;
+      ok = !!row && !unanswered;
       itemDone = true;
       if (!painted) {
         paint(true);
@@ -5817,6 +5824,11 @@ const AppView = {
   // What _sessionIdForChange answers when Homeroom gave no answer at all and
   // this phone saved none: not "no such change" (the native-offline proposal).
   CHANGE_UNREACHABLE: 'unreachable',
+  // What _fetchTopicItem answers when the item's own read had no answer at
+  // all, online or not: not "no such item" (the 19 Nov retest of #6862: on a
+  // slow link a request's read ran out its 15 s and the page fell back to the
+  // Workshop).
+  ITEM_UNANSWERED: 'unanswered',
 
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
@@ -5870,19 +5882,23 @@ const AppView = {
     }
   },
 
-  // A page that could not be read offline — a change address whose lookup
-  // had no answer (CHANGE_UNREACHABLE), or an item whose own read had none
+  // A page that could not be read — a change address whose lookup had no
+  // answer (CHANGE_UNREACHABLE), or an item whose own read had none
   // (_renderTopicSubView's miss): the page keeps its skeleton, says once
-  // that it was not saved on this phone, and opens itself when Homeroom
-  // answers again — or when the reader has gone somewhere else, does
-  // nothing.
+  // why, and opens itself when Homeroom answers again — or when the reader
+  // has gone somewhere else, does nothing. Offline, the page was never saved
+  // on this phone; online, Homeroom is slow to answer, so it asks again soon
+  // (SLOW_RETRY_MS) and then every 20 s.
   _openChangeWhenOnline(content, ref, pending) {
     // Said once per page, however many times it is asked again.
     const key = `${App.currentApp || ''}:${ref && ref.kind}:${ref && (ref.pr || ref.id)}`;
-    if (AppView._changeWaitSaid !== key) {
+    const offline = AppView._noAnswerNow();
+    const first = AppView._changeWaitSaid !== key;
+    if (first) {
       AppView._changeWaitSaid = key;
-      const words = ref && (ref.kind === 'issue' || ref.kind === 'gov')
-        ? 'changes:page.notSavedYetThread' : 'changes:page.notSavedYet';
+      const words = !offline ? 'changes:page.slowToAnswer'
+        : ref && (ref.kind === 'issue' || ref.kind === 'gov')
+          ? 'changes:page.notSavedYetThread' : 'changes:page.notSavedYet';
       try {
         if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t(words));
       } catch (_) { /* the header's status still says why */ }
@@ -5905,8 +5921,11 @@ const AppView = {
       retry();
     };
     window.addEventListener('usernode:offline-change', onChange);
-    timer = setTimeout(tick, 20000);
+    timer = setTimeout(tick, !offline && first ? AppView.SLOW_RETRY_MS : 20000);
   },
+  // How soon a page whose read had no answer, online, asks again the first
+  // time: its read already waited up to 15 s (lib/read-timeout.ts).
+  SLOW_RETRY_MS: 3000,
 
   // #4367: once the open change is known to have a pull request, its address
   // is `dev/changes/<N>`. Replaces the history entry — an old link is the
@@ -5939,13 +5958,18 @@ const AppView = {
   // The single-item fetch behind the topic page's fast open (#4524):
   // dispatches to the by-id fetchers the recovery path has always used —
   // a session resolves through the proposal one, since a session IS a
-  // chat_session row the proposal endpoints serve. Returns the row or null;
+  // chat_session row the proposal endpoints serve. Returns the row, null for
+  // no such item, or ITEM_UNANSWERED when the read had no answer at all;
   // each fetcher is best-effort and swallows its own errors.
   async _fetchTopicItem(ref) {
-    if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
+    const outcome = {};
+    const noAnswer = (row) => (!row && outcome.unanswered ? AppView.ITEM_UNANSWERED : row);
+    if (ref.kind === 'gov') return noAnswer(await AppView._fetchGovProposalById(ref.id, outcome));
     if (ref.kind === 'issue') {
-      const row = await AppView._fetchIssueByNumber(ref.id);
+      const row = await AppView._fetchIssueByNumber(ref.id, outcome);
       if (row) return row;
+      // No answer is not "no such request", and its thread would wait as long.
+      if (outcome.unanswered) return AppView.ITEM_UNANSWERED;
       // #6019: a request address with a change's number is that change.
       // Asked before the page settles as missing, so a number that is
       // neither still falls back to the board at the moment it always did.
@@ -5953,7 +5977,7 @@ const AppView = {
       await AppView._openByThread('issue', ref.id, () => AppView._devTopic === here);
       return null;
     }
-    return AppView._fetchProposalById(ref.id);
+    return noAnswer(await AppView._fetchProposalById(ref.id, outcome));
   },
 
   /**
@@ -6147,7 +6171,7 @@ const AppView = {
   // way loadMoreMerged does. Best-effort: a miss (404 / no access / network
   // error) leaves _topicProposal untouched, so the caller falls back to the
   // forum exactly as before.
-  async _fetchProposalById(id) {
+  async _fetchProposalById(id, outcome) {
     if (!AppView.appData || !id) return null;
     const slug = AppView.appData.slug;
     // #6827: the change page's own read already carried this row.
@@ -6171,6 +6195,7 @@ const AppView = {
     } catch (_) { /* the read below answers */ }
     try {
       const res = await fetch(`/api/apps/${slug}/proposals/${id}${AppView._demoQS()}`);
+      if (res.status >= 500) return AppView._itemUnanswered(outcome);
       if (!res.ok) return null;
       const data = await res.json();
       const row = data.proposal || null;
@@ -6196,8 +6221,24 @@ const AppView = {
       }
       return row;
     } catch {
-      return null;
+      return AppView._itemUnanswered(outcome);
     }
+  },
+
+  // An item read with no answer at all (it threw, timed out, or the server
+  // failed): still null to every caller, and `outcome.unanswered` says why,
+  // for the topic page that would otherwise read it as "no such item".
+  _itemUnanswered(outcome) {
+    if (outcome) outcome.unanswered = true;
+    return null;
+  },
+
+  // A shared request read's row, telling this caller's `outcome` when it had
+  // no answer.
+  async _itemReadRow(read, outcome) {
+    const got = await read;
+    if (got && got.unanswered) return AppView._itemUnanswered(outcome);
+    return got ? got.row : null;
   },
 
   // (#1115) The governance twin of _topicProposal: a single-item cache for a
@@ -6217,11 +6258,12 @@ const AppView = {
   // chat_sessions id / pr_number, and governance ids come from the `issues`
   // sequence and collide numerically with it (the same reason _loadDevData
   // and loadMoreMerged both exclude close rows from it).
-  async _fetchGovProposalById(id) {
+  async _fetchGovProposalById(id, outcome) {
     if (!AppView.appData || !id) return null;
     const slug = AppView.appData.slug;
     try {
       const res = await fetch(`/api/apps/${slug}/governance/${id}${AppView._demoQS()}`);
+      if (res.status >= 500) return AppView._itemUnanswered(outcome);
       if (!res.ok) return null;
       const data = await res.json();
       const row = data.proposal || null;
@@ -6230,7 +6272,7 @@ const AppView = {
       AppView._putCachedRow('gov', row);
       return row;
     } catch {
-      return null;
+      return AppView._itemUnanswered(outcome);
     }
   },
 
@@ -6246,7 +6288,10 @@ const AppView = {
   // _topicIssue. Best-effort: a miss (404 / no access / network error), or
   // an answer for an app the view has since left, leaves the cache untouched
   // so the caller falls back to the board.
-  async _fetchIssueByNumber(number) {
+  //
+  // `outcome`, when given, is told `unanswered` for a read that had no answer
+  // at all (it threw, timed out, or the server failed), which is not a miss.
+  async _fetchIssueByNumber(number, outcome) {
     if (!AppView.appData || !number) return null;
     const slug = AppView.appData.slug;
     // #6604: a topic open and a live burst ask for the same request at the
@@ -6254,26 +6299,27 @@ const AppView = {
     const key = `${slug}:${number}`;
     const reads = AppView._issueRowReads || (AppView._issueRowReads = new Map());
     const running = reads.get(key);
-    if (running) return running;
+    if (running) return AppView._itemReadRow(running, outcome);
     const read = (async () => {
       try {
         const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
-        if (!res.ok) return null;
+        if (res.status >= 500) return { row: null, unanswered: true };
+        if (!res.ok) return { row: null };
         const data = await res.json();
         const row = data.issue || null;
-        if (!row || row.number !== number) return null;
-        if (!AppView.appData || AppView.appData.slug !== slug) return null;
+        if (!row || row.number !== number) return { row: null };
+        if (!AppView.appData || AppView.appData.slug !== slug) return { row: null };
         AppView._topicIssue = row;
         AppView._topicIssueSlug = slug;
         AppView._putCachedRow('issue', row);
-        return row;
+        return { row };
       } catch {
-        return null;
+        return { row: null, unanswered: true };
       }
     })();
     reads.set(key, read);
     try {
-      return await read;
+      return await AppView._itemReadRow(read, outcome);
     } finally {
       if (reads.get(key) === read) reads.delete(key);
     }
