@@ -68,23 +68,28 @@ function renderGrid(apps, recents, patch = {}) {
 }
 
 const left = (slug, at) => ({ slug, name: slug, iconUrl: null, iconEmoji: null, at });
-const openedLine = (html) => (html.match(/<p class="app-card-status app-card-opened"[^>]*>([^<]*)<\/p>/) || [])[1];
+const LINE = /<p class="app-card-status app-card-opened"><span class="app-card-opened-long">([^<]*)<\/span><span class="app-card-opened-short">([^<]*)<\/span><\/p>/;
+const openedLine = (html) => (html.match(LINE) || [])[1];
+const shortLine = (html) => (html.match(LINE) || [])[2];
 
 test('the words are the Home catalog\'s, a whole message', () => {
   assert.equal(message('home:grid.tile.opened'), 'Opened {{when}}');
+  assert.equal(message('home:grid.tile.openedShort'), '{{when}}');
   assert.match(read(GRID), /t\('home:grid\.tile\.opened', \{ when: /);
+  assert.match(read(GRID), /t\('home:grid\.tile\.openedShort', \{ when: /);
 });
 
 test('a tile whose app was opened says when, under its name', () => {
   const html = renderGrid([tile()], [left('plant-pal', ago(2 * HOUR + 60 * 1000))]);
   assert.equal(openedLine(html), 'Opened 2h ago', html);
+  assert.equal(shortLine(html), '2h ago', 'and the time alone, for a phone\'s narrow tile');
   assert.match(html, /aria-label="Plant Pal, Opened 2h ago"/, 'a screen reader hears it with the name');
 });
 
 test('an app never opened says nothing: no line, no empty element', () => {
   const html = renderGrid([tile(), tile({ slug: 'club-votes', name: 'Club Votes' })],
     [left('plant-pal', ago(5 * 60 * 1000))]);
-  assert.equal((html.match(/app-card-opened/g) || []).length, 1, 'one tile of the two says it');
+  assert.equal((html.match(/app-card-opened"/g) || []).length, 1, 'one tile of the two says it');
   assert.equal(openedLine(html), 'Opened 5m ago');
   assert.match(html, /aria-label="Club Votes"/);
   assert.doesNotMatch(renderGrid([tile()], []), /app-card-opened|Opened/);
@@ -115,14 +120,21 @@ test('recentAppTimes: the latest time for each app, within 30 days, never a gues
   assert.equal(times.get('twice'), Date.parse('2026-11-19T11:00:00Z'), 'the later of two entries');
 });
 
-test('the line fits the tile\'s caption lane, and Standard (WIP) draws it from its tokens', () => {
+test('the line fits the tile\'s caption lane uncut, and Standard (WIP) does not draw it', () => {
   const css = read('public/css/app.css');
   const rule = css.match(/\n\.app-card-opened \{[^}]*\}/);
   assert.ok(rule, 'app.css styles the line');
   assert.match(rule[0], /color: var\(--text-muted\)/);
   assert.match(rule[0], /white-space: nowrap/, 'one line: the row height is fixed');
-  const wip = css.match(/html\[data-skin-wip\] #app-list \.app-card-opened \{[^}]*\}/);
-  assert.ok(wip, 'the look has its own rule');
-  assert.match(wip[0], /font-size: var\(--wip-meta-size\)/);
-  assert.match(wip[0], /color: var\(--wip-ink-muted\)/);
+  assert.doesNotMatch(rule[0], /ellipsis|overflow|margin/, 'a time is never cut, and the line stays in its lane');
+  assert.match(css, /\n\.app-card-opened-short \{ display: none; \}\n@media \(max-width: 639\.98px\) \{\n  \.app-card-opened-long \{ display: none; \}\n  \.app-card-opened-short \{ display: inline; \}\n\}/,
+    'under the tile\'s own 640px breakpoint the time alone is shown');
+  assert.match(css, /html\[data-skin-wip\] #app-list \.app-card-opened \{ display: none; \}/,
+    'Standard (WIP) does not draw the line');
+});
+
+test('past a week it still counts days, never a date with a year', () => {
+  const html = renderGrid([tile()], [left('plant-pal', ago(29 * 24 * HOUR + HOUR))]);
+  assert.equal(openedLine(html), 'Opened 29d ago');
+  assert.equal(shortLine(html), '29d ago');
 });

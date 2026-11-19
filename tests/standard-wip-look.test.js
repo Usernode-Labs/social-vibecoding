@@ -21,8 +21,8 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 const WIP_HIDES = [
   // Home has no Pinned communities section under the look.
   'html[data-skin-wip] #home-communities-section',
-  // Under 1024px a project's tile is its icon and name alone (so not when it was opened either, #4025).
-  'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people, .app-card-opened)',
+  // Under 1024px a project's tile is its icon and name alone.
+  'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people)',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
   // The board is by stage alone under the look (asked 18 Nov 2026): no By category / By stage switch.
@@ -33,6 +33,8 @@ const WIP_HIDES = [
   'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
+  'html[data-skin-wip] #app-list .app-card-opened',
 ];
 
 function wipBlock() {

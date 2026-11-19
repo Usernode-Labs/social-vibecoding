@@ -101,7 +101,11 @@
   },
   "grid.tile.opened": {
     "text": "Opened {{when}}",
-    "description": "Small grey line under an app's name on a Pinned apps tile on Home, for an app the viewer used on this device in the last 30 days. {{when}} is a short relative time such as \"2h ago\" or \"just now\", counted from when they left the app. Keep it very short: the tile is narrow."
+    "description": "Small grey line under an app's name on a Pinned apps tile on Home, for an app the viewer used on this device in the last 30 days. {{when}} is a short relative time such as \"2h ago\" or \"just now\", counted from when they left the app. Shown from tablet width up; a phone shows the time alone."
+  },
+  "grid.tile.openedShort": {
+    "text": "{{when}}",
+    "description": "The same small grey line under an app's name on a Pinned apps tile on Home, on a phone, where the tile is too narrow for \"Opened 2h ago\": the time alone. {{when}} is a short relative time such as \"2h ago\", \"30d ago\" or \"just now\". Add a word only if it stays as short as the time."
   },
   "grid.tile.status.creating": {
     "text": "Spinning up...",
