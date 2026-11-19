@@ -106,6 +106,13 @@ const NOT_A_DESIGN = Object.freeze({ ok: false, status: 409, error: 'not_a_desig
  * the viewer alone, so nobody else's read can learn a private thread exists
  * (the request page offers the link only to its owner). The newest such
  * thread when more than one is tied to the request. Never throws.
+ *
+ * Artifacts, stage 4 (light): when the thread holds a design and the
+ * viewer's plan on the request was made from it, also the version that plan
+ * shows (`designVersion`, stored on the plan since stage 0), so the request
+ * page offers its author a door to the design itself, running, at that
+ * version. Only its author ever gets it, and the design is read only by its
+ * owner (artifacts.js): no path shows it to anyone else.
  */
 async function threadForRequest(pool, { userId, appId, number }) {
   const user = id(userId);
@@ -114,13 +121,29 @@ async function threadForRequest(pool, { userId, appId, number }) {
   if (!user || !app || !request) return null;
   try {
     const { rows: [row] } = await pool.query(
-      `SELECT root_message_id FROM private_threads
-        WHERE user_id = $1 AND app_id = $2 AND result_ref = $3 AND state IN ('filed', 'posted')
-        ORDER BY updated_at DESC
+      `SELECT p.root_message_id,
+              (SELECT s.design_version
+                 FROM chat_session_specs s
+                 JOIN chat_sessions cs ON cs.id = s.session_id
+                WHERE s.design_thread_id = p.id AND cs.user_id = p.user_id AND cs.app_id = p.app_id
+                  AND cs.source = 'request_spec' AND cs.created_from_issue_number = p.result_ref
+                  AND s.shared_to_group_at IS NOT NULL
+                ORDER BY s.shared_to_group_at DESC, s.id DESC
+                LIMIT 1) AS design_version
+         FROM private_threads p
+        WHERE p.user_id = $1 AND p.app_id = $2 AND p.result_ref = $3 AND p.state IN ('filed', 'posted')
+        ORDER BY p.updated_at DESC
         LIMIT 1`,
       [user, app, request],
     );
-    return row ? { rootId: Number(row.root_message_id) } : null;
+    if (!row) return null;
+    const found = { rootId: Number(row.root_message_id) };
+    const version = Number(row.design_version);
+    if (!(Number.isSafeInteger(version) && version > 0)) return found;
+    // A design's only: what the thread holds is the store's to say, and a
+    // plain page is never a plan's design.
+    const held = await designFor(pool, { userId: user, rootId: found.rootId });
+    return isDesign(held) ? { ...found, designVersion: version } : found;
   } catch (err) {
     log.warn('design-threads', 'Could not read the thread a request came from', { err: err.message });
     return null;

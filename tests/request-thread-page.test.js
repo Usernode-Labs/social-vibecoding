@@ -211,6 +211,20 @@ test('#6680: a request filed from a private thread links its owner back to it', 
   assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: null } }), /data-request-from-thread/);
 });
 
+// Artifacts, stage 4 (light): when the owner's plan here was made from the
+// design that thread holds, the head offers them the design itself, running,
+// at the version the plan shows. Nobody else's read carries it (the route
+// test and tests/plan-design-source-postgres.test.js), and everyone else
+// sees the plan's own screens.
+test('artifacts: a plan made from its owner\'s design opens that design, at the version the plan shows, for its owner', () => {
+  const html = renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372, designVersion: 3 } } });
+  assert.match(html, /href="#homeroom-bot\/thread\/17372\/design\/3" data-request-design-door="3">Open the design, version 3<\/a>/);
+  assert.match(html, /data-request-from-thread="17372">[\s\S]*?data-request-design-door="3"/, 'beside the link back to its thread');
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: { ...requestView(), fromThread: { rootId: 17372 } } }), /data-request-design-door/,
+    'a thread that filed no plan from a design opens no design');
+  assert.doesNotMatch(renderComponent(HEAD, 'RequestHead', { r: requestView() }), /data-request-design-door/);
+});
+
 function appView(username = 'evan', globals = {}) {
   const c = {
     ...globals,

@@ -966,6 +966,21 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
               >
                 {t('project:topic.request.fromThread')}
               </a>
+              {/* Artifacts, stage 4: the design the plan was made from, running,
+                  at the version the plan shows: for its author alone, as the
+                  link above is. Everyone else sees the plan's own screens. */}
+              {r.fromThread.designVersion ? (
+                <>
+                  <span aria-hidden="true"> · </span>
+                  <a
+                    className="font-semibold text-violet-700 hover:underline dark:text-violet-300"
+                    href={`#homeroom-bot/thread/${r.fromThread.rootId}/design/${r.fromThread.designVersion}`}
+                    data-request-design-door={r.fromThread.designVersion}
+                  >
+                    {t('project:topic.request.openDesign', { version: r.fromThread.designVersion })}
+                  </a>
+                </>
+              ) : null}
             </p>
           ) : null}
           {(working && !r.status.closed) || cardLook ? null : (

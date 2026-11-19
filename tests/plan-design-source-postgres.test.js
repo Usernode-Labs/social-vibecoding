@@ -183,6 +183,25 @@ test('a plan names the design it came from: the migration, the boot backfill, th
     assert.equal(await source.backfill({ async query() { throw new Error('gone'); } }), 0);
   });
 
+  await t.test('stage 4: the request page offers a plan\'s author the design it came from, at its version, and nobody else', async () => {
+    const designs = require('../src/services/design-threads');
+    const drawn = await thread(sam, { number: 40, state: 'posted' });
+    const id = await plan(sam, { number: 40, html: planWords(5) });
+    // As this build posts a plan: the design named on it.
+    await pool.query('UPDATE chat_session_specs SET design_thread_id = $2, design_version = 5 WHERE id = $1', [id, drawn.threadId]);
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: sam.id, appId: app.id, number: 40 }), { rootId: drawn.rootId, designVersion: 5 });
+    assert.equal(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number: 40 }), null, 'another member learns nothing of it');
+    // A thread whose plan names no design: the way back, and no door.
+    const plain = await thread(ada, { number: 41, kind: null });
+    await plan(ada, { number: 41, html: '<article data-spec><p>A plan in words.</p></article>' });
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number: 41 }), { rootId: plain.rootId });
+    // A page is never a plan's design, even named so by hand.
+    const page = await thread(ada, { number: 42, kind: 'page', state: 'posted' });
+    const fromPage = await plan(ada, { number: 42, html: planWords(1) });
+    await pool.query('UPDATE chat_session_specs SET design_thread_id = $2, design_version = 1 WHERE id = $1', [fromPage, page.threadId]);
+    assert.deepEqual(await designs.threadForRequest(pool, { userId: ada.id, appId: app.id, number: 42 }), { rootId: page.rootId });
+  });
+
   await t.test('artifact-store: a row the build from before writes is a design in its thread, and the store holds a page', async () => {
     const held = await thread(ada, { number: 30 });
     const { rows: [row] } = await pool.query(
