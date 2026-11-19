@@ -189,7 +189,11 @@ test('the worker says when the network answered behind a saved copy, and the pag
 // with no answer seen for 10 s. Bytes arriving are the network answering.
 test('a network body the worker hands the page counts as the network answering while it arrives', () => {
   const sw = read('public/sw.js');
-  assert.match(sw, /return fromCache \? response : reportArriving\(event, response\);/, 'an API read or a shot from the network');
+  assert.match(sw, /return fromCache \? response : reportArriving\(event, response\);/, 'an API read from the network');
+  // The fifth follow-up (the retest of #6876): an <img> sends no scope header,
+  // so every picture, a change's shots too, leaves through the no-scope exit.
+  assert.match(sw, /if \(!context\) \{\s*return fetch\(new Request\(event\.request, \{ cache: 'no-store' \}\)\)\.then\(\(res\) => reportArriving\(event, res\)\);/,
+    'a picture, which has no scope');
   assert.match(sw, /event\.waitUntil\(cache\.put\(event\.request, res\.clone\(\)\)\.catch\(\(\) => \{\}\)\);\s*\}\s*return reportArriving\(event, res\);/,
     'an icon, avatar or visual downloaded the first time');
   assert.match(sw, /transform\(chunk, controller\) \{\s*noteNetworkAnswered\(event\);\s*controller\.enqueue\(chunk\);/, 'told per chunk, through the two-second gap');

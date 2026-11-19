@@ -1069,6 +1069,29 @@ test('a network body says the network is answering while it arrives, not once it
   assert.deepEqual(posted(h), [], 'nothing for the page to re-read');
 });
 
+test('a picture, which sends no scope header, says so too while it arrives', async () => {
+  // The retest of #6876 (19 Nov 2026): an <img> can send no header, so every
+  // shot went out through networkFirstApi's no-scope exit, which was not
+  // wrapped, and the phone still went "Connecting…" while shots drained. The
+  // test above sends its shot with the header, as a fetch() read does.
+  const body = chunkedBody();
+  const h = harness.worker({ timers: manualTimers(),
+    fetcher: async () => new Response(body.stream, { headers: { 'Content-Type': 'image/png' } }) });
+  const res = await h.get(null, SHOT);
+  const sent = h.requests.at(-1);
+  assert.equal(sent.headers.get(harness.SCOPE_HEADER), null, 'sent as an image is, with no scope');
+  assert.equal(sent.cache, 'no-store', 'the no-scope path, which stores nothing');
+  const reader = res.body.getReader();
+  body.push('fake-png');
+  assert.equal(new TextDecoder().decode((await reader.read()).value), 'fake-png');
+  await until(() => answeredPosts(h) === 1, 'the picture\'s bytes to be told');
+  body.end();
+  assert.equal((await reader.read()).done, true);
+  await h.drain();
+  assert.equal((await (await h.caches.open(API_CACHE)).keys()).length, 0, 'and nothing was stored');
+  assert.deepEqual(posted(h), []);
+});
+
 test('a body the network already decoded is not labelled as encoded', async () => {
   const h = harness.worker({ timers: manualTimers(), fetcher: async () => harness.json({ fake: 'A' }, harness.A, {
     headers: { 'Content-Encoding': 'br', 'Content-Length': '7' },
