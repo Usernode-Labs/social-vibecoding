@@ -49,6 +49,7 @@ const CAPTURE_ID = 77;
 const SID = 'a'.repeat(64);
 const STORAGE_PATH = '/__usernode_access/storage';
 const STORAGE_NAME = '__Host-usernode_embed';
+let cookieFreeFrame = false;
 
 const APPS = {
   pubapp: { id: PUB_APP_ID, slug: 'pubapp', view_visibility: 'public' },
@@ -59,14 +60,15 @@ const byId = (id) => Object.values(APPS).find((a) => a.id === Number(id));
 const fakePool = {
   async query(sql, params = []) {
     if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
-    if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, view_visibility, moderation_suspended_at,[\s\S]*?FROM apps WHERE slug/.test(sql)) {
       const app = APPS[params[0]];
-      return { rows: app ? [{ id: app.id, view_visibility: app.view_visibility }] : [] };
+      return { rows: app ? [{ id: app.id, view_visibility: app.view_visibility, cookie_free_frame: cookieFreeFrame }] : [] };
     }
     if (/SELECT view_visibility, moderation_suspended_at FROM apps WHERE id/.test(sql)) {
       const app = byId(params[0]);
       return { rows: app ? [{ view_visibility: app.view_visibility }] : [] };
     }
+    if (/SELECT runtime_name FROM apps WHERE id/.test(sql)) return { rows: [] };
     if (/FROM app_collaborators WHERE app_id = \$1 AND status = 'member'/.test(sql)) {
       return { rows: params[0] === PRIV_APP_ID ? [{ user_id: MEMBER_ID }] : [] };
     }
@@ -108,11 +110,13 @@ test.before(async () => {
 });
 test.after(() => new Promise((resolve) => server.close(resolve)));
 test.beforeEach(() => {
+  cookieFreeFrame = false;
+  delete process.env.APP_OFFLINE_CACHE;
   appAccess.invalidateAllVisibility();
   edgeGate._resetCachesForTest();
 });
 
-function gate({ host = PRIV_HOST, uri = '/', method = 'GET', cookie, dest, site, origin, ws, usernodeToken } = {}) {
+function gate({ host = PRIV_HOST, uri = '/', method = 'GET', cookie, dest, site, origin, ws, usernodeToken, kubernetes } = {}) {
   const headers = {
     Host: host,
     'X-Forwarded-Host': host,
@@ -124,6 +128,7 @@ function gate({ host = PRIV_HOST, uri = '/', method = 'GET', cookie, dest, site,
     ...(origin ? { Origin: origin } : {}),
     ...(ws ? { 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==' } : {}),
     ...(usernodeToken ? { 'x-usernode-token': usernodeToken } : {}),
+    ...(kubernetes ? { 'X-Usernode-Gate': 'kubernetes' } : {}),
   };
   return new Promise((resolve, reject) => {
     const req = http.request(`${baseUrl}/__caddy/access`, { method: 'GET', headers }, (res) => {
@@ -147,6 +152,30 @@ const isAuthorize = (loc) => typeof loc === 'string' && loc.startsWith(`${PLATFO
 const trade = (tok, next = '/?un-build=abc', { host = PRIV_HOST, dest = 'iframe' } = {}) => gate({
   host, dest, site: 'same-origin',
   uri: `/__usernode_access?frame=${encodeURIComponent(tok)}&next=${encodeURIComponent(next)}`,
+});
+
+test('an opted-in private frame serves the bundled document only with a current member token', async () => {
+  cookieFreeFrame = true;
+  const member = token();
+  process.env.APP_OFFLINE_CACHE = 'on';
+  const launch = await gate({ uri: `/?token=${member}`, dest: 'iframe', site: 'cross-site', kubernetes: true });
+  assert.equal(launch.status, 200);
+  assert.deepEqual(setCookies(launch), []);
+  assert.equal(launch.headers['x-usernode-upstream'], 'sv-app-7-privapp');
+  assert.equal(launch.headers['x-usernode-cache'], undefined);
+  delete process.env.APP_OFFLINE_CACHE;
+  for (const invalid of [token(OUTSIDER_ID), token(MEMBER_ID, PUB_APP_ID)]) {
+    assert.equal((await gate({ uri: `/?token=${invalid}`, dest: 'iframe', site: 'cross-site' })).status, 401);
+  }
+  assert.equal((await gate({ dest: 'iframe', site: 'cross-site' })).status, 401);
+  assert.notEqual((await gate({ uri: '/app.js', dest: 'script', site: 'same-origin' })).status, 200);
+  assert.notEqual((await gate({ uri: '/api/state', dest: 'empty', site: 'same-origin' })).status, 200);
+  assert.equal((await gate({ uri: '/api/state', dest: 'empty', site: 'same-origin', usernodeToken: member })).status, 200);
+  assert.ok(isAuthorize((await gate({ dest: 'document', site: 'none' })).headers.location));
+
+  const tokenless = await trade(member, '/notes?id=3');
+  assert.deepEqual(setCookies(tokenless), []);
+  assert.equal(tokenless.headers.location, `/notes?id=3&token=${encodeURIComponent(member)}`);
 });
 
 // The page's script, run against a stand-in window: what it posts, where,

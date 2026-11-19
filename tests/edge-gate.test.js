@@ -91,7 +91,7 @@ const fakePool = {
     if (/FROM user_app_blocks/.test(sql)) {
       return { rows: [...state.blocked].filter((k) => k.endsWith(`:${params[0]}`)).map((k) => ({ user_id: Number(k.split(':')[0]) })) };
     }
-    if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, view_visibility, moderation_suspended_at,[\s\S]*?FROM apps WHERE slug/.test(sql)) {
       const app = APPS[params[0]];
       return { rows: app ? [{ id: app.id, view_visibility: app.view_visibility }] : [] };
     }

@@ -188,7 +188,7 @@ function fakePool() {
   return {
     async query(sql, params = []) {
       if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
-      if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
+      if (/SELECT id, view_visibility, moderation_suspended_at,[\s\S]*?FROM apps WHERE slug/.test(sql)) {
         return { rows: params[0] === SLUG ? [{ id: APP_ID, view_visibility: 'private' }] : [] };
       }
       if (/SELECT view_visibility, moderation_suspended_at FROM apps WHERE id/.test(sql)) {

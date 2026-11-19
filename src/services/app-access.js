@@ -480,7 +480,9 @@ async function getHostVisibility(pool, slug) {
     return cached.appId == null ? null : cached;
   }
   const { rows } = await pool.query(
-    'SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug = $1',
+    `SELECT id, view_visibility, moderation_suspended_at,
+            (manifest_snapshot -> 'cookieFreeFrame') = 'true'::jsonb AS cookie_free_frame
+       FROM apps WHERE slug = $1`,
     [slug]
   );
   if (!rows.length) {
@@ -493,6 +495,7 @@ async function getHostVisibility(pool, slug) {
     appId: rows[0].id,
     viewPrivate: rows[0].view_visibility === 'private',
     suspended: !!rows[0].moderation_suspended_at,
+    cookieFreeFrame: rows[0].cookie_free_frame === true,
   };
   hostVisBySlug.set(slug, entry);
   return entry;

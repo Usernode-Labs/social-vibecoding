@@ -168,7 +168,7 @@ const accessPool = {
   queries: [],
   async query(sql, params = []) {
     this.queries.push(sql);
-    if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, view_visibility, moderation_suspended_at,[\s\S]*?FROM apps WHERE slug/.test(sql)) {
       const app = ACCESS_APPS[params[0]];
       return { rows: app ? [{ id: app.id, view_visibility: 'public', moderation_suspended_at: null }] : [] };
     }

@@ -105,7 +105,7 @@ const live = new Set([`${SID}:${MEMBER_ID}`]);
 const fakePool = {
   async query(sql, params = []) {
     if (/FROM user_app_blocks/.test(sql)) return { rows: [] };
-    if (/SELECT id, view_visibility, moderation_suspended_at FROM apps WHERE slug/.test(sql)) {
+    if (/SELECT id, view_visibility, moderation_suspended_at,[\s\S]*?FROM apps WHERE slug/.test(sql)) {
       const a = APPS[params[0]];
       return { rows: a ? [{ id: a.id, view_visibility: a.view_visibility }] : [] };
     }
