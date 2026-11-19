@@ -135,8 +135,10 @@ test('the banner markup is gone from the shell', () => {
   assert.doesNotMatch(appJs, /sit tight/);
 
   // The unrelated banners that share this region of the shell stay.
-  assert.ok(indexHtml.includes('id="offline-banner"'),
-    'the offline banner is untouched');
+  // (The offline strip went later, for the header's connection status: the
+  // native-offline proposal.)
+  assert.ok(indexHtml.includes('id="connection-status"'),
+    'the connection status is in the shell');
   assert.ok(indexHtml.includes('id="view-as-non-admin-banner"'),
     'the view-as-non-admin banner is untouched');
 });

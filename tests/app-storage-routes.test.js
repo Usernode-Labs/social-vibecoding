@@ -91,7 +91,8 @@ const store = {
   async putFile(appId, id, data) { objects.set(`${appId}/${id}`, Buffer.from(data)); },
   async getFileStream(appId, id, range = null) {
     const data = objects.get(`${appId}/${id}`);
-    if (!data) throw new Error('NoSuchKey');
+    if (store.failReads) throw Object.assign(new Error('object store sent nothing'), { code: 'StoreTimeout' });
+    if (!data) throw Object.assign(new Error('Not Found'), { code: 'NoSuchKey' });
     return Readable.from([range ? data.subarray(range.start, range.end + 1) : data]);
   },
   async removeFile(appId, id) { objects.delete(`${appId}/${id}`); },
@@ -261,6 +262,24 @@ test('usage without a user token reports the app and no person', async () => {
     assert.equal(usage.appCapBytes, 10 * 1024 * 1024 * 1024);
     assert.equal(usage.userBytes, null);
     assert.equal(usage.userCapBytes, null);
+  });
+});
+
+test('a store that cannot answer reads back as a JSON 503 to retry, not a 404', async () => {
+  await withServer(async (base) => {
+    const stored = await (await upload(base, { query: 'filename=d.json&owner=app', body: JSON_BYTES })).json();
+    store.failReads = true;
+    try {
+      const res = await fetch(`${base}/files/${stored.id}`, { headers: appHeaders() });
+      assert.equal(res.status, 503);
+      assert.equal(res.headers.get('retry-after'), '5');
+      assert.deepEqual(await res.json(), {
+        ok: false, code: 'storage_unavailable', error: 'File storage is unavailable right now',
+      });
+    } finally {
+      store.failReads = false;
+    }
+    assert.equal((await fetch(`${base}/files/${stored.id}`, { headers: appHeaders() })).status, 200);
   });
 });
 

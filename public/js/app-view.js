@@ -5433,6 +5433,14 @@ const AppView = {
       AppView._clearTopicHeadBody();
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
+      // The native-offline proposal (18 Nov 2026): no answer is not "no such
+      // change". The page stays where it is, says so once, and opens when
+      // Homeroom answers again, instead of dropping the reader on the
+      // Workshop.
+      if (id === AppView.CHANGE_UNREACHABLE) {
+        AppView._openChangeWhenOnline(content, ref, pending);
+        return;
+      }
       if (!id) {
         // #6019: numbers are one sequence per app, so a change address
         // with a request's number is that request's thread.
@@ -5886,26 +5894,82 @@ const AppView = {
     return AppView.openTopic('issue', Number(number), options.replaceRoute ? { replaceRoute: true } : undefined);
   },
 
+  // What _sessionIdForChange answers when Homeroom gave no answer at all and
+  // this phone saved none: not "no such change" (the native-offline proposal).
+  CHANGE_UNREACHABLE: 'unreachable',
+
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
+  // With no answer (offline, a server that is down) the number this phone
+  // saw last time stands in (lib/kept-copies.ts, `change:<slug>:<n>`), and
+  // with none saved it is CHANGE_UNREACHABLE.
   async _sessionIdForChange(pr) {
     const slug = App.currentApp || AppView.appData?.slug;
     if (!slug || !pr) return null;
+    const kept = window.UsernodeReact?.keptCopies;
+    const keptName = `change:${slug}:${Number(pr)}${AppView._demoQS() ? ':demo' : ''}`;
+    const keep = (id) => {
+      try { kept?.keep?.(keptName, id); } catch (_) { /* the page opens all the same */ }
+      return id;
+    };
+    const saved = () => {
+      try {
+        const id = Number(kept?.read?.(keptName));
+        if (Number.isInteger(id) && id > 0) return id;
+      } catch (_) { /* nothing saved */ }
+      return AppView.CHANGE_UNREACHABLE;
+    };
     // #6827: a change page's own read (started when the route named the
     // change) already answered this, so the address costs no second read.
     try {
       const page = window.UsernodeReact?.devBoard?.peekChangePage?.(slug, Number(pr));
-      if (page && page.sessionId) return page.sessionId;
+      if (page && page.sessionId) return keep(page.sessionId);
     } catch (_) { /* the read below answers */ }
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
+      // A refusal or a miss is the server's word; a server error is no answer.
+      if (res.status >= 500) return saved();
       if (!res.ok) return null;
       const data = await res.json();
       const id = Number(data && data.sessionId);
-      return Number.isInteger(id) && id > 0 ? id : null;
+      return Number.isInteger(id) && id > 0 ? keep(id) : null;
     } catch {
-      return null;
+      return saved();
     }
+  },
+
+  // A change address that could not be looked up (CHANGE_UNREACHABLE): the
+  // page keeps its skeleton, says once that the change was not saved on this
+  // phone, and opens itself when Homeroom answers again — or when the reader
+  // has gone somewhere else, does nothing.
+  _openChangeWhenOnline(content, ref, pending) {
+    // Said once per change, however many times it is asked again.
+    const key = `${App.currentApp || ''}:${ref && ref.pr}`;
+    if (AppView._changeWaitSaid !== key) {
+      AppView._changeWaitSaid = key;
+      try {
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:page.notSavedYet'));
+      } catch (_) { /* the header's status still says why */ }
+    }
+    let timer = null;
+    const stop = () => {
+      window.removeEventListener('usernode:offline-change', onChange);
+      if (timer) clearTimeout(timer);
+    };
+    const retry = () => {
+      stop();
+      if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
+      void AppView._renderTopicSubView(content, ref);
+    };
+    const onChange = (e) => { if (e && e.detail && e.detail.offline === false) retry(); };
+    // A server error the probe never calls offline: ask again in a while.
+    const tick = () => {
+      if (AppView._devTopic !== pending) { stop(); return; }
+      if (window.Offline && Offline.isOffline && Offline.isOffline()) { timer = setTimeout(tick, 20000); return; }
+      retry();
+    };
+    window.addEventListener('usernode:offline-change', onChange);
+    timer = setTimeout(tick, 20000);
   },
 
   // #4367: once the open change is known to have a pull request, its address

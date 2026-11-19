@@ -26,6 +26,7 @@
  * copy the service worker saved is what left the number stuck. A counts read
  * that fails keeps the numbers already on screen instead of zeroing them.
  */
+import { keepCopy, keptCopy, keptLoaded } from '../../lib/kept-copies';
 import { createStore } from '../../lib/plain-store.js';
 import { sharedJson } from '../../lib/shared-read';
 import { keepDevicePins, takeDevicePins } from '../guest/device-pins';
@@ -54,7 +55,18 @@ export interface HomePinsState {
   pins: HomePin[];
   joined: JoinedCommunity[];
   owed: Record<string, number>;
+  /**
+   * The read had no answer and nothing was saved on this phone, so `pins`
+   * and `joined` being empty says nothing about the person (the
+   * native-offline proposal: Communities read "You are not in a community
+   * yet" after a cold launch offline). Optional so a fixture without it reads
+   * as an answer.
+   */
+  failed?: boolean;
 }
+
+/** The kept copy (lib/kept-copies.ts) of the last answer, drawn when a read has none. */
+const KEPT_NAME = 'home:pins';
 
 const INITIAL: HomePinsState = { ready: false, pins: [], joined: [], owed: {} };
 
@@ -109,24 +121,53 @@ export function loadHomePins(): Promise<void> {
   return run;
 }
 
+type KeptPins = Pick<HomePinsState, 'pins' | 'joined' | 'owed'>;
+
 async function readAll(): Promise<void> {
   try {
+    let joinedFailed = false;
     const [pinsBody, appsBody, countsBody] = await Promise.all([
       readJson('/api/me/home-pins'),
       // These two are the community scope's reads too (loadCommunities), a
       // moment apart on every page load: one request serves both (#6591).
-      sharedJson<any>('/api/apps?scope=joined').catch(() => ({ apps: [] })),
+      sharedJson<any>('/api/apps?scope=joined').catch(() => { joinedFailed = true; return null; }),
       // The current numbers, never the worker's saved copy (request 6500).
       sharedJson<any>('/api/workshop/counts', { fresh: true }).catch(() => null),
     ]);
-    const joined = (Array.isArray(appsBody?.apps) ? appsBody.apps : [])
-      .filter((a: any) => a && a.slug && a.is_member && !a.demo);
+    const current = homePinsStore.get();
+    // A joined list that failed is not an empty one: keep the one on screen,
+    // or the one this phone saved, rather than saying they joined nothing.
+    const joined = joinedFailed
+      ? (current.joined.length ? current.joined : keptCopy<KeptPins>(KEPT_NAME)?.joined || [])
+      : (Array.isArray(appsBody?.apps) ? appsBody.apps : [])
+        .filter((a: any) => a && a.slug && a.is_member && !a.demo);
     // A counts read that failed says nothing about the votes, so the tiles
     // keep the numbers they already had rather than dropping to zero.
-    const owed = countsBody ? owedFrom(countsBody) : homePinsStore.get().owed;
-    homePinsStore.set({ ready: true, pins: Array.isArray(pinsBody?.pins) ? pinsBody.pins : [], joined, owed });
+    const owed = countsBody ? owedFrom(countsBody) : current.owed;
+    const pins = Array.isArray(pinsBody?.pins) ? pinsBody.pins : [];
+    homePinsStore.set({ ready: true, failed: false, pins, joined, owed });
+    if (!joinedFailed) keepCopy(KEPT_NAME, { pins, joined, owed });
   } catch {
-    homePinsStore.set({ ready: true });
+    const current = homePinsStore.get();
+    // What is on screen came from an answer: it stays.
+    if (current.ready && !current.failed) {
+      homePinsStore.set({ ready: true });
+      return;
+    }
+    // Offline, the read can fail before this device's copies have loaded.
+    await keptLoaded();
+    const kept = keptCopy<KeptPins>(KEPT_NAME);
+    if (kept) {
+      homePinsStore.set({
+        ready: true,
+        failed: false,
+        pins: Array.isArray(kept.pins) ? kept.pins : [],
+        joined: Array.isArray(kept.joined) ? kept.joined : [],
+        owed: kept.owed && typeof kept.owed === 'object' ? kept.owed : {},
+      });
+    } else {
+      homePinsStore.set({ ready: true, failed: true });
+    }
   }
 }
 

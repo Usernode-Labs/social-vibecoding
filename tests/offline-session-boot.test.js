@@ -533,16 +533,18 @@ test('offline state is published as a body class', () => {
   assert.match(OFFLINE, /classList\.toggle\('is-offline', offline\)/);
 });
 
-test('the offline strip outranks the auth overlays and the drawer', () => {
-  const rule = CSS.slice(CSS.indexOf('body.is-offline #offline-banner'));
-  assert.match(rule.slice(0, 400), /position:\s*fixed/);
-  const z = /z-index:\s*(\d+)/.exec(rule.slice(0, 400));
-  assert.ok(z, 'the strip has no z-index');
-  // Auth overlays are z-40, the drawer panel z-50. Anything at or below
-  // those and the strip is invisible exactly when it matters most.
-  assert.ok(Number(z[1]) > 50, `z-index ${z[1]} is not above the drawer`);
-  // Its space is reserved, so it floats over nothing it would hide.
-  assert.match(CSS, /body\.is-offline\s*\{[^}]*padding-top/);
+test('offline, the header says so and the shell reserves no strip for it', () => {
+  // The native-offline proposal (18 Nov 2026): the full-width amber strip,
+  // fixed above the auth overlays, is gone. The header's connection status
+  // says it, as native apps say it in their title bar, and reserves nothing;
+  // the sign-in screens, which cover the header, keep their own offline
+  // words (the .offline-only blocks below).
+  assert.doesNotMatch(CSS, /#offline-banner/, 'no rule draws the old strip');
+  assert.match(CSS, /body\.is-offline\s*\{\s*--offline-strip-h:\s*0px;\s*\}/,
+    'the strip height the install strip stacks on is zero');
+  assert.doesNotMatch(CSS, /body\.is-offline\s*\{[^}]*padding-top/, 'no room is reserved for it');
+  assert.match(FRONTEND('features/header/connection-status.tsx'), /id="connection-status"/);
+  assert.match(FRONTEND('Shell.tsx'), /<ConnectionStatus \/>/);
 });
 
 test('.offline-only blocks are inert until offline', () => {
