@@ -54,7 +54,8 @@ const MOMENT_WORDS = [
   [D({ moment: 'ready', said: 'ready_broken', appName: 'Flat 4B Chores', ready: { broken: ['Rota'] } }), 'Dark mode · Flat 4B Chores',
     'Built, but one thing isn\'t working yet. Try it to see.', 'Ready to try', 'Dark mode'],
   // A stop says which one, and what is next; never "A person can pick it up".
-  [D({ moment: 'stopped', said: 'build_other' }), 'Dark mode · Plant Pal', 'Stopped: something went wrong while I was building. Tap Try again.', 'Stopped', 'Dark mode'],
+  // T2.9 (19 Nov 2026): a request's stop names what its page offers.
+  [D({ moment: 'stopped', said: 'build_other' }), 'Dark mode · Plant Pal', 'Stopped: something went wrong while I was building. Ask me to build it again on its page.', 'Stopped', 'Dark mode'],
   [D({ moment: 'stopped', said: 'needs_look' }), 'Dark mode · Plant Pal', 'Stopped: it\'s built, but a person needs to look at it before you can try it.', 'Stopped', 'Dark mode'],
   [D({ moment: 'on_hold', said: 'allowance', count: 2 }), '2 requests on hold', 'On hold until Monday: your building time for this week is used up.', 'On hold', '2 requests on hold'],
   [D({ moment: 'live', said: 'live' }), 'Dark mode · Plant Pal', 'It\'s live. Open Plant Pal to see it.', 'Live', 'Dark mode'],
@@ -63,7 +64,7 @@ const MOMENT_WORDS = [
   [D({ moment: 'live', said: 'live_soon' }), 'Dark mode · Plant Pal', 'It\'s going live now. Open Plant Pal in a few minutes to see it.', 'Live', 'Dark mode'],
   // A row written before "one story" keeps reading, as the moment it is.
   ['hrbot:question:Plant Pal', 'Plant Pal', 'I have a question before I build it.', 'Needs you', 'Plant Pal'],
-  ['hrbot:stopped_build:Plant Pal', 'Plant Pal', 'Stopped: something went wrong while I was building. Tap Try again.', 'Stopped', 'Plant Pal'],
+  ['hrbot:stopped_build:Plant Pal', 'Plant Pal', 'Stopped: something went wrong while I was building. Ask me to build it again on its page.', 'Stopped', 'Plant Pal'],
   ['hrbot:held:', 'Homeroom bot', 'On hold until Monday: I\'ve used my budget for this week.', 'On hold', 'Homeroom bot'],
   ['hrbot:live_first:Plant Pal', 'Plant Pal', 'Your first version is live. Open Plant Pal to try it.', 'Live', 'Plant Pal first version'],
 ];

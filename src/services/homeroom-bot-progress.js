@@ -678,6 +678,8 @@ function firstVersionStage(stage, { ready = false } = {}) {
 const BUILDING_LINE_STAGE = Object.freeze({
   queued: 'build_queued', starting: 'starting', held_builds: 'held', held_waiting: 'held',
   reviewing: 'reviewing', proposing: 'proposing', fixing: 'fixing', revising: 'revising', update_queued: 'followup_queued',
+  // T2.2: waiting for building credit, to start again by itself.
+  credit_wait: 'build_queued',
 });
 
 /**
@@ -792,15 +794,13 @@ function stageOf(input, { now = new Date() } = {}) {
     // waits on nobody's approval.
     const first = row.first_version === true;
     if (row.check_state === 'passing' || row.check_state === 'skipped') {
-      if (first) {
-        return { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' };
-      }
       // #6528: its tests passed but its before & after shots are still being
       // taken: it reads as checking, so the "Ready to try" bell (and the
       // ready card) waits until the pictures are there. The rule is the
       // bot's own readiness (bot-readiness.ts heldUntil), with its 45-minute
       // lapse when no settle ever comes; a change with nothing visible to
-      // shoot is not held.
+      // shoot is not held. T2.12 (19 Nov 2026): a first version's shots too,
+      // before it goes live without a vote (its App tab says Testing then).
       const head = (row.proposal_source === 'imported' ? row.imported_pr_head_sha : row.reviewed_head_sha) || row.checks_sha;
       const held = heldUntil({
         shots_state: row.shots_state,
@@ -812,8 +812,13 @@ function stageOf(input, { now = new Date() } = {}) {
       if (held != null) {
         return {
           stage: 'checks', since: row.checks_at || row.proposal_at,
-          doing: 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
+          doing: first
+            ? 'its tests passed; its before and after shots are still being taken, and then as the project\'s first version it goes live without a vote'
+            : 'it\'s waiting for approval, and its tests passed; its before and after shots are still being taken',
         };
+      }
+      if (first) {
+        return { stage: 'vote', since: row.proposal_at, doing: 'its tests passed, and as the project\'s first version it goes live without a vote in a minute or two' };
       }
       return { stage: 'vote', since: row.proposal_at, doing: 'it\'s waiting for approval', waitingOn: 'the group' };
     }
@@ -866,10 +871,16 @@ function stageOf(input, { now = new Date() } = {}) {
     // #4539, 30 Oct 2026: on a closed request nothing waits to be built any
     // more. The bot's refresh reads open requests only, so a build held back
     // by a limit, a plan waiting for Build it, or one waiting its turn never
-    // starts; it reads as not built because the request was closed. Main
-    // said "held back" of four closed requests while the
-    // bot tab rightly left them out. A build already under way builds on.
+    // starts; it reads as not built because the request was closed. A build
+    // already under way builds on.
     if (closed && !row.build_session_id) return null;
+    // T2.2 (19 Nov 2026): the build stopped and left the request owed in the
+    // bot's own queue: OpenRouter's credit ran out (#6867: the run keeps no
+    // verdict, so it still reads ready), or its plan is read again (#6859).
+    // That queue row is where it stands. It was read below as the build's
+    // session (archived: nothing; paused: "getting it ready to try"), so a
+    // credit wait read "Not started yet".
+    if (row.queue_id && !row.started_at && OWED_AGAIN.has(row.queue_reason)) return queuedStageOf(row, { now });
     if (row.cap_suppressed) {
       return {
         stage: 'held',
@@ -926,40 +937,55 @@ function stageOf(input, { now = new Date() } = {}) {
     }
     return { stage: 'planning', since: row.build_started_at || row.run_at, doing: 'writing the plan for the build', limit: 'plan' };
   }
-  if (row.queue_id) {
-    // One story: held until the week resets, because its payer's building
-    // time is used up (homeroom-bot.js runTriage): On hold until Monday.
-    // #6357: or held for a day after its look threw again and again, which
-    // is no money at all: paused, and tried again then.
-    const hold = holdOf(row, { now });
-    if (hold && hold.kind === 'cooldown') {
-      return {
-        stage: 'on_hold', hold: 'cooldown', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
-        doing: `paused after repeated errors: trying again at ${hold.until.slice(0, 16).replace('T', ' ')} UTC`,
-      };
-    }
-    if (hold) {
-      return {
-        stage: 'on_hold', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
-        doing: 'on hold until Monday: this week\'s building time is used up',
-      };
-    }
-    // Not its number in the queue: that counts every project's requests, and
-    // the per-project and per-person limits decide more.
-    // #6228: a reply waiting for the read the bot has queued reads as that
-    // read about to happen, not as a request waiting its turn.
-    if (replyWaits(row, { now })) {
-      return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
-    }
-    return { stage: 'queued', since: row.enqueued_at, doing: QUEUE_WAIT,
-      ...(planFailed(row) ? { retry: 'plan' } : {}) };
-  }
+  if (row.queue_id) return queuedStageOf(row, { now });
   // #6228: a reply nobody has queued a read for yet still reads as one
   // coming, for REPLY_WAIT_MS: the bot's refresh sees it and queues it.
   if (replyWaits(row, { now })) {
     return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
   }
   return null;
+}
+
+// T2.2: the queue reasons a stopped build leaves its request owed by
+// (src/workflow/rules/bot-loop.ts CREDIT_WAIT_REASON, PLAN_RETRY_REASON):
+// the bot picks it up again by itself, so its queue row says where it is
+// whatever its newest run's build left behind.
+const OWED_AGAIN = new Set(['credit_wait', 'plan_retry']);
+
+/**
+ * Pure: a request's stage while it has a queue row that has not started
+ * (stageOf): on hold (the week's building time, or a day's pause after
+ * repeated errors), a reply about to be read, or waiting its turn, with
+ * `retry: 'plan'` when the read is its failed plan's retry (#6313, #6859).
+ * fromStage reads the row's queue reason for a credit wait (#6867).
+ */
+function queuedStageOf(row, { now = new Date() } = {}) {
+  // One story: held until the week resets, because its payer's building
+  // time is used up (homeroom-bot.js runTriage): On hold until Monday.
+  // #6357: or held for a day after its look threw again and again, which
+  // is no money at all: paused, and tried again then.
+  const hold = holdOf(row, { now });
+  if (hold && hold.kind === 'cooldown') {
+    return {
+      stage: 'on_hold', hold: 'cooldown', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
+      doing: `paused after repeated errors: trying again at ${hold.until.slice(0, 16).replace('T', ' ')} UTC`,
+    };
+  }
+  if (hold) {
+    return {
+      stage: 'on_hold', until: hold.until, since: row.enqueued_at, waitingOn: 'time',
+      doing: 'on hold until Monday: this week\'s building time is used up',
+    };
+  }
+  // Not its number in the queue: that counts every project's requests, and
+  // the per-project and per-person limits decide more.
+  // #6228: a reply waiting for the read the bot has queued reads as that
+  // read about to happen, not as a request waiting its turn.
+  if (replyWaits(row, { now })) {
+    return { stage: 'reading', reply: true, waiting: true, since: row.reply_at, doing: 'reading the new reply in a moment' };
+  }
+  return { stage: 'queued', since: row.enqueued_at, doing: QUEUE_WAIT,
+    ...(planFailed(row) || row.queue_reason === 'plan_retry' ? { retry: 'plan' } : {}) };
 }
 
 /**
@@ -971,6 +997,27 @@ function stageOf(input, { now = new Date() } = {}) {
 function planFailed(row) {
   return row?.build_ok === false
     && /no plan could be written|only part of a spec/.test(String(row.build_error || ''));
+}
+
+// T2.9 (19 Nov 2026): how long a plan that could not be written reads as
+// tried again before its retry read is queued (homeroom-bot.js
+// queuePlanRetry, right after the build's record). Past it with no retry
+// queued, it is stopped.
+const PLAN_RETRY_GRACE_MS = 10 * MINUTE_MS;
+
+/**
+ * Pure (T2.9): whether a request's newest look could not write its plan and
+ * the bot is about to read it again by itself: its first such failure (a
+ * read for the retry is never tried again, #6859), not queued yet, within
+ * PLAN_RETRY_GRACE_MS of the build's last activity. Between the build's
+ * record and the retry's queue row it read Stopped, and rang "Stopped" for a
+ * plan the bot was already trying again.
+ */
+function planRetryOwed(row, { now = new Date() } = {}) {
+  if (!planFailed(row) || row.queue_id || row.request_closed === true) return false;
+  if (row.run_read_reason === 'plan_retry') return false;
+  const at = Date.parse(row.build_last_activity || row.run_at || '');
+  return Number.isFinite(at) && new Date(now).getTime() - at <= PLAN_RETRY_GRACE_MS;
 }
 
 /**
@@ -1184,6 +1231,8 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
          SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
                 proposal_session_id, live_build_waiting_at, awaiting_go_at,
                 reason AS run_reason, already_done AS run_already_done,
+                -- T2.9: why the look was read (a failed plan's retry is read once).
+                read_reason AS run_read_reason,
                 review->>'state' AS review_state, review->>'startedAt' AS review_started_at,
                 jsonb_array_length(COALESCE(review->'rounds', '[]'::jsonb)) AS review_round,
                 (review->'reviewer'->>'maxRounds')::int AS review_max_rounds,
@@ -1220,7 +1269,7 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
             run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
             run.review_state, run.review_started_at, run.review_round, run.review_max_rounds, run.review_minutes,
-            run.no_change_said, run.run_reason, run.run_already_done,
+            run.no_change_said, run.run_reason, run.run_already_done, run.run_read_reason,
             bs.status AS build_status, bs.created_at AS build_started_at, bs.last_activity_at AS build_last_activity,
             bs.active_turn->>'mode' AS build_turn_mode, bs.active_turn->>'startedAt' AS build_turn_at,
             spec.created_at AS spec_at,
@@ -1238,6 +1287,9 @@ const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q
             cs.checks_commit_sha AS checks_sha, cs.reviewed_head_sha, cs.imported_pr_head_sha,
             cs.source AS proposal_source,
             COALESCE(cs.promoted_at, cs.created_at) AS proposal_at, cs.live_at AS merged_at,
+            -- T2.1: when and why the bot's change was closed (a closed
+            -- change session is 'archived'), which its request's stop says.
+            cs.archived_at AS proposal_closed_at, cs.close_reason AS proposal_close_reason,
             oq.created_at AS question_at,
             -- #6284: it stopped at its own limit on this change, with no
             -- grant open: Needs you reads that, not "checking".
@@ -1375,6 +1427,10 @@ module.exports = {
   firstVersionStageOf,
   firstVersionStopped,
   handedBack,
+  // T2.9: a plan that could not be written, and whether the bot tries it again.
+  planFailed,
+  planRetryOwed,
+  PLAN_RETRY_GRACE_MS,
   QUEUE_WAIT,
   setupOf,
   firstVersionRows,

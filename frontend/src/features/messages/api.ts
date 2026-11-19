@@ -1618,7 +1618,10 @@ function normalizeBotJob(row: JsonRecord): HomeroomBotJob {
 const ASK_KINDS = new Set([
   'question', 'followup_ask', 'plan', 'person', 'blocked', 'empty', 'build_failed', 'checks', 'needs_look', 'first_version_failed',
 ]);
-const JOB_STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
+// T2.9: every cause the one decoder names a stop by (services/bot-stop-cause.js).
+const JOB_STOP_CAUSES = new Set([
+  'time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other', 'plan', 'push', 'push_permanent', 'push_gave_up', 'stopped',
+]);
 
 /**
  * One request, one story: where a tray entry's request is in the chat with
@@ -1702,6 +1705,7 @@ export function normalizeBotTrack(input: unknown): BotTrack | null {
     work,
     step: TRACK_STEPS.has(step) ? step : null,
     ...(CODE.test(cause) ? { cause } : {}),
+    ...(/^[A-Za-z0-9_.-]{1,64}$/.test(text(pick(row, 'causeBy'))) ? { causeBy: text(pick(row, 'causeBy')) } : {}),
     waitingOn: waitingOn === 'you' || waitingOn === 'group' ? waitingOn : null,
     ...(waitingOn === 'you' && text(pick(row, 'waitingFor')) ? { waitingFor: text(pick(row, 'waitingFor')).slice(0, 64) } : {}),
     busy: bool(pick(row, 'busy')),
@@ -1817,7 +1821,7 @@ export async function getHomeroomBotWork(options?: ReadOptions & { also?: readon
  * "N of M"; an unknown state or outcome reads as a piece of work that
  * stopped, never as one still going.
  */
-const STOP_CAUSES = new Set(['time', 'restart', 'restarts', 'no_change', 'unproposed', 'no_start', 'other']);
+const STOP_CAUSES = JOB_STOP_CAUSES;
 const HELD_BY = new Set(['builds_per_app', 'proposals_per_app', 'proposals_total']);
 
 export function normalizeBotActivity(input: unknown): HomeroomBotActivity[] {

@@ -683,6 +683,18 @@
     "text": "Something went wrong while I was building",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the build failed for another reason. The bot speaks as I."
   },
+  "bot.state.line.stop.plan": {
+    "text": "I couldn’t write the plan for it",
+    "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the bot could not write its plan for the request, so nothing was built. The bot speaks as I."
+  },
+  "bot.state.line.stop.push": {
+    "text": "I built it, but GitHub wouldn’t take the upload",
+    "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": the build finished, and GitHub refused to take the code it made. The bot speaks as I."
+  },
+  "bot.state.line.stop.stopped": {
+    "text": "A person stopped it",
+    "description": "The line under a Homeroom bot activity card's title, under the heading \"Stopped\": somebody stopped the bot's build of the request."
+  },
   "bot.state.line.heldPerApp": {
     "text": "I’ll start when one of my changes on {{project}} is voted in or closed",
     "description": "The line under a Homeroom bot activity card's title, under the heading \"Waiting\": the bot has as many changes up for a vote on this project as it may, and starts once one is decided. {{project}} is the project's name."
@@ -4543,6 +4555,18 @@
     "text": "Its build didn't finish",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title saying where it is and why, for the state \"stopped\" when the reason is \"build_failed\"."
   },
+  "bot.track.line.stopped.plan": {
+    "text": "It couldn't write the plan",
+    "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under a request's title for the state \"stopped\": the bot could not write its plan for the request, so nothing was built, and it is not trying again by itself."
+  },
+  "bot.track.line.stopped.stopped": {
+    "text": "A person stopped its build",
+    "description": "The track of a request Homeroom bot works on. Line under a request's title for the state \"stopped\": somebody stopped the bot's build of the request (who is not known)."
+  },
+  "bot.track.line.stopped.stoppedBy": {
+    "text": "@{{username}} stopped its build",
+    "description": "The track of a request Homeroom bot works on. Line under a request's title for the state \"stopped\": a person stopped the bot's build of the request. {{username}} is that person's username, shown after an @."
+  },
   "bot.track.line.done_elsewhere.by": {
     "text": "{{username}} shipped it in PR {{number}}",
     "description": "The track of a request Homeroom bot works on: where the request is, drawn the same in the chat with the bot, a request's thread, the request's page and the bot's slots page. Line under the title of a request somebody else's merged change shipped. {{username}} is that person's username and {{number}} the pull request's number."
@@ -4950,6 +4974,18 @@
   "ai.pill.decide": {
     "text": "Needs Reply",
     "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back because a person has to decide something first, and the bot needs their reply about what happens next. Opens the request. A short label, not a verb."
+  },
+  "ai.pill.othersDecide": {
+    "text": "See who decides",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot handed back for a decision that is not the person's own: the project's creator or admins decide it. Opens the request, whose note names them. A short label."
+  },
+  "ai.pill.moveIt": {
+    "text": "Move it",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found is about another project, or about Homeroom itself. Opens the request, where its note offers to move it (or copy it to Homeroom's own board). A verb."
+  },
+  "ai.pill.closeIt": {
+    "text": "Close it",
+    "description": "The AI tab's main view, Needs you: the pill on a request Homeroom bot found has nothing to build (it was filed on the wrong project, the person asked to drop it, or it only asked a question the bot answered). Opens the request, where its note offers a vote on closing it. A verb."
   },
   "ai.pill.proposeClose": {
     "text": "Confirm it works",

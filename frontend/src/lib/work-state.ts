@@ -118,6 +118,14 @@ export interface WorkState {
   change?: StandingChange | null;
   asks?: StandingAsks | null;
   said?: StandingSaid | null;
+  /**
+   * T2.9, T2.10 (19 Nov 2026): why it stopped, or what its hand-back waits
+   * on, as the one decoder stored it (services/bot-stop-cause.js): a stop's
+   * cause ('plan', 'credit', 'stopped', 'look_failed', ...) or a hand-back's
+   * ('requester', 'others', 'platform', 'other_project', 'wrong_project',
+   * 'close', 'operator_work', 'destructive_db', 'blocked', 'empty').
+   */
+  cause?: string | null;
 }
 
 /**
@@ -339,6 +347,7 @@ export function normalizeWorkState(input: unknown): WorkState | null {
     ...(change ? { change } : {}),
     ...(asks ? { asks } : {}),
     ...(said ? { said } : {}),
+    ...(CODE.test(text(row.cause)) ? { cause: text(row.cause) } : {}),
   };
 }
 

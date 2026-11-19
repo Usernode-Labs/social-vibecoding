@@ -647,6 +647,10 @@
     "text": "Waiting to merge",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change was approved and tested, and GitHub has not merged it yet because GitHub's own required checks are still running or it is held back for a moment."
   },
+  "work.stage.stuck": {
+    "text": "Stuck going live",
+    "description": "Where a request or a change stands, the same words on every screen. The stage word: its change was approved, but GitHub's own required checks never passed after many tries, so Homeroom stopped trying to merge it until the change or the project's main code moves."
+  },
   "work.stage.live": {
     "text": "Live",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). The stage word: its change is live."
@@ -703,6 +707,78 @@
     "text": "Waiting for more detail",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Shown to someone other than the requester: Homeroom bot needs more detail to build it."
   },
+  "work.handBack.others": {
+    "text": "Waiting for @{{username}} to decide",
+    "description": "Where a request stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Homeroom bot, the platform's builder bot, left the request for a person to decide, and the person who decides on this project is not the one who asked for it. {{username}} is that person's username, shown after an @."
+  },
+  "work.handBack.othersMany": {
+    "text": "Waiting for the project's admins to decide",
+    "description": "Where a request stands, the same words on every screen. Homeroom bot, the platform's builder bot, left the request for a person to decide, and the people who decide on this project (its creator and admins) are not the one who asked for it."
+  },
+  "work.handBack.operatorWork": {
+    "text": "Waiting on setup outside the app",
+    "description": "Where a request stands, the same words on every screen. Homeroom bot, the platform's builder bot, cannot build the request until somebody with access sets something up outside the app first (for example an outside account or a setting on the project)."
+  },
+  "work.handBack.destructiveDb": {
+    "text": "Needs a person: it changes stored data",
+    "description": "Where a request stands, the same words on every screen. Homeroom bot, the platform's builder bot, leaves the request to a person because building it would change data the app already stores in a way that could lose some of it."
+  },
+  "work.handBack.platform": {
+    "text": "About Homeroom itself: put it on Homeroom's board?",
+    "description": "Where a request stands, shown to the person who asked for it. Homeroom bot, the platform's builder bot, found the request is about Homeroom, the platform, not about this project, and offers to put a copy on Homeroom's own board of requests."
+  },
+  "work.handBack.otherProject": {
+    "text": "About another project: move it there?",
+    "description": "Where a request stands, shown to the person who asked for it. Homeroom bot, the platform's builder bot, found the request is about a different project than the one it was filed on, and offers to move it there."
+  },
+  "work.handBack.wrongProject": {
+    "text": "Filed on the wrong project: close it?",
+    "description": "Where a request stands, shown to the person who asked for it. Homeroom bot, the platform's builder bot, found the request was filed on the wrong project, and offers a vote on closing it here."
+  },
+  "work.handBack.close": {
+    "text": "Nothing to build: close it?",
+    "description": "Where a request stands, shown to the person who asked for it. Homeroom bot, the platform's builder bot, found nothing to build (the person asked to drop it, or it only asked for an explanation, which Homeroom bot gave), and offers a vote on closing it."
+  },
+  "work.handBack.blocked": {
+    "text": "Can't be built as written: add detail",
+    "description": "Where a request stands, shown to the person who asked for it. Homeroom bot, the platform's builder bot, read the code and found the request cannot be built as it is written; more detail from them lets it look again."
+  },
+  "work.handBackOthers.others": {
+    "text": "Waiting for @{{username}} to decide",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot left the request for a person to decide, and the person who decides on this project is {{username}}, shown after an @."
+  },
+  "work.handBackOthers.othersMany": {
+    "text": "Waiting for the project's admins to decide",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot left the request for the people who decide on this project (its creator and admins)."
+  },
+  "work.handBackOthers.operatorWork": {
+    "text": "Waiting on setup outside the app",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot cannot build the request until somebody with access sets something up outside the app first."
+  },
+  "work.handBackOthers.destructiveDb": {
+    "text": "Needs a person: it changes stored data",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot leaves the request to a person because building it would change data the app already stores in a way that could lose some of it."
+  },
+  "work.handBackOthers.platform": {
+    "text": "About Homeroom itself",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot found the request is about Homeroom, the platform, not about this project."
+  },
+  "work.handBackOthers.otherProject": {
+    "text": "About another project",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot found the request is about a different project than the one it was filed on."
+  },
+  "work.handBackOthers.wrongProject": {
+    "text": "Filed on the wrong project",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot found the request was filed on the wrong project."
+  },
+  "work.handBackOthers.close": {
+    "text": "Nothing left to build",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot found nothing to build: it was asked to drop it, or it only asked for an explanation, which Homeroom bot gave."
+  },
+  "work.handBackOthers.blocked": {
+    "text": "Can't be built as written",
+    "description": "Where a request stands, shown to anyone but the person who asked for it. Homeroom bot read the code and found the request cannot be built as it is written."
+  },
   "work.reason.buildFailed": {
     "text": "Stopped: the build didn't finish",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Homeroom bot's build of it did not finish."
@@ -722,6 +798,14 @@
   "work.reason.stalled": {
     "text": "Stopped: the build didn't start",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). the build was queued but never started."
+  },
+  "work.reason.planFailed": {
+    "text": "Stopped: the plan couldn't be written",
+    "description": "Where a request stands, the same words on every screen. Homeroom bot, the platform's builder bot, could not write its plan for the request and is not trying again by itself; nothing was built."
+  },
+  "work.reason.stoppedBy": {
+    "text": "Stopped by @{{username}}",
+    "description": "Where a request stands, the same words on every screen. A person stopped Homeroom bot's build of the request. {{username}} is that person's username, shown after an @."
   },
   "work.line.queued": {
     "text": "Waiting its turn",
@@ -846,6 +930,10 @@
   "work.line.githubWait": {
     "text": "Waiting on GitHub",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line under Going live: the change has the yes it needs, and GitHub held its merge back for a moment (busy, or a refusal nobody has to act on). Homeroom tries again in a few minutes."
+  },
+  "work.line.githubStuck": {
+    "text": "GitHub's checks never passed. It waits until the change or main moves.",
+    "description": "Where a request or a change stands, the second line under \"Stuck going live\": its change was approved, GitHub's required checks never finished or kept failing after many tries, and Homeroom tries again once the change gets a new version or the project's main code changes."
   },
   "work.line.shots": {
     "text": "Tests passed: only the before and after screenshots are left",

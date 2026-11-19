@@ -151,17 +151,21 @@ test('the push and the bell row for the DM say it stopped and how to start it ag
   const copy = policy.buildNotificationCopy('build_stopped', {
     sourceUsername: 'homeroom_bot', sourceIsSynthetic: true, detail, messageContent: 'x',
   });
+  // T2.9 (19 Nov 2026): a request's stop names what its page offers; a
+  // first version's, the Try again under it in its maker's chat.
   assert.deepEqual(copy, {
     title: 'Display location and host information · Page Turners',
-    body: 'Stopped: something went wrong while I was building. Tap Try again.',
+    body: 'Stopped: something went wrong while I was building. Ask me to build it again on its page.',
   });
   // A sender that says which stop it was is worded by it.
   const timedOut = await dm.notificationDetail(pool, 'stopped', { ...metadata, said: 'build_time' });
-  assert.equal(notifyCopy.botMomentCopy(timedOut).body, 'Stopped: it took longer than I\'m allowed. Tap Try again.');
+  assert.equal(notifyCopy.botMomentCopy(timedOut).body, 'Stopped: it took longer than I\'m allowed. Ask me to build it again on its page.');
+  const firstTimedOut = await dm.notificationDetail(pool, 'stopped', { ...metadata, said: 'build_time', firstVersion: true });
+  assert.equal(notifyCopy.botMomentCopy(firstTimedOut).body, 'Stopped: it took longer than I\'m allowed. Tap Try again.');
   const said = dm.dmText('build_failed', { reason: 'the build ran past its time limit (finished after a restart)' },
     { appName: 'Page Turners', issueNumber: 3, issueTitle: 'Display location and host information', firstVersion: false });
   assert.match(said, /try again/i, 'the DM it opens says how to start it again too');
-  assert.match(copy.body, /Try again\.$/);
+  assert.match(copy.body, /Ask me to build it again on its page\.$/);
 });
 
 test('no failure surface says "pick it up" any more', () => {
@@ -264,7 +268,7 @@ test('a later change that stopped keeps its words', async () => {
   assert.equal(live.buildFailedText(FIRST_CAUSES[0][0]), `Homeroom bot built this, but couldn't put it up for approval. ${RETRY}`);
   const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
   assert.equal(notifyCopy.botMomentCopy(`hrbot2:${JSON.stringify({ m: 'stopped', s: 'build_not_proposed', a: 'Book Club', t: 'Dark mode' })}`).body,
-    'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.');
+    'Stopped: I built it but couldn\'t put it up for a vote. Ask me to build it again on its page.');
   // An update that did not happen has nothing to put up, first version or not.
   assert.equal(dm.updateFailedWords(FIRST_CAUSES[0][0], 'the first version'),
     'I couldn\'t update the first version: something went wrong while I was working on it.');
@@ -377,10 +381,14 @@ test('#6313: only ask for a reply when a reply is what restarts it', () => {
 test('#6313: the notification for a plan that could not be written says the plan', async () => {
   const pool = { async query() { return { rows: [] }; } };
   const notifyCopy = require('../src/services/homeroom-bot-notify-copy');
-  assert.equal(dm.saidOf('build_failed', { cause: 'plan' }), 'build_no_plan');
+  // T2.9 (19 Nov 2026): "I'm trying again" only when a retry is coming.
+  assert.equal(dm.saidOf('build_failed', { cause: 'plan', retrying: true }), 'build_no_plan');
+  assert.equal(dm.saidOf('build_failed', { cause: 'plan' }), 'build_no_plan_stopped');
+  assert.equal(notifyCopy.botMomentCopy(`hrbot2:${JSON.stringify({ m: 'stopped', s: 'build_no_plan_stopped', a: 'Plate', t: 'Print view' })}`).body,
+    'Stopped: I couldn\'t write the plan for it. Ask me to build it on its page.');
   const metadata = {
     kind: 'build_failed', appName: 'Plate', requestTitle: 'Print view',
-    said: dm.saidOf('build_failed', { cause: dm.buildFailedCause(PLAN_REASON).cause }),
+    said: dm.saidOf('build_failed', { cause: dm.buildFailedCause(PLAN_REASON).cause, retrying: true }),
   };
   const detail = await dm.notificationDetail(pool, dm.momentOf(metadata), metadata);
   assert.deepEqual(notifyCopy.parseBotDetail(detail).said, 'build_no_plan');

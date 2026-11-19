@@ -2675,6 +2675,13 @@ const BOT_ASK_IDS = {
   empty: 'notifications:row.bot.ask.moreDetail',
   done: 'notifications:row.bot.ask.done',
   platform: 'notifications:row.bot.ask.platform',
+  // T2.10 (19 Nov 2026): a person verdict that is not its requester's own
+  // decision says what it waits on.
+  decide_setup: 'notifications:row.bot.ask.decideSetup',
+  decide_person: 'notifications:row.bot.ask.decidePerson',
+  elsewhere: 'notifications:row.bot.ask.elsewhere',
+  wrong_project: 'notifications:row.bot.ask.wrongProject',
+  close: 'notifications:row.bot.ask.close',
 };
 // A row from before "one story": the moment each old token is.
 const BOT_LEGACY_MOMENTS = {

@@ -8301,6 +8301,19 @@ const AppView = {
     const failing = reasons.indexOf('github_checks_failing') !== -1;
     const waiting = reasons.indexOf('github_checks') !== -1;
     const busy = reasons.indexOf('github_busy') !== -1 || reasons.indexOf('github_refused') !== -1;
+    // 19 Nov 2026 (T1.7): approved, and GitHub's required checks never passed
+    // after 15 tries, so Homeroom stopped asking until the change or main
+    // moves ('github_stuck', beside the hold it came from).
+    if (reasons.indexOf('github_stuck') !== -1) {
+      return {
+        name: PlatformI18n.t('changes:page.merge.name'),
+        figure: PlatformI18n.t('changes:page.merge.figure.stuck'),
+        tone: 'bad', done: false, hold: 'stuck',
+        segments: [{ weight: 1, pct: 100, state: 'bad' }],
+        label: PlatformI18n.t('changes:page.merge.label.stuck'),
+        note: [PlatformI18n.t('changes:page.merge.note.stuck')],
+      };
+    }
     if (!failing && !waiting && !busy) return null;
     const integration = item.integration || {};
     const wait = {

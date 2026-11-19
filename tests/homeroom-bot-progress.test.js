@@ -162,8 +162,12 @@ test('#6528: a passing change holds at checking until its shots settle', () => {
     'nothing visible to shoot is not held');
   assert.equal(stage({ ...open, ...shooting, checks_at: ago(50), shots_updated_at: ago(50) }).stage, 'vote',
     'the hold lapses after 45 minutes');
-  assert.equal(stage({ ...open, ...shooting, first_version: true }).stage, 'vote',
-    'a first version goes live without a vote and is not held');
+  // T2.12 (19 Nov 2026): a first version's shots hold it too, as its App
+  // tab's readiness does (homeroom-bot-dm.js changeReadiness); once they
+  // settle it goes live without a vote.
+  assert.equal(stage({ ...open, ...shooting, first_version: true }).stage, 'checks',
+    'a first version is held while its shots are taken, as its App tab is');
+  assert.equal(stage({ ...open, ...shooting, first_version: true, shots_state: 'verified' }).stage, 'vote');
 });
 
 // 13 Oct 2026 (D1): a project's first version goes live without a vote, so

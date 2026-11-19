@@ -147,4 +147,24 @@ test('the bot\'s questions in Needs you are the requests that wait on an answer'
     assert.deepEqual(await feed(ada), []);
     assert.deepEqual(await listed(ada), []);
   });
+
+  // T2.12 (19 Nov 2026): one still open in the chat is owed only while the
+  // request's stored row still waits for that answer.
+  await t.test('one still open in the chat leaves once the request moves past it', async () => {
+    const conversation = await one(`INSERT INTO conversations (kind) VALUES ('direct') RETURNING id`);
+    const dm = await one(
+      `INSERT INTO conversation_messages (conversation_id, sender_id, content, metadata)
+       VALUES ($1, $2, 'A question', jsonb_build_object('homeroomBot', jsonb_build_object('question', 'Red or blue?')))
+       RETURNING id`,
+      [conversation.id, bot.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages (message_id, user_id, conversation_id, app_id, issue_number, kind, question_status)
+       VALUES ($1, $2, $3, $4, 7, 'question', 'open')`,
+      [dm.id, ada.id, conversation.id, app.id]);
+    await stand('building', null);
+    assert.deepEqual(await feed(ada), [], 'the row moved past the question');
+    await stand('waiting_for_you', 'question');
+    assert.deepEqual((await feed(ada)).map((q) => q.id), [dm.id]);
+    await pool.query(`UPDATE homeroom_bot_dm_messages SET question_status = 'answered' WHERE message_id = $1`, [dm.id]);
+  });
 });

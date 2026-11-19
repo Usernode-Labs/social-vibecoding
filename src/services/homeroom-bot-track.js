@@ -33,7 +33,8 @@ const STEP_OF_STAGE = Object.freeze({
 });
 // A line that says nobody is at it yet, or that it waits its turn.
 const NOT_STARTED = new Set(['queued', 'waiting', 'on_hold', 'cooldown', 'first_version_wait']);
-const READY = new Set(['queued', 'held_builds', 'held_waiting']);
+// T2.2: a build that waits for building credit is ready too (work-state.js READY).
+const READY = new Set(['queued', 'held_builds', 'held_waiting', 'credit_wait']);
 
 // The limits a request can be held at. `builds`: the project's builds
 // waiting or under way (homeroom-bot.js BUILDS_PER_APP, #6156), so it waits
@@ -48,41 +49,27 @@ const CAP_LIMITS = Object.freeze({
 });
 
 /**
- * Pure: why a build that did not succeed stopped, as a code, from its run's
- * build_error (the same reading homeroom-bot-dm.js buildFailedCause makes
- * for the DM) and, for a build that changed nothing, what its turns said of
- * it (noChangeWhy). Never the agent's words themselves.
+ * Pure: why a build that did not succeed stopped, as the code its line says
+ * (messages.json bot.track.line.stopped.*), from its run's build_error and,
+ * for a build that changed nothing, what its turns said of it. T2.9: read by
+ * the one decoder (bot-stop-cause.js), so the track, the note, the standing
+ * and the push say the same cause. Never the agent's words themselves.
  */
 function buildStopWhy(buildError, noChange = null) {
-  const r = String(buildError || '').split(/; (?:last activity|it last said):/)[0];
-  if (/restarted in the middle of each of its last/.test(r)) return 'restarts';
-  if (/ran past its time limit/.test(r)) return 'time';
-  if (/restarted|by a restart/.test(r)) return 'restart';
-  if (/built but could not be proposed/.test(r)) return 'unproposed';
-  if (/couldn't push the build's commit/.test(r)) return 'not_pushed';
-  if (/produced no change/.test(r)) return noChangeWhy(noChange);
-  if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) return 'no_start';
-  return 'build_failed';
+  const decode = require('./bot-stop-cause');
+  const read = decode.buildCause(buildError, { noChangeSaid: noChange?.said || null });
+  return decode.trackCauseOf(read.cause === 'no_change' ? noChangeWhy(noChange) : read.cause);
 }
 
 /**
  * Pure (H2): why a build changed nothing, as a code, from what its last
  * turn said (`said`, the agent's last message, which is never shown to
- * anybody but admins) and whether it was asked once more (`nudged`).
- * 'no_change_already' when it says the change is already there,
- * 'no_change_unclear' when it was not sure what to change,
- * 'no_change_could_not' when it says it could not, else 'no_change'.
+ * anybody but admins): 'no_change_already', 'no_change_unclear',
+ * 'no_change_could_not', else 'no_change' (bot-stop-cause.js noChangeWhy).
  */
 function noChangeWhy(noChange) {
-  const said = String(noChange?.said || '');
-  if (/\balready\b[^.]{0,60}\b(?:exists?|there|implemented|in place|done|works?|does|has|handles|shows|supports)\b|\bno (?:code )?changes? (?:is |are |were )?(?:needed|required|necessary)\b|\bnothing (?:needs|needed) to change\b/i.test(said)) {
-    return 'no_change_already';
-  }
-  if (/\b(?:unclear|ambiguous|not sure|unsure|clarif\w*|which (?:one|of)|need(?:s)? more detail)\b/i.test(said)) return 'no_change_unclear';
-  if (/\b(?:can'?t|cannot|could ?n[o']t|unable|not possible|impossible|no access|not allowed|permission)\b/i.test(said)) {
-    return 'no_change_could_not';
-  }
-  return 'no_change';
+  const why = require('./bot-stop-cause').noChangeWhy(noChange?.said);
+  return why ? `no_change_${why}` : 'no_change';
 }
 
 
@@ -220,10 +207,17 @@ function trackOf({ job, work = null, runs = null, held = null, doneBy = null, un
   if (state.stage === 'reading' && code === 'queued' && Number(state.line.place) > 0) {
     track.queue = { ahead: Number(state.line.place) - 1 };
   }
-  // A build that did not finish says why, in a code (buildStopWhy).
+  // A build that did not finish says why, in a code (buildStopWhy); a
+  // stored row's cause is the one decoder's (bot-stop-cause.js), named as
+  // the track's line names it. A person who stopped it is named too.
   if (state.stage === 'stopped' && state.reason === 'build_failed') {
-    const cause = lead ? buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null) : state.cause;
+    const decode = require('./bot-stop-cause');
+    const cause = lead
+      ? buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null)
+      : decode.trackCauseOf(state.cause || null);
     if (cause) track.cause = cause;
+    const by = cause === 'stopped' ? (lead ? decode.buildCause(lead.build_error).by : (state.causeNames || [])[0]) : null;
+    if (by) track.causeBy = by;
   }
   const shipped = doneBy || state.doneBy || null;
   if (state.stage === 'closed' && shipped) {

@@ -263,6 +263,11 @@ async function fire(pool, { sessionId, event, head = null, verdict = null, deps 
   if (!Number.isInteger(sid) || sid <= 0) return 0;
   const change = await changeOf(pool, sid);
   if (!change) return 0;
+  // T2.6 (19 Nov 2026): ready to vote on is open for votes, as the change's
+  // stored work state says (work_states.vote_open): not while it conflicts,
+  // has an update on its way or its shots are still being taken. Those wait;
+  // the work-state sweep tells them once it opens (tellVoteFollowups).
+  if (event === 'vote' && !(await openForVotes(pool, sid))) return 0;
   const issues = Array.isArray(change.linked_issues) ? change.linked_issues.map(Number).filter((n) => n > 0) : [];
   const { rows } = await pool.query(
     `SELECT * FROM homeroom_bot_followups
@@ -286,6 +291,18 @@ async function fire(pool, { sessionId, event, head = null, verdict = null, deps 
     if (await tell(pool, claimed[0], { event, verdict, deps })) told += 1;
   }
   return told;
+}
+
+/** T2.6: whether a change's stored row has it open for votes, or it has no row (as before). */
+async function openForVotes(pool, sessionId) {
+  try {
+    const res = await pool.query(
+      `SELECT vote_open FROM work_states WHERE item_kind = 'change' AND item_ref = $1`, [Number(sessionId)]);
+    const row = res && Array.isArray(res.rows) ? res.rows[0] : null;
+    return !row || row.vote_open === true;
+  } catch {
+    return true;
+  }
 }
 
 /** The change closed: every waiting person gets one line saying so. */

@@ -156,6 +156,13 @@ export const STOP_CAUSE_LINES: Record<NonNullable<HomeroomBotActivity['stopCause
   unproposed: 'messages:bot.state.line.stop.unproposed',
   no_start: 'messages:bot.state.line.stop.noStart',
   other: 'messages:bot.state.line.stop.other',
+  // T2.9: the one decoder's other causes (services/bot-stop-cause.js), each
+  // said for what it is, never as "something went wrong while I was building".
+  plan: 'messages:bot.state.line.stop.plan',
+  push: 'messages:bot.state.line.stop.push',
+  push_permanent: 'messages:bot.state.line.stop.push',
+  push_gave_up: 'messages:bot.state.line.stop.push',
+  stopped: 'messages:bot.state.line.stop.stopped',
 };
 
 /**

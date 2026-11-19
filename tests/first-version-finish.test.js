@@ -333,7 +333,8 @@ test('a first version built and not proposed says Try again finishes it; every o
   const push = (said, f) => notifyCopy.botMomentCopy(`hrbot2:${JSON.stringify({ m: 'stopped', s: said, a: 'Club Votes', ...(f ? { f: 1 } : {}) })}`).body;
   assert.equal(push('build_not_proposed', true), 'Stopped: I built your first version but couldn\'t put it live yet. Tap Try again and I\'ll finish it.');
   assert.equal(push('build_time', true), 'Stopped: it took longer than I\'m allowed. Tap Try again.');
-  assert.equal(push('build_not_proposed', false), 'Stopped: I built it but couldn\'t put it up for a vote. Tap Try again.');
+  // T2.9 (19 Nov 2026): a request's stop names what its page offers.
+  assert.equal(push('build_not_proposed', false), 'Stopped: I built it but couldn\'t put it up for a vote. Ask me to build it again on its page.');
   // The request and its GitHub comment: a reply there starts it over, so it
   // says where Try again is; its Homeroom copy in the bot's own voice.
   const posted = live.buildFailedText(UNPROPOSED, { firstVersion: true });

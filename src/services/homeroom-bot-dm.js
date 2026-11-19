@@ -667,11 +667,17 @@ const STORY_MOMENTS = Object.freeze({
 // The moments that ring. (They were shown in Main Chat as well as the request's thread, until 14 Nov 2026.)
 const RINGING_MOMENTS = new Set(['needs_you', 'ready', 'stopped', 'on_hold', 'live', 'done_elsewhere']);
 // A build that did not finish, by its cause (buildFailedCause).
+// T2.9: the one decoder's causes (bot-stop-cause.js buildCause), each with
+// words of its own: the upload's three (they read 'build_other' before), a
+// credit wait, a stop by a person. A plan that could not be written says it
+// is trying again only when it is (saidOf).
 const BUILD_SAID = Object.freeze({
   time: 'build_time', restart: 'build_restart', restarts: 'build_restart', no_change: 'build_no_change',
   unproposed: 'build_not_proposed', no_start: 'build_no_start', other: 'build_other',
   // #6313: nothing was built; the plan could not be written.
   plan: 'build_no_plan',
+  push: 'build_push', push_permanent: 'build_push_permanent', push_gave_up: 'build_push_gave_up',
+  credit: 'build_credit', stopped: 'stopped_by',
 });
 
 /** Pure: the contract's moment for a message of the bot's, by its kind, or null. */
@@ -701,7 +707,10 @@ function saidOf(kind, info = {}) {
       if (Array.isArray(info.ready?.broken) && info.ready.broken.length) return 'ready_broken';
       if (first) return 'ready_first';
       return info.group || info.ready?.group ? 'ready_group' : 'ready';
-    case 'build_failed': return BUILD_SAID[info.cause] || 'build_other';
+    case 'build_failed':
+      // T2.9: "I'm trying again" only when a retry is owed (#6859).
+      if (info.cause === 'plan') return info.retrying === true ? 'build_no_plan' : 'build_no_plan_stopped';
+      return BUILD_SAID[info.cause] || 'build_other';
     case 'first_version_failed': return 'first_failed';
     case 'preview_failed': case 'needs_look': return 'needs_look';
     case 'checks': return 'checks';
@@ -1713,41 +1722,25 @@ function questionLead(line, it, dm) {
 
 /**
  * Pure: what ended a build that did not finish, as one of a few causes
- * ({ cause, times }). `reason` is the run's own record (homeroom-bot.js,
+ * ({ cause, times?, by? }). `reason` is the run's own record (homeroom-bot.js,
  * homeroom-bot-live.js), written for the platform: on 5 Oct 2026 a
  * requester read "the build ran past its time limit (finished after a
- * restart)". It is read for what happened and never quoted. "(finished
- * after a restart)" only says which process recorded it, never why it
- * ended: a build that ran too long or changed nothing is said as that.
+ * restart)". It is read for what happened and never quoted.
+ * T2.9 (19 Nov 2026): read by the one decoder every surface shares
+ * (bot-stop-cause.js buildCause): the note, the track's line, the stored
+ * standing and the push say the same cause. A build that ran out of
+ * building credit (`credit`) and one a person stopped (`stopped`, `by`)
+ * are causes of their own now.
  */
 function buildFailedCause(reason) {
-  // Read from the reason alone: what a failed turn was last doing and its
-  // final message follow it (homeroom-bot-live.js failureDetail), and an
-  // agent that wrote "the server would not start" did not fail to start.
-  const r = String(reason || '').split(/; (?:last activity|it last said):/)[0]
-    .replace(/\s*\(finished after a restart\)/g, '');
-  const restarts = /restarted in the middle of each of its last (\d+) tries/.exec(r);
-  if (restarts) return { cause: 'restarts', times: Number(restarts[1]) };
-  if (/ran past its time limit/.test(r)) return { cause: 'time' };
-  if (/restarted|by a restart/.test(r)) return { cause: 'restart' };
-  if (/built but could not be proposed/.test(r)) return { cause: 'unproposed' };
-  if (/couldn't push the build's commit/.test(r)) {
-    // #6267: the upload, not the build, failed. A temporary refusal is being
-    // retried; the other two say how a person can help.
-    if (/gave up/.test(r)) return { cause: 'push_gave_up' };
-    if (/permanent/.test(r)) return { cause: 'push_permanent' };
-    return { cause: 'push' };
-  }
-  if (/produced no change/.test(r)) return { cause: 'no_change' };
-  if (/could not start|would not start|could not open a session|could not create its branch/.test(r)) {
-    return { cause: 'no_start' };
-  }
-  // #6313: the plan turn ended before it wrote a plan (homeroom-bot-live.js
-  // buildAndPropose: "no plan could be written (…)", the spec turn's final
-  // message "only part of a spec"). Nothing was built, so it is never said as
-  // something that went wrong "during the build".
-  if (/no plan could be written|only part of a spec/.test(r)) return { cause: 'plan' };
-  return { cause: 'other' };
+  const read = require('./bot-stop-cause').buildCause(reason);
+  // The note's words have no line of their own for what a build that
+  // changed nothing said of it: it is the one cause.
+  return {
+    cause: read.cause,
+    ...(read.times ? { times: read.times } : {}),
+    ...(read.by ? { by: read.by } : {}),
+  };
 }
 
 // What the bot was doing when it stopped: building a request, or updating
@@ -1776,6 +1769,11 @@ const FAILED_SAID = Object.freeze({
     push_gave_up: (d, it) => `I built ${it}, but GitHub kept refusing the upload, so I've stopped trying for now.`,
     // #6313: nothing was built, so it says the plan, never "during the build".
     plan: (d, it) => `I couldn't finish writing the plan for ${it}.`,
+    // T2.9: OpenRouter's credit ran out (#6867). Nothing failed, and there is
+    // nothing to tap: it starts again by itself once there is credit.
+    credit: (d, it) => `I ran out of building credit while ${d.starting} ${it}. I'll pick it up again by myself once there's credit.`,
+    // T2.9: a person stopped it (the stop writes 'stopped: by @username').
+    stopped: (d, it, n, by) => `${by ? `@${by}` : 'Somebody'} stopped me while I was ${d.starting} ${it}.`,
     other: (d, it) => `I couldn't ${d.verb} ${it}: something went wrong while I was working on it.`,
   }),
   bot: Object.freeze({
@@ -1790,6 +1788,8 @@ const FAILED_SAID = Object.freeze({
     push_gave_up: (d, it) => `Homeroom bot built ${it}, but GitHub kept refusing the upload, so it has stopped trying for now.`,
     // #6313: nothing was built, so it says the plan, never "during the build".
     plan: (d, it) => `Homeroom bot couldn't finish writing the plan for ${it}.`,
+    credit: (d, it) => `Homeroom bot ran out of building credit while ${d.starting} ${it}. It picks it up again by itself once there's credit.`,
+    stopped: (d, it, n, by) => `${by ? `@${by}` : 'Somebody'} stopped Homeroom bot while it was ${d.starting} ${it}.`,
     other: (d, it) => `Homeroom bot couldn't ${d.verb} ${it}: something went wrong during the ${d.noun}.`,
   }),
 });
@@ -1817,7 +1817,8 @@ function failedWords(reason, { it = 'this', voice = 'me', doing = 'build', first
   const d = FAILED_DOING[doing] || FAILED_DOING.build;
   const cause = d === FAILED_DOING.update && read.cause === 'unproposed' ? 'other' : read.cause;
   if (first && cause === 'unproposed') return (FIRST_UNPROPOSED_SAID[voice] || FIRST_UNPROPOSED_SAID.me)(it);
-  return (FAILED_SAID[voice] || FAILED_SAID.me)[cause](d, it, read.times);
+  const said = (FAILED_SAID[voice] || FAILED_SAID.me);
+  return (said[cause] || said.other)(d, it, read.times, read.by);
 }
 
 /**
@@ -1970,7 +1971,10 @@ function requestNews(kind, dm, context) {
         const why = `${line}\n\n${buildFailedWords(dm.reason, context.appName || it, 'me', { first: true })}`;
         // #6267: the platform retries a temporary refusal itself, so the
         // maker is not asked to do anything; the others say how a tap helps.
-        if (cause === 'push') return why;
+        // T2.9: nor is a build waiting for building credit, which starts
+        // again by itself (its words say so), nor one a person stopped,
+        // which is no failure: no Try again.
+        if (cause === 'push' || cause === 'credit' || cause === 'stopped') return why;
         // #6313: a retry already queued (or the bot trying again by itself)
         // is not something a person has to ask for.
         if (dm.retrying === true) return `${why} I'm trying again.`;
@@ -1982,7 +1986,7 @@ function requestNews(kind, dm, context) {
         // line; a permanent one or one given up on says a reply helps.
         const cause = buildFailedCause(dm.reason).cause;
         const words = `${line}\n\n${buildFailedWords(dm.reason, it)}`;
-        if (cause === 'push') return words;
+        if (cause === 'push' || cause === 'credit' || cause === 'stopped') return words;
         // #6313: only ask for a reply when a reply is what restarts it. A
         // failure the bot is already trying again by itself says so instead
         // of asking for something that is already happening.
@@ -2443,6 +2447,8 @@ async function relayIssuePost({
       ...dm, firstVersion: context.firstVersion, group: context.group,
       ...(kind === 'build_failed' ? { cause: buildFailedCause(dm.reason).cause } : {}),
     }),
+    // T2.9: who stopped a build a person stopped, for the push's words.
+    ...(kind === 'build_failed' && buildFailedCause(dm.reason).by ? { stoppedBy: buildFailedCause(dm.reason).by } : {}),
     ...(kind === 'proposal' && dm.card ? { waiting: waitingPhrase(dm.card) } : {}),
   };
   if (!metadata.said) delete metadata.said;
@@ -3507,11 +3513,19 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
       },
     },
   });
+  // T2.6 (19 Nov 2026): who else must approve it is asked, and a promise to
+  // say when it is ready to vote on is kept, only once its stored work
+  // state opens it for votes (work-state.js votePings, the sweep's
+  // tellVoteFollowups). Its readiness here is its checks and its shots
+  // alone, and it rang them while the change still conflicted with main or
+  // had an update queued; "a new proposal to vote on" then rang them again.
+  // A change with no stored row yet is asked as before.
+  const openNow = await voteOpenNow(pool, id);
   // #6264: the card that just said "ready to try" is also the line a
   // follow-up asked for, so it keeps that promise and nothing else is said.
   // #6255: this is also true of a first version, whose promise was stored
   // against the request alone while it was still being built.
-  if (told?.messageId && requester?.userId) {
+  if (openNow && told?.messageId && requester?.userId) {
     await require('./thread-followups').satisfiedBy(pool, {
       sessionId: id, userId: requester.userId, place: { type: 'dm' }, event: 'vote', messageId: told.messageId,
     }).catch(() => {});
@@ -3521,7 +3535,7 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   // the group talks about it.
   // Nor is anybody asked to approve a first version (D1): it needs no Yes,
   // so needsYesFrom names nobody and nothing is sent.
-  if (approval && !broken.length) {
+  if (approval && !broken.length && openNow) {
     await noteApproversReady(pool, { sessionId: id, epoch: state.epoch, requesterId: requester?.userId || null, state: approval, strict: true });
   }
   // B9: and the chat message it was asked in, if it was, says Try it.
@@ -3532,6 +3546,56 @@ async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], of
   // not its own passes now; its card says so (never throws).
   await require('./homeroom-bot-flaky-checks').noteGreen(pool, id, { deps });
   return told;
+}
+
+/**
+ * T2.6: whether a change's stored work state has it open for votes now
+ * (work_states.vote_open), or it has no row yet (true: asked as before).
+ * A read that fails is true, as before the row was read.
+ */
+async function voteOpenNow(pool, sessionId) {
+  try {
+    const res = await pool.query(
+      `SELECT vote_open FROM work_states WHERE item_kind = 'change' AND item_ref = $1`, [Number(sessionId)]);
+    const row = res && Array.isArray(res.rows) ? res.rows[0] : null;
+    return !row || row.vote_open === true;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * T2.6 (19 Nov 2026): who must approve one of Homeroom bot's changes, read
+ * when its stored work state opens it for votes (work-state.js votePings),
+ * by the rules its ready card asks them by (tellReady): its checks passed on
+ * its head, nothing its shots show is broken, it matches the plan it was
+ * built from, and it is not a first version. `{ appId, epoch, requesterId,
+ * recipients }`, or null when nobody is to be asked (not the bot's change,
+ * or one of those rules says no). Reads only, so it runs in the caller's
+ * transaction.
+ */
+async function approversOnOpen(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const state = await changeReadiness(pool, id);
+  if (!state || !state.checked || (state.broken && state.broken.length)) return null;
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT r.app_id, r.issue_number FROM homeroom_bot_runs r
+      WHERE r.proposal_session_id = $1 ORDER BY r.id DESC LIMIT 1`, [id]);
+  if (!run) return null;
+  // #6407: a change that misses the plan it was built from asks nobody else
+  // (its requester's card says what it misses: notePlanMiss, per head).
+  const { rows: [miss] = [] } = await pool.query(
+    `SELECT 1 FROM chat_messages m, chat_sessions cs
+      WHERE cs.id = $1 AND m.app_id = $2 AND m.thread_type = 'issue' AND m.thread_ref = $3
+        AND m.metadata -> 'planMiss' ->> 'head' = COALESCE(cs.reviewed_head_sha, '')
+      LIMIT 1`, [id, Number(run.app_id), Number(run.issue_number)]);
+  if (miss) return null;
+  const requester = await requesterOf(pool, Number(run.app_id), Number(run.issue_number));
+  const approval = await approvalState(pool, { sessionId: id, userId: requester?.userId || null });
+  if (!approval || approval.firstVersion) return null;
+  const recipients = await needsYesFrom(pool, approval, { except: requester?.userId ? [requester.userId] : [] });
+  return { appId: Number(run.app_id), epoch: state.epoch, requesterId: requester?.userId || null, recipients };
 }
 
 /**
@@ -7299,6 +7363,9 @@ module.exports = {
   planMissText,
   notePlanMiss,
   tellReady,
+  // T2.6: who must approve a change, asked when its row opens for votes.
+  approversOnOpen,
+  voteOpenNow,
   noteChangeStopped,
   needsLookText,
   noteNeedsLook,

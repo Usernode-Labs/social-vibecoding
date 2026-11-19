@@ -584,12 +584,32 @@ function needKind(work: WorkState): string {
   if (waitsForPlan(work)) return 'plan';
   if (work.why === 'already_works') return 'works';
   if (work.why === 'needs_detail') return 'detail';
+  // T2.10 (19 Nov 2026): a person verdict says what it waits on, from the
+  // cause the server stored (services/bot-stop-cause.js handBackOf): never
+  // "Needs Reply" to a requester whose decision it is not.
+  if (work.why === 'decide' && work.cause && DECIDE_KINDS[work.cause]) return DECIDE_KINDS[work.cause];
   return 'decide';
 }
+
+// T2.10: each hand-back that is not its requester's own decision, by the
+// pill its row wears.
+const DECIDE_KINDS: Record<string, string> = {
+  others: 'others_decide',
+  operator_work: 'detail',
+  destructive_db: 'detail',
+  platform: 'move',
+  other_project: 'move',
+  wrong_project: 'close',
+  close: 'close',
+};
 
 const NEED_PILLS: Record<string, string> = {
   plan: 'messages:ai.pill.buildIt',
   decide: 'messages:ai.pill.decide',
+  // T2.10: who decides it, a move offered, a close vote offered.
+  others_decide: 'messages:ai.pill.othersDecide',
+  move: 'messages:ai.pill.moveIt',
+  close: 'messages:ai.pill.closeIt',
   works: 'messages:ai.pill.proposeClose',
   stopped: 'messages:ai.pill.tryAgain',
   fix_stopped: 'messages:ai.pill.letTryAgain',

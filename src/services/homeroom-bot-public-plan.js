@@ -82,6 +82,49 @@ function settledOf(run, change) {
 }
 
 /**
+ * Pure (T2.4, 19 Nov 2026): the card's state from the request's stored work
+ * state (services/work-state.js, the one decider), once Build it is pressed:
+ * what every other surface says of the request, never a second reading of
+ * the plan's own run. Its build waiting its turn, held behind the project's
+ * build limit, waiting for building credit or under way is 'building' (the
+ * row's words say which); its change checking or up for a vote is 'built';
+ * merging, or live, is 'live'; stopped is 'stopped', by the row's reason.
+ * Null for a row that says nothing of a pressed plan (no row yet, a question
+ * asked since, closed): the plan's own records answer then.
+ */
+function stateFromWork(work) {
+  if (!work || !work.stage) return null;
+  switch (work.stage) {
+    case 'reading':
+    case 'planning':
+    case 'building':
+      return { state: 'building', reason: null };
+    case 'checking':
+    case 'up_for_vote':
+      return { state: 'built', reason: null };
+    case 'going_live':
+    case 'live':
+      return { state: 'live', reason: null };
+    case 'stopped':
+      return { state: 'stopped', reason: work.reason === 'change_closed' ? 'change_closed' : 'build_failed' };
+    default:
+      return null;
+  }
+}
+
+/** Pure (T2.4): the row's words as the card draws them: its stage and its second line, as anybody reads them. */
+function workOf(work) {
+  if (!work || !work.stage) return null;
+  const words = work.words || null;
+  return {
+    stage: work.stage,
+    reason: work.reason || null,
+    line: work.line && work.line.code ? { code: String(work.line.code) } : null,
+    words: words ? { stage: words.stageOthers || words.stage, line: words.line || null } : null,
+  };
+}
+
+/**
  * Whether a newer look of the request is queued or running since the plan
  * was put up: somebody asked for a change to it (a reply on the request),
  * and the next plan is on its way.
@@ -143,17 +186,27 @@ async function readPlan(pool, { app, issueNumber, viewer = null }) {
   const newest = await newestRun(pool, app.id, issueNumber);
   if (newest && Number(newest.id) > Number(run.id)) return { plan: null };
   const waiting = !!run.awaiting_go_at && run.build_ok == null && !run.build_session_id && !Number(run.proposal_session_id);
+  // T2.4: once Build it is pressed, the request's stored work state says
+  // where it is, as every other surface says it: a build waiting its turn or
+  // held behind the project's build limit is not "building", and a change
+  // still checking is not "up for a vote". The plan's own records answer
+  // only where the row says nothing of it.
+  const stored = waiting ? null : await require('./work-state').forRequests(pool, app.id, [issueNumber])
+    .then((rows) => rows.get(Number(issueNumber)) || null).catch(() => null);
+  const fromWork = stateFromWork(stored);
   const building = run.build_ok == null && !waiting && !Number(run.proposal_session_id)
     && (!!run.go_ahead_at || !!run.build_session_id);
-  let state = waiting ? 'waiting' : building ? 'building' : null;
-  let reason = null;
+  let state = waiting ? 'waiting' : fromWork ? fromWork.state : building ? 'building' : null;
+  let reason = fromWork ? fromWork.reason : null;
   let change = null;
-  if (!state) {
+  if (state !== 'waiting' && state !== 'building') {
     const row = await changeOf(pool, run.proposal_session_id);
-    const settled = settledOf(run, row);
-    if (!settled) return { plan: null };
-    state = settled.state;
-    reason = settled.reason;
+    if (!state) {
+      const settled = settledOf(run, row);
+      if (!settled) return { plan: null };
+      state = settled.state;
+      reason = settled.reason;
+    }
     if (row) change = { id: Number(row.id), number: Number(row.pr_number) || null };
   }
   const requester = await dm().requesterOf(pool, app.id, issueNumber).catch(() => null);
@@ -192,6 +245,9 @@ async function readPlan(pool, { app, issueNumber, viewer = null }) {
       requester: requester?.username || null,
       mine: !!viewer && !!requester && Number(requester.userId) === Number(viewer.id),
       changing,
+      // T2.4: the request's stored work state, whose words the card says
+      // once Build it is pressed (null while it waits, or with no row).
+      work: fromWork ? workOf(stored) : null,
     },
   };
 }
@@ -263,4 +319,4 @@ async function tellRequester(pool, { app, issueNumber, user, requester, deps = {
   }
 }
 
-module.exports = { readPlan, buildPlan, cardOf, choicesOf };
+module.exports = { readPlan, buildPlan, cardOf, choicesOf, stateFromWork, workOf };

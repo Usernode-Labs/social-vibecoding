@@ -259,6 +259,14 @@ const OWED_QUESTIONS_FROM = `(
         FROM homeroom_bot_dm_messages dq
         JOIN conversation_messages dqm ON dqm.id = dq.message_id AND dqm.deleted_at IS NULL
        WHERE dq.user_id = $1 AND dq.question_status = 'open'
+         -- T2.12 (19 Nov 2026): only while its request's stored work state
+         -- still waits for that answer (the question its standing names,
+         -- services/work-state.js asks.question); a request the row has
+         -- moved past (building since, a plan, closed) owes no answer here.
+         -- One with no row yet is listed, as before.
+         AND NOT EXISTS (SELECT 1 FROM work_states dws
+                          WHERE dws.app_id = dq.app_id AND dws.item_kind = 'request' AND dws.item_ref = dq.issue_number
+                            AND NOT (dws.stage = 'waiting_for_you' AND dws.why = 'question'))
       UNION ALL
       SELECT ws.app_id, qp.thread_message_id AS id, ws.item_ref AS issue_number, COALESCE(ws.since, qp.created_at) AS created_at,
              COALESCE(qpm.content, '') AS question, qpm.user_id AS sender_id

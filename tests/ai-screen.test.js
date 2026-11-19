@@ -2804,3 +2804,21 @@ test('#6838: the list scrolls up and down only, and the chip rail keeps its own 
   assert.match(block, /touch-action: pan-y;/, 'a sideways swipe is not a pan');
   assert.match(lists, /className=\{`mx-1\.5 flex gap-2 overflow-x-auto /, 'the chips still scroll sideways inside their rail');
 });
+
+// T2.10 (19 Nov 2026): a hand-back's pill says what it waits on, from the
+// cause the server stored (services/bot-stop-cause.js), never "Needs Reply"
+// to a requester whose decision it is not.
+test('T2.10: a person verdict\'s pill says who or what it waits on', () => {
+  const { needsYou } = loadTsx(MODEL);
+  const decide = (n, cause) => thread(n, 500 + n, 'decide', { group: 'needs', work: { cause } });
+  const rows = needsYou([], {
+    private: [], next: [], live: [], waiting: [],
+    needs: [decide(1, 'requester'), decide(2, 'others'), decide(3, 'platform'), decide(4, 'other_project'),
+      decide(5, 'wrong_project'), decide(6, 'close'), decide(7, 'operator_work')],
+  });
+  assert.deepEqual(rows.map((r) => message(r.pill.id)), [
+    'Needs Reply', 'See who decides', 'Move it', 'Move it', 'Close it', 'Close it', 'Take a look',
+  ]);
+  const { normalizeWorkState } = loadTsx('frontend/src/lib/work-state.ts');
+  assert.equal(normalizeWorkState({ stage: 'waiting_for_you', why: 'decide', cause: 'others' }).cause, 'others', 'the client keeps the cause');
+});

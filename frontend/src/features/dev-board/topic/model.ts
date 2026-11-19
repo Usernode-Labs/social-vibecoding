@@ -758,7 +758,7 @@ export type ChangeMergeView = ChangeGateView & {
    * the release images: Homeroom's own tries say nothing a reader needs, so
    * the card leaves them out. `github_wait` (busy or refused) keeps them.
    */
-  hold?: 'github_checks' | 'github_wait' | 'failing' | 'merging';
+  hold?: 'github_checks' | 'github_wait' | 'failing' | 'merging' | 'stuck';
 };
 
 /** #4455: what a change's page says about the change itself, as the thread's root post. */

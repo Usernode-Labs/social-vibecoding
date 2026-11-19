@@ -55,6 +55,49 @@ export interface RequestBotPlan {
   requester: string | null;
   mine: boolean;
   changing: boolean;
+  /**
+   * T2.4 (19 Nov 2026): the request's stored work state once Build it is
+   * pressed (services/homeroom-bot-public-plan.js workOf): its stage and
+   * second line, and their words. Null while the plan waits, or with no row.
+   */
+  work?: RequestPlanWork | null;
+}
+
+/** The request's stored work state, as the plan card says it. */
+export interface RequestPlanWork {
+  stage: string;
+  reason: string | null;
+  line: { code: string } | null;
+  words: { stage: { id: string; values?: Record<string, string | number> }; line: { id: string; values?: Record<string, string | number> } | null } | null;
+}
+
+const PLAN_PHRASE = /^core:work\.[A-Za-z]+\.[A-Za-z]+$/;
+
+/** Pure (T2.4): a phrase of the row's words the card may say, or null. */
+function planPhraseOf(input: unknown): { id: string; values?: Record<string, string | number> } | null {
+  const p = input as { id?: unknown; values?: unknown } | null;
+  if (!p || typeof p.id !== 'string' || !PLAN_PHRASE.test(p.id)) return null;
+  const values: Record<string, string | number> = {};
+  for (const [k, v] of Object.entries((p.values && typeof p.values === 'object' ? p.values : {}) as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isFinite(v)) values[k] = v;
+    else if (typeof v === 'string') values[k] = v.slice(0, 200);
+  }
+  return Object.keys(values).length ? { id: p.id, values } : { id: p.id };
+}
+
+/** Pure (T2.4): the row the read carried, field by field, or null. */
+function planWorkOf(input: unknown): RequestPlanWork | null {
+  const w = input as Record<string, unknown> | null;
+  if (!w || typeof w !== 'object' || typeof w.stage !== 'string') return null;
+  const words = w.words as { stage?: unknown; line?: unknown } | null;
+  const stage = words ? planPhraseOf(words.stage) : null;
+  const line = w.line as { code?: unknown } | null;
+  return {
+    stage: w.stage,
+    reason: typeof w.reason === 'string' ? w.reason : null,
+    line: line && typeof line.code === 'string' ? { code: line.code } : null,
+    words: stage ? { stage, line: planPhraseOf(words!.line) } : null,
+  };
 }
 
 /** Pure: the plan as the read answered it, or null for anything else. */
@@ -71,11 +114,40 @@ export function planFromRead(body: unknown): RequestBotPlan | null {
     reason: plan.reason === 'change_closed' ? 'change_closed' : plan.reason === 'build_failed' ? 'build_failed' : null,
     lines: Array.isArray(plan.lines) ? plan.lines.filter((l) => l && typeof l.text === 'string') : [],
     choices: Array.isArray(plan.choices) ? plan.choices : [],
+    work: plan.state === 'waiting' ? null : planWorkOf(plan.work),
   };
 }
 
+/**
+ * Pure (T2.4, 19 Nov 2026): what the request's stored work state says of a
+ * pressed plan, inside its card: its stage word and second line ("Ready to
+ * build · Waiting for one of the project's builds to finish", "Taking
+ * screenshots · ..."), the words every other surface says, in place of the
+ * card's own reading of its run. Null while the plan waits, with no row, or
+ * while the row only says it is building (the line under the title does).
+ */
+export function planWorkLineOf(plan: RequestBotPlan): Array<{ id: string; values?: Record<string, string | number> }> | null {
+  const words = plan.state !== 'waiting' ? plan.work?.words : null;
+  if (!words) return null;
+  // Under way (reading, planning, building, starting, reviewing): the card's
+  // own "Building it" says that. Only a wait has words of its own here.
+  if (plan.state === 'building' && !PLAN_WAITS.has(plan.work?.line?.code || '')) return null;
+  return [words.stage, ...(words.line ? [words.line] : [])];
+}
+
+// The row's second lines that say a pressed plan's build waits rather than
+// runs (services/work-state.js WAITING_LINES).
+const PLAN_WAITS: ReadonlySet<string> = new Set([
+  'queued', 'held_builds', 'held_waiting', 'credit_wait', 'retry_plan', 'update_queued', 'claimed',
+  'planning_with_you', 'waiting', 'on_hold', 'cooldown', 'first_version_wait',
+]);
+
 /** Pure: the card's state, from what the plan waits for. */
 export function planCardState(plan: RequestBotPlan): PlanCardState {
+  // T2.4: pressed, and its row says it is not under way yet (waiting its
+  // turn, held, waiting for credit): the card says that line, with no
+  // spinner, as a settled card says what became of it.
+  if (plan.state === 'building' && planWorkLineOf(plan)) return 'closed';
   if (plan.state === 'building') return 'built';
   // #6860: a settled plan is drawn with its lines and what became of it,
   // and no Build it: the change was made, or the build stopped.
@@ -110,6 +182,9 @@ export function planSettledLineOf(plan: RequestBotPlan): { id: string } | null {
  */
 export function planSubOf(plan: RequestBotPlan, number: number): { id: string; values: Record<string, string> } | null {
   const values = { number: String(number) };
+  // T2.4: a pressed plan whose row says it is not under way (waiting its
+  // turn, held, waiting for credit) is not said as building.
+  if (plan.state === 'building' && planWorkLineOf(plan)) return { id: 'project:topic.request.botPlan.subPressed', values };
   if (plan.state === 'building') return { id: 'project:topic.request.botPlan.subBuilding', values };
   if (plan.state !== 'waiting') return null;
   if (plan.mine) return { id: 'project:topic.request.botPlan.subYours', values };
@@ -205,6 +280,7 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
   } as HomeroomBotPlan;
   const sub = planSubOf(plan, number);
   const settled = planSettledLineOf(plan);
+  const worked = planWorkLineOf(plan);
   return (
     <div className="dev-request-plan" data-request-plan={planCardState(plan)}>
       <PlanCardView
@@ -214,7 +290,11 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
         busy={busy}
         building={plan.state === 'building'}
         // #6860: a settled card says what became of it, in the page's own words.
-        settledLine={settled ? (
+        settledLine={worked ? (
+          <p className="messages-bot-answered" role="status" data-request-plan-settled="">
+            {worked.map((p) => t(p.id, p.values)).join(' · ')}
+          </p>
+        ) : settled ? (
           <p className="messages-bot-answered" role="status" data-request-plan-settled="">{t(settled.id)}</p>
         ) : undefined}
         onBuild={(answers) => { void build(answers); }}

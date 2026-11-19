@@ -642,6 +642,52 @@ function outcomeOf(row) {
   }
 }
 
+// T2.12 (19 Nov 2026): the stages in which a request's work is still going.
+const STILL_GOING = new Set(['reading', 'planning', 'building']);
+const WORKING = Symbol('working');
+
+/**
+ * Pure (T2.12): what a card's request's stored work state says the card came
+ * to, when the card's run is the request's newest (its row's `runId`): a
+ * stop by its reason, a hand-back by its why, WORKING while the row says the
+ * work is still going, or null where the row has nothing of its own to say
+ * (its change's states, which changeOutcomeOf reads, and a plan waiting).
+ */
+function outcomeFromWork(work) {
+  if (!work || !work.stage) return null;
+  if (STILL_GOING.has(work.stage)) return WORKING;
+  if (work.stage === 'stopped') {
+    if (work.reason === 'build_failed') return 'build_failed';
+    if (work.reason === 'look_failed') return 'failed';
+    if (work.reason === 'change_closed') return 'closed';
+    if (work.reason === 'stalled') return 'stopped';
+    return null;
+  }
+  if (work.stage === 'waiting_for_you') {
+    if (work.why === 'question') return 'question';
+    if (work.why === 'decide' || work.why === 'already_works') return 'person';
+    if (work.why === 'needs_detail') return work.cause === 'blocked' ? 'blocked' : 'empty';
+  }
+  return null;
+}
+
+/**
+ * Pure (T2.12): a card's outcome. Its run's own record decides it
+ * (outcomeOf), unless the run is its request's newest look and no newer card
+ * began: then the request's stored work state, the row every other screen
+ * draws, says it (outcomeFromWork). A card read "Didn't finish" or "Needs
+ * you" from its run while the request's row had moved on (a reply being
+ * read, a person who claimed it, a retry of its plan).
+ */
+function outcomeFor(row, work = null) {
+  const own = outcomeOf(row);
+  const newest = !!work && Number(work.runId) > 0 && Number(work.runId) === Number(row.run_id) && !row.next_at;
+  if (!newest) return own;
+  const said = outcomeFromWork(work);
+  if (said === WORKING) return null;
+  return said || own;
+}
+
 /** Pure: when a finished card's work ended, where the records say. */
 function endedAt(row, outcome) {
   if (['proposed', 'live', 'closed', 'checking', 'needs_look', 'going_live'].includes(outcome)) return iso(row.proposal_at);
@@ -890,7 +936,7 @@ function cardOf(row, entry, { firstVersion = null, work = null } = {}) {
     ...(waited ? { waitedFor: waited } : {}),
     links: linksOf(row),
   };
-  let outcome = outcomeOf(row);
+  let outcome = outcomeFor(row, work);
   // Its change's status is its request's stored row's, while that row draws
   // the change this card's run proposed.
   if (outcome && ['proposed', 'checking', 'needs_look', 'going_live', 'live', 'closed'].includes(outcome)) {
@@ -1157,7 +1203,7 @@ async function activityCards(pool, { user, userId, settings, config, deps, now }
   void settings; void config; void now;
   const workOf = (row) => works.get(`${Number(row.app_id)}#${Number(row.issue_number)}`) || null;
   // A card still going says where its request stands; one that ended does not ask.
-  const entryOf = (row) => (!outcomeOf(row) && !row.next_at ? entryOfWork(workOf(row)) : null);
+  const entryOf = (row) => (!outcomeFor(row, workOf(row)) && !row.next_at ? entryOfWork(workOf(row)) : null);
   // What a wait before the work was for: read only for the cards that waited.
   const waited = shown.filter((row) => workClock(row, entryOf(row)).waitedFrom);
   const firstVersions = waited.length
@@ -1508,6 +1554,9 @@ module.exports = {
   cardUnderPlan,
   thanksText,
   outcomeOf,
+  // T2.12: a card's outcome from its request's stored row, when its run is the newest.
+  outcomeFor,
+  outcomeFromWork,
   entryOfWork,
   queueWords,
   changeOutcomeOf,

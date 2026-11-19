@@ -635,6 +635,26 @@
     "text": "Move it to Homeroom's board?",
     "description": "First line of a notification from Homeroom bot: one of the viewer's requests is about the Homeroom platform itself rather than this project, and the bot offers to move it to Homeroom's own list of requests. Homeroom is the product's name. The request's title is on the line below."
   },
+  "row.bot.ask.decideSetup": {
+    "text": "Needs setup first",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests can only be built once somebody with access sets something up outside the app (for example an outside account or a setting on the project). The request's title is on the line below."
+  },
+  "row.bot.ask.decidePerson": {
+    "text": "Needs a person",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests would change data the app already stores, so a person has to build it rather than the bot. The request's title is on the line below."
+  },
+  "row.bot.ask.elsewhere": {
+    "text": "Another project?",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests looks like it belongs to another project, and the bot offers to move it there. The request's title is on the line below."
+  },
+  "row.bot.ask.wrongProject": {
+    "text": "Wrong project?",
+    "description": "First line of a notification from Homeroom bot: one of the viewer's requests looks like it was filed on the wrong project, and the bot offers a vote on closing it. The request's title is on the line below."
+  },
+  "row.bot.ask.close": {
+    "text": "Close it?",
+    "description": "First line of a notification from Homeroom bot: the bot found nothing to build for one of the viewer's requests (they asked to drop it, or it only asked a question the bot answered), and it offers a vote on closing it. The request's title is on the line below."
+  },
   "row.bot.subject.firstVersion": {
     "text": "{{project}} first version",
     "description": "Second line of a notification from Homeroom bot, in bold: the first version of a new project the bot builds for the viewer. {{project}} is the project's name."
