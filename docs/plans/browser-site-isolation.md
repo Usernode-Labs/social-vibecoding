@@ -122,14 +122,12 @@ ICANN registrable domain than the platform (`edge-gate.js`
   preview frame, for that frame's app, at the origin the frame was pointed
   at. The page trades the token at `/__usernode_access?frame=` and returns
   to the page asked for, fragment included (an offline app's `#un-token`).
-- A browser that keeps no cookie in the frame (WebKit shipped partitioned
-  cookies in Safari 18.4, switched them off in 18.5 to 26.1, and brought them
-  back in 26.2) is shown that the app cannot open inside Homeroom, with a link
-  that opens it in its own tab, where the top-level hop works.
-
-The Storage Access API was not used: WebKit grants it only after a user
-gesture in the frame, a prompt, and prior first-party interaction with the
-apps' site. Neither platform cookie changes.
+- A browser that keeps no partitioned cookie in the frame can open a setup
+  page on the app's own host. A signed-in member's confirmation sets a
+  separate host-only access cookie and returns to Homeroom. Tapping
+  **Continue in Homeroom** requests Storage Access in the frame. The cookie
+  is bound to that app and the member's live session, and the gate strips it
+  before forwarding requests. The standalone link remains available.
 
 ## Acceptance
 
