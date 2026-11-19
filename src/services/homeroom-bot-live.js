@@ -217,7 +217,7 @@ function decidersPhrase(names) {
   return `${list.slice(0, -1).join(', ')} or ${list[list.length - 1]}`;
 }
 
-function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
+function personText({ reason, platform = false, project = null, done = false, withdrawn = false, goAheadDecides = null, firstStep = null, blocker = null, whoActs = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
   // #4239: about Homeroom itself. The requester is offered the move in their
   // DM; the project's creator and admins, who see only this note, are told
   // they can move it too (homeroom-bot-move.js moveGate).
@@ -263,6 +263,14 @@ function personText({ reason, platform = false, project = null, done = false, wi
       return `${cannotLead(blocker)}: ${reasonSentence(reason)}\n\n`
         + 'Anyone in the project can propose to close it once this answers the question. '
         + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+    }
+    // 19 Nov 2026 (#6869): a project's own setup is nobody's code change, so
+    // no coding agent can do it. The note names who can act instead. A
+    // database change keeps the build sentence, because there a code change
+    // is the answer.
+    if (blockerOf(blocker) === 'operator_work') {
+      return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
+        + `${whoCanActLine(whoActs)} ` + canBuildPart(firstStep);
     }
     return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
@@ -317,7 +325,7 @@ function staleCannot(run) {
  */
 function cannotLead(blocker) {
   const key = blockerOf(blocker);
-  if (key === 'operator_work') return 'This needs something set up outside this app, which I can\'t do from here';
+  if (key === 'operator_work') return 'This needs something set up outside this project\'s code, which I can\'t do from here';
   if (key === 'destructive_db') return 'This changes or removes data that is already saved, which I leave to a person';
   if (key === 'explanation') return 'This asks for an explanation, not a change, so here is what the code says';
   return 'I can\'t build this one myself';
@@ -328,9 +336,24 @@ function cannotLead(blocker) {
  * sentence that follows "I can't build all of this one: ...". `firstStep` is
  * the smaller step the read named, if any. Pure.
  */
-function canBuildPart(firstStep) {
+function canBuildPart(firstStep, { also = false } = {}) {
   const step = typeof firstStep === 'string' ? firstStep.replace(/\s+/g, ' ').trim() : '';
-  return step ? `I can build this part now: ${step}.` : 'Reply here if a smaller part would help.';
+  return step
+    ? `I can ${also ? 'also ' : ''}build this part${also ? ' here' : ''} now: ${step}.`
+    : (also ? '' : 'Reply here if a smaller part would help.');
+}
+
+/**
+ * 19 Nov 2026 (#6869): who can act on the project's own setup, when no code
+ * change is the answer: the control and who has it, as the read named it
+ * (`who_acts`). A read from before it named one falls back to the outside
+ * service's own people. Pure.
+ */
+function whoCanActLine(whoActs) {
+  const who = typeof whoActs === 'string' ? whoActs.replace(/\s+/g, ' ').trim() : '';
+  return who
+    ? `No code change does this: ${who} can.`
+    : 'No code change does this: whoever runs that outside service can.';
 }
 
 /**
@@ -338,13 +361,16 @@ function canBuildPart(firstStep) {
  * `deciders` are the people who decide on the project when the requester
  * does not (homeroom-bot.js whoDecides); else the requester. Pure.
  */
-function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
+function personHomeroomText({ reason, platform = false, project = null, requester = null, deciders = [], done = false, goAheadDecides = null, firstStep = null, blocker = null, whoActs = null, elsewhere = null, elsewhereJoin = false, candidates = [] }) {
   // #4239, #6311: about Homeroom itself. The requester is offered the copy
   // in the thread and the move in their DM. Plain words, in the first
   // person: no checkout, no head commit, no build agent.
   if (platform) {
-    return firstPerson(`I think this is about Homeroom itself, not ${project ? clipText(project, 80) : 'this project'}: ${reasonSentence(reason)} `
-      + 'I can put it on Homeroom\'s own board too and keep this request open here.');
+    const name = project ? clipText(project, 80) : 'this project';
+    return firstPerson(`I think this is about Homeroom itself, not ${name}: ${reasonSentence(reason)} `
+      + 'I can put it on Homeroom\'s own board too and keep this request open here. '
+      + `Homeroom's team picks it up there; there is nothing to build on ${name} for it.`
+      + (firstStep ? ` ${canBuildPart(firstStep, { also: true })}` : ''));
   }
   // #6771: about another project: its one job is to say where it belongs,
   // and its one action (under the note, its card) moves it there.
@@ -374,6 +400,10 @@ function personHomeroomText({ reason, platform = false, project = null, requeste
       return `${cannotLead(blocker)}: ${reasonSentence(reason)} `
         + 'Anyone in the project can tap Propose to close below once this answers it. '
         + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+    }
+    if (blockerOf(blocker) === 'operator_work') {
+      return firstPerson(`${cannotLead(blocker)}: ${reasonSentence(reason)} `
+        + `${whoCanActLine(whoActs)} ` + canBuildPart(firstStep));
     }
     return firstPerson(`${cannotLead(blocker)}: ${reasonSentence(reason)} `
       + `A person has to build it, for example with a coding agent, and the group votes on it as usual. `
@@ -436,7 +466,7 @@ function personSuggestions({ firstStep = null, platform = false, done = false, w
  * request, instead of the note again. It says what a go-ahead cannot change,
  * then the part the bot can still build. Server text, like the labels.
  */
-function goAheadCannotText({ reason, firstStep = null, reader = null, blocker = null } = {}) {
+function goAheadCannotText({ reason, firstStep = null, reader = null, blocker = null, whoActs = null } = {}) {
   // 17 Nov 2026 (#6770): a go-ahead changes nothing on a request that only
   // asked for an explanation: the answer is already there, and the way on is
   // to turn it into a fix or close it.
@@ -444,6 +474,12 @@ function goAheadCannotText({ reason, firstStep = null, reader = null, blocker = 
     return `A go-ahead can't change anything here. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
       + 'Anyone in the project can propose to close it once this answers the question. '
       + 'If it shows something broken, reply Turn this into a fix and I\'ll plan the fix.';
+  }
+  // 19 Nov 2026 (#6869): the project's own setup names who can act, never a
+  // coding agent. A database change keeps the build sentence.
+  if (blockerOf(blocker) === 'operator_work') {
+    return `A go-ahead can't settle this one. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
+      + `${whoCanActLine(whoActs)} ` + canBuildPart(firstStep);
   }
   return `A go-ahead can't settle this one. ${cannotLead(blocker)}: ${reasonSentence(reason, { reader })} `
     + 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. '
@@ -6060,6 +6096,7 @@ module.exports = {
   personSuggestions,
   goAheadCannotText,
   canBuildPart,
+  whoCanActLine,
   cannotLead,
   cannotStands,
   staleCannot,

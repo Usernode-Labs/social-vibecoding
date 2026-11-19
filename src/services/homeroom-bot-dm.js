@@ -2016,7 +2016,9 @@ function requestNews(kind, dm, context) {
       // message's own buttons (homeroom-bot-move.js foldOffer).
       if (dm.platform) {
         return `${line}\n\nThis is about Homeroom itself rather than ${context.appName}, so no change to ${context.appName} `
-          + `can do it: ${clip(dm.reason, 600)}`;
+          + `can do it: ${clip(dm.reason, 600)}\n\nHomeroom's team picks it up there; there is nothing to build `
+          + `on ${context.appName} for it.`
+          + (dm.firstStep ? ` ${require('./homeroom-bot-live').canBuildPart(dm.firstStep, { also: true })}` : '');
       }
       if (dm.done) return doneText(line, dm);
       // 17 Nov 2026 (#6770): a request that only asked for an explanation has
@@ -2029,11 +2031,16 @@ function requestNews(kind, dm, context) {
       // 6 Nov 2026 (#6430): a go-ahead cannot settle this kind of change, so
       // it says a person has to build it, and never tells the person who just
       // approved that somebody needs to approve.
+      // 19 Nov 2026 (#6869): the project's own setup is nobody's code change,
+      // so it names who can act instead of a coding agent.
       if (dm.goAheadDecides === false) {
+        const live = require('./homeroom-bot-live');
+        const done = dm.blocker === 'operator_work'
+          ? `${live.whoCanActLine(dm.whoActs)} `
+          : 'A person has to build it, for example you with a coding agent, and the group votes on it as usual. ';
         return `${line}\n\nThis needs a person to build, so I haven't built it: ${clip(dm.reason, 600)}\n\n`
-          + `${require('./homeroom-bot-live').cannotLead(dm.blocker)}. A person has to build it, `
-          + 'for example you with a coding agent, and the group votes on it as usual. '
-          + require('./homeroom-bot-live').canBuildPart(dm.firstStep);
+          + `${live.cannotLead(dm.blocker)}. ${done}`
+          + live.canBuildPart(dm.firstStep);
       }
       // #3772: and what to do about it. "Left for the group" was a dead end
       // for somebody who was the group: a reply here is posted on the

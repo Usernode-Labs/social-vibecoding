@@ -150,7 +150,8 @@ test('#6311: a note built from internal words comes out in plain words, first pe
     assert.doesNotMatch(own, new RegExp(word.replace('/', '\\/'), 'i'), `still internal: ${own}`);
   }
   assert.match(own, /I confirmed a person needs to decide the check/, 'the bot speaks as I');
-  assert.match(own, /I can put it on Homeroom's own board too and keep this request open here\.$/);
+  assert.match(own, /I can put it on Homeroom's own board too and keep this request open here\./);
+  assert.match(own, /Homeroom's team picks it up there; there is nothing to build on Plant Pal for it\./);
   // The question and the empty note go through the same rewrite.
   assert.doesNotMatch(firstPerson(live.questionText({ question: 'In this checkout, which list?' })), /checkout/i);
   assert.doesNotMatch(firstPerson(live.emptyText({ reason: 'The head commit names nothing.' })), /head commit/i);
@@ -161,11 +162,11 @@ test('#6311: a note built from internal words comes out in plain words, first pe
 test('#6395, #6430: a go-ahead that cannot settle it says what can be built, and names no Go ahead', () => {
   const own = live.personHomeroomText({
     reason: 'It moves credentials outside this app.', goAheadDecides: false, blocker: 'operator_work',
-    firstStep: 'Remove the dead bot token line',
+    firstStep: 'Remove the dead bot token line', whoActs: 'an admin of this project, in Settings › Secrets',
   });
-  assert.equal(own, 'This needs something set up outside this app, which I can\'t do from here: '
-    + 'It moves credentials outside this app. A person has to build it, for example with a coding agent, '
-    + 'and the group votes on it as usual. I can build this part now: Remove the dead bot token line.');
+  assert.equal(own, 'This needs something set up outside this project\'s code, which I can\'t do from here: '
+    + 'It moves credentials outside this app. No code change does this: an admin of this project, in Settings › Secrets can. '
+    + 'I can build this part now: Remove the dead bot token line.');
   assert.doesNotMatch(own, /Go ahead/i);
   assert.doesNotMatch(own, /@/, 'it names nobody who can say Go ahead');
   assert.doesNotMatch(own, /\bapprove/i, 'it never tells the reader that somebody has to approve');
@@ -177,13 +178,21 @@ test('#6395, #6430: a go-ahead that cannot settle it says what can be built, and
     + 'A person has to build it, for example with a coding agent, and the group votes on it as usual. '
     + 'Reply here if a smaller part would help.');
   assert.equal(live.cannotLead('something else'), 'I can\'t build this one myself', 'a run stored before the blocker was named');
-  assert.match(own, /A person has to build it, for example with a coding agent/);
+  // 19 Nov 2026 (#6869): the project's own setup never sends anyone to a
+  // coding agent; it names who can act instead.
+  assert.doesNotMatch(own, /coding agent/);
+  assert.equal(live.whoCanActLine(null), 'No code change does this: whoever runs that outside service can.');
+  assert.equal(live.whoCanActLine('an admin of this project, in Settings › Secrets'),
+    'No code change does this: an admin of this project, in Settings › Secrets can.');
 
-  const cannot = live.goAheadCannotText({ reason: 'It moves credentials outside this app.', firstStep: 'Remove the dead line', blocker: 'operator_work' });
-  assert.equal(cannot, 'A go-ahead can\'t settle this one. This needs something set up outside this app, which I can\'t do from here: '
-    + 'It moves credentials outside this app. A person has to build it, for example you with a coding agent, '
-    + 'and the group votes on it as usual. I can build this part now: Remove the dead line.');
-  assert.match(cannot, /A person has to build it, for example you with a coding agent/);
+  const cannot = live.goAheadCannotText({
+    reason: 'It moves credentials outside this app.', firstStep: 'Remove the dead line', blocker: 'operator_work',
+    whoActs: 'an admin of this project, in Settings › Secrets',
+  });
+  assert.equal(cannot, 'A go-ahead can\'t settle this one. This needs something set up outside this project\'s code, which I can\'t do from here: '
+    + 'It moves credentials outside this app. No code change does this: an admin of this project, in Settings › Secrets can. '
+    + 'I can build this part now: Remove the dead line.');
+  assert.doesNotMatch(cannot, /coding agent/);
   assert.doesNotMatch(cannot, /\bapprove/i);
   assert.equal(live.goAheadCannotText({ reason: 'The whole thing is too big for one build.' }),
     'A go-ahead can\'t settle this one. I can\'t build this one myself: The whole thing is too big for one build. '

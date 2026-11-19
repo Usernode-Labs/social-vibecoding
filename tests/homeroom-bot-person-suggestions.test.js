@@ -333,7 +333,7 @@ test('a go-ahead that meets a read saying it cannot settle it posts one plain re
       parsed: {
         verdict: 'person', reason: 'moving App secrets is operator work outside this app.',
         firstStep: 'Remove the dead bot token line', platform: false, done: false, goAheadDecides: false,
-        blocker: 'operator_work',
+        blocker: 'operator_work', whoActs: 'an admin of this project, in Settings › Secrets',
       },
       goAhead: { by: 'evan' },
       decider: { requesterDecides: true },
@@ -347,7 +347,8 @@ test('a go-ahead that meets a read saying it cannot settle it posts one plain re
   }
   assert.equal(says.length, 1);
   assert.match(says[0].homeroomText,
-    /^A go-ahead can't settle this one\. This needs something set up outside this app, which I can't do from here: moving App secrets is operator work outside this app\. A person has to build it, for example you with a coding agent, and the group votes on it as usual\. I can build this part now: Remove the dead bot token line\.$/);
+    /^A go-ahead can't settle this one\. This needs something set up outside this project's code, which I can't do from here: moving App secrets is operator work outside this app\. No code change does this: an admin of this project, in Settings › Secrets can\. I can build this part now: Remove the dead bot token line\.$/);
+  assert.doesNotMatch(says[0].homeroomText, /coding agent/);
   assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
   assert.deepEqual(says[0].metadata.homeroomBot.actions.map((a) => a.label),
     ['Remove the dead bot token line', 'Not now']);

@@ -695,7 +695,7 @@ async function createThreadNotifications(pool, {
 // ('issue_mention', notifyIssueFiled writes it first). Those people hear
 // about this request once, from the row that says why they are told, unless
 // that would cost them the only buzz they asked for (mentionStandsIn).
-async function createIssueOpenedNotifications(pool, { appId, issueNumber, authorId, mentioned = [] }) {
+async function createIssueOpenedNotifications(pool, { appId, issueNumber, authorId, mentioned = [], alsoTo = [] }) {
   if (!appId || !issueNumber) return [];
 
   const { rows: appRows } = await pool.query(
@@ -715,6 +715,12 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
   let recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
   recipientIds.delete(authorId);
   recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
+  // #6869: people the caller names who are not collaborators of this app
+  // (Homeroom's admins, when a copy of a report lands on its own board).
+  // They are still filtered by the new_issues preference below.
+  for (const id of (Array.isArray(alsoTo) ? alsoTo : []).map(Number)) {
+    if (Number.isSafeInteger(id) && id > 0) recipientIds.add(id);
+  }
   if (!recipientIds.size) return [];
 
   recipientIds = new Set(await notificationPreferences.filterUsersByCategory(pool, {
@@ -749,7 +755,35 @@ async function createIssueOpenedNotifications(pool, { appId, issueNumber, author
   return rows;
 }
 
-// #4271: of the people a request's mention told, the ones it tells in place
+/**
+ * #6869: a copy of a project's report that landed on Homeroom's own board
+ * reaches Homeroom's full admins (not view-only ones), through the same
+ * new-request notification the board already sends. Best-effort: never
+ * throws, and [] when nobody is told.
+ */
+async function notifyPlatformAdminsOfCopy(pool, { appId, issueNumber, authorId = null }) {
+  try {
+    if (!appId || !issueNumber) return [];
+    const { rows } = await pool.query(
+      'SELECT id FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE',
+    );
+    const admins = rows.map((r) => Number(r.id)).filter((id) => Number.isSafeInteger(id) && id > 0);
+    if (!admins.length) return [];
+    const made = await createIssueOpenedNotifications(pool, {
+      appId, issueNumber, authorId, alsoTo: admins,
+    });
+    for (const row of made) await hydrateAndPush(pool, row);
+    log.info('notifications', 'Told Homeroom\'s admins about a copied request', {
+      appId, issueNumber, admins: made.length,
+    });
+    return made;
+  } catch (err) {
+    log.warn('notifications', 'Could not tell Homeroom\'s admins about a copied request', {
+      appId, issueNumber, err: err.message,
+    });
+    return [];
+  }
+}
 // of 'issue_opened'. That is all of them but one case: somebody whose phone
 // rings for a new request and not for a mention (Direct interactions off,
 // App alerts on). For them the mention is a quiet row and this one is the
@@ -2467,6 +2501,8 @@ module.exports = {
   createRevisionRecheckNotifications,
   createAppHealthNotification,
   createPlatformLimitNotifications,
+  createIssueOpenedNotifications,
+  notifyPlatformAdminsOfCopy,
   createPlatformIncidentNotifications,
   createCheckFailedNotification,
   createConnectorSubmittedNotification,

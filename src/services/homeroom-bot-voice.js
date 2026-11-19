@@ -959,7 +959,7 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
   const requester = await dmModule(deps).requesterOf(pool, app.id, Number(place.ref)).catch(() => null);
   if (!(await botModule(deps).goAheadCounts(pool, app, requester, speaker.id))) return null;
   const { rows: [lastLook] } = await pool.query(
-    `SELECT verdict, reason, go_ahead_decides, go_ahead_blocker, first_step FROM homeroom_bot_runs
+    `SELECT verdict, reason, go_ahead_decides, go_ahead_blocker, first_step, who_acts FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, Number(place.ref)],
   ).catch(() => ({ rows: [] }));
@@ -968,11 +968,55 @@ async function goAheadCannotReply(pool, { app, place, row, speaker, deps = {} })
   if (!live.cannotStands(lastLook)) return null;
   return {
     text: live.goAheadCannotText({
-      reason: lastLook.reason, firstStep: lastLook.first_step, reader: speaker.username, blocker: lastLook.go_ahead_blocker,
+      reason: lastLook.reason, firstStep: lastLook.first_step, reader: speaker.username,
+      blocker: lastLook.go_ahead_blocker, whoActs: lastLook.who_acts,
     }),
     labels: live.personSuggestions({
       firstStep: lastLook.first_step, goAheadDecides: false, blocker: lastLook.go_ahead_blocker,
     }),
+  };
+}
+
+/**
+ * #6869: a yes to the part the bot's note offered ("I can build this part
+ * now: X"), typed in the request's own discussion. The part is filed as a
+ * smaller request linked to this one, and the answer names it, instead of the
+ * "A go-ahead can't settle this one" refusal. Resolves { text, partStarted }
+ * or null (the turn runs as today).
+ */
+async function offeredPartReply(pool, config, { app, place, row, speaker, deps = {} }) {
+  if (place?.type !== 'issue' || place.ref == null || !row || !speaker) return null;
+  const part = require('./homeroom-bot-part');
+  const { rows: [lastLook] } = await pool.query(
+    `SELECT id, mode, verdict, reason, go_ahead_decides, go_ahead_blocker, first_step, about_platform
+       FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
+    [app.id, Number(place.ref)],
+  ).catch(() => ({ rows: [] }));
+  if (!part.partOffered(lastLook)) return null;
+  if (!part.acceptsPart(row.content, lastLook.first_step)) return null;
+  const requester = await dmModule(deps).requesterOf(pool, app.id, Number(place.ref)).catch(() => null);
+  if (!(await botModule(deps).goAheadCounts(pool, app, requester, speaker.id))) return null;
+  const settings = await botModule(deps).readSettings(pool).catch(() => null);
+  let filed;
+  try {
+    filed = await part.startOfferedPart(pool, config, {
+      app, issueNumber: Number(place.ref), run: lastLook, user: speaker, settings, deps,
+    });
+  } catch (err) {
+    return { text: 'I couldn\'t file that part just now. Try again in a minute.', partStarted: null };
+  }
+  if (!filed.ok) {
+    return {
+      text: filed.code === 'allowance'
+        ? filed.said || 'Your building time for this week is used up, so it cannot start this week. It resets on Monday.'
+        : 'I couldn\'t file that part just now. Try again in a minute.',
+      partStarted: null,
+    };
+  }
+  return {
+    text: part.partStartedText(lastLook.first_step, filed.issueNumber),
+    partStarted: { messageId: Number(row.id), issueNumber: filed.issueNumber },
   };
 }
 
@@ -1130,6 +1174,20 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
   // answered here, once, in the same fixed words the chat's start tool uses.
   // Nothing is being built, so the model never writes "I'm on it" or offers
   // tell_me_when.
+  // #6869: a yes to the part the last note offered starts that part, before
+  // the refusal that is kept only for a note that offered none.
+  const offeredPart = await offeredPartReply(pool, config, {
+    app, place, row: last.message, speaker: last.speaker, deps,
+  });
+  if (offeredPart) {
+    const sent = await say(pool, {
+      app, place, bot, text: offeredPart.text, answer, mark, suggest: false,
+      extra: offeredPart.partStarted ? { partStarted: offeredPart.partStarted } : {}, deps,
+    });
+    record.replyId = sent?.id || null;
+    await restOfChat();
+    return finishWith('replied');
+  }
   const goAheadCannot = await goAheadCannotReply(pool, {
     app, place, row: last.message, speaker: last.speaker, deps,
   });
@@ -4364,6 +4422,7 @@ module.exports = {
   judgedIds,
   askChanged,
   goAheadCannotReply,
+  offeredPartReply,
   replyOf,
   transcriptLine,
   attachedFiles,

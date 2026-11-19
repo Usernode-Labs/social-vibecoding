@@ -6258,7 +6258,8 @@ async function startRequest(pool, ctx, args) {
   // named who. A go-ahead from that person is the decision the note asked
   // for, so the queued look records it rather than asking again.
   const { rows: lastLook } = await pool.query(
-    `SELECT verdict, reason, go_ahead_decides, go_ahead_blocker, first_step FROM homeroom_bot_runs
+    `SELECT id, verdict, reason, go_ahead_decides, go_ahead_blocker, first_step, who_acts, about_platform
+       FROM homeroom_bot_runs
       WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' ORDER BY id DESC LIMIT 1`,
     [app.id, n],
   );
@@ -6270,12 +6271,46 @@ async function startRequest(pool, ctx, args) {
   // (go_ahead_blocker) is said again. One stored before the read had to name
   // it was often neither (a sign-in fix, a large request), so its go-ahead
   // queues a fresh read below instead of the old refusal.
-  if (liveModule(deps).cannotStands(lastLook[0])) {
+  // #6869: a note that offered a part ("I can build this part now: X") is
+  // answered by building that part as a smaller request linked to this one,
+  // whether or not a go-ahead could settle the whole request. The refusal is
+  // kept for a note that offered none.
+  if (liveModule(deps).cannotStands(lastLook[0]) || lastLook[0]?.about_platform === true) {
+    if (String(lastLook[0]?.first_step || '').trim()) {
+      const part = require('./homeroom-bot-part');
+      let filed;
+      try {
+        filed = await part.startOfferedPart(pool, ctx.config, {
+          app, issueNumber: n, run: lastLook[0], user, settings, deps,
+        });
+      } catch (err) {
+        return { ok: false, error: 'That part could not be filed just now. Nothing was started. Try again in a minute.' };
+      }
+      if (!filed.ok) {
+        return {
+          ok: false,
+          error: filed.code === 'allowance'
+            ? 'Their building time for this week is used up, so it cannot start this week. Nothing was started. It resets on Monday; someone else in the project can ask for it before then.'
+            : 'There was no part to start. Nothing was started.',
+        };
+      }
+      ctx.started = name;
+      noteLiveWork(ctx, app, n);
+      ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: filed.issueNumber });
+      require('./bot-work-changed').noteWorkChanged(user.id, deps);
+      return {
+        ok: true,
+        said: part.partStartedText(lastLook[0].first_step, filed.issueNumber),
+        ...(filed.again ? { already: 'That part was already filed, so nothing new was filed.' } : {}),
+        card: LIVE_CARD_NOTE,
+      };
+    }
     return {
       ok: false,
       code: 'go_ahead_cannot',
       said: liveModule(deps).goAheadCannotText({
-        reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username, blocker: lastLook[0].go_ahead_blocker,
+        reason: lastLook[0].reason, firstStep: lastLook[0].first_step, reader: user.username,
+        blocker: lastLook[0].go_ahead_blocker, whoActs: lastLook[0].who_acts,
       }),
       next: 'Say exactly this. Do not say you are on it, and do not offer tell_me_when.',
     };

@@ -140,7 +140,7 @@ test('an older request\'s first read rings only when it is ready to try (16 Oct 
 
 test('a re-read and the ask to repair a reply restate the verdict\'s keys (runs 1390, 1451, 1454 answered in keys of their own)', () => {
   const again = bot.continuedTriagePrompt({ seed: 'SEED', issueNumber: 30 });
-  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation"\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
+  assert.match(again, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in the same format as before, for issue #30, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation", "who_acts": "who and where, operator_work only"\}\nUse these keys and the others your instructions name \(such as `answers`, `blocker`, `assumptions`, `platform`\): a block with keys of its own, or no `verdict`, cannot be read\.$/);
   assert.match(bot.VERDICT_REPAIR_PROMPT, /with nothing before or after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person",[^\n]+\}\nUse these keys and the others your instructions name/);
   assert.ok(bot.triageClosing(30).endsWith(`in this format, and nothing after it:\n${bot.VERDICT_FORMAT}`), 'the first read says the same shape');
 });
@@ -1803,7 +1803,29 @@ test('runTriage: the request comes first; the platform reference follows, small,
     `the whole triage prompt stays under ${bot.TRIAGE_PROMPT_CEILING} chars: ${prompt.length}`);
   assert.doesNotMatch(prompt, /prompt-part:/, 'the budgets are stripped before the model reads the prompt');
   // The last thing the model reads is the one format parseVerdict accepts.
-  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation"\}$/);
+  assert.match(prompt, /END YOUR REPLY WITH EXACTLY ONE fenced JSON block in this format, and nothing after it:\n\{"verdict": "question" \| "empty" \| "ready" \| "person", "determined": true \| false, "missing_fact": "\.\.\.", "question": "\.\.\.", "default": "\.\.\.", "build_note": "\.\.\.", "reason": "\.\.\.", "first_step": "\.\.\.", "go_ahead": true \| false, "cannot_because": "operator_work" \| "destructive_db" \| "explanation", "who_acts": "who and where, operator_work only"\}$/);
+});
+
+test('#6869: the read is told the app\'s state and the same report elsewhere', () => {
+  const bare = bot.triagePromptFor({ seed: 'SEED', issueNumber: 1 });
+  assert.doesNotMatch(bare, /This project is running\./, 'nothing is added without a state');
+  const withState = bot.triagePromptFor({
+    seed: 'SEED', issueNumber: 1,
+    appState: {
+      status: 'running',
+      lastDeployAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString(),
+      deploy: null, lastFailure: null,
+    },
+    sameReports: [{
+      project: 'Family Tree', number: 19, ageDays: 1, title: 'the page shows garbled text', aboutPlatform: true, reason: null,
+    }],
+  });
+  assert.match(withState, /This project is running\./);
+  assert.match(withState, /Its last deploy was \d+ \w{3} \d{4} \(15 days ago\)\./);
+  assert.match(withState, /No deploy is under way\./);
+  assert.match(withState, /Its last deploy did not fail\./);
+  assert.match(withState, /a restart, redeploy or rollback is not the answer/);
+  assert.match(withState, /Family Tree reported request #19 yesterday/);
 });
 
 test('#6777: a triage prompt part over its budget names that part, its size and its budget', () => {

@@ -564,6 +564,9 @@ function triagePrompt(snapshot, seed, readsImages = false, guidance = null) {
     personPlan: snapshot.extra?.personPlan || null,
     // #6211: the board the read was given, so the replay says the same.
     overlapCandidates: snapshot.extra?.overlapCandidates || null,
+    // #6869: the app's state and the same report elsewhere it read.
+    appState: snapshot.extra?.appState || null,
+    sameReports: snapshot.extra?.sameReports || null,
     // A studio trial's context pack (services/bench/packs.js).
     guidance,
   });

@@ -654,7 +654,13 @@ async function copyToHomeroom(pool, config, {
   if (!filed.again) {
     await movedLine(pool, {
       app, thread: { type: 'issue', ref: n }, kind: 'copied', version: `to-${Number(filed.issueNumber)}`, deps,
-      words: `Also filed on Homeroom's own board as request #${filed.issueNumber}: ${link}. This request stays open here.`,
+      words: `Also filed on Homeroom's own board as request #${filed.issueNumber}: ${link}. This request stays open here. `
+        + `Homeroom's team picks it up there; there is nothing to build on ${app.name || app.slug} for it.`,
+    });
+    // #6869: Homeroom's own full admins hear about a report that landed on
+    // their board, through the board's new-request notification. Best-effort.
+    await (deps.notifications || require('./notifications')).notifyPlatformAdminsOfCopy?.(pool, {
+      appId: target.id, issueNumber: filed.issueNumber, authorId: credited.id,
     });
     try {
       await github.createIssueComment(gate.repo.owner, gate.repo.repo, n,
@@ -696,7 +702,8 @@ async function decideCopy(pool, config, { user, settings, action, yes, ack, deps
   const name = filed.target.name || filed.target.slug;
   const line = dmModule(deps).requestLine({ appName: name, issueNumber: filed.issueNumber, issueTitle: filed.title });
   return ack(
-    `${line}\n\nFiled on Homeroom's own board, with a link to it left on the original. This request stays open here.`,
+    `${line}\n\nFiled on Homeroom's own board, with a link to it left on the original. This request stays open here. `
+      + `Homeroom's team picks it up there; there is nothing to build on ${app?.name || app?.slug || 'this project'} for it.`,
     {
       objects: [{ type: 'issue', appId: Number(filed.target.id), issueNumber: filed.issueNumber }],
       metadata: {
@@ -914,6 +921,7 @@ function moveOfferMeta({ app, actionId, targetName = null, join = false }) {
 module.exports = {
   MOVE_OFFER_OUTCOMES,
   noteMoveOffer,
+  movedLine,
   moveOfferSummary,
   foldOffer,
   foldedOfferSent,
