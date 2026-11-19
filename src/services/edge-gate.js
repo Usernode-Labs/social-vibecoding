@@ -142,9 +142,9 @@ const { readSessionCookie } = require('./browser-session-cookies');
 //     pointed at.
 //   * a browser that keeps no cookie in such a frame at all (Safari 18.5 to
 //     26.1, where WebKit had partitioned cookies switched off) comes back
-//     from either path without the door; it is shown the same page saying
-//     the app cannot open inside Homeroom in this browser, with a link that
-//     opens it in a tab of its own, where the sign-in hop works.
+//     from either path without the door. The fallback offers a direct visit
+//     to set up a separate access cookie, then requests storage on a tap
+//     inside the frame. It can also open the app directly in its own tab.
 
 const crypto = require('crypto');
 const platformJwt = require('./platform-jwt');
@@ -155,6 +155,8 @@ const { USERNODE_DOMAIN } = require('./caddy');
 const { appHostIsIsolated } = require('./browser-site-isolation');
 
 const CALLBACK_PATH = '/__usernode_access';
+const STORAGE_SETUP_PATH = '/__usernode_access/storage';
+const STORAGE_COOKIE = '__Host-usernode_embed';
 // Appended when the gate redirects to itself to set a cookie from an iframe
 // token, or to stop a loop: a request that carries it is never redirected
 // again.
@@ -273,6 +275,21 @@ function chromelessUrl(slug, next = '/') {
   return next && next !== '/' ? `${base}?path=${next}` : base;
 }
 
+function storageSetupUrl(next) {
+  return `${STORAGE_SETUP_PATH}?next=${encodeURIComponent(next)}`;
+}
+
+function appReturnPath(next) {
+  if (uriPath(next) !== STORAGE_SETUP_PATH) return next;
+  const requested = frameDoorNext(parseUriQuery(next).get('next'));
+  const pathname = uriPath(requested);
+  if (pathname === STORAGE_SETUP_PATH) return '/';
+  const params = parseUriQuery(requested);
+  params.delete('un-build');
+  params.delete('un-theme');
+  return params.size ? `${pathname}?${params}` : pathname;
+}
+
 function withRetryMarker(uri) {
   return `${uri}${uri.includes('?') ? '&' : '?'}${RETRY_MARKER}=1`;
 }
@@ -378,7 +395,7 @@ function scriptJson(value) {
 // `blocked` (this browser keeps no cookie in the frame) or when nobody
 // answers, says the app cannot open here and offers it in a tab of its own.
 // English in code like the gate's other pages: it loads no shell bundle.
-function frameDoorPage({ platformOrigin, next, blocked, nonce }) {
+function frameDoorPage({ platformOrigin, next, blocked, nonce, storageSetup }) {
   const text = {
     title: 'This app can’t open here',
     body: 'This browser keeps the app from signing in inside Homeroom. It works in a tab of its own.',
@@ -395,15 +412,44 @@ main{max-width:22rem;padding:24px;text-align:center}
 main[hidden]{display:none}
 h1{font-size:17px;margin:0 0 8px}
 p{margin:0 0 16px;opacity:.75}
-a{display:inline-block;padding:10px 16px;border-radius:999px;background:#2563eb;color:#fff;text-decoration:none;font-weight:600}
+a,button{display:inline-block;border:0;padding:10px 16px;border-radius:999px;background:#2563eb;color:#fff;text-decoration:none;font:inherit;font-weight:600}
+#storage:not([hidden]){display:grid;justify-items:center;gap:10px;margin-bottom:12px}
 </style></head>
-<body><main id="blocked"${blocked ? '' : ' hidden'}><h1>${text.title}</h1><p>${text.body}</p>
+<body><main id="blocked"${blocked ? '' : ' hidden'}><h1 id="door-title">${text.title}</h1><p id="door-description">${text.body}</p>
+    ${storageSetup ? `<div id="storage" hidden>
+      <p>Set up access for this app, then continue here.</p>
+      <a href="${storageSetup}" target="_blank" rel="noopener">Set up access</a>
+      <button id="continue" type="button">Continue in Homeroom</button>
+      <p id="storage-status" role="status"></p>
+    </div>` : ''}
 <a href="${next.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}" target="_blank" rel="noopener">${text.open}</a></main>
 <script nonce="${nonce}">
 (function () {
   var platform = ${scriptJson(platformOrigin)};
   var nonce = ${scriptJson(nonce)};
   var callback = ${scriptJson(CALLBACK_PATH)};
+  var retryMarker = ${scriptJson(RETRY_MARKER)};
+  var storage = document.getElementById('storage');
+  if (storage && window.parent !== window && typeof document.requestStorageAccess === 'function') {
+    storage.hidden = false;
+    document.getElementById('door-title').textContent = 'Open this app in Homeroom';
+    document.getElementById('door-description').hidden = true;
+    var button = document.getElementById('continue');
+    var status = document.getElementById('storage-status');
+    button.addEventListener('click', function () {
+      button.disabled = true;
+      status.textContent = 'Requesting access…';
+      document.requestStorageAccess().then(function () {
+        var params = new URLSearchParams(location.search);
+        params.delete(retryMarker);
+        var search = params.toString();
+        location.replace(location.pathname + (search ? '?' + search : '') + location.hash);
+      }, function () {
+        button.disabled = false;
+        status.textContent = 'Set up access first, or open this app in a new tab.';
+      });
+    });
+  }
   var settled = false;
   function show() {
     if (settled) return;
@@ -428,9 +474,25 @@ a{display:inline-block;padding:10px 16px;border-radius:999px;background:#2563eb;
 </script></body></html>`;
 }
 
+function storageSetupPage(nonce) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open this app in Homeroom</title>
+<style nonce="${nonce}">
+:root{color-scheme:light dark}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.5 system-ui,sans-serif}
+main{max-width:24rem;padding:24px;text-align:center}
+button{border:0;border-radius:999px;padding:10px 16px;background:#2563eb;color:#fff;font:inherit;font-weight:600}
+</style></head><body><main>
+<h1>Open this app in Homeroom</h1>
+<p>Return to Homeroom, then tap Continue in Homeroom to open the app there.</p>
+<form method="post"><button type="submit">Return to Homeroom</button></form>
+</main></body></html>`;
+}
+
 // Every gate cookie name, in either spelling, for stripping before the app.
 // (The guest hint is not one: the bridge reads it on the app's own page.)
-const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state)$/;
+const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state|embed)$/;
 
 // The Cookie header minus the gate's own cookies (scripts/app-gate.js; the
 // Caddyfile does the same with a header_up replacement).
@@ -619,11 +681,12 @@ function frameDoorNext(uri) {
   return next.slice(0, q) + (rest ? `?${rest}` : '');
 }
 
-function readAccessCookie(req, { host, appId }) {
-  const raw = req.cookies?.[cookieNames().access];
+function readAccessCookie(req, { host, appId }, name = cookieNames().access) {
+  const raw = req.cookies?.[name];
   if (!raw) return null;
   const claims = platformJwt.orNull(() => platformJwt.verifyEdgeCookie(raw));
   if (!claims || claims.host !== host || claims.appId !== appId || !Number.isInteger(claims.uid)) return null;
+  if ((claims.storageAccess === true) !== (name === STORAGE_COOKIE)) return null;
   return claims;
 }
 
@@ -661,6 +724,9 @@ async function handleAccess(pool, req, res) {
   const topNav = isTopLevelNavigation(req.headers, method);
   const ws = isWebSocketUpgrade(req.headers);
   const names = cookieNames();
+  const app = { host, appId: vis.appId };
+  const cookie = readAccessCookie(req, app);
+  const storageEnabled = secureCookies() && signin && vis.viewPrivate && framesCrossSite(host);
 
   const redirect = (location) => {
     res.set('Referrer-Policy', 'no-referrer');
@@ -692,8 +758,10 @@ async function handleAccess(pool, req, res) {
     res.set('Content-Security-Policy', `default-src 'none'; script-src 'nonce-${nonce}'; `
       + `style-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'; frame-ancestors ${platformOrigin}`);
     res.set('Referrer-Policy', 'no-referrer');
-    return res.status(401).type('html')
-      .send(frameDoorPage({ platformOrigin, next: frameDoorNext(uri), blocked, nonce }));
+    const next = frameDoorNext(uri);
+    return res.status(401).type('html').send(frameDoorPage({
+      platformOrigin, next, blocked, nonce, storageSetup: storageEnabled && storageSetupUrl(next),
+    }));
   };
   const crossSiteFrame = isFrameNavigation(req.headers, method) && framesCrossSite(host);
 
@@ -741,6 +809,33 @@ async function handleAccess(pool, req, res) {
     }
     return res.status(200).send('ok');
   };
+
+  if (uriPath(uri) === STORAGE_SETUP_PATH) {
+    if (!storageEnabled || ws || header(req.headers, 'sec-fetch-dest') !== 'document') {
+      return res.status(404).send('Not found');
+    }
+    if (method !== 'GET' && (method !== 'POST' || !sameOriginWrite({ headers: req.headers, host }))) {
+      return res.status(403).send('Forbidden');
+    }
+    const next = appReturnPath(uri);
+    const member = cookie?.sid && await appAccess.isViewMember(pool, vis.appId, cookie.uid)
+      && await sessionLive(pool, cookie.sid, cookie.uid);
+    if (!member) {
+      if (method === 'GET' && query.get(RETRY_MARKER) !== '1') return startHop(storageSetupUrl(next));
+      return redirect(chromelessUrl(slug, next));
+    }
+    if (method === 'POST') {
+      const credential = platformJwt.signEdgeCookie({ ...cookie, storageAccess: true });
+      res.cookie(STORAGE_COOKIE, credential, { ...cookieOptions(platformJwt.EDGE_COOKIE_TTL_S), sameSite: 'none' });
+      res.set('Referrer-Policy', 'no-referrer');
+      return res.redirect(303, next === '/' ? `https://${USERNODE_DOMAIN}/app/${slug}` : chromelessUrl(slug, next));
+    }
+    const nonce = crypto.randomBytes(16).toString('base64url');
+    res.set('Content-Security-Policy', `default-src 'none'; style-src 'nonce-${nonce}'; base-uri 'none'; `
+      + `form-action 'self' https://${USERNODE_DOMAIN}; frame-ancestors 'none'`);
+    res.set('Referrer-Policy', 'same-origin');
+    return res.status(401).type('html').send(storageSetupPage(nonce));
+  }
 
   // 1. Callbacks from the apex authorize hop. Handled first so a fresh code
   // always re-mints the cookie. Never reaches the app.
@@ -842,12 +937,11 @@ async function handleAccess(pool, req, res) {
     }
     // Refused (expired, spent, another host, not a member, signed out):
     // where an unsigned visitor goes, never another round of the hop.
-    return redirect(isProduction ? chromelessUrl(slug, next) : `https://${USERNODE_DOMAIN}/`);
+    return redirect(isProduction ? chromelessUrl(slug, appReturnPath(next)) : `https://${USERNODE_DOMAIN}/`);
   }
 
   const ownToken = header(req.headers, 'x-usernode-token');
   const queryToken = query.get('token') || '';
-  const cookie = readAccessCookie(req, { host, appId: vis.appId });
 
   // ── View-public apps ──────────────────────────────────────────────────
   if (!vis.viewPrivate) {
@@ -880,6 +974,18 @@ async function handleAccess(pool, req, res) {
   }
 
   // ── View-private apps: a member with view access, or nothing ──────────
+
+  // This cookie is issued only by first-party setup and released to the frame
+  // by the browser's storage grant. It never becomes the app's identity.
+  const storageCookie = storageEnabled && !topNav && !cookie && readAccessCookie(req, app, STORAGE_COOKIE);
+  if (storageCookie?.sid && await appAccess.isViewMember(pool, vis.appId, storageCookie.uid)
+      && await sessionLive(pool, storageCookie.sid, storageCookie.uid)) {
+    if ((ws && !identityAllowed({ method, headers: req.headers, host }))
+        || (!ws && !SAFE_METHODS.has(method) && !sameOriginWrite({ headers: req.headers, host }))) {
+      return res.status(403).send('Forbidden');
+    }
+    if (ws || header(req.headers, 'sec-fetch-site') === 'same-origin') return allow();
+  }
 
   // 2. An app identity token the request carries: the shell's ?token= on an
   // iframe load, or the x-usernode-token header app frontends forward.
@@ -962,7 +1068,7 @@ async function handleAuthorize(pool, req, res) {
   const isProduction = parsed.label === parsed.slug;
   const vis = await appAccess.getHostVisibility(pool, parsed.slug);
   if (!vis || vis.suspended) return res.status(404).send('Not found');
-  const fallback = isProduction ? chromelessUrl(parsed.slug, next) : `https://${USERNODE_DOMAIN}/`;
+  const fallback = isProduction ? chromelessUrl(parsed.slug, appReturnPath(next)) : `https://${USERNODE_DOMAIN}/`;
 
   if (!req.user) {
     if (isProduction && !vis.viewPrivate && signinEnabled()) {

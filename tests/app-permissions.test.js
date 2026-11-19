@@ -126,8 +126,10 @@ test('the App-tab sandbox allows downloads and the two copies agree exactly', as
   const src = read('public/js/app-view.js');
   const adapter = src.match(/_appIframeSandbox: '([^']*)'/);
   assert.ok(adapter, 'the DOM adapter names its navigated sandbox');
-  assert.equal(adapter[1], policy.APP_FRAME_SANDBOX,
+  assert.equal(adapter[1], policy.HOMEROOM_APP_FRAME_SANDBOX,
     'the React copy and the DOM fallback are the same string');
+  assert.match(policy.HOMEROOM_APP_FRAME_SANDBOX, /\ballow-storage-access-by-user-activation\b/);
+  assert.doesNotMatch(policy.APP_FRAME_SANDBOX, /\ballow-storage-access-by-user-activation\b/);
   assert.match(policy.APP_FRAME_SANDBOX, /\ballow-downloads\b/,
     'a sandboxed app can save a file');
   for (const wider of ['allow-popups-to-escape-sandbox', 'allow-top-navigation']) {
