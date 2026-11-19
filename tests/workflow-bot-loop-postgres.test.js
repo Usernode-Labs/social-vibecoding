@@ -517,9 +517,18 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     assert.deepEqual(progress.holdOf(q), { kind: 'cooldown', until: new Date(d.owed.heldUntil).toISOString() });
     assert.equal(progress.stageOf({ ...q, queue_id: q.id }).hold, 'cooldown');
     work.answer.set(request.WORK.look, { outcome: 'done' });
+    // Review of 19 Nov 2026: a person's ask lifts the hold AND the back-off
+    // standing behind it (five faults: it could wait up to an hour more), so
+    // it is looked at now rather than left queued behind `wait_until`.
+    const looksBefore = calls(request.WORK.look).length;
     await oweOnly(app2.id, 112, { reason: 'dm_answer', priority: 0 });
-    assert.equal((await inst(request.MACHINE, requestKey(app2.id, 112))).data.owed.heldUntil, null, 'a person\'s ask lifts it');
-    assert.equal((await row(app2.id, 112)).held_reason, null, 'and its reason with it');
+    await send(lane.MACHINE, lane.KEY, 'Look', {});
+    await settle();
+    const asked = (await inst(request.MACHINE, requestKey(app2.id, 112))).data;
+    assert.equal(asked.owed?.heldUntil ?? null, null, 'a person\'s ask lifts it');
+    assert.equal(asked.backoff, null, 'and the back-off with it');
+    assert.equal(calls(request.WORK.look).length, looksBefore + 1, 'so it is looked at at once');
+    assert.equal((await row(app2.id, 112))?.held_reason ?? null, null, 'and its reason with it');
     work.answer.set(request.WORK.look, { outcome: 'done' });
   });
 
