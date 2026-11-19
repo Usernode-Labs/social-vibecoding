@@ -932,10 +932,14 @@ slot no other read holds while it runs, three builds per project.
   an hour, ended by a look that ran; the bot's weekly cap a minute at a time; GitHub's
   hourly budget nearly used up (`services/github-budget.js`: a look, a build's start, the
   refresh or a sweep found it so, reading nothing), with no grant and no refresh until it
-  resets, then a full refresh; OpenRouter's credit run out (a turn's 402 for credit,
-  `Released` with `credit`), with no grant until the credit sweep finds it back
-  (`services/openrouter-credit.js sweep` → `CreditBack`). That `CreditBack` also tells every
-  person's `bot-dm` that kept a message for credit (its `CreditBack`, below). A request an
+  resets, then a full refresh; OpenRouter's credit run out, with no grant while the one stored outage stands. That
+  pause is a level, not an event: the lane reads the outage on every pass (`bot-lane/facts.ts`
+  `credit`, from the platform setting `services/openrouter-credit.js` keeps and every turn
+  reports to with `noteOutage`), keeps a copy in its data only to know when a pause has just
+  lifted, and while one stands looks again every two minutes. The pass that finds the outage
+  gone grants again and tells every person's `bot-dm` that kept a message for credit (its
+  `CreditBack`, below). The credit sweep's `CreditBack` is only a wake-up, sent after the
+  cleared state is stored; nothing depends on it arriving. A request an
   admin must look at (its instance flagged) holds no slot.
 - **The refresh** (`bot.refresh`) every five minutes, and 20 seconds after a project is asked
   for (a person wrote on an idle request, a merge, a settings change), at once for a first
