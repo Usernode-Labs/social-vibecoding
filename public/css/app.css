@@ -29821,11 +29821,44 @@ html.side-panel-resizing :is(.split-handle, .side-panel-divider)::before { opaci
 body:has(.dev-ws-side) :is(#dev-main-pause-notice, #dev-release-stall-notice, #dev-code-pause-notice) {
   max-width: calc(var(--dev-ws-side-list-w) + 24px);
 }
-/* What scrolls up past the pill fades out above it instead of showing as a
-   cut line of text in the gap over the pill. */
-html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-scroll {
-  -webkit-mask-image: linear-gradient(to bottom, transparent 0, transparent 4px, #000 calc(var(--pill-top) + 22px));
-  mask-image: linear-gradient(to bottom, transparent 0, transparent 4px, #000 calc(var(--pill-top) + 22px));
+/* THE CARDS GO UNDER THE PILL AND UNDER THE REPLY BOX, AND NO FURTHER
+   (19 Nov 2026). What scrolls up is cut at the pill's middle: the pill
+   covers it from there, so a card slides into the round of the pill's
+   lower ends and nothing shows in the gap over the pill or round its upper
+   ends. It used to fade out across that gap, so the top of a card stayed
+   in sight over the pill and on both sides of it. The rule names
+   `#gc-thread-scroll` because the looks' own fade (`html[data-skin] …
+   #gc-thread-scroll`, two ids) outranked the class and showed the most of
+   it in the brand look.
+
+   At the foot, the same in reverse: the scroller runs on under the reply
+   box's card by the card's corner radius (`--composer-tuck`, the rule
+   below), so the cards reach into the round of its upper corners. They
+   used to stop on a line at its top edge, with the page showing in both
+   corners, as if they ended short of it. The second layer of the mask
+   shows that strip only across the card: the bar's 12px each side, and on
+   a wide page the timeline's column at its end (`--composer-end`), where
+   no card covers it. A card wider than the reply box (the full page's) is
+   still cut at the box's top edge beside it. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) #gc-thread-scroll {
+  --pill-cut: calc(var(--pill-top) + var(--pill-h) / 2);
+  -webkit-mask-image: linear-gradient(to bottom, transparent var(--pill-cut), #000 var(--pill-cut)), linear-gradient(#000, #000);
+  mask-image: linear-gradient(to bottom, transparent var(--pill-cut), #000 var(--pill-cut)), linear-gradient(#000, #000);
+  -webkit-mask-size: 100% calc(100% - var(--composer-tuck, 0px)), calc(100% - 24px - var(--composer-end, 0px)) var(--composer-tuck, 0px);
+  mask-size: 100% calc(100% - var(--composer-tuck, 0px)), calc(100% - 24px - var(--composer-end, 0px)) var(--composer-tuck, 0px);
+  -webkit-mask-position: 0 0, calc(12px + var(--composer-end, 0px) * (1 - var(--rtl-sign)) / 2) 100%;
+  mask-position: 0 0, calc(12px + var(--composer-end, 0px) * (1 - var(--rtl-sign)) / 2) 100%;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+/* The foot's padding grows by what the scroller does, so the newest reply
+   still ends 12px over the card. Only while nothing stands between the
+   scroller and the card (nobody typing, no reply, attachment or error over
+   it); the card is opaque in both looks, so what runs under it is hidden. */
+html:is(:not([data-skin]), [data-skin="brand"]) #dev-topic-thread .dev-request:has(.dev-thread-card) .dev-request-sheet:has(> .chat-status:empty + .messages-composer > .messages-composer-card):not(:has(> .messages-composer > :is(#gc-thread-reply-preview:not(.hidden), .dc-attach-error:not(.hidden), .dc-attach-strip:not(:empty)))) > #gc-thread-scroll {
+  --composer-tuck: 22px;
+  margin-bottom: calc(-1 * var(--composer-tuck));
+  padding-bottom: calc(12px + var(--composer-tuck)) !important;
 }
 /* The handle between the card and the timeline: only on a wide page, where
    the timeline stands beside the card (the 1180px block above). */
@@ -30026,6 +30059,9 @@ html.in-side-panel.side-panel-beside-ai .dev-thread-kicker { display: none; }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) {
     --thread-rail-w: 332px;
     --thread-rail-gap: 20px;
+    /* The reply box ends where the card does (below); the scroller's foot
+       under it reads this. */
+    --composer-end: calc(var(--thread-rail-w) + var(--thread-rail-gap));
     max-width: 1132px;
   }
   html:is(:not([data-skin]), [data-skin="brand"]):not(.in-side-panel) .gc-tab-body:not(:has(> .gc-spec-side-panel-open)) #dev-topic-thread:not(.dev-ws-side-page) .dev-request:has(.dev-request-rail:not(:empty)) .dev-request-scroll {
