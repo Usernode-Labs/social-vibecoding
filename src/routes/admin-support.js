@@ -38,6 +38,7 @@ const {
 } = require('../services/bounties');
 const { ACTIVITY_SELECT, formatActivityRow } = require('./topochain/admin/user-activities');
 const { iso, num } = require('./topochain/helpers');
+const { activityTimePrecision } = require('../services/topochain/activity-time');
 
 const SEARCH_LIMIT = 20;
 const PAGE = 50;
@@ -206,7 +207,8 @@ function timelineArms(type) {
     arms.push(`
       SELECT ua.activity_at AS at, 'points' AS kind, ua.source AS type, ua.points AS points,
              COALESCE(c.goal, ct.goal, ua.description, ua.activity_type) AS title,
-             se.name AS detail, NULL::text AS app_name, NULL::text AS app_slug
+             se.name AS detail, NULL::text AS app_name, NULL::text AS app_slug,
+             ua.metadata AS meta
         FROM user_activities ua
         JOIN season_events se ON se.id = ua.season_event_id
         LEFT JOIN challenges c ON c.id = ua.challenge_id
@@ -215,14 +217,14 @@ function timelineArms(type) {
   }
   if (want('kudos')) {
     arms.push(`
-      SELECT pk.created_at, 'kudos', 'kudos_given', NULL::numeric, cs.pr_title, au.username, a.name, a.slug
+      SELECT pk.created_at, 'kudos', 'kudos_given', NULL::numeric, cs.pr_title, au.username, a.name, a.slug, NULL::jsonb
         FROM pr_kudos pk
         JOIN chat_sessions cs ON cs.id = pk.session_id
         LEFT JOIN users au ON au.id = cs.user_id
         LEFT JOIN apps a ON a.id = cs.app_id
        WHERE pk.giver_user_id = $1`);
     arms.push(`
-      SELECT pk.created_at, 'kudos', 'kudos_received', NULL::numeric, cs.pr_title, g.username, a.name, a.slug
+      SELECT pk.created_at, 'kudos', 'kudos_received', NULL::numeric, cs.pr_title, g.username, a.name, a.slug, NULL::jsonb
         FROM pr_kudos pk
         JOIN chat_sessions cs ON cs.id = pk.session_id
         LEFT JOIN users g ON g.id = pk.giver_user_id
@@ -230,13 +232,13 @@ function timelineArms(type) {
        WHERE cs.user_id = $1`);
     arms.push(`
       SELECT ib.created_at, 'kudos', 'bounty_pledged', NULL::numeric,
-             'Issue #' || ib.github_issue_number, ib.status, a.name, a.slug
+             'Issue #' || ib.github_issue_number, ib.status, a.name, a.slug, NULL::jsonb
         FROM issue_bounties ib
         LEFT JOIN apps a ON a.id = ib.app_id
        WHERE ib.giver_user_id = $1`);
     arms.push(`
       SELECT ib.awarded_at, 'kudos', 'bounty_awarded', NULL::numeric,
-             'Issue #' || ib.github_issue_number, g.username, a.name, a.slug
+             'Issue #' || ib.github_issue_number, g.username, a.name, a.slug, NULL::jsonb
         FROM issue_bounties ib
         LEFT JOIN users g ON g.id = ib.giver_user_id
         LEFT JOIN apps a ON a.id = ib.app_id
@@ -245,7 +247,7 @@ function timelineArms(type) {
   if (want('proposals')) {
     arms.push(`
       SELECT e.created_at, 'proposals', e.event_type, NULL::numeric,
-             cs.pr_title, COALESCE(e.metadata->>'prNumber', e.metadata->>'vote'), a.name, a.slug
+             cs.pr_title, COALESCE(e.metadata->>'prNumber', e.metadata->>'vote'), a.name, a.slug, NULL::jsonb
         FROM events e
         LEFT JOIN chat_sessions cs ON cs.id = e.session_id
         LEFT JOIN apps a ON a.id = e.app_id
@@ -254,14 +256,14 @@ function timelineArms(type) {
   if (want('account')) {
     arms.push(`
       SELECT e.created_at, 'account', e.event_type, NULL::numeric,
-             e.metadata->>'from', e.metadata->>'to', a.name, a.slug
+             e.metadata->>'from', e.metadata->>'to', a.name, a.slug, NULL::jsonb
         FROM events e
         LEFT JOIN apps a ON a.id = e.app_id
        WHERE e.user_id = $1 AND e.event_type = ANY('{${ACCOUNT_EVENT_TYPES.join(',')}}'::text[])`);
     arms.push(`
       SELECT ue.registered_at, 'account', 'enrolled', NULL::numeric,
              COALESCE(se.name, s.name), CASE WHEN ue.season_event_id IS NULL THEN 'season' ELSE 'event' END,
-             NULL::text, NULL::text
+             NULL::text, NULL::text, NULL::jsonb
         FROM user_enrollments ue
         JOIN seasons s ON s.id = ue.season_id
         LEFT JOIN season_events se ON se.id = ue.season_event_id
@@ -501,7 +503,7 @@ function adminSupportRoutes(config) {
     try {
       const arms = timelineArms(type);
       const { rows } = await pool.query(
-        `SELECT * FROM (${arms.join('\n UNION ALL \n')}) AS t(at, kind, type, points, title, detail, app_name, app_slug)
+        `SELECT * FROM (${arms.join('\n UNION ALL \n')}) AS t(at, kind, type, points, title, detail, app_name, app_slug, meta)
           WHERE t.at IS NOT NULL AND ($2::timestamptz IS NULL OR t.at < $2)
           ORDER BY t.at DESC
           LIMIT $3`,
@@ -515,6 +517,8 @@ function adminSupportRoutes(config) {
         title: r.title,
         detail: r.detail,
         app: r.app_slug ? { name: r.app_name, slug: r.app_slug } : null,
+        // Only a points row is a challenge activity, which may be day-only.
+        precision: r.kind === 'points' ? activityTimePrecision({ metadata: r.meta }) : null,
       }));
       res.json({ items, nextBefore: items.length === PAGE ? items[items.length - 1].at : null });
     } catch (err) {

@@ -5,6 +5,7 @@ import type { FormEvent } from 'react';
 
 import { AdminUI } from './admin-console.js';
 import { DetailCard, Row, fmtDate, fmtDateTime, orDash } from './admin-detail-parts.tsx';
+import { fmtActivityAt } from './activity-at.ts';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { fetchJson, send } from './topochain/api.ts';
 
@@ -494,7 +495,7 @@ function PointsHistory({ userId, events, canWrite, version, onChanged }: {
                         {activityTitle(a.points, a.challenge?.goal || a.description)}
                       </div>
                       <div className={SMALL_MUTED}>
-                        {[fmtDateTime(a.activity_at), a.event?.name, SOURCE_LABEL[a.source] || a.source,
+                        {[fmtActivityAt(a.activity_at, a.activity_time_precision, fmtDateTime, 'en-GB'), a.event?.name, SOURCE_LABEL[a.source] || a.source,
                           a.added_by_user?.name ? `by ${a.added_by_user.name}` : ''].filter(Boolean).join(' · ')}
                       </div>
                       {a.source === 'support_adjustment' && a.metadata?.reason && a.challenge?.goal
@@ -808,7 +809,7 @@ function TimelineCard({ userId, version }: { userId: number; version: number }) 
               <li key={`${it.at}-${it.type}-${i}`} className="py-2">
                 <div className="text-sm text-zinc-900 dark:text-zinc-100 break-words">{timelineLine(it)}</div>
                 <div className={SMALL_MUTED}>
-                  {[fmtDateTime(it.at), it.kind === 'points' ? it.detail : '', appText(it.app),
+                  {[fmtActivityAt(it.at, it.precision, fmtDateTime, 'en-GB'), it.kind === 'points' ? it.detail : '', appText(it.app),
                     it.kind === 'points' ? (SOURCE_LABEL[it.type] || it.type) : ''].filter(Boolean).join(' · ')}
                 </div>
               </li>
