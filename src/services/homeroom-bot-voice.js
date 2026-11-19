@@ -1249,16 +1249,6 @@ async function runTurn(pool, config, { appId, place, through = 0, sorry = false,
 // What a turn says when it could not answer at all (Q3: once, where it was asked).
 const SORRY_TEXT = 'Sorry, I couldn\'t answer that just now. Ask me again in a bit.';
 
-/** The newest message in `place`, or 0. */
-async function newestIn(pool, { app, place }) {
-  const thread = threadOf(place);
-  const { rows } = thread
-    ? await pool.query(
-      'SELECT MAX(id) AS id FROM chat_messages WHERE app_id = $1 AND thread_type = $2 AND thread_ref = $3', [app.id, thread.type, thread.ref])
-    : await pool.query('SELECT MAX(id) AS id FROM chat_messages WHERE app_id = $1 AND thread_type IS NULL', [app.id]);
-  return Number(rows[0]?.id) || 0;
-}
-
 /** Pure: the key a turn's reply is said once by (bot-post.js). */
 function replyKey(app, place, turnKey) {
   const botPost = require('./bot-post');

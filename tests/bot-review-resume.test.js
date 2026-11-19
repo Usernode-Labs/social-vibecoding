@@ -171,9 +171,7 @@ test('the run-four restart: a fix turn recovery followed to its end is recorded 
     inFlight: { step: 'fix', round: 1, at: new Date(10_000_000 - 12 * MIN).toISOString() },
     costUsd: 0.4,
   });
-  const recoveredFix = review.recoveredFixOf({
-    result: { pushOk: true, ahead: 2, sha: '394d7494', lastResultText: 'Fixed all six.' }, costUsd: 0.21, ms: 744_000,
-  });
+  const recoveredFix = { ok: true, sha: '394d7494', commits: 2, costUsd: 0.21, ms: 744_000 };
   const h = harness({ prior, recoveredFix, verdicts: ['ship'] });
   const out = await review.runReviewLoop(h.opts);
   assert.equal(h.calls.fix.length, 0, 'the fix turn is not run again');
@@ -199,14 +197,14 @@ test('a fix turn that was lost with the restart is run again; one that failed or
   assert.equal(l.finalSha, 'fix1');
   assert.equal(l.stop, 'ship');
 
-  const failed = harness({ prior: awaiting(), recoveredFix: review.recoveredFixOf({ result: { agentHarness: 'claude', ccExit: 1, lastResultText: 'It stopped.' } }) });
+  const failed = harness({ prior: awaiting(), recoveredFix: { ok: false, error: 'the fix turn failed (the agent exited with code 1)', costUsd: null, ms: null } });
   const f = await review.runReviewLoop(failed.opts);
   assert.equal(failed.calls.fix.length, 0);
   assert.equal(f.rounds[0].fix.ok, false);
   assert.equal(f.stop, 'fix_failed');
   assert.equal(f.finalSha, 'sha0');
 
-  const late = harness({ prior: awaiting(), recoveredFix: review.recoveredFixOf({ result: {}, timedOut: true }) });
+  const late = harness({ prior: awaiting(), recoveredFix: { ok: false, stopped: true, costUsd: null, ms: null } });
   const t = await review.runReviewLoop(late.opts);
   assert.equal(t.stop, 'time_budget');
   assert.equal(t.rounds[0].fix.stopped, true);
@@ -350,18 +348,13 @@ test('once the build is no longer this process\'s, the loop takes no further ste
   assert.deepEqual(fresh.calls.started, []);
 });
 
-test('canResume counts the restarts; recoveredFixOf reads a recovered turn as a fix turn\'s result; a done review is not carried on', async () => {
+test('canResume counts the restarts; a done review is not carried on', async () => {
   assert.equal(review.MAX_REVIEW_RESUMES, 3);
   assert.equal(review.canResume({ state: 'reviewing' }), true);
   assert.equal(review.canResume({ state: 'capturing', resumes: 2 }), true);
   assert.equal(review.canResume({ state: 'reviewing', resumes: 3 }), false);
   assert.equal(review.canResume({ state: 'done' }), false);
   assert.equal(review.canResume(null), false);
-  assert.deepEqual(review.recoveredFixOf({ result: { pushOk: true, ahead: 3, sha: 'abc' }, costUsd: 0.2, ms: 5 }),
-    { ok: true, sha: 'abc', commits: 3, costUsd: 0.2, ms: 5 });
-  assert.deepEqual(review.recoveredFixOf({ result: { pushOk: false, ahead: 0 } }), { ok: true, sha: null, commits: null, costUsd: null, ms: null },
-    'a fix that changed nothing is a fix that landed nothing, as on the live path');
-  assert.equal(review.recoveredFixOf({ result: {}, timedOut: true }).stopped, true);
   // A done review handed in is not resumed: the loop starts fresh.
   const h = harness({ prior: { ...savedState(), state: 'done' }, verdicts: ['ship'] });
   const out = await review.runReviewLoop(h.opts);

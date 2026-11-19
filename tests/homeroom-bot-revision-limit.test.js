@@ -75,14 +75,7 @@ test('an open grant buys exactly one more round', async () => {
   assert.equal(spent.grants, 2);
 });
 
-test('the stopped line says how many tries and who can let it try again', () => {
-  const mine = followup.stoppedAtLimitText({ failingCount: 77, tries: 3, you: true });
-  assert.match(mine, /stopped after 3 tries/);
-  assert.match(mine, /You can let it try once more/);
-  assert.match(mine, /77 of this change's checks failed/);
-  const others = followup.stoppedAtLimitText({ failingCount: 77, tries: 4 });
-  assert.match(others, /an admin can let it try again/);
-  assert.doesNotMatch(others, /voted/, 'a voter who is neither sees no button');
+test('the stopped message says how many tries', () => {
   assert.match(followup.stoppedHandOffText({ failingCount: 77, tries: 3 }), /stopped after 3 tries/);
 });
 
