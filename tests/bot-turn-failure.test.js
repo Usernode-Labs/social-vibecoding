@@ -138,6 +138,19 @@ test('B6: a first version\'s one automatic retry is not spent on a build that st
   assert.equal(bot.autoRetryable({ ...failed, creditOut: true }), false, 'one that met the 402 waits for credit instead');
 });
 
+test('B1: a plan or build turn is out of credit by its own fields, never by a platform error\'s text', () => {
+  const live = require('../src/services/homeroom-bot-live');
+  assert.equal(live.turnCreditOut({ error: null, result: { lastResultText: '', agentErrorCode: 'insufficient_credits' } }), true);
+  assert.equal(live.turnCreditOut({ error: null, result: { lastResultText: `API Error: 402 ${body(INSUFFICIENT)}` } }), true);
+  assert.equal(live.turnCreditOut({ error: 'insufficient_credits', result: {} }), true);
+  // What used to pause every project: a platform message, or the model's own
+  // reason a plan cannot be built, that happens to hold "402".
+  assert.equal(live.turnCreditOut({ error: 'dispatch: connect ECONNREFUSED 10.0.0.7:402', result: {} }), false);
+  assert.equal(live.turnCreditOut({ error: null, result: { lastResultText: 'Blocked: the 402 page needs a design first.' } }), false);
+  assert.equal(live.turnCreditOut({ error: null, result: { lastResultText: `API Error: 402 ${body(SHORTER)}` } }), false);
+  assert.equal(live.turnCreditOut(null), false);
+});
+
 // ── One stored outage, read as a level ──────────────────────────────────
 
 function settingsPool() {
