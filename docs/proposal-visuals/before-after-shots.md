@@ -1377,8 +1377,8 @@ Still open:
   corner is half clipped. Crops too small to read (under 120×40 px) no
   longer lead the card; the screen shots do.
 - Shots are 1× unless a run is taken at device density
-  (`services/shots-density.js`). The worker runs Playwright MCP 0.0.85 and
-  its own Chromium (Chrome for Testing 158), with the image's patch
+  (`services/shots-density.js`). The worker runs Playwright MCP 0.0.86 and
+  its own Chromium (Chrome for Testing 159), with the image's patch
   (`worker/patch-playwright-mcp.js`): upstream answers an action with a link
   to a snapshot file and a named screenshot without its image, which the
   shots agent, having no file tools, could not read. An element is named by

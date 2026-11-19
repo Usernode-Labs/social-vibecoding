@@ -32,7 +32,7 @@ const NETWORK = 'usernode-net';
 const DUMP = '/tmp/shots-dry-run.dump';
 const PORTS = Object.freeze({ base: 4101, head: 4102 });
 const ORIGINS = Object.freeze({ base: 'http://127.0.0.1:4101', head: 'http://localhost:4102' });
-const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.85';
+const PLAYWRIGHT_MCP = '@playwright/mcp@0.0.86';
 
 function usage() {
   return `Usage: npm run shots:pair -- up --before SHA --after SHA [options]
