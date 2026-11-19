@@ -157,10 +157,65 @@ test('a full server blocks creation like a spent allowance, and both shots pin t
   assert.equal(mod.serverBinds({ used: 3, limit: null, remaining: null }, { used: 10, limit: 50, remaining: 40, full: false }), true);
   assert.equal(mod.serverBinds(QUOTA, null), false);
   const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../frontend/src/features/dialogs/app-allowance.tsx'), 'utf8');
-  assert.match(src, /const blocked = spent \|\| serverFull;/);
+  // #6842: blocked is what the reason rule says, not a separate guess.
+  assert.match(src, /const reason = blockedReason\(quota, server\);\s*const blocked = reason !== null;/);
+  // #6842: the pin rides beside the make screen's own shot (?shot=make).
+  assert.match(src, /if \(shots\.includes\('no-app-slots'\)\) \{\s*quota = \{ used: 0, limit: 0, remaining: 0 \};\s*server = null;/);
   // ?shot=create-quota keeps the #1611 check deterministic on a full server.
   assert.match(src, /shot === 'create-quota'\) \{\s*quota = \{ used: 1, limit: 2, remaining: 1 \};\s*server = null;/);
   assert.match(src, /shot === 'create-server-full'\) \{\s*quota = \{ used: 0, limit: 2, remaining: 2 \};\s*server = \{ used: 50, limit: 50, remaining: 0, full: true \};/);
+});
+
+// ── #6842: which limit it is ─────────────────────────────────────
+
+test('the server and the client agree on which limit blocks creation, in the same order', () => {
+  const { mod } = renderPanel({ quota: QUOTA, server: null });
+  const full = { used: 50, limit: 50, remaining: 0, full: true };
+  const roomy = { used: 10, limit: 50, remaining: 40, full: false };
+  const cases = [
+    // [quota, server, expected]
+    [{ used: 0, limit: 2, remaining: 2 }, null, null],
+    [{ used: 0, limit: 2, remaining: 2 }, roomy, null],
+    [{ used: 7, limit: null, remaining: null }, full, null],
+    [{ used: 0, limit: 2, remaining: 2 }, full, 'server'],
+    [{ used: 2, limit: 2, remaining: 0 }, null, 'slots'],
+    [{ used: 0, limit: 0, remaining: 0 }, null, 'no_slots'],
+    [{ used: 0, limit: 0, remaining: 0 }, full, 'no_slots'],
+    [{ used: null, limit: 2, remaining: null }, null, null],
+  ];
+  for (const [quota, server, expected] of cases) {
+    assert.equal(allowance.blockedBy(quota, server), expected, `server ${JSON.stringify([quota, server])}`);
+    assert.equal(mod.blockedReason(quota, server), expected, `client ${JSON.stringify([quota, server])}`);
+  }
+  // The reason is read off the allowance, after the server when it is there.
+  assert.equal(allowance.blockedBy({ used: 0, limit: 2, remaining: 2 }, null), null);
+});
+
+test('an account with no app slots says so, never "0 of 0 app slots used"', () => {
+  const none = { used: 0, limit: 0, remaining: 0 };
+  const { html, mod } = renderPanel({ quota: none, server: null });
+  assert.match(html, /data-quota-state="no-slots"/);
+  assert.match(html, />No app slots yet</);
+  assert.match(html, /This account can(?:&#x27;|')t make projects of its own yet\. An admin can give it app slots\./);
+  assert.match(html, /Request more/, 'the way to ask stays');
+  assert.doesNotMatch(html, /0 of 0/);
+  assert.doesNotMatch(html, /No app slots free/);
+  // The panel's summary and the profile's App slots row share the words.
+  assert.equal(mod.quotaHeadline(none), 'No app slots yet');
+  assert.equal(mod.appSlotsLine(none, null), 'No app slots yet');
+  assert.equal(mod.appSlotsLine(none, '2026-10-03T10:00:00Z'), 'No app slots yet');
+  // The account's own reason wins while the whole server is also full.
+  const both = renderPanel({ quota: none, server: { used: 50, limit: 50, remaining: 0, full: true } }).html;
+  assert.match(both, /data-quota-state="no-slots"/);
+  assert.match(both, />No app slots yet</);
+  assert.doesNotMatch(both, />Server is full</);
+  assert.doesNotMatch(both, /create-app-quota-server/);
+  assert.match(both, /Request more/);
+  // A spent allowance keeps the card's own wording and red line.
+  const spent = renderPanel({ quota: { used: 2, limit: 2, remaining: 0 }, server: null }).html;
+  assert.match(spent, /data-quota-state="spent"/);
+  assert.match(spent, /2 of 2 app slots used/);
+  assert.doesNotMatch(spent, /No app slots yet/);
 });
 
 // ── #23: quiet in the create dialog ──────────────────────────────

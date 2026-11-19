@@ -443,6 +443,10 @@
     "text": "No app limit",
     "description": "Summary at the right of the allowance box for an account that may create any number of apps, when how many it has is not known."
   },
+  "allowance.headline.noSlots": {
+    "text": "No app slots yet",
+    "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account that has no app slots at all: it cannot make projects of its own yet, either because it is still waiting to be let in or because an admin set its allowance to zero. Never for an account that simply used up its slots."
+  },
   "allowance.headline.usedNoLimit_one": {
     "text": "{{count}} app made · no limit",
     "description": "Summary at the right of the allowance box, and the App slots row's line on the profile, for an account with no limit. {{count}} is how many apps it has made, imported or made a version of. Keep the middle dot as a separator."
@@ -502,6 +506,10 @@
   "allowance.detail.admin": {
     "text": "Admin accounts can create apps without a slot limit.",
     "description": "Explanation in the allowance box for an administrator's account, which has no limit on apps."
+  },
+  "allowance.detail.noSlots": {
+    "text": "This account can't make projects of its own yet. An admin can give it app slots.",
+    "description": "Explanation in the allowance box for an account that has no app slots at all, above the \"Request more\" button."
   },
   "allowance.detail.unavailable": {
     "text": "Current usage is unavailable.",

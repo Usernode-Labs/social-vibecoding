@@ -123,6 +123,8 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       const third = await request('POST', '/api/apps', { name: 'Third app' });
       assert.equal(third.status, 403);
       assert.equal(third.data.code, 'app_allowance_exhausted');
+      assert.equal(third.data.reason, 'slots', 'spent slots are named as such (#6842)');
+      assert.match(third.data.error, /You have used 2 of 2 app slots\./);
       assert.deepEqual(third.data.quota, { used: 2, limit: 2, remaining: 0 });
       const thirdFork = await request('POST', `/api/apps/${first.data.app.slug}/fork`, { name: 'Third fork' });
       assert.equal(thirdFork.status, 403);
@@ -130,6 +132,35 @@ test('app allowances: migration, create/fork, requests and admin review', async 
       assert.equal((await allowance.read(pool, alice)).quota.remaining, 1);
       await client.query('DELETE FROM apps WHERE id = $1', [first.data.app.id]);
       assert.equal((await allowance.read(pool, alice)).quota.remaining, 2);
+    });
+
+    // #6842: a person who has never made an app was refused with "You have
+    // used 0 of 0 app slots". An account with no slots at all (still waiting
+    // to be let in, or set to zero by an admin) is told that instead.
+    await t.test('an account with no app slots is told so, not that it used them all', async () => {
+      await client.query(`INSERT INTO users (id, username, app_quota, is_admin, admin_readonly, has_platform_access, private_member_since)
+        VALUES (7, 'nomad', 0, FALSE, FALSE, FALSE, NOW()), (8, 'zeroed', 0, FALSE, FALSE, TRUE, NULL)`);
+      const nomad = { id: 7, username: 'nomad', appQuota: 0, isAdmin: false, canAdminWrite: false };
+      const zeroed = { id: 8, username: 'zeroed', appQuota: 0, isAdmin: false, canAdminWrite: false };
+      for (const person of [nomad, zeroed]) {
+        user = person;
+        const parsed = await allowance.read(pool, person);
+        assert.deepEqual(parsed.quota, { used: 0, limit: 0, remaining: 0 }, person.username);
+        assert.equal(parsed.canCreateApps, false);
+        assert.equal(parsed.blockedBy, 'no_slots');
+        const seen = await request('GET', '/api/me/app-allowance');
+        assert.equal(seen.status, 200);
+        assert.equal(seen.data.blockedBy, 'no_slots');
+        const refused = await request('POST', '/api/apps', { name: 'First project' });
+        assert.equal(refused.status, 403, person.username);
+        assert.equal(refused.data.code, 'app_allowance_exhausted');
+        assert.equal(refused.data.reason, 'no_slots');
+        assert.doesNotMatch(refused.data.error, /You have used/);
+        assert.match(refused.data.error, /it has no app slots\. An admin can give it some\./);
+      }
+      user = null;
+      // The later bulk-quota test counts every user it changes.
+      await client.query('DELETE FROM users WHERE id IN (7, 8)');
     });
 
     await t.test('duplicate requests persist once and notify both admin roles', async () => {
