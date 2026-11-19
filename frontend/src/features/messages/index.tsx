@@ -2269,8 +2269,8 @@ function ReplyThreadPanel({ alone = false, onBack = null }: {
       className="messages-reply-pane platform-kb-column dc-lift dc-lift-session"
       style={replyWidth != null ? { '--messages-reply-width': `${replyWidth}px` } as CSSProperties : undefined}
       aria-label={t('messages:replies.paneName')}
-      data-reply-thread={rootId}
       data-bot-sheet={sheet ? '' : undefined}
+      data-reply-thread={rootId}
     >
       {/* #5691: the divider between the chat and this thread, dragged to
           trade room between them (and stepped by the arrow keys). It is
