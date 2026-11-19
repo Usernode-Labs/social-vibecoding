@@ -5587,6 +5587,18 @@ const AppView = {
     // the awaited openTopic callers are not held by the fallback itself.
     const onMiss = () => {
       concluded = true;
+      // The native-offline follow-up (19 Nov 2026): with the shell offline,
+      // a read that found nothing had no answer, which is not "no such
+      // item". The page keeps its skeleton, says once that it is not saved
+      // on this phone yet, and opens when Homeroom answers again, rather
+      // than dropping the reader on the Workshop.
+      if (AppView._noAnswerNow()) {
+        note('failure', { errorCode: 'offline' });
+        AppView._dropTopicSwap();
+        AppView._openChangeWhenOnline(content, ref, AppView._devTopic);
+        finish();
+        return;
+      }
       note('failure', { errorCode: 'not_found' });
       AppView._dropTopicSwap();
       // Missing ref (an issue GitHub no longer serves, archived session, bad
@@ -5846,17 +5858,33 @@ const AppView = {
     }
   },
 
-  // A change address that could not be looked up (CHANGE_UNREACHABLE): the
-  // page keeps its skeleton, says once that the change was not saved on this
-  // phone, and opens itself when Homeroom answers again — or when the reader
-  // has gone somewhere else, does nothing.
+  // Whether a read with no result had no answer at all: the shell is
+  // offline, or the phone says it has no network.
+  _noAnswerNow() {
+    try {
+      if (window.Offline && Offline.isOffline && Offline.isOffline()) return true;
+      const word = window.__usernodeNativeConnectivity;
+      return !!(word && word.online === false);
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // A page that could not be read offline — a change address whose lookup
+  // had no answer (CHANGE_UNREACHABLE), or an item whose own read had none
+  // (_renderTopicSubView's miss): the page keeps its skeleton, says once
+  // that it was not saved on this phone, and opens itself when Homeroom
+  // answers again — or when the reader has gone somewhere else, does
+  // nothing.
   _openChangeWhenOnline(content, ref, pending) {
-    // Said once per change, however many times it is asked again.
-    const key = `${App.currentApp || ''}:${ref && ref.pr}`;
+    // Said once per page, however many times it is asked again.
+    const key = `${App.currentApp || ''}:${ref && ref.kind}:${ref && (ref.pr || ref.id)}`;
     if (AppView._changeWaitSaid !== key) {
       AppView._changeWaitSaid = key;
+      const words = ref && (ref.kind === 'issue' || ref.kind === 'gov')
+        ? 'changes:page.notSavedYetThread' : 'changes:page.notSavedYet';
       try {
-        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t('changes:page.notSavedYet'));
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t(words));
       } catch (_) { /* the header's status still says why */ }
     }
     let timer = null;
