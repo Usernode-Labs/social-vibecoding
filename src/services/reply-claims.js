@@ -574,13 +574,16 @@ function planCardOther(sentence, { appName = '', appSlug = '', title = '' } = {}
 }
 
 /**
- * #6566: the receipt a report's own reply may carry ("Filed as #6564 on
- * Homeroom's requests board"), accepted only for the number this turn filed.
+ * #6566: the receipt a report's own reply may carry ("Filed as #6564 in
+ * Homeroom's Workshop"), accepted only for the number this turn filed.
  */
 function receiptPhrases(ctx) {
   const number = Number(ctx?.reported?.number);
   if (!Number.isInteger(number) || number <= 0) return null;
-  return new RegExp(`(?:Already )?[Ff]iled as #${number} on Homeroom['’]s requests board`, 'i');
+  // "in Homeroom's Workshop" is what it says now (the chat's own naming
+  // rule: never a "board"); the older wording is still what a reply written
+  // from an earlier message of the thread may repeat.
+  return new RegExp(`(?:Already )?[Ff]iled as #${number} (?:in Homeroom['’]s Workshop|on Homeroom['’]s requests board)`, 'i');
 }
 
 /**
@@ -1141,7 +1144,7 @@ async function unknownRequests(pool, ctx, numbers) {
 const PROJECT_NAME_STOPWORDS = new Set([
   'main chat', 'workshop', 'discover', 'messages', 'home', 'needs you', 'hub', 'all communities', 'settings',
   'homeroom bot', 'the app',
-  // #6566: "on Homeroom's requests board" names the platform, not a project.
+  // #6566: "in Homeroom's Workshop" names the platform, not a project.
   'homeroom', 'homerooms', 'homeroom s',
 ]);
 // A sentence that speaks of a draft, a request or the next one is where a

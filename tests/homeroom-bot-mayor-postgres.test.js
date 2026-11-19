@@ -2405,7 +2405,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       summary: 'A build that never finishes', details: 'My request has been building for hours.', project: 'secret-diary', number: 2,
     });
     assert.equal(hidden.result.ok, true);
-    assert.match(hidden.result.sent, /on Homeroom's requests board, where anyone can read it; the last few messages of this chat went only to the team, privately\.$/);
+    assert.match(hidden.result.sent, /in Homeroom's Workshop, where anyone can read it; the last few messages of this chat went only to the team, privately\.$/);
     const privateBody = posted.at(-1).body;
     assert.match(privateBody, new RegExp(`\\*\\*App:\\*\\* a private project \\(app id ${diary.id}\\)\\n\\*\\*Request:\\*\\* #2\\n`));
     assert.match(privateBody, /My request has been building for hours\./);

@@ -3477,7 +3477,7 @@ async function seedStagingBotReportReply(pool) {
       rootId = root.rows[0].id;
       const filed = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Filed as #6564 on Homeroom''s requests board, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
+         VALUES ($1, $2, 'Filed as #6564 in Homeroom''s Workshop, where anyone can read it; the last few messages of this chat went only to the team, privately.', $3, NOW() - INTERVAL '1 day')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
@@ -3488,7 +3488,7 @@ async function seedStagingBotReportReply(pool) {
       );
       const again = await pool.query(
         `INSERT INTO conversation_messages (conversation_id, sender_id, content, thread_root_id, created_at)
-         VALUES ($1, $2, 'Already filed as #6564 on Homeroom''s requests board. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
+         VALUES ($1, $2, 'Already filed as #6564 in Homeroom''s Workshop. Nothing new was filed.', $3, NOW() - INTERVAL '1 day' + INTERVAL '2 minutes')
          RETURNING id`,
         [conversationId, bot.id, rootId],
       );
