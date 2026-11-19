@@ -25,6 +25,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 
 import { RichMessage, useMessages } from '../../../lib/i18n/react';
+import { changeHref } from '../../../lib/change-href';
 import { PlanCardView, type PlanCardState } from '../../messages/bot-plan-view';
 import { WORK_CHANGED_EVENT } from '../../messages/bot-shared';
 import { PlanCrops } from '../../messages/plan-crops';
@@ -32,9 +33,19 @@ import type { HomeroomBotPlan } from '../../messages/types';
 import { openRequestSpec, type RequestSpecCard } from './request-model';
 
 /** What GET /api/apps/:slug/issues/:number/bot-plan answers (services/homeroom-bot-public-plan.js). */
+/** #6860: waiting for Build it, its build under way, or what became of it. */
+export type RequestPlanState = 'waiting' | 'building' | 'built' | 'live' | 'stopped';
+const PLAN_STATES: readonly string[] = ['waiting', 'building', 'built', 'live', 'stopped'];
+/** What a stopped plan stopped by, in the words the page and the bot's page say (core:work.reason.*). */
+export type RequestPlanReason = 'build_failed' | 'change_closed';
+
 export interface RequestBotPlan {
   runId: number;
-  state: 'waiting' | 'building';
+  state: RequestPlanState;
+  /** For 'stopped': why it stopped, which is the line it draws. */
+  reason: RequestPlanReason | null;
+  /** For 'built' and 'live': the change it made, which the card names and opens. */
+  change: { id: number; number: number | null } | null;
   title: string | null;
   summary: string;
   lines: Array<{ n: number | null; text: string }>;
@@ -50,9 +61,14 @@ export interface RequestBotPlan {
 export function planFromRead(body: unknown): RequestBotPlan | null {
   const plan = (body as { plan?: unknown } | null)?.plan as RequestBotPlan | null | undefined;
   if (!plan || typeof plan !== 'object' || !(Number(plan.runId) > 0)) return null;
-  if (plan.state !== 'waiting' && plan.state !== 'building') return null;
+  if (!PLAN_STATES.includes(plan.state)) return null;
+  const change = plan.change && Number(plan.change.id) > 0
+    ? { id: Number(plan.change.id), number: Number(plan.change.number) > 0 ? Number(plan.change.number) : null }
+    : null;
   return {
     ...plan,
+    change,
+    reason: plan.reason === 'change_closed' ? 'change_closed' : plan.reason === 'build_failed' ? 'build_failed' : null,
     lines: Array.isArray(plan.lines) ? plan.lines.filter((l) => l && typeof l.text === 'string') : [],
     choices: Array.isArray(plan.choices) ? plan.choices : [],
   };
@@ -61,14 +77,36 @@ export function planFromRead(body: unknown): RequestBotPlan | null {
 /** Pure: the card's state, from what the plan waits for. */
 export function planCardState(plan: RequestBotPlan): PlanCardState {
   if (plan.state === 'building') return 'built';
+  // #6860: a settled plan is drawn with its lines and what became of it,
+  // and no Build it: the change was made, or the build stopped.
+  if (plan.state !== 'waiting') return 'closed';
   return plan.changing ? 'changing' : 'open';
+}
+
+/**
+ * Pure (#6860, 19 Nov 2026): the line a settled plan's card draws inside it,
+ * once its build is over: the same words the rest of the request's page says
+ * for it under the title ("Up for a vote", "Live", or why it stopped), and
+ * never "Building it". It wraps, where the line under the title does not.
+ * Null while the plan waits or builds, and when it has no line to draw.
+ */
+export function planSettledLineOf(plan: RequestBotPlan): { id: string } | null {
+  if (plan.state === 'built') return { id: 'project:topic.request.botPlan.settled.vote' };
+  if (plan.state === 'live') return { id: 'project:topic.request.botPlan.settled.live' };
+  if (plan.state === 'stopped') {
+    return { id: plan.reason === 'change_closed'
+      ? 'project:topic.request.botPlan.settled.changeClosed'
+      : 'project:topic.request.botPlan.settled.buildFailed' };
+  }
+  return null;
 }
 
 /**
  * Pure (#6280, 4 Nov 2026): the line under the plan's title, by what the
  * plan waits for. While it waits: who it waits for ("Plan for #N · waiting
  * for you"). Once Build it is pressed: "Plan for #N · building", never
- * "waiting for you". Null when the plan is no longer waiting or building.
+ * "waiting for you". A settled plan says what became of it inside its card
+ * (planSettledLineOf), so it has no line here.
  */
 export function planSubOf(plan: RequestBotPlan, number: number): { id: string; values: Record<string, string> } | null {
   const values = { number: String(number) };
@@ -166,6 +204,7 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
     complicated: true,
   } as HomeroomBotPlan;
   const sub = planSubOf(plan, number);
+  const settled = planSettledLineOf(plan);
   return (
     <div className="dev-request-plan" data-request-plan={planCardState(plan)}>
       <PlanCardView
@@ -174,6 +213,10 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
         state={planCardState(plan)}
         busy={busy}
         building={plan.state === 'building'}
+        // #6860: a settled card says what became of it, in the page's own words.
+        settledLine={settled ? (
+          <p className="messages-bot-answered" role="status" data-request-plan-settled="">{t(settled.id)}</p>
+        ) : undefined}
         onBuild={(answers) => { void build(answers); }}
         onChange={change}
         surface="request"
@@ -192,7 +235,22 @@ export function RequestPlan({ slug, number, specs = [] }: { slug: string; number
             ) : <span>{t('project:topic.request.botPlan.readWhole')}</span>}
           </button>
         ) : null}
-        footer={refused ? <p className="messages-bot-answered" role="status" data-request-plan-refused="">{t(refused)}</p> : null}
+        footer={plan.change || refused ? (
+          <>
+            {plan.change ? (
+              <a
+                className="mt-1 inline-flex h-9 items-center text-[0.9375rem] font-medium text-violet-700 hover:underline dark:text-violet-300"
+                href={changeHref(slug, plan.change.id, plan.change.number)}
+                data-request-plan-change=""
+              >
+                {plan.change.number
+                  ? t('project:topic.request.botPlan.change', { number: String(plan.change.number) })
+                  : t('project:topic.request.botPlan.changeUnnumbered')}
+              </a>
+            ) : null}
+            {refused ? <p className="messages-bot-answered" role="status" data-request-plan-refused="">{t(refused)}</p> : null}
+          </>
+        ) : null}
       />
     </div>
   );

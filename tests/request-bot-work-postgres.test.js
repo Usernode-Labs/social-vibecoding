@@ -247,4 +247,49 @@ test('a request the Homeroom bot is reading or building, by issue, through the r
       listener.close();
     }
   });
+
+  // #6860 (19 Nov 2026): a request's plan card said "Building it" from the
+  // day Build was pressed until the request closed, whatever became of that
+  // build (Gym Tracker #78: built, voted on, set aside, and still
+  // "Building it"). Against real rows: a build under way is building; a
+  // change up for a vote, a change gone (set aside) and a build that
+  // stopped say what became of them; and a newer run of the request, with
+  // no plan of its own, drops the older plan's card.
+  await t.test('#6860: a finished plan reads what became of it, never "building"', async () => {
+    const plan = require('../src/services/homeroom-bot-public-plan');
+    const app = { id: plantPal, slug: 'plant-pal' };
+    const json = JSON.stringify({ complicated: true, bullets: ['Watch the Progress hub'] });
+    const change = async (status, pr) => (await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, session_title, pr_number)
+       VALUES ($1, $2, $3, 'Track bodyweight', $4) RETURNING id`,
+      [plantPal, bot.id, status, pr])).rows[0].id;
+    const ago = '2026-10-27T10:00:00Z';
+    const reading = async (n) => (await plan.readPlan(pool, { app, issueNumber: n })).plan;
+
+    await run(plantPal, 20, { plan: json, go_ahead_at: ago });
+    assert.equal((await reading(20)).state, 'building', 'its own build is under way');
+
+    const upForVote = await change('promoted', 11373);
+    await run(plantPal, 21, { plan: json, go_ahead_at: ago, build_ok: true, proposal_session_id: upForVote });
+    const built = await reading(21);
+    assert.equal(built.state, 'built', 'built, and its change is up for a vote');
+    assert.deepEqual(built.change, { id: upForVote, number: 11373 });
+
+    const gone = await change('archived', 9653);
+    await run(plantPal, 22, { plan: json, go_ahead_at: ago, build_ok: true, proposal_session_id: gone });
+    const aside = await reading(22);
+    assert.equal(aside.state, 'stopped', 'its change closed without merging: set aside');
+    assert.equal(aside.reason, 'change_closed');
+    assert.deepEqual(aside.change, { id: gone, number: 9653 });
+
+    await run(plantPal, 23, { plan: json, go_ahead_at: ago, build_ok: false, build_error: 'the build ran out of steps' });
+    const stopped = await reading(23);
+    assert.equal(stopped.state, 'stopped');
+    assert.equal(stopped.reason, 'build_failed');
+
+    await run(plantPal, 24, { plan: json, go_ahead_at: ago });
+    assert.equal((await reading(24)).state, 'building');
+    await run(plantPal, 24, { verdict: 'failed' });
+    assert.equal(await reading(24), null, 'a newer run of the request, with no plan, drops the older card');
+  });
 });

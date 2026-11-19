@@ -43,6 +43,44 @@ async function newestPlan(pool, appId, issueNumber) {
   return run || null;
 }
 
+/** The request's newest live run, whatever its plan: a newer look of the request. */
+async function newestRun(pool, appId, issueNumber) {
+  const { rows: [run] = [] } = await pool.query(
+    `SELECT id FROM homeroom_bot_runs
+      WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
+      ORDER BY id DESC LIMIT 1`,
+    [appId, issueNumber],
+  );
+  return run || null;
+}
+
+/** The change a run built ([id, status, pr_number]), or null. */
+async function changeOf(pool, sessionId) {
+  const id = Number(sessionId) || 0;
+  if (!id) return null;
+  const { rows: [row] = [] } = await pool.query(
+    'SELECT id, status, pr_number FROM chat_sessions WHERE id = $1',
+    [id],
+  ).catch(() => ({ rows: [] }));
+  return row || null;
+}
+
+/**
+ * Pure (#6860): what became of a plan whose build is over. Its change is
+ * the answer when it has one: up for a vote, live, or gone (set aside). A
+ * build that stopped says so, and one dropped for a newer plan (a skip)
+ * has no card at all. Null when the plan has no card to draw.
+ */
+function settledOf(run, change) {
+  if (change) {
+    if (change.status === 'archived') return { state: 'stopped', reason: 'change_closed' };
+    if (change.status === 'merged') return { state: 'live', reason: null };
+    return { state: 'built', reason: null };
+  }
+  if (/^skipped:/.test(String(run.build_error || ''))) return null;
+  return { state: 'stopped', reason: 'build_failed' };
+}
+
 /**
  * Whether a newer look of the request is queued or running since the plan
  * was put up: somebody asked for a change to it (a reply on the request),
@@ -85,15 +123,39 @@ function choicesOf(plan) {
 /**
  * The plan on a request, as its page draws it for `viewer` (a signed-in
  * user, or null): { plan: null } when there is none, else { plan: { runId,
- * state, title, summary, lines, choices, spec, requester, mine, changing } }.
- * `state` is 'waiting' (for Build it) or 'building' (gone ahead with).
+ * state, reason, change, title, summary, lines, choices, spec, requester,
+ * mine, changing } }.
+ *
+ * `state` is 'waiting' (for Build it), 'building' (its build is under way),
+ * or what became of the plan once its build is over: 'built' (its change is
+ * up for a vote), 'live' (its change merged) or 'stopped', with `reason` the
+ * words it stopped by ('build_failed' | 'change_closed'), the same ones the
+ * request's own page and the bot's page say. #6860: 'building' is never
+ * read off a press alone — a plan whose build finished, failed or was
+ * dropped is settled, not building — and a newer look of the request
+ * supersedes an older plan outright: no card.
  */
 async function readPlan(pool, { app, issueNumber, viewer = null }) {
   const run = await newestPlan(pool, app.id, issueNumber);
   if (!run) return { plan: null };
-  const waiting = !!run.awaiting_go_at && run.build_ok == null && !run.build_session_id;
-  const state = waiting ? 'waiting' : run.go_ahead_at ? 'building' : null;
-  if (!state) return { plan: null };
+  // #6860: a newer look of the request (a new read, or one that failed)
+  // takes over from this plan: it is not this request's plan any more.
+  const newest = await newestRun(pool, app.id, issueNumber);
+  if (newest && Number(newest.id) > Number(run.id)) return { plan: null };
+  const waiting = !!run.awaiting_go_at && run.build_ok == null && !run.build_session_id && !Number(run.proposal_session_id);
+  const building = run.build_ok == null && !waiting && !Number(run.proposal_session_id)
+    && (!!run.go_ahead_at || !!run.build_session_id);
+  let state = waiting ? 'waiting' : building ? 'building' : null;
+  let reason = null;
+  let change = null;
+  if (!state) {
+    const row = await changeOf(pool, run.proposal_session_id);
+    const settled = settledOf(run, row);
+    if (!settled) return { plan: null };
+    state = settled.state;
+    reason = settled.reason;
+    if (row) change = { id: Number(row.id), number: Number(row.pr_number) || null };
+  }
   const requester = await dm().requesterOf(pool, app.id, issueNumber).catch(() => null);
   const changing = waiting ? await planChanging(pool, app.id, issueNumber, run.awaiting_go_at).catch(() => false) : false;
   let title = null;
@@ -119,6 +181,8 @@ async function readPlan(pool, { app, issueNumber, viewer = null }) {
     plan: {
       runId: Number(run.id),
       state,
+      reason,
+      change,
       title,
       summary: card.summary,
       lines: card.lines,
