@@ -46,7 +46,7 @@ import { StatusPill, TitleContent } from '../card/dev-card';
 import type { StatusPillState } from '../card/model';
 import { normalizeBotTrack } from '../../messages/api';
 import type { BotTrack } from '../../messages/types';
-import { normalizeWorkState, type WorkState } from '../../../lib/work-state';
+import { normalizeWorkState, type Standing, type WorkState } from '../../../lib/work-state';
 import { TrackCard, trackClock, trackEyebrow, trackLinks } from '../../messages/bot-track';
 import { RequestPlan } from './request-plan';
 import type { RequestStatusView, RequestView } from './model';
@@ -837,8 +837,16 @@ export function RequestHead({ r }: { r: RequestView }): ReactNode {
   // One summary for the request and its one change, as the card credits it:
   // the change's own words are not said again under it.
   const covers = cardLook && !editing && summary?.basis === 'change';
-  const cardContext = useMemo(() => ({ card: cardLook, page, covers }), [cardLook, page, covers]);
   const yours = (r.standing as { mine?: boolean } | null | undefined)?.mine !== false;
+  // The request's own stored row, for the foot of its one change
+  // (./thread-changes.tsx): the page is the request's, so that foot says
+  // where the request stands, as the timeline's last step does (requestRail).
+  // A closed request's page says how it ended; its change keeps its own foot.
+  const row = useMemo<Standing | null>(
+    () => (standing && !r.status.closed ? { ...standing, mine: yours } : null),
+    [standing, r.status.closed, yours],
+  );
+  const cardContext = useMemo(() => ({ card: cardLook, page, covers, row }), [cardLook, page, covers, row]);
   const planOpen = openNow?.kind === 'plan' ? specs.find((card) => card.key === openNow.key) || null : null;
   /** One of the ballot's changes, which the card look opens over the card (./thread-changes.tsx LookedChange). */
   const competes = (id: number) => typeof document !== 'undefined' && !!document.querySelector(`#gc-thread-head [data-thread-look="${id}"]`);
