@@ -707,21 +707,6 @@ function planReadout(plan) {
   return screens;
 }
 
-// What planHtml's tech section says its after side is, in either of its two wordings.
-const PLAN_VERSION_RE = /\bafter is version (\d+)(?:, a mockup| of the design)\b/;
-
-/**
- * Pure (#6153): the design version a plan made by planHtml shows as its
- * after side, read back from its words (its HTML or the markdown made from
- * it), or null for any other plan: what Homeroom bot's line in the design
- * thread says it builds from ("building #14 from version 4").
- */
-function planDesignVersion(text) {
-  const match = PLAN_VERSION_RE.exec(String(text || ''));
-  const version = match ? Number(match[1]) : null;
-  return Number.isSafeInteger(version) && version > 0 ? version : null;
-}
-
 // What a design may post from: a thread put away posts nothing.
 const POSTABLE = new Set(['open', 'posted', 'filed']);
 
@@ -847,6 +832,9 @@ async function postDesignPlan(pool, config, {
   const plan = planHtml({
     design, title: named, notes: said, before: before ? before.html : null, after: after.html, version: after.version,
   });
+  // Artifacts, stage 0: the plan's version stores which design it came from
+  // (request-specs.js postRequestSpec), so nothing reads it out of its words.
+  const source = { threadId: design.threadId, version: after.version };
   // A plan the plans would refuse is said before anything is filed.
   const checked = specs.prepareSpec(plan);
   if (!checked.ok) {
@@ -865,6 +853,7 @@ async function postDesignPlan(pool, config, {
     try {
       posted = await specs.postRequestSpec(pool, {
         app, repo: open.repo, issueNumber: n, issueTitle: open.issue.title || null, user, text: plan, webPath: webPath(n),
+        design: source,
       }, deps);
     } catch (err) {
       if (err instanceof specs.SpecError) return { ok: false, status: err.status, error: err.message };
@@ -916,7 +905,7 @@ async function postDesignPlan(pool, config, {
   let planVersion = null;
   try {
     const posted = await specs.postRequestSpec(pool, {
-      app, repo, issueNumber: number, issueTitle: named, user, text: plan, webPath: webPath(number),
+      app, repo, issueNumber: number, issueTitle: named, user, text: plan, webPath: webPath(number), design: source,
     }, deps);
     planVersion = posted.version;
   } catch (err) {
@@ -992,7 +981,6 @@ module.exports = {
   planGap,
   planReadout,
   planHtml,
-  planDesignVersion,
   planTargetOf,
   filedNext,
   postDesignPlan,

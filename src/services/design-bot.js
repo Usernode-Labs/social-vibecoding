@@ -1404,7 +1404,9 @@ async function readPlan(pool, { design, project, html, threads, mayor, deps = {}
       return {
         ok: true, posted: true, number: Number(n),
         planVersion: Number(plan.version) || null,
-        designVersion: threads.planDesignVersion(plan.html),
+        // Artifacts, stage 0: stored on the plan when it was posted from
+        // a design, never read out of its words.
+        designVersion: plan.design?.version || null,
         screens: threads.planReadout(plan.html), gap,
       };
     }

@@ -58,7 +58,6 @@ test('a new-project design\'s plan says it was drawn with Homeroom\'s own styles
   });
   assert.match(html, /a mockup drawn with Homeroom's own stylesheets/);
   assert.doesNotMatch(html, /drawn with the project's stylesheets/);
-  assert.equal(designs.planDesignVersion(html), 3);
   const ofProject = designs.planHtml({
     design: { width: 390, height: 844, title: 'List', route: null, surface: 'app' },
     title: 'List', notes: '', before: null, after: '<main>x</main>', version: 2,
@@ -453,6 +452,79 @@ test('postDesignPlan refuses a plan a script would empty, and posts it when allo
 
   const clean = await postGap('<main><ul><li>One</li><li>Two</li></ul></main>');
   assert.equal(clean.result.ok, true, 'a plan with its rows in the markup posts as before');
+});
+
+// Artifacts, stage 0: a plan knows which design it came from, as stored
+// fields. The regular expression over the plan's words is gone.
+test('a plan made from a design is posted with the design\'s thread and version, and nothing reads them from its words', async () => {
+  const designs = require('../src/services/design-threads');
+  const specs = require('../src/services/request-specs');
+  const { posted, result } = await postGap('<main><ul><li>One</li><li>Two</li></ul></main>');
+  assert.equal(result.ok, true);
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].design.version, result.version, 'the version shown as the plan\'s after side');
+  assert.ok(Number.isSafeInteger(posted[0].design.threadId) && posted[0].design.threadId > 0, 'and the thread that holds the design');
+  assert.equal(designs.planDesignVersion, undefined, 'the reader over the plan\'s words is removed');
+  // What the plans' own store keeps and gives back.
+  assert.deepEqual(specs.designSource({ threadId: '41', version: 3 }), { threadId: 41, version: 3 });
+  for (const bad of [null, {}, { threadId: 41 }, { version: 3 }, { threadId: 0, version: 3 }, { threadId: 41, version: -1 }, { threadId: 41, version: 1.5 }]) {
+    assert.equal(specs.designSource(bad), null);
+  }
+  // The store writes the pair on the plan's version and reads it back.
+  const queries = [];
+  const client = {
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/INSERT INTO chat_sessions/.test(sql)) return { rows: [{ id: 77 }] };
+      if (/INSERT INTO chat_session_specs/.test(sql)) return { rows: [{ version: 1 }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const pool = {
+    connect: async () => client,
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/FROM chat_session_specs s/.test(sql)) {
+        return { rows: [{ session_id: 77, version: 1, content: 'A plan', content_html: null, design_thread_id: '41', design_version: 3, user_id: 9, username: 'evan' }] };
+      }
+      return { rows: [] };
+    },
+  };
+  await specs.postRequestSpec(pool, {
+    app: { id: 5, slug: 'ear' }, repo: null, issueNumber: 18, user: { id: 9, username: 'evan' }, text: '# Plan\n\nWords.',
+    design: { threadId: 41, version: 3 },
+  }, {
+    ws: { sendSystemMessage: async () => null, broadcastToApp() {}, sendToUser() {} },
+    github: {},
+  }).catch(() => null);
+  const insert = queries.find((q) => /INSERT INTO chat_session_specs/.test(q.sql));
+  assert.ok(insert, 'the plan\'s version was written');
+  assert.match(insert.sql, /design_thread_id, design_version\)/);
+  assert.deepEqual(insert.params.slice(-2), [41, 3]);
+  const plan = await specs.personPlanOf(pool, { appId: 5, issueNumber: 18 });
+  assert.deepEqual(plan.design, { threadId: 41, version: 3 });
+});
+
+test('the one-time fill of older plans uses the expression the code read, against the words planHtml writes', () => {
+  const designs = require('../src/services/design-threads');
+  const sql = read('src/db/migrations/plan-design-source.sql');
+  const source = /substring\(sp\.content_html from '([^']+)'\)::int/.exec(sql)?.[1];
+  assert.ok(source, 'the migration reads the version out of the plan\'s words');
+  // PostgreSQL's word boundaries, as JavaScript writes them.
+  const re = new RegExp(source.replace(/\\[mM]/g, '\\b'));
+  const design = { title: 'Home', route: '/', width: 390, height: 844 };
+  const drawn = designs.planHtml({ design, title: 'Design: Home', notes: '', after: '<p>new</p>', version: 4 });
+  const captured = designs.planHtml({ design, title: 'Design: Home', notes: '', before: '<p>was</p>', after: '<p>new</p>', version: 7 });
+  assert.equal(re.exec(drawn)?.[1], '4', 'a screen drawn from words');
+  assert.equal(re.exec(captured)?.[1], '7', 'a captured one, beside version 1');
+  assert.equal(re.exec('A plan a person wrote, version 3 of it.'), null);
+  assert.equal(re.exec('after is version 12345678, a mockup'), null, 'a number too long to be a version is never cast');
+  // Filled once: only rows not filled yet, and columns added if missing.
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS design_thread_id BIGINT;/);
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS design_version INTEGER;/);
+  assert.match(sql, /WHERE sp\.design_version IS NULL/);
+  assert.doesNotMatch(sql, /\bDROP\b|\bRENAME\b/i);
 });
 
 test('the plan card warns that the lists would show empty, and offers to write the rows in first', async () => {

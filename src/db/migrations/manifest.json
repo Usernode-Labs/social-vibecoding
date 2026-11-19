@@ -475,6 +475,11 @@
       "id": "homeroom-bot-run-who-acts",
       "sha256": "eeb7e1c51a7f0ebc6b68d46ad4a3e1f8daa5d6ea4bb32a055bd779185288d000",
       "schemaSha256": "b1ba5d805ef1af6d088ca4a6c89cd6b69ca2169c7a0612f90ede5f664a8c6e22"
+    },
+    {
+      "id": "plan-design-source",
+      "sha256": "76f81d8dea4eb885cff349fc7d39164f342c5070cfce38c4e28bb55928f8983a",
+      "schemaSha256": "19df16ffd70fe0dca8af24164182e29f28fdc7c41f40c7e7fe1b8976d1aeacd7"
     }
   ]
 }

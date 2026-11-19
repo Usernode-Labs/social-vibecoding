@@ -318,7 +318,7 @@ test('read_plan reads a posted plan back from its request, without scripts', asy
   const designs = require('../src/services/design-threads');
   const posted = designs.planHtml({
     design: { width: 390, height: 844, title: 'Homeroom bot page', route: null, surface: 'platform' },
-    title: 'Homeroom bot page', notes: '', before: null, after: '<main><p>Posted words</p></main>', version: 3,
+    title: 'Homeroom bot page', notes: '', before: null, after: '<main><p>Posted words</p></main>', version: 9,
   });
   const read = [];
   const turn = boardTurn([
@@ -327,7 +327,9 @@ test('read_plan reads a posted plan back from its request, without scripts', asy
   ], {
     design: { ...DESIGN, state: 'posted', number: 18 }, current: { version: 4, html: '<main><p>Now</p></main>' },
     planTarget: 18,
-    requestSpecs: { async personPlanOf(_pool, args) { read.push(args); return { version: 2, html: posted }; } },
+    // Artifacts, stage 0: the plan stores the design it came from; the words
+    // of the posted plan (which say another number here) are never read for it.
+    requestSpecs: { async personPlanOf(_pool, args) { read.push(args); return { version: 2, html: posted, design: { threadId: 7, version: 3 } }; } },
   });
   await turn.run;
   assert.deepEqual(read, [{ appId: 3, issueNumber: 18 }], 'the thread\'s request, on its project');
