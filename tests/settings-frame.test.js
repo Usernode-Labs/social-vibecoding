@@ -265,12 +265,12 @@ test('the list stays in view on a desktop while a long section scrolls, and scro
   assert.match(rule[1], /flex-basis: 376px; width: 376px;[^}]*margin: -8px; padding: 8px 8px 24px;/, '8px larger on every side, taken back as margins: a scroller cuts shadows, and the cards keep theirs');
 });
 
-test('a field inside a card has an edge in Pastel and in Paper, said for this screen and not in the looks\' own files', () => {
+test('a field inside a card has an edge in Paper, said for this screen and not in the look\'s own file', () => {
   const FIELD = ':is\\(input, select, textarea\\):not\\(\\[type="checkbox"\\], \\[type="radio"\\], \\[type="file"\\], \\[type="range"\\], \\[type="hidden"\\]\\):not\\(:focus\\)';
   const AT = '#settings-screen #settings-root #settings-section-content :is\\(\\.ui-card, \\.ui-fields\\) ';
-  assert.match(settings, new RegExp(`html\\[data-skin="pastel"\\] ${AT}${FIELD} \\{ background: var\\(--fr-sunk\\); box-shadow: inset 0 0 0 1px var\\(--fr-line\\); \\}`), 'Pastel: what it does on a white sheet');
   assert.match(settings, new RegExp(`html\\[data-skin="paper"\\] ${AT}${FIELD} \\{ background: var\\(--fr-ctl\\); box-shadow: inset 0 0 0 1px color-mix\\(in srgb, var\\(--fr-ink\\) 22%, transparent\\); \\}`), 'Paper: its control tone (white in light) and a ring that shows');
-  for (const look of ['pastel', 'paper']) assert.doesNotMatch(read('frontend/looks', `${look}.css`), /settings/, `${look}.css is not touched`);
+  assert.doesNotMatch(read('frontend/looks', 'paper.css'), /settings/, 'paper.css is not touched');
+  assert.doesNotMatch(settings, /data-skin="pastel"/, 'Pastel had a rule here too, gone with the look (19 Nov 2026)');
 });
 
 test('in Paper a quiet button inside one of this screen\'s cards is the control tone (white in light), as the look says of its own', () => {

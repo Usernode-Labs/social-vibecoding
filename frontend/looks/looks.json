@@ -1,31 +1,10 @@
 {
-  "note": "Read by scripts/build-looks-css.js. order = FRAME_SKINS (frontend/src/lib/skin.ts). Per look: the tour direction it is, the family that leads the document font stack, the font directories under public/fonts whose @font-face it declares, --accent-tint in light and dark (a literal rgba at or under 0.2 alpha: tests/dev-chat-ground.test.js), the opaque --fr-surface for browsers without backdrop-filter (translucent looks only), and the page ground in light and dark when a look has its own page (none of the five does today).",
+  "note": "Read by scripts/build-looks-css.js. order = FRAME_SKINS (frontend/src/lib/skin.ts). Per look: the tour direction it is, the family that leads the document font stack, the font directories under public/fonts whose @font-face it declares, --accent-tint in light and dark (a literal rgba at or under 0.2 alpha: tests/dev-chat-ground.test.js), the opaque --fr-surface for browsers without backdrop-filter (translucent looks only), and the page ground in light and dark when a look has its own page (Paper does not today).",
   "stack": "system-ui,-apple-system,'Segoe UI',sans-serif,'Apple Color Emoji','Segoe UI Emoji','Segoe UI Symbol','Noto Color Emoji'",
   "order": [
-    "glass",
-    "paper",
-    "pastel",
-    "mosaic",
-    "sunrise"
+    "paper"
   ],
   "looks": {
-    "glass": {
-      "letter": "C",
-      "name": "GLASS",
-      "family": "Albert Sans",
-      "faces": [
-        "albert-sans"
-      ],
-      "tint": [
-        "rgba(59,85,230,.12)",
-        "rgba(142,162,255,.16)"
-      ],
-      "opaque": [
-        "#fbfbfd",
-        "#171a2b"
-      ],
-      "ground": null
-    },
     "paper": {
       "letter": "H",
       "name": "PAPER",
@@ -39,68 +18,9 @@
       ],
       "opaque": null,
       "ground": null
-    },
-    "pastel": {
-      "letter": "I",
-      "name": "PASTEL",
-      "family": "DM Sans",
-      "faces": [
-        "dm-sans"
-      ],
-      "tint": [
-        "rgba(79,70,229,.14)",
-        "rgba(154,147,255,.2)"
-      ],
-      "opaque": null,
-      "ground": null
-    },
-    "mosaic": {
-      "letter": "J",
-      "name": "MOSAIC",
-      "family": "Urbanist",
-      "faces": [
-        "urbanist"
-      ],
-      "tint": [
-        "rgba(47,102,240,.13)",
-        "rgba(134,166,255,.16)"
-      ],
-      "opaque": [
-        "#fbfbfd",
-        "#1b1d38"
-      ],
-      "ground": null
-    },
-    "sunrise": {
-      "letter": "K",
-      "name": "SUNRISE",
-      "family": "Plus Jakarta Sans",
-      "faces": [
-        "plus-jakarta-sans"
-      ],
-      "tint": [
-        "rgba(37,99,235,.14)",
-        "rgba(127,168,255,.2)"
-      ],
-      "opaque": null,
-      "ground": null
     }
   },
   "fonts": {
-    "albert-sans": {
-      "family": "Albert Sans",
-      "weight": "300 900",
-      "files": [
-        {
-          "file": "AlbertSans-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "AlbertSans-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
     "instrument-sans": {
       "family": "Instrument Sans",
       "weight": "400 700",
@@ -111,48 +31,6 @@
         },
         {
           "file": "InstrumentSans-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "dm-sans": {
-      "family": "DM Sans",
-      "weight": "100 1000",
-      "files": [
-        {
-          "file": "DMSans-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "DMSans-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "urbanist": {
-      "family": "Urbanist",
-      "weight": "100 900",
-      "files": [
-        {
-          "file": "Urbanist-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "Urbanist-Variable-latin-ext.woff2",
-          "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
-        }
-      ]
-    },
-    "plus-jakarta-sans": {
-      "family": "Plus Jakarta Sans",
-      "weight": "200 800",
-      "files": [
-        {
-          "file": "PlusJakartaSans-Variable.woff2",
-          "range": "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD"
-        },
-        {
-          "file": "PlusJakartaSans-Variable-latin-ext.woff2",
           "range": "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF"
         }
       ]

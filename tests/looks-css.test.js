@@ -34,22 +34,6 @@ test('a kit selector is scoped to any look, a look\'s selector to its own flag',
   assert.equal(looks.mapSelector('.tab.on::after', null).selector, 'html[data-skin] .fr-tab.fr-on::after');
 });
 
-test('Mosaic lays a list out as tiles, never a card of launcher tiles, a list of one-line rows or a form', () => {
-  const mosaic = read('frontend', 'looks', 'mosaic.css');
-  const not = ':not(.list,:has(>.tiles,.row.showall,.row.item,.row.proj,.row.month,.row.th,.row.rk,.tog,.chk))';
-  // Every rule of the mosaic carries the same exceptions: Home's Pinned apps
-  // (tiles, then "Show all N apps") and You's History (an item under its
-  // project's head row) were both laid out as two columns of tiles. The
-  // rows are named at any depth: History's are inside a group per project.
-  // A card holding a switch or a choice is a form: it stays one plain list.
-  const all = mosaic.split('.cols>.stack:first-child .card:has(>.row)').length - 1;
-  assert.ok(all >= 9);
-  assert.equal(mosaic.split(`.cols>.stack:first-child .card:has(>.row)${not}`).length - 1, all);
-  assert.ok(read('public', 'css', 'app.css').includes('html[data-skin="mosaic"] .fr-cols>.fr-stack:first-child .fr-card:has(>.fr-row):not(.fr-list,:has(>.fr-tiles,.fr-row.fr-showall,.fr-row.fr-item,.fr-row.fr-proj,.fr-row.fr-month,.fr-row.fr-th,.fr-row.fr-rk,.fr-tog,.fr-chk)),'));
-  // An odd last tile fills the row, so a group never ends on a hole.
-  assert.ok(mosaic.includes(`.cols>.stack:first-child .card:has(>.row)${not}>.row:last-child:nth-child(odd){grid-column:1/-1}`));
-});
-
 test('on a phone only a card\'s own item rows wrap; a compact list\'s stay one line', () => {
   const css = read('public', 'css', 'app.css');
   assert.ok(css.includes('html[data-skin][data-skin] .fr-row.fr-item:not(.fr-list .fr-row){flex-wrap:wrap;'));
@@ -435,7 +419,7 @@ function topLevel(head) {
 test('every rule of the section starts from a look, and every class and token is the frame\'s', () => {
   const body = section().replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [...body.matchAll(/(?:^|\n)([^@{}\n][^{}]*)\{([^{}]*)\}/g)];
-  assert.ok(rules.length > 900, `the kit and five looks are all there (${rules.length} rules)`);
+  assert.ok(rules.length > 600, `the kit and its one look are all there (${rules.length} rules)`);
   for (const [, head, decls] of rules) {
     for (const sel of topLevel(head)) {
       assert.match(sel, /^html\[data-skin/, `"${sel}" must start from a look`);

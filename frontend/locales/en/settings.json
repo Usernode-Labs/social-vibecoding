@@ -1223,41 +1223,21 @@
     "text": "Paper, simplified, with brand styling",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
   },
-  "experimental.look.glass": {
-    "text": "Glass",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.look.paper": {
     "text": "Paper",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (one white sheet on the wallpaper with quiet grey panels). A proper name; translate it as a short name, not a sentence."
   },
-  "experimental.look.pastel": {
-    "text": "Pastel",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (groups tinted lavender, pink and peach in turn). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.mosaic": {
-    "text": "Mosaic",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (lists drawn as tiles, two across). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.sunrise": {
-    "text": "Sunrise",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.label": {
-    "text": "Design tokens",
-    "description": "Name and tooltip of a second menu beside the Look menu in the header, next to the bell, which admins see only while the Standard (WIP) look is picked: which set of colours and typeface (design tokens) that look is drawn with."
-  },
-  "experimental.wipTokens.current": {
-    "text": "Current",
-    "description": "First option of the Design tokens menu beside the bell (admins, Standard (WIP) look): that look drawn with the colours it has today."
-  },
   "experimental.wipTokens.brand": {
-    "text": "Homeroom brand kit",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): that look drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name."
+    "text": "Homeroom brand kit (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
   },
   "experimental.wipTokens.brand2": {
-    "text": "Homeroom brand kit V2",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): a second, bolder drawing of that look from Homeroom's brand guidelines (a yellow block for what needs you, serif section titles, black and cream). V2 means version two. Homeroom is the product name."
+    "text": "Homeroom brand kit V2 (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with a second drawing from Homeroom's brand guidelines (serif section titles, black and cream). V2 means version two. Homeroom is the product name. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
+  },
+  "experimental.wipTokens.highlighter": {
+    "text": "Highlighter (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with a white page and yellow used like a marker pen. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
     "text": "Try another look for Homeroom, in light and dark. One keeps every page as it is and draws it in the website's colours. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Admins see this menu, and the same one beside the bell, while the rest is drawn. Kept for this browser.",

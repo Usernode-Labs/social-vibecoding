@@ -123,8 +123,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy: it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*(?:<option value="wip:[a-z0-9]+">\{t\('settings:experimental\.wipTokens\.[a-z0-9]+'\)\}<\/option>\s*)+<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard and its work-in-progress copy (listed once per token set since 19 Nov 2026): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -134,7 +134,8 @@ test('settings.js sets it only through the menu, and paints what is stored', () 
   const src = settingsJs();
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch is wired');
   assert.doesNotMatch(src, /'brand' : 'standard'/, 'nothing sets brand but the menu\'s own value');
-  assert.match(src, /window\.Skin\?\.set\?\.\(e\.target\.value \|\| 'standard'\)/, 'the change is the save');
+  // An entry is a look, or Standard (WIP) with one of its token sets ('wip:<set>'): the set is written, then the look.
+  assert.match(src, /const \[look, set\] = String\(e\.target\.value \|\| 'standard'\)\.split\(':'\);\s*if \(look === 'wip'\) window\.Skin\?\.setTokens\?\.\(set \|\| 'current'\);\s*window\.Skin\?\.set\?\.\(look\);/, 'the change is the save');
   assert.match(src, /window\.Skin\?\.onChange\?\.\(/, 'a change in another tab re-paints the menu');
 });
 

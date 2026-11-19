@@ -255,14 +255,8 @@ test('the chrome keeps clear of a phone\'s status bar and home strip', () => {
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar \{\s*position: relative;\s*margin-bottom: var\(--platform-safe-bottom, 0px\);\s*\}/);
   assert.match(css, /html\[data-skin\] \.fr\.fr-shell \.fr-tabbar::after \{[^}]*top: 100%;[^}]*height: var\(--platform-safe-bottom, 0px\);[^}]*background: inherit;/,
     'the tab bar\'s ground fills the home strip');
-  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*margin-bottom: 0;\s*\}/,
-    'a floating tab bar reaches the foot of the screen');
-  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar \{\s*height: calc\(64px \+ var\(--platform-tabs-inset, 0px\)\);\s*padding-bottom: calc\(8px \+ var\(--platform-tabs-inset, 0px\)\);\s*\}/,
-    'and spends the home strip as its own padding, the way #platform-tabs does');
-  assert.match(css, /html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar \{\s*height: calc\(62px \+ var\(--platform-tabs-inset, 0px\)\);\s*padding-bottom: calc\(6px \+ var\(--platform-tabs-inset, 0px\)\);\s*\}/,
-    'Pastel too, at its own height');
-  assert.match(css, /html\[data-skin="glass"\] \.fr\.fr-shell \.fr-tabbar::after,\s*html\[data-skin="pastel"\] \.fr\.fr-shell \.fr-tabbar::after \{ content: none; \}/,
-    'the bar\'s own box fills the strip under it, so the general rule\'s strip is not drawn');
+  // Glass and Pastel floated their tab bar and had rules of their own for it; both looks are gone (19 Nov 2026).
+  assert.doesNotMatch(css, /html\[data-skin="(?:glass|pastel)"\] \.fr\.fr-shell \.fr-tabbar/);
   assert.doesNotMatch(css, /html\[data-skin="pastel"\] \.fr\.fr-app\.fr-shell \{ top:/, 'Pastel\'s top capsule is gone, and the offset it needed with it');
   // --platform-header-h is defined without the inset and the screens add it
   // themselves; --fr-shell-top now includes it, so it is subtracted once.
