@@ -135,14 +135,6 @@
     "text": "View your app allowance or request more slots.",
     "description": "Last sentence of the + tile's tooltip when the viewer has used up the number of apps they may create: what pressing it does instead. A slot is room for one app."
   },
-  "needsCard.seeAllCount_one": {
-    "text": "See all {{count}}",
-    "description": "Link at the end of the heading line of Home's Recent threads card, when the card could not list every thread: opens the notifications sheet's Recent threads list. {{count}} is how many there are in all."
-  },
-  "needsCard.seeAllCount_other": {
-    "text": "See all {{count}}",
-    "description": "Link at the end of the heading line of Home's Recent threads card, when the card could not list every thread: opens the notifications sheet's Recent threads list. {{count}} is how many there are in all."
-  },
   "needsCard.seeAll": {
     "text": "See all",
     "description": "Link at the end of the heading line of Home's Recent threads card: opens the notifications sheet's Recent threads list, every discussion the viewer took part in."
@@ -151,45 +143,29 @@
     "text": "Recent threads",
     "description": "Title of Home's Recent threads card, in the side column: the discussions the viewer took part in, newest activity first. The card opens the same list in the notifications sheet."
   },
-  "needsCard.total_one": {
-    "text": "{{count}} recent thread",
-    "description": "Line under \"Recent threads\" on Home's Recent threads card: how many threads the viewer took part in. Singular."
-  },
-  "needsCard.total_other": {
-    "text": "{{count}} recent threads",
-    "description": "Line under \"Recent threads\" on Home's Recent threads card: how many threads the viewer took part in. Plural."
-  },
-  "needsCard.more_one": {
-    "text": "{{count}} more",
-    "description": "Last row of Home's Recent threads card, beside Pinned apps, when one more thread was there than the column had room to list. Pressing it opens the whole list."
-  },
-  "needsCard.more_other": {
-    "text": "{{count}} more",
-    "description": "Last row of Home's Recent threads card, beside Pinned apps, when more threads were there than the column had room to list. Pressing it opens the whole list."
-  },
   "needsCard.kind.change": {
     "text": "Change #{{number}}",
-    "description": "First, small line of a row on Home's Recent threads card: the thread is a change to a project. {{number}} is its number, like 6800."
+    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a change to a project. {{number}} is its number, like 6800."
   },
   "needsCard.kind.changeBare": {
     "text": "Change",
-    "description": "First, small line of a row on Home's Recent threads card, for a change with no number yet: the thread is a change to a project."
+    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a change to a project that has no number yet."
   },
   "needsCard.kind.request": {
     "text": "Request #{{number}}",
-    "description": "First, small line of a row on Home's Recent threads card: the thread is a request. {{number}} is its number, like 6790."
+    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a request. {{number}} is its number, like 6790."
   },
   "needsCard.kind.requestBare": {
     "text": "Request",
-    "description": "First, small line of a row on Home's Recent threads card, for a request with no number yet: the thread is a request filed on a project."
+    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a request filed on a project that has no number yet."
   },
   "needsCard.kind.decision": {
     "text": "Decision",
-    "description": "First, small line of a row on Home's Recent threads card: the thread is a group decision on how a project is run. It has no number."
+    "description": "The title of a row on Home's Recent threads card, for a thread that has no title of its own: what the thread is. It is a group decision on how a project is run (a vote on a new name, a card picture, and so on)."
   },
   "needsCard.meta": {
     "text": "{{project}} · <0>{{when}}</0>",
-    "description": "Last, small line of a row on Home's Recent threads card: the thread's project, then how long ago something last happened in it. Keep the <0></0> tags around the time. {{project}} is a project's name, like Plant Pal; {{when}} is a time, like 2h ago."
+    "description": "Second, small line of a row on Home's Recent threads card, under the thread's title: the thread's project, then how long ago something last happened in it. Keep the <0></0> tags around the time. {{project}} is a project's name, like Plant Pal; {{when}} is a time, like 2h ago."
   },
   "create.lockedTip": {
     "text": "New project. View app quota. {{hint}}",

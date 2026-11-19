@@ -370,7 +370,8 @@ function ThreadRow({ thread }: { thread: RecentThread }): ReactNode {
       </span>
       <span className="flex-1 min-w-0">
         <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">{kind}</span>
-        <span className="block text-[15px] font-[650] text-zinc-800 dark:text-zinc-100 truncate">{thread.title}</span>
+        {/* A thread with no title of its own is called what it is (services/recent-threads.js). */}
+        <span className="block text-[15px] font-[650] text-zinc-800 dark:text-zinc-100 truncate">{thread.title || kind}</span>
         <span className="block text-[13px] text-zinc-500 dark:text-zinc-400 truncate">
           <RichMessage
             id="notifications:sheet.threads.meta"

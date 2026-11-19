@@ -737,12 +737,11 @@ test('Recent threads stands beside Pinned apps on a wide screen, and is a sidewa
   assert.doesNotMatch(panel, /flex:\s*1 1 auto;/, 'and so is its panel');
   assert.match(card, /flex:\s*none;/);
   assert.match(panel, /flex:\s*none;/);
-  // The last row says how many more there are, in the action's colour.
+  // 19 Nov 2026: no "N more" row; the heading opens the rest.
   assert.doesNotMatch(wide, /nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth any more');
-  const more = at('#home-screen:has(#home-apps-section:not([hidden])) #home-needs-card .wip-row-more').body;
-  assert.match(more, /min-height:\s*3\.25rem;/);
-  assert.match(more, /font-size:\s*15px;\s*font-weight:\s*650;/);
-  assert.match(more, /color:\s*var\(--wip-ink-action\);/);
+  assert.doesNotMatch(block, /#home-needs-card \.wip-row-more/);
+  // The look sets no --wip-cell-pad, so the kit row's padding fell away: a recent thread's row is padded top and bottom.
+  assert.match(block, /@media \(min-width: 768px\) \{\s*html\[data-skin="brand"\][^{]*#home-needs-card \.wip-row \{\s*padding: 0\.5rem 0;/);
   // The launcher grid is repainted, never moved: the card is the box around it.
   assert.match(at('#home-screen:has(#home-needs-card) #home-apps-section:not([hidden]) #app-list').body, /^\s*background-color:\s*transparent;\s*box-shadow:\s*none;\s*$/);
   assert.match(wide, /> \.home-area-label \+ div \{[\s\S]*?background-color:\s*var\(--bl-card\);/);
