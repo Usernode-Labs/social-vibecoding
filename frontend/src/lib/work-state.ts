@@ -242,7 +242,8 @@ function phraseOf(input: unknown): Phrase | null {
   return Object.keys(values).length ? { id: text(row.id), values } : { id: text(row.id) };
 }
 
-function wordsOf(input: unknown): WorkWords | null {
+/** Pure: a row's words as the server sent them (phrasesOf), or null; also read by a card that carries them. */
+export function wordsOf(input: unknown): WorkWords | null {
   const row = recordOf(input);
   const stage = row ? phraseOf(row.stage) : null;
   if (!row || !stage) return null;

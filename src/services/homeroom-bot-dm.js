@@ -2362,7 +2362,7 @@ async function relayIssuePost({
   // thread says, quietly, that it is built and being tested.
   let sendKey = key;
   if (kind === 'proposal' && !ready && hasProposalCard(dm)) {
-    const state = await changeReadiness(pool, dm.sessionId);
+    const state = await changeReadyFacts(pool, dm.sessionId);
     if (state && !state.ready) {
       log.info('homeroom-bot-dm', 'A change is up; its requester hears when it is ready to try', {
         app: app.slug, issueNumber, sessionId: Number(dm.sessionId) || null,
@@ -3293,26 +3293,29 @@ async function waitingPlan(pool, { userId, appId, issueNumber }) {
 // ── Ready to try ─────────────────────────────────────────────────────────
 
 // B4: the check verdicts that make a change ready to try.
-const READY_CHECKS = new Set(['passing', 'skipped']);
-
 /** Pure: the key one change's "ready" is sent once under, per approval epoch. */
 function readyKey(sessionId, epoch) {
   return `hrbot-ready-${Number(sessionId)}-${Number(epoch) || 0}`;
 }
 
 /**
- * B4: whether one of the bot's changes is ready to try: up for approval, with
- * its checks passed or skipped, and its before & after shots on that head
- * settled (shots-state.holdsReady): the shots agent tries what the change
- * says it does, and a change whose main action fails is not offered as
- * ready (Flat 4B Chores, whose "mark as done" answered a 500 on every tap
- * while its checks passed). Resolves { ready, epoch, waitingOnShots, broken,
- * skipped }, `broken` being the declared changes those shots show failing
- * (shots-state.brokenOnHead) and `skipped` those they could not reach for
- * want of data the change can seed (shots-state.skippedOnHead), or null for
- * no such change.
+ * B4: what the "ready to try" card of one of the bot's changes is sent
+ * with: { ready, epoch, waitingOnShots, broken, skipped, title, work }, or
+ * null for no such change.
+ *
+ * Review A3 (19 Nov 2026): whether it is ready is not decided here. It was
+ * (`changeReadiness`: up for a vote, its checks passed on its head, its
+ * shots settled), a third copy of a rule that knew nothing of a conflict
+ * with main, a merge GitHub holds or an update on its way. `ready` is now
+ * the change's stored work state's alone (services/work-state.js, `work`:
+ * rules/bot-readiness.ts readyToTry), the row every screen draws and its
+ * voters are asked by. `broken` are the declared changes its shots on its
+ * head show failing (shots-state.brokenOnHead: the shots agent tries what
+ * the change says it does, and a change whose main action fails is not
+ * offered as ready) and `skipped` those they could not reach for want of
+ * data the change can seed (skippedOnHead). Reads only.
  */
-async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
+async function changeReadyFacts(pool, sessionId) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
   const { rows } = await pool.query(
@@ -3325,28 +3328,20 @@ async function changeReadiness(pool, sessionId, { now = Date.now() } = {}) {
   const row = rows[0];
   if (!row) return null;
   const shotsState = require('./shots-state');
-  const revision = require('./pr-vote-revision');
-  const head = revision.visualHeadForSession(row);
-  // N5: and its verdict is about the head up for approval. One about
-  // another commit (a fix the restart recovery rolled back, Club Votes, 12
-  // October 2026) is not its own: its checks are still to come.
-  const reviewed = revision.reviewedHeadForSession(row);
-  const onHead = !reviewed || !row.checks_commit_sha || revision.sameSha(row.checks_commit_sha, reviewed);
-  const checked = row.status === 'promoted' && READY_CHECKS.has(row.check_state) && onHead;
-  const waitingOnShots = checked && shotsState.holdsReady(row, head, { now });
+  const head = require('./pr-vote-revision').visualHeadForSession(row);
+  const work = (await require('./work-state').forChanges(pool, [id], { ensure: false })).get(id) || null;
+  const ready = row.status === 'promoted' && require('../workflow/rules/bot-readiness.ts').readyToTry(work);
   return {
-    ready: checked && !waitingOnShots,
-    // Up for a vote with its checks passed or skipped on its head (the
-    // change machine's own `checked`): what a card may still be sent for.
-    checked,
+    ready,
     epoch: Number(row.approval_epoch) || 0,
-    waitingOnShots,
-    broken: checked ? shotsState.brokenOnHead(row, head) : [],
-    skipped: checked ? shotsState.skippedOnHead(row, head) : [],
+    waitingOnShots: !!work && work.stage === 'checking' && work.line?.code === 'shots',
+    broken: ready ? shotsState.brokenOnHead(row, head) : [],
+    skipped: ready ? shotsState.skippedOnHead(row, head) : [],
     // #3870: what the change is, for its ready card: its proposal's title,
     // unless that is the placeholder written while titles could not be
     // made, else its session's.
     title: changeTitle(row),
+    work,
   };
 }
 
@@ -3420,14 +3415,15 @@ function planMissText({ offPlan = null, requester = null } = {}) {
 async function tellReady(pool, sessionId, { epoch, broken: brokenClaims = [], offPlan: offPlanMisses = [], deps = {} } = {}) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
-  const state = await changeReadiness(pool, id);
+  const state = await changeReadyFacts(pool, id);
   if (!state) return null;
-  // Decided for another epoch, or no longer up for a vote with its checks
-  // passed (merged, closed, a newer verdict since: a retry, or an admin's,
-  // after the fact): the machine decides again from its next look.
-  // `notUp`: nothing was sent for it, and the machine considers the epoch
-  // again (a merge that GitHub refuses puts it back up for its vote).
-  if (Number(state.epoch) !== Number(epoch) || !state.checked) return { stale: true, notUp: true };
+  // Decided for another epoch, or its stored work state no longer says it is
+  // ready to try (merged, closed, a newer verdict or a conflict since: a
+  // retry, or an admin's, after the fact): the machine decides again from
+  // its next look. `notUp`: nothing was sent for it, and the machine
+  // considers the epoch again (a merge that GitHub refuses puts it back up
+  // for its vote).
+  if (Number(state.epoch) !== Number(epoch) || !state.ready) return { stale: true, notUp: true };
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.issue_number, a.id, a.slug, a.name
        FROM homeroom_bot_runs r JOIN apps a ON a.id = r.app_id
@@ -3567,8 +3563,8 @@ async function voteOpenNow(pool, sessionId) {
 /**
  * T2.6 (19 Nov 2026): who must approve one of Homeroom bot's changes, read
  * when its stored work state opens it for votes (work-state.js votePings),
- * by the rules its ready card asks them by (tellReady): its checks passed on
- * its head, nothing its shots show is broken, it matches the plan it was
+ * by the rules its ready card asks them by (tellReady): its stored row says
+ * it is ready to try, nothing its shots show is broken, it matches the plan it was
  * built from, and it is not a first version. `{ appId, epoch, requesterId,
  * recipients }`, or null when nobody is to be asked (not the bot's change,
  * or one of those rules says no). Reads only, so it runs in the caller's
@@ -3577,8 +3573,8 @@ async function voteOpenNow(pool, sessionId) {
 async function approversOnOpen(pool, sessionId) {
   const id = Number(sessionId);
   if (!Number.isInteger(id) || id <= 0) return null;
-  const state = await changeReadiness(pool, id);
-  if (!state || !state.checked || (state.broken && state.broken.length)) return null;
+  const state = await changeReadyFacts(pool, id);
+  if (!state || !state.ready || (state.broken && state.broken.length)) return null;
   const { rows: [run] = [] } = await pool.query(
     `SELECT r.app_id, r.issue_number FROM homeroom_bot_runs r
       WHERE r.proposal_session_id = $1 ORDER BY r.id DESC LIMIT 1`, [id]);
@@ -3819,9 +3815,17 @@ async function noteApproversReady(pool, { sessionId, epoch, requesterId = null, 
  * neither clock has no `at`. The client words it, in the reader's own time
  * zone (frontend/src/features/messages/bot-ready.tsx approvedLine).
  */
-function goesLiveAfterYes(gate, waiting = []) {
+function goesLiveAfterYes(gate, waiting = [], work = null) {
   if (!gate) return null;
-  if (gate.mergeable) return { soon: true };
+  // Review A3: "in a minute or two" only while the change's stored work
+  // state does not say what it still waits on. With its votes in, a change
+  // that must sync with main, whose checks run again or fail, or whose merge
+  // GitHub holds is not going live in a minute: `waits` carries the row's
+  // stage and line, in the words every screen says them, for the card's line.
+  if (gate.mergeable) {
+    const waits = waitsBeforeLive(work);
+    return waits ? { soon: false, at: null, missing: 0, waitingOn: [], more: 0, waits } : { soon: true };
+  }
   const clock = (gate.thresholdMet || gate.lazyArmed) && gate.windowEndsAt ? String(gate.windowEndsAt) : null;
   const missing = gate.thresholdMet
     ? 0
@@ -3830,12 +3834,33 @@ function goesLiveAfterYes(gate, waiting = []) {
   return { soon: false, at: clock, missing, waitingOn: names.slice(0, 3), more: Math.max(names.length - 3, 0) };
 }
 
+/**
+ * Pure (review A3): what an approved change still waits on before it goes
+ * live, from its stored work state: { stage, line, words } when the row says
+ * it is checking (its checks, a sync with main, its shots) or that GitHub
+ * holds its merge; null when nothing does (it is up for its vote or simply
+ * going live), or there is no row to read.
+ */
+function waitsBeforeLive(work) {
+  if (!work || !work.stage) return null;
+  const held = work.stage === 'checking' || (work.stage === 'going_live' && !!work.line && work.line.code !== 'first_version');
+  if (!held) return null;
+  return { stage: work.stage, line: work.line || null, words: work.words || require('./work-state').phrasesOf(work) };
+}
+
+/** A change's stored work state (services/work-state.js), or null: read only, never made here. */
+async function changeWork(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!(id > 0)) return null;
+  return (await require('./work-state').forChanges(pool, [id], { ensure: false })).get(id) || null;
+}
+
 /** B7: goesLiveAfterYes for one change, read now, after `userId`'s Yes was recorded. Null when it cannot be read. */
 async function goesLiveFor(pool, sessionId, userId) {
   const state = await approvalState(pool, { sessionId, userId });
   if (!state) return null;
   const waiting = await usernamesOf(pool, await needsYesFrom(pool, state, { except: [Number(userId)] }));
-  return goesLiveAfterYes(state.gate, waiting);
+  return goesLiveAfterYes(state.gate, waiting, await changeWork(pool, sessionId).catch(() => null));
 }
 
 // The cards about one change sent to one person (noteApproved,
@@ -3992,7 +4017,7 @@ function readyStateOf(row) {
  * else it waits on (needsYesFrom, as the card was sent with), whether their
  * Yes is in and, once it is, what happens next (goesLiveAfterYes).
  */
-async function readyApproval(pool, sessionId, userId) {
+async function readyApproval(pool, sessionId, userId, work = null) {
   const state = await approvalState(pool, { sessionId, userId });
   if (!state) return null;
   const names = state.missing === 0 ? [] : await usernamesOf(pool, await needsYesFrom(pool, state, { except: [Number(userId)] }));
@@ -4005,7 +4030,7 @@ async function readyApproval(pool, sessionId, userId) {
       waitingOn: names.slice(0, 3),
       more: Math.max(names.length - 3, 0),
     },
-    ...(state.already ? { goesLive: goesLiveAfterYes(state.gate, names) } : {}),
+    ...(state.already ? { goesLive: goesLiveAfterYes(state.gate, names, work) } : {}),
   };
 }
 
@@ -4058,7 +4083,10 @@ async function readyStates(pool, { user }) {
       const sessionId = Number(row.session_id);
       if (!approvals.has(sessionId)) {
         if (approvals.size >= MAX_READY_APPROVALS) continue;
-        approvals.set(sessionId, await readyApproval(pool, sessionId, userId).catch((err) => {
+        // Its change's stored work state (review A3): what the card says
+        // happens after its Yes is what the row says it still waits on.
+        const work = await changeWork(pool, sessionId).catch(() => null);
+        approvals.set(sessionId, await readyApproval(pool, sessionId, userId, work).catch((err) => {
           log.warn('homeroom-bot-dm', 'Could not read where a ready card\'s change stands', { sessionId, err: err.message });
           return null;
         }));
@@ -6957,9 +6985,9 @@ async function firstVersionApproval(pool, sessionId, viewerId = null) {
  * homeroom-bot-progress.js's FIRST_VERSION_STEPS, the build line its
  * thumbnail shows to whoever reads it (`deps.viewerId`; buildLineOf, #4053),
  * whether the bot waits on an answer from them, and whether its proposal is
- * ready to try (N5: up for the vote by the rule its ready card goes out on,
- * changeReadiness, with no follow-up queued or running on it; until then it
- * is on the step before, Testing it). While it is ready, `approval` is where
+ * ready to try (N5: by its stored work state, the row its ready card goes out
+ * on, with no follow-up queued or running on it; until then it is on the
+ * step before, Testing it). While it is ready, `approval` is where
  * approval of it stands for that reader (firstVersionApproval above), when
  * that could be read. While it is built and tested, `chosenPlan` is the plan
  * its maker chose (chosenPlanOf, #4396). GET /api/apps/:slug reads it
@@ -7130,20 +7158,15 @@ async function firstVersionStateOf(pool, row, deps = {}) {
   // plan's step rather than going back one. Its line is planning either way.
   const replanning = times.queue_reason === 'plan_change' && (stageNow === 'queued' || stageNow === 'reading');
   const question = stageNow === 'question';
-  // N5: ready to try by the rule its ready card goes out on
-  // (changeReadiness: its checks passed on its head, and its before &
-  // after shots settled), never off the vote step alone: a follow-up
-  // queued or running on it (a fix of its failing checks, say) is not
-  // ready, and neither is a pass its shots still hold back. A read that
-  // fails is not ready. Its change is the work state's own.
+  // N5, review A3: ready to try when its request's stored row says so, the
+  // row its ready card goes out on (rules/bot-readiness.ts readyToTry: its
+  // change is open for votes, or, a first version's, going live without
+  // one). The row already holds everything that makes it not ready: its
+  // checks, its before & after shots, a conflict with main, a follow-up
+  // queued or running on it (those are other steps: Testing it). It asked a
+  // second rule before (changeReadiness), which could disagree with the row.
   const proposalId = Number(work.leadChangeId) || null;
-  const readiness = stageNow === 'vote' && proposalId
-    ? await (deps.readiness || changeReadiness)(pool, proposalId).catch((err) => {
-      log.warn('homeroom-bot-dm', 'Could not read whether a first version is ready to try', { appId: row.app_id, err: err.message });
-      return null;
-    })
-    : null;
-  const ready = stageNow === 'vote' && readiness?.ready === true;
+  const ready = stageNow === 'vote' && !!proposalId;
   const stage = progress.firstVersionStage(stageNow, { ready });
   // Ready to try: who it waits on, for the App tab to say. A read that
   // fails leaves the screen as it was before it said so.
@@ -7354,9 +7377,9 @@ module.exports = {
   retireSuggestions,
   greet,
   settlePrompt,
-  READY_CHECKS,
   readyKey,
-  changeReadiness,
+  changeReadyFacts,
+  waitsBeforeLive,
   brokenWords,
   offPlanWords,
   isBotsPlan,

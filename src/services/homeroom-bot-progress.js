@@ -659,12 +659,11 @@ function updateAskSql(cs) {
 
 /**
  * Pure (N5): the stage a first version's App tab is drawn at, from its
- * stage (stageOf) and whether it is ready to try (`ready`:
- * homeroom-bot-dm.changeReadiness, the rule its ready card goes out on: its
- * checks passed on its head and its before & after shots settled). Ready to
- * try ('vote') only then; a vote that is not ready yet, and a follow-up
- * queued or running on it, are its checks ('checks': Testing it). Any other
- * stage is itself.
+ * stage (firstVersionStageOf) and whether it is ready to try (`ready`: its
+ * request's stored work state says so, the row its ready card goes out on,
+ * review A3). Ready to try ('vote') only then; a vote that is not ready
+ * yet, and a follow-up queued or running on it, are its checks ('checks':
+ * Testing it). Any other stage is itself.
  */
 function firstVersionStage(stage, { ready = false } = {}) {
   if (stage === 'vote') return ready ? 'vote' : 'checks';

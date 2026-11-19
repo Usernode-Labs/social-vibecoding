@@ -37,7 +37,7 @@ const flaky = require('./homeroom-bot-flaky-checks');
 const { syncWaits, syncStand } = require('./vote-ready');
 const checksEstimate = require('./checks-estimate');
 const { firstVersionSql } = require('./first-version-rule');
-const { heldUntil } = require('../workflow/rules/bot-readiness.ts');
+const { heldUntil, readyToTry } = require('../workflow/rules/bot-readiness.ts');
 const { currentVotePredicateSql } = require('../workflow/rules/vote-predicate.ts');
 
 // The stages, whys, reasons and line codes, and what each means on every
@@ -708,8 +708,8 @@ function promotedChange(row, now) {
   if (syncWaits(row)) return state('checking', { since, line: { code: 'sync_wait' } });
   // #6528: its before & after shots are still being taken. T2.12 (19 Nov
   // 2026): a first version's too: it read Going live while its App tab,
-  // which waits for the same shots (homeroom-bot-dm.js changeReadiness),
-  // said Testing.
+  // which waited for the same shots, said Testing. (Review A3: the App tab
+  // and the ready card read this row now.)
   if (shotsHeld(row, now)) return state('checking', { since, line: { code: 'shots' } });
   // D1: a project's first version goes live without a vote.
   if (row.first_version === true) return state('going_live', { since: row.promoted_at, line: { code: 'first_version' } });
@@ -2244,16 +2244,93 @@ async function votePings(db, changed) {
 }
 
 /**
+ * Pure (review A3): whether a changed row is a change that has just become
+ * ready to try (rules/bot-readiness.ts readyToTry: its stored vote_open
+ * turned true, or it is a first version now going live without a vote), the
+ * moment Homeroom bot's change machine sends its requester the "ready to
+ * try" card.
+ */
+function tryOpened(row) {
+  return !!row && row.kind === 'change' && readyToTry(row.state) && !(row.prev && readyToTry(row.prev));
+}
+
+// Tell Homeroom bot's change machine (src/workflow/bot-change/) that the
+// stored row of each change named by $1 says it is ready to try: a plain
+// pending event, appended as a vote's is (routes/votes.js botChangeVotedSql),
+// only for a change the machine follows and has not finished with.
+const BOT_CHANGE_OPENED_SQL = `
+  INSERT INTO wf_events (machine, key, app_id, type, payload, source, actor, request_key, caused_by)
+  SELECT wi.machine, wi.key, wi.app_id, 'VoteOpened', jsonb_build_object('sessionId', x.id),
+         '{"kind":"route","name":"work-state"}'::jsonb, NULL, 'vote-opened:' || gen_random_uuid(), NULL
+    FROM unnest($1::int[]) AS x(id)
+    JOIN wf_instances wi ON wi.machine = 'bot-change' AND wi.key = 'session:' || x.id
+   WHERE wi.state NOT IN ('merged', 'live', 'closed')
+  RETURNING id`;
+
+/**
+ * Review A3 (19 Nov 2026): "ready to try" has one decider, the stored row.
+ * Each changed change that has just become ready to try (tryOpened) is told
+ * to the bot's change machine, in `db`'s transaction, with the row that says
+ * so: the machine reads the row again and sends the card (it kept a rule of
+ * its own before, which knew nothing of a conflict with main, a merge GitHub
+ * holds or an update on its way). Its own unit: a failed append leaves the
+ * rows stored, and the sweep tells the machine again (botChangesWaiting).
+ * Resolves how many were told.
+ */
+async function botChangesOpened(db, changed) {
+  const ids = [...new Set((changed || []).filter(tryOpened).map((row) => Number(row.sessionId || row.ref)).filter((id) => id > 0))];
+  if (!ids.length) return 0;
+  return unit(db, async (tx) => (await tx.query(BOT_CHANGE_OPENED_SQL, [ids])).rows.length).catch((err) => {
+    require('./logger').warn('work-state', 'Could not tell the bot\'s change machine a change is ready to try', { ids, message: err.message });
+    return 0;
+  });
+}
+
+// The bot's changes whose stored row says ready to try while their machine
+// still waits to hear it and has told nobody for this approval epoch: a row
+// opened where no event could be appended with it (a Pod of the release
+// before this one stored it, or the append failed). `deadline_at`: a machine
+// waiting on its own clock (its plan being compared) is not waiting to hear.
+const BOT_CHANGES_WAITING_SQL = `
+  SELECT cs.id
+    FROM work_states ws
+    JOIN chat_sessions cs ON cs.id = ws.item_ref AND cs.status = 'promoted'
+    JOIN wf_instances wi ON wi.machine = 'bot-change' AND wi.key = 'session:' || cs.id
+   WHERE ws.item_kind = 'change'
+     AND (ws.vote_open OR (ws.stage = 'going_live' AND ws.line->>'code' = 'first_version'))
+     AND wi.state IN ('checking', 'waiting_on_shots') AND wi.deadline_at IS NULL
+     AND COALESCE(wi.data->>'told', '') <> cs.approval_epoch::text
+     AND ws.updated_at < NOW() - INTERVAL '1 minute'
+     AND NOT EXISTS (SELECT 1 FROM wf_events e
+                      WHERE e.machine = wi.machine AND e.key = wi.key AND e.type = 'VoteOpened' AND e.status = 'pending')
+   ORDER BY cs.id
+   LIMIT 20`;
+
+/** The sweep's part of botChangesOpened: tell the machine of each change it still waits to hear about. Never throws. */
+async function botChangesWaiting(db) {
+  try {
+    const { rows } = await db.query(BOT_CHANGES_WAITING_SQL);
+    if (!rows.length) return 0;
+    return (await db.query(BOT_CHANGE_OPENED_SQL, [rows.map((r) => Number(r.id))])).rows.length;
+  } catch (err) {
+    require('./logger').warn('work-state', 'Could not read the bot\'s changes still waiting to hear they are ready to try', { message: err.message });
+    return 0;
+  }
+}
+
+/**
  * The pushes changed rows are carried by: their work_state, the bell of each
  * that rang, the voters asked about each change that opened for votes, each
  * ready one withdrawn, and the cards their move retired (settleCards;
- * `cards: false` leaves those to the caller).
+ * `cards: false` leaves those to the caller). Homeroom bot's change machine
+ * is told of each of its changes that became ready to try (botChangesOpened).
  */
 async function pushesOf(db, changed, { cards = true } = {}) {
   const pushes = [
     ...changed.map(pushOf), ...(await bellPushes(db, changed)), ...(await votePings(db, changed)),
     ...(await withdrawReady(db, changed)),
   ];
+  await botChangesOpened(db, changed);
   return cards ? [...pushes, ...(await settleCards(db, changed))] : pushes;
 }
 
@@ -2474,6 +2551,9 @@ async function sweep(db, { olderThanMs = 2 * 60 * 1000, limit = 100, seed = 100,
   // T2.6: whoever asked to be told when a change is ready to vote on hears
   // it once its row opens for votes, never before.
   const told = await tellVoteFollowups(db);
+  // Review A3: and Homeroom bot's change machine hears of each change whose
+  // row says ready to try that it has not heard about.
+  if (isPool(db)) await botChangesWaiting(db);
   if (!items.length) {
     return { checked: 0, seeded: 0, due: 0, changed: [], pushes: [], told, ...(await sweepMeasure(db)) };
   }
@@ -2735,6 +2815,10 @@ module.exports = {
   sweep,
   drainDirty,
   ensure,
+  // Review A3: the bot's change machine is told when a row is ready to try.
+  tryOpened,
+  botChangesOpened,
+  botChangesWaiting,
   // T2.7, T2.8
   dueOf,
   refreshUnits,

@@ -1605,15 +1605,31 @@ answers how its fix round on a head ended (bot-request's `FixRoundEnded`, `FixRe
 Its creating guard
 requires a run of the bot's that proposed the session.
 
-- **One rule decides, from the row, with the transaction's clock**
-  (`rules/bot-readiness.ts`, the one copy the old modules import back): a message is only
-  "look now", so a late or repeated one decides the same thing again.
-  - **Ready to try**: up for a vote, its checks passed or skipped on the head up for a
-    vote, its shots on that head settled. Said once per approval epoch: the card, its
-    record, the approvers' bells when nothing is broken, the chip (`bot.tellReady`).
-  - **Waiting on its shots**: held until 45 minutes after the later of the verdict and
-    the slot's last move, by the instance's own timer (the bot's refresh sweep and its
-    20-minute window are gone).
+- **It decides from the rows, with the transaction's clock** (`facts.ts`,
+  `rules/bot-readiness.ts`): a message is only "look now", so a late or repeated one
+  decides the same thing again. Version 4 (review A3, 19 Nov 2026).
+  - **Ready to try is not its own rule.** It reads the change's stored work state
+    (`work_states`, which `services/work-state.js` derives and owns:
+    `rules/bot-readiness.ts readyToTry`, open for votes, or a first version going live
+    without a vote). Versions up to 3 decided it a second time (its checks passed on its
+    head, its shots settled), which knew nothing of a conflict with main, a merge GitHub
+    holds or an update on its way, so the card could say ready while the change's page
+    said Syncing with main. Said once per approval epoch: the card, its record, the
+    approvers' bells when nothing is broken, the chip (`bot.tellReady`, which reads the
+    same row again and sends nothing when it no longer says ready).
+  - **Told when the row opens**: `work-state.js pushesOf` appends `VoteOpened` (a web
+    event, source `route`) in the transaction that stored the row, the moment the
+    voters' own ping goes out (`botChangesOpened`). The one-minute sweep appends it for
+    a row that opened with no event (an older Pod stored it, or the append failed),
+    once a minute has passed and none is pending (`botChangesWaiting`).
+  - **Waiting on its shots** (`waiting_on_shots`): while its row says Taking
+    screenshots. It has no timer of its own for them: the row's own due time ends the
+    hold (`work-state.js dueOf`, 45 minutes after the later of the verdict and the
+    slot's last move), and the row opening tells it. A plan comparison (#6407) still
+    waits on the instance's own timer, at most 45 minutes.
+  - **An old instance**: `data` kept its shape, so an instance version 3 wrote is read
+    as it is, and its `told` epoch stands (nothing is said twice). A Pod of version 3
+    refuses `VoteOpened`, so it leaves version 4's instances alone during a release.
   - **Back to the bot**: its checks fail, or its shots show part of it failing or could
     not reach part of it for want of seed data, and no round looked at that head
     (`bot.queueFix`: its request's instance hears `FixAsked`, bot-request). It waits for

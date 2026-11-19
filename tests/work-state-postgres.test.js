@@ -749,5 +749,80 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     await voice.finishAsks(pool, { runTag: 'run-6819' });
     assert.equal((await stored('change', followed.id)).stage, 'up_for_vote', 'the update landed: it asks again');
   });
+
+  // Review A3 (19 Nov 2026): "ready to try" has one decider, the stored row.
+  // The bot's change machine is told the moment a change's row opens
+  // (VoteOpened, in the transaction that stored it), never before, once,
+  // and only for a change it follows and has not finished with. The sweep
+  // tells it of a row that opened where no event was appended (a Pod of the
+  // release before stored it).
+  await t.test('A3: the bot\'s change machine hears VoteOpened when its change\'s row opens, and only then', async () => {
+    // An instance of the bot's change machine, as the kernel writes one.
+    const follow = async (sessionId, state, data = {}) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query(`SELECT set_config('app.wf_writer', 'transition', true)`);
+        await client.query(
+          `INSERT INTO wf_instances (machine, key, app_id, state, data, machine_version)
+           VALUES ('bot-change', $1, $2, $3, $4::jsonb, 4)`,
+          [`session:${sessionId}`, app.id, state, JSON.stringify({ sessionId, ...data })]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    };
+    const opened = async (sessionId) => (await pool.query(
+      `SELECT type, payload, source, status, producer FROM wf_events
+        WHERE machine = 'bot-change' AND key = $1 AND type = 'VoteOpened' ORDER BY id`, [`session:${sessionId}`])).rows;
+    const store = async (sessionId) => ws.pushesOf(pool, await ws.refresh(pool, [{ sessionId }]));
+
+    // The bot's change, up with its checks still running: not open, nothing said.
+    const bots = await change(bot, 620, [], 'promoted', { promotedAt: new Date(), checkState: 'pending' });
+    await follow(bots.id, 'checking');
+    await store(bots.id);
+    assert.equal((await stored('change', bots.id)).stage, 'checking');
+    assert.deepEqual(await opened(bots.id), [], 'not open for votes: the machine is not told');
+
+    // Its checks pass on its head: the row opens, and the machine hears it once.
+    await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [bots.id]);
+    await store(bots.id);
+    assert.equal((await stored('change', bots.id)).stage, 'up_for_vote');
+    const told = await opened(bots.id);
+    assert.equal(told.length, 1);
+    assert.deepEqual([told[0].payload, told[0].source, told[0].status], [{ sessionId: bots.id }, { kind: 'route', name: 'work-state' }, 'pending']);
+    await store(bots.id);
+    assert.equal((await opened(bots.id)).length, 1, 'a refresh that changes nothing says nothing again');
+
+    // A change the machine has finished with, and one it does not follow, are never told.
+    const done = await change(bot, 621, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await follow(done.id, 'closed');
+    const unfollowed = await change(bob, 622, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await store(done.id);
+    await store(unfollowed.id);
+    assert.equal((await stored('change', done.id)).stage, 'up_for_vote');
+    assert.deepEqual([await opened(done.id), await opened(unfollowed.id)], [[], []]);
+
+    // A row that opened with no event (stored by an older Pod): the sweep's
+    // backstop tells the machine, once, and not while it has heard already.
+    const missed = await change(bot, 623, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await ws.refresh(pool, [{ sessionId: missed.id }]);
+    await follow(missed.id, 'checking');
+    assert.equal(await ws.botChangesWaiting(pool), 0, 'stored within the last minute: its own refresh may still tell it');
+    await pool.query(`UPDATE work_states SET updated_at = NOW() - interval '2 minutes' WHERE item_kind = 'change' AND item_ref = $1`, [missed.id]);
+    assert.equal(await ws.botChangesWaiting(pool), 1);
+    assert.equal((await opened(missed.id)).length, 1);
+    assert.equal(await ws.botChangesWaiting(pool), 0, 'one pending already: not told twice');
+    // Told for this approval epoch already (its `told`): nothing to say.
+    const toldAlready = await change(bot, 624, [], 'promoted', { promotedAt: new Date(), checkState: 'passing' });
+    await ws.refresh(pool, [{ sessionId: toldAlready.id }]);
+    await follow(toldAlready.id, 'checking', { told: 0 });
+    await pool.query(`UPDATE work_states SET updated_at = NOW() - interval '2 minutes' WHERE item_kind = 'change' AND item_ref = $1`, [toldAlready.id]);
+    assert.equal(await ws.botChangesWaiting(pool), 0);
+    assert.deepEqual(await opened(toldAlready.id), []);
+  });
 });
 

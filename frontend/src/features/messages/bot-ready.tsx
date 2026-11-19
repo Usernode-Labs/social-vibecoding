@@ -17,7 +17,7 @@ import { approvedHere, ensureBotActivity, loadBotActivity, noteApprovedHere, use
 import { botMeta } from './bot-question';
 import { quoteInComposer } from './store';
 import type {
-  ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotMeta, HomeroomBotReady, HomeroomBotReadyNow,
+  ConversationMessage, HomeroomBotAction, HomeroomBotGoesLive, HomeroomBotWaits, HomeroomBotMeta, HomeroomBotReady, HomeroomBotReadyNow,
 } from './types';
 import { dayNumber, inZone } from '../../lib/time-zone';
 
@@ -284,9 +284,23 @@ function whoElse({ missing, waitingOn, more }: HomeroomBotGoesLive): AfterYes {
  */
 export function approvedLine(next: HomeroomBotGoesLive, now: Date = new Date(Date.now()), locale?: string): string {
   if (next.soon) return translate('messages:bot.ready.approved.soon');
+  // Its approvals are in, and its stored work state says what it still
+  // waits on (a sync with main, its checks, GitHub): said in the row's own
+  // words, never "in a minute or two".
+  const status = next.waits ? waitsWords(next.waits) : '';
+  if (status) return translate('messages:bot.ready.approved.waits', { status });
   const day = next.at ? liveDay(next.at, now, locale) : null;
   const who = next.missing ? whoElse(next) : null;
   return translate(APPROVED_LINES[who ? who.who : 'none'][day ? day.kind : 'none'], { ...(who ? who.values : {}), ...(day || {}) });
+}
+
+/** Pure: a stored work state's stage and line in its own words ("Approved · Waiting on GitHub's checks"), or '' with none. */
+export function waitsWords(waits: HomeroomBotWaits): string {
+  const words = waits.words;
+  if (!words || !words.stage) return '';
+  const stage = translate(words.stage.id, words.stage.values);
+  const line = words.line ? translate(words.line.id, words.line.values) : '';
+  return line ? translate('messages:bot.ready.approved.waitsOn', { stage, line }) : stage;
 }
 
 /**
