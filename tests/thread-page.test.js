@@ -153,8 +153,8 @@ test('an address with the other kind\'s number opens what the number is', () => 
   assert.match(helper, /if \(asked === 'issue' && change\) \{\s+await AppView\.openTopic\('proposal', Number\(change\.id\)\);/);
   assert.match(helper, /if \(asked === 'proposal' && request\) \{\s+await AppView\.openTopic\('issue', n\);/);
   assert.match(view, /if \(await AppView\._openByThread\('proposal', ref\.pr, \(\) => AppView\._devTopic === pending\)\) return;/);
-  const fetchItem = view.slice(view.indexOf('async _fetchTopicItem(ref) {'), view.indexOf('async _fetchTopicItem(ref) {') + 700);
-  assert.match(fetchItem, /const row = await AppView\._fetchIssueByNumber\(ref\.id\);\s+if \(row\) return row;[\s\S]*await AppView\._openByThread\('issue', ref\.id, \(\) => AppView\._devTopic === here\);\s+return null;/,
+  const fetchItem = view.slice(view.indexOf('async _fetchTopicItem(ref) {'), view.indexOf('async _fetchTopicItem(ref) {') + 1000);
+  assert.match(fetchItem, /const row = await AppView\._fetchIssueByNumber\(ref\.id, outcome\);\s+if \(row\) return row;[\s\S]*await AppView\._openByThread\('issue', ref\.id, \(\) => AppView\._devTopic === here\);\s+return null;/,
     'asked inside the item fetch, so the board fallback keeps its moment');
 });
 
