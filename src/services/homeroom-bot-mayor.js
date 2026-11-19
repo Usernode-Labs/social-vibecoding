@@ -6295,7 +6295,7 @@ async function startRequest(pool, ctx, args) {
         };
       }
       ctx.started = name;
-      noteLiveWork(ctx, app, n);
+      noteLiveWork(ctx, app, filed.issueNumber, lastLook[0].first_step);
       ctx.cards.push({ type: 'issue', appId: Number(app.id), issueNumber: filed.issueNumber });
       require('./bot-work-changed').noteWorkChanged(user.id, deps);
       return {
