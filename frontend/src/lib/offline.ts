@@ -99,14 +99,18 @@ const HUNG_READ_COUNTS_MS = 15_000;
  * bandwidth every other read was using, timed out, and with a stuck read as
  * its second witness the shell went offline: "Connecting…", controls greyed,
  * writes queued, on a network that was answering. So a probe that TIMED OUT
- * is not believed while the network answered within this long. Three things
+ * is not believed while the network answered within this long. Four things
  * tell `answered`: an API read the network answered (./read-timeout.ts, never
  * for the service worker's saved copy), the worker's own network read landing
  * behind a saved copy it served (public/sw.js `network-answered`, through
  * ./service-worker.ts: on the 19 Nov retest the worker served saved copies
- * after its 4 s deadline and the page saw no answer at all), and a frame on
- * the events socket (public/js/app.js). A probe that failed outright still
- * is believed, and so is the phone saying it has no network.
+ * after its 4 s deadline and the page saw no answer at all), a network body
+ * the worker hands the page still arriving (the same message, from sw.js
+ * `reportArriving`: a change page's shots queued 17 s of bytes, every read
+ * waited behind them, and the page, which never sees an image's bytes, went
+ * 10 s without an answer), and a frame on the events socket
+ * (public/js/app.js). A probe that failed outright still is believed, and so
+ * is the phone saying it has no network.
  */
 export const ANSWERED_RECENTLY_MS = 10_000;
 

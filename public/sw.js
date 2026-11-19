@@ -1119,15 +1119,6 @@ if (typeof module !== 'undefined' && module.exports) {
     return false;
   }
 
-  // Tell every open tab that a cached answer we already served is now out
-  // of date. The worker gets exactly ONE response per request, so without
-  // this the corrected copy would sit in the cache until the next reload
-  // and "instant" would mean "instant and wrong".
-  //
-  // Broadcast rather than event.clientId: a second tab on this origin was
-  // served the same stale entry from the same cache and is just as wrong.
-  // The noise that buys is bounded on the page side — App.refreshActiveScreen
-  // bails on a hidden tab or an open sheet.
   // The network answered a read the worker had already answered from its
   // saved copy (the native-offline follow-up, 19 Nov 2026): the page never
   // sees that answer, so on a slow link it saw none at all and took the
@@ -1138,9 +1129,59 @@ if (typeof module !== 'undefined' && module.exports) {
     const now = Date.now();
     if (now - networkAnsweredAt < NETWORK_ANSWERED_GAP_MS) return;
     networkAnsweredAt = now;
-    event.waitUntil(notifyClients({ type: 'network-answered' }));
+    const told = notifyClients({ type: 'network-answered' });
+    // Told from a body still streaming (reportArriving), the fetch event
+    // may have no lifetime left to extend; the stream keeps the worker up.
+    try { event.waitUntil(told); } catch { /* already sending */ }
   }
 
+  // A body still arriving is the network answering too (the fourth
+  // follow-up, 19 Nov 2026 retest, 600 ms / 500 kbps). A change page's four
+  // before/after shots queued 17 s of bytes on the link, and every read asked
+  // for after them waited behind that queue, the /health probe included.
+  // The page counts only the start of its own fetch() answers, never an
+  // image's bytes, so it went over 10 s without an answer and took the link
+  // for a dead one while a chunk arrived every 250 ms. A network body the
+  // worker hands the page says so as it arrives, at most once every
+  // NETWORK_ANSWERED_GAP_MS. When the link really goes, the bytes stop.
+  //
+  // The body is piped, not cloned: a page that drops an image still cancels
+  // its download. Its bytes are already decoded, so a Content-Encoding (and
+  // the encoded Content-Length with it) would mislabel them. A redirect
+  // stays as it is: a new Response would lose its final address.
+  const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
+  function reportArriving(event, res) {
+    if (!res || !res.body || res.redirected || typeof TransformStream !== 'function') return res;
+    if (res.status <= 0 || res.status >= 500 || NULL_BODY_STATUSES.has(res.status)) return res;
+    try {
+      const headers = new Headers(res.headers);
+      if (headers.has('Content-Encoding')) {
+        headers.delete('Content-Encoding');
+        headers.delete('Content-Length');
+      }
+      const counted = new TransformStream({
+        transform(chunk, controller) {
+          noteNetworkAnswered(event);
+          controller.enqueue(chunk);
+        },
+      });
+      return new Response(res.body.pipeThrough(counted), {
+        status: res.status, statusText: res.statusText, headers,
+      });
+    } catch {
+      return res;
+    }
+  }
+
+  // Tell every open tab that a cached answer we already served is now out
+  // of date. The worker gets exactly ONE response per request, so without
+  // this the corrected copy would sit in the cache until the next reload
+  // and "instant" would mean "instant and wrong".
+  //
+  // Broadcast rather than event.clientId: a second tab on this origin was
+  // served the same stale entry from the same cache and is just as wrong.
+  // The noise that buys is bounded on the page side — App.refreshActiveScreen
+  // bails on a hidden tab or an open sheet.
   async function notifyClients(message) {
     try {
       const windows = await self.clients.matchAll({ type: 'window' });
@@ -1648,7 +1689,8 @@ if (typeof module !== 'undefined' && module.exports) {
       schedule: swSchedule,
     });
     if (pending) event.waitUntil(pending.catch(() => {}));
-    return currentApiContext(context) && (!fromCache || canReplay()) ? response : staleApiResponse();
+    if (!currentApiContext(context) || (fromCache && !canReplay())) return staleApiResponse();
+    return fromCache ? response : reportArriving(event, response);
   }
 
   async function cacheFirstImmutable(event) {
@@ -1662,7 +1704,7 @@ if (typeof module !== 'undefined' && module.exports) {
         && !/\bprivate\b/i.test(responseHeader(res, 'Cache-Control') || '')) {
       event.waitUntil(cache.put(event.request, res.clone()).catch(() => {}));
     }
-    return res;
+    return reportArriving(event, res);
   }
 
   // Fill the shell cache with ONE build: fetch the document first, then every

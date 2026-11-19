@@ -184,6 +184,19 @@ test('the worker says when the network answered behind a saved copy, and the pag
   assert.match(page, /data\.type === 'network-answered'[\s\S]*?Offline\?\.answered\?\.\(\)/);
 });
 
+// The fourth follow-up (19 Nov 2026 retest): a change page's four shots
+// queued 17 s of bytes on the slow link, and the probe timed out behind them
+// with no answer seen for 10 s. Bytes arriving are the network answering.
+test('a network body the worker hands the page counts as the network answering while it arrives', () => {
+  const sw = read('public/sw.js');
+  assert.match(sw, /return fromCache \? response : reportArriving\(event, response\);/, 'an API read or a shot from the network');
+  assert.match(sw, /event\.waitUntil\(cache\.put\(event\.request, res\.clone\(\)\)\.catch\(\(\) => \{\}\)\);\s*\}\s*return reportArriving\(event, res\);/,
+    'an icon, avatar or visual downloaded the first time');
+  assert.match(sw, /transform\(chunk, controller\) \{\s*noteNetworkAnswered\(event\);\s*controller\.enqueue\(chunk\);/, 'told per chunk, through the two-second gap');
+  assert.match(sw, /res\.body\.pipeThrough\(counted\)/, 'piped, so a page that drops the picture still cancels its download');
+  assert.match(read('frontend/src/lib/offline.ts'), /a network body\s*\* the worker hands the page still arriving/);
+});
+
 test('a frame on the events socket counts as the network answering', () => {
   const app = read('public/js/app.js');
   const handler = app.slice(app.indexOf('App.eventsWs.onmessage = (event) => {'), app.indexOf('JSON.parse(event.data)', app.indexOf('App.eventsWs.onmessage = (event) => {')));

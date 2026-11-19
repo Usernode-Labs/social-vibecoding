@@ -87,8 +87,9 @@ function swContainer(): ServiceWorkerContainer | null {
 function listenForApiUpdates(container: ServiceWorkerContainer): void {
   container.addEventListener('message', (event: MessageEvent) => {
     const data = event.data as { type?: string; url?: string; scope?: string } | null;
-    // The network answered behind a saved copy the worker served (public/sw.js
-    // noteNetworkAnswered): the link is slow, not dead (lib/offline.ts).
+    // The network answered behind a saved copy the worker served, or a body
+    // it hands this page is still arriving (public/sw.js noteNetworkAnswered,
+    // reportArriving): the link is slow, not dead (lib/offline.ts).
     if (data && data.type === 'network-answered') {
       try { (window as unknown as { Offline?: { answered?: () => void } }).Offline?.answered?.(); } catch { /* no probe */ }
       return;
