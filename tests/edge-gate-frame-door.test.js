@@ -46,6 +46,9 @@ const PUB_APP_ID = 1;
 const MEMBER_ID = 10;
 const OUTSIDER_ID = 99;
 const CAPTURE_ID = 77;
+const SID = 'a'.repeat(64);
+const STORAGE_PATH = '/__usernode_access/storage';
+const STORAGE_NAME = '__Host-usernode_embed';
 
 const APPS = {
   pubapp: { id: PUB_APP_ID, slug: 'pubapp', view_visibility: 'public' },
@@ -73,6 +76,9 @@ const fakePool = {
     if (/SELECT is_admin FROM users WHERE id/.test(sql)) return { rows: [{ is_admin: false }] };
     if (/SELECT id FROM users WHERE username = \$1/.test(sql)) {
       return { rows: params[0] === 'usernode-capture' ? [{ id: CAPTURE_ID }] : [] };
+    }
+    if (/FROM sessions\s+WHERE encode\(sha256/.test(sql)) {
+      return { rows: params[0] === SID && params[1] === MEMBER_ID ? [{ '?column?': 1 }] : [] };
     }
     if (/UPDATE chat_sessions cs SET last_activity_at = now\(\)/.test(sql)) return { rows: [] };
     throw new Error(`frame-door stub: unexpected query: ${sql}`);
@@ -106,7 +112,7 @@ test.beforeEach(() => {
   edgeGate._resetCachesForTest();
 });
 
-function gate({ host = PRIV_HOST, uri = '/', method = 'GET', cookie, dest, site, ws, usernodeToken } = {}) {
+function gate({ host = PRIV_HOST, uri = '/', method = 'GET', cookie, dest, site, origin, ws, usernodeToken } = {}) {
   const headers = {
     Host: host,
     'X-Forwarded-Host': host,
@@ -115,6 +121,7 @@ function gate({ host = PRIV_HOST, uri = '/', method = 'GET', cookie, dest, site,
     ...(cookie ? { Cookie: cookie } : {}),
     ...(dest ? { 'Sec-Fetch-Dest': dest } : {}),
     ...(site ? { 'Sec-Fetch-Site': site } : {}),
+    ...(origin ? { Origin: origin } : {}),
     ...(ws ? { 'Sec-WebSocket-Key': 'dGhlIHNhbXBsZSBub25jZQ==' } : {}),
     ...(usernodeToken ? { 'x-usernode-token': usernodeToken } : {}),
   };
@@ -144,13 +151,18 @@ const trade = (tok, next = '/?un-build=abc', { host = PRIV_HOST, dest = 'iframe'
 
 // The page's script, run against a stand-in window: what it posts, where,
 // and where it goes when the shell answers.
-function runDoorPage(body, { href = `https://${PRIV_HOST}/?un-build=abc#un-token=T1`, framed = true } = {}) {
+function runDoorPage(body, { href = `https://${PRIV_HOST}/?un-build=abc#un-token=T1`, framed = true, requestStorageAccess } = {}) {
   const script = /<script nonce="[^"]+">([\s\S]*?)<\/script>/.exec(body)[1];
   const url = new URL(href);
   const posted = [];
   const listeners = [];
   const timers = [];
   const blocked = { hidden: !/<main id="blocked">/.test(body) };
+  const elements = { blocked, 'door-title': {}, 'door-description': {}, 'storage-status': {} };
+  if (body.includes('id="storage"')) {
+    elements.storage = { hidden: true };
+    elements.continue = { addEventListener: (_type, fn) => { elements.continue.click = fn; } };
+  }
   const parent = { postMessage: (data, origin) => posted.push({ data, origin }) };
   const location = {
     pathname: url.pathname, search: url.search, hash: url.hash,
@@ -162,15 +174,106 @@ function runDoorPage(body, { href = `https://${PRIV_HOST}/?un-build=abc#un-token
   };
   if (!framed) win.parent = win;
   const context = {
-    window: win, location, setTimeout: (fn) => timers.push(fn),
-    document: { getElementById: (id) => (id === 'blocked' ? blocked : null) },
+    window: win, location, URLSearchParams, setTimeout: (fn) => timers.push(fn),
+    document: { getElementById: (id) => elements[id], requestStorageAccess },
   };
   vm.runInNewContext(script, context);
   return {
-    posted, location, blocked, timers,
+    posted, location, blocked, timers, elements,
     deliver: (event) => listeners.forEach((fn) => fn({ source: parent, origin: PLATFORM, ...event })),
   };
 }
+
+const memberCookie = (sid = SID, name = '__Host-usernode_access', storageAccess = false) => {
+  const jwt = platformJwt.signEdgeCookie({ host: PRIV_HOST, appId: PRIV_APP_ID, uid: MEMBER_ID, sid, storageAccess });
+  return `${name}=${jwt}`;
+};
+
+test('the fallback asks for storage from the click and reloads the same frame after a grant', async () => {
+  const door = await gate({ dest: 'iframe', uri: '/notes?token=secret&id=3&__ua=1' });
+  assert.match(door.body, /href="\/__usernode_access\/storage\?next=%2Fnotes%3Fid%3D3"/);
+  assert.doesNotMatch(door.body, /token=secret/);
+  let requests = 0;
+  const page = runDoorPage(door.body, {
+    href: `https://${PRIV_HOST}/notes?id=3&__ua=1#section`,
+    requestStorageAccess: () => { requests++; return Promise.resolve(); },
+  });
+  assert.equal(page.elements.storage.hidden, false);
+  assert.equal(requests, 0);
+  page.elements.continue.click();
+  await Promise.resolve();
+  assert.equal(requests, 1);
+  assert.equal(page.location.replaced, '/notes?id=3#section');
+
+  const denied = runDoorPage(door.body, { requestStorageAccess: () => Promise.reject(new Error('denied')) });
+  denied.elements.continue.click();
+  await Promise.resolve();
+  assert.equal(denied.elements.continue.disabled, false);
+  assert.match(denied.elements['storage-status'].textContent, /Set up access first/);
+  assert.equal(denied.location.replaced, undefined);
+  assert.equal(runDoorPage(door.body).elements.storage.hidden, true);
+});
+
+test('only a signed-in member confirming on the app host can set its separate storage cookie', async () => {
+  const uri = `${STORAGE_PATH}?next=${encodeURIComponent('/notes?id=3&un-build=old')}`;
+  const signedIn = { uri, dest: 'document', cookie: memberCookie() };
+  const confirmation = { ...signedIn, method: 'POST', site: 'same-origin', origin: `https://${PRIV_HOST}` };
+  const setup = await gate(signedIn);
+  assert.equal(setup.status, 401);
+  assert.match(setup.body, /<form method="post">/);
+  assert.ok(setup.headers['content-security-policy'].includes(`form-action 'self' ${PLATFORM}; frame-ancestors 'none'`));
+  assert.equal(setCookies(setup).length, 0);
+  assert.ok(isAuthorize((await gate({ uri, dest: 'document' })).headers.location));
+  assert.equal((await gate({ ...confirmation, dest: 'iframe' })).status, 404);
+  assert.equal((await gate({ ...confirmation, origin: PLATFORM, site: 'cross-site' })).status, 403);
+  assert.equal((await gate({ ...confirmation, host: PUB_HOST })).status, 404);
+  assert.equal((await gate({ ...confirmation, host: PREVIEW_HOST })).status, 404);
+  assert.equal(setCookies(await gate({ ...confirmation, cookie: memberCookie('b'.repeat(64)) })).length, 0);
+  assert.equal(setCookies(await gate({ ...confirmation, cookie: memberCookie(null) })).length, 0);
+
+  const result = await gate(confirmation);
+  assert.equal(result.status, 303);
+  assert.equal(result.headers.location, `${PLATFORM}/#app/privapp/full?path=/notes?id=3`);
+  const cookie = setCookies(result).find((value) => value.startsWith(`${STORAGE_NAME}=`));
+  assert.match(cookie, /HttpOnly; Secure; SameSite=None/);
+  assert.doesNotMatch(cookie, /Domain=|Partitioned/i);
+  const jwt = cookie.split(';')[0].slice(STORAGE_NAME.length + 1);
+  const claims = platformJwt.verifyEdgeCookie(jwt);
+  assert.deepEqual([claims.host, claims.appId, claims.uid, claims.sid, claims.storageAccess],
+    [PRIV_HOST, PRIV_APP_ID, MEMBER_ID, SID, true]);
+  assert.equal((await gate({ ...confirmation, uri: `${STORAGE_PATH}?next=%2F%3Fun-build%3Dold` })).headers.location,
+    `${PLATFORM}/app/privapp`);
+});
+
+test('a storage cookie opens the iframe, its assets, and own-origin WebSockets while the session is live', async () => {
+  const cookie = memberCookie(SID, STORAGE_NAME, true);
+  for (const request of [
+    { uri: `/?token=${token()}&__ua=1`, dest: 'iframe', site: 'same-origin' },
+    { uri: '/app.js', dest: 'script', site: 'same-origin' },
+    { uri: '/api/items', dest: 'empty', site: 'same-origin', method: 'POST', origin: `https://${PRIV_HOST}` },
+    { uri: '/ws', ws: true, origin: `https://${PRIV_HOST}` },
+  ]) {
+    const result = await gate({ ...request, cookie });
+    assert.equal(result.status, 200, request.uri);
+    assert.equal(result.headers['x-usernode-identity'], undefined);
+  }
+  assert.equal((await gate({ uri: '/api/items', method: 'POST', site: 'cross-site', origin: PLATFORM, cookie })).status, 403);
+  assert.equal((await gate({ uri: '/ws', ws: true, origin: PLATFORM, cookie })).status, 403);
+  assert.equal((await gate({ dest: 'iframe', site: 'cross-site', cookie })).status, 401);
+  const existingDoor = await trade(token());
+  const both = `__Host-usernode_access=${doorValue(existingDoor)}; ${cookie}`;
+  assert.equal((await gate({ uri: '/ws', ws: true, cookie: both })).status, 200,
+    'the regular partitioned door still takes precedence');
+  for (const invalid of [
+    memberCookie('b'.repeat(64), STORAGE_NAME, true),
+    memberCookie(SID, STORAGE_NAME),
+    memberCookie(SID, '__Host-usernode_access', true),
+  ]) {
+    assert.equal((await gate({ dest: 'iframe', site: 'cross-site', cookie: invalid })).status, 401);
+  }
+  assert.equal(edgeGate.stripGateCookies(`a=1; ${cookie}`), 'a=1');
+  assert.equal(require('../scripts/app-gate').stripGateCookies(`a=1; ${cookie}`), 'a=1');
+});
 
 test('the layout: apps on onhomeroom.app are framed from another site', () => {
   assert.equal(edgeGate.framesCrossSite(PRIV_HOST), true);

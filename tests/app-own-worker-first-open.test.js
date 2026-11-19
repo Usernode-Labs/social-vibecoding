@@ -119,7 +119,7 @@ async function frameHarness(t, { navigable = true } = {}) {
       el = s.slug ? fakeFrame(doc, { navigable }) : null;
       slug = s.slug;
     }
-    if (el) el.setAttribute('sandbox', s.sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX);
+    if (el) el.setAttribute('sandbox', s.sandboxReady ? policy.HOMEROOM_APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX);
     appFrameRefs.iframe = el;
   };
   const unsubscribe = appFrameStore.subscribe(render);
@@ -138,7 +138,7 @@ test('a new frame reaches the app through an empty document under the app sandbo
   assert.equal(el.getAttribute('sandbox'), h.policy.PENDING_FRAME_SANDBOX, 'mounted restricted, as before');
 
   assert.equal(h.bridge.setSrc(APP_URL), true);
-  assert.deepEqual(el.navigations, [[PRIMER, h.policy.APP_FRAME_SANDBOX]],
+  assert.deepEqual(el.navigations, [[PRIMER, h.policy.HOMEROOM_APP_FRAME_SANDBOX]],
     'first an empty data: document, already under the app sandbox');
   assert.equal(el.getAttribute('src'), null, 'the app is not asked for until that document is in');
   assert.equal(h.bridge.keeps({ slug: SLUG, src: APP_URL }), true,
@@ -146,8 +146,8 @@ test('a new frame reaches the app through an empty document under the app sandbo
 
   assert.equal(el.load(), 'stopped', 'the empty document\'s load goes no further than the capture phase');
   assert.deepEqual(el.navigations, [
-    [PRIMER, h.policy.APP_FRAME_SANDBOX],
-    [APP_URL, h.policy.APP_FRAME_SANDBOX],
+    [PRIMER, h.policy.HOMEROOM_APP_FRAME_SANDBOX],
+    [APP_URL, h.policy.HOMEROOM_APP_FRAME_SANDBOX],
   ], 'then the app, from a document WebKit lets the app\'s worker answer for');
   assert.equal(h.doc.capture.size, 0, 'and the capture listener is gone');
   assert.equal(h.bridge.keeps({ slug: SLUG, src: APP_URL }), true);
@@ -224,7 +224,7 @@ test('a frame whose window cannot be navigated from here gets its src directly',
   h.bridge.mount({ slug: SLUG, faded: false });
   const el = h.frame();
   h.bridge.setSrc(APP_URL);
-  assert.deepEqual(el.navigations, [[APP_URL, h.policy.APP_FRAME_SANDBOX]]);
+  assert.deepEqual(el.navigations, [[APP_URL, h.policy.HOMEROOM_APP_FRAME_SANDBOX]]);
 });
 
 test('the policy and the bridge say why the first navigation is primed', () => {

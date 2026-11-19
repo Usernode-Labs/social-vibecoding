@@ -35,6 +35,10 @@ const KINDS = Object.freeze({
   // token.
   INVITE_LINK_BUSY: 'invite_link_busy',
   INVITE_LINK_PAUSED: 'invite_link_paused',
+  // #6867: OpenRouter's credit ran out, one per outage; the bot's lane is
+  // paused until the balance read shows credit again
+  // (services/openrouter-credit.js). The provider's own words are the why.
+  CREDIT_OUT: 'credit_out',
 });
 
 // How far back the console looks, and how many it lists.

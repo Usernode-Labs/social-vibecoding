@@ -753,13 +753,18 @@
       const lookSelect = document.getElementById('settings-look');
       const paintLooks = () => {
         const skin = window.Skin?.get?.();
+        // Standard (WIP) is listed once per token set ('wip:<set>'; the look as it is drawn is 'wip').
+        const set = skin === 'wip' ? window.Skin?.getTokens?.() : null;
+        const entry = set && set !== 'current' ? `wip:${set}` : skin;
         if (lookSelect) {
-          lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === skin) ? skin : '';
+          lookSelect.value = Array.from(lookSelect.options).some((o) => o.value === entry) ? entry : '';
         }
       };
       if (lookSelect) {
         lookSelect.addEventListener('change', (e) => {
-          window.Skin?.set?.(e.target.value || 'standard');
+          const [look, set] = String(e.target.value || 'standard').split(':');
+          if (look === 'wip') window.Skin?.setTokens?.(set || 'current');
+          window.Skin?.set?.(look);
           paintLooks();
         });
         // Another tab changing it repaints the menu here too.

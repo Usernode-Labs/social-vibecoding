@@ -162,7 +162,7 @@ function attachRenderer(store, refs, policy) {
       const el = r.els.get(k.slug);
       el.id = '';
       el.kept = true;
-      el.setAttribute('sandbox', k.sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX);
+      el.setAttribute('sandbox', k.sandboxReady ? policy.HOMEROOM_APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX);
       if (refs.kept) refs.kept[k.slug] = el;
     }
     if (!slug) {
@@ -180,7 +180,7 @@ function attachRenderer(store, refs, policy) {
       r.el.style.backgroundColor = state.background || '';
       r.el.setAttribute(
         'sandbox',
-        sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX
+        sandboxReady ? policy.HOMEROOM_APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX
       );
       refs.iframe = r.el;
     }
@@ -1347,7 +1347,7 @@ test('the app-frame URL policy allows only absolute cross-origin HTTP(S) targets
 
 test('the bridge restricts the blank frame, then enables the app sandbox before navigation', async () => {
   const h = await makeHarness();
-  const fullSandbox = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads';
+  const fullSandbox = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads allow-storage-access-by-user-activation';
 
   h.bridge.mount({ slug: SLUG, faded: false });
   const frame = h.bridge.frame();
@@ -1506,7 +1506,7 @@ test('`src` is not state, and the store starts from the prerendered markup', () 
     /APP_FRAME_SANDBOX =[\s\S]*allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads/,
     'the navigated app keeps the established capability contract');
   assert.match(FRAME,
-    /sandbox=\{look\.sandboxReady \? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX\}/,
+    /sandbox=\{look\.sandboxReady \? HOMEROOM_APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX\}/,
     'React owns the two-phase sandbox attribute');
   // Exactly one place in the whole chain assigns src.
   const srcWrites = BRIDGE.match(/el\.src = /g) || [];

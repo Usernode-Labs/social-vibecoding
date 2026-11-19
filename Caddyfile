@@ -342,7 +342,7 @@ import /etc/caddy/active/platform-upstream.caddy
 		# and could be replayed by whoever reads them, and the sign-in
 		# hop's state, which would let it plant a code of its own.
 		header_up -X-Usernode-Identity
-		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon|state)=[^;]*;?\s*` ""
+		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon|state|embed)=[^;]*;?\s*` ""
 		@unauth status 401
 		handle_response @unauth {
 			@chromeless {
@@ -470,7 +470,7 @@ https:// {
 		header_up -X-Usernode-Identity
 		header_up -X-Usernode-Upstream
 		header_up -X-Usernode-Applink
-		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon|state)=[^;]*;?\s*` ""
+		header_up Cookie `(?:__Host-usernode|__usernode)_(?:access|anon|state|embed)=[^;]*;?\s*` ""
 		@unauth status 401
 		handle_response @unauth {
 			@chromeless {
