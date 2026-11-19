@@ -152,6 +152,7 @@ export const MessageRow = memo(function MessageRow({
   planCardId = null,
   hidePrompts = false,
   botChat = false,
+  flat = false,
 }: {
   message: ConversationMessage;
   conversationId: number;
@@ -177,6 +178,12 @@ export const MessageRow = memo(function MessageRow({
    * is a thread, so such a row is always drawn in one (`inThread`).
    */
   botChat?: boolean;
+  /**
+   * #6863: a private thread with Homeroom bot, alone in its tab's column,
+   * reads as a public thread's rows do — every message is the flat named
+   * row, its author's face and name beside it, never a bubble on a side.
+   */
+  flat?: boolean;
 }) {
   const t = useMessages('messages');
   // #6738: the words a search result was opened by stay marked in this
@@ -419,14 +426,16 @@ export const MessageRow = memo(function MessageRow({
       && !isTwoQuestions(message) && !isReadyMessage(message));
   // Under one of the frame's looks no row has a side (the tour's s17: "your
   // own messages and theirs share one style, so a thread reads top to
-  // bottom"): every row is the named row a channel draws.
+  // bottom"): every row is the named row a channel draws. #6863: so is every
+  // row of a private thread with the bot, alone in its tab's column, where
+  // the thread is drawn as a public thread's one sheet (`flat`).
   const frame = isFrameSkin(useLiveSkin());
   // 18 Nov 2026: in the chat with Homeroom bot every message of the bot's is
   // the flat named row its answers are, a notice as much as a reply with
   // buttons: the same speaker no longer changes style message by message.
   // People's own messages keep their bubble.
   const botRow = botChat && !!message.sender.bot;
-  const sided = !frame && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
+  const sided = !flat && !frame && kind !== 'channel' && !step && !message.system && !isCardMessage && !botRow;
 
   // The quoted reply, the body and the inline editor: the part of the
   // message that stands as the row's text. A deleted message says so in its
