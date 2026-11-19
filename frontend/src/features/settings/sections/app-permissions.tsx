@@ -1,6 +1,7 @@
 import { SectionHeading, StatusLine } from '@/components/ui/field';
 
 import { AppPermissionsList } from '../app-permissions-list';
+import { PermissionsSummary } from '../permissions-summary';
 import { useMessages } from '../../../lib/i18n/react';
 
 /**
@@ -35,6 +36,9 @@ export function AppPermissionsSection() {
         <SectionHeading title={t('settings:appPermissions.title')} blurbClassName="dark:text-zinc-400">
           {t('settings:appPermissions.intro')}
         </SectionHeading>
+        {/* #6512: the page at a glance. Draws nothing until a list has loaded
+            something active, so the first render is unchanged. */}
+        <PermissionsSummary />
         <div id="app-permissions-list" className="ui-card space-y-2">
           <AppPermissionsList />
         </div>

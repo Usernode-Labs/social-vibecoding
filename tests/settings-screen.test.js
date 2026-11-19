@@ -2556,6 +2556,62 @@ test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (
 });
 
 
+// #6512 items 6 and 10: the page at a glance, from what it already loads.
+const SUMMARY = 'frontend/src/features/settings/permissions-summary.tsx';
+const summaryLine = (deviceApps, aiApps) => renderComponent(SUMMARY, 'PermissionsSummaryView', { deviceApps, aiApps });
+const summaryText = (html) => html.replace(/<[^>]+>/g, '');
+
+test('App permissions opens with how many apps hold something, and zero says nothing (#6512)', () => {
+  // Nothing held: no line at all, which is also the first render (both
+  // stores idle), so the prerendered section is what it was.
+  assert.equal(summaryLine(0, 0), '');
+  assert.equal(renderComponent(SUMMARY, 'PermissionsSummary'), '', 'idle stores draw nothing');
+  assert.equal(shellMarkup().includes('permissions-summary'), false, 'and the prerendered document agrees');
+  // One and several, each half a whole message with its own plural.
+  assert.equal(summaryText(summaryLine(1, 1)), '1 app can use your device · 1 app can use AI on your budget');
+  assert.equal(summaryText(summaryLine(3, 2)), '3 apps can use your device · 2 apps can use AI on your budget');
+  // A zero half is left out, with no dot beside the other.
+  assert.equal(summaryText(summaryLine(2, 0)), '2 apps can use your device');
+  assert.equal(summaryText(summaryLine(0, 1)), '1 app can use AI on your budget');
+  assert.match(summaryLine(3, 2), /^<p data-role="permissions-summary" class="mb-3 text-\[13px\] text-zinc-600 dark:text-zinc-400">/);
+  assert.equal(message('settings:appPermissions.summary.device_one'), '{{count}} app can use your device');
+  assert.equal(message('settings:appPermissions.summary.ai_other'), '{{count}} apps can use AI on your budget');
+  const src = read(SUMMARY);
+  assert.match(src, /app\.items\.some\(\(item\) => !item\.revoked\)/, 'an app whose permissions are all revoked holds nothing');
+  assert.match(src, /ai\.grants\.filter\(\(g\) => !g\.revoked\)/, 'and a revoked AI allowance is not counted');
+  assert.match(read('frontend/src/features/settings/sections/app-permissions.tsx'),
+    /<\/SectionHeading>[\s\S]*?<PermissionsSummary \/>\s*<div id="app-permissions-list" className="ui-card space-y-2">/,
+    'the line sits at the top of the page, above the first list, whose host keeps its id and classes');
+});
+
+test('App AI permissions totals what the apps spent today (#6512)', () => {
+  const total = (html) => (html.match(/<p data-role="spend-total"[^>]*>([^<]*)<\/p>/) || [])[1];
+  // No app at all: the empty line stands and no total is drawn.
+  assert.equal(total(grantRows({ phase: 'ready', grants: [] })), undefined);
+  // One app.
+  assert.equal(total(grantRows({ phase: 'ready', grants: [grantView({ spentCents: 37 })] })), 'Apps have spent $0.37 today');
+  // Several, a revoked one among them: what it spent earlier today counts.
+  const several = grantRows({ phase: 'ready', grants: [
+    grantView({ appId: 1, spentCents: 37 }),
+    grantView({ appId: 2, spentCents: 105, spent: '1.05' }),
+    grantView({ appId: 3, spentCents: 8, revoked: true }),
+  ] });
+  assert.equal(total(several), 'Apps have spent $1.50 today');
+  assert.ok(several.indexOf('data-role="spend-total"') < several.indexOf('data-role="cap"'), 'the total is above the rows');
+  // An allowed app that has spent nothing still shows the total, at zero.
+  assert.equal(total(grantRows({ phase: 'ready', grants: [grantView({ spentCents: 0, spent: '0.00' })] })), 'Apps have spent $0.00 today');
+  // Only revoked apps and nothing spent: a zero would say nothing.
+  assert.equal(total(grantRows({ phase: 'ready', grants: [grantView({ spentCents: 0, revoked: true })] })), undefined);
+  // The row's figure and the total are the same day: the cap is daily.
+  assert.match(message('settings:grants.spentToday'), /today$/);
+  assert.match(message('settings:grants.totalToday'), /today$/);
+  // The number comes from the same two fields the row's own figure adds up.
+  const grantViewOf = new Function(`return ({ state: { hasApiKey: false }, ${sliceMethod(settingsJs, '_grantView')} });`)();
+  const view = grantViewOf._grantView({ appId: 5, status: 'active', dailyCapCents: 100, spentTodayCents: 30, byokSpentTodayCents: 7 });
+  assert.equal(view.spentCents, 37);
+  assert.equal(view.spent, '0.37');
+});
+
 // ── The connector cards (#1191) ───────────────────────────────────────
 
 const CONNECTORS_LIST = 'frontend/src/features/settings/connectors-list.tsx';

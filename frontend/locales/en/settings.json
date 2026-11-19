@@ -695,6 +695,10 @@
     "text": "${{spent}} / ${{cap}} today",
     "description": "Figure on an app's row in Settings > App AI permissions: what the app has spent today out of its daily cap. {{spent}} and {{cap}} are amounts in US dollars such as 0.12; the dollar signs are part of the text."
   },
+  "grants.totalToday": {
+    "text": "Apps have spent ${{spent}} today",
+    "description": "Line above the list of apps in Settings > App AI permissions: what all the apps together have spent on AI today, the same day each row's own figure covers. {{spent}} is an amount in US dollars such as 0.37; the dollar sign is part of the text."
+  },
   "grants.capLabel": {
     "text": "Cap $",
     "description": "Label directly before a number field on an app's row in Settings > App AI permissions: the most the app may spend per day, in US dollars. The dollar sign reads as the unit of the field that follows."
@@ -1782,6 +1786,22 @@
   "appPermissions.intro": {
     "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. If an app is open in this tab, revoking closes it so it stops at once. Anywhere else it is open, it keeps access until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
     "description": "Explanation under the App device permissions heading in Settings. Revoking closes the app when it is open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
+  },
+  "appPermissions.summary.device_one": {
+    "text": "{{count}} app can use your device",
+    "description": "First half of the summary line at the top of Settings > App permissions: how many apps currently hold at least one device permission (location, microphone, camera, screen or a connected device). {{count}} is the number of apps. Shown only when it is at least one."
+  },
+  "appPermissions.summary.device_other": {
+    "text": "{{count}} apps can use your device",
+    "description": "First half of the summary line at the top of Settings > App permissions: how many apps currently hold at least one device permission (location, microphone, camera, screen or a connected device). {{count}} is the number of apps. Shown only when it is at least one."
+  },
+  "appPermissions.summary.ai_one": {
+    "text": "{{count}} app can use AI on your budget",
+    "description": "Second half of the summary line at the top of Settings > App permissions: how many apps are currently allowed to use AI on the person's budget. {{count}} is the number of apps. Shown only when it is at least one."
+  },
+  "appPermissions.summary.ai_other": {
+    "text": "{{count}} apps can use AI on your budget",
+    "description": "Second half of the summary line at the top of Settings > App permissions: how many apps are currently allowed to use AI on the person's budget. {{count}} is the number of apps. Shown only when it is at least one."
   },
   "appPermissions.loadFailed": {
     "text": "Could not load app permissions.",
