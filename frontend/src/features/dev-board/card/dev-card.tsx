@@ -78,6 +78,7 @@ import type {
   PreviewSpec,
   RailSpec,
   StatusPillState,
+  TitleEditTarget,
   TitleSpec,
 } from './model';
 
@@ -1272,30 +1273,38 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
   // survive hydration (React #418) and the shell build refuses it.
   const text = t.lead ? ` ${t.text}` : t.text;
   const edit = t.edit;
-  const editSession = !!edit && 'session' in edit;
-  const editId = edit ? ('session' in edit ? edit.session : edit.issue) : null;
   return (
     <>
       {t.lead ? <span className={t.lead.cls}>{t.lead.s}</span> : null}
       {t.edit ? `${text} ` : text}
       {t.trail ? <span className={t.trail.cls}>{` · ${t.trail.s}`}</span> : null}
-      {edit ? (
-        <>
-          <button
-            type="button"
-            className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
-            title={editSession ? msg('project:card.title.editProposal') : msg('project:card.title.editRequest')}
-            aria-label={msg('project:card.title.edit')}
-            onClick={() => call({
-              fn: editSession ? 'beginSessionTitleEdit' : 'beginIssueTitleEdit',
-              args: [editId],
-            })}
-          >
-            <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" aria-hidden="true" />
-          </button>
-        </>
-      ) : null}
+      {edit ? <TitleEditButton edit={edit} /> : null}
     </>
+  );
+}
+
+/**
+ * The author's pencil beside a title, which opens its inline editor. Its own
+ * export since 19 Nov 2026: a change's page says its title in the thread's
+ * head card (topic/change-head.tsx ChangeBar), and the pencil goes with it.
+ */
+export function TitleEditButton({ edit }: { edit: TitleEditTarget }): ReactNode {
+  const msg = useMessages('project');
+  const editSession = 'session' in edit;
+  const editId = 'session' in edit ? edit.session : edit.issue;
+  return (
+    <button
+      type="button"
+      className="align-middle text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors dark:text-zinc-400"
+      title={editSession ? msg('project:card.title.editProposal') : msg('project:card.title.editRequest')}
+      aria-label={msg('project:card.title.edit')}
+      onClick={() => call({
+        fn: editSession ? 'beginSessionTitleEdit' : 'beginIssueTitleEdit',
+        args: [editId],
+      })}
+    >
+      <PencilSquareIcon className="w-3.5 h-3.5 inline -mt-0.5" aria-hidden="true" />
+    </button>
   );
 }
 
