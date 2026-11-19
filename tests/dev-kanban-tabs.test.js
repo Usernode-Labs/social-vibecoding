@@ -460,15 +460,15 @@ test('?view=kanban resolves onto the Workshop, with the stage pane up', () => {
   assert.equal(AppView._getWorkshopGroup(), 'stage', 'the columns it wanted');
 });
 
-test('an explicit ?group= wins over the retired ?view=kanban beside it', () => {
-  // `?group=` is the parameter still being offered, so it names the pane.
-  // `category` is what the pane is called, and what it was called before
-  // #2332 briefly renamed it.
+test('an old ?group=category beside the retired ?view=kanban still lands on the columns', () => {
+  // `?group=` named a pane while All items had two. It has one (request
+  // 6708), so the parameter is not read.
   const AppView = makeAppView({
     search: '?view=kanban&group=category',
     matchMedia: () => ({ matches: false }),
   });
-  assert.equal(AppView._getWorkshopGroup(), 'category');
+  assert.equal(AppView._getWorkshopGroup(), 'stage');
+  assert.equal(AppView._workshopTab(), 'all');
 });
 
 test('?view=workshop wins over a stored kanban preference', () => {
@@ -503,11 +503,12 @@ test('an unrecognized ?view= leaves the existing resolution untouched', () => {
   assert.equal(AppView._getViewMode(), 'workshop'); // the default, unchanged
 });
 
-test('choosing a pane retires the ?view=kanban override so the click sticks', () => {
+test('choosing a tab retires the ?view=kanban override so the click sticks', () => {
   // The surviving half of "an explicit choice beats the URL". It used to be
-  // the view-mode toggle against `?view=`; with one mode left, the control
-  // that choice is made on is the grouping tab strip, and the override it has
-  // to retire is the one the retired parameter set.
+  // the view-mode toggle against `?view=`, then the grouping strip; with one
+  // mode and one view of All items left (request 6708), the choice is the
+  // page's tab, and the override it retires is the one the retired
+  // parameter set.
   const store = { devViewMode: 'kanban' };
   const AppView = makeAppView({
     search: '?view=kanban',
@@ -518,9 +519,9 @@ test('choosing a pane retires the ?view=kanban override so the click sticks', ()
     },
   });
   assert.equal(AppView._getViewMode(), 'workshop', 'the stored value migrates too');
-  assert.equal(AppView._getWorkshopGroup(), 'stage');
-  AppView._setWorkshopGroup('category');
-  assert.equal(AppView._getWorkshopGroup(), 'category',
+  assert.equal(AppView._workshopTab(), 'all');
+  AppView._setWorkshopTab('needs');
+  assert.equal(AppView._workshopTab(), 'needs',
     'the explicit choice wins over the URL');
 });
 

@@ -46,8 +46,9 @@ test('restoreFromHash rewrites the aliases onto the dev vocabulary', () => {
   // resolves onto the Workshop and asks for the pane that draws those columns.
   assert.match(fn, /tab === 'board'.*parts\[3\] = null; boardView = 'workshop'/s,
     'board parses as the card area, drawn as the Workshop');
-  assert.match(fn, /tab === 'board'[\s\S]*_overrideWorkshopGroup\('stage'\)/,
-    'and selects the stage pane, which is where the board\'s columns live');
+  assert.match(fn, /tab === 'board'[\s\S]*?_overrideWorkshopTab\('all'\)/,
+    'and opens All items, which is the board\'s columns');
+  assert.doesNotMatch(fn, /_overrideWorkshopGroup/, 'with no pane to pick: All items has one view (request 6708)');
   // Both rewrites must land BEFORE the dev-section switch reads parts[3],
   // or the aliases would fall through to the plain App tab.
   assert.ok(
