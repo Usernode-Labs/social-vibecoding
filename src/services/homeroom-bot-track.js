@@ -55,7 +55,9 @@ const CAP_LIMITS = Object.freeze({
  */
 function buildStopWhy(buildError, noChange = null) {
   const decode = require('./bot-stop-cause');
-  const read = decode.buildCause(buildError, { noChangeSaid: noChange?.said || null });
+  // B4: a run (its stored code, stopOf), or a reason that was never stored.
+  const opts = { noChangeSaid: noChange?.said || null };
+  const read = buildError && typeof buildError === 'object' ? decode.buildCauseOf(buildError, opts) : decode.buildCause(buildError, opts);
   return decode.trackCauseOf(read.cause === 'no_change' ? noChangeWhy(noChange) : read.cause);
 }
 
@@ -211,10 +213,10 @@ function trackOf({ job, work = null, runs = null, held = null, doneBy = null, un
   if (state.stage === 'stopped' && state.reason === 'build_failed') {
     const decode = require('./bot-stop-cause');
     const cause = lead
-      ? buildStopWhy(lead.build_error, lead.no_change_said ? { said: lead.no_change_said } : null)
+      ? buildStopWhy(lead, lead.no_change_said ? { said: lead.no_change_said } : null)
       : decode.trackCauseOf(state.cause || null);
     if (cause) track.cause = cause;
-    const by = cause === 'stopped' ? (lead ? decode.buildCause(lead.build_error).by : (state.causeNames || [])[0]) : null;
+    const by = cause === 'stopped' ? (lead ? decode.buildCauseOf(lead).by : (state.causeNames || [])[0]) : null;
     if (by) track.causeBy = by;
   }
   const shipped = doneBy || state.doneBy || null;

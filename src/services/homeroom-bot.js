@@ -8297,7 +8297,7 @@ const WAITING_PUSH_HOURS = 6;
 async function waitingPushRun(pool, runId) {
   const { rows: [run] = [] } = await pool.query(
     `SELECT r.id, r.app_id, r.issue_number, r.build_ok, r.build_session_id, r.build_branch, r.build_sha,
-            r.build_commits, r.build_spec_md, r.build_error, r.build_finish,
+            r.build_commits, r.build_spec_md, r.build_error, r.build_stop, r.build_finish,
             bs.status AS session_status, bs.branch_name AS session_branch, bs.user_id AS session_user_id,
             sw.unpushed_sha, sw.unpushed_branch_name,
             a.slug, a.name, a.repo_url,
@@ -8332,7 +8332,8 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
     run = await waitingPushRun(pool, runId);
     if (!run || run.build_ok !== null || !run.build_session_id) return { ok: false, why: 'no_run', app };
     if (Number(run.newest_run_id) !== Number(run.id)) return { ok: false, why: 'not_newest', app };
-    if (!run.build_error || !String(run.build_error).startsWith('waiting to push:')) {
+    // B4: by its stored code (bot-stop-cause.js stopOf), not its English.
+    if (require('./bot-stop-cause').stopOf(run)?.cause !== 'waiting_push') {
       return { ok: false, why: 'not_waiting', app };
     }
     if (Number(run.session_user_id) !== Number((await ensureBotUser(pool, config)).id)) return { ok: false, why: 'not_bots', app };
@@ -8350,7 +8351,7 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
           SET build_finish = COALESCE(build_finish, '{}'::jsonb)
                 || jsonb_build_object('claimed_at', NOW(), 'by', $2::int, 'session_id', $3::int)
         WHERE id = $1 AND build_ok IS NULL AND proposal_session_id IS NULL AND build_session_id = $3
-          AND build_error LIKE 'waiting to push:%'
+          AND build_stop->>'cause' = 'waiting_push'
           AND (build_finish->>'claimed_at' IS NULL
                OR (build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $4))
         RETURNING id`,
@@ -8370,7 +8371,7 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
       if (!permanent) return { ok: false, why: 'push_failed', app };
       const reason = `couldn't push the build's commit (${err.code || code}, permanent)`;
       await pool.query(
-        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_stop = '{"cause":"push_permanent"}'::jsonb,
                 build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
           WHERE id = $1 AND build_ok IS NULL`,
         [run.id, reason],
@@ -8383,7 +8384,7 @@ async function finishWaitingPush(pool, config, { runId, deps = {} } = {}) {
       // on top of it. Drop the saved record (done) and say retrying cannot fix it.
       const reason = `couldn't push the build's commit (non_fast_forward, permanent)`;
       await pool.query(
-        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_stop = '{"cause":"push_permanent"}'::jsonb,
                 build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'failed')
           WHERE id = $1 AND build_ok IS NULL`,
         [run.id, reason],
@@ -8469,7 +8470,7 @@ async function sweepWaitingPushes(pool, config, deps = {}) {
     `SELECT r.id,
             COALESCE((r.build_finish->>'waiting_at')::timestamptz, r.created_at) AS waiting_since
        FROM homeroom_bot_runs r
-      WHERE r.build_ok IS NULL AND r.build_error LIKE 'waiting to push:%'
+      WHERE r.build_ok IS NULL AND r.build_stop->>'cause' = 'waiting_push'
         AND r.build_session_id IS NOT NULL AND r.proposal_session_id IS NULL
         AND (r.build_finish->>'claimed_at' IS NULL
              OR (r.build_finish->>'claimed_at')::timestamptz < NOW() - make_interval(mins => $1))
@@ -8498,9 +8499,9 @@ async function giveUpWaitingPush(pool, config, { runId, deps = {} } = {}) {
   const code = waitingPushCode(run.build_error);
   const reason = `couldn't push the build's commit (${code}, gave up after 6 hours)`;
   const { rows } = await pool.query(
-    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2,
+    `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_stop = '{"cause":"push_gave_up"}'::jsonb,
             build_finish = COALESCE(build_finish, '{}'::jsonb) || jsonb_build_object('outcome', 'gave_up')
-      WHERE id = $1 AND build_ok IS NULL AND build_error LIKE 'waiting to push:%'
+      WHERE id = $1 AND build_ok IS NULL AND build_stop->>'cause' = 'waiting_push'
       RETURNING id`,
     [run.id, reason],
   );
@@ -8523,7 +8524,7 @@ async function resumeWaitingPush(pool, config, { bot, app, issueNumber, deps = {
   const { rows: [run] = [] } = await pool.query(
     `SELECT r.id FROM homeroom_bot_runs r
       WHERE r.app_id = $1 AND r.issue_number = $2 AND r.build_ok IS NULL AND r.proposal_session_id IS NULL
-        AND r.build_error LIKE 'waiting to push:%'
+        AND r.build_stop->>'cause' = 'waiting_push'
         AND NOT EXISTS (SELECT 1 FROM homeroom_bot_runs n
                          WHERE n.app_id = r.app_id AND n.issue_number = r.issue_number AND n.id > r.id)
       ORDER BY r.id DESC LIMIT 1`,
@@ -10589,9 +10590,9 @@ const CLOSED_WHILE_BUILDING = 'skipped: the request was closed before it was pro
 async function whyNotBuild(pool, { runId, botId, appId, issueNumber, github = null, repo = null }) {
   try {
     const { rows: [run] = [] } = await pool.query(
-      'SELECT created_at, build_ok, build_error, build_session_id FROM homeroom_bot_runs WHERE id = $1', [runId],
+      'SELECT created_at, build_ok, build_error, build_stop, build_session_id FROM homeroom_bot_runs WHERE id = $1', [runId],
     );
-    if (run?.build_ok === false && /^skipped:/.test(String(run.build_error || ''))) return String(run.build_error);
+    if (run?.build_ok === false && require('./bot-stop-cause').stopOf(run)?.cause === 'skipped') return String(run.build_error);
     const proposed = await requestProposal(pool, { appId, botId, issueNumber, since: run?.created_at || null });
     if (proposed) return hasProposalSkip(proposed.id);
     // Its own session is the run's (its claim); a plan, which links none,

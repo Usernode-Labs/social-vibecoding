@@ -621,8 +621,8 @@ function firstVersionStageOf(work) {
  * request is queued for another read, which is a retry of the plan.
  */
 function planFailed(row) {
-  return row?.build_ok === false
-    && /no plan could be written|only part of a spec/.test(String(row.build_error || ''));
+  // B4: from its stored code (bot-stop-cause.js stopOf), not its English.
+  return row?.build_ok === false && require('./bot-stop-cause').stopOf(row)?.plan === true;
 }
 
 // T2.9 (19 Nov 2026): how long a plan that could not be written reads as
@@ -661,7 +661,8 @@ function firstVersionStopped(row) {
   if (!row || row.mode !== 'live' || row.verdict !== 'ready' || row.build_ok !== false) return false;
   if (row.request_closed === true) return false;
   if (['promoted', 'merging', 'merged'].includes(row.proposal_status)) return false;
-  return !/^(?:skipped|blocked):/.test(String(row.build_error || ''));
+  const cause = require('./bot-stop-cause').stopOf(row)?.cause;
+  return cause !== 'skipped' && cause !== 'blocked';
 }
 
 /**
@@ -854,7 +855,7 @@ function requestClosedSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' }
 function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_number' } = {}) {
   return `LEFT JOIN homeroom_bot_queue q ON q.app_id = ${appId} AND q.issue_number = ${issueNumber}
        LEFT JOIN LATERAL (
-         SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_session_id,
+         SELECT id, mode, verdict, created_at, duration_ms, cap_suppressed, build_ok, build_error, build_stop, build_session_id,
                 proposal_session_id, live_build_waiting_at, awaiting_go_at,
                 reason AS run_reason, already_done AS run_already_done,
                 -- T2.9: why the look was read (a failed plan's retry is read once).
@@ -892,7 +893,7 @@ function requestRecordJoinsSql({ appId = 'm.app_id', issueNumber = 'm.issue_numb
 const REQUEST_RECORD_COLUMNS = `q.id AS queue_id, q.started_at, q.enqueued_at, q.reason AS queue_reason, q.held_until, q.held_reason,
             run.id AS run_id, run.mode, run.verdict, run.created_at AS run_at, run.duration_ms AS run_duration_ms,
             run.cap_suppressed,
-            run.build_ok, run.build_error, run.build_session_id, run.proposal_session_id AS run_proposal,
+            run.build_ok, run.build_error, run.build_stop, run.build_session_id, run.proposal_session_id AS run_proposal,
             run.live_build_waiting_at AS build_waiting_at, run.awaiting_go_at AS plan_waiting_at,
             run.review_state, run.review_started_at, run.review_round, run.review_max_rounds, run.review_minutes,
             run.no_change_said, run.run_reason, run.run_already_done, run.run_read_reason,

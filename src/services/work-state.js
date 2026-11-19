@@ -546,7 +546,7 @@ function deriveFacts(row, { now = new Date(), change = null } = {}) {
   if (back === 'decide') return state('waiting_for_you', { since: row.run_at, why: 'decide', ...said });
   if (back === 'build_stopped') return state('stopped', { since: row.run_at, reason: 'build_failed' });
   if (row.request_closed === true) return state('closed', { since: row.closed_at || row.run_at });
-  if (row.mode === 'live' && (row.verdict === 'empty' || /^blocked:/.test(String(row.build_error || '')))) {
+  if (row.mode === 'live' && (row.verdict === 'empty' || require('./bot-stop-cause').stopOf(row)?.cause === 'blocked')) {
     return state('waiting_for_you', { since: row.run_at, why: 'needs_detail', ...said });
   }
   if (row.mode === 'live' && row.verdict === 'failed') return state('stopped', { since: row.run_at, reason: 'look_failed' });
@@ -1228,7 +1228,7 @@ const STANDING_RUNS_SQL = `
     FROM (SELECT DISTINCT x.app_id, x.issue_number FROM unnest($1::int[], $2::int[]) AS x(app_id, issue_number)) it
     CROSS JOIN LATERAL (
       SELECT r.id, r.app_id, r.issue_number, r.verdict, r.cap_suppressed, r.awaiting_go_at, r.proposal_session_id,
-             r.build_ok, r.build_error, r.build_session_id, r.error, r.created_at,
+             r.build_ok, r.build_error, r.build_stop, r.build_session_id, r.error, r.created_at,
              r.build_no_change->'turns'->-1->>'said' AS no_change_said,
              -- T2.10: what a person verdict found (bot-stop-cause.js handBackOf).
              r.about_platform, r.go_ahead_blocker, (r.wrong_project IS NOT NULL) AS wrong_project,

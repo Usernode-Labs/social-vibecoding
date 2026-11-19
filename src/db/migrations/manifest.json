@@ -480,6 +480,11 @@
       "id": "work-state-one-writer",
       "sha256": "48d01fd14d04ff8558f5ecb3cb0f2d560219fbf93c9ed82c3a20fa0532ad28a6",
       "schemaSha256": "83f19a55fe0a3ddab7fc6360bd477b893ed4517af2885be9c77a9a2088ee1353"
+    },
+    {
+      "id": "homeroom-bot-run-stop-cause",
+      "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
+      "schemaSha256": "14f5d1727937505cd38944fe5cc678c521b784e33fbe19c740009c56771a59f4"
     }
   ]
 }
