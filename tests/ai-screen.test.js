@@ -661,6 +661,10 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.match(rail, /data-x="y"/);
   assert.equal(typeof PlainRail, 'function', 'the plain rail stays for callers that only clip');
   assert.match(lists, /\{rail\.map\(\(app\) => \(/, 'the rail draws the chips railProjects gives it');
+  // #6706: All's new-items number clears the label, the same 8px gap the
+  // project chips beside it give theirs.
+  assert.match(lists, /className=\{`gap-2 px-4 \$\{CHIP_EDGE\}`\} selected=\{!picked\.length\} onClick=\{\(\) => setOnly\(\[\]\)\}/,
+    'All leaves a gap before its number');
   // More stands outside the rail, so a narrow rail never scrolls it away,
   // and it is a menu button, not a toggle.
   assert.match(lists, /<\/FadeRail>\s*\{past > 0 \? \(\s*<Chip/);
