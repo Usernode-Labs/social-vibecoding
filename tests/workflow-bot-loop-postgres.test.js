@@ -515,7 +515,7 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     const q = await row(app2.id, 112);
     assert.equal(q.held_reason, 'cooldown');
     assert.deepEqual(progress.holdOf(q), { kind: 'cooldown', until: new Date(d.owed.heldUntil).toISOString() });
-    assert.equal(progress.stageOf({ ...q, queue_id: q.id }).hold, 'cooldown');
+    assert.equal(require('../src/services/work-state').derive({ ...q, queue_id: q.id }).line.code, 'cooldown');
     work.answer.set(request.WORK.look, { outcome: 'done' });
     // Review of 19 Nov 2026: a person's ask lifts the hold AND the back-off
     // standing behind it (five faults: it could wait up to an hour more), so
@@ -916,8 +916,8 @@ test('the Homeroom bot\'s loop machines against the full PostgreSQL schema', { t
     assert.ok(await row(garden.id, 9), 'the wait and its read survive a quiet refresh');
     // Nothing about it is "on hold": the request page reads the wait, and
     // its newest failed plan, as Homeroom bot trying the plan again.
-    const stage = progress.stageOf({ queue_id: q.id, enqueued_at: q.enqueued_at, wait_until: q.wait_until,
+    const stage = require('../src/services/work-state').derive({ queue_id: q.id, enqueued_at: q.enqueued_at, wait_until: q.wait_until,
       build_ok: false, build_error: 'no plan could be written (the spec turn ended on an API error)' });
-    assert.deepEqual([stage.stage, stage.retry], ['queued', 'plan']);
+    assert.deepEqual([stage.stage, stage.line.code], ['planning', 'retry_plan']);
   });
 });

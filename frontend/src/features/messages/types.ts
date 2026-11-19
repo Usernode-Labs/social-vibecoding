@@ -1,5 +1,5 @@
 import type { ReleaseOutlook } from '../../lib/release-eta';
-import type { WorkState } from '../../lib/work-state';
+import type { WorkState, WorkWords } from '../../lib/work-state';
 import type { UnreadMark } from './unread-anchor';
 
 /**
@@ -281,6 +281,19 @@ export interface HomeroomBotGoesLive {
   missing: number;
   waitingOn: string[];
   more: number;
+  /**
+   * What the change's stored work state says it still waits on although its
+   * approvals are in (services/homeroom-bot-dm.js waitsBeforeLive): its
+   * checks, a sync with main, a merge GitHub holds. The words are the row's
+   * own phrase ids, the ones every screen says.
+   */
+  waits?: HomeroomBotWaits;
+}
+
+export interface HomeroomBotWaits {
+  stage: string;
+  line: { code: string } | null;
+  words: WorkWords;
 }
 
 /** B6: one of a plan's choices, or one of two questions: the suggested answer first. */

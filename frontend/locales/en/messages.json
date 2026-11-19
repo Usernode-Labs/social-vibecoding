@@ -1151,6 +1151,14 @@
     "text": "You approved it. It goes live in a minute or two.",
     "description": "Line on Homeroom bot's card after the reader approved a change and nothing else is needed: the change is put into use shortly."
   },
+  "bot.ready.approved.waits": {
+    "text": "You approved it. It is not live yet: {{status}}.",
+    "description": "Line under a ready-to-try card once the reader approved the change and it has the approvals it needs, while something still holds it back. {{status}} is where the change stands in Homeroom's own status words, for example \"Syncing with main\" or \"Approved · Waiting on GitHub's checks\"."
+  },
+  "bot.ready.approved.waitsOn": {
+    "text": "{{stage}} · {{line}}",
+    "description": "A change's status and its detail joined into one phrase, for the line under an approved ready-to-try card. {{stage}} is the status word (\"Approved\"), {{line}} its detail (\"Waiting on GitHub's checks\")."
+  },
   "bot.ready.approved.none.none": {
     "text": "You approved it. It goes live once it has the approvals it needs.",
     "description": "Line on Homeroom bot's card after the reader approved a change that still needs other approvals, when nothing more is known about them. \"Goes live\" means the change is put into use."

@@ -1123,6 +1123,10 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     // one people vote on, and its news must reach her (B4: once it is ready
     // to try, its checks passed).
     await pool.query(`UPDATE chat_sessions SET check_state = 'passing' WHERE id = $1`, [first]);
+    // Review A3: ready to try is the change's stored work state, which the
+    // drain stores within seconds of that write (services/work-state.js).
+    const workState = require('../src/services/work-state');
+    await workState.pushesOf(pool, await workState.refresh(pool, [{ sessionId: first }]));
     const told = await dm.relayIssuePost({
       pool, app, issueNumber: 3783, kind: 'proposal', runId: a, postId: 37833, bot,
       dm: { link: `https://app.onhomeroom.com/#app/seed-swap/dev/proposals/${first}`, sessionId: first },

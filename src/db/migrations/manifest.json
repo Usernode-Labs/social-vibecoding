@@ -485,6 +485,16 @@
       "id": "artifact-store",
       "sha256": "0b2b396e8efa0057a68bb5bf7ecbc24eda697b9efe8153102b10a19ad1b23fd8",
       "schemaSha256": "2f22555e45c9c119433bd409bf53331555290284659c4017394f23cfc71408f8"
+    },
+    {
+      "id": "work-state-one-writer",
+      "sha256": "48d01fd14d04ff8558f5ecb3cb0f2d560219fbf93c9ed82c3a20fa0532ad28a6",
+      "schemaSha256": "2499a1d3768e7f47b0296b495addb8bb532abad8827a5df55aa93a7f5787eb7c"
+    },
+    {
+      "id": "homeroom-bot-run-stop-cause",
+      "sha256": "1d0288278492a7df3df5ecb040643d9912ff77639a535cf354a9159b4882ee0d",
+      "schemaSha256": "918b752fef10b150cde58e4600e2dcef6649e396968a52db36cb92af086b8d21"
     }
   ]
 }

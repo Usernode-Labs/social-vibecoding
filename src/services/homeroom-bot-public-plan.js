@@ -32,7 +32,8 @@ const bot = () => require('./homeroom-bot');
 /** The newest complicated plan of a request, with what it waits for. */
 async function newestPlan(pool, appId, issueNumber) {
   const { rows: [run] = [] } = await pool.query(
-    `SELECT r.id, r.plan, r.awaiting_go_at, r.go_ahead_at, r.build_ok, r.build_session_id, r.proposal_session_id
+    `SELECT r.id, r.plan, r.awaiting_go_at, r.go_ahead_at, r.build_ok, r.build_session_id, r.proposal_session_id,
+            r.build_error, r.build_stop
        FROM homeroom_bot_runs r
       WHERE r.app_id = $1 AND r.issue_number = $2 AND r.mode = 'live'
         AND r.plan IS NOT NULL AND (r.plan->>'complicated')::boolean IS TRUE
@@ -77,7 +78,9 @@ function settledOf(run, change) {
     if (change.status === 'merged') return { state: 'live', reason: null };
     return { state: 'built', reason: null };
   }
-  if (/^skipped:/.test(String(run.build_error || ''))) return null;
+  // B4: by its stored code. (The run's English was never read here, so a
+  // skip drew a stopped card.)
+  if (require('./bot-stop-cause').stopOf(run)?.cause === 'skipped') return null;
   return { state: 'stopped', reason: 'build_failed' };
 }
 

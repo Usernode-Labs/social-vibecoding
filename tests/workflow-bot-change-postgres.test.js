@@ -3,8 +3,15 @@
 // The Homeroom bot's change machine (step 8, src/workflow/bot-change/)
 // against the full PostgreSQL schema: what one of the bot's changes up for a
 // vote has its requester and approvers hear, and when it goes back to the
-// bot, decided under the instance's lock from the change's row, with the
-// work that sends it fake. Each [main] bug the step fixes
+// bot, decided under the instance's lock from the change's row and its
+// stored work state, with the work that sends it fake. Review A3: whether a
+// change is ready to try is the stored row's (work_states), which the
+// harness keeps as services/work-state.js does: the real derive
+// (deriveChange) over the session's own columns, stored before and after
+// each event, the machine told when the row becomes ready (tryOpened,
+// VoteOpened). tests/work-state-postgres.test.js drives the real refresh
+// and its event; tests/bot-change-ready-on-vote-open.test.js the machine
+// with no database. Each [main] bug the step fixes
 // (workflow-foundation's trace-bot-notes.md §7) is named where it is pinned.
 //
 // Run with: TEST_DATABASE_URL=postgres://… node --test tests/workflow-bot-change-postgres.test.js
@@ -15,9 +22,10 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const { Pool } = require('pg');
 const { createRuntime, defineMachine } = require('../src/workflow/kernel/index.ts');
-const { botChange, sessionKey, MACHINE, WORK, FIX_ROUNDS } = require('../src/workflow/bot-change/machine.ts');
+const { botChange, sessionKey, MACHINE, WORK, FIX_ROUNDS, FIX_ANSWER_MS } = require('../src/workflow/bot-change/machine.ts');
 const { toBotChange, writeBotChange } = require('../src/workflow/rules/bot-notes.ts');
 const { READY_HOLD_MS } = require('../src/workflow/rules/bot-readiness.ts');
+const workState = require('../src/services/work-state');
 
 const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL || 'postgres://postgres:postgres@127.0.0.1:5432/postgres';
 const SHA = (c) => c.repeat(40).slice(0, 40);
@@ -129,8 +137,35 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
       if (!(await rt.runServices())) { await rt.drain(); return; }
     }
   };
+  // The change's stored work state, kept as services/work-state.js keeps it
+  // after whatever moved the change (the platform's afterAccepted hook, its
+  // marks): what the real derive says of the session's own row, and the
+  // machine told when that row became ready to try.
+  const storedRows = new Map();
+  const store = async (s) => {
+    const { rows: [row] } = await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [s.id]);
+    const state = workState.deriveChange({ ...row, checks_at: row.checks_checked_at, first_version: false, votes_in: false }, { now: new Date() });
+    const now = { stage: state.stage, line: state.line, voteOpen: workState.voteOpenOf(state) };
+    await pool.query(
+      `INSERT INTO work_states (app_id, item_kind, item_ref, session_id, stage, line, whose_move, since, vote_open)
+       VALUES ($1, 'change', $2, $2, $3, $4::jsonb, $5, $6, $7)
+       ON CONFLICT (app_id, item_kind, item_ref) DO UPDATE
+         SET stage = EXCLUDED.stage, line = EXCLUDED.line, whose_move = EXCLUDED.whose_move, since = EXCLUDED.since,
+             vote_open = EXCLUDED.vote_open, updated_at = NOW()`,
+      [row.app_id, s.id, state.stage, state.line ? JSON.stringify(state.line) : null, state.whoseMove, state.since, now.voteOpen]);
+    const opened = workState.tryOpened({ kind: 'change', ref: s.id, sessionId: s.id, state: now, prev: storedRows.get(s.id) || null });
+    storedRows.set(s.id, now);
+    if (opened && await inst(s)) {
+      await rt.append(bc, sessionKey(s.id), { type: 'VoteOpened', payload: { sessionId: s.id } },
+        { requestKey: `o-${++rk}`, source: { kind: 'route', name: 'work-state' } });
+    }
+  };
   const tell = async (s, type, payload = {}) => {
+    await store(s);
     const id = await rt.append(bc, sessionKey(s.id), { type, payload: { sessionId: s.id, ...payload } }, { requestKey: `t-${++rk}`, source: system });
+    await settle();
+    // And after it: the event's own transition is one of those that store it.
+    await store(s);
     await settle();
     return (await pool.query('SELECT result, reason FROM wf_events WHERE id = $1', [id])).rows[0];
   };
@@ -147,10 +182,16 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
   const reset = () => { work.calls.length = 0; work.answer.clear(); pushes.length = 0; };
   // Its deadline, made due, and the clock's Look applied.
   const fire = async (s) => {
-    await asTransition((cl) => cl.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2', [MACHINE, sessionKey(s.id)]));
+    await store(s);
+    await asTransition((cl) => cl.query('UPDATE wf_instances SET deadline_at = now() WHERE machine = $1 AND key = $2 AND deadline_at IS NOT NULL', [MACHINE, sessionKey(s.id)]));
     await rt.fireTimers();
     await settle();
+    await store(s);
+    await settle();
   };
+  // The work-state sweep reaching a row whose due time passed (a shots hold
+  // that lapsed): the row is stored again, and the machine told if it opened.
+  const sweep = async (s) => { await store(s); await settle(); };
 
   await t.test('B-create: only a change of the bot\'s, up for a vote, is followed', async () => {
     reset();
@@ -226,7 +267,7 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.deepEqual(calls(WORK.ready).map((c) => c.input.epoch), [1, 1]);
   });
 
-  await t.test('B-hold: its shots still to come hold it, by the transaction\'s clock, moved by their activity (bugs 5, 6)', async () => {
+  await t.test('B-hold: its shots still to come hold it, by its stored row, moved by their activity (bugs 5, 6; review A3)', async () => {
     reset();
     const s = await change();
     await tell(s, 'Proposed');
@@ -235,20 +276,21 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     await tell(s, 'Verdict', { head: s.head, state: 'passing' });
     let i = await inst(s);
     assert.equal(i.state, 'waiting_on_shots');
-    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.now() + READY_HOLD_MS)) < 60000, 'held 45 minutes from now');
+    assert.equal(i.deadline_at, null, 'no clock of its own: its row says when the hold ends, and it is told');
     assert.equal(calls(WORK.ready).length, 0);
-    // The clock comes while the run still moves (its slot moved 10 minutes
-    // ago): held on, from that move (the sweep's window ignored it, bug 5).
+    // The row is read again while the run still moves (its slot moved 10
+    // minutes ago, its verdict 50): held on, from that move (bug 5).
     await shots(s, { state: 'exploring', runId: crypto.randomBytes(16).toString('hex'), at: `NOW() - INTERVAL '10 minutes'` });
     await asTransition((cl) => cl.query(`UPDATE chat_sessions SET checks_checked_at = NOW() - INTERVAL '50 minutes' WHERE id = $1`, [s.id]));
-    await fire(s);
+    await sweep(s);
     i = await inst(s);
     assert.equal(i.state, 'waiting_on_shots');
-    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - (Date.now() + READY_HOLD_MS - 10 * 60000)) < 60000);
-    // No settle ever comes: held long enough, it is ready anyway, by the
-    // machine's own timer (the leader's sweep and its window are gone).
+    assert.equal(calls(WORK.ready).length, 0);
+    // No settle ever comes: held long enough (READY_HOLD_MS), its row opens
+    // for votes anyway, and the machine is told with it.
+    assert.ok(READY_HOLD_MS < 50 * 60000);
     await shots(s, { state: 'exploring', runId: crypto.randomBytes(16).toString('hex'), at: `NOW() - INTERVAL '50 minutes'` });
-    await fire(s);
+    await sweep(s);
     assert.equal((await inst(s)).state, 'ready');
     assert.equal(calls(WORK.ready).length, 1);
   });
@@ -268,9 +310,11 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.deepEqual(calls(WORK.fix).map((c) => c.input.head), [s.head]);
     assert.match(calls(WORK.fix)[0].key, new RegExp(`^fix:${s.head.slice(0, 12)}:v\\d+$`));
     assert.equal(calls(WORK.ready).length, 0, 'no card while the bot fixes it');
-    // No clock of its own, and no read of the bot's queue: its request's
-    // instance (bot-request) answers how the round it asked for ended.
-    assert.equal(i.deadline_at, null, 'it waits for its request\'s answer');
+    // No read of the bot's queue: its request's instance (bot-request)
+    // answers how the round it asked for ended. Review 3e: its clock is only
+    // a backstop, FIX_ANSWER_MS away, for an answer that never comes.
+    assert.equal(i.deadline_event.type, 'FixUnanswered', 'it waits for its request\'s answer, with a backstop');
+    assert.ok(Math.abs(new Date(i.deadline_at).getTime() - Date.now() - FIX_ANSWER_MS) < 5 * 60 * 1000);
     assert.equal(FIX_ROUNDS, 2);
     // The round was lost (its look ended without it, bug 3; a release took
     // it, bug 4): asked once more.
@@ -462,7 +506,7 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     work.answer.set(WORK.fix, { queued: true });
     await tell(s, 'ShotsSettled');
     assert.equal((await inst(s)).state, 'with_the_bot');
-    assert.equal((await inst(s)).deadline_at, null, 'with the bot: no clock until something tells it to look');
+    assert.equal((await inst(s)).deadline_event.type, 'FixUnanswered', 'with the bot: only its backstop clock (review 3e)');
     await asTransition((cl) => cl.query(`UPDATE chat_sessions SET status = 'merging' WHERE id = $1`, [s.id]));
     // A look while it is being merged (another verdict) arms its clock.
     await tell(s, 'Verdict', { head: s.head, state: 'passing' });
@@ -496,8 +540,7 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.equal((await inst(h)).state, 'waiting_on_shots');
     await tell(h, 'PreviewStopped', { head: h.head });
     const i = await inst(h);
-    assert.equal(i.state, 'waiting_on_shots');
-    assert.ok(i.deadline_at, 'the hold\'s clock is kept');
+    assert.equal(i.state, 'waiting_on_shots', 'what it waits on is kept');
     assert.equal(calls(WORK.stopped).length, 1);
   });
 
@@ -570,17 +613,17 @@ test('the Homeroom bot\'s change machine against the full PostgreSQL schema', { 
     assert.equal(yes.rowCount, 1, 'the vote is recorded as before');
     await settle();
     // 5 Nov 2026 (decision 6): its votes are on the change's page.
-    assert.deepEqual(calls(WORK.approved), []);
+    assert.deepEqual(calls('bot.tellApproved'), []);
     assert.deepEqual(pushes.filter((p) => p.data?.type === 'homeroom_bot_work_changed').map((p) => p.routing.userId), [asker.id]);
     await cast('no');
     await cast('yes');
     await settle();
-    assert.equal(calls(WORK.approved).length, 0);
+    assert.equal(calls('bot.tellApproved').length, 0);
     pushes.length = 0;
     const out = await retractVote({ pool, sessionId: s.id, userId: voter.id });
     assert.equal(out.vote, 'yes');
     await settle();
-    assert.equal(calls(WORK.approved).length, 0, 'taken back: still none');
+    assert.equal(calls('bot.tellApproved').length, 0, 'taken back: still none');
     assert.equal(pushes.filter((p) => p.data?.type === 'homeroom_bot_work_changed').length, 1, 'its tray reads again');
     // A change the machine does not follow tells nobody.
     const other = await change({ owner: asker.id, run: false });

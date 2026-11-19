@@ -1489,9 +1489,10 @@ test('#6521 list row and Testing card agree on a pass from an older version', ()
     checks_commit_sha: 'a'.repeat(40), reviewed_head_sha: 'b'.repeat(40),
   };
   // The list row reads its own shape: still checking.
-  assert.equal(progress.stageOf({
+  const listed = require('../src/services/work-state').derive({
     ...old, proposal_status: 'promoted', proposal_source: 'native', checks_sha: old.checks_commit_sha,
-  }).stage, 'checks');
+  });
+  assert.deepEqual([listed.stage, listed.line], ['checking', null]);
   // The page, read by the change's author (the re-run is theirs to press).
   const own = context({ id: 7, username: 'maya' });
   const card = plain(own._changeTestingView({ ...PR, checks_on_head: progress.sessionChecksOnHead(old) }));

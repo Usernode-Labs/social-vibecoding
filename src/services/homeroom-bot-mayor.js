@@ -1880,7 +1880,7 @@ function buildWords(r) {
   if (r.verdict !== 'ready') return r.build_ok == null ? undefined : (r.build_ok ? 'built' : `could not build: ${error}`);
   if (r.build_ok === true || r.proposal_session_id) return 'built';
   if (r.build_ok === false) {
-    return /^skipped:/.test(String(r.build_error || ''))
+    return require('./bot-stop-cause').stopOf(r)?.cause === 'skipped'
       ? `stopped before it was built: ${error.replace(/^skipped:\s*/, '')}`
       : `could not build: ${error}`;
   }
@@ -1899,7 +1899,7 @@ async function requestDetail(pool, { user, project, number, settings = null, dep
   // #3772: only the looks it acted on. A background (shadow) look said
   // nothing to anybody, and its verdict read as the bot's decision.
   const { rows: runs } = await pool.query(
-    `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, created_at,
+    `SELECT verdict, question, question_answers, reason, build_note, build_ok, build_error, build_stop, created_at,
             proposal_session_id, cap_suppressed, build_session_id, about_platform
        FROM homeroom_bot_runs WHERE app_id = $1 AND issue_number = $2 AND mode = 'live'
       ORDER BY id DESC LIMIT 4`,

@@ -1,4 +1,4 @@
-import { normalizeWorkState } from '../../lib/work-state';
+import { normalizeWorkState, wordsOf } from '../../lib/work-state';
 import type {
   BotLiveWork,
   BotOutcome,
@@ -18,6 +18,7 @@ import type {
   HomeroomBotPlan,
   HomeroomBotPlanQuestion,
   HomeroomBotReadyNow,
+  HomeroomBotWaits,
   HomeroomBotWork,
   BotFiledLimit,
   BotFiledNext,
@@ -221,13 +222,31 @@ export function normalizeGoesLive(input: unknown): HomeroomBotGoesLive | null {
   if (pick(row, 'soon') === true) return { soon: true, at: null, missing: 0, waitingOn: [], more: 0 };
   if (pick(row, 'soon') !== false) return null;
   const at = text(pick(row, 'at'));
+  const waits = waitsOf(pick(row, 'waits'));
   return {
     soon: false,
     at: at && Number.isFinite(Date.parse(at)) ? at : null,
     missing: Math.max(Math.floor(Number(pick(row, 'missing')) || 0), 0),
     waitingOn: array(pick(row, 'waitingOn')).filter((u): u is string => typeof u === 'string' && !!u).slice(0, 3),
     more: Math.max(Math.floor(Number(pick(row, 'more')) || 0), 0),
+    ...(waits ? { waits } : {}),
   };
+}
+
+/**
+ * Review A3: what an approved change's stored work state says it still
+ * waits on (services/homeroom-bot-dm.js waitsBeforeLive): its stage, its
+ * line's code and the row's own words. Null without a stage and words.
+ */
+function waitsOf(input: unknown): HomeroomBotWaits | null {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const row = record(input);
+  const stage = text(pick(row, 'stage'));
+  const words = wordsOf(pick(row, 'words'));
+  if (!stage || !words) return null;
+  const lineRow = pick(row, 'line');
+  const code = lineRow && typeof lineRow === 'object' && !Array.isArray(lineRow) ? text(pick(record(lineRow), 'code')) : '';
+  return { stage, line: code ? { code } : null, words };
 }
 
 /**

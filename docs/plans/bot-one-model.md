@@ -115,6 +115,18 @@ Writers call `refresh` where an item's facts change:
 - the routes that change a request or change outside them: close, reopen,
   claim, vote.
 
+One writer at a time per item (review B3, 19 Nov 2026): `refresh` takes
+the item's lock (`pg_try_advisory_xact_lock`, `WORK_STATE_ITEM_LOCK`)
+before it reads the item's facts, and holds it to the end of its
+transaction, so no write puts an older reading of the facts over a row
+derived from a newer one. It never waits for the lock: a writer that finds
+an item taken leaves it to the holder (what it wrote marked the item; the
+drain marks a skipped item again). A reader that makes a missing row
+publishes it like any other write (`ensure`, `ensureChanges`). Which derive
+wrote a row is its own column, `derive_version`, as well as `standing.v`
+for the release before; a row whose only change is that, or its due time,
+is stored quietly. A row whose `since` moved has changed.
+
 ### Push and the bell
 
 Every changed row is pushed as `work_state` to everyone who can see the item.
@@ -125,6 +137,10 @@ A change of stage rings the requester's bell:
 - into `up_for_vote`: ready to vote;
 - into `stopped`: stopped;
 - into `live`: live.
+
+Once per moment (review B3): the bell carries a key of its item, stage
+(with its why or reason) and `since` (`notifications.bell_key`), and is not
+rung again while a bell with that key is unread.
 
 ### Readers
 
