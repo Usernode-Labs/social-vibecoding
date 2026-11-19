@@ -383,6 +383,49 @@ test('nothing under Make it says what you write is public on GitHub', () => {
   }
 });
 
+// #6842: somebody who has never made an app saw a pale Make it with no
+// reason at all on any door but Create, and the refusal said they had used
+// their slots. Every door now says which limit it is, in one line.
+test('a blocked Make it says which limit it is, outside Create too', () => {
+  const render = (reason, entry = 'first-session', extra = {}) => renderComponent(
+    `${DIR}/make.tsx`,
+    'MakeScreen',
+    { who: 'Jordan', onMade() {}, onLookAround() {}, onClose() {}, entry, ...extra },
+    {
+      stubs: {
+        '../dialogs/app-allowance': {
+          useAppAllowance: () => ({ blocked: reason !== null, reason }),
+          AppAllowance: (props) => createElement('div', { id: props.id }),
+        },
+      },
+    },
+  );
+  for (const reason of ['no_slots', 'slots', 'server']) {
+    const id = `onboarding:firstSession.make.blocked.${reason === 'no_slots' ? 'noSlots' : reason}`;
+    const text = message(id);
+    const html = render(reason);
+    assert.match(html, new RegExp(`data-make-blocked="${reason}"`), reason);
+    assert.ok(html.includes(text.replace(/'/g, '&#x27;')) || html.includes(text), `${reason}: the catalog's own sentence`);
+    assert.doesNotMatch(html, /data-make-blocked="[^"]+">[^<]*of 0/, 'never "0 of 0"');
+    // The line stands above the pale Make it it explains.
+    assert.ok(html.indexOf(`data-make-blocked="${reason}"`) < html.indexOf('data-make-submit'), reason);
+    assert.match(html.match(/<button[^>]*data-make-submit[^>]*>/)[0], / disabled=""/, `${reason}: pale`);
+    // The same one line is all it shows: no allowance card on this door.
+    assert.doesNotMatch(html, /id="make-app-quota"/);
+  }
+  assert.equal(message('onboarding:firstSession.make.blocked.noSlots'),
+    "Your account can't make projects of its own yet: it has no app slots.");
+  assert.doesNotMatch(message('onboarding:firstSession.make.blocked.noSlots'), /—/);
+  // Create keeps its quiet allowance card, and gets no second line.
+  const create = render('no_slots', 'create');
+  assert.match(create, /id="make-app-quota"/);
+  assert.doesNotMatch(create, /data-make-blocked/);
+  // Nothing blocked says nothing, and Make it is not pale.
+  const free = render(null);
+  assert.doesNotMatch(free, /data-make-blocked/);
+  assert.doesNotMatch(free.match(/<button[^>]*data-make-submit[^>]*>/)[0], / disabled=""/);
+});
+
 // Production run, iOS app, 5 Oct 2026: the keyboard's next chevron did not
 // move from the description to the name; "Make it" looked disabled until a
 // name was typed, beside a placeholder that read like a name already given;

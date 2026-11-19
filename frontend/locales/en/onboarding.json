@@ -1055,6 +1055,18 @@
     "text": "Give it a name to make it. You can change it later.",
     "description": "Error under the empty name field when the member pressed Make it. Both \"it\" are the project."
   },
+  "firstSession.make.blocked.noSlots": {
+    "text": "Your account can't make projects of its own yet: it has no app slots.",
+    "description": "Red line above the pale Make it or Import it button on the \"What do you want to make?\" screen, when the account has no app slots at all: it is still waiting to be let in, or an admin set its allowance to zero."
+  },
+  "firstSession.make.blocked.slots": {
+    "text": "All your app slots are used. Request more from App slots on your profile.",
+    "description": "Red line above the pale Make it or Import it button on the \"What do you want to make?\" screen, when every app slot the account has is already taken. App slots is the row of that name on the profile."
+  },
+  "firstSession.make.blocked.server": {
+    "text": "This server is at its app limit, so no new projects can be made right now.",
+    "description": "Red line above the pale Make it or Import it button on the \"What do you want to make?\" screen, when the whole platform has reached its limit of apps, whatever the person's own app slots."
+  },
   "firstSession.make.error.notMade": {
     "text": "Could not make it. Try again.",
     "description": "Error above the Make it button when creating the project failed and the server gave no reason of its own. \"it\" is the project."
