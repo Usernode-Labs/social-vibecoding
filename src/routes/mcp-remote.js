@@ -991,7 +991,76 @@ function mcpBrowserRoutes(config) {
     }
   });
 
+  // Rename (#6137): the person's own name for one connection, so two of the
+  // same tool can be told apart. It writes mcp_grant_labels and nothing else:
+  // no token is read past the ownership check, minted, refreshed or revoked,
+  // and no audit event is written because no access changed. An empty name
+  // clears it, and the row goes back to the tool's own name. Somebody else's
+  // id, a delegated grant and an unknown id all answer the 404 Disconnect
+  // answers.
+  router.patch('/api/me/connectors/:id', userRate, jsonBody('4kb'), async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    const grantId = req.params.id;
+    if (!mcpOauth.GRANT_ID_RE.test(grantId || '')) {
+      return res.status(400).json({ error: 'invalid_request' });
+    }
+    const parsed = normalizeConnectorLabel(req.body && req.body.label);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    try {
+      const found = await mcpOauth.withTransaction(pool, async (dbClient) => {
+        const { rows } = await dbClient.query(
+          `SELECT t.grant_id FROM mcp_tokens t
+            WHERE t.grant_id = $1 AND t.user_id = $2
+              AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
+            LIMIT 1`,
+          [grantId, req.user.id]
+        );
+        if (!rows.length) return false;
+        if (parsed.label === null) {
+          await dbClient.query(
+            'DELETE FROM mcp_grant_labels WHERE grant_id = $1 AND user_id = $2',
+            [grantId, req.user.id]
+          );
+        } else {
+          await dbClient.query(
+            `INSERT INTO mcp_grant_labels (grant_id, user_id, label)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (grant_id) DO UPDATE
+               SET label = EXCLUDED.label, updated_at = NOW()
+             WHERE mcp_grant_labels.user_id = EXCLUDED.user_id`,
+            [grantId, req.user.id, parsed.label]
+          );
+        }
+        return true;
+      });
+      return found
+        ? res.json({ id: grantId, label: parsed.label })
+        : res.status(404).json({ error: 'not_found' });
+    } catch (err) {
+      log.error('mcp-remote', 'rename failed', { message: err.message });
+      return res.status(503).json({ error: 'temporarily_unavailable' });
+    }
+  });
+
   return router;
+}
+
+// The name a person gives a connection (#6137), as it is stored: plain text on
+// one line. Control characters and runs of whitespace become one space, so a
+// pasted line break cannot make a row two lines tall; the cap is counted in
+// characters a person sees, not UTF-16 units. null, or nothing left after the
+// trim, means "clear it". Anything that is not a string or null is refused
+// rather than coerced.
+const CONNECTOR_LABEL_MAX = 60;
+function normalizeConnectorLabel(value) {
+  if (value === null) return { label: null };
+  if (typeof value !== 'string') return { error: 'invalid_request' };
+  // eslint-disable-next-line no-control-regex
+  const label = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]+/g, ' ').trim();
+  if (!label) return { label: null };
+  if (Array.from(label).length > CONNECTOR_LABEL_MAX) return { error: 'label_too_long' };
+  return { label };
 }
 
 // Staging mock data for the Settings → connectors list. Obviously fake,
@@ -1040,6 +1109,7 @@ function demoConnector(kind, overrides = {}) {
   }[kind];
   return {
     status: 'connected',
+    label: null,
     scopes: [READ_SCOPE, WRITE_SCOPE],
     ...base,
     demo: true,
@@ -1128,6 +1198,21 @@ function demoConnectorState(flag) {
     // An expired Claude connection (#6137): the row that offers Reconnect,
     // which lands on the Claude guide's sign-in step. ChatGPT's guide has no
     // such step, so the fixture above shows the row without it.
+    // Two Claude connections, one of them named by the person (#6137): the
+    // named row leads with its name and keeps the tool's under it, and the
+    // other shows what a row looks like before anyone renames it.
+    case 'connectors-renamed':
+      return {
+        connectors: [
+          demoConnector('claude', { label: 'Sample name: work laptop' }),
+          demoConnector('claude', {
+            id: 'staging-demo-connector-6',
+            connected_at: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+            last_used_at: new Date(Date.now() - 26 * 60 * 60 * 1000).toISOString(),
+          }),
+        ],
+        hint: demoHintStatus({}),
+      };
     case 'connectors-reconnect':
       return {
         connectors: [demoConnector('expired', { id: 'staging-demo-connector-5', client_name: 'Claude (claude.ai)' })],
@@ -1220,12 +1305,14 @@ async function readConnectorGrants(pool, userId) {
             MIN(t.created_at)  AS connected_at,
             MAX(t.last_used_at) AS last_used_at,
             MAX(c.client_name)  AS client_name,
+            MAX(l.label)        AS label,
             (ARRAY_AGG(array_to_string(t.scopes, ' ') ORDER BY t.created_at DESC))[1] AS scopes,
             MAX(t.expires_at) FILTER (WHERE t.revoked_at IS NULL) AS expires_at,
             BOOL_OR(t.revoked_at IS NULL
                     AND t.expires_at > clock_timestamp()) AS active
        FROM mcp_tokens t
        LEFT JOIN mcp_clients c ON c.client_id = t.client_id
+       LEFT JOIN mcp_grant_labels l ON l.grant_id = t.grant_id AND l.user_id = t.user_id
       WHERE t.user_id = $1
         AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)
       GROUP BY t.grant_id
@@ -1239,6 +1326,8 @@ async function readConnectorGrants(pool, userId) {
   return rows.map((row) => ({
     id: row.grant_id,
     client_name: row.client_name || 'Unknown client',
+    // The person's own name for it (#6137), or null: the row then shows the tool's.
+    label: row.label || null,
     connected_at: new Date(row.connected_at).toISOString(),
     last_used_at: row.last_used_at ? new Date(row.last_used_at).toISOString() : null,
     scopes: String(row.scopes || '').split(' ').filter((scope) => SUPPORTED_SCOPES.includes(scope)),
@@ -1346,5 +1435,7 @@ module.exports = {
   // thing that can be wrong in a way a stubbed pool cannot show.
   readConnectorTestGrants,
   readConnectorGrants,
+  normalizeConnectorLabel,
+  CONNECTOR_LABEL_MAX,
   isInitializeRequest,
 };

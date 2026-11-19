@@ -490,6 +490,8 @@
     // { "<user id>": { "chatgpt": [1, 2] } }. A convenience, like the two keys
     // here: Homeroom cannot see what happens inside another product.
     CONNECTOR_STEPS_KEY: 'usernode:connector-steps',
+    // The longest name a connection can be given: the server's cap (#6137).
+    CONNECTOR_LABEL_MAX: 60,
     FOLDED_KEY: 'usernode:settings-folded',
 
     // #5995: how much is set up behind a row, said in words at its trailing
@@ -2482,9 +2484,15 @@
       } else if (lastUsed) detail = tr('settings:connectors.row.lastActive', { lastUsed });
       else if (connected) detail = tr('settings:connectors.row.notUsedYet', { connected });
       else detail = tr('settings:connectors.row.unknownDate');
+      // The person's own name for it leads when there is one (#6137), and the
+      // tool's name moves to the line under it so the row still says what it is.
+      const toolName = connector.client_name || tr('settings:connectors.row.unnamedClient');
+      const label = typeof connector.label === 'string' && connector.label.trim() ? connector.label.trim() : null;
       return {
         id: String(connector.id),
-        title: connector.client_name || tr('settings:connectors.row.unnamedClient'),
+        title: label || toolName,
+        label,
+        toolName,
         detail,
         capabilities: this._connectorCapabilities(connector, expired),
         reconnect,
@@ -2796,6 +2804,49 @@
           status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400');
           status.classList.add('text-red-700', 'dark:text-red-400');
         }
+      }
+    },
+
+    // Rename one connection (#6137). Resolves true when the name was saved, so
+    // the row's editor closes, and false when it was not, so it stays open with
+    // what was typed. An empty name clears it. A ?demo= fixture row is renamed
+    // on the page only: no such connection exists for the server to rename.
+    async _renameConnector(id, value) {
+      const status = document.getElementById('connectors-status');
+      const say = (text, ok) => {
+        if (!status) return;
+        status.textContent = text;
+        status.classList.remove('hidden', ...(ok ? ['text-red-700', 'dark:text-red-400'] : ['text-emerald-700', 'dark:text-emerald-400']));
+        status.classList.add(...(ok ? ['text-emerald-700', 'dark:text-emerald-400'] : ['text-red-700', 'dark:text-red-400']));
+      };
+      const label = String(value == null ? '' : value).replace(/\s+/g, ' ').trim();
+      if (Array.from(label).length > Settings.CONNECTOR_LABEL_MAX) {
+        say(tr('settings:connectors.rename.tooLong', { max: Settings.CONNECTOR_LABEL_MAX }), false);
+        return false;
+      }
+      const done = () => say(label ? tr('settings:connectors.rename.done') : tr('settings:connectors.rename.cleared'), true);
+      const row = (this._connectors || []).find((c) => String(c.id) === String(id));
+      if (row && row.demo) {
+        row.label = label || null;
+        this._renderConnectors();
+        done();
+        return true;
+      }
+      try {
+        const response = await fetch(`/api/me/connectors/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: label || null }),
+        });
+        if (!response.ok) throw new Error(tr('settings:connectors.rename.failedRetry'));
+        await this._loadConnectors();
+        done();
+        return true;
+      } catch (err) {
+        say(err.message || tr('settings:connectors.rename.failedRetry'), false);
+        return false;
       }
     },
 

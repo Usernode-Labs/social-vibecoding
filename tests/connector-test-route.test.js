@@ -335,6 +335,13 @@ async function withListSchema(t) {
       ADD COLUMN scopes TEXT[] NOT NULL DEFAULT ARRAY['usernode:apps:read', 'usernode:proposals:write'],
       ADD COLUMN token_hash TEXT NOT NULL DEFAULT 'secret-hash',
       ADD COLUMN token_hint TEXT NOT NULL DEFAULT 'secret-hint';
+    -- #6137: the person's own name for a connection, one row per grant.
+    CREATE TABLE mcp_grant_labels (
+      grant_id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      label TEXT NOT NULL CHECK (char_length(label) BETWEEN 1 AND 60),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
   `);
   return client;
 }
@@ -362,6 +369,11 @@ test('the list keeps live and recently lapsed grants, and hides the rest', async
         -- Another account's lapsed grant.
         ('g-other', 'c-claude', 8, clock_timestamp() - INTERVAL '1 day', NULL, NULL, DEFAULT, clock_timestamp() - INTERVAL '31 days');
       INSERT INTO mcp_delegations (grant_id) VALUES ('g-delegated');
+      -- #6137: g-live was named by its owner. A name filed under another
+      -- account for g-lapsed is not this account's and is not read.
+      INSERT INTO mcp_grant_labels (grant_id, user_id, label) VALUES
+        ('g-live', 7, 'Work laptop'),
+        ('g-lapsed', 8, 'Not theirs');
     `);
 
     const rows = await readConnectorGrants(client, 7);
@@ -372,6 +384,8 @@ test('the list keeps live and recently lapsed grants, and hides the rest', async
     assert.equal(live.client_name, 'Claude.ai');
     assert.deepEqual(live.scopes, ['usernode:apps:read'], 'the TEXT[] column comes back as its scopes');
     assert.equal('expired_at' in live, false);
+    assert.equal(live.label, 'Work laptop', 'the name its owner gave it, once, though the grant has two token rows');
+    assert.equal(lapsed.label, null, 'a name under another account is not read');
 
     assert.equal(lapsed.status, 'expired');
     assert.deepEqual(lapsed.scopes, ['usernode:apps:read', 'usernode:proposals:write']);
@@ -380,7 +394,7 @@ test('the list keeps live and recently lapsed grants, and hides the rest', async
 
     // Nothing about a token crosses this seam: the row is exactly these fields.
     assert.deepEqual(Object.keys(lapsed).sort(), [
-      'client_name', 'connected_at', 'expired_at', 'id', 'last_used_at', 'scopes', 'status',
+      'client_name', 'connected_at', 'expired_at', 'id', 'label', 'last_used_at', 'scopes', 'status',
     ]);
     assert.doesNotMatch(JSON.stringify(rows), /secret-hash|secret-hint/);
   } finally {
