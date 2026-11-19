@@ -38,11 +38,7 @@ const NAME: Record<'standard' | (typeof MENU_SKINS)[number], string> = {
   standard: 'settings:experimental.look.standard',
   wip: 'settings:experimental.look.wip',
   brand: 'settings:experimental.look.brand',
-  glass: 'settings:experimental.look.glass',
   paper: 'settings:experimental.look.paper',
-  pastel: 'settings:experimental.look.pastel',
-  mosaic: 'settings:experimental.look.mosaic',
-  sunrise: 'settings:experimental.look.sunrise',
 };
 // Standard (WIP) under each of its other token sets is an entry of the same
 // menu, beside the looks (19 Nov 2026). Whole literals again.

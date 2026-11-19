@@ -1223,25 +1223,9 @@
     "text": "Paper, simplified, with brand styling",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
   },
-  "experimental.look.glass": {
-    "text": "Glass",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.look.paper": {
     "text": "Paper",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (one white sheet on the wallpaper with quiet grey panels). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.pastel": {
-    "text": "Pastel",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (groups tinted lavender, pink and peach in turn). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.mosaic": {
-    "text": "Mosaic",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (lists drawn as tiles, two across). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.sunrise": {
-    "text": "Sunrise",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
   },
   "experimental.wipTokens.brand": {
     "text": "Homeroom brand kit (WIP)",

@@ -24,7 +24,7 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
  * labelled groups of one row) with its own tokens, typeface and a few rules
  * in app.css ("THE FRAME'S LOOKS"). The head's SKINS is 'brand' and these.
  */
-export const FRAME_SKINS = ['glass', 'paper', 'pastel', 'mosaic', 'sunrise'] as const;
+export const FRAME_SKINS = ['paper'] as const;
 export type FrameSkin = typeof FRAME_SKINS[number];
 export type Skin = 'standard' | 'wip' | 'brand' | FrameSkin;
 

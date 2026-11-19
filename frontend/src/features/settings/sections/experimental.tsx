@@ -71,11 +71,7 @@ export function ExperimentalSection() {
             <option value="wip:brand2">{t('settings:experimental.wipTokens.brand2')}</option>
             <option value="wip:highlighter">{t('settings:experimental.wipTokens.highlighter')}</option>
             <option value="brand">{t('settings:experimental.look.brand')}</option>
-            <option value="glass">{t('settings:experimental.look.glass')}</option>
             <option value="paper">{t('settings:experimental.look.paper')}</option>
-            <option value="pastel">{t('settings:experimental.look.pastel')}</option>
-            <option value="mosaic">{t('settings:experimental.look.mosaic')}</option>
-            <option value="sunrise">{t('settings:experimental.look.sunrise')}</option>
           </Select>
           <p className="ui-hint text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
             {t('settings:experimental.look.description')}

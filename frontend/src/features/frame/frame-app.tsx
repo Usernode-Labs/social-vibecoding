@@ -1,11 +1,11 @@
 /**
  * The frame's own chrome: the sidebar, the bar and the phone's tab bar the
  * 2026-11-06 screen tour draws around every page (`page()` in the tour's
- * kit), shown while the device's look is one of the frame's five.
+ * kit), shown while the device's look is the frame's (Paper; Glass, Pastel,
+ * Mosaic and Sunrise were removed on 19 Nov 2026).
  *
- * Drawn with the kit (frontend/@/components/ui/kit.tsx), so each look's
- * sidebar, bar and tab bar are that look's own: glass's floating pane,
- * Sunrise's ink sidebar, Mosaic's glass panel, Pastel's white panel.
+ * Drawn with the kit (frontend/@/components/ui/kit.tsx), so a look's
+ * sidebar, bar and tab bar are that look's own.
  *
  * IT DRAWS; THE SHELL'S OWN NAVIGATION STILL DECIDES. Today's header and
  * tab bar stay mounted, hidden (app.css "THE FRAME IN THE SHELL"), and

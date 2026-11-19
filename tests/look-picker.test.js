@@ -21,12 +21,11 @@ const PICKER = 'frontend/src/features/frame/look-picker.tsx';
 const view = (props) => renderComponent(PICKER, 'LookPickerView', { onPick() {}, ...props }, { cache: false });
 
 test('it is one small control: a glyph, and under it the system\'s own menu of looks', () => {
-  const html = view({ variant: 'frame', skin: 'glass' });
+  const html = view({ variant: 'frame', skin: 'paper' });
   assert.match(html, /^<label class="fr-ib fr-look" title="Look" data-look-picker="frame"><svg[^>]*>.*?<\/svg><select aria-label="Look">/s);
   assert.deepEqual([...html.matchAll(/<option value="([a-z]+)"( selected="")?>([^<]+)<\/option>/g)].map((m) => [m[1], m[3], !!m[2]]), [
-    ['standard', 'Standard', false], ['wip', 'Standard (WIP)', false], ['brand', 'Paper, simplified, with brand styling', false], ['glass', 'Glass', true],
-    ['paper', 'Paper', false], ['pastel', 'Pastel', false], ['mosaic', 'Mosaic', false], ['sunrise', 'Sunrise', false],
-  ], 'Standard, its work-in-progress copy, then brand and the five looks in the tour\'s order, the device\'s own chosen');
+    ['standard', 'Standard', false], ['wip', 'Standard (WIP)', false], ['brand', 'Paper, simplified, with brand styling', false], ['paper', 'Paper', true],
+  ], 'Standard, its work-in-progress copy, then brand and Paper, the device\'s own chosen');
 });
 
 test('brand keeps the platform\'s header, and the menu there reads it', () => {
