@@ -6,9 +6,10 @@
 // stored row's shape and its words from the server's own code
 // (src/services/work-state.js shapeOf, which words it with phrasesOf), as one
 // viewer reads it (forViewer), and through JSON, as the wire carries it.
-// tests/lib/work-words.js gives a fixture the same words from a table kept by
-// hand; this asks the server, so a fixture cannot say words the server would
-// not have sent with that stage and line.
+// tests/lib/work-words.js gives a hand-built fixture the same words (it asks
+// phrasesOf too); this builds the whole row as the server stores and sends
+// it, so a fixture cannot carry a shape or words the server would not have
+// sent with that stage and line.
 //
 //   storedRow({ stage: 'stopped', reason: 'fix_stopped', change })
 //   storedRow({ stage: 'checking', line: { code: 'shots' } }, { kind: 'change', myVote: 'yes' })
