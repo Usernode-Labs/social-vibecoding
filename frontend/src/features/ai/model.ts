@@ -375,6 +375,28 @@ export function groupRows<T extends { lit?: boolean; fresh?: boolean; moved?: bo
 }
 
 /**
+ * Pure (19 Nov 2026): a group's rows while its Show more is open, as the
+ * standard list draws them. `kept` is the rows that were in sight when it
+ * was opened (groupRows folded, by key, in their drawn order). They stay
+ * where they were, and the rest open under them in their own order.
+ *
+ * Opening used to draw every row in its own place (groupRows open), so a
+ * row lifted above the fold (the one you are on, a new one, one that just
+ * moved) went back down into the folding part. That part opens from no
+ * height and no opacity, so the row vanished, the list jumped up by its
+ * height and it faded in again as the rest grew; shutting did the reverse.
+ * #6245 still holds: a row pressed while the group is open is not in
+ * `kept`, so it does not slide up under the pointer.
+ */
+export function openRows<T extends { key: string }>(items: T[], kept: readonly string[]): { items: T[]; shown: number; hidden: number } {
+  const byKey = new Map(items.map((row) => [row.key, row]));
+  const top = kept.map((key) => byKey.get(key)).filter((row): row is T => !!row);
+  const inTop = new Set(top.map((row) => row.key));
+  const rest = items.filter((row) => !inTop.has(row.key));
+  return { items: [...top, ...rest], shown: top.length, hidden: rest.length };
+}
+
+/**
  * Pure (18 Nov 2026): where each thread of In progress and Waiting stands,
  * its list and its stage, by thread. A new line (a few minutes left) is not
  * a move.

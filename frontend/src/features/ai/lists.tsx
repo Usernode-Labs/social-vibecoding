@@ -68,7 +68,7 @@ import {
 import { useMessages } from '../../lib/i18n/react';
 import { getDateLocale } from '../../lib/i18n/runtime';
 import {
-  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, recentGroupsFirst,
+  GROUP_FIRST, byDay, byProject, dayKey, freshFirst, groupRows, holdOrder, openRows, recentGroupsFirst,
   type AiApp, type AiThread, type WorkRow,
 } from './model';
 import { ThreadDoneMenu } from '../messages/private-thread-done';
@@ -138,6 +138,17 @@ const DOT = 'absolute -start-3 top-1/2 h-2 w-2 -translate-y-1/2 rounded-full bg-
  * something new shows its dot folded and open alike.
  */
 const FOLD_CLIP = 'min-h-0 overflow-hidden -ms-4 ps-4';
+
+/**
+ * 19 Nov 2026: how a fold opens and shuts. Its height eases on one curve
+ * both ways. Opening, its rows fade in as the room opens. Shutting, they
+ * stay drawn while the clip takes them from the bottom up, and turn
+ * transparent only once the room is gone. Both used to run one sharp
+ * ease-out, so a shutting fold had faded out within a frame or two while
+ * most of its room was still there: a blank band that then closed.
+ */
+const FOLD_OPEN = 'grid-rows-[1fr] opacity-100 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_200ms_ease-out]';
+const FOLD_SHUT = 'grid-rows-[0fr] opacity-0 [transition:grid-template-rows_300ms_cubic-bezier(0.4,0,0.2,1),opacity_0s_linear_300ms]';
 
 function LineButton({ line, quiet = false, freshTitles = false }: { line: Line; quiet?: boolean; freshTitles?: boolean }): ReactNode {
   const t = useMessages('messages');
@@ -388,19 +399,24 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
   foldFresh?: boolean;
 }): ReactNode {
   const t = useMessages('messages');
-  const [opened, setOpened] = useState<Record<string, boolean>>({});
+  // Each open project's rows that were in sight when its Show more was
+  // pressed, by key (./model.ts openRows). A project is open while it has them.
+  const [opened, setOpened] = useState<Record<string, string[]>>({});
   return (
     <>
       {byProject(lines).map((g) => {
         const key = g.app?.slug || 'none';
-        const open = !!opened[key];
-        // #6245: only a folded group lifts the row you are on. Once its Show
-        // more has opened every row, they keep their own order, so pressing
-        // one does not slide it up under the pointer. #6262: a fresh row is
-        // never folded either.
+        const kept = opened[key];
+        const open = !!kept;
+        // #6245: only a folded group lifts the row you are on. #6262: a fresh
+        // row is never folded either. 19 Nov 2026: opened, the rows that were
+        // in sight stay where they were and the rest open under them, so no
+        // row moves into the fold as it opens (openRows); a row pressed while
+        // it is open still keeps its place.
         // 6 Nov 2026: a day-headed list keeps each day's rows together, so a
         // project reads Today's rows, then Yesterday's, then the date.
-        const { items, shown, hidden } = groupRows(dayHeads ? byDay(g.items) : g.items, first, open, !foldFresh);
+        const rows = dayHeads ? byDay(g.items) : g.items;
+        const { items, shown, hidden } = kept ? openRows(rows, kept) : groupRows(rows, first, false, !foldFresh);
         // #6408: how many of the folded rows have something new, for Show more's ending.
         const freshHidden = foldFresh ? items.slice(shown).filter((line) => line.fresh).length : 0;
         const anyFresh = freshStyle && g.items.some((line) => line.fresh);
@@ -453,7 +469,7 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                   it opens to its own height without measuring it. */}
               {hidden ? (
                 <div
-                  className={`grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${open ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+                  className={`grid motion-reduce:transition-none ${open ? FOLD_OPEN : FOLD_SHUT}`}
                   aria-hidden={open ? undefined : true}
                   inert={!open}
                   data-ai-group-rest=""
@@ -468,7 +484,20 @@ function GroupList({ lines, quiet = false, heads, first, freshStyle = false, fre
                   </div>
                 </div>
               ) : null}
-              {hidden ? <GroupMore hidden={hidden} fresh={freshHidden} open={open} onClick={() => setOpened((o) => ({ ...o, [key]: !open }))} /> : null}
+              {hidden ? (
+                <GroupMore
+                  hidden={hidden}
+                  fresh={freshHidden}
+                  open={open}
+                  onClick={() => setOpened((o) => {
+                    const next = { ...o };
+                    // Opening keeps the rows in sight where they are.
+                    if (open) delete next[key];
+                    else next[key] = items.slice(0, shown).map((line) => line.key);
+                    return next;
+                  })}
+                />
+              ) : null}
             </div>
           </div>
         );
@@ -561,7 +590,7 @@ function Section({ list, head, owe = false, lines, still = null, quiet = false, 
             <ChevronDownIcon className={`h-4 w-4 transition-transform motion-reduce:transition-none${stillShown ? ' rotate-180' : ''}`} aria-hidden="true" />
           </button>
           <div
-            className={`grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none ${stillShown ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+            className={`grid motion-reduce:transition-none ${stillShown ? FOLD_OPEN : FOLD_SHUT}`}
             aria-hidden={stillShown ? undefined : true}
             inert={!stillShown}
             data-ai-still-rest=""
