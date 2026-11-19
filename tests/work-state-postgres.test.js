@@ -873,6 +873,7 @@ test('work states against the full schema', { timeout: 120000 }, async (t) => {
     assert.equal((await ws.takeItems(holder, [`request:${app.id}:145`])).size, 0);
     await pool.query('INSERT INTO homeroom_bot_queue (app_id, issue_number, priority) VALUES ($1, 145, 1)', [app.id]);
     const released = new Promise((resolve) => {
+      // fixed wait: the holder commits while the route's refresh is already retrying, which is the case under test
       setTimeout(() => { holder.query('COMMIT').finally(() => { holder.release(); resolve(); }); }, 250);
     });
     const out = await ws.touched(pool, [req(145)]);
