@@ -2512,7 +2512,8 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
       [['reply', { text: 'Which do you want first: bigger cards or fewer on a row?' }]],
     ], seen), { deps: { designBot } });
     assert.equal(seen.length, 2, 'the turn goes on after it, and replies itself');
-    assert.ok(seen[1].some((m) => m.role === 'system' && m.content === session.prompt), 'with the design section');
+    // `scripted` keeps each whole request, so its messages are `.messages`.
+    assert.ok(seen[1].messages.some((m) => m.role === 'system' && m.content === session.prompt), 'with the design section');
     assert.equal(roomed.length, 1);
     assert.deepEqual([roomed[0].app.slug, roomed[0].title], ['note-board', 'Note cards']);
     assert.deepEqual([opening[0].brief, opening[0].started, opening[0].openedAt], ['Roomier note cards', true, 1]);
