@@ -426,11 +426,11 @@ export function HomeScreen() {
                 Down while rows are held back; up once they are out and
                 folding would hide some; plain words when neither. */}
             {wip && moreCount > 0 ? (
-              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
+              <WipHeadMore id="home-apps-see-all" direction="down" expanded={false} label={t('home:grid.showAll', { count: moreCount })} pill={t('home:grid.showAll', { count: moreCount })} onClick={() => { foldApps(false); }}>
                 {t('home:grid.headingProjects')}
               </WipHeadMore>
             ) : wip && canFold ? (
-              <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
+              <WipHeadMore id="home-apps-see-less" direction="up" expanded label={t('home:grid.seeLess')} pill={t('home:grid.seeLess')} onClick={() => { foldApps(true); }}>
                 {t('home:grid.headingProjects')}
               </WipHeadMore>
             ) : wip ? t('home:grid.headingProjects') : t('home:grid.heading')}

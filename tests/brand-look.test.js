@@ -771,7 +771,7 @@ test('the Communities page wears the look: its button, its cards, and no count o
 test('a community\'s card says its members, what went live and who was there, read only where it is drawn', () => {
   const src = read('frontend', 'src', 'features', 'home', 'pinned-communities.tsx');
   const page = read('frontend', 'src', 'features', 'communities', 'index.tsx');
-  assert.match(page, /const cards = brand && wide;/);
+  assert.match(page, /const cards = \(brand && wide\) \|\| wip;/);
   assert.match(page, /if \(cards && shown && state\.ready && listKey !== '\|'\) void loadHomePinsActivity\(\);/, 'only on the page, in the look, on a wide screen');
   assert.match(page, /detail=\{cards \? activity\.bySlug\[pin\.slug\] : undefined\}/, 'the pinned ones');
   assert.match(page, /detail=\{cards \? activity\.bySlug\[c\.slug\] : undefined\}/, 'and the joined ones');

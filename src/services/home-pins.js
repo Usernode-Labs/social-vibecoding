@@ -172,6 +172,8 @@ const ACTIVITY_FACES = 3;
  *                same three kinds of taking part, over the same week and
  *                people only, as the hub's "40 active this week"
  *                (communities.activitySummary);
+ *   description  what it says it is (dapp.json's description, at most 280
+ *                characters), left out when it says nothing;
  *   people       up to ACTIVITY_FACES of them, the most recently active
  *                first, each with their picture when they have one.
  * The pinned ones are those `list` shows (the same filters, written out
@@ -182,7 +184,8 @@ const ACTIVITY_FACES = 3;
 async function activity(db, userId) {
   const { rows } = await db.query(
     `WITH pins AS (
-       SELECT DISTINCT ON (c.community_id) c.community_id, a.id AS app_id, a.slug
+       SELECT DISTINCT ON (c.community_id) c.community_id, a.id AS app_id, a.slug,
+              LEFT(btrim(a.manifest_snapshot->>'description'), 280) AS description
          FROM (
            SELECT p.community_id FROM home_community_pins p WHERE p.user_id = $1
            UNION
@@ -220,7 +223,7 @@ async function activity(db, userId) {
          LEFT JOIN user_avatars av ON av.user_id = u.id
         GROUP BY who.app_id, u.id, u.username, av.id
      )
-     SELECT pins.slug,
+     SELECT pins.slug, pins.description,
             (SELECT COUNT(*)::int FROM community_members cm
               WHERE cm.community_id = pins.community_id) AS members,
             (SELECT COUNT(*)::int FROM chat_sessions s
@@ -243,6 +246,8 @@ async function activity(db, userId) {
         avatarUrl: p.avatar_id ? `/avatars/${p.avatar_id}` : null,
       })),
     };
+    // What it is, in its own words (dapp.json's description), when it has any.
+    if (r.description) out[r.slug].description = r.description;
   }
   return out;
 }

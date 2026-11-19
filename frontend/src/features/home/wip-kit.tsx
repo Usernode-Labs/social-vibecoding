@@ -40,7 +40,7 @@ export function WipCta({ children, glyph = true, ...rest }: ButtonHTMLAttributes
  * are the section's name, so `label` says what pressing does ("See all
  * challenges").
  */
-export function WipHeadMore({ direction, label, href, onClick, id, expanded, children }: {
+export function WipHeadMore({ direction, label, href, onClick, id, expanded, pill, children }: {
   direction: 'right' | 'down' | 'up';
   label: string;
   /** With an address it is a link; without, a button. */
@@ -49,6 +49,13 @@ export function WipHeadMore({ direction, label, href, onClick, id, expanded, chi
   id?: string;
   /** For a button that unfolds: whether the section is unfolded now. */
   expanded?: boolean;
+  /**
+   * Words for a small button after the label ("Show all 27 communities",
+   * "Show less"), drawn with the chevron inside it, in place of the bare
+   * chevron: for a label that folds its section, where the way to the rest
+   * should read as a button.
+   */
+  pill?: string;
   children: ReactNode;
 }) {
   const Glyph = direction === 'down' ? ChevronDownIcon : direction === 'up' ? ChevronUpIcon : ChevronRightIcon;
@@ -57,9 +64,16 @@ export function WipHeadMore({ direction, label, href, onClick, id, expanded, chi
       {/* Plain words get a span of their own, so a look can mark the words
           alone (a count beside them is its caller's own element). */}
       {typeof children === 'string' ? <span className="wip-head-words">{children}</span> : children}
-      <span className="wip-head-chevron" aria-hidden="true">
-        <Glyph className="wip-head-chevron-glyph" strokeWidth="2.4" />
-      </span>
+      {pill ? (
+        <span className="wip-fold-pill" aria-hidden="true">
+          {pill}
+          <Glyph className="wip-head-chevron-glyph" strokeWidth="2.4" />
+        </span>
+      ) : (
+        <span className="wip-head-chevron" aria-hidden="true">
+          <Glyph className="wip-head-chevron-glyph" strokeWidth="2.4" />
+        </span>
+      )}
     </>
   );
   if (href) {

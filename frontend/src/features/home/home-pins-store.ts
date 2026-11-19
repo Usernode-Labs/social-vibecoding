@@ -211,6 +211,8 @@ export interface PinActivity {
   liveWeek: number;
   activeWeek: number;
   people: Array<{ username: string; avatarUrl: string | null }>;
+  /** What the community says it is, when it says anything. */
+  description?: string;
 }
 
 export const homePinsActivityStore = createStore<{ ready: boolean; bySlug: Record<string, PinActivity> }>(

@@ -158,7 +158,7 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       id="home-challenges-section"
       slot="challenges"
       label={challenges?.seeAll && wip ? (
-        <WipHeadMore direction="right" href="#leaderboard/challenges" label={t('home:challenges.seeAll.label')}>
+        <WipHeadMore direction="right" href="#leaderboard/challenges" label={t('home:challenges.seeAll.label')} pill={t('home:challenges.seeAll.text')}>
           {challenges.heading}
         </WipHeadMore>
       ) : challenges ? challenges.heading : t('home:challenges.heading')}

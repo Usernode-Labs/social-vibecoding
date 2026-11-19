@@ -234,6 +234,7 @@ export function NeedsYouCard(): ReactNode {
           direction="right"
           onClick={openThreadsList}
           label={t('home:needsCard.seeAll')}
+          pill={t('home:needsCard.seeAll')}
         >
           <span id="home-needs-card-title" className="wip-head-words">{t('home:needsCard.eyebrow')}</span>
         </WipHeadMore>

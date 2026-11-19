@@ -248,7 +248,7 @@ test('a private member is offered no New project on Home and no New community on
   // offer, which a private member is not made.
   const page = read('frontend/src/features/communities/index.tsx');
   assert.match(page, /const offerCreate = state\.ready && !win\?\.App\?\.user\?\.privateMember;/);
-  assert.match(page, /const createTile = offerCreate && !q && !editing;/);
+  assert.match(page, /const createTile = offerCreate && !q && !editing && !wip;/);
   assert.match(page, /\{kit && offerCreate \? \(\s*<WipCta\s+id="communities-new-top"/);
   assert.doesNotMatch(read('frontend/src/features/home/pinned-communities.tsx'), /offerCreate|showCreateModal/, 'nothing on Home\'s side of the tiles makes one');
   const panels = read('src/routes/home-panels.js');
