@@ -1135,7 +1135,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'open_app_preview',
-      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to change it live"). Only in a private thread, for a project they can change, never Homeroom itself. Call it alone, and do not reply: the draft answers them, and makes the change they asked for, if they asked for one.',
+      description: 'Open a live app preview with them: a draft of a project\'s app runs beside this chat, and from then on what they say in this thread changes the draft, and the preview restarts with each change in a few seconds. Nothing is public until they tap Propose, which puts it to the project\'s vote. Use it when they want to change a project\'s app and watch it change as you talk: they ask for a preview, or to change it live (a message that begins "I want to change an app live"). Only in a private thread, for a project they can change, never Homeroom itself. Call it alone, and do not reply: the draft answers them, and makes the change they asked for, if they asked for one.',
       parameters: {
         type: 'object',
         properties: {

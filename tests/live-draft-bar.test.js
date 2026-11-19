@@ -53,7 +53,7 @@ test('app.js hands the draft\'s socket frame on as the bar\'s window event', () 
   assert.match(app, new RegExp(`case 'live_draft_changed':\\s*(//[^\\n]*\\n\\s*)*window\\.dispatchEvent\\(new CustomEvent\\('${LIVE_DRAFT_EVENT}', \\{ detail: data \\}\\)\\);`));
 });
 
-test('New chat offers "I want to change it live…" once a project of its own is picked', () => {
+test('New chat offers "I want to change an app live…" once a project of its own is picked', () => {
   const NEW = 'frontend/src/features/messages/new-thread.tsx';
   const { LIVE_START, offersLive, NEW_THREAD_STARTS, startOf } = loadTsx(NEW);
   assert.equal(offersLive('', {}), false, 'not for Any project');
@@ -61,16 +61,16 @@ test('New chat offers "I want to change it live…" once a project of its own is
   assert.equal(offersLive('gym', { gym: { selfHosted: false } }), true);
   assert.equal(offersLive('homeroom', { homeroom: { selfHosted: true } }), false, 'never Homeroom itself');
   const words = message(LIVE_START.text);
-  assert.equal(words, 'I want to change it live');
+  assert.equal(words, 'I want to change an app live');
   assert.equal(message(LIVE_START.label).replace(/<\/?0>/g, ''), `${words}…`, 'the pill says the words it writes, then "…"');
   assert.equal(LIVE_START.kind, 'any');
   assert.ok(!NEW_THREAD_STARTS.some((s) => s.key === 'live'), 'the five starts stay five; the sixth is drawn only with a project');
   const starts = [...NEW_THREAD_STARTS, LIVE_START].map((s) => ({ ...s, text: message(s.text) }));
-  assert.equal(startOf('I want to change it live: make the button bigger', starts).key, 'live');
+  assert.equal(startOf('I want to change an app live: make the button bigger', starts).key, 'live');
   assert.match(read(NEW), /offersLive\(project, scope\.info[^)]*\)\s*\?\s*\[\.\.\.NEW_THREAD_STARTS, LIVE_START\]/);
   // Homeroom bot is what opens it: the chat's tool, named for that start.
   const mayor = require('../src/services/homeroom-bot-mayor');
   const tool = mayor.TOOLS.find((t) => t.function.name === 'open_app_preview').function;
-  assert.match(tool.description, /I want to change it live/);
+  assert.match(tool.description, /I want to change an app live/);
   assert.match(tool.description, /Call it alone, and do not reply/);
 });

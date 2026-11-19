@@ -5972,11 +5972,11 @@
     "description": "Line on a thread's live draft bar when opening, proposing or closing the draft failed for a reason the server did not say."
   },
   "newThread.starts.live.label": {
-    "text": "I want to change it live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "text": "I want to change an app live<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
-    "text": "I want to change it live",
-    "description": "Written into the message box when the \"I want to change it live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change it live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project."
+    "text": "I want to change an app live",
+    "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
   }
 }
