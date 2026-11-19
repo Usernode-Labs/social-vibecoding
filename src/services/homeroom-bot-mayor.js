@@ -1206,7 +1206,7 @@ const TOOLS = [
       // Step 6 (#6864): it hands nothing over. It gives this turn the design
       // tools, and the turn draws the screen and says the version it saved.
       name: 'start_design',
-      description: 'Start drawing a screen with them, as a design in this thread: it gives you the design tools (write_screen, edit_design, capture_page and the rest) and the design\'s rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
+      description: 'Start drawing a screen with them, as a design in this thread: it gives you the design tools (write_artifact, edit_artifact, capture_page and the rest) and the design\'s rules for the rest of this turn. Use it when they want to see how something could look, or to change how a screen looks or is laid out. Then draw it yourself, from their words, the project\'s code and any picture they sent, and reply once: your reply says the version you saved, shown small in this thread with Open preview.',
       parameters: {
         type: 'object',
         properties: {
@@ -2121,7 +2121,7 @@ function goesOnAfter(text, { rounds, limit, nudged = 0, messages = 0 }) {
  * is the project's name when the caller knows it; `version` (step 6) the
  * design version a drawing or an edit is saved as ("Drawing version 4").
  */
-function doingFor(name, args = {}, { project = null, version = null } = {}) {
+function doingFor(name, args = {}, { project = null, version = null, kind = null } = {}) {
   const v = Number.isSafeInteger(Number(version)) && Number(version) > 0 ? Number(version) : null;
   switch (name) {
     case 'progress':
@@ -2158,9 +2158,13 @@ function doingFor(name, args = {}, { project = null, version = null } = {}) {
     }
     case 'edit_design':
       return v ? { kind: 'drawing', version: v } : { kind: 'designing' };
-    // Artifacts: a plain page being written or changed ("Writing").
+    // Artifacts: the generic write and edit. A design's are its drawing, as
+    // write_screen and edit_design were (stage 3); a plain page's, "Writing".
     case 'write_artifact':
+      if (kind === 'design') return v ? { kind: 'drawing', version: v } : { kind: 'drawing' };
+      return { kind: 'writing' };
     case 'edit_artifact':
+      if (kind === 'design') return v ? { kind: 'drawing', version: v } : { kind: 'designing' };
       return { kind: 'writing' };
     case 'offer_request':
       return { kind: 'drafting' };
@@ -2200,7 +2204,7 @@ function sayDoing(pool, ctx, name, args = {}) {
       else if (caps.draft?.owns?.(name)) project = caps.draft.projectName || null;
     }
     const version = caps.design?.owns?.(name) ? caps.design.version(name) : null;
-    const what = doingFor(name, args, { project, version });
+    const what = doingFor(name, args, { project, version, kind: caps.design?.owns?.(name) ? caps.design.kind || null : null });
     if (what === undefined) return;
     // #6405: once the turn has named a step, a tool with no name of its own
     // leaves that step up, rather than dropping the card back to "Thinking".
@@ -4468,7 +4472,7 @@ async function answer(pool, config, { bot, user, settings, conversationId, messa
         grow('design', turnRounds.rounds);
         return {
           ok: true, version: opened.version(),
-          note: `The design tools are yours for the rest of this turn, and its rules follow. Draw it now (write_screen, or capture_page for one of Homeroom's own pages and then edit_design), then reply once: it is saved as version ${opened.version()}.`,
+          note: `The design tools are yours for the rest of this turn, and its rules follow. Draw it now (write_artifact, or capture_page for one of Homeroom's own pages and then edit_artifact), then reply once: it is saved as version ${opened.version()}.`,
         };
       };
       // open_app_preview: the draft capability, loaded for the rest of this turn.

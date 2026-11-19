@@ -1450,7 +1450,9 @@ function repairNote(problems, { tools = null } = {}) {
   // 1 Nov 2026: a screen said to be drawing with nothing drawn.
   // Step 6: with the design tools loaded it draws now; else start_design
   // gives it them first (homeroom-bot-mayor.js).
-  const drawWith = offered('write_screen') ? 'write_screen (or edit_design)' : null;
+  // A design's thread (capture_page is the design kind's alone), where the generic
+  // write and edit draw the screen (stage 3).
+  const drawWith = offered('capture_page') ? 'write_artifact (or edit_artifact)' : null;
   // Artifacts: a plain page's thread writes and changes it with its own tools.
   const pageDone = kinds.has('page_done')
     ? (offered('edit_artifact')

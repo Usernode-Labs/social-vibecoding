@@ -157,7 +157,7 @@ test('in a page\'s thread no screen is drawn and no project is offered; with a d
     design, current: { version: 1, html: '<main>Ear</main>' },
   });
   await drawn.run;
-  assert.ok(drawn.offered[0].includes('edit_design'));
-  assert.equal(drawn.offered[0].includes('write_artifact'), false, 'a thread holds one artifact');
+  assert.ok(drawn.offered[0].includes('edit_artifact'));
+  assert.equal(drawn.offered[0].filter((name) => name === 'write_artifact').length, 1, 'the design\'s own write (stage 3), never the chat\'s that starts a page');
   assert.equal(drawn.offered[0].includes('start_design'), false);
 });

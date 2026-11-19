@@ -246,7 +246,7 @@ async function openPage(pool, config, { user, artifact = null, room = null, star
       if (name === 'compare_artifacts') {
         if (!artifact) return { ok: false, error: 'There is nothing to compare yet: this page has one version once you reply.' };
         const made = require('./design-bot-compare').compareCard({ design: artifact, args, latest: changed() ? version() : base });
-        if (made.error) return { ok: false, error: made.error.replace('draw it with write_screen first', 'write the page with write_artifact first') };
+        if (made.error) return { ok: false, error: made.error.replace('There is no screen to compare yet: draw it with write_artifact first', 'There is nothing to compare yet: write the page with write_artifact first') };
         card = made.card;
         return { ok: true, note: 'Shown side by side under your reply, where they pick one. Say so in a sentence.' };
       }

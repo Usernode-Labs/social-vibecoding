@@ -36,7 +36,7 @@ const designBot = require('../src/services/design-bot');
 
 test('the design draws, reads the project\'s code and edits, in its twelve rounds of the chat\'s turn', () => {
   // Step 6 (#6864): the chat's own reply ends the turn, with the version's summary.
-  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan']);
+  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan']);
   assert.equal(designBot.MAX_ROUNDS, 12);
   for (const t of designBot.TOOLS) {
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -210,11 +210,11 @@ test('the prompt says an app\'s compiled Tailwind holds only the classes it uses
 
 test('the prompt: a thread with no screen yet is drawn; one with a version is edited, its stylesheets left out', () => {
   const none = designBot.designPrompt({ username: 'ada', surface: 'new', brief: 'A seed calendar' });
-  assert.match(none, /This thread has no screen yet\. It is for a screen of a new project, not made yet\. Draw it with write_screen/);
+  assert.match(none, /This thread has no screen yet\. It is for a screen of a new project, not made yet\. Draw it with write_artifact/);
   assert.match(none, /the native kit \(native\.css\)/);
   assert.match(none, /WHAT YOU WERE ASKED TO DRAW\nA seed calendar/);
   assert.doesNotMatch(none, /Main Chat|MAIN CHAT/, '14 Nov 2026: there is no Main Chat to name');
-  assert.match(none, /THERE IS NO SCREEN YET: draw it with write_screen\.$/);
+  assert.match(none, /THERE IS NO SCREEN YET: draw it with write_artifact\.$/);
   assert.match(none, /Content rules: nothing sexual, no\n  realistic or graphic violence and no real-money gambling/, 'its content rules kept');
   assert.doesNotMatch(none, /—/);
   const design = { surface: 'app', app: { slug: 'garden', name: 'Garden club' }, title: 'Plots', width: 390, height: 844 };
@@ -240,9 +240,10 @@ test('#6257: a first drawing with nothing to go on asks first, and quotes a ques
 
   const asked = designBot.designPrompt({ username: 'ada', surface: 'new', askFirst: true });
   assert.match(asked, /FIRST SCREEN: Before you draw/);
-  assert.match(asked, /draw nothing: ask one short question/);
+  // Stage 3: the chat's question rule: what makes the question necessary, and what the answer decides.
+  assert.match(asked, /draw nothing: say in one clause that nothing yet says what the app is for or what this screen should do, and ask about both in one question, since the screen is drawn from the answer/);
   assert.match(asked, /Never start from a placeholder/);
-  assert.match(asked, /THERE IS NO SCREEN YET: draw it with write_screen, or ask first as FIRST SCREEN says\.$/);
+  assert.match(asked, /THERE IS NO SCREEN YET: draw it with write_artifact, or ask first as FIRST SCREEN says\.$/);
   assert.doesNotMatch(asked, /—/);
   assert.doesNotMatch(designBot.designPrompt({ username: 'ada', surface: 'new' }), /FIRST SCREEN/,
     'a drawing with something to go on is unchanged');

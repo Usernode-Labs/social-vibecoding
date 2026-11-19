@@ -31,6 +31,7 @@
 // (private-threads.js), said by the thread's own words.
 
 const log = require('./logger');
+const { DESIGN_LIMITS, ARTIFACT_LIMITS } = require('./bot-profiles');
 
 // The most one version may be: the column allows 1 MB, and a version is
 // drawn whole in a frame and read whole by the model that edits it.
@@ -57,10 +58,13 @@ const MAX_PIN_TEXT = 80;
 // its frame's policy names this site (frontend/src/features/artifact/
 // policy.ts); a kind without them loads nothing at all. `capability`: the
 // capability of a private thread's turn that works on it (bot-profiles.js
-// CAPABILITIES), loaded only while a thread holds one.
+// CAPABILITIES), loaded only while a thread holds one. `limits`: the kind's
+// own (stage 3), which a turn grows to while its artifact is open: a
+// design's rounds, output room and clock are its drawing's, more than a
+// plain page needs.
 const KINDS = Object.freeze({
-  design: Object.freeze({ kind: 'design', sheets: true, capability: 'design' }),
-  page: Object.freeze({ kind: 'page', sheets: false, capability: 'artifact' }),
+  design: Object.freeze({ kind: 'design', sheets: true, capability: 'design', limits: DESIGN_LIMITS }),
+  page: Object.freeze({ kind: 'page', sheets: false, capability: 'artifact', limits: ARTIFACT_LIMITS }),
 });
 // Where an artifact lives: its author's private thread with the bot. The
 // only place there is (nothing publishes one to a project).

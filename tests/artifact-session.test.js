@@ -236,7 +236,8 @@ test('a page is said as a page: the thread opened for it, the working card, the 
 test('private threads with the bot only: no project thread is offered an artifact tool, and nothing publishes one', () => {
   for (const name of profiles.ARTIFACT_TOOLS) {
     assert.equal(botTools.offers(name, 'thread'), false, `${name} in a project's thread`);
-    assert.equal(botTools.offers(name, 'design'), false);
+    // Stage 3: a design is written and changed with the same two, in its own words.
+    assert.equal(botTools.offers(name, 'design'), ['write_artifact', 'edit_artifact'].includes(name), name);
     assert.equal(botTools.offers(name, 'artifact'), true);
   }
   assert.equal(botTools.offers('write_artifact', 'main'), true, 'the one way a private thread comes to hold a page');

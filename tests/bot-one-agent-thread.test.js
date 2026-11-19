@@ -223,9 +223,10 @@ test('a design thread\'s turn has the design tools and section; an ordinary one 
   const design = turn([{ calls: [call('reply', { text: 'They were Asked and Planned.' })] }]);
   await design.run;
   const tools = design.offered[0];
-  for (const name of ['write_screen', 'edit_design', 'capture_page', 'compare_versions', 'make_pictures', 'read_plan', 'offer_plan']) {
+  for (const name of ['write_artifact', 'edit_artifact', 'capture_page', 'compare_versions', 'make_pictures', 'read_plan', 'offer_plan']) {
     assert.ok(tools.includes(name), `${name} in a design thread`);
   }
+  assert.ok(!tools.includes('write_screen') && !tools.includes('edit_design'), 'stage 3: the generic names are offered; the old ones only still run');
   assert.ok(!tools.includes('start_design'), 'the design is there already');
   assert.ok(!tools.includes('draw_screen'), 'nothing hands drawing over');
   assert.ok(tools.includes('offer_request') && tools.includes('my_work'), 'and every tool a private thread has');
@@ -242,7 +243,7 @@ test('a design thread\'s turn has the design tools and section; an ordinary one 
   });
   await plain.run;
   const plainTools = plain.offered[0];
-  for (const name of ['write_screen', 'edit_design', 'capture_page', 'offer_plan', 'list_files', 'edit_file', 'apply_changes']) {
+  for (const name of ['write_screen', 'edit_design', 'edit_artifact', 'capture_page', 'offer_plan', 'list_files', 'edit_file', 'apply_changes']) {
     assert.ok(!plainTools.includes(name), `${name} is not offered in an ordinary thread`);
   }
   assert.ok(plainTools.includes('start_design'), 'a design can be started there');
@@ -276,8 +277,8 @@ test('start_design loads the design for the rest of the turn, and that turn save
     },
   });
   await h.run;
-  assert.ok(!h.offered[0].includes('write_screen'), 'no design tools before it starts one');
-  assert.ok(h.offered[1].includes('write_screen'), 'its tools from the next round');
+  assert.ok(!h.offered[0].includes('capture_page'), 'no design tools before it starts one');
+  assert.ok(h.offered[1].includes('capture_page') && h.offered[1].includes('edit_artifact'), 'its tools from the next round');
   assert.ok(h.seen[1].some((m) => m.role === 'system' && /THIS THREAD'S DESIGN/.test(m.content)), 'and its section');
   assert.equal(threadsMade.length, 1, 'the thread holds the design now');
   assert.equal(h.sent.length, 1, 'one reply');
@@ -608,7 +609,7 @@ test('the design and draft sessions keep their handlers: no answer loop of their
   const designNames = designBot.TOOLS.map((tool) => tool.function.name);
   assert.ok(!designNames.includes('reply') && !designNames.includes('offer_request') && !designNames.includes('close_thread'),
     'the chat\'s own reply, offer_request and close_thread serve a design thread');
-  for (const tool of ['write_screen', 'edit_design']) {
+  for (const tool of ['write_artifact', 'edit_artifact']) {
     const props = designBot.TOOLS.find((t) => t.function.name === tool).function.parameters.properties;
     assert.equal('note' in props, false, `${tool} takes no note: the reply's summary is the version's one line`);
   }

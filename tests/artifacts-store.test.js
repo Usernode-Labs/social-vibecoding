@@ -131,6 +131,10 @@ test('a version is whole HTML within the store\'s limits, numbered in order, and
   assert.deepEqual(store.PLACES, ['thread'], 'its author\'s thread: nothing publishes one');
   assert.equal(store.KINDS.design.sheets, true, 'a design is drawn with the project\'s stylesheets');
   assert.equal(store.KINDS.page.sheets, false, 'a page needs none, so none are written in');
+  // Stage 3: a kind's limits are its own, and they are what its capability's turn grows to.
+  const profiles = require('../src/services/bot-profiles');
+  for (const kind of Object.values(store.KINDS)) assert.equal(kind.limits, profiles.capabilityOf(kind.capability).limits, kind.kind);
+  assert.ok(store.KINDS.page.limits.rounds < store.KINDS.design.limits.rounds, 'a plain page is cheaper than a design');
   assert.equal(store.kindOf('nonsense').kind, 'design', 'a row from before is a design');
   // No status of its own: the artifact's row and its read carry none.
   const src = read('src/services/artifacts.js').replace(/\/\/[^\n]*/g, '');

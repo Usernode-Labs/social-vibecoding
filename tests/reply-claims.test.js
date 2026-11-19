@@ -173,8 +173,8 @@ test('the repair note names only the tools its place offers, and asks for no den
   assert.match(main, /call start_design now with what to draw and its title, draw it, then reply/);
   assert.doesNotMatch(main, /draw_screen|do not reply/);
   assert.match(main, /to finish this private thread, call close_thread\./);
-  const design = claims.repairNote([{ kind: 'design_done', said: 'x' }], { tools: new Set(['reply', 'write_screen', 'edit_design', 'start_design']) });
-  assert.match(design, /Call write_screen \(or edit_design\) now, then reply\./, 'with the design loaded it draws now');
+  const design = claims.repairNote([{ kind: 'design_done', said: 'x' }], { tools: new Set(['reply', 'write_artifact', 'edit_artifact', 'capture_page', 'start_design']) });
+  assert.match(design, /Call write_artifact \(or edit_artifact\) now, then reply\./, 'with the design loaded it draws now');
   // A live draft's change said with none saved (step 6, draft_done).
   const draft = claims.repairNote([{ kind: 'draft_done', said: 'says you changed or saved the draft' }], { tools: new Set(['reply', 'apply_changes']) });
   assert.match(draft, /Nothing was saved to the draft this turn\. Make the change with edit_file and save it with apply_changes/);

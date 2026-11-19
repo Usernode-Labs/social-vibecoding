@@ -71,7 +71,7 @@ test('the designer has compare_versions and make_pictures between its own tools 
   const names = designBot.TOOLS.map((t) => t.function.name);
   // #6354: capture_page comes after the board readers. Step 6 (#6864): the
   // chat's own reply, close_thread and offer_request serve a design thread.
-  assert.deepEqual(names, ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan', 'compare_versions', 'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page']);
+  assert.deepEqual(names, ['write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan', 'compare_versions', 'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page']);
   const prompt = designBot.designPrompt({
     username: 'ada', design: { surface: 'app', app: { name: 'Garden club' }, title: 'Plots', width: 390, height: 844 }, version: 2, html: '<p>x</p>',
     pictures: [{ id: 'a'.repeat(32), label: 'A · light', width: 1024, height: 1024 }, { id: 'nope', label: 'B' }],

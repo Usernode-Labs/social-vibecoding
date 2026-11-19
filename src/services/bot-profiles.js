@@ -128,7 +128,7 @@ const CHAT_TOOLS = Object.freeze([
 // design's project unless another is named, and stop once its reading is
 // over. The chat's own reply, close_thread and offer_request serve it.
 const DESIGN_TOOLS = Object.freeze([
-  'write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan', 'compare_versions',
+  'write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan', 'compare_versions',
   'make_pictures', 'offer_plan', 'offer_project', 'list_requests', 'get_request', 'capture_page',
 ]);
 const DRAFT_TOOLS = Object.freeze([

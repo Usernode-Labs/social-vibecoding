@@ -53,7 +53,7 @@ test('the design bot is offered both board readers, and they count as reading', 
   assert.ok(names.includes('list_requests'));
   assert.ok(names.includes('get_request'));
   assert.equal(names.indexOf('list_requests') > names.indexOf('offer_project'), true, 'appended after offer_project');
-  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_screen', 'edit_design', 'list_source', 'read_source', 'read_plan'],
+  assert.deepEqual(designBot.TOOLS.slice(0, 5).map((t) => t.function.name), ['write_artifact', 'edit_artifact', 'list_source', 'read_source', 'read_plan'],
     'the chat\'s own reply ends a design turn');
   assert.equal(designBot.ACT_TOOLS.some((t) => t.function.name === 'list_requests'), false);
   assert.equal(designBot.ACT_TOOLS.some((t) => t.function.name === 'get_request'), false);
@@ -355,8 +355,8 @@ test('one whole screen a turn: a second write_screen is refused and recorded, an
   assert.equal(toolResult(turn.seen, 'w1').ok, true);
   const refused = toolResult(turn.seen, 'w2');
   assert.equal(refused.ok, false);
-  assert.equal(refused.error, 'You drew this turn\'s screen already. Change or extend it with edit_design: a second '
-    + 'write_screen is taken only when the first was refused or empty.');
+  assert.equal(refused.error, 'You drew this turn\'s screen already. Change or extend it with edit_artifact: a second '
+    + 'write_artifact is taken only when the first was refused or empty.');
   assert.equal(toolResult(turn.seen, 'e1').ok, true, 'the edit is taken');
   // #6681: the look at the render runs before the version is shown, and this
   // harness has no capture job, so it records that it was skipped.
@@ -387,16 +387,16 @@ test('a second write_screen is taken after an empty one, or a refused one', asyn
 });
 
 test('the tools and the prompt say a plan drops scripts, and name read_plan', () => {
-  const write = designBot.TOOLS.find((t) => t.function.name === 'write_screen').function.description;
+  const write = designBot.TOOLS.find((t) => t.function.name === 'write_artifact').function.description;
   assert.match(write, /A plan shows the screen without its scripts/);
   assert.match(write, /write every row, label and state it must show into the markup/);
-  assert.match(write, /One write_screen a turn: grow it with edit_design/);
-  const edit = designBot.TOOLS.find((t) => t.function.name === 'edit_design').function.description;
+  assert.match(write, /One write_artifact a turn: grow it with edit_artifact/);
+  const edit = designBot.TOOLS.find((t) => t.function.name === 'edit_artifact').function.description;
   assert.match(edit, /The way to change or extend this turn's screen/);
   assert.match(edit, /write rows and words into the markup, not a script that builds them/);
   const prompt = designBot.designPrompt({ username: 'evan', design: DESIGN, version: 4, html: '<p>x</p>' });
   assert.match(prompt, /A plan shows the screen without its scripts, so\n {2}every row, label and state it must show goes in the markup/);
-  assert.match(prompt, /A second\n {2}write_screen is taken only when the first was refused or came out empty\./);
+  assert.match(prompt, /A second\n {2}write_artifact is taken only when the first was refused or came out empty\./);
   assert.doesNotMatch(prompt, /A second write_screen in a turn replaces the first/);
   assert.match(prompt, /call read_plan first and answer from what it shows; never\n {2}guess why\./);
 });
