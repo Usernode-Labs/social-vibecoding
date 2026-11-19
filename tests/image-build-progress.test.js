@@ -432,7 +432,7 @@ test('the finished image step names its phases so a slow build says where the ti
 test('the standalone image keeps the Docker CLI and pins the patched Buildx binary', () => {
   const source = read('Dockerfile');
   assert.match(source, /FROM docker:29\.9\.2-cli AS docker-tools/);
-  assert.match(source, /FROM --platform=\$BUILDPLATFORM golang:1\.26\.10-alpine AS buildx-tools/);
+  assert.match(source, /FROM --platform=\$BUILDPLATFORM golang:1\.26\.11-alpine AS buildx-tools/);
   assert.match(source, /ADD --checksum=sha256:d2b5d92ff45929f83aad2f44ca045c887e61c2a851c72ee185ce68a13f118dd8 https:\/\/codeload.github.com\/docker\/buildx\/tar.gz\/b708617c05822b226f952c4e223cf750cbbd4798/);
   assert.match(source, /RUN patch -p1 < \/tmp\/dependencies.patch/);
   assert.match(source, /go build -mod=vendor -trimpath/);

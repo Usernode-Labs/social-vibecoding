@@ -5,7 +5,7 @@
 # So the gate's esbuild is compiled here from the same version's source with
 # a patched Go, and only that one binary reaches the image below.
 ARG ESBUILD_VERSION=0.25.12
-FROM golang:1.27.3-trixie AS esbuild-build
+FROM golang:1.27.4-trixie AS esbuild-build
 ARG ESBUILD_VERSION
 RUN CGO_ENABLED=0 GOTOOLCHAIN=local GOBIN=/out \
     go install -trimpath "github.com/evanw/esbuild/cmd/esbuild@v${ESBUILD_VERSION}" \
