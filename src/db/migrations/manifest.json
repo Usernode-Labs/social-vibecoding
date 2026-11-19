@@ -455,6 +455,11 @@
       "id": "activation-code-links",
       "sha256": "0d7cc779eb97c44a8cc0711711578c22a44d5768dce3816f4972f1cf880ea335",
       "schemaSha256": "171e331152418ea5efbbc2b753e9cf608d8e11fac678d70c8289993e94115f86"
+    },
+    {
+      "id": "homeroom-bot-run-wrong-project",
+      "sha256": "fdc0c8bb3143d57bf1fa862ec7df4425181c404567d57e905c389dc72e4bc212",
+      "schemaSha256": "b7599ab91df271c93366652738c6925124dbdf64c1109c401ecb47d49303e641"
     }
   ]
 }

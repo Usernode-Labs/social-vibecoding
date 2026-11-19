@@ -107,6 +107,10 @@ async function migrate(config) {
   // you says "Already works" with Propose to close and the request's page
   // says why. Staging has no model, so the bot's note is stored.
   await seedStagingBotAlreadyWorks(pool);
+  // #6752's shots: a request the bot read as filed on the wrong project, so
+  // its page and the requester's chat say where it seems to belong and offer
+  // the close vote. Staging has no model, so the bot's note is stored.
+  await seedStagingBotWrongProject(pool);
   // #6399's shots: a request handed back over a plan the bot could not read,
   // which a later release made readable, so its card offers a read again.
   await seedStagingBotOutdatedReason(pool);
@@ -2555,6 +2559,123 @@ async function seedStagingBotAlreadyWorks(pool) {
     }
   } catch (err) {
     log.warn('db', 'Staging Homeroom bot already-works seeding failed', { message: err.message });
+  }
+}
+
+// #6752 (17 Nov 2026): a request Homeroom bot read as filed on the wrong
+// project. Its run carries `wrong_project`, its note says where the request
+// seems to belong and quotes what points there, and Propose to close under
+// it opens the same close vote a finished request gets. Filed by the shots'
+// member fixture (usernode-capture); the bot's note is stored because
+// staging has no model. Idempotent by request number and a no-op outside
+// staging.
+async function seedStagingBotWrongProject(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const apps = await pool.query('SELECT id, slug, name FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1');
+    const people = await pool.query("SELECT id FROM users WHERE username = 'usernode-capture' LIMIT 1");
+    const bot = await pool.query("SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE LIMIT 1");
+    if (!apps.rows.length || !people.rows.length || !bot.rows.length) return;
+    const { id: appId, slug: appSlug, name: appName } = apps.rows[0];
+    const userId = people.rows[0].id;
+    const botId = bot.rows[0].id;
+    const number = 9111;
+    const title = 'Staging demo: a request the bot found on the wrong project';
+    const wrongProject = {
+      project: 'Plant Pal',
+      why: 'It asks for "Plant Pal\'s watering screen", which this project does not have.',
+    };
+    const live = require('../services/homeroom-bot-live');
+    const noteText = live.wrongProjectHomeroomText({ wrongProject, project: appName });
+    const why = live.wrongProjectReason(wrongProject);
+    await pool.query(
+      `INSERT INTO requests (app_id, number, title, body, created_by, created_at, updated_at)
+       SELECT $1, $2, $3, 'Staging demo: obviously fake.', $4, NOW() - INTERVAL '3 days', NOW() - INTERVAL '3 days'
+        WHERE NOT EXISTS (SELECT 1 FROM requests WHERE app_id = $1 AND number = $2)`,
+      [appId, number, title, userId],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title)
+       VALUES ($1, $2, $3, $4) ON CONFLICT (app_id, issue_number) DO NOTHING`,
+      [appId, number, userId, title],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, reason, wrong_project, created_at)
+       SELECT $1, $2, 'live', 'person', $3, $4, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM homeroom_bot_runs
+                           WHERE app_id = $1 AND issue_number = $2 AND mode = 'live' AND verdict = 'person')`,
+      [appId, number, why, JSON.stringify(wrongProject)],
+    );
+    const note = await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, metadata, created_at)
+       SELECT $1, $2, $3, 'message', 'issue', $4, $5, NOW() - INTERVAL '1 day'
+        WHERE NOT EXISTS (SELECT 1 FROM chat_messages
+                           WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $4
+                             AND metadata->>'stagingDemo' = 'wrong-project-note')
+       RETURNING id`,
+      [
+        appId, botId, noteText, number,
+        JSON.stringify({ stagingDemo: 'wrong-project-note', homeroomBot: { kind: 'note' } }),
+      ],
+    );
+    let noteId = note.rows[0] ? note.rows[0].id : null;
+    if (noteId == null) {
+      const existing = await pool.query(
+        `SELECT id FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2
+            AND metadata->>'stagingDemo' = 'wrong-project-note'
+          ORDER BY id LIMIT 1`,
+        [appId, number],
+      );
+      noteId = existing.rows[0] ? existing.rows[0].id : null;
+    }
+    const { botNotificationDetail } = require('../services/homeroom-bot-notify-copy');
+    const detail = botNotificationDetail({
+      moment: 'needs_you', said: 'stopped', kind: 'person',
+      appName, appSlug, requestTitle: title, reason: why, issueNumber: number,
+    });
+    if (noteId != null && detail) {
+      await pool.query(
+        `INSERT INTO notifications
+           (user_id, app_id, chat_message_id, source_user_id, kind, detail, read_at, created_at)
+         SELECT $1::int, $2::int, $3::int, $4::int, 'build_needs_you', $5::varchar, NULL, NOW() - INTERVAL '1 day'
+          WHERE NOT EXISTS (SELECT 1 FROM notifications n
+                             WHERE n.user_id = $1 AND n.kind = 'build_needs_you' AND n.chat_message_id = $3::int)`,
+        [userId, appId, noteId, botId, detail],
+      );
+    }
+    // The note with Propose to close and Keep it open under it for any
+    // member. Idempotent by the offer tied to the note.
+    if (noteId != null) {
+      const tied = await pool.query(
+        `SELECT 1 FROM bot_cards WHERE place = 'thread' AND chat_message_id = $1
+          UNION ALL SELECT 1 FROM homeroom_bot_voice_offers WHERE message_id = $1 LIMIT 1`, [noteId],
+      );
+      if (!tied.rows.length) {
+        const { rows: [offer] } = await pool.query(
+          `INSERT INTO bot_cards (place, app_id, kind, args, user_id, chat_message_id)
+           VALUES ('thread', $1, 'close_request', $2, NULL, $3) RETURNING id`,
+          [appId, JSON.stringify({ issueNumber: number, title, why }), noteId],
+        );
+        const offerId = Number(offer.id);
+        await pool.query('UPDATE chat_messages SET metadata = $2 WHERE id = $1', [
+          noteId,
+          JSON.stringify({
+            stagingDemo: 'wrong-project-note',
+            homeroomBot: {
+              kind: 'voice',
+              offer: { id: offerId, kind: 'close_request', status: 'open', forUserId: null },
+              actions: [
+                { id: 'yes', label: 'Propose to close', style: 'primary', offerId },
+                { id: 'no', label: 'Keep it open', style: 'secondary', offerId },
+              ],
+            },
+          }),
+        ]);
+      }
+    }
+  } catch (err) {
+    log.warn('db', 'Staging Homeroom bot wrong-project seeding failed', { message: err.message });
   }
 }
 
@@ -16607,6 +16728,8 @@ module.exports = {
   seedStagingBotAllowanceWarning,
   // #6306: the already-works request (run, note and bell row) the shots need.
   seedStagingBotAlreadyWorks,
+  // #6752: the wrong-project request (run, note and offer) the shots need.
+  seedStagingBotWrongProject,
   // #6399: the handed-back request whose reason a later release lifted.
   seedStagingBotOutdatedReason,
   // #6441: the folded "went live" rows the bell's Unread shows.
