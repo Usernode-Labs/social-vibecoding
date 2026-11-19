@@ -56,8 +56,9 @@ import { swatchFor } from '../../group-chat/swatch';
 import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import { askToFit, upstreamAction } from '../../versions/upstream';
 import { useInlineImageViewer } from '../../image-viewer/image-viewer';
-import { ActionButton, StatusPill, TitleContent, VoteButton, isVoteSpec } from '../card/dev-card';
-import type { ActionSpec, DevCardModel, StatusPillState } from '../card/model';
+import { ActionButton, StatusPill, TitleContent, TitleEditButton, VoteButton, isVoteSpec } from '../card/dev-card';
+import type { ActionSpec, DevCardModel, StatusPillState, TitleSpec } from '../card/model';
+import { useThreadHeadFit } from './thread-head-fit';
 import type { ChangeGateView, ChangeMergeView, ChangeThreadView, ChangeUpstreamView, FixChecksView, TopicBody } from './model';
 import { shortDate } from '../../../lib/timestamp';
 import { changeRail, type RailOpen } from './rail-model';
@@ -104,13 +105,21 @@ export function headPill(v: Pick<ChangeThreadView, 'pill' | 'status'>): StatusPi
  * else behind ⋯. When the change has a technical half (`detailsId`, the same
  * gate the ⋯ Details row uses), the title itself opens the Details sheet
  * (#5329): it looks as it always did, and underlines on hover.
+ *
+ * 19 Nov 2026: the head names the change by its own title (`titleSpec`, as
+ * the card drew it), in two lines, with the author's pencil beside it; "Change
+ * #N" and where it stands are the small line over it, with the project and the
+ * topic (app.css "THE THREAD'S HEAD IS A CARD"). A change with no title of its
+ * own yet is named by its number.
  */
-export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
+export function ChangeBar({ v, menuKey, detailsId = null, name = null, titleSpec = null }: {
   v: ChangeThreadView;
   menuKey: string;
   detailsId?: number | null;
   /** The change's own title, for the kit's head under one of the frame's looks. */
   name?: string | null;
+  /** The change's own title as its card draws it: its lead and trail runs and the author's pencil. */
+  titleSpec?: TitleSpec | null;
 }): ReactNode {
   const t = useMessages('project');
   const title = v.number ? t('project:topic.change.bar.titleNumbered', { number: v.number }) : t('project:topic.change.bar.title');
@@ -124,36 +133,48 @@ export function ChangeBar({ v, menuKey, detailsId = null, name = null }: {
   // UNDER ONE OF THE FRAME'S LOOKS the page's head is the kit's (the tour's
   // s34): what it is in a small line over the change's title, with this menu.
   const frame = isFrameSkin(useLiveSkin());
+  // The head card is measured and tightens as the thread scrolls (./thread-head-fit.ts).
+  const head = useRef<HTMLElement>(null);
+  useThreadHeadFit(head, !frame);
   if (frame) return <TopicFrameHead title={name || title} over={dotLine([title, v.category])} menu={menuKey ? { key: menuKey, label: t('project:topic.change.bar.more') } : null} />;
-  // 18 Nov 2026: the bar is the thread's header pill (app.css), on its own
-  // page and in either panel alike. Its second line is the project, then the
-  // topic, which the card's kicker said before.
+  // 18 Nov 2026: the bar is the thread's head (app.css), on its own page and
+  // in either panel alike. Its project and topic are what the card's kicker
+  // said before.
   const project = threadProjectName();
   const where = dotLine([project, v.category]);
+  const own = titleSpec && String(titleSpec.text || '').trim() ? titleSpec : null;
+  const words = own ? (own.title || own.text) : title;
+  const heading = (
+    <span className="dev-thread-bar-title">
+      {own ? <TitleContent t={{ ...own, edit: undefined, editing: undefined }} /> : title}
+    </span>
+  );
   return (
-    <header className="messages-thread-header">
+    <header ref={head} className="messages-thread-header">
       <ThreadBarTile />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 dev-thread-bar-text">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="messages-thread-name min-w-0">
-            {detailsId ? (
-              <button
-                type="button"
-                className="messages-thread-name-link"
-                data-change-details-open=""
-                onClick={() => (window as any).AppView?.openTechnicalDetails?.(detailsId)}
-                aria-label={t('project:topic.change.bar.openDetails', { title })}
-                title={t('project:topic.change.bar.openDetailsTitle')}
-              >
-                {title}
-              </button>
-            ) : title}
-          </div>
+          <div className="messages-thread-kicker min-w-0" data-change-kicker="">{title}</div>
           {pill ? (
             <span className="shrink-0" data-change-status={pill.key}>
               <StatusPill s={pill} inline />
             </span>
           ) : null}
+        </div>
+        <div className="messages-thread-name min-w-0">
+          {detailsId ? (
+            <button
+              type="button"
+              className="messages-thread-name-link"
+              data-change-details-open=""
+              onClick={() => (window as any).AppView?.openTechnicalDetails?.(detailsId)}
+              aria-label={t('project:topic.change.bar.openDetails', { title: words })}
+              title={t('project:topic.change.bar.openDetailsTitle')}
+            >
+              {heading}
+            </button>
+          ) : heading}
+          {own?.edit ? <TitleEditButton edit={own.edit} /> : null}
         </div>
         {v.category
           ? <div className="messages-thread-sub" data-change-category="">{where}</div>
@@ -1144,7 +1165,7 @@ export function ChangeThreadHead({ id, card, body, v, linkedIssues, onIssuesSave
   return (
     <>
       {back ? createPortal(<TopicBack />, back) : null}
-      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} />, bar) : null}
+      {bar ? createPortal(<ChangeBar v={v} menuKey={menuKey} detailsId={id && body.changeId ? id : null} name={card.title.text || card.title.title || null} titleSpec={card.title} />, bar) : null}
       {rail ? createPortal(<ThreadRail steps={railSteps} onOpen={openRail} current={cardLook ? openNow : null} />, rail) : null}
       {images.viewer}
       <ThreadCardContext.Provider value={cardContext}>

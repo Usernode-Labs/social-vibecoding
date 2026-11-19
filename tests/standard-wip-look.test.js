@@ -19,8 +19,6 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
-  // Home's Recent threads rows carry no "Request #8" line under the look (asked 19 Nov 2026).
-  'html[data-skin-wip] #home-needs-card .wip-item-kind',
   // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
   'html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
   // Home has no Pinned communities section under the look.

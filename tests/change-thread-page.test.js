@@ -382,7 +382,10 @@ test('the header shows the status pill beside "Change #N", in the card\'s capsul
       title: message('changes:badge.pill.failedTitle') }),
     menuKey: '',
   });
-  assert.match(failed, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+  // 19 Nov 2026: "Change #N" is the head's small line, beside its pill; the
+  // title under it is the change's own (its number until it has one).
+  assert.match(failed, /<div class="messages-thread-kicker min-w-0" data-change-kicker="">Change #81<\/div><span class="shrink-0" data-change-status="delivery_failed">/);
+  assert.match(failed, /<div class="messages-thread-name min-w-0"><span class="dev-thread-bar-title">Change #81<\/span><\/div>/);
   assert.match(failed, /<span class="shrink-0" data-change-status="delivery_failed"><span class="gc-vote-count gc-vote-count-blocked dev-status-pill"/);
   assert.doesNotMatch(failed, /dev-status-pill-block|dev-status-pill-vote/, 'the capsule form, not the board card\'s bar');
   assert.match(failed, new RegExp(`>${message('changes:badge.pill.failed')}<`));
@@ -397,7 +400,7 @@ test('the header shows the status pill beside "Change #N", in the card\'s capsul
   // Being built or closed: the header is as it was.
   const none = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
   assert.doesNotMatch(none, /data-change-status|gc-vote-count/);
-  assert.match(none, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+  assert.match(none, /<div class="messages-thread-name min-w-0"><span class="dev-thread-bar-title">Change #81<\/span><\/div>/);
   // #5683: a change being voted on keeps its pill beside the title, as it
   // always did (snait asked for it back). The Votes card under the title
   // gives the fuller account; the pill still says where it stands at a glance.
@@ -418,13 +421,21 @@ test('the header title is a button that opens Details where the ⋯ menu has a D
   const head = 'frontend/src/features/dev-board/topic/change-head.tsx';
   const open = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '', detailsId: 81 });
   assert.match(open, /<div class="messages-thread-name min-w-0"><button type="button" class="messages-thread-name-link" data-change-details-open=""/);
-  assert.match(open, /aria-label="Change #81, see details" title="See details">Change #81<\/button><\/div>/);
+  assert.match(open, /aria-label="Change #81, see details" title="See details"><span class="dev-thread-bar-title">Change #81<\/span><\/button><\/div>/);
   assert.equal(message('project:topic.change.bar.openDetails', { title: 'Change #81' }), 'Change #81, see details');
   assert.equal(message('project:topic.change.bar.openDetailsTitle'), 'See details');
   // Without the gate, the title is the plain div it always was.
   const plain = renderComponent(head, 'ChangeBar', { v: view(null), menuKey: '' });
   assert.doesNotMatch(plain, /messages-thread-name-link/);
-  assert.match(plain, /<div class="messages-thread-name min-w-0">Change #81<\/div>/);
+  assert.match(plain, /<div class="messages-thread-name min-w-0"><span class="dev-thread-bar-title">Change #81<\/span><\/div>/);
+  // 19 Nov 2026: with its own title, the head says that, the button is
+  // named by it, and the author's pencil stands beside it, outside the button.
+  const named = renderComponent(head, 'ChangeBar', {
+    v: view(null), menuKey: '', detailsId: 81,
+    titleSpec: { text: 'Sort the leaderboard by score', title: 'Sort the leaderboard by score', edit: { session: 81 } },
+  });
+  assert.match(named, /aria-label="Sort the leaderboard by score, see details" title="See details"><span class="dev-thread-bar-title">Sort the leaderboard by score<\/span><\/button><button type="button"[^>]*aria-label="Edit title"/);
+  assert.match(named, /data-change-kicker="">Change #81<\/div>/, 'the number is the small line\'s');
 });
 
 test('the title button opens details the way the ⋯ row does, on the row\'s gate', () => {

@@ -98,7 +98,7 @@ SELECT * FROM (
   SELECT t.id, t.kind, t.number, t.title, t.created_at,
          a.slug, a.name AS app_name, a.icon_emoji, a.icon_image_id,
          req.number AS request_number, req.title AS request_title,
-         ch.pr_number, ch.session_title AS change_title,
+         ch.pr_number, ch.title AS change_title,
          dec.id AS decision_id,
          GREATEST(
            t.created_at,
@@ -123,8 +123,13 @@ SELECT * FROM (
        LIMIT 1
     ) req ON TRUE
     -- The newest change a person (not a headless auto session) made in it.
+    -- Its title is its pull request's, then its session's (as the AI tab's
+    -- rows read it, services/ai-work.js): a change handed in through the
+    -- connector has a pull request title and no session title, and its row
+    -- used to fall back to the project's name.
     LEFT JOIN LATERAL (
-      SELECT s.pr_number, s.session_title, s.last_activity_at FROM chat_sessions s
+      SELECT s.pr_number, COALESCE(NULLIF(s.pr_title, ''), NULLIF(s.session_title, '')) AS title,
+             s.last_activity_at FROM chat_sessions s
        WHERE s.thread_id = t.id AND s.is_headless = FALSE
        ORDER BY s.id DESC
        LIMIT 1
@@ -157,7 +162,10 @@ const iso = (at) => (at ? new Date(at).toISOString() : null);
 
 // One thread, as the sheet's row reads it. `kind`, `number` and `title` follow
 // what the page it opens says: a request names itself first (the page is its
-// own), then a change, and a decision has no number.
+// own), then a change, and a decision has no number. A thread with no title
+// of its own has an empty one, which the rows draw as what it is ("Change
+// #6872"): the project's name is on the row already, and as a title it read
+// as though the change were called that.
 function serialize(row) {
   const kind = row.kind === 'decision' ? 'decision'
     : (row.request_number != null && row.request_title != null ? 'request' : 'change');
@@ -169,7 +177,7 @@ function serialize(row) {
     threadId: Number(row.id),
     kind,
     number,
-    title: row.request_title || row.change_title || row.title || row.app_name || '',
+    title: row.request_title || row.change_title || row.title || '',
     appSlug: row.slug,
     appName: row.app_name,
     appIconEmoji: row.icon_emoji || null,

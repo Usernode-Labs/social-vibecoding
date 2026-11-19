@@ -2745,7 +2745,7 @@
   },
   "topic.change.bar.openDetails": {
     "text": "{{title}}, see details",
-    "description": "Accessible name of a change's page header title when tapping it opens the Details sheet. {{title}} is the header's title, for example \"Change #87\". \"Details\" is the same word the ⋯ menu's Details row uses."
+    "description": "Accessible name of a change's page header title when tapping it opens the Details sheet. {{title}} is the change's own title as the header shows it, for example \"Sort the leaderboard by score\", or \"Change #87\" when it has none yet. \"Details\" is the same word the ⋯ menu's Details row uses."
   },
   "topic.change.bar.openDetailsTitle": {
     "text": "See details",
