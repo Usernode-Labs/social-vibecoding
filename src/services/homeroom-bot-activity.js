@@ -730,7 +730,10 @@ function buildUnderWay(row) {
 // (services/work-state.js), the row every screen draws, in the same words
 // (`doing`), never from a reading of the bot's records of its own.
 const WAITING_TURN = new Set(['queued', 'waiting', 'first_version_wait']);
-const HELD_LINES = new Set(['held_builds', 'held_waiting', 'claimed']);
+// A request waiting rather than worked on: its project's build slots, its
+// changes waiting for votes, somebody's claim, or the bot's building credit
+// (credit_wait: its words said so, but its card spun as if building).
+const HELD_LINES = new Set(['held_builds', 'held_waiting', 'claimed', 'credit_wait']);
 
 /**
  * Pure: a card's working entry from its request's stored work state: the

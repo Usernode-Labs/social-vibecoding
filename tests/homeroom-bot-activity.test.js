@@ -112,6 +112,10 @@ test('a card still going takes its step from its request\'s work state; with not
   assert.equal(doing({ stage: 'reading', line: { code: 'queued', place: 2 } }), 'Not started yet · Number 2 in my own line; I\'ll start by myself');
   // A limit that holds it keeps the words every screen says.
   assert.equal(doing({ stage: 'building', line: { code: 'held_builds' } }), 'Ready to build · Waiting for one of the project\'s builds to finish');
+  // A credit wait is waiting too: its card does not spin as a build under way.
+  const credit = activity.entryOfWork({ stage: 'building', line: { code: 'credit_wait' }, whoseMove: 'bot' });
+  assert.equal(credit.building, false, 'no build under way while it waits for credit');
+  assert.equal(activity.entryOfWork({ stage: 'building', line: null, whoseMove: 'bot' }).building, true, 'a build with no line is under way');
   // Held for its requester's plan, whatever it had reached: it waits on them, and is no build under way.
   const planning = activity.entryOfWork({ stage: 'planning', line: { code: 'planning_with_you', ready: true }, whoseMove: 'requester' });
   assert.deepEqual([planning.doing, planning.waitingOn, planning.typicalMinutes],
