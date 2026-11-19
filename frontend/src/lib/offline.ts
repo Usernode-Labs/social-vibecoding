@@ -67,18 +67,20 @@ export const OFFLINE_BANNER_ID = 'offline-banner';
  *     shell's word, or the browser's `offline`);
  *   - `updating`: a planned restart for a release (#6403).
  *
- * It follows the offline state with HYSTERESIS, the way Superhuman's bar
- * learned to: once shown it stays MIN_SHOWN_MS, and FLAP_SHOWN_MS when it
- * went away less than FLAP_WINDOW_MS ago, so a patchy link does not make it
- * flicker. Only what is SHOWN lingers: `isOffline()` and `body.is-offline`
- * move at once, so queued writes go the moment the server answers.
+ * It follows the offline state with a short HYSTERESIS, so a patchy link
+ * does not make it flicker: once shown it stays MIN_SHOWN_MS, and
+ * FLAP_SHOWN_MS when it went away less than FLAP_WINDOW_MS ago. Only what is
+ * SHOWN lingers: `isOffline()` and `body.is-offline` move at once, so queued
+ * writes go the moment the server answers. The holds are short on purpose
+ * (the follow-up after the 19 Nov retest): they were 10 s and 60 s, and
+ * "Connecting…" stayed up a full minute over a connection that was back.
  */
 export type ConnectionStatus = 'online' | 'connecting' | 'no-internet' | 'updating';
 
 export const connectionStatusStore = createStore<{ status: ConnectionStatus }>({ status: 'online' });
 
-export const MIN_SHOWN_MS = 10_000;
-export const FLAP_SHOWN_MS = 60_000;
+export const MIN_SHOWN_MS = 3_000;
+export const FLAP_SHOWN_MS = 10_000;
 export const FLAP_WINDOW_MS = 2 * 60 * 1000;
 
 /**
@@ -97,10 +99,14 @@ const HUNG_READ_COUNTS_MS = 15_000;
  * bandwidth every other read was using, timed out, and with a stuck read as
  * its second witness the shell went offline: "Connecting…", controls greyed,
  * writes queued, on a network that was answering. So a probe that TIMED OUT
- * is not believed while an API read was answered within this long
- * (./read-timeout.ts tells `answered`, never for the service worker's saved
- * copy). A probe that failed outright still is, and so is the phone saying it
- * has no network.
+ * is not believed while the network answered within this long. Three things
+ * tell `answered`: an API read the network answered (./read-timeout.ts, never
+ * for the service worker's saved copy), the worker's own network read landing
+ * behind a saved copy it served (public/sw.js `network-answered`, through
+ * ./service-worker.ts: on the 19 Nov retest the worker served saved copies
+ * after its 4 s deadline and the page saw no answer at all), and a frame on
+ * the events socket (public/js/app.js). A probe that failed outright still
+ * is believed, and so is the phone saying it has no network.
  */
 export const ANSWERED_RECENTLY_MS = 10_000;
 
