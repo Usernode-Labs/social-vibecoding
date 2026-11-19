@@ -119,6 +119,50 @@ test('the standing\'s words are drawn as the server sent them, and kept through 
   }
 });
 
+// A why or a reason this build has no name for (a newer server) used to be
+// dropped on the way in, so the row reached a screen as a stop with no
+// reason, or a wait with no why. It is kept as it came, and the screen draws
+// the words the server sent with it.
+test('a why or a reason this build does not know is kept, and its words are drawn', () => {
+  const { normalizeWorkState } = loadTsx(LIB);
+  const { requestFoot } = loadTsx('frontend/src/features/dev-board/topic/card-model.ts');
+  const { requestRail } = loadTsx('frontend/src/features/dev-board/topic/rail-model.ts');
+  const { storedRow } = require('./lib/stored-row');
+  const say = (p) => message(p.id, p.values);
+  // A stored row as the server sends it, then given a reason of a later
+  // release: its words are the server's (here, ones this catalog has).
+  const sent = {
+    ...storedRow({ stage: 'stopped', reason: 'build_failed', whoseMove: 'requester' }),
+    reason: 'out_of_credit',
+    words: { stage: { id: 'core:work.reason.planFailed' }, stageOthers: { id: 'core:work.reason.planFailed' }, line: null },
+  };
+  const work = normalizeWorkState(sent);
+  assert.equal(work.reason, 'out_of_credit', 'kept, not nulled');
+  const foot = requestFoot(work, true);
+  assert.equal(say(foot.headline), message('core:work.reason.planFailed'), 'the foot says the server\'s words for it');
+  assert.equal(foot.tone, 'bad');
+  const steps = requestRail({ asker: 'maya', askedAt: '2026-11-07T09:12:00Z', specs: [], changes: [], standing: work });
+  assert.equal(say(steps[steps.length - 1].title), 'Stopped');
+  assert.equal(steps[steps.length - 1].tone, 'bad');
+
+  const waiting = normalizeWorkState({
+    ...storedRow({ stage: 'waiting_for_you', why: 'decide', whoseMove: 'requester' }),
+    why: 'pick_a_plan',
+    words: { stage: { id: 'core:work.why.decide' }, stageOthers: { id: 'core:work.whyOthers.decide' }, line: null },
+  });
+  assert.equal(waiting.why, 'pick_a_plan');
+  assert.equal(say(requestFoot(waiting, true).headline), message('core:work.why.decide'));
+  assert.equal(say(requestFoot(waiting, false).headline), message('core:work.whyOthers.decide'));
+  // The ones it knows come through as they were.
+  assert.equal(normalizeWorkState(storedRow({ stage: 'stopped', reason: 'fix_stopped' })).reason, 'fix_stopped');
+  assert.equal(normalizeWorkState(storedRow({ stage: 'waiting_for_you', why: 'plan' })).why, 'plan');
+  // Only a code is kept: anything else is no reason at all.
+  for (const junk of ['Has Spaces', '<b>x</b>', 7, { code: 'x' }, '', 'x'.repeat(41)]) {
+    assert.equal(normalizeWorkState({ stage: 'stopped', reason: junk }).reason, null, String(junk));
+    assert.equal(normalizeWorkState({ stage: 'waiting_for_you', why: junk }).why, null, String(junk));
+  }
+});
+
 // The words a fixture is given (tests/lib/work-words.js) are the server's
 // own, once the server words its standings (services/work-state.js phrasesOf).
 test('the fixtures\' words are the server\'s phrasesOf', (t) => {
