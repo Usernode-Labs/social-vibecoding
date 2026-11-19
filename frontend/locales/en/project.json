@@ -3635,6 +3635,30 @@
     "text": "Plan for #{{number}} · building",
     "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it: the bot is building what the plan describes. It replaces the line that said the plan waits for Build it. {{number}} is the request's number."
   },
+  "topic.request.botPlan.settled.vote": {
+    "text": "Up for a vote",
+    "description": "On a request's page, the line Homeroom bot's plan card says once its build finished and made a change: the change waits for the group's votes, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.settled.live": {
+    "text": "Live",
+    "description": "On a request's page, the line Homeroom bot's plan card says once the change its build made was approved and went live, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.settled.buildFailed": {
+    "text": "Stopped: the build didn't finish",
+    "description": "On a request's page, the line Homeroom bot's plan card says when Homeroom bot's build of the plan did not finish, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.settled.changeClosed": {
+    "text": "Stopped: its change was closed",
+    "description": "On a request's page, the line Homeroom bot's plan card says when the change its build made was closed without going live while the request stays open, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.change": {
+    "text": "Change #{{number}}",
+    "description": "On a request's page, the link under the lines of Homeroom bot's plan once that plan was built: names the change it made and opens it. {{number}} is the change's number."
+  },
+  "topic.request.botPlan.changeUnnumbered": {
+    "text": "Its change",
+    "description": "On a request's page, the link under the lines of Homeroom bot's plan once that plan was built, when the change it made has no number yet: opens the change."
+  },
   "topic.request.botPlan.readWhole": {
     "text": "Read the whole plan",
     "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."

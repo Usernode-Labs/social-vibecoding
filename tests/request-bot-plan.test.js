@@ -32,14 +32,16 @@ test('the card is the plan\'s own text when it carries it, else its bullets; its
 });
 
 // A pool that answers each query by what it asks, and records it.
-function fakePool({ run, queued = false, action = null, requester = { userId: 1, username: 'evan' } }) {
+function fakePool({ run, queued = false, action = null, requester = { userId: 1, username: 'evan' }, newest = null, change = null }) {
   const said = [];
   return {
     said,
     requester,
     async query(sql, params) {
       said.push({ sql, params });
-      if (/FROM homeroom_bot_runs r/.test(sql)) return { rows: run ? [run] : [] };
+      if (/FROM homeroom_bot_runs r\b/.test(sql)) return { rows: run ? [run] : [] };
+      if (/FROM homeroom_bot_runs\b/.test(sql)) return { rows: newest ? [newest] : [] };
+      if (/FROM chat_sessions\b/.test(sql)) return { rows: change ? [change] : [] };
       if (/FROM homeroom_bot_queue/.test(sql)) return { rows: queued ? [{}] : [] };
       if (/JOIN bot_cards a/.test(sql)) return { rows: action ? [action] : [] };
       return { rows: [], rowCount: 1 };
@@ -47,6 +49,74 @@ function fakePool({ run, queued = false, action = null, requester = { userId: 1,
   };
 }
 const waitingRun = { id: 4436, plan: { complicated: true, bullets: ['x'] }, awaiting_go_at: '2026-11-03T12:14:00Z', build_ok: null, build_session_id: null };
+// The build of that plan, once Build it was pressed (which clears the wait).
+const builtRun = { id: 4436, plan: { complicated: true, bullets: ['x'] }, awaiting_go_at: null, go_ahead_at: '2026-11-03T12:20:00Z', build_ok: null, build_session_id: 600, proposal_session_id: null };
+const app = { id: 9, slug: 'usernode-2d5619' };
+
+// #6860 (19 Nov 2026): the card says what became of the plan, not "Building
+// it" for as long as the request stays open. Gym Tracker #78 showed
+// "Building it" from 27 Oct: its plan had been built, put up for a vote and
+// set aside, and a newer read of the request had stopped since.
+test('#6860: a plan is building only while its own build is under way', async () => {
+  const building = await plan.readPlan(fakePool({ run: builtRun }), { app, issueNumber: 78 });
+  assert.equal(building.plan.state, 'building');
+  assert.equal(building.plan.change, null);
+  // Waiting for Build it is waiting, never building.
+  assert.equal((await plan.readPlan(fakePool({ run: waitingRun }), { app, issueNumber: 78 })).plan.state, 'waiting');
+  // A build that started and keeps running while a newer look of the
+  // request exists is not building any more: the newer look supersedes it.
+  assert.deepEqual(await plan.readPlan(fakePool({ run: builtRun, newest: { id: 6250 } }), { app, issueNumber: 78 }), { plan: null });
+  // Nor is one whose build finished and made a change.
+  const finished = await plan.readPlan(fakePool({ run: { ...builtRun, build_ok: true, proposal_session_id: 500 }, change: { id: 500, status: 'active', pr_number: null } }),
+    { app, issueNumber: 78 });
+  assert.equal(finished.plan.state, 'built');
+});
+
+test('#6860: a plan whose change is up for a vote says so, and names the change', async () => {
+  const up = await plan.readPlan(
+    fakePool({ run: { ...builtRun, build_ok: true, proposal_session_id: 11373 }, change: { id: 11373, status: 'promoted', pr_number: 9653 } }),
+    { app, issueNumber: 78 });
+  assert.equal(up.plan.state, 'built');
+  assert.deepEqual(up.plan.change, { id: 11373, number: 9653 });
+  assert.equal(up.plan.reason, null);
+  assert.deepEqual(up.plan.choices, [], 'nothing to pick: it is not for build any more');
+  const live = await plan.readPlan(
+    fakePool({ run: { ...builtRun, build_ok: true, proposal_session_id: 11373 }, change: { id: 11373, status: 'merged', pr_number: 9653 } }),
+    { app, issueNumber: 78 });
+  assert.equal(live.plan.state, 'live');
+  assert.deepEqual(live.plan.change, { id: 11373, number: 9653 });
+});
+
+test('#6860: a plan whose build stopped says so, not building', async () => {
+  const failed = await plan.readPlan(
+    fakePool({ run: { ...builtRun, build_ok: false, build_error: 'the build ran out of steps' } }), { app, issueNumber: 78 });
+  assert.equal(failed.plan.state, 'stopped');
+  assert.equal(failed.plan.reason, 'build_failed');
+  assert.equal(failed.plan.change, null);
+});
+
+test('#6860: a plan whose change was closed without merging is set aside, and named', async () => {
+  const aside = await plan.readPlan(
+    fakePool({ run: { ...builtRun, build_ok: true, proposal_session_id: 11373 }, change: { id: 11373, status: 'archived', pr_number: 9653 } }),
+    { app, issueNumber: 78 });
+  assert.equal(aside.plan.state, 'stopped');
+  assert.equal(aside.plan.reason, 'change_closed');
+  assert.deepEqual(aside.plan.change, { id: 11373, number: 9653 });
+  // Dropped for a newer plan (a skip): no card.
+  assert.deepEqual(await plan.readPlan(
+    fakePool({ run: { ...builtRun, build_ok: false, build_error: 'skipped: its requester asked to change the plan' } }),
+    { app, issueNumber: 78 }), { plan: null });
+});
+
+test('#6860: a newer run of the request, with no plan of its own, drops the older plan\'s card', async () => {
+  for (const run of [builtRun, { ...builtRun, build_ok: true, proposal_session_id: 11373 }]) {
+    assert.deepEqual(await plan.readPlan(fakePool({ run, newest: { id: 6250 }, change: { id: 11373, status: 'archived', pr_number: 9653 } }),
+      { app, issueNumber: 78 }), { plan: null });
+  }
+  // The same run is not a newer one.
+  const same = await plan.readPlan(fakePool({ run: builtRun, newest: { id: 4436 } }), { app, issueNumber: 78 });
+  assert.equal(same.plan.state, 'building');
+});
 
 function deps(pool, { over = false, went = { ok: true, chosen: [] } } = {}) {
   const calls = [];
@@ -65,7 +135,6 @@ function deps(pool, { over = false, went = { ok: true, chosen: [] } } = {}) {
     wsSvc: { sendSystemMessage: async (_p, appId, text, _k, _m, thread) => { calls.push(['said', text, thread]); } },
   };
 }
-const app = { id: 9, slug: 'usernode-2d5619' };
 
 test('another member\'s Build it is paid from their week, and the requester is told in the request\'s thread', async () => {
   const pool = fakePool({ run: waitingRun });
@@ -150,4 +219,57 @@ test('the request\'s page draws the plan once it is read, with Build it, and Cha
   // 11 Nov 2026 (one model): the status card above it says the standing's
   // own words, the ones the Homeroom bot tab says for it.
   assert.equal(message('changes:request.status.lead.stands', { stage: message('core:work.why.plan') }), 'Waiting for you to OK the plan.');
+});
+
+// #6860 (19 Nov 2026): a plan whose build is over is drawn with what became
+// of it, in the same words the rest of the request's page and the Homeroom
+// bot page say, and names the change it made. Only a build under way reads
+// "Building it".
+test('#6860: the request\'s card settles in the page\'s own words, never "Building it" for a finished plan', () => {
+  const card = loadTsx('frontend/src/features/dev-board/topic/request-plan.tsx');
+  const base = {
+    runId: 4436, title: 'Track bodyweight', summary: '', lines: [{ n: 1, text: 'A row opens its page.' }], choices: [],
+    spec: null, postId: 31, requester: 'evan', mine: false, changing: false, reason: null, change: null,
+  };
+  const built = card.planFromRead({ plan: { ...base, state: 'built', change: { id: 500, number: 11373 } } });
+  assert.equal(built.state, 'built');
+  assert.deepEqual(built.change, { id: 500, number: 11373 });
+  // No Build it, and the plan's own lines stay: only a build under way is "built".
+  assert.equal(card.planCardState(built), 'closed');
+  assert.equal(card.planCardState(card.planFromRead({ plan: { ...base, state: 'building' } })), 'built');
+  // A settled plan has no line under its title: what became of it is said
+  // inside the card, in the words the rest of the page says for it.
+  assert.equal(card.planSubOf(built, 78), null);
+  assert.deepEqual(card.planSettledLineOf(built), { id: 'project:topic.request.botPlan.settled.vote' });
+  assert.equal(message('project:topic.request.botPlan.settled.vote'), message('core:work.stage.upForVote'),
+    'up for a vote, in the page\'s own words');
+
+  const live = card.planFromRead({ plan: { ...base, state: 'live', change: { id: 500, number: 11373 } } });
+  assert.equal(card.planCardState(live), 'closed');
+  assert.equal(message('project:topic.request.botPlan.settled.live'), message('core:work.stage.live'));
+
+  const failed = card.planFromRead({ plan: { ...base, state: 'stopped', reason: 'build_failed' } });
+  assert.equal(card.planCardState(failed), 'closed');
+  assert.deepEqual(card.planSettledLineOf(failed), { id: 'project:topic.request.botPlan.settled.buildFailed' });
+  assert.equal(message('core:work.reason.buildFailed'), 'Stopped: the build didn\'t finish');
+  assert.equal(message('project:topic.request.botPlan.settled.buildFailed'), message('core:work.reason.buildFailed'),
+    'the footer\'s own words');
+
+  const aside = card.planFromRead({ plan: { ...base, state: 'stopped', reason: 'change_closed', change: { id: 500, number: 11373 } } });
+  assert.equal(card.planCardState(aside), 'closed');
+  assert.deepEqual(card.planSettledLineOf(aside), { id: 'project:topic.request.botPlan.settled.changeClosed' });
+  assert.equal(message('core:work.reason.changeClosed'), 'Stopped: its change was closed');
+  assert.equal(message('project:topic.request.botPlan.settled.changeClosed'), message('core:work.reason.changeClosed'),
+    'the footer\'s own words');
+  // The card that still waits has its line under the title, and no settled one.
+  assert.deepEqual(card.planSubOf({ ...base, state: 'waiting', mine: true }, 78),
+    { id: 'project:topic.request.botPlan.subYours', values: { number: '78' } });
+  assert.equal(card.planSettledLineOf({ ...base, state: 'waiting', mine: true }), null);
+
+  // A state the page does not know is no card at all.
+  assert.equal(card.planFromRead({ plan: { ...base, state: 'other' } }), null);
+
+  const src = read('frontend/src/features/dev-board/topic/request-plan.tsx');
+  assert.match(src, /href=\{changeHref\(slug, plan\.change\.id, plan\.change\.number\)\}/, 'a built plan names its change and opens it');
+  assert.match(src, /settledLine=\{settled \? \(/, 'a settled card says what became of it inside it');
 });
