@@ -582,6 +582,14 @@ function stagingMockIssues(repoUrl) {
     // so its status card says the reason may be out of date and offers
     // "Ask Homeroom bot to read this again". A staging copy has no GitHub to
     // read the request from, so its page's own fetch finds it here.
+    // #6752: the request Homeroom bot read as filed on the wrong project. Its
+    // run carries `wrong_project` and its thread carries the note with
+    // Propose to close (seedStagingBotWrongProject in src/db/migrate.js). A
+    // staging copy has no GitHub to read the request from, so its page's own
+    // fetch finds it here.
+    mk(9111, 'Staging demo: a request the bot found on the wrong project',
+      'Staging demo: obviously fake. The bot found this belongs to another '
+      + 'project, not Homeroom.\n\n**Source:** Homeroom user (usernode-capture)', 26),
     mk(9112, 'Staging demo: a request handed back over a plan the bot could not read',
       'Staging demo: obviously fake. The bot handed this back because it '
       + 'could not read a plan a person posted, and Homeroom can read one now.\n\n'
@@ -607,6 +615,15 @@ function stagingMockIssues(repoUrl) {
       'Staging demo: obviously fake. Its build failed, so the bot said so, '
       + 'and it failed again after somebody replied.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 3),
+    // #6867: the request a build left waiting for OpenRouter's credit
+    // (seedStagingBotWaitingRows in src/db/migrate.js stores its queue row).
+    // A staging copy has no GitHub to read the request from, so its page's
+    // own fetch finds it here, and only the after copy has it.
+    mk(9119, 'Staging demo: a request waiting for building credit',
+      'Staging demo: obviously fake. Its build stopped because the credit '
+      + 'that pays for building ran out, so it waits for Homeroom bot to '
+      + 'pick it up again by itself.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 1),
   ];
 }
 

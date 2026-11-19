@@ -116,6 +116,15 @@ function importGithubClient() {
 // a vote on one 404s harmlessly. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
+// #6827: the config `voteRoutes(config)` was built with, so a read this
+// module exports (readProposalRow) can be called from another route file
+// (`/threads/:number?with=changes`) without loading the config again.
+let sharedConfig = null;
+// #6827: the shared row read is declared inside `voteRoutes` (the route and
+// the read it builds are one piece of source); this is how another route
+// file reaches the one it built.
+let readProposalRowForRoutes = null;
+
 // `viewer` (the requesting user's username, when known) seeds ONE mock
 // proposal's assignee as the viewer's own so the #600 "already voted"
 // assignee-dropdown state (name box empty, viewer's pick checked) is
@@ -142,10 +151,17 @@ function stagingDemoNeedsProposal(id, slug) {
     chat_count: 0, last_message_at: null, votes_required: 1,
     priority: null, assignee: null, category: null,
     // #6814: its own page draws the card's own picture, so a demo change that
-    // says nothing on screen changes shows "What it touches" there too.
+    // says nothing on screen changes shows that picture there too.
     ...(card.diagram ? { diagram: card.diagram, diagram_source: card.diagram_source || 'author' } : {}),
     ...(card.touches ? { touches: card.touches } : {}),
     ...(card.shots_detail ? { shots_detail: card.shots_detail } : {}),
+    // #6832: a demo change declared as changing nothing on screen has a shots
+    // run that needs none, as a real one does (services/shots-view.js), so
+    // its own page draws the change's picture (the diagram, or "What it
+    // touches" before #6832) where the empty box would be.
+    ...(card.shots_detail && card.shots_detail.intent && card.shots_detail.intent.impact === 'none'
+      ? { shots: { state: 'not_required', rationale: card.shots_detail.intent.rationale || null } }
+      : {}),
   };
 }
 
@@ -2914,6 +2930,7 @@ function promotedByOwnersAgent(req) {
 
 function voteRoutes(config) {
   const router = Router();
+  sharedConfig = config;
   const pool = getPool(config);
 
   // Per-app visibility gate for the session-id-addressed vote routes
@@ -5249,6 +5266,29 @@ function voteRoutes(config) {
   // same view gate and visibility rule as the read below, so a number it
   // answers is one that read serves. Several sessions can name one PR; the
   // one that reached a vote wins, then the newest.
+  //
+  // #6827: the number, resolved once for both reads below.
+  async function changeSessionIdFor(gatedApp, req, number) {
+    const { rows } = await pool.query(
+      `SELECT cs.id FROM chat_sessions cs
+       WHERE cs.app_id = $1 AND cs.pr_number = $3
+         AND (cs.status IN ('promoted', 'merging', 'merged')
+           OR (cs.status IN ('active', 'paused')
+             AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
+       ORDER BY (cs.status IN ('promoted', 'merging', 'merged')) DESC, cs.id DESC
+       LIMIT 1`,
+      [gatedApp.id, req.user?.id || null, number]
+    );
+    let sessionId = rows[0] ? rows[0].id : null;
+    // Staging demo mode: the by-id read's mock rows, by their PR number.
+    if (!sessionId && IS_STAGING && req.query.demo === '1') {
+      const mock = stagingMockMerged(req.user).concat(stagingMockProposals())
+        .find((m) => Number(m.pr_number) === number);
+      sessionId = mock ? mock.id : null;
+    }
+    return sessionId || null;
+  }
+
   router.get('/api/apps/:slug/changes/:number', async (req, res) => {
     try {
       const gatedApp = await appAccess.getAppForUser(
@@ -5258,23 +5298,7 @@ function voteRoutes(config) {
       const number = /^\d{1,9}$/.test(String(req.params.number))
         ? parseInt(req.params.number, 10) : NaN;
       if (!(number > 0)) return res.status(404).json({ error: 'Change not found' });
-      const { rows } = await pool.query(
-        `SELECT cs.id FROM chat_sessions cs
-         WHERE cs.app_id = $1 AND cs.pr_number = $3
-           AND (cs.status IN ('promoted', 'merging', 'merged')
-             OR (cs.status IN ('active', 'paused')
-               AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
-         ORDER BY (cs.status IN ('promoted', 'merging', 'merged')) DESC, cs.id DESC
-         LIMIT 1`,
-        [gatedApp.id, req.user?.id || null, number]
-      );
-      let sessionId = rows[0] ? rows[0].id : null;
-      // Staging demo mode: the by-id read's mock rows, by their PR number.
-      if (!sessionId && IS_STAGING && req.query.demo === '1') {
-        const mock = stagingMockMerged(req.user).concat(stagingMockProposals())
-          .find((m) => Number(m.pr_number) === number);
-        sessionId = mock ? mock.id : null;
-      }
+      const sessionId = await changeSessionIdFor(gatedApp, req, number);
       if (!sessionId) return res.status(404).json({ error: 'Change not found' });
       res.json({ sessionId, prNumber: number });
     } catch (err) {
@@ -5282,6 +5306,67 @@ function voteRoutes(config) {
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // #6827: ONE read that answers a change's page — the change, where it
+  // lives (its request home), its thread and its proposal row with the
+  // before/after picture addresses — so its title and body arrive after a
+  // single round trip rather than a chain of four (#6827's measurement).
+  // Every part is best-effort: one that fails answers null, and the client
+  // falls back to its own read for that part. Field names are the ones the
+  // screens already read (`/changes/:n`, `/threads/change/:id`,
+  // `/threads/:n`, `/proposals/:id?results=failing`), so nothing on screen
+  // is reshaped.
+  router.get('/api/apps/:slug/changes/:number/page', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    try {
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, locked, repo_url`
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const number = /^\d{1,9}$/.test(String(req.params.number))
+        ? parseInt(req.params.number, 10) : NaN;
+      if (!(number > 0)) return res.status(404).json({ error: 'Change not found' });
+      const sessionId = await changeSessionIdFor(gatedApp, req, number);
+      if (!sessionId) return res.status(404).json({ error: 'Change not found' });
+
+      const threadsSvc = require('../services/threads');
+      const threadMoves = require('../services/thread-moves');
+      const viewerId = req.user ? req.user.id : null;
+      // The change's home decides WHICH thread is this page's, so it and
+      // the proposal row go out together; the thread follows the home.
+      const [home, row] = await Promise.all([
+        threadsSvc.requestHome(pool, { appId: gatedApp.id, sessionId, viewerId }).catch(() => null),
+        readProposalRow({ pool, config }, withFailingResults(req), gatedApp, sessionId).catch(() => null),
+      ]);
+      const request = home ? home.number : null;
+      let thread = null;
+      try {
+        const found = await threadsSvc.threadForNumber(pool, {
+          appId: gatedApp.id, number: request || number, asChange: !request,
+        });
+        if (found) {
+          const { owner, repo } = repoRef.ownerRepo(gatedApp.repo_url) || {};
+          const page = await threadsSvc.threadPage(pool, { thread: found, viewerId, owner, repo });
+          thread = {
+            ...page,
+            moves: await threadMoves.openMoves(pool, { threadId: found.id, viewerId }),
+          };
+        }
+      } catch (err) {
+        log.warn('votes', 'Could not read a change page\'s thread', { message: err.message });
+      }
+      return res.json({
+        sessionId, prNumber: number, request, thread,
+        proposal: row ? row.proposal : null,
+        context: row ? row.context : null,
+      });
+    } catch (err) {
+      log.error('votes', 'Failed to read a change page', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+
 
   router.get('/api/apps/:slug/proposals/:id', async (req, res) => {
     try {
@@ -5293,385 +5378,407 @@ function voteRoutes(config) {
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
 
-      const userId = req.user?.id || null;
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(404).json({ error: 'Proposal not found' });
 
-      const { rows } = await pool.query(
-        `${mergedRowSelect()}
-         WHERE cs.app_id = $1 AND cs.id = $3
-           AND (cs.status IN ('promoted', 'merging', 'merged')
-             OR (cs.status IN ('active', 'paused')
-               AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
-         LIMIT 1`,
-        [gatedApp.id, userId, id]
-      );
-
-      let proposal = rows[0] || null;
-      if (proposal) {
-        // Same read-only priority + assigned-person chips the list rows carry.
-        const attrs = await topicAttrs.summarizeForProposals(
-          pool, gatedApp.id,
-          [{ id: proposal.id, linked_issues: proposal.linked_issues }], userId
-        );
-        const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
-        proposal.priority = s.priority;
-        proposal.assignee = s.assignee;
-        proposal.category = s.category;
-        proposal.shots = config.shots?.present
-          ? await shotsView.getForSession(pool, proposal, req.params.slug, { viewer: req.user })
-          : null;
-        // #4452: how long testing usually takes here, for the change page's
-        // one testing bar and its time left (services/checks-estimate.js).
-        proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
-        // #6604: the page's before/after, for a change with no verified
-        // shots yet (services/visuals.js). The board's /promoted rows carry
-        // this aggregate; a change page opened by its own read alone needs it
-        // here, or its legacy "All N screens" card disappeared.
-        {
-          const { rows: [vis] } = await pool.query(
-            `SELECT jsonb_object_agg(
-                      sv.kind || '_' || sv.capture_index || '_' || sv.media,
-                      jsonb_build_object(
-                        'id', sv.id,
-                        'path', sv.captured_path,
-                        'viewport', sv.captured_viewport,
-                        'commit', sv.commit_hash,
-                        'scenarioId', sv.scenario_id,
-                        'scenarioFingerprint', sv.scenario_fingerprint,
-                        'fellBack', sv.before_fell_back))
-               FROM session_visuals sv WHERE sv.session_id = $1`,
-            [proposal.id]
-          ).catch(() => ({ rows: [{ jsonb_object_agg: null }] }));
-          proposal.visuals = require('../services/visuals')
-            .shapeAgg(vis && vis.jsonb_object_agg, visualHeadForSession(proposal));
-        }
-        // #6234: Homeroom bot fixing its own change's failing checks, for the
-        // Testing card (services/homeroom-bot-progress.js changeBotFix);
-        // null for any change of a person's.
-        proposal.bot_fix = await require('../services/homeroom-bot-progress')
-          .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
-        // #6116: what it has cost so far at list price, for its author or an
-        // admin only (services/session-cost.js).
-        proposal.cost_total_cents = await require('../services/session-cost')
-          .sessionCostForViewer(pool, proposal, req.user);
-        // #4479: the plan it was built from, for the page's plan card.
-        proposal.plan = await require('./sessions')
-          .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
-        // Its code did not come across from GitHub (services/code-missing.js):
-        // the page's notice and the card's "Code missing", read as the list
-        // reads it. Always written, as the board merges this read into its
-        // held row key by key.
-        proposal.code_missing = await codeMissing.forSession(pool, {
-          ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
-        });
-        // #4490: the author's diagram, which leads the change's page, and
-        // "What it touches", the picture the page falls back to. Touches are
-        // shown only for the head they were read at, as the board rows do, and
-        // a moved head is read again in the background for the next view. Not
-        // for a head whose code is missing: there is nothing on the git host
-        // to read, and the read warned on every view.
-        {
-          const drawn = await pool.query(
-            'SELECT pr_diagram, pr_diagram_source, pr_touches, pr_touches_sha FROM chat_sessions WHERE id = $1', [proposal.id]
-          ).catch(() => ({ rows: [] }));
-          const row = drawn.rows[0] || null;
-          proposal.diagram = diagramContract.storedDiagram(row && row.pr_diagram);
-          proposal.diagram_source = proposal.diagram ? (row.pr_diagram_source || 'author') : null;
-          const head = proposal.code_missing ? null : visualHeadForSession(proposal);
-          proposal.touches = head && row && row.pr_touches_sha === head
-            ? proposalTouches.storedTouches(row.pr_touches) : null;
-          proposalTouches.scheduleRefresh(pool, [{
-            id: proposal.id, repo_url: gatedApp.repo_url,
-            pr_touches_sha: row && row.pr_touches_sha, head,
-          }]);
-        }
-        // An update from this version's original (services/upstream-offers.js):
-        // what it brings, what it does here, and where it stands, for the
-        // change page's From <original> card. Null for any other change.
-        proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
-        // #6140: what its Preview reads (AppView._cardPreviewSpec), on a change
-        // still up for a vote. A request's page draws a change from this read
-        // alone, with no board row under it, so without these its Testing card
-        // had no Try it. The fields /promoted carries, with its own derivation
-        // of building and failed; can_preview is the one the session lists
-        // use, so a preview gone to sleep can be woken. Never while it builds:
-        // _cardPreviewSpec offers a rebuild before it says "building". A
-        // merged row keeps its shape: its page offers the live app instead.
-        if (proposal.status === 'promoted' || proposal.status === 'merging') {
-          const { rows: [preview] } = await pool.query(
-            `SELECT staging_url, testing_md, testing_path,
-                    (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL
-                       OR shared_at IS NOT NULL) AS can_preview
-               FROM chat_sessions WHERE id = $1`,
-            [proposal.id]
-          );
-          proposal.staging_url = preview?.staging_url || null;
-          proposal.testing_md = preview?.testing_md || null;
-          proposal.testing_path = preview?.testing_path || null;
-          Object.assign(proposal, require('../services/staging').previewDisplayState(proposal));
-          proposal.can_preview = !!preview?.can_preview && !proposal.staging_building;
-        }
-      }
-
-      // #3669: the proposal page's own read must carry the same per-row
-      // governance fields the list rows do. AppView._refreshTopicLive
-      // refetches THIS endpoint right after a vote and merges the response
-      // into the held board row key-wise, so a response without
-      // qualified_* / votes_required left the pre-vote pill standing
-      // ("0 of 1 approval") until a full board reload. Promoted/merging
-      // rows get the identical enrichment /promoted applies; merged rows
-      // keep their historical snapshot, and active rows have no vote to
-      // describe.
-      if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')
-        && proposal.votes_required == null) {
-        const governance = require('../services/governance');
-        const gov = await governance.getGovernance(pool, gatedApp.id);
-        const electorate = await governance.getElectorate(pool, gatedApp.id, gov);
-        const flagged = !!proposal.requires_explicit_approval;
-        const rulesCtx = gov.rules
-          ? await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id])
-          : null;
-        const q = electorate.approverIds
-          ? await governance.qualifiedCounts(
-            pool, 'pr', proposal.id, electorate.approverIds,
-            flagged ? { authorId: proposal.user_id ?? null } : undefined
-          )
-          : { yes: proposal.yes_count, no: proposal.no_count, otherYes: proposal.other_yes_count };
-        // 13 Oct 2026, D1: the project's first version, whose vote the gate
-        // waives; the change page says it goes live without one.
-        proposal.first_version = await isFirstVersion(pool, proposal.id);
-        // #5803 / #5947: the clock an admin's or approver's lone No arms, for
-        // the page's pill.
-        const loneNoByProposal = await governance.loneNoTimes(pool, [proposal.id]);
-        const gate = governance.computeGate(
-          gov, electorate.active, q.yes, q.no,
-          proposal.promoted_at || proposal.created_at, null,
-          {
-            explicitApproval: flagged,
-            otherYes: q.otherYes,
-            memberCount: flagged
-              ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
-            ...loneNoByProposal.get(Number(proposal.id)),
-            // #4666: who voted, on a project with rules of its own.
-            ...(rulesCtx ? governance.rulesGateOpts(
-              rulesCtx,
-              proposal.id, proposal.user_id ?? null, proposal.explicit_approval_reason || null
-            ) : {}),
-            firstVersion: proposal.first_version,
-          }
-        );
-        proposal.votes_required = gate.required;
-        // #6594: the same fact the board's rows carry, so the change page's
-        // own heading says Approved instead of Waiting for approval.
-        proposal.votes_in = gate.mergeable === true && proposal.first_version !== true;
-        proposal.merge_window_ends_at = gate.windowEndsAt;
-        proposal.contested = gate.contested;
-        proposal.reject_window_ends_at = gate.rejectionEndsAt;
-        proposal.rejection_armed = gate.rejectionArmed;
-        proposal.approval_policy = gate.policy;
-        proposal.approvals_required = gate.approvalsRequired;
-        // #4747, same field the /promoted rows carry. Always written: the
-        // board merges this response into its held row key by key, so a
-        // missing key would leave a stale advisory value behind.
-        proposal.my_vote_advisory = !!userId
-          && proposal.my_vote_uncounted !== true
-          && !governance.viewerDecides(gov, {
-            approverIds: electorate.approverIds,
-            facts: rulesCtx ? rulesCtx.facts : null,
-            explicitApproval: flagged,
-            explicitReason: proposal.explicit_approval_reason || null,
-          }, userId);
-        Object.assign(proposal, governance.explicitApprovalRowFields(proposal, gate));
-        if (gate.mode === 'rules') Object.assign(proposal, governance.ruleRowFields(gate));
-        proposal.qualified_yes_count = gate.qualifiedYes;
-        proposal.qualified_no_count = gate.qualifiedNo;
-        // #3234: display only — the threshold as it stood when voting opened.
-        proposal.votes_required_at_promote = governance.requiredAtPromote(
-          gov, proposal.active_users_at_promote, q.no
-        );
-
-        // The ledger too (services/merge-requirements.js): the card's
-        // "Waiting on the group" line reads the merge gate's recording,
-        // which a vote does not supersede — withLiveApprovals reconciles
-        // its waiting approvals step against the columns just attached.
-        const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
-        // #6521: always written: the board merges this response into its
-        // held row key by key, and the page reads it on its Tested card.
-        proposal.checks_on_head = sessionChecksOnHead(proposal);
-        proposal.freshness = require('../services/proposal-freshness').readFreshness(proposal);
-        proposal.integration = require('../services/integration').readIntegration(proposal);
-        proposal.shotsEnforced = !!config.shots?.enforce
-          && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
-        proposal.releaseHold = (await releaseHolds.forSessions(pool, [proposal.id])).get(Number(proposal.id)) || proposal.releaseHold || null;
-        proposal.mergeRequirements = require('../services/merge-requirements').readRequirements({
-          ...proposal,
-          release_hold: proposal.releaseHold,
-          shotsEnforced: proposal.shotsEnforced,
-          app_main_check_state: mainCheck.state,
-          app_main_check_sha: mainCheck.sha,
-          app_main_check_resumed_sha: mainCheck.resumedSha,
-          // The pause is its own fact (main_check_paused_sha), and a red
-          // names its test; the ledger says both rather than re-deriving.
-          app_main_check_paused: mainCheck.paused,
-          app_main_check_paused_sha: mainCheck.pausedSha,
-          app_main_check_confirming: mainCheck.confirming,
-          app_main_check_failing_test: mainCheck.failingTest,
-        });
-      }
-
-      // #6593: while GitHub's required checks hold the merge, the page's own
-      // read carries them and, when GitHub lets Homeroom read them, how many
-      // of the required checks are done. Always written on a promoted row, so
-      // a response merged into the board's held row replaces a stale value
-      // rather than leaving one behind.
-      if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')) {
-        const integrationSvc = require('../services/integration');
-        proposal.integration = integrationSvc.readIntegration(proposal);
-        proposal.integration.githubChecks = null;
-        const held = proposal.integration.blockReasons;
-        // Failed checks are the failing card's to say; no read is made for
-        // them, even when a still-running reason is recorded beside them.
-        if (proposal.status === 'promoted'
-          && held.indexOf('github_checks') !== -1 && held.indexOf('github_checks_failing') === -1) {
-          proposal.integration.githubChecks = await require('../services/github-checks-progress')
-            .readProgress({
-              repoUrl: gatedApp.repo_url,
-              headSha: proposal.integration.headSha || proposal.reviewed_head_sha,
-            });
-        }
-      }
-
-      // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
-      // the DB, so resolve a mock id straight from the generators. This lets
-      // a staging tester deep-link a mock Completed proposal that never
-      // reached the first page (ids ~9100021+) and confirm it opens on
-      // demand. Strictly a no-op in production (gated on IS_STAGING).
-      //
-      // #4524: the topic page's fast open fires this read beside the board
-      // load, so it also lands here for the mock OWN and SHARED sessions the
-      // session lists append — ids the DB will never hold. Production's SQL
-      // above serves those states (an active or paused session the viewer
-      // owns or that is shared), so the demo generators answer them the same
-      // way; a 404 in the network log is a console error, which fails every
-      // declared check on the route.
-      let demoRow = false;
-      if (!proposal && IS_STAGING && req.query.demo === '1') {
-        const sessionMocks = require('./sessions');
-        proposal = stagingMockMerged(req.user).find((m) => m.id === id)
-          || ownDemoProposals(stagingMockProposals(), req.user, req.params.slug).find((m) => m.id === id)
-          || stagingDemoNeedsProposal(id, req.params.slug)
-          || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
-          || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
-          || null;
-        demoRow = !!proposal;
-      }
-
-      if (!proposal) return res.status(404).json({ error: 'Proposal not found' });
-      // #6604: a change's page draws from THIS read alone now — the board is
-      // not loaded behind it in the side panel or on its own page — so a
-      // staging ?demo=1 row must carry the same derived merge fields the
-      // board's list rows do. The list derives them for every row
-      // (GET .../promoted); one resolved from the generators above skipped
-      // that pass, so its steps sheet had no gates and its merge step read as
-      // if there were none.
-      if (demoRow) {
-        const freshnessSvc = require('../services/proposal-freshness');
-        const integrationSvc = require('../services/integration');
-        const requirementsSvc = require('../services/merge-requirements');
-        const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
-        proposal.freshness = proposal.freshness || freshnessSvc.readFreshness(proposal);
-        proposal.checks_on_head = sessionChecksOnHead(proposal);
-        proposal.integration = proposal.integration || integrationSvc.readIntegration(proposal);
-        proposal.shotsEnforced = !!config.shots?.enforce
-          && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
-        proposal.mergeRequirements = requirementsSvc.readRequirements({
-          ...proposal,
-          release_hold: proposal.releaseHold || null,
-          shotsEnforced: proposal.shotsEnforced,
-          app_main_check_state: mainCheck.state,
-          app_main_check_sha: mainCheck.sha,
-          app_main_check_resumed_sha: mainCheck.resumedSha,
-          app_main_check_paused: mainCheck.paused,
-          app_main_check_paused_sha: mainCheck.pausedSha,
-          app_main_check_confirming: mainCheck.confirming,
-          app_main_check_failing_test: mainCheck.failingTest,
-        });
-      }
-      if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
-        proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
-      }
-      // #5064: a merge of the platform's own app opened on its own (a link
-      // from the bell or Home, beyond the board's first page) gets the
-      // board's deployment_state too, so its page says "going live" until
-      // the running build carries it rather than reading a live_at the old
-      // merge path stamped at once. A child app's keeps its words.
-      if (proposal.status === 'merged' && proposal.deployment_state == null && gatedApp.self_hosted
-          && !(IS_STAGING && req.query.demo === '1')) {
-        const { rows: [selfApp] } = await pool.query(
-          'SELECT id, slug, self_hosted, main_sha, release_stall FROM apps WHERE id = $1', [gatedApp.id]);
-        if (selfApp) {
-          const row = { ...proposal };
-          await annotateDeploymentState(config, pool, selfApp, [row]);
-          proposal = row;
-        }
-      }
-      // Merged into the platform's own app and not live yet: when the next
-      // release carries it (services/release-watch.js), which the page says
-      // as "Merged; goes live in the next release (about 8 minutes)". A
-      // child app's merge goes live with its own deploy and keeps its words.
-      if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_RELEASE_BLOCKED_ID) {
-        proposal = { ...proposal, deployment_state: 'stalled', live_at: null, release_block: { ...DEMO_RELEASE_BLOCK } };
-      }
-      // A change stuck behind a red release has no estimate: its page says
-      // what blocked it instead (release_block).
-      if (proposal.status === 'merged' && proposal.live_at === null && !proposal.release
-          && proposal.deployment_state !== 'stalled') {
-        const releaseWatch = require('../services/release-watch');
-        if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_GOING_LIVE_ID) {
-          proposal = { ...proposal, release: releaseWatch.demoRelease() };
-        } else if (gatedApp.self_hosted) {
-          const release = releaseWatch.releaseOf(await releaseWatch.outlook(pool), {
-            mergedAt: proposal.merged_at || proposal.created_at, id: proposal.id,
-          });
-          if (release) proposal = { ...proposal, release };
-        }
-      }
-      // `?results=failing`: the proposal page's own read, which lists passing
-      // checks only when their fold is opened (services/list-test-results.js).
-      // #6604: the change's page draws from this read alone now — the board
-      // is not loaded behind it — so the project-level vote context the
-      // board's /promoted answer carries rides along here too. Without it the
-      // Votes card lost its "any of N members" line and an admin lost the
-      // admin-merge affordance on a change opened cold or in the side panel.
-      let context = null;
-      try {
-        const { active: activeUsers, majority } = await getActiveUserStats(pool, gatedApp.id);
-        const gov = await require('../services/governance').getGovernance(pool, gatedApp.id);
-        context = {
-          slug: req.params.slug,
-          majority,
-          activeUsers,
-          // Same demo override /promoted applies (see its comment): a
-          // prod-cloned staging app is locked, and ?demo=1 exists to review
-          // states a lock would suppress.
-          locked: !!gatedApp.locked && !(IS_STAGING && req.query.demo === '1'),
-          approverPolicy: gov.approverPolicy,
-          approvalsRequired: gov.approvalsRequired,
-          isAppAdmin: await appAdmins.isAppAdmin(pool, gatedApp.id, req.user?.id),
-        };
-      } catch (err) {
-        // Best-effort: the page still draws from the proposal row.
-        log.warn('votes', 'Could not read the vote context', { message: err.message });
-      }
-      // #6821: where it stands, from the one stored row every list reads.
-      await attachWork(pool, proposal ? [proposal] : [], userId);
-      res.json({ proposal: listTestResults.forItem(req, proposal), context });
+      const out = await readProposalRow({ config, pool }, req, gatedApp, id);
+      if (!out) return res.status(404).json({ error: 'Proposal not found' });
+      res.json(out);
     } catch (err) {
       log.error('votes', 'Failed to get proposal by id', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+// #6827: the row and the vote context `/proposals/:id?results=failing`
+// answers, built once so the proposal page and a change page's own read
+// (#6827's `/changes/:number/page`) can never drift apart in field names.
+// `gatedApp` is the caller's view-gated app, read with ACCESS_COLUMNS,
+// locked and repo_url. Null when the id names no proposal this viewer may
+// see. `ctx` is `{ config, pool }`.
+// #6827: the row as the change page's own read asks for it — failing checks
+// only, exactly as `/proposals/:id?results=failing` answers.
+function withFailingResults(req) {
+  return { ...req, query: { ...req.query, results: 'failing' } };
+}
+
+async function readProposalRow(ctx, req, gatedApp, id) {
+  const { pool } = ctx;
+  const config = ctx.config || sharedConfig || {};
+  const userId = req.user?.id || null;
+  const { rows } = await pool.query(
+    `${mergedRowSelect()}
+     WHERE cs.app_id = $1 AND cs.id = $3
+       AND (cs.status IN ('promoted', 'merging', 'merged')
+         OR (cs.status IN ('active', 'paused')
+           AND (cs.user_id = $2 OR cs.shared_at IS NOT NULL)))
+     LIMIT 1`,
+    [gatedApp.id, userId, id]
+  );
+
+  let proposal = rows[0] || null;
+  if (proposal) {
+    // Same read-only priority + assigned-person chips the list rows carry.
+    const attrs = await topicAttrs.summarizeForProposals(
+      pool, gatedApp.id,
+      [{ id: proposal.id, linked_issues: proposal.linked_issues }], userId
+    );
+    const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
+    proposal.priority = s.priority;
+    proposal.assignee = s.assignee;
+    proposal.category = s.category;
+    proposal.shots = config.shots?.present
+      ? await shotsView.getForSession(pool, proposal, req.params.slug, { viewer: req.user })
+      : null;
+    // #4452: how long testing usually takes here, for the change page's
+    // one testing bar and its time left (services/checks-estimate.js).
+    proposal.checks_estimate = await require('../services/checks-estimate').forApp(pool, gatedApp.id);
+    // #6604: the page's before/after, for a change with no verified
+    // shots yet (services/visuals.js). The board's /promoted rows carry
+    // this aggregate; a change page opened by its own read alone needs it
+    // here, or its legacy "All N screens" card disappeared.
+    {
+      const { rows: [vis] } = await pool.query(
+        `SELECT jsonb_object_agg(
+                  sv.kind || '_' || sv.capture_index || '_' || sv.media,
+                  jsonb_build_object(
+                    'id', sv.id,
+                    'path', sv.captured_path,
+                    'viewport', sv.captured_viewport,
+                    'commit', sv.commit_hash,
+                    'scenarioId', sv.scenario_id,
+                    'scenarioFingerprint', sv.scenario_fingerprint,
+                    'fellBack', sv.before_fell_back))
+           FROM session_visuals sv WHERE sv.session_id = $1`,
+        [proposal.id]
+      ).catch(() => ({ rows: [{ jsonb_object_agg: null }] }));
+      proposal.visuals = require('../services/visuals')
+        .shapeAgg(vis && vis.jsonb_object_agg, visualHeadForSession(proposal));
+    }
+    // #6234: Homeroom bot fixing its own change's failing checks, for the
+    // Testing card (services/homeroom-bot-progress.js changeBotFix);
+    // null for any change of a person's.
+    proposal.bot_fix = await require('../services/homeroom-bot-progress')
+      .changeBotFix(pool, proposal.id, { viewer: req.user }).catch(() => null);
+    // #6116: what it has cost so far at list price, for its author or an
+    // admin only (services/session-cost.js).
+    proposal.cost_total_cents = await require('../services/session-cost')
+      .sessionCostForViewer(pool, proposal, req.user);
+    // #4479: the plan it was built from, for the page's plan card.
+    proposal.plan = await require('./sessions')
+      .changePlanFor(pool, proposal.id, proposal.user_id, userId).catch(() => null);
+    // Its code did not come across from GitHub (services/code-missing.js):
+    // the page's notice and the card's "Code missing", read as the list
+    // reads it. Always written, as the board merges this read into its
+    // held row key by key.
+    proposal.code_missing = await codeMissing.forSession(pool, {
+      ...proposal, app_id: gatedApp.id, repo_url: gatedApp.repo_url,
+    });
+    // #4490: the author's diagram, which leads the change's page, and
+    // "What it touches", the picture the page falls back to. Touches are
+    // shown only for the head they were read at, as the board rows do, and
+    // a moved head is read again in the background for the next view. Not
+    // for a head whose code is missing: there is nothing on the git host
+    // to read, and the read warned on every view.
+    {
+      const drawn = await pool.query(
+        'SELECT pr_diagram, pr_diagram_source, pr_touches, pr_touches_sha FROM chat_sessions WHERE id = $1', [proposal.id]
+      ).catch(() => ({ rows: [] }));
+      const row = drawn.rows[0] || null;
+      proposal.diagram = diagramContract.storedDiagram(row && row.pr_diagram);
+      proposal.diagram_source = proposal.diagram ? (row.pr_diagram_source || 'author') : null;
+      const head = proposal.code_missing ? null : visualHeadForSession(proposal);
+      proposal.touches = head && row && row.pr_touches_sha === head
+        ? proposalTouches.storedTouches(row.pr_touches) : null;
+      proposalTouches.scheduleRefresh(pool, [{
+        id: proposal.id, repo_url: gatedApp.repo_url,
+        pr_touches_sha: row && row.pr_touches_sha, head,
+      }]);
+    }
+    // An update from this version's original (services/upstream-offers.js):
+    // what it brings, what it does here, and where it stands, for the
+    // change page's From <original> card. Null for any other change.
+    proposal.upstream = await require('../services/upstream-offers').changeView(pool, proposal.id);
+    // #6140: what its Preview reads (AppView._cardPreviewSpec), on a change
+    // still up for a vote. A request's page draws a change from this read
+    // alone, with no board row under it, so without these its Testing card
+    // had no Try it. The fields /promoted carries, with its own derivation
+    // of building and failed; can_preview is the one the session lists
+    // use, so a preview gone to sleep can be woken. Never while it builds:
+    // _cardPreviewSpec offers a rebuild before it says "building". A
+    // merged row keeps its shape: its page offers the live app instead.
+    if (proposal.status === 'promoted' || proposal.status === 'merging') {
+      const { rows: [preview] } = await pool.query(
+        `SELECT staging_url, testing_md, testing_path,
+                (pr_number IS NOT NULL OR checks_commit_sha IS NOT NULL
+                   OR shared_at IS NOT NULL) AS can_preview
+           FROM chat_sessions WHERE id = $1`,
+        [proposal.id]
+      );
+      proposal.staging_url = preview?.staging_url || null;
+      proposal.testing_md = preview?.testing_md || null;
+      proposal.testing_path = preview?.testing_path || null;
+      Object.assign(proposal, require('../services/staging').previewDisplayState(proposal));
+      proposal.can_preview = !!preview?.can_preview && !proposal.staging_building;
+    }
+  }
+
+  // #3669: the proposal page's own read must carry the same per-row
+  // governance fields the list rows do. AppView._refreshTopicLive
+  // refetches THIS endpoint right after a vote and merges the response
+  // into the held board row key-wise, so a response without
+  // qualified_* / votes_required left the pre-vote pill standing
+  // ("0 of 1 approval") until a full board reload. Promoted/merging
+  // rows get the identical enrichment /promoted applies; merged rows
+  // keep their historical snapshot, and active rows have no vote to
+  // describe.
+  if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')
+    && proposal.votes_required == null) {
+    const governance = require('../services/governance');
+    const gov = await governance.getGovernance(pool, gatedApp.id);
+    const electorate = await governance.getElectorate(pool, gatedApp.id, gov);
+    const flagged = !!proposal.requires_explicit_approval;
+    const rulesCtx = gov.rules
+      ? await governance.rulesContext(pool, gatedApp.id, gov, 'pr', [proposal.id])
+      : null;
+    const q = electorate.approverIds
+      ? await governance.qualifiedCounts(
+        pool, 'pr', proposal.id, electorate.approverIds,
+        flagged ? { authorId: proposal.user_id ?? null } : undefined
+      )
+      : { yes: proposal.yes_count, no: proposal.no_count, otherYes: proposal.other_yes_count };
+    // 13 Oct 2026, D1: the project's first version, whose vote the gate
+    // waives; the change page says it goes live without one.
+    proposal.first_version = await isFirstVersion(pool, proposal.id);
+    // #5803 / #5947: the clock an admin's or approver's lone No arms, for
+    // the page's pill.
+    const loneNoByProposal = await governance.loneNoTimes(pool, [proposal.id]);
+    const gate = governance.computeGate(
+      gov, electorate.active, q.yes, q.no,
+      proposal.promoted_at || proposal.created_at, null,
+      {
+        explicitApproval: flagged,
+        otherYes: q.otherYes,
+        memberCount: flagged
+          ? await governance.communityMemberCount(pool, gatedApp.id) : undefined,
+        ...loneNoByProposal.get(Number(proposal.id)),
+        // #4666: who voted, on a project with rules of its own.
+        ...(rulesCtx ? governance.rulesGateOpts(
+          rulesCtx,
+          proposal.id, proposal.user_id ?? null, proposal.explicit_approval_reason || null
+        ) : {}),
+        firstVersion: proposal.first_version,
+      }
+    );
+    proposal.votes_required = gate.required;
+    // #6594: the same fact the board's rows carry, so the change page's
+    // own heading says Approved instead of Waiting for approval.
+    proposal.votes_in = gate.mergeable === true && proposal.first_version !== true;
+    proposal.merge_window_ends_at = gate.windowEndsAt;
+    proposal.contested = gate.contested;
+    proposal.reject_window_ends_at = gate.rejectionEndsAt;
+    proposal.rejection_armed = gate.rejectionArmed;
+    proposal.approval_policy = gate.policy;
+    proposal.approvals_required = gate.approvalsRequired;
+    // #4747, same field the /promoted rows carry. Always written: the
+    // board merges this response into its held row key by key, so a
+    // missing key would leave a stale advisory value behind.
+    proposal.my_vote_advisory = !!userId
+      && proposal.my_vote_uncounted !== true
+      && !governance.viewerDecides(gov, {
+        approverIds: electorate.approverIds,
+        facts: rulesCtx ? rulesCtx.facts : null,
+        explicitApproval: flagged,
+        explicitReason: proposal.explicit_approval_reason || null,
+      }, userId);
+    Object.assign(proposal, governance.explicitApprovalRowFields(proposal, gate));
+    if (gate.mode === 'rules') Object.assign(proposal, governance.ruleRowFields(gate));
+    proposal.qualified_yes_count = gate.qualifiedYes;
+    proposal.qualified_no_count = gate.qualifiedNo;
+    // #3234: display only — the threshold as it stood when voting opened.
+    proposal.votes_required_at_promote = governance.requiredAtPromote(
+      gov, proposal.active_users_at_promote, q.no
+    );
+
+    // The ledger too (services/merge-requirements.js): the card's
+    // "Waiting on the group" line reads the merge gate's recording,
+    // which a vote does not supersede — withLiveApprovals reconciles
+    // its waiting approvals step against the columns just attached.
+    const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+    // #6521: always written: the board merges this response into its
+    // held row key by key, and the page reads it on its Tested card.
+    proposal.checks_on_head = sessionChecksOnHead(proposal);
+    proposal.freshness = require('../services/proposal-freshness').readFreshness(proposal);
+    proposal.integration = require('../services/integration').readIntegration(proposal);
+    proposal.shotsEnforced = !!config.shots?.enforce
+      && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+    proposal.releaseHold = (await releaseHolds.forSessions(pool, [proposal.id])).get(Number(proposal.id)) || proposal.releaseHold || null;
+    proposal.mergeRequirements = require('../services/merge-requirements').readRequirements({
+      ...proposal,
+      release_hold: proposal.releaseHold,
+      shotsEnforced: proposal.shotsEnforced,
+      app_main_check_state: mainCheck.state,
+      app_main_check_sha: mainCheck.sha,
+      app_main_check_resumed_sha: mainCheck.resumedSha,
+      // The pause is its own fact (main_check_paused_sha), and a red
+      // names its test; the ledger says both rather than re-deriving.
+      app_main_check_paused: mainCheck.paused,
+      app_main_check_paused_sha: mainCheck.pausedSha,
+      app_main_check_confirming: mainCheck.confirming,
+      app_main_check_failing_test: mainCheck.failingTest,
+    });
+  }
+
+  // #6593: while GitHub's required checks hold the merge, the page's own
+  // read carries them and, when GitHub lets Homeroom read them, how many
+  // of the required checks are done. Always written on a promoted row, so
+  // a response merged into the board's held row replaces a stale value
+  // rather than leaving one behind.
+  if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')) {
+    const integrationSvc = require('../services/integration');
+    proposal.integration = integrationSvc.readIntegration(proposal);
+    proposal.integration.githubChecks = null;
+    const held = proposal.integration.blockReasons;
+    // Failed checks are the failing card's to say; no read is made for
+    // them, even when a still-running reason is recorded beside them.
+    if (proposal.status === 'promoted'
+      && held.indexOf('github_checks') !== -1 && held.indexOf('github_checks_failing') === -1) {
+      proposal.integration.githubChecks = await require('../services/github-checks-progress')
+        .readProgress({
+          repoUrl: gatedApp.repo_url,
+          headSha: proposal.integration.headSha || proposal.reviewed_head_sha,
+        });
+    }
+  }
+
+  // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
+  // the DB, so resolve a mock id straight from the generators. This lets
+  // a staging tester deep-link a mock Completed proposal that never
+  // reached the first page (ids ~9100021+) and confirm it opens on
+  // demand. Strictly a no-op in production (gated on IS_STAGING).
+  //
+  // #4524: the topic page's fast open fires this read beside the board
+  // load, so it also lands here for the mock OWN and SHARED sessions the
+  // session lists append — ids the DB will never hold. Production's SQL
+  // above serves those states (an active or paused session the viewer
+  // owns or that is shared), so the demo generators answer them the same
+  // way; a 404 in the network log is a console error, which fails every
+  // declared check on the route.
+  let demoRow = false;
+  if (!proposal && IS_STAGING && req.query.demo === '1') {
+    const sessionMocks = require('./sessions');
+    proposal = stagingMockMerged(req.user).find((m) => m.id === id)
+      || ownDemoProposals(stagingMockProposals(), req.user, req.params.slug).find((m) => m.id === id)
+      || stagingDemoNeedsProposal(id, req.params.slug)
+      || sessionMocks.stagingMockSharedSessions().find((m) => m.id === id)
+      || sessionMocks.stagingMockOwnSessions(req.user?.id, config.selfAppSlug).find((m) => m.id === id)
+      || null;
+    demoRow = !!proposal;
+  }
+
+  if (!proposal) return null;
+  // #6604: a change's page draws from THIS read alone now — the board is
+  // not loaded behind it in the side panel or on its own page — so a
+  // staging ?demo=1 row must carry the same derived merge fields the
+  // board's list rows do. The list derives them for every row
+  // (GET .../promoted); one resolved from the generators above skipped
+  // that pass, so its steps sheet had no gates and its merge step read as
+  // if there were none.
+  if (demoRow) {
+    const freshnessSvc = require('../services/proposal-freshness');
+    const integrationSvc = require('../services/integration');
+    const requirementsSvc = require('../services/merge-requirements');
+    const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+    proposal.freshness = proposal.freshness || freshnessSvc.readFreshness(proposal);
+    proposal.checks_on_head = sessionChecksOnHead(proposal);
+    proposal.integration = proposal.integration || integrationSvc.readIntegration(proposal);
+    proposal.shotsEnforced = !!config.shots?.enforce
+      && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+    proposal.mergeRequirements = requirementsSvc.readRequirements({
+      ...proposal,
+      release_hold: proposal.releaseHold || null,
+      shotsEnforced: proposal.shotsEnforced,
+      app_main_check_state: mainCheck.state,
+      app_main_check_sha: mainCheck.sha,
+      app_main_check_resumed_sha: mainCheck.resumedSha,
+      app_main_check_paused: mainCheck.paused,
+      app_main_check_paused_sha: mainCheck.pausedSha,
+      app_main_check_confirming: mainCheck.confirming,
+      app_main_check_failing_test: mainCheck.failingTest,
+    });
+  }
+  if (IS_STAGING && req.query.demo === '1' && proposal.checks_estimate == null) {
+    proposal = { ...proposal, checks_estimate: require('../services/checks-estimate').DEMO_ESTIMATE };
+  }
+  // #5064: a merge of the platform's own app opened on its own (a link
+  // from the bell or Home, beyond the board's first page) gets the
+  // board's deployment_state too, so its page says "going live" until
+  // the running build carries it rather than reading a live_at the old
+  // merge path stamped at once. A child app's keeps its words.
+  if (proposal.status === 'merged' && proposal.deployment_state == null && gatedApp.self_hosted
+      && !(IS_STAGING && req.query.demo === '1')) {
+    const { rows: [selfApp] } = await pool.query(
+      'SELECT id, slug, self_hosted, main_sha, release_stall FROM apps WHERE id = $1', [gatedApp.id]);
+    if (selfApp) {
+      const row = { ...proposal };
+      await annotateDeploymentState(config, pool, selfApp, [row]);
+      proposal = row;
+    }
+  }
+  // Merged into the platform's own app and not live yet: when the next
+  // release carries it (services/release-watch.js), which the page says
+  // as "Merged; goes live in the next release (about 8 minutes)". A
+  // child app's merge goes live with its own deploy and keeps its words.
+  if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_RELEASE_BLOCKED_ID) {
+    proposal = { ...proposal, deployment_state: 'stalled', live_at: null, release_block: { ...DEMO_RELEASE_BLOCK } };
+  }
+  // A change stuck behind a red release has no estimate: its page says
+  // what blocked it instead (release_block).
+  if (proposal.status === 'merged' && proposal.live_at === null && !proposal.release
+      && proposal.deployment_state !== 'stalled') {
+    const releaseWatch = require('../services/release-watch');
+    if (IS_STAGING && req.query.demo === '1' && Number(proposal.id) === DEMO_GOING_LIVE_ID) {
+      proposal = { ...proposal, release: releaseWatch.demoRelease() };
+    } else if (gatedApp.self_hosted) {
+      const release = releaseWatch.releaseOf(await releaseWatch.outlook(pool), {
+        mergedAt: proposal.merged_at || proposal.created_at, id: proposal.id,
+      });
+      if (release) proposal = { ...proposal, release };
+    }
+  }
+  // `?results=failing`: the proposal page's own read, which lists passing
+  // checks only when their fold is opened (services/list-test-results.js).
+  // #6604: the change's page draws from this read alone now — the board
+  // is not loaded behind it — so the project-level vote context the
+  // board's /promoted answer carries rides along here too. Without it the
+  // Votes card lost its "any of N members" line and an admin lost the
+  // admin-merge affordance on a change opened cold or in the side panel.
+  let context = null;
+  try {
+    const { active: activeUsers, majority } = await getActiveUserStats(pool, gatedApp.id);
+    const gov = await require('../services/governance').getGovernance(pool, gatedApp.id);
+    context = {
+      slug: req.params.slug,
+      majority,
+      activeUsers,
+      // Same demo override /promoted applies (see its comment): a
+      // prod-cloned staging app is locked, and ?demo=1 exists to review
+      // states a lock would suppress.
+      locked: !!gatedApp.locked && !(IS_STAGING && req.query.demo === '1'),
+      approverPolicy: gov.approverPolicy,
+      approvalsRequired: gov.approvalsRequired,
+      isAppAdmin: await appAdmins.isAppAdmin(pool, gatedApp.id, req.user?.id),
+    };
+  } catch (err) {
+    // Best-effort: the page still draws from the proposal row.
+    log.warn('votes', 'Could not read the vote context', { message: err.message });
+  }
+  // #6821: where it stands, from the one stored row every list reads.
+  await attachWork(pool, proposal ? [proposal] : [], userId);
+  return { proposal: listTestResults.forItem(req, proposal), context };
+}
+
+  readProposalRowForRoutes = readProposalRow;
 
   // ── #11/#16: undo a merged PR by opening a revert PR ───────────────
   //
@@ -7505,6 +7612,10 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // asserts its PR body never carries a live @mention).
 module.exports = {
   voteRoutes,
+  // #6827: a change page's own read (`/changes/:number/page`) and
+  // `/threads/:number?with=changes` build their rows with the same code the
+  // proposal page's read uses, so field names cannot drift.
+  readProposalRow: (...args) => readProposalRowForRoutes(...args),
   stagingMockProposalFor,
   evaluateMergeGate,
   attemptMerge,

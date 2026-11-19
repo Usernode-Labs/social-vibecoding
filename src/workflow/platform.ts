@@ -812,12 +812,13 @@ const BOT_SOURCE = (name: string) => ({ kind: 'system' as const, name });
 // retried caller append once.
 export async function botOwed(db: Db, p: {
   appId: number; issueNumber: number; reason: string; priority: number; payer?: number | null; requestedBy?: number | null;
-  changedBy?: string | null; threadSeenAt?: string | null; key?: string | null; source?: string;
+  changedBy?: string | null; threadSeenAt?: string | null; key?: string | null; source?: string; waitMs?: number | null;
 }): Promise<void> {
   await appendEvent(db, BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'Owed',
     payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), reason: p.reason, priority: p.priority,
-      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null } as any,
+      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null,
+      ...(p.waitMs ? { waitMs: Number(p.waitMs) } : {}) } as any,
   }, { requestKey: p.key || `owed:${randomUUID()}`, source: BOT_SOURCE(p.source || 'owed'), appId: Number(p.appId) });
 }
 
@@ -829,7 +830,8 @@ export async function botOwedAndWait(p: Parameters<typeof botOwed>[1]): Promise<
   const out = await runtime.appendAndWait(BOT_REQUEST, botRequestKey(p.appId, p.issueNumber), {
     type: 'Owed',
     payload: { appId: Number(p.appId), issueNumber: Number(p.issueNumber), reason: p.reason, priority: p.priority,
-      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null } as any,
+      payer: p.payer ?? null, requestedBy: p.requestedBy ?? null, changedBy: p.changedBy ?? null, threadSeenAt: p.threadSeenAt ?? null,
+      ...(p.waitMs ? { waitMs: Number(p.waitMs) } : {}) } as any,
   }, { requestKey: p.key || `owed:${randomUUID()}`, source: BOT_SOURCE(p.source || 'owed'), appId: Number(p.appId), waitMs: 3000 });
   return (out.reply as any) || null;
 }
@@ -886,6 +888,15 @@ export async function botRefresh(appId: number | null, { now = false }: { now?: 
   if (!runtime) return;
   await runtime.append(BOT_LANE, LANE_KEY, { type: 'RefreshAsked', payload: { appId, now } as any },
     { requestKey: `refresh:${randomUUID()}`, source: BOT_SOURCE('refresh'), appId: appId ?? undefined });
+}
+
+// #6867: OpenRouter's credit is back (the balance read): the lane lifts its
+// pause and grants slots again, so the requests the outage held run in their
+// usual order without anybody replying.
+export async function botCreditBack(): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(BOT_LANE, LANE_KEY, { type: 'CreditBack', payload: {} },
+    { requestKey: `credit:${randomUUID()}`, source: BOT_SOURCE('credit') });
 }
 
 // What the bot's queue would answer about a request now: its instance's

@@ -86,12 +86,14 @@ const Home = {
   _loadQueued: null,
 
   load() {
-    // Edit mode (#4669) does not survive a reload of the catalog. The router
-    // calls load() on every visit to Home, so leaving the screen and coming
-    // back starts clean; a WS-triggered refresh ends it too, which is the
-    // honest reading of "the shelf changed under you". A failure inside
-    // toggleAdded also lands here, ending edit mode with the revert.
-    Home._editing = false;
+    // Edit mode (#4669) survives a catalog reload (#6696). This used to clear
+    // the flag, relying on the router calling load() on every visit to Home —
+    // but load() is also every background refresh (an app's status frame, a
+    // vote landing), so the remove buttons vanished a few seconds into
+    // arranging, without a Done. render() reads Home._editing and repaints the
+    // badges over the fresh data. Leaving Home ends it instead: App's
+    // _setScreenVisible asks Home.setEditing(false) when #home-screen goes
+    // hidden.
     if (Home._loadInFlight) {
       if (!Home._loadQueued) {
         const rerun = () => { Home._loadQueued = null; return Home.load(); };
@@ -1222,6 +1224,8 @@ const Home = {
       // it: dapp.json's own sentence, and the list's contributor count.
       description: String(app.manifest_snapshot?.description || '').trim(),
       contributors: Math.max(0, Number(app.contributor_count) || 0),
+      // And how many people are in its community (the list's member_count).
+      members: Math.max(0, Number(app.member_count) || 0),
     };
   },
 

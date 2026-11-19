@@ -19,14 +19,26 @@ const read = (...parts) => fs.readFileSync(path.join(__dirname, '..', ...parts),
 
 /** What Standard (WIP) deliberately does not display, by selector. */
 const WIP_HIDES = [
+  // Home's Recent threads rows carry no "Request #8" line under the look (asked 19 Nov 2026).
+  'html[data-skin-wip] #home-needs-card .wip-item-kind',
+  // With the sidebar open, Homeroom's logo is the panel's brand, so the top bar does not repeat it (asked 19 Nov 2026).
+  'html[data-skin-wip] body:has(> #platform-tabs:not(.hidden):not(.platform-tabs-route-hidden):not(.platform-tabs-folded)) #platform-header #header-title > span:has(> span > #header-title-name > svg)',
   // Home has no Pinned communities section under the look.
   'html[data-skin-wip] #home-communities-section',
+  // A pinned project's tile has no description under the look (asked 19 Nov 2026).
+  'html[data-skin-wip] #app-list .app-card-desc',
   // Under 1024px a project's tile is its icon and name alone.
-  'html[data-skin-wip] #app-list :is(.app-card-desc, .app-card-people)',
+  'html[data-skin-wip] #app-list .app-card-people',
   // A project's hub has no Topics card under the look (asked 18 Nov 2026).
   'html[data-skin-wip] #dev-workshop [data-ws-hub-topics]',
+  // A board card's category tag shows in Advanced mode only (asked 18 Nov 2026).
+  'html[data-skin-wip][data-interface-mode="basic"] #dev-kanban [data-attr-field="category"]',
+  // The Workshop's door opens the board under the look, so the board has no "‹ All items" line of its own.
+  'html[data-skin-wip] #dev-workshop .dev-ws[data-ws-tab="all"] .dev-ws-pagehead',
   // For you's label heads the vote line alone on the hub, so it goes when there is no vote line.
   'html[data-skin-wip] #dev-workshop [data-ws-hub-for-you]:not(:has(> .dev-ws-foryou > :is(.dev-ws-week-note, [data-ws-hub-needs]))) > :first-child',
+  // A pinned app's tile does not say when it was last opened under the look: its tiles say less (#4025).
+  'html[data-skin-wip] #app-list .app-card-opened',
 ];
 
 function wipBlock() {

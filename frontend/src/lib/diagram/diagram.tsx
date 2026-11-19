@@ -22,6 +22,7 @@ import { useMessages } from '../i18n/react';
 import { t as translate } from '../i18n/runtime';
 import { DIAGRAM_LABELS, diagramText, figure, type DiagramRecord, type DiagramSource } from './types';
 import { renderMermaid } from './mermaid';
+import { Scene } from './scene';
 
 export { readDiagram, DIAGRAM_LABELS, diagramText } from './types';
 export type { DiagramRecord, DiagramSource } from './types';
@@ -139,8 +140,101 @@ function Numbers({ d }: { d: Extract<DiagramRecord, { kind: 'numbers' }> }): Rea
   );
 }
 
-function isDark(): boolean {
-  return typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
+// ── #6832: the three pictures for a change nobody sees ──────────────────
+
+/** One side of a "seen" picture, drawn the way its `look` says. */
+function SeenSide({ side, look, after }: { side: { title: string; lines?: string[] }; look: string; after: boolean }): ReactNode {
+  const lines = side.lines || [];
+  return (
+    <div className="dev-ws-diagram-seen-side" data-seen-look={look} data-side={after ? 'after' : 'before'}>
+      <div className="dev-ws-diagram-seen-title">{side.title}</div>
+      {lines.map((l, i) => <div key={`${i}-${l}`} className="dev-ws-diagram-seen-line">{l}</div>)}
+    </div>
+  );
+}
+
+function Seen({ d }: { d: Extract<DiagramRecord, { kind: 'seen' }> }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <div className="dev-ws-diagram-seen">
+      <div className="dev-ws-diagram-seen-where">{d.where}</div>
+      <div className="dev-ws-diagram-seen-sides">
+        <div className="dev-ws-diagram-seen-col">
+          <div className="dev-ws-diagram-seen-label">{t('project:diagram.seen.before')}</div>
+          <SeenSide side={d.before} look={d.look} after={false} />
+        </div>
+        <div className="dev-ws-diagram-seen-col">
+          <div className="dev-ws-diagram-seen-label">{t('project:diagram.seen.after')}</div>
+          <SeenSide side={d.after} look={d.look} after />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** "18 Nov 2026" from an ISO date, in the reader's own locale. */
+function dayWords(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  try {
+    return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(at);
+  } catch {
+    return iso;
+  }
+}
+
+function Moment({ d }: { d: Extract<DiagramRecord, { kind: 'moment' }> }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <div className="dev-ws-diagram-moment">
+      <div className="dev-ws-diagram-moment-when">
+        {t(d.before.lasted ? 'project:diagram.moment.head' : 'project:diagram.moment.headNoLasted', {
+          date: dayWords(d.before.date), ref: d.before.ref, lasted: d.before.lasted || '',
+        })}
+      </div>
+      <ol className="dev-ws-diagram-moment-events">
+        {d.before.events.map((e, i) => <li key={`${i}-${e}`}>{e}</li>)}
+      </ol>
+      <div className="dev-ws-diagram-moment-now">{t('project:diagram.moment.now')}</div>
+      <ol className="dev-ws-diagram-moment-events dev-ws-diagram-moment-after">
+        {d.after.events.map((e, i) => <li key={`${i}-${e}`}>{e}</li>)}
+      </ol>
+    </div>
+  );
+}
+
+function StepRow({ label, steps, after }: { label: string; steps: { pic: string; caption: string; note?: string; retry?: boolean }[]; after: boolean }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <div className="dev-ws-diagram-steps-row" data-steps-side={after ? 'after' : 'before'}>
+      <div className="dev-ws-diagram-steps-label">{label}</div>
+      <div className="dev-ws-diagram-steps">
+        {steps.map((s, i) => (
+          <div key={`${i}-${s.pic}-${s.caption}`} className="dev-ws-diagram-step-pic" data-pic={s.pic}>
+            <Scene pic={s.pic} />
+            <div className="dev-ws-diagram-step-caption">
+              {s.caption}
+              {s.retry ? <span className="dev-ws-diagram-step-retry" title={t('project:diagram.steps.retry')}>↻<span className="sr-only">{t('project:diagram.steps.retry')}</span></span> : null}
+            </div>
+            {s.note ? <div className="dev-ws-diagram-step-note">{s.note}</div> : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Steps({ d }: { d: Extract<DiagramRecord, { kind: 'steps' }> }): ReactNode {
+  const t = useMessages('project');
+  return (
+    <div className="dev-ws-diagram-steps-two">
+      <StepRow label={t('project:diagram.seen.before')} steps={d.before} after={false} />
+      <StepRow label={t('project:diagram.seen.after')} steps={d.after} after />
+    </div>
+  );
+}
+
+function isDark(): boolean {  return typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
 }
 
 /** The Mermaid kind: nothing until it is drawn, `onFail` if it cannot be. */
@@ -188,7 +282,10 @@ export function Diagram({ d, source, onOpen, onFail, className, defer = false, d
     : d.kind === 'flow' ? <Flow d={d} />
       : d.kind === 'changes' ? <Changes d={d} />
         : d.kind === 'numbers' ? <Numbers d={d} />
-          : defer ? <span className="dev-ws-diagram-wait" aria-hidden="true" /> : <Mermaid source={d.source} dark={dark} onFail={onFail} />;
+          : d.kind === 'seen' ? <Seen d={d} />
+            : d.kind === 'moment' ? <Moment d={d} />
+              : d.kind === 'steps' ? <Steps d={d} />
+                : defer ? <span className="dev-ws-diagram-wait" aria-hidden="true" /> : <Mermaid source={d.source} dark={dark} onFail={onFail} />;
   const door = onOpen ? {
     role: 'button' as const,
     tabIndex: 0,

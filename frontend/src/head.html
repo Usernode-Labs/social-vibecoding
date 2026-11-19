@@ -462,21 +462,22 @@
     // 15 Nov 2026: THE DEFAULT IS 'brand', "Paper, simplified, with brand
     // styling", for everyone: a device with nothing stored is drawn in it.
     // The other looks are Settings › Experimental's (an admin's menu).
-    //   'homeroom:skin'  → key removed: the default, 'brand' (the standard
-    //                      pages in the website's colours and typefaces;
-    //                      the id is the old New look's)
-    //                    → 'brand'  the same look, as devices that picked
-    //                      it before it was the default stored it
+    //   'homeroom:skin'  → 'brand'  "Paper, simplified, with brand
+    //                      styling": the standard pages in the website's
+    //                      colours and typefaces. The id is the old New
+    //                      look's, whose switch is gone.
     //                    → 'standard'  the look Homeroom had before: no
     //                      data-skin on <html>. It was "key removed" until
     //                      15 Nov 2026, so a device that had it then now
     //                      gets the default
-    //                    → 'glass', 'paper', 'pastel', 'mosaic',
-    //                      'sunrise'  the five looks of the one frame
-    //                      All are drawn in light and dark.
+    //                    → 'paper'  the one look of the one frame
+    //                      Both are drawn in light and dark, and are
+    //                      the Look menu's, an admin's preview.
     //                    → anything else, a retired look's id among them
     //                      ('brandkit', 'workbench', 'today', 'playground',
-    //                      gone 12 Nov 2026), reads as the default
+    //                      gone 12 Nov 2026; 'glass', 'pastel', 'mosaic',
+    //                      'sunrise', gone 19 Nov 2026), reads as the
+    //                      default
     //   'homeroom:look-tools' → 'on': the look menu and the light/dark
     //                      switch beside the bell (features/frame/
     //                      look-picker.tsx) are shown to an admin who
@@ -504,7 +505,7 @@
       // 'wip' is "Standard (WIP)": the standard look itself, where a change
       // to it is tried before it is the standard's. It sets no data-skin (no
       // rule of a look applies), only data-skin-wip for a rule of its own.
-      const SKINS = ['wip', 'brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise'];
+      const SKINS = ['wip', 'brand', 'paper'];
       const _listeners = [];
 
       let pinned = null;
@@ -524,7 +525,7 @@
       // 'brand' is Homeroom's brand kit (cream, yellow, blue, Geist). Kept on
       // the device like the look, and `?tokens=` pins one for this load.
       const TOKENS_KEY = 'homeroom:wip-tokens';
-      const TOKEN_SETS = ['brand', 'brand2'];
+      const TOKEN_SETS = ['brand', 'brand2', 'highlighter'];
       let pinnedTokens = null;
       let chosenTokens = null;
       try {
@@ -571,6 +572,12 @@
         const skin = get();
         if (skin === 'wip') root.setAttribute('data-skin-wip', '');
         else root.removeAttribute('data-skin-wip');
+        // Settings > Experimental > Advanced mode, on <html> for the looks
+        // that keep a detail for it (the same device key the switch writes,
+        // features/settings/interface-mode.ts). Advanced unless Basic is saved.
+        let basic = false;
+        try { basic = localStorage.getItem('homeroom:interface-mode') === 'basic'; } catch (e) { /* no storage: Advanced */ }
+        root.setAttribute('data-interface-mode', basic ? 'basic' : 'advanced');
         const tokens = skin === 'wip' ? getTokens() : 'current';
         if (tokens !== 'current') root.setAttribute('data-wip-tokens', tokens);
         else root.removeAttribute('data-wip-tokens');

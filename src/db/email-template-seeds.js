@@ -260,7 +260,8 @@ const SEEDS = {
       preheader: ``,
       why: `You are receiving this because of activity on your account or your place on the waitlist. We only send mail you asked for.`,
       html: `<p>Someone asked to reset the password for the Homeroom account with this email address.</p>`
-        + `<p>Set a new password here: <a href="{{url}}" style="color:#0a6ee0">{{url}}</a></p>`
+        + `<p><a href="{{url}}" style="display:inline-block;padding:11px 20px;border-radius:8px;background:#0a6ee0;color:#ffffff;font-size:15px;font-weight:600;text-decoration:none">Set a new password</a></p>`
+        + `<p>If the button does not work, copy this address into your browser: <a href="{{url}}" style="color:#0a6ee0">{{url}}</a></p>`
         + `<p>The link expires in 30 minutes and works once. If you did not request this, you can ignore it. Your password is unchanged.</p>`,
       text: `Someone asked to reset the password for the Homeroom account with this email address.\n\n`
         + `Set a new password here: {{url}}\n\n`

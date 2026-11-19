@@ -215,9 +215,11 @@ test('files are dropped, pasted or picked in a blank thread, and ride its first 
   assert.match(src, /role="menuitem" disabled=\{attachments\.length \+ uploading >= MAX_ATTACHMENTS\}/, 'the row greys out at four, the "+" does not');
   assert.equal(message('messages:composer.attachFiles'), 'Attach files');
   assert.match(src, /setAddOpen\(false\); fileRef\.current\?\.click\(\)/);
-  for (const id of ['messages:composer.removeAttachment', 'messages:composer.uploading', 'messages:composer.addToMessage', 'messages:composer.attachFiles']) {
+  for (const id of ['messages:composer.uploading', 'messages:composer.addToMessage', 'messages:composer.attachFiles']) {
     assert.ok(src.includes(`t('${id}'`), `${id} is the words the rest of Messages uses`);
   }
+  // The × and the picture of a staged file are the shared strip's (#6862).
+  assert.match(src, /<PendingStripRows items=\{staged\} onRemove=\{removeStaged\}/);
   assert.doesNotMatch(src, /messages:newThread\.(attach|drop|upload)/, 'no new catalog text');
   // Send is enabled by files alone, and held while an upload runs.
   assert.match(src, /disabled=\{busy \|\| dictating \|\| uploading > 0 \|\| \(!words\.trim\(\) && !attachments\.length && !object\)\}/);

@@ -44,10 +44,71 @@
  * module evaluates — not one microtask later.
  */
 
+import { initFreshness, resetFreshness } from './freshness';
+import { createStore } from './plain-store.js';
 import { publishVisibility, readVisibility } from './visibility-store';
 
-/** The visibility-store key the banner island subscribes to. */
+/**
+ * The visibility-store key the offline state is published under. The amber
+ * strip that read it is gone (the native-offline proposal, 18 Nov 2026): the
+ * header says it now (connectionStatusStore below), and this key stays for
+ * the code that asks whether the shell is showing its offline state.
+ */
 export const OFFLINE_BANNER_ID = 'offline-banner';
+
+/**
+ * What the header's connection status says (features/header/
+ * connection-status.tsx), as native apps put it in their title bar:
+ *
+ *   - `online`: nothing;
+ *   - `connecting`: Homeroom does not answer, though the phone may have a
+ *     network (the /health probe failed, or a read hung);
+ *   - `no-internet`: the phone itself says it has no network (the native
+ *     shell's word, or the browser's `offline`);
+ *   - `updating`: a planned restart for a release (#6403).
+ *
+ * It follows the offline state with a short HYSTERESIS, so a patchy link
+ * does not make it flicker: once shown it stays MIN_SHOWN_MS, and
+ * FLAP_SHOWN_MS when it went away less than FLAP_WINDOW_MS ago. Only what is
+ * SHOWN lingers: `isOffline()` and `body.is-offline` move at once, so queued
+ * writes go the moment the server answers. The holds are short on purpose
+ * (the follow-up after the 19 Nov retest): they were 10 s and 60 s, and
+ * "Connecting…" stayed up a full minute over a connection that was back.
+ */
+export type ConnectionStatus = 'online' | 'connecting' | 'no-internet' | 'updating';
+
+export const connectionStatusStore = createStore<{ status: ConnectionStatus }>({ status: 'online' });
+
+export const MIN_SHOWN_MS = 3_000;
+export const FLAP_SHOWN_MS = 10_000;
+export const FLAP_WINDOW_MS = 2 * 60 * 1000;
+
+/**
+ * A same-origin read unanswered this long (./read-timeout.ts SLOW_READ_MS
+ * says so through `slowRead`) is a sign the network carries nothing (offline test, 18 Nov 2026: on a quiet network the socket gave up
+ * after 35 s and the strip came 20-26 s in). It asks the probe at once, and a
+ * failed probe after a hung read is believed without the confirming check.
+ */
+export const HUNG_READ_MS = 5000;
+/** How long a hung read counts as the probe's second witness. */
+const HUNG_READ_COUNTS_MS = 15_000;
+
+/**
+ * A SLOW LINK IS NOT A DEAD ONE (the native-offline follow-up, 19 Nov 2026).
+ * On a 600 ms / 500 kbps link the probe's /health read waited behind the
+ * bandwidth every other read was using, timed out, and with a stuck read as
+ * its second witness the shell went offline: "Connecting…", controls greyed,
+ * writes queued, on a network that was answering. So a probe that TIMED OUT
+ * is not believed while the network answered within this long. Three things
+ * tell `answered`: an API read the network answered (./read-timeout.ts, never
+ * for the service worker's saved copy), the worker's own network read landing
+ * behind a saved copy it served (public/sw.js `network-answered`, through
+ * ./service-worker.ts: on the 19 Nov retest the worker served saved copies
+ * after its 4 s deadline and the page saw no answer at all), and a frame on
+ * the events socket (public/js/app.js). A probe that failed outright still
+ * is believed, and so is the phone saying it has no network.
+ */
+export const ANSWERED_RECENTLY_MS = 10_000;
 
 /**
  * The banner's planned-restart notice (issue #6403): while Homeroom restarts
@@ -84,6 +145,8 @@ export interface OfflineApi {
   nudge(): void;
   forceOffline(): void;
   probe(): Promise<void>;
+  slowRead(): void;
+  answered(): void;
   restartNotice(): void;
   restartDone(): void;
   restartNoticeVisible(): boolean;
@@ -109,6 +172,55 @@ const RESTART_NOTICE_MS = 60000;
 // probing is disabled, so a screenshot of the offline UI can be taken on a
 // perfectly good connection.
 let forced = false;
+// The phone said it has no network (native shell or the browser's flag).
+let noNetwork = false;
+// When the last same-origin read hung (HUNG_READ_MS), or 0.
+let hungAt = 0;
+// When the network last answered an API read (status under 500), or 0.
+let answeredAt = 0;
+// The header status's hysteresis: when it was last shown and hidden, whether
+// this showing came soon after the last one, and the pending hide.
+let shownAt = 0;
+let hiddenAt = 0;
+let flapping = false;
+let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function wantedStatus(): ConnectionStatus {
+  if (offline) return noNetwork ? 'no-internet' : 'connecting';
+  if (restarting) return 'updating';
+  return 'online';
+}
+
+/** Move the header status toward the current state, holding it up as the hysteresis says. */
+function publishStatus(now: number = Date.now()): void {
+  const want = wantedStatus();
+  const current = connectionStatusStore.get().status;
+  if (want !== 'online') {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+    if (current === 'online') {
+      flapping = hiddenAt > 0 && now - hiddenAt < FLAP_WINDOW_MS;
+      shownAt = now;
+    }
+    if (current !== want) connectionStatusStore.set({ status: want });
+    return;
+  }
+  if (current === 'online') return;
+  // A restart notice is the server's own word that it is back: no hold. So
+  // too a pinned screenshot state, which never clears anyway.
+  const hold = current === 'updating' ? 0 : (flapping ? FLAP_SHOWN_MS : MIN_SHOWN_MS) - (now - shownAt);
+  if (hold > 0) {
+    if (!hideTimer) hideTimer = setTimeout(() => { hideTimer = null; publishStatus(); }, hold);
+    return;
+  }
+  // A restart notice going is no flap: only an offline spell counts.
+  if (current !== 'updating') hiddenAt = now;
+  connectionStatusStore.set({ status: 'online' });
+  // Back online, every screen reads again: nothing saved is on show.
+  resetFreshness();
+}
 
 function syncRecheck(): void {
   // While offline, re-probe on a slow loop so the banner clears even when the
@@ -135,13 +247,15 @@ function set(next: boolean): void {
   // ?shot=feedback-queued intermittently photographed an online shell (#1054):
   // the global-events socket opening calls Offline.nudge() a few ms earlier.
   if (forced && !next) return;
+  if (!next) noNetwork = false;
   if (next === offline) {
+    publishStatus();
     syncRecheck();
     return;
   }
   offline = next;
-  // The banner is React-owned now: publish, don't touch its class.
   publishVisibility(OFFLINE_BANNER_ID, offline);
+  publishStatus();
   try {
     document.body.classList.toggle('is-offline', offline);
   } catch {
@@ -163,19 +277,22 @@ export function probe(): Promise<void> {
   // A network request can remain pending across a reconnect. Bound the probe
   // itself as well as aborting the fetch, so every retry cannot get stuck
   // joining the same request. Only the race winner may publish a result.
-  const deadline = new Promise<boolean>((resolve) => {
+  // What the check found: an answer, no answer in time, or a failure.
+  type Outcome = 'ok' | 'timeout' | 'failed';
+  const deadline = new Promise<Outcome>((resolve) => {
     timer = setTimeout(() => {
-      resolve(false);
+      resolve('timeout');
       controller.abort();
     }, PROBE_TIMEOUT_MS);
   });
   const health = Promise.resolve()
     .then(() => fetch('/health', { cache: 'no-store', signal: controller.signal }))
-    .then((res) => res.ok, () => false);
+    .then((res): Outcome => (res.ok ? 'ok' : 'failed'), (): Outcome => 'failed');
   probing = Promise.race([health, deadline])
-    .then((reachable) => {
-      if (reachable) {
+    .then((outcome) => {
+      if (outcome === 'ok') {
         failures = 0;
+        hungAt = 0;
         if (confirmTimer) {
           clearTimeout(confirmTimer);
           confirmTimer = null;
@@ -183,10 +300,21 @@ export function probe(): Promise<void> {
         set(false);
         return;
       }
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) noNetwork = true;
+      // Slow, not gone: the check ran out of time while other reads were
+      // being answered (ANSWERED_RECENTLY_MS). Nothing is counted, the stuck
+      // read is explained, and the next sign of trouble asks again.
+      if (outcome === 'timeout' && !offline && !noNetwork
+          && answeredAt > 0 && Date.now() - answeredAt < ANSWERED_RECENTLY_MS) {
+        hungAt = 0;
+        return;
+      }
       failures += 1;
       // Two failures in a row (or a tab already showing the banner): a real
-      // outage. One is not enough — ask again in two seconds first.
-      if (failures >= 2 || offline) {
+      // outage. One is not enough — ask again in two seconds first — unless
+      // a read hung just before it: two witnesses, the same as two checks.
+      const hungRecently = hungAt > 0 && Date.now() - hungAt < HUNG_READ_COUNTS_MS;
+      if (failures >= 2 || offline || hungRecently) {
         if (confirmTimer) {
           clearTimeout(confirmTimer);
           confirmTimer = null;
@@ -230,10 +358,12 @@ export function restartNotice(): void {
   if (restarting) return;
   restarting = true;
   publishVisibility(RESTART_NOTICE_ID, true);
+  publishStatus();
   restartTimer = setTimeout(() => {
     restartTimer = null;
     restarting = false;
     publishVisibility(RESTART_NOTICE_ID, false);
+    publishStatus();
     void probe();
   }, RESTART_NOTICE_MS);
 }
@@ -248,6 +378,7 @@ export function restartDone(): void {
   if (!restarting) return;
   restarting = false;
   publishVisibility(RESTART_NOTICE_ID, false);
+  publishStatus();
 }
 
 /** Whether the update notice should be showing now (for a first render). */
@@ -286,8 +417,14 @@ export function nativeConnectivity(detail: NativeConnectivity | null | undefined
   const moved = nativeVia !== null && via !== nativeVia;
   nativeVia = via;
   if (!detail.online) {
+    noNetwork = true;
     set(true);
     return;
+  }
+  // A network again: until Homeroom answers, the header says "Connecting".
+  if (noNetwork) {
+    noNetwork = false;
+    publishStatus();
   }
   // Online and still on the same network (the word every page load gets):
   // nothing to ask.
@@ -302,6 +439,21 @@ export function nativeConnectivity(detail: NativeConnectivity | null | undefined
   }
 }
 
+/**
+ * A read has gone HUNG_READ_MS unanswered (./read-timeout.ts tells this):
+ * probe now, and let a failed probe count it as the second witness.
+ */
+export function slowRead(): void {
+  if (forced) return;
+  hungAt = Date.now();
+  void probe();
+}
+
+/** The network answered an API read (./read-timeout.ts): the link is carrying something. */
+export function answered(): void {
+  answeredAt = Date.now();
+}
+
 let started = false;
 
 /** Install `window.Offline` and start listening. Idempotent. */
@@ -313,6 +465,8 @@ export function initOffline(): OfflineApi {
     nudge: () => { void probe(); },
     forceOffline,
     probe,
+    slowRead,
+    answered,
     restartNotice,
     restartDone,
     restartNoticeVisible,
@@ -321,8 +475,12 @@ export function initOffline(): OfflineApi {
   if (started) return api;
   started = true;
 
+  initFreshness();
   window.addEventListener('online', () => { void probe(); });
-  window.addEventListener('offline', () => { void probe(); });
+  window.addEventListener('offline', () => {
+    noNetwork = true;
+    void probe();
+  });
   // Background tabs can have their retry timers throttled. Check immediately
   // when the user returns, without adding probes to healthy tab switches.
   const recheckVisible = () => {

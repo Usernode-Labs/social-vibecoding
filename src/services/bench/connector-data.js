@@ -615,6 +615,8 @@ const SETTINGS_FIELDS = Object.freeze([
   'worksFor', 'verifiedSignals', 'verifiedGrandfather',
   // Homeroom bot parity, P8: pictures' model and weekly cap.
   'imageModel', 'pictureWeeklyCap',
+  // #6867: the OpenRouter credit levels the full admins are warned at.
+  'creditWarnCents', 'creditUrgentCents',
 ]);
 
 /**

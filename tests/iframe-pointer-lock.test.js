@@ -40,7 +40,7 @@ test('App-tab iframe sandbox carries allow-pointer-lock', () => {
     /allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads/
   );
   assert.match(fallback,
-    /_appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads'/,
+    /_appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads allow-storage-access-by-user-activation'/,
     'the DOM-only fallback keeps the same app sandbox');
 });
 

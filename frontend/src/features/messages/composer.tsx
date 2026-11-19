@@ -14,11 +14,13 @@ import { BotSavedDrafts } from './bot-drafts-list';
 import { answeringIn, sendMode, stopMode, STOPPING_MAX_MS } from './bot-stop';
 import { botRequestNames, threadsAllowed } from './bot-shared';
 import type { ConversationUser, MessageAttachment, SharedObjectCard, SharedObjectReference, StagedObject } from './types';
-import { fileSize, MessageMarkdown, pendingObjectLabel, senderName } from './format';
+import { MessageMarkdown, pendingObjectLabel, senderName } from './format';
 import { plainText } from './plain-text';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
+import { PendingStripRows } from '../attachments/pending-strip';
+import { attachmentView, pendingUploadView, type PendingUpload } from './attachment-views';
 import { registerComposerDrop } from './pane-drop';
 import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
@@ -118,7 +120,13 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   const [value, setValue] = useState('');
   const [dictating, setDictating] = useState(false);
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
-  const [uploading, setUploading] = useState(0);
+  // #6862: a file still uploading is drawn too — an image as its own local
+  // preview, dimmed with a progress ring, with no × until it lands.
+  const [pending, setPending] = useState<PendingUpload[]>([]);
+  const uploading = pending.length;
+  const pendingRef = useRef<PendingUpload[]>([]);
+  pendingRef.current = pending;
+  const uploadSeq = useRef(0);
   // An item the person chose to share (Share, the picker): a chip over the
   // box until they send it or press ×. 14 Nov 2026: nothing else attaches
   // one. The Homeroom bot tab's list attached what a row opened to Main
@@ -167,10 +175,22 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   // #2386: friends lead the @ list (features/friends/store.ts).
   const friendIds = useFriendIds();
 
+  // #6862: a file still uploading belongs to the draft it was started in, so
+  // a change of draft takes its local previews with it.
+  const clearPending = () => {
+    for (const item of pendingRef.current) if (item.thumbUrl) URL.revokeObjectURL(item.thumbUrl);
+    setPending([]);
+  };
+  // A preview outlives neither the composer nor a change of draft.
+  useEffect(() => () => {
+    for (const item of pendingRef.current) if (item.thumbUrl) URL.revokeObjectURL(item.thumbUrl);
+  }, []);
+
   // #6249: the attached files come back with the words they were saved with.
   // A scope change is still the one place the composer reads a draft back.
   useEffect(() => {
     setValue(draftFor(scope)); setAttachments(draftAttachmentsFor(scope)); setObject(null); setError(''); setAskReply(false);
+    clearPending();
     setSelMenu(null); setLinkOpen(false); menuRange.current = null; linkRange.current = null;
   }, [scope]);
 
@@ -183,6 +203,15 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
     const next = change(draftAttachmentsFor(target));
     setDraftAttachments(target, next);
     if (target === scopeRef.current) setAttachments(next);
+  };
+
+  /** #6862: an upload's row and its local preview go together. */
+  const forgetPending = (key: string) => {
+    setPending((items) => {
+      const gone = items.find((item) => item.key === key);
+      if (gone?.thumbUrl) URL.revokeObjectURL(gone.thumbUrl);
+      return items.filter((item) => item.key !== key);
+    });
   };
 
   // Reply puts the caret here where there is a hardware keyboard, so the
@@ -752,13 +781,18 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
     const { upload, refused } = stageFiles(files, attachments.length + uploading, t);
     setError(refused);
     for (const file of upload) {
-      setUploading((count) => count + 1); setError(refused);
+      // #6862: the row appears at once. An image shows its own picture, made
+      // from the File and not yet on the server; anything else waits as a
+      // card. Both say "uploading" and offer no × until the upload lands.
+      const key = `p${(uploadSeq.current += 1)}`;
+      const thumbUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+      setPending((items) => [...items, { key, file, thumbUrl }]);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);
         updateAttachments(startScope, (items) => [...items, attachment]);
+        forgetPending(key);
       }
-      catch (err) { setError(err instanceof Error ? err.message : t('messages:composer.uploadFailed', { file: file.name })); }
-      finally { setUploading((count) => Math.max(0, count - 1)); }
+      catch (err) { setError(err instanceof Error ? err.message : t('messages:composer.uploadFailed', { file: file.name })); forgetPending(key); }
     }
   }
 
@@ -865,6 +899,15 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
   // source that gets sent.
   const preview = isChannel && hasFormatting(value) && plainText(value).length > 0 ? value.trim() : null;
 
+  // #6862: what is staged, as the pending strip draws it — the files already
+  // uploaded, then the ones still in flight. Only a landed file carries a ×;
+  // the strip reads an index over this whole list.
+  const staged = [...attachments.map(attachmentView), ...pending.map(pendingUploadView)];
+  const removeStaged = (index: number) => {
+    const item = attachments[index];
+    if (item) updateAttachments(scope, (items) => items.filter((candidate) => candidate.id !== item.id));
+  };
+
   return (
     <ChatComposerBar className={`messages-composer ${inThread ? 'messages-composer-thread' : ''}`}>
       {/* QA 2026-09-24 Q2: before the opening message of a request, what it
@@ -884,7 +927,7 @@ export function MessageComposer({ threadRootId = null, scroller }: { threadRootI
       <ComposerDropTarget scope={scope} onFiles={(files) => { void addFiles(files); }} />
       {reply ? <div className="messages-reply-draft"><div className="min-w-0"><span className="font-semibold">{reply.sender.unnamed ? (reply.sender.id ? t('messages:composer.replyingToUnknownHandle') : t('messages:composer.replyingToUnknown')) : t('messages:composer.replyingTo', { name: senderName(reply.sender, { bare: active.kind === 'direct' }) })}</span><p className="truncate">{plainText(reply.content) || t('messages:composer.replyAttachment')}</p>{reply.sender.bot && mirrorsReplies(reply.metadata?.homeroomBot) ? <p className="messages-bot-note">{t('messages:bot.draft.reply')}</p> : null}{planReply ? <p className="messages-bot-note">{planReply.firstVersion ? t('messages:composer.planReplyNote') : t('messages:composer.planReplyNotePublic')}</p> : null}</div><button type="button" onClick={() => setReply(scope, null)} aria-label={t('messages:composer.cancelReply')}>×</button></div> : null}
       {object ? <div className="messages-pending-object"><span aria-hidden="true">◆</span><span className="truncate">{pendingObjectLabel(object, stagedCard)}</span><button type="button" onClick={() => setObject(null)} aria-label={t('messages:composer.removeSharedItem')}>×</button></div> : null}
-      {attachments.length || uploading ? <div className="dc-attach-strip dc-attach-strip-active">{attachments.map((item) => <div key={item.id} className="dc-attach-item"><div className="min-w-0"><div className="dc-attach-name">{item.name}</div><div className="dc-attach-size">{fileSize(item.size)}</div></div><button type="button" className="dc-attach-remove" onClick={() => updateAttachments(scope, (items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button></div>)}{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
+      {staged.length ? <div className="dc-attach-strip dc-attach-strip-active"><PendingStripRows items={staged} onRemove={removeStaged} />{uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}</div> : null}
       {channelShown && channelMatches ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.channelsMenu')}>{channelMatches.map((item, index) => <button key={item.handle} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} data-channel-option={item.handle} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertChannel(item.handle)}>#{item.handle}{item.kind === 'app' && item.name.toLowerCase() !== item.handle ? <span className="messages-channel-option-name"> {item.name}</span> : null}</button>)}</div> : null}
       {mentionShown && mention ? <div className="messages-mention-menu" id={listId} role="listbox" aria-label={t('messages:composer.peopleMenu')}>{mention.map((member, index) => <button key={member.id} id={optionId(index)} type="button" role="option" tabIndex={-1} aria-selected={index === activeOption} onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setHighlight(index)} onClick={() => insertMention(member.username)}>@{member.username}</button>)}</div> : null}
       {emojiOpen && emoji ? (

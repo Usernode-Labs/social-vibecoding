@@ -209,6 +209,35 @@ test('done wins when the read says both done and withdrawn', async () => {
   assert.equal(says[0].dm.withdrawn, undefined);
 });
 
+// #6752: a request filed on the wrong project gets the same close offer,
+// under a note that says where it seems to belong.
+const WRONG_WHY = 'It asks for "Plant Pal\'s watering screen", which X does not have.';
+const WRONG = { project: 'Plant Pal', why: WRONG_WHY };
+const WRONG_NOTE = `Wrong project? This seems to be about Plant Pal, not X: It asks for "Plant Pal's watering screen", which X does not have. Tap Propose to close below to start a vote. It stays open until the group votes for it, or reply here if it does belong here.`;
+const WRONG_REASON = `Filed on the wrong project: it seems to belong to Plant Pal. ${WRONG_WHY}`;
+
+test('#6752: a wrong-project person note says where it belongs and carries the close offer', async () => {
+  const { says, offers } = await noteFor({ verdict: 'person', done: false, wrongProject: WRONG });
+  assert.equal(says.length, 1);
+  assert.equal(says[0].kind, 'person');
+  assert.equal(says[0].homeroomText, WRONG_NOTE);
+  assert.doesNotMatch(says[0].homeroomText, /Go ahead/);
+  assert.equal(says[0].metadata, undefined, 'no Go ahead or first-step buttons');
+  assert.equal(says[0].dm.wrongProject.project, 'Plant Pal', 'the requester\'s DM says the same');
+  assert.equal(says[0].dm.wrongProject.why, WRONG_WHY);
+  assert.deepEqual(offers, [{
+    kind: 'close_request', forUserId: null,
+    args: { issueNumber: 7, title: 'Open the library', why: WRONG_REASON },
+  }]);
+});
+
+test('#6752: a wrong-project note adds no buttons while a close vote is open', async () => {
+  const { says, offers } = await noteFor({ verdict: 'person', done: false, wrongProject: WRONG }, { openVotes: [{ id: 9 }] });
+  assert.equal(says[0].homeroomText, WRONG_NOTE);
+  assert.equal(says[0].metadata, undefined);
+  assert.equal(offers.length, 0);
+});
+
 test('#6413: parseVerdict reads withdrawn only on person or empty, and never with platform', () => {
   assert.equal(homeroomBot.parseVerdict('{"verdict":"person","reason":"x","withdrawn":true}').withdrawn, true);
   assert.equal(homeroomBot.parseVerdict('{"verdict":"empty","reason":"x","withdrawn":true}').withdrawn, true);

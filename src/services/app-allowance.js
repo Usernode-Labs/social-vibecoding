@@ -61,13 +61,46 @@ async function read(pool, user, opts = {}) {
       result.server = null;
     }
   }
+  // Which limit this account meets first (#6842), said by the panel and the
+  // refusal alike. Only the words and where they show change: canCreateApps
+  // stays the account's own verdict.
+  result.blockedBy = blockedBy(result.quota, result.server);
   return result;
 }
 
+// WHICH LIMIT STOPS IT (#6842). An account that has never made an app was
+// told "You have used 0 of 0 app slots", because a private member (and an
+// admin's app_quota of 0) reads as limit 0 and the old refusal only ever
+// spoke of spent slots. The reason is the account's own first, then the
+// server's: an account with no slots is told so even when the server is also
+// full, because that is the limit that still applies once it has room.
+// Returns 'no_slots', 'server', 'slots' or null. Pure.
+function blockedBy(quota, server) {
+  if (!quota || quota.limit === null) return null;
+  if (quota.limit === 0) return 'no_slots';
+  if (server && server.full) return 'server';
+  if (quota.used != null && quota.used >= quota.limit) return 'slots';
+  return null;
+}
+
+const NO_SLOTS =
+  "Your account can't make projects of its own yet: it has no app slots. An admin can give it some.";
+
 function refusal(allowance) {
+  const reason = allowance.blockedBy || blockedBy(allowance.quota, allowance.server);
+  let error;
+  if (reason === 'no_slots') {
+    error = NO_SLOTS;
+  } else if (reason === 'server' && allowance.server) {
+    // The 429's own words, so the 403 and the full-server refusal agree.
+    error = `This server is at its app limit (${allowance.server.limit}). Ask an admin to remove an app or raise the limit.`;
+  } else {
+    error = `You have used ${allowance.quota.used} of ${allowance.quota.limit} app slots. Request more slots from the app allowance panel.`;
+  }
   return {
     code: 'app_allowance_exhausted',
-    error: `You have used ${allowance.quota.used} of ${allowance.quota.limit} app slots. Request more slots from the app allowance panel.`,
+    reason,
+    error,
     ...allowance,
   };
 }
@@ -191,4 +224,4 @@ async function grantRequest(pool, { userId, actorId }) {
   return rows[0] || null;
 }
 
-module.exports = { read, serverCapacity, refusal, requestMore, cancelOwn, setQuota, declineRequest, grantRequest };
+module.exports = { read, serverCapacity, blockedBy, refusal, requestMore, cancelOwn, setQuota, declineRequest, grantRequest };

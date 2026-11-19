@@ -22,6 +22,9 @@ export const PENDING_FRAME_SANDBOX = '';
 // download an app starts, including a blob URL saved by an <a download>.
 export const APP_FRAME_SANDBOX =
   'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads';
+// The signed-in App tab may ask for its own cookie after a user tap. Staging
+// and public embeds use APP_FRAME_SANDBOX without this capability.
+export const HOMEROOM_APP_FRAME_SANDBOX = `${APP_FRAME_SANDBOX} allow-storage-access-by-user-activation`;
 
 /**
  * ── The permission policy (#2219) ──────────────────────────────────────

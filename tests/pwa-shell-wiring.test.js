@@ -266,11 +266,12 @@ test('the precached document names the platform, and does not guess a theme', ()
     'the padding and gap those two sums are made of');
 });
 
-test('index.html wires up the manifest, the banner, and the React bundle', () => {
+test('index.html wires up the manifest, the connection status, and the React bundle', () => {
   const html = readPublic('index.html');
   assert.match(html, /<link rel="manifest" href="\/manifest\.webmanifest">/);
   assert.match(html, /<meta name="theme-color"/);
-  assert.match(html, /id="offline-banner"/);
+  // The native-offline proposal: the header's connection status, not a strip.
+  assert.match(html, /id="connection-status"/);
   // The SW used to be registered by <script src="/js/offline.js">. #1078
   // converted the offline banner to a React island and retired that module,
   // so the registration moved into the React bundle — which is the one

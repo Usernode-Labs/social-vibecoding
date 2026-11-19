@@ -134,9 +134,11 @@ export function FeedbackDialog() {
   // go into that comment's box.
   const toComment = () => {
     const carry = Feedback._takeDraft();
-    dialog.close();
     const any = carry.text.trim() || carry.title || carry.images.length || carry.bounty;
-    openCommentMode({ via: 'switch', carry: any ? carry : null });
+    // Comment mode opens once the form's close has committed and its back
+    // record is spent: opened in the same task, the kit's dismiss would run
+    // after the mode mounted and take the mode's Escape with it.
+    dialog.closeThen(() => openCommentMode({ via: 'switch', carry: any ? carry : null }));
   };
 
   // Was the middle of `App.bindEvents`. Layout effect, so the header's

@@ -58,7 +58,7 @@ const { createActivity } = require('../src/services/gateway-activity');
 // The same stripping the Caddyfile does with a header_up replacement: the
 // access cookie, the anonymous marker and the sign-in hop's state
 // (src/services/edge-gate.js cookieNames).
-const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state)$/;
+const GATE_COOKIE_RE = /^(?:__Host-usernode|__usernode)_(?:access|anon|state|embed)$/;
 function hasGateCookie(cookieHeader) {
   if (typeof cookieHeader !== 'string' || !cookieHeader) return false;
   return cookieHeader.split(';').some((part) => GATE_COOKIE_RE.test(part.split('=')[0].trim()));
@@ -169,6 +169,8 @@ function createGate({
     delete headers.host;
     Object.assign(headers, {
       host: platform.host,
+      // The gate relays fallback bodies as-is, without Content-Encoding.
+      'accept-encoding': 'identity',
       'x-forwarded-host': String(req.headers.host || ''),
       'x-forwarded-method': req.method,
       'x-forwarded-uri': req.url,

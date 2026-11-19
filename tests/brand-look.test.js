@@ -155,8 +155,8 @@ test('the Skin module runs before the first stylesheet', () => {
 
 test('the look is the Look menu\'s first option, and New look\'s switch is gone', () => {
   const src = experimentalSrc();
-  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
-    'right after Standard and its work-in-progress copy: it is the one look that redraws the standard pages');
+  assert.match(src, /<option value="">\{t\('settings:experimental\.look\.standard'\)\}<\/option>\s*<option value="wip">\{t\('settings:experimental\.look\.wip'\)\}<\/option>\s*(?:<option value="wip:[a-z0-9]+">\{t\('settings:experimental\.wipTokens\.[a-z0-9]+'\)\}<\/option>\s*)+<option value="brand">\{t\('settings:experimental\.look\.brand'\)\}<\/option>/,
+    'right after Standard and its work-in-progress copy (listed once per token set since 19 Nov 2026): it is the one look that redraws the standard pages');
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch of its own');
   assert.doesNotMatch(src, /settings:experimental\.newLook\./, 'and none of the switch\'s words');
   assert.doesNotMatch(src, /review-flow-enabled/, 'the Needs you switch is gone');
@@ -166,7 +166,8 @@ test('settings.js sets it only through the menu, and paints what is stored', () 
   const src = settingsJs();
   assert.doesNotMatch(src, /new-look-enabled/, 'no switch is wired');
   assert.doesNotMatch(src, /'brand' : 'standard'/, 'nothing sets brand but the menu\'s own value');
-  assert.match(src, /window\.Skin\?\.set\?\.\(e\.target\.value \|\| 'standard'\)/, 'the change is the save');
+  // An entry is a look, or Standard (WIP) with one of its token sets ('wip:<set>'): the set is written, then the look.
+  assert.match(src, /const \[look, set\] = String\(e\.target\.value \|\| 'standard'\)\.split\(':'\);\s*if \(look === 'wip'\) window\.Skin\?\.setTokens\?\.\(set \|\| 'current'\);\s*window\.Skin\?\.set\?\.\(look\);/, 'the change is the save');
   assert.match(src, /window\.Skin\?\.onChange\?\.\(/, 'a change in another tab re-paints the menu');
 });
 
@@ -380,8 +381,12 @@ test('the sidebar is blue with white words, and the row you are on is sun', () =
   assert.ok(here, 'the lit row');
   assert.match(here.body, /color:\s*var\(--bl-on-sun\);/, 'ink on sun');
   assert.match(here.selectors[0], /\.platform-rail-community:not\(\[data-rail-open\]\)/, 'a community whose places are open is not lit; its place is');
+  assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-sun'), '#ffee6f');
+  // Dark turns the sun down a step and keeps all its colour (oklch .88 .18
+  // 100): the full sun glared as a fill on the navy, and a darker one that
+  // lost its colour too went olive.
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-sun'), '#f3d920');
   for (const mode of [LIGHT, DARK]) {
-    assert.equal(valueOf(ruleAt(mode).body, '--bl-sun'), '#ffee6f');
     assert.equal(valueOf(ruleAt(mode).body, '--bl-on-sun'), '#121a0e');
   }
   assert.ok(ruleFor('.platform-rail-nest-in::before').some((rule) => /background:\s*rgba\(255, 255, 255, 0\.45\);/.test(rule.body)),
@@ -440,7 +445,10 @@ test('one accent for "do this", and the old blue as words is the sky', () => {
   assert.ok(pill, 'the main button is a sun pill');
   assert.match(pill.body, /box-shadow:\s*var\(--bl-pill-edge\);/);
   assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-pill-edge'), 'inset 0 0 0 1px #121a0e, 0 2px 0 #121a0e', 'on the website\'s ink outline and hard foot');
-  assert.match(valueOf(ruleAt(DARK).body, '--bl-pill-edge'), /^0 2px 0 #[0-9a-f]{6}$/, 'in dark the foot alone: an ink outline would vanish');
+  // In dark an ink outline would vanish, and the deeper-sun foot it had
+  // instead read as yellow on gold: the pill is flat.
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-pill-edge'), '0 0 0 transparent');
+  assert.equal(valueOf(ruleAt(DARK).body, '--bl-pill-edge-down'), '0 0 0 transparent');
   const words = ruleFor('.text-violet-600')[0];
   assert.match(words.body, /color:\s*var\(--bl-sky\);/);
   assert.equal(valueOf(ruleAt(LIGHT).body, '--bl-sky'), '#1a63c4', 'the deep sky on a white card');
@@ -913,4 +921,16 @@ test('Needs you\'s card is the look\'s white card from 768px, with the page\'s c
   assert.match(ruleAt(`${EITHER} .rf-bar [aria-pressed="false"]`).body, /box-shadow:\s*var\(--bl-raise-edge\);/);
   // The review flow's own defaults are untouched.
   assert.match(read('public', 'css', 'app.css'), /\.rf-run, \.rf-page-wrap \{\s*--rf-page: var\(--home-ground\);/);
+});
+
+test('Messages on a phone is a white sheet with its rows flush on it', () => {
+  // Below 768px Messages is the drawer (features/messages/phone-drawer.tsx),
+  // whose list lies on a strip, the page's own cream in this look.
+  const at = (sel) => ruleAt(`${EITHER} ${sel}`);
+  assert.match(at('.messages-layout.messages-drawer').body, /background-color:\s*var\(--bl-card\);/, 'the look\'s card: white in light, one step off the page in dark');
+  assert.match(at('.messages-layout.messages-drawer .messages-section-card').body, /box-shadow:\s*none;/, 'no card edge round rows that lie flush on the sheet');
+  const search = at('.messages-layout.messages-drawer .messages-search-input').body;
+  assert.match(search, /background:\s*var\(--bl-page\);/, 'the search field is the page\'s cream on the white');
+  assert.match(at('.messages-layout.messages-drawer .messages-search-input:focus').body, /border-color:\s*var\(--brand-line\);/);
+  assert.match(read('frontend', 'src', 'features', 'messages', 'index.tsx'), /const drawerClass = drawer\.on \? ` messages-drawer/, 'the class the rules key on');
 });

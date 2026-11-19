@@ -80,8 +80,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    staging without the rows. Use it for auth material, direct messages,
    financial data, credentials and personal information beyond a public
    username. A public table must never carry a foreign key to a private
-   one. Schema is applied idempotently on boot: `CREATE TABLE IF NOT
-   EXISTS`, `ADD COLUMN IF NOT EXISTS`.
+   one. Boot runs idempotent DDL (`IF NOT EXISTS`) only when its code
+   changed: a no-op DDL waits on a busy table's lock.
 5. **For every user-visible screen, add or extend a `dapp.json` test in
    the same commit.** Use `{ name, path, expectSelector?, expectText? }`;
    tag one representative flow with
@@ -94,8 +94,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    `declare_visible_changes` with the change, real steps, focus,
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
    before/after shots of it on the exact builds. For a non-visual change,
-   record `impact: "none"` with a specific rationale. Then call `declare_diagram`:
-   `{"version":1,"kind":"flow","before":["A"],"after":["B"]}`.
+   record `impact: "none"` with a specific rationale, then call
+   `declare_diagram`: `seen`, `moment` or `steps`; none counts as incomplete.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
@@ -439,6 +439,52 @@ visitor.
 - Each app gets its own Postgres DB. Schema is applied idempotently
   on boot — use `CREATE TABLE IF NOT EXISTS` / `ALTER TABLE … ADD
   COLUMN IF NOT EXISTS` so repeated migrations are safe.
+- **Apply the schema only when the code that defines it changed.**
+  Idempotent is not free: `ADD COLUMN IF NOT EXISTS`, `CREATE INDEX IF
+  NOT EXISTS`, dropping and re-adding a constraint and the like take
+  their table's lock even when there is nothing to do. On every boot
+  they queue behind whatever holds that lock (the previous release
+  still serving during a rollout, a long read, a job's open
+  transaction), and every query on that table then queues behind them.
+  A boot stuck there never answers its health check, so the platform
+  restarts it and the wait starts again. One app measured 10 of its
+  boot statements waiting behind plain reads and 18 behind writers;
+  with the pattern below, none.
+
+  Hash the code that applies the schema into a fingerprint, keep the
+  last one applied in a settings row, and run the DDL only when they
+  differ. Reading one row takes no lock that a writer waits on.
+
+  ```js
+  // Every function that applies schema. A new one is added here.
+  const SCHEMA_PARTS = [applySchema, books.migrate, notes.migrate];
+  const fingerprint = () => require('crypto').createHash('sha256')
+    .update(SCHEMA_PARTS.map((f) => f.toString()).join('\n\u0000\n')).digest('hex');
+
+  async function migrate() {
+    const want = fingerprint();
+    let have = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT value->>'fingerprint' AS f FROM app_settings WHERE key = 'schema'`);
+      have = rows[0]?.f ?? null;
+    } catch { /* a new database: no settings table yet */ }
+    if (have === want) return; // nothing changed: no DDL, no locks
+    await applySchema(); // creates app_settings among the rest
+    await pool.query(
+      `INSERT INTO app_settings (key, value) VALUES ('schema', $1::jsonb)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [JSON.stringify({ fingerprint: want })]);
+  }
+  ```
+
+  Two limits. `f.toString()` covers a function's own text, not SQL it
+  reads from a constant elsewhere, so hash that SQL too or keep it inside
+  the function. And add a test that every schema function the boot calls
+  is in `SCHEMA_PARTS`, since one left out is never applied again. The
+  boot that does apply a change still takes those locks once. Work that
+  must run on every boot regardless (syncing reference data) goes outside
+  the fingerprint check, as ordinary queries.
 - Connect via a single `pg.Pool({ connectionString: process.env.DATABASE_URL })`.
 - Record ownership with `user_id` / `username` from `req.user`.
   Find a person's rows by `user_id`, never by `username` alone: account
@@ -2143,6 +2189,8 @@ const file = await res.json(); // { ok, id, url, sizeBytes, sha256, owner: 'app'
 //   → { ok, files: [...], next }   (next: the id to pass as `after`, or null)
 // Read one back (private ones too; a Range header reads part of it):
 //   GET `${base}/files/<id>`
+//   404 not_found: the file is gone. 503 storage_unavailable (Retry-After):
+//   the store could not answer in time; the file is there, read it again.
 // Delete and usage take the app token alone as well:
 //   DELETE `${base}/files/<id>`, GET `${base}/usage`
 //   (usage adds `appOwnedBytes`; `userBytes` is null without a user token)

@@ -264,7 +264,7 @@ const AppView = {
   // Board VIEW MODE was a second surface for something the lander already
   // contains. What retired is the mode and its standalone surface, not the
   // columns: `#app/<slug>/board` and the old `?view=kanban` both resolve onto
-  // that pane (see _readWorkshopGroupOverride below and the alias block in
+  // that pane (see _workshopTabParam below and the alias block in
   // app.js's restoreFromHash), exactly as `/activity` resolves onto the
   // Workshop itself.
   VIEW_MODES: ['workshop'],
@@ -288,19 +288,16 @@ const AppView = {
   // two board-shaped overviews that already resolved onto it before it
   // retired. The table above sends all five to the same mode, which is what
   // stops anyone landing nowhere; this names the three whose viewer also
-  // wanted the COLUMNS, so _getWorkshopGroup can open them there. 'list' and
+  // wanted the COLUMNS, so _workshopTab can open All items for them. 'list' and
   // 'feed' are not here: the Workshop replaced those, and its default pane is
   // the one they resolve to.
   RETIRED_BOARD_VIEW_MODES: ['kanban', 'pm', 'report'],
-  // ── Reaching the retired Board: it takes TWO answers, not one ────────
+  // ── Reaching the retired Board ──────────────────────────────────────
   //
-  // The board's columns are the Workshop's stage pane, and that pane is one
-  // grouping of ONE TAB: `_workshopTab()` has to say 'all' and
-  // `_getWorkshopGroup()` has to say 'stage'. Setting the grouping alone leaves
-  // the lander on its default tab, where the grouping control is not even
-  // rendered — which is the whole of the bug this pair of helpers fixes. Both
-  // resolvers consult both, so the translation lives in one place instead of
-  // being half-applied in two.
+  // The board's columns are the Workshop's All items page, so the one answer
+  // a board link needs is the tab: `_workshopTab()` has to say 'all'. (It took
+  // two while All items had a second pane, by category; request 6708 removed
+  // it.)
   //
   // Was this page opened by the retired Board view's own deep link?
   _retiredBoardLink() {
@@ -335,8 +332,8 @@ const AppView = {
   // `?view=` on the page URL wins for one paint — a deep link to a layout —
   // and is retired the moment the viewer chooses (see _setViewMode). With one
   // mode left it can only ever resolve to 'workshop'; `?view=kanban` is
-  // honoured as a request for the STAGE PANE instead, in
-  // _readWorkshopGroupOverride below, which is where those columns live now.
+  // honoured as a request for ALL ITEMS instead, in
+  // _workshopTabParam below, which is where those columns live now.
   _viewModeUrlOverride: undefined,
   _readViewModeOverride() {
     if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
@@ -372,113 +369,24 @@ const AppView = {
     AppView._reactDevBoard()?.publishViewMode(next);
   },
 
-  // ── How the Workshop groups the board below its summary ─────────────
+  // ── All items is the board by stage, and nothing else (request 6708) ─
   //
-  // Two panes under one tab strip: the model's drafted CATEGORIES (what the
-  // Workshop has always shown) or the board's own STAGES — the kanban
-  // columns, rendered in place. The stage pane is not a second board: it is
-  // the same `<DevKanban/>` reading the same published view model, nested
-  // inside the Workshop's React tree. See
-  // frontend/src/features/dev-board/workshop/group-mode-store.ts.
+  // All items had two panes under a "By category" / "By stage" switch: the
+  // model's drafted categories, or the board's own stages, the kanban
+  // columns rendered in place by the same `<DevKanban/>` from the same
+  // published view model. The switch is gone and the stage pane is the page.
   //
-  // NO LONGER ADDITIVE — this pane IS the board. It arrived as a second way
-  // to reach those columns while the Board view mode still owned the first;
-  // that mode and its segment in the Improve panel have since retired, so the
-  // stage pane is the only way in and `#app/<slug>/board` resolves onto it.
-  // The two surfaces could never be on screen together anyway, because
-  // `_repaintDevBody` gives #dev-body to one at a time; what changed is that
-  // the other one is no longer reachable.
+  // So there is nothing to choose and nothing to remember. A choice stored
+  // while the switch existed (localStorage `devWorkshopGroup`) and a link that
+  // asks for a pane (`?group=category`, `?group=theme`) are never read: both
+  // land on the board, as `?group=stage`, `?view=kanban` and
+  // `#app/<slug>/board` always did.
   //
-  // localStorage, like VIEW_MODE_KEY: which way you read the board is a
-  // lasting preference, not a scratch narrowing that should quietly expire.
-  WORKSHOP_GROUP_KEY: 'devWorkshopGroup',
-  WORKSHOP_GROUPS: ['category', 'stage'],
-  // #2332 spelled this pane 'theme' for one release, on the argument that it
-  // groups by what the work is ABOUT while a category is what KIND of work it
-  // is. That split is gone: there is ONE grouping and it is a category, which
-  // is what this file's own chip tooltip had been saying all along.
-  //
-  // The stored value and `?group=` are both public surfaces, so the retired
-  // spelling keeps resolving rather than falling back to the default: a
-  // viewer who chose the pane under #2332 opens on it, and a link from that
-  // release still lands where it did. Read-time only, like every other
-  // migration here — the current spelling is written on the next tap.
-  WORKSHOP_GROUP_ALIASES: { theme: 'category' },
-  _migrateWorkshopGroup(v) {
-    if (AppView.WORKSHOP_GROUPS.includes(v)) return v;
-    return AppView.WORKSHOP_GROUP_ALIASES[v] || null;
-  },
-  // `?group=stage`, mirroring `?view=` above — resolved once and cached, so a
-  // deep link can reach a pane that is otherwise only a click away. It is
-  // what the declared check for the stage pane navigates to: a check run
-  // starts with an empty localStorage and would otherwise always land on
-  // category and assert nothing.
-  //
-  // It answers for the RETIRED Board view's deep link too. `?view=kanban`
-  // asked for a mode that no longer exists, and the pane it was asking for is
-  // this one, so the old parameter resolves here rather than going quietly
-  // nowhere — the same courtesy `#app/<slug>/board` gets from the alias block
-  // in app.js. An explicit `?group=` wins when both are present, because that
-  // is the parameter still being offered.
-  _workshopGroupUrlOverride: undefined,
-  _readWorkshopGroupOverride() {
-    if (AppView._workshopGroupUrlOverride !== undefined) return AppView._workshopGroupUrlOverride;
-    try {
-      const v = AppView._migrateWorkshopGroup(new URLSearchParams(location.search).get('group'));
-      AppView._workshopGroupUrlOverride = v
-        || (AppView._retiredBoardLink() ? 'stage' : null);
-    } catch { AppView._workshopGroupUrlOverride = null; }
-    return AppView._workshopGroupUrlOverride;
-  },
-  // The retired Board ROUTE's landing, and the only caller that sets this
-  // override without a query parameter: `#app/<slug>/board` resolves onto the
-  // Workshop with the stage pane up (see app.js's restoreFromHash). Transient
-  // exactly as `?group=` is — it does NOT write the stored preference, and a
-  // tap on "By category" clears it through _setWorkshopGroup — so following an
-  // old board link shows those columns without re-deciding how this viewer
-  // reads the board from then on.
-  _overrideWorkshopGroup(group) {
-    const next = AppView._migrateWorkshopGroup(group);
-    if (!next) return;
-    AppView._workshopGroupUrlOverride = next;
-  },
-  _getWorkshopGroup() {
-    try {
-      const override = AppView._readWorkshopGroupOverride();
-      if (override) return override;
-      const stored = AppView._migrateWorkshopGroup(
-        window.localStorage.getItem(AppView.WORKSHOP_GROUP_KEY)
-      );
-      if (stored) return stored;
-      // THE RETIRED BOARD PREFERENCE, carried across rather than dropped.
-      // `RETIRED_VIEW_MODES` already stops a stored 'kanban' landing on a mode
-      // that no longer exists, but on its own it forgets the thing the viewer
-      // actually chose: they picked the COLUMNS, and migrating them to the
-      // Workshop's default pane hands them the categories instead. The rule
-      // that table exists for is "the nearest surviving surface", and for the
-      // Board that surface is this pane — so a viewer who last left the Dev
-      // screen on the Board still opens on the columns.
-      //
-      // Only when they have expressed no grouping preference of their own,
-      // which the return above has already established, and read-time like
-      // every other migration here: nothing is written back, so the day they
-      // do choose a pane, that choice is what persists.
-      if (AppView._storedBoardPreference()) return 'stage';
-      return 'category';
-    } catch { return 'category'; }
-  },
-  _setWorkshopGroup(mode) {
-    const next = AppView._migrateWorkshopGroup(mode) || 'category';
-    // An explicit tap retires the URL override, exactly as `_setViewMode`
-    // does — otherwise `?group=` would keep winning over every later click.
-    AppView._workshopGroupUrlOverride = null;
-    try { window.localStorage.setItem(AppView.WORKSHOP_GROUP_KEY, next); } catch {}
-    // Publish BEFORE the repaint so the pane swaps in the same frame as the
-    // tab's pressed state; `_repaintBoardSurface` then publishes the view
-    // model the newly shown pane reads. Both stores flush synchronously.
-    AppView._reactDevBoard()?.publishWorkshopGroup(next);
-    AppView._repaintBoardSurface();
-  },
+  // The React side still has the pane's store
+  // (frontend/src/features/dev-board/workshop/group-mode-store.ts) and the
+  // category lanes behind it. Nothing here publishes to that store, so it
+  // rests on its default, which is the stage pane.
+  _getWorkshopGroup() { return 'stage'; },
   // #482: kanban filter-bar state. The active object always reflects the
   // CURRENT app; it is (re)loaded per slug from localStorage whenever the
   // board mounts (_repaintDevBody) and written back on every change
@@ -2473,7 +2381,7 @@ const AppView = {
   // cross-origin policy below. Until then the blank frame renders sandbox="":
   // no permission is granted to the same-origin initial document, so browsers
   // have no escapable allow-scripts + allow-same-origin pair to warn about.
-  _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads',
+  _appIframeSandbox: 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock allow-downloads allow-storage-access-by-user-activation',
 
   // ── The permission policy (#2219) ──────────────────────────────────
   //
@@ -5433,6 +5341,14 @@ const AppView = {
       AppView._clearTopicHeadBody();
       const id = await AppView._sessionIdForChange(ref.pr);
       if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
+      // The native-offline proposal (18 Nov 2026): no answer is not "no such
+      // change". The page stays where it is, says so once, and opens when
+      // Homeroom answers again, instead of dropping the reader on the
+      // Workshop.
+      if (id === AppView.CHANGE_UNREACHABLE) {
+        AppView._openChangeWhenOnline(content, ref, pending);
+        return;
+      }
       if (!id) {
         // #6019: numbers are one sequence per app, so a change address
         // with a request's number is that request's thread.
@@ -5608,6 +5524,9 @@ const AppView = {
     let concluded = false;
     let itemDone = false;
     let ok = false;
+    // The item's own read had no answer at all (_fetchTopicItem's
+    // ITEM_UNANSWERED), which the miss branch does not read as "no such item".
+    let unanswered = false;
     let finish;
     const settled = new Promise((resolve) => { finish = resolve; });
     // Their threads need no item to mount — the request's and the
@@ -5671,6 +5590,21 @@ const AppView = {
     // the awaited openTopic callers are not held by the fallback itself.
     const onMiss = () => {
       concluded = true;
+      // The native-offline follow-up (19 Nov 2026): with the shell offline,
+      // a read that found nothing had no answer, which is not "no such
+      // item". The page keeps its skeleton, says once that it is not saved
+      // on this phone yet, and opens when Homeroom answers again, rather
+      // than dropping the reader on the Workshop. So too online, when the
+      // item's own read had no answer (a slow link that ran out its time, a
+      // server error): it says Homeroom is slow and tries again.
+      const offlineNow = AppView._noAnswerNow();
+      if (unanswered || offlineNow) {
+        note('failure', { errorCode: offlineNow ? 'offline' : 'network' });
+        AppView._dropTopicSwap();
+        AppView._openChangeWhenOnline(content, ref, AppView._devTopic);
+        finish();
+        return;
+      }
       note('failure', { errorCode: 'not_found' });
       AppView._dropTopicSwap();
       // Missing ref (an issue GitHub no longer serves, archived session, bad
@@ -5722,7 +5656,8 @@ const AppView = {
     // One read for this item, always: it refreshes a row the lists answered
     // with and is what paints a cold open.
     Promise.resolve(AppView._fetchTopicItem(ref)).then((row) => {
-      ok = !!row;
+      unanswered = row === AppView.ITEM_UNANSWERED;
+      ok = !!row && !unanswered;
       itemDone = true;
       if (!painted) {
         paint(true);
@@ -5886,21 +5821,111 @@ const AppView = {
     return AppView.openTopic('issue', Number(number), options.replaceRoute ? { replaceRoute: true } : undefined);
   },
 
+  // What _sessionIdForChange answers when Homeroom gave no answer at all and
+  // this phone saved none: not "no such change" (the native-offline proposal).
+  CHANGE_UNREACHABLE: 'unreachable',
+  // What _fetchTopicItem answers when the item's own read had no answer at
+  // all, online or not: not "no such item" (the 19 Nov retest of #6862: on a
+  // slow link a request's read ran out its 15 s and the page fell back to the
+  // Workshop).
+  ITEM_UNANSWERED: 'unanswered',
+
   // #4367: the session a change's pull request number names on this app, or
   // null — from the server, which applies the proposal page's own visibility.
+  // With no answer (offline, a server that is down) the number this phone
+  // saw last time stands in (lib/kept-copies.ts, `change:<slug>:<n>`), and
+  // with none saved it is CHANGE_UNREACHABLE.
   async _sessionIdForChange(pr) {
     const slug = App.currentApp || AppView.appData?.slug;
     if (!slug || !pr) return null;
+    const kept = window.UsernodeReact?.keptCopies;
+    const keptName = `change:${slug}:${Number(pr)}${AppView._demoQS() ? ':demo' : ''}`;
+    const keep = (id) => {
+      try { kept?.keep?.(keptName, id); } catch (_) { /* the page opens all the same */ }
+      return id;
+    };
+    const saved = () => {
+      try {
+        const id = Number(kept?.read?.(keptName));
+        if (Number.isInteger(id) && id > 0) return id;
+      } catch (_) { /* nothing saved */ }
+      return AppView.CHANGE_UNREACHABLE;
+    };
+    // #6827: a change page's own read (started when the route named the
+    // change) already answered this, so the address costs no second read.
+    try {
+      const page = window.UsernodeReact?.devBoard?.peekChangePage?.(slug, Number(pr));
+      if (page && page.sessionId) return keep(page.sessionId);
+    } catch (_) { /* the read below answers */ }
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/changes/${Number(pr)}${AppView._demoQS()}`);
+      // A refusal or a miss is the server's word; a server error is no answer.
+      if (res.status >= 500) return saved();
       if (!res.ok) return null;
       const data = await res.json();
       const id = Number(data && data.sessionId);
-      return Number.isInteger(id) && id > 0 ? id : null;
+      return Number.isInteger(id) && id > 0 ? keep(id) : null;
     } catch {
-      return null;
+      return saved();
     }
   },
+
+  // Whether a read with no result had no answer at all: the shell is
+  // offline, or the phone says it has no network.
+  _noAnswerNow() {
+    try {
+      if (window.Offline && Offline.isOffline && Offline.isOffline()) return true;
+      const word = window.__usernodeNativeConnectivity;
+      return !!(word && word.online === false);
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // A page that could not be read — a change address whose lookup had no
+  // answer (CHANGE_UNREACHABLE), or an item whose own read had none
+  // (_renderTopicSubView's miss): the page keeps its skeleton, says once
+  // why, and opens itself when Homeroom answers again — or when the reader
+  // has gone somewhere else, does nothing. Offline, the page was never saved
+  // on this phone; online, Homeroom is slow to answer, so it asks again soon
+  // (SLOW_RETRY_MS) and then every 20 s.
+  _openChangeWhenOnline(content, ref, pending) {
+    // Said once per page, however many times it is asked again.
+    const key = `${App.currentApp || ''}:${ref && ref.kind}:${ref && (ref.pr || ref.id)}`;
+    const offline = AppView._noAnswerNow();
+    const first = AppView._changeWaitSaid !== key;
+    if (first) {
+      AppView._changeWaitSaid = key;
+      const words = !offline ? 'changes:page.slowToAnswer'
+        : ref && (ref.kind === 'issue' || ref.kind === 'gov')
+          ? 'changes:page.notSavedYetThread' : 'changes:page.notSavedYet';
+      try {
+        if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(PlatformI18n.t(words));
+      } catch (_) { /* the header's status still says why */ }
+    }
+    let timer = null;
+    const stop = () => {
+      window.removeEventListener('usernode:offline-change', onChange);
+      if (timer) clearTimeout(timer);
+    };
+    const retry = () => {
+      stop();
+      if (AppView._devTopic !== pending || !document.getElementById('dev-topic-thread')) return;
+      void AppView._renderTopicSubView(content, ref);
+    };
+    const onChange = (e) => { if (e && e.detail && e.detail.offline === false) retry(); };
+    // A server error the probe never calls offline: ask again in a while.
+    const tick = () => {
+      if (AppView._devTopic !== pending) { stop(); return; }
+      if (window.Offline && Offline.isOffline && Offline.isOffline()) { timer = setTimeout(tick, 20000); return; }
+      retry();
+    };
+    window.addEventListener('usernode:offline-change', onChange);
+    timer = setTimeout(tick, !offline && first ? AppView.SLOW_RETRY_MS : 20000);
+  },
+  // How soon a page whose read had no answer, online, asks again the first
+  // time: its read already waited up to 15 s (lib/read-timeout.ts).
+  SLOW_RETRY_MS: 3000,
 
   // #4367: once the open change is known to have a pull request, its address
   // is `dev/changes/<N>`. Replaces the history entry — an old link is the
@@ -5933,13 +5958,18 @@ const AppView = {
   // The single-item fetch behind the topic page's fast open (#4524):
   // dispatches to the by-id fetchers the recovery path has always used —
   // a session resolves through the proposal one, since a session IS a
-  // chat_session row the proposal endpoints serve. Returns the row or null;
+  // chat_session row the proposal endpoints serve. Returns the row, null for
+  // no such item, or ITEM_UNANSWERED when the read had no answer at all;
   // each fetcher is best-effort and swallows its own errors.
   async _fetchTopicItem(ref) {
-    if (ref.kind === 'gov') return AppView._fetchGovProposalById(ref.id);
+    const outcome = {};
+    const noAnswer = (row) => (!row && outcome.unanswered ? AppView.ITEM_UNANSWERED : row);
+    if (ref.kind === 'gov') return noAnswer(await AppView._fetchGovProposalById(ref.id, outcome));
     if (ref.kind === 'issue') {
-      const row = await AppView._fetchIssueByNumber(ref.id);
+      const row = await AppView._fetchIssueByNumber(ref.id, outcome);
       if (row) return row;
+      // No answer is not "no such request", and its thread would wait as long.
+      if (outcome.unanswered) return AppView.ITEM_UNANSWERED;
       // #6019: a request address with a change's number is that change.
       // Asked before the page settles as missing, so a number that is
       // neither still falls back to the board at the moment it always did.
@@ -5947,7 +5977,7 @@ const AppView = {
       await AppView._openByThread('issue', ref.id, () => AppView._devTopic === here);
       return null;
     }
-    return AppView._fetchProposalById(ref.id);
+    return noAnswer(await AppView._fetchProposalById(ref.id, outcome));
   },
 
   /**
@@ -6141,11 +6171,31 @@ const AppView = {
   // way loadMoreMerged does. Best-effort: a miss (404 / no access / network
   // error) leaves _topicProposal untouched, so the caller falls back to the
   // forum exactly as before.
-  async _fetchProposalById(id) {
+  async _fetchProposalById(id, outcome) {
     if (!AppView.appData || !id) return null;
     const slug = AppView.appData.slug;
+    // #6827: the change page's own read already carried this row.
+    try {
+      const carried = window.UsernodeReact?.devBoard?.peekChangeProposal?.(slug, Number(id));
+      if (carried && carried.proposal) {
+        const row = carried.proposal;
+        AppView._overlayPendingVote(row);
+        AppView._topicProposal = row;
+        AppView._putCachedRow('proposal', row);
+        AppView._applyVoteContext(carried.context);
+        if (AppView.voteState && AppView.voteState.bySession) {
+          AppView.voteState.bySession[String(row.id)] = row;
+          if (row.pr_number != null) AppView.voteState.byPrNumber[String(row.pr_number)] = row;
+          if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
+            GroupChat.refreshVoteControls();
+          }
+        }
+        return row;
+      }
+    } catch (_) { /* the read below answers */ }
     try {
       const res = await fetch(`/api/apps/${slug}/proposals/${id}${AppView._demoQS()}`);
+      if (res.status >= 500) return AppView._itemUnanswered(outcome);
       if (!res.ok) return null;
       const data = await res.json();
       const row = data.proposal || null;
@@ -6171,8 +6221,24 @@ const AppView = {
       }
       return row;
     } catch {
-      return null;
+      return AppView._itemUnanswered(outcome);
     }
+  },
+
+  // An item read with no answer at all (it threw, timed out, or the server
+  // failed): still null to every caller, and `outcome.unanswered` says why,
+  // for the topic page that would otherwise read it as "no such item".
+  _itemUnanswered(outcome) {
+    if (outcome) outcome.unanswered = true;
+    return null;
+  },
+
+  // A shared request read's row, telling this caller's `outcome` when it had
+  // no answer.
+  async _itemReadRow(read, outcome) {
+    const got = await read;
+    if (got && got.unanswered) return AppView._itemUnanswered(outcome);
+    return got ? got.row : null;
   },
 
   // (#1115) The governance twin of _topicProposal: a single-item cache for a
@@ -6192,11 +6258,12 @@ const AppView = {
   // chat_sessions id / pr_number, and governance ids come from the `issues`
   // sequence and collide numerically with it (the same reason _loadDevData
   // and loadMoreMerged both exclude close rows from it).
-  async _fetchGovProposalById(id) {
+  async _fetchGovProposalById(id, outcome) {
     if (!AppView.appData || !id) return null;
     const slug = AppView.appData.slug;
     try {
       const res = await fetch(`/api/apps/${slug}/governance/${id}${AppView._demoQS()}`);
+      if (res.status >= 500) return AppView._itemUnanswered(outcome);
       if (!res.ok) return null;
       const data = await res.json();
       const row = data.proposal || null;
@@ -6205,7 +6272,7 @@ const AppView = {
       AppView._putCachedRow('gov', row);
       return row;
     } catch {
-      return null;
+      return AppView._itemUnanswered(outcome);
     }
   },
 
@@ -6221,7 +6288,10 @@ const AppView = {
   // _topicIssue. Best-effort: a miss (404 / no access / network error), or
   // an answer for an app the view has since left, leaves the cache untouched
   // so the caller falls back to the board.
-  async _fetchIssueByNumber(number) {
+  //
+  // `outcome`, when given, is told `unanswered` for a read that had no answer
+  // at all (it threw, timed out, or the server failed), which is not a miss.
+  async _fetchIssueByNumber(number, outcome) {
     if (!AppView.appData || !number) return null;
     const slug = AppView.appData.slug;
     // #6604: a topic open and a live burst ask for the same request at the
@@ -6229,26 +6299,27 @@ const AppView = {
     const key = `${slug}:${number}`;
     const reads = AppView._issueRowReads || (AppView._issueRowReads = new Map());
     const running = reads.get(key);
-    if (running) return running;
+    if (running) return AppView._itemReadRow(running, outcome);
     const read = (async () => {
       try {
         const res = await fetch(`/api/apps/${slug}/github-issues/${number}${AppView._demoQS()}`);
-        if (!res.ok) return null;
+        if (res.status >= 500) return { row: null, unanswered: true };
+        if (!res.ok) return { row: null };
         const data = await res.json();
         const row = data.issue || null;
-        if (!row || row.number !== number) return null;
-        if (!AppView.appData || AppView.appData.slug !== slug) return null;
+        if (!row || row.number !== number) return { row: null };
+        if (!AppView.appData || AppView.appData.slug !== slug) return { row: null };
         AppView._topicIssue = row;
         AppView._topicIssueSlug = slug;
         AppView._putCachedRow('issue', row);
-        return row;
+        return { row };
       } catch {
-        return null;
+        return { row: null, unanswered: true };
       }
     })();
     reads.set(key, read);
     try {
-      return await read;
+      return await AppView._itemReadRow(read, outcome);
     } finally {
       if (reads.get(key) === read) reads.delete(key);
     }
@@ -10276,6 +10347,14 @@ const AppView = {
     // panel has always painted from without a read.
     const slugForReads = (AppView.appData && AppView.appData.slug) || App.currentApp;
     const known = AppView._findItem(kind, id);
+    // #6827: a change's one page read starts with the panel's own, exactly
+    // as a change's address starts it with the page's.
+    if ((kind === 'proposal' || kind === 'session') && slugForReads && known) {
+      const pr = Number(known.pr_number);
+      if (Number.isInteger(pr) && pr > 0) {
+        try { window.UsernodeReact?.devBoard?.prefetchChangePage?.(slugForReads, pr); } catch (_) { /* the page reads */ }
+      }
+    }
     AppView._topicProposal = null;
     AppView._topicGov = null;
     AppView._topicIssue = null;
@@ -13396,17 +13475,16 @@ const AppView = {
     try {
       const v = new URLSearchParams(window.location.search).get('ws');
       // A retired `?view=kanban` asked for the board's columns, which live in
-      // the All items tab — the other half of the answer is the grouping, in
-      // _readWorkshopGroupOverride above. An explicit `?ws=` wins, because that
-      // is the parameter still being offered.
+      // the All items tab. An explicit `?ws=` wins, because that is the
+      // parameter still being offered.
       AppView._workshopTabUrlOverride = AppView._isWorkshopPlace(v)
         ? v
         : (AppView._retiredBoardLink() ? 'all' : null);
     } catch { AppView._workshopTabUrlOverride = null; }
     return AppView._workshopTabUrlOverride;
   },
-  // The retired Board ROUTE's landing, the tab half. `#app/<slug>/board` calls
-  // this and _overrideWorkshopGroup together (see app.js's restoreFromHash);
+  // The retired Board ROUTE's landing. `#app/<slug>/board` calls this (see
+  // app.js's restoreFromHash);
   // transient exactly as `?ws=` is, and a tap on another tab clears it through
   // _setWorkshopTab.
   _overrideWorkshopTab(tab) {
@@ -13432,9 +13510,8 @@ const AppView = {
       // way back to the tab it hangs off above it.
       if (AppView._isWorkshopPlace(stored) && stored !== 'plan') return stored;
       // A viewer who last left the Dev screen on the Board gets the tab those
-      // columns live in, for the same reason _getWorkshopGroup gives them the
-      // pane: migrating the retired mode without carrying what it MEANT would
-      // hand them a digest where they had chosen a worklist.
+      // columns live in: migrating the retired mode without carrying what it
+      // MEANT would hand them a digest where they had chosen a worklist.
       if (AppView._storedBoardPreference()) return 'all';
       return 'status';
     } catch { return 'status'; }
@@ -13523,6 +13600,28 @@ const AppView = {
     });
   },
 
+  // #6825: a still's smaller copies (services/shots-view.js `sizes`) as one
+  // srcset, smallest first, so a slot takes the smallest copy sharp for it
+  // and its screen. Empty for a still saved before the copies existed, which
+  // then loads its one url as it always did.
+  _shotSrcSet(artifact) {
+    const copyOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}\?size=(?:thumb|screen)$/.test(String(url || ''));
+    const parts = (Array.isArray(artifact && artifact.sizes) ? artifact.sizes : [])
+      .filter((copy) => copy && copyOk(copy.url) && Number(copy.width) > 0)
+      .map((copy) => `${copy.url} ${Math.round(Number(copy.width))}w`);
+    if (!parts.length) return '';
+    const own = Number(artifact && artifact.width) > 0 ? Number(artifact.width) : 0;
+    if (own && artifact.url) parts.push(`${artifact.url} ${own}w`);
+    return parts.join(', ');
+  },
+
+  // The blurred preview a slot draws until its still decodes: the 20 px WebP
+  // the server sent inside the shots view, and nothing else.
+  _shotPlaceholder(artifact) {
+    const value = artifact && typeof artifact.placeholder === 'string' ? artifact.placeholder : '';
+    return value.length <= 1400 && /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/.test(value) ? value : '';
+  },
+
   // The first before/after capture pair, as the Needs-you feed's picture.
   // `visuals` is the server shape visualsTilesHtml reads — the grouped form
   // or the legacy flat one — and this keeps only what the feed draws: one
@@ -13536,7 +13635,7 @@ const AppView = {
       // null suppresses the legacy capture instead of substituting a picture
       // that may have nothing to do with the claim.
       if (shots.state !== 'verified') return null;
-      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.test(String(url || ''));
+      const urlOk = (url) => /^\/api\/apps\/[^/?#]+\/proposals\/\d+\/shots\/[0-9a-f]{32}(?:\?density=device|\?size=(?:thumb|screen))?$/.test(String(url || ''));
       // The picture follows the page's mode, as the full viewer does: a
       // light page takes a light shot (a run from before modes recorded
       // counts as light) and never a dark one; a dark page takes the dark
@@ -13613,13 +13712,26 @@ const AppView = {
           && Number(a.density) > 1 && box(a.rect && [a.rect.x, a.rect.y, a.rect.w, a.rect.h], 4)
           && a.rect.w > 0 && a.rect.h > 0
         )).map((a) => ({ url: a.url, rect: { x: a.rect.x, y: a.rect.y, w: a.rect.w, h: a.rect.h }, density: Number(a.density) }));
+        // #6825: a still with smaller copies carries their `srcSet` and the
+        // `placeholder` it draws until one arrives; one saved before them
+        // carries neither, exactly as it always did.
+        const side = (artifact, height) => {
+          const srcSet = AppView._shotSrcSet(artifact);
+          const placeholder = AppView._shotPlaceholder(artifact);
+          return {
+            url: artifact.url,
+            height,
+            ...(srcSet ? { srcSet } : {}),
+            ...(placeholder ? { placeholder } : {}),
+          };
+        };
         return {
           viewport: screen.viewport,
           width,
           density,
           closeups,
-          before: { url: base.url, height: heightBefore },
-          after: { url: head.url, height: heightAfter },
+          before: side(base, heightBefore),
+          after: side(head, heightAfter),
           regions,
           changes,
         };
@@ -13682,7 +13794,7 @@ const AppView = {
   _setWorkshopTab(key) {
     // The plan is gone once it is built, so the page reopens on the hub.
     const next = AppView._isWorkshopPlace(key) && key !== 'plan' ? key : 'status';
-    // An explicit tap retires the URL override, exactly as `_setWorkshopGroup`
+    // An explicit tap retires the URL override, exactly as `_setViewMode`
     // does — otherwise `?ws=` would keep winning over every later press.
     AppView._workshopTabUrlOverride = null;
     try { window.localStorage.setItem(AppView.WORKSHOP_TAB_KEY, next); } catch {}
@@ -15826,22 +15938,17 @@ const AppView = {
       // Seeded on every repaint, not once at mount: `_repaintDevBody` tears
       // the Workshop host down and rebuilds it on every view-mode change, so
       // there is no single mount to seed from.
-      const group = AppView._getWorkshopGroup();
-      react.publishWorkshopGroup(group);
-      // The "By stage" pane renders the board's own columns. Built ONLY when
-      // that pane is up: `_kanbanView()` buckets, orders and filters every
-      // card on the board, which is real work to do for a pane nobody is
-      // looking at. `_lastKanbanView` is shared with the standalone board on
-      // purpose — it is what a mobile column tab republishes from, and the
-      // two surfaces are never mounted at the same time.
+      // All items is the board's own columns (request 6708: the one view),
+      // so its view model is built on every repaint. `_lastKanbanView` is
+      // shared with the standalone board on purpose: it is what a mobile
+      // column tab republishes from, and the two surfaces are never mounted
+      // at the same time.
       //
       // BEFORE the mount below, unlike the Workshop's own publish: the board
       // renders from INSIDE the Workshop's tree, so a kanban store still
       // holding the previous board would paint one frame of it.
-      if (group === 'stage') {
-        AppView._lastKanbanView = AppView._kanbanView();
-        react.publishKanban(AppView._lastKanbanView);
-      }
+      AppView._lastKanbanView = AppView._kanbanView();
+      react.publishKanban(AppView._lastKanbanView);
       react.mountWorkshop(el);
       react.publishWorkshop(AppView._workshopView());
     }
@@ -26998,9 +27105,10 @@ const AppView = {
       ? String(sha).slice(0, 8) : PlatformI18n.t('changes:shots.card.unknownCommit');
     const shotsUrl = (url) => {
       const value = String(url || '');
-      // A sharp still has its own address, `?density=device` (shots-view.js
-      // shotUrl); nothing else may follow the id.
-      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device)?$/.exec(value);
+      // A sharp still has its own address, `?density=device`, and a smaller
+      // copy its own, `?size=thumb` or `?size=screen` (shots-view.js
+      // artifactUrl); nothing else may follow the id.
+      const match = /^\/api\/apps\/[^/?#]+\/proposals\/(\d+)\/shots\/[0-9a-f]{32}(?:\?density=device|\?size=(?:thumb|screen))?$/.exec(value);
       if (!match || (Number.isInteger(sessionId) && sessionId > 0 && Number(match[1]) !== sessionId)) return '';
       return value;
     };
@@ -27281,7 +27389,26 @@ const AppView = {
         const dark = themes
           ? by(screen.shot, screen.viewport, which === 'base' ? 'base' : 'head', 'context', null, 'dark')
           : null;
-        const inner = `<img src="${attr(shotsUrl(artifact.url))}" ${alt} class="shots-img-light" loading="lazy">${dark ? `<img src="${attr(shotsUrl(dark.url))}" ${alt} class="shots-img-dark" loading="lazy">` : ''}${drawn[which]}`;
+        // #6825: the still takes the smallest copy sharp for this slot (its
+        // stage is at most about 640 px wide), over its blurred preview, so
+        // the picture arrives sooner and nothing moves when it lands.
+        const still = (artifact, cls) => {
+          const set = AppView._shotSrcSet(artifact);
+          const preview = AppView._shotPlaceholder(artifact);
+          const style = preview ? ` style="${attr(`background-image:url("${preview}");background-size:cover;background-position:center`)}"` : '';
+          // The slot's width, from the usable box (#THE USABLE BOX): the page
+          // less its own margins, up to the stage's 640 px.
+          const srcsets = set ? ` srcset="${attr(set)}" sizes="(max-width: 640px) calc(var(--platform-usable-w) - 32px), 640px"` : '';
+          // The preview is this box's own background, so the box is fixed
+          // before a byte arrives: its width and height are the still's
+          // pixels, and the decoded picture covers the preview in place. If
+          // no copy loads at all, the preview gives way to the full-size
+          // picture rather than staying blurred forever.
+          const box = `${Number(artifact.width) > 0 ? ` width="${Math.round(Number(artifact.width))}"` : ''}${Number(artifact.height) > 0 ? ` height="${Math.round(Number(artifact.height))}"` : ''}`;
+          const fallback = set ? ` onerror="this.onerror=null;this.removeAttribute('srcset');this.removeAttribute('sizes');this.style.backgroundImage='none'"` : '';
+          return `<img src="${attr(shotsUrl(artifact.url))}"${srcsets}${box} ${alt} class="${cls}" loading="lazy"${style}${fallback}>`;
+        };
+        const inner = `${still(artifact, 'shots-img-light')}${dark ? still(dark, 'shots-img-dark') : ''}${drawn[which]}`;
         if (!crop) return `<span class="shots-flip-side ${cls}" style="--shots-shape:${shape}">${inner}</span>`;
         const at = which === 'base' ? crop.before : crop.after;
         const pct = (value, total) => `${(value / total * 100).toFixed(3)}%`;

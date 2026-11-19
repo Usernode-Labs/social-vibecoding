@@ -44,7 +44,7 @@ import { useMessages } from '../../lib/i18n/react';
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { appActivity } from './app-activity.js';
-import { APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
+import { HOMEROOM_APP_FRAME_SANDBOX, PENDING_FRAME_SANDBOX } from './app-frame-policy.js';
 import { navStore } from '../nav/nav-store.js';
 import { appFrameRefs, appFrameStore } from './app-frame-store.js';
 import { publishAppTone } from './app-tone.js';
@@ -189,7 +189,7 @@ const AppFrame = memo(function AppFrame({ slug }: { slug: string }): ReactNode {
         ref={iframeRef}
         className="w-full h-full border-0"
         style={{ opacity: active && state.faded ? 0 : 1, backgroundColor: look.background || undefined }}
-        sandbox={look.sandboxReady ? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX}
+        sandbox={look.sandboxReady ? HOMEROOM_APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX}
         allow={look.allow}
         data-app-slug={slug}
         title={look.title || undefined}

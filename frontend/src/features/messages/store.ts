@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 
 import { t } from '../../lib/i18n/runtime';
 import { ACTION_OUTBOX_EVENT, actionOutbox, type ActionOutcome } from '../../lib/action-outbox';
-import { KEPT_DRAW_MS } from '../../lib/kept-copies';
+import { KEPT_DRAW_MS, keptLoaded } from '../../lib/kept-copies';
 import { isOffline, probe } from '../../lib/offline';
 import { startThreadAbout } from '../../lib/thread-about';
 import { botNewAddress, botOldAddress, botTabFromMessages, goBotAddress, knownBotConversation, noteBotConversation, openBotTab } from '../ai/door';
@@ -637,6 +637,10 @@ export async function loadConversations(force = false): Promise<void> {
     // answer is the server's word.
     const noAnswer = unreachable(error);
     const answered = error instanceof api.MessagesApiError && error.status < 500;
+    // Offline, a read can fail before this device's copies have loaded
+    // (kept-copies.ts keptLoaded): wait for them before saying there are none.
+    if (!answered && !state.conversations.length) await keptLoaded();
+    if (request !== listRequest) return;
     if (!answered && !state.conversations.length && drawKeptList(online)) return;
     publish({
       loadingList: false,
@@ -644,6 +648,7 @@ export async function loadConversations(force = false): Promise<void> {
       online,
       error: !noAnswer ? errorMessage(error, t('messages:store.error.loadList'))
         : state.conversations.length ? null : t('messages:store.error.unreachableList'),
+      errorOffline: noAnswer,
     });
     resolvePendingChannel();
   } finally {
@@ -869,6 +874,8 @@ export async function loadThread(conversationId: number, force = false): Promise
     // offline copy (#4243), which these reads no longer have: they answer
     // `private, no-store` (api.ts ReadOptions).
     const answered = error instanceof api.MessagesApiError && error.status < 500;
+    if (!answered && !preserveVisibleThread) await keptLoaded();
+    if (request !== threadRequest) return;
     if (!answered && !preserveVisibleThread && drawKeptThread(conversationId)) return;
     const noAnswer = unreachable(error);
     publish({
@@ -881,6 +888,7 @@ export async function loadThread(conversationId: number, force = false): Promise
       ...(preserveVisibleThread ? {} : { active: noAnswer ? listedConversation(conversationId) : null }),
       loadingThread: false,
       threadError: noAnswer ? t('messages:store.error.unreachableThread') : errorMessage(error, t('messages:store.error.loadThread')),
+      threadErrorOffline: noAnswer,
       // A 404 is an answer, not a failure: trying again reads the same one.
       threadGone: error instanceof api.MessagesApiError && error.status === 404 ? 'missing' : null,
     });

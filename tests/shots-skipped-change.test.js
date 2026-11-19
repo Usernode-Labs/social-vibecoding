@@ -329,3 +329,50 @@ test('get_proposal\'s nextStep names a seedable skip, its reason, and how to fix
     assert.doesNotMatch(tools.shapeProposal(row, ORIGIN).nextStep, /Before & after shots of this revision could not show/, why);
   }
 });
+
+// ── #6832: a change that changes nothing on screen with no picture ────────
+
+const NONE_INTENT = { shots_detail: { intent: { impact: 'none', rationale: 'It only changes how a merge resolves' } } };
+const SEEN_RECORD = {
+  version: 1, kind: 'seen', where: 'A stuck change\'s status', look: 'status',
+  before: { title: 'Tests failed' }, after: { title: 'Needs a catch-up with main' },
+};
+
+test('#6832: an impact-none change with no seen, moment or steps picture is due its picture, once per commit', () => {
+  const due = followup.checksDue(botRow(NONE_INTENT));
+  assert.equal(due.noPicture, true);
+  assert.deepEqual(Object.keys(due), ['head', 'failing', 'total', 'noPicture']);
+  assert.equal(followup.onlyNoPictureDue(due), true);
+  assert.equal(followup.onlyShotsDue(due), false);
+  // Any one of the three clears it: nothing is due, so no fix round runs.
+  const complete = [
+    SEEN_RECORD,
+    { version: 1, kind: 'moment', before: { date: '2026-11-18', ref: 'PR #6699', events: ['Kept twice'] }, after: { events: ['Tried again'] } },
+    { version: 1, kind: 'steps', before: [{ pic: 'two-edits', caption: 'Two edits' }], after: [{ pic: 'merged', caption: 'Merged' }] },
+  ];
+  for (const record of complete) {
+    const cleared = followup.checksDue(botRow({ ...NONE_INTENT, pr_diagram: record }));
+    assert.equal(cleared?.noPicture, undefined, record.kind);
+    assert.equal(followup.onlyNoPictureDue(cleared), false, record.kind);
+  }
+  // An older kind does not count: it says nothing a voter can read.
+  assert.equal(followup.checksDue(botRow({ ...NONE_INTENT, pr_diagram: { version: 1, kind: 'rename', from: 'a', to: 'b' } })).noPicture, true);
+  // One round per commit, and nothing when a change does show something.
+  for (const extra of [{ fix_revised: true }, { looked: true }, { check_state: 'pending' }]) {
+    assert.equal(followup.checksDue(botRow({ ...NONE_INTENT, ...extra })) || null, null, JSON.stringify(extra));
+  }
+  assert.equal(followup.checksDue(botRow())?.noPicture, undefined, 'a change that shows something is not due a picture');
+});
+
+test('#6832: the fix turn is asked for the picture, with the three kinds and the order to choose them', () => {
+  const due = followup.checksDue(botRow(NONE_INTENT));
+  const prompt = followup.checksFixPrompt({ seed: 'SEED', proposalBlock: 'BLOCK', ...due });
+  assert.match(prompt, /Nothing on screen changes and the change has no picture of what it does/);
+  assert.match(prompt, /Add one with declare_diagram, and change no files: kind "seen" when anything a person could notice changes/);
+  assert.match(prompt, /otherwise kind "moment" when the request reports a real incident, using only its own dates, references and durations/);
+  assert.match(prompt, /otherwise kind "steps", a before row and an after row of at most five drawings/);
+  // A round that is only the picture asks for one thing, and no code.
+  assert.match(prompt, /Do exactly one thing:/);
+  assert.match(prompt, /- "revise": call declare_diagram with the picture above, and change no files\./);
+  assert.doesNotMatch(prompt, /add the data the shots need/);
+});

@@ -50,7 +50,6 @@ import { VotingHelp, type VotingHelpProps } from './voting-help';
 import { DevTopicSubView } from './topic-frame';
 import { publishViewMode } from './view-mode-store';
 import { publishDevActions } from './actions-store';
-import { publishWorkshopGroup } from './workshop/group-mode-store';
 import { publishInviteOffer, type InviteOffer } from './workshop/invite-offer';
 import {
   aiEnabledStore,
@@ -66,7 +65,7 @@ import type { DevKanbanView, DevWorkshopView } from './card/model';
 import { DevWorkshop, withoutSavedVotes } from './workshop/workshop';
 import { openPrivateRequest } from './workshop/private-request-door';
 import { TopicHead } from './topic/topic-head';
-import { prefetchThread } from './topic/thread-items';
+import { peekChangePage, peekChangeProposal, prefetchChangePage, prefetchThread } from './topic/thread-items';
 import { topicHeadStore, type TopicHeadState } from './topic/topic-store';
 import { publishRequestThread } from './topic/request-model';
 import { askVotesInView } from './topic/votes-in-view';
@@ -114,6 +113,15 @@ export interface DevBoardBridge {
    * as app-view.js's item read, rather than after the root post has painted.
    */
   prefetchThread(slug: string | null, number: number | null): Promise<unknown> | null;
+  /**
+   * #6827: start a change page's ONE read (the change, its home, its thread
+   * and its proposal) when the route names it, beside the app's own read.
+   */
+  prefetchChangePage(slug: string | null, number: number | null): Promise<unknown> | null;
+  /** #6827: that read's answer, once it settled within its 10 s. */
+  peekChangePage(slug: string | null, number: number | null): { sessionId: number; request: number | null; proposal: any; context: any } | null;
+  /** #6827: the proposal row that answer carried, by the change's id. */
+  peekChangeProposal(slug: string | null, sessionId: number | null): { proposal: any; context: any } | null;
   /** #4453: a request's stream, as `GroupChat.renderThread` publishes it — for its spec cards. */
   publishRequestThread(number: number, rows: TranscriptMessage[]): void;
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
@@ -132,7 +140,6 @@ export interface DevBoardBridge {
   /** The Workshop's Private requests open private request `id` of `slug` (workshop/private-request-door.ts). */
   showPrivateRequest(slug: string, id: number): void;
   publishViewMode(mode: string): void;
-  publishWorkshopGroup(mode: string): void;
   /** #3700: the invite link a project's page was opened from (App._followInvite). */
   publishInviteOffer(offer: InviteOffer | null): void;
   unmount(host: Element | null): void;
@@ -195,6 +202,9 @@ permissionConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   prefetchThread,
+  prefetchChangePage,
+  peekChangePage,
+  peekChangeProposal,
   mountBoard(host, options) {
     // Seed before the first render so a cold `?view=kanban` deep link paints
     // kanban immediately rather than list-then-kanban.
@@ -395,7 +405,6 @@ export const devBoardBridge: DevBoardBridge = {
   showPrivateRequest: (slug: string, id: number) => openPrivateRequest(slug, Number(id)),
 
   publishViewMode,
-  publishWorkshopGroup,
   publishInviteOffer,
   unmount: unmountLegacyPortal,
   unmountAll: unmountAllLegacyPortals,

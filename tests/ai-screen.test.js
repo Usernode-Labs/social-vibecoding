@@ -661,6 +661,10 @@ test('the filter: the three projects that need you most as chips, then any picke
   assert.match(rail, /data-x="y"/);
   assert.equal(typeof PlainRail, 'function', 'the plain rail stays for callers that only clip');
   assert.match(lists, /\{rail\.map\(\(app\) => \(/, 'the rail draws the chips railProjects gives it');
+  // #6706: All's new-items number clears the label, the same 8px gap the
+  // project chips beside it give theirs.
+  assert.match(lists, /className=\{`gap-2 px-4 \$\{CHIP_EDGE\}`\} selected=\{!picked\.length\} onClick=\{\(\) => setOnly\(\[\]\)\}/,
+    'All leaves a gap before its number');
   // More stands outside the rail, so a narrow rail never scrolls it away,
   // and it is a menu button, not a toggle.
   assert.match(lists, /<\/FadeRail>\s*\{past > 0 \? \(\s*<Chip/);
@@ -2729,4 +2733,26 @@ test('#6714: the AI tab\'s address from a project\'s page is narrowed to that pr
   assert.equal(a.botTabAddress(undefined), '#homeroom-bot');
   assert.equal(a.botTabAddress(''), '#homeroom-bot');
   assert.equal(a.botTabAddress('not a slug'), '#homeroom-bot', 'never anything but a slug');
+});
+
+// #6838: on a phone the list stays the width of the screen and never slides
+// sideways. The badge's spoken label (sr-only, absolute) used to escape the
+// chip rail's clip on a chip scrolled past its end, because neither the badge
+// nor the rail was positioned: the nearest positioned ancestor was the drawer
+// list itself, so the label widened the list and `overflow-y: auto` gave it a
+// sideways scroll. The badge now holds its own label, and the list clips
+// sideways overflow as a guard. The chip rail keeps its own sideways scroll.
+test('#6838: the list scrolls up and down only, and the chip rail keeps its own sideways scroll', () => {
+  const lists = read('frontend/src/features/ai/lists.tsx');
+  const badge = lists.slice(lists.indexOf('function FreshBadge'));
+  const outer = badge.slice(0, badge.indexOf('>'));
+  assert.match(outer, /className=\{`relative inline-flex /, 'the badge is positioned, so its spoken label is clipped with it');
+  assert.match(badge, /<span className="sr-only">\{t\('messages:ai\.filter\.fresh', \{ count \}\)\}<\/span>/, 'the count is still spoken');
+  const css = read('public/css/app.css');
+  const rule = css.slice(css.indexOf('.ai-drawer-list {'));
+  const block = rule.slice(0, rule.indexOf('}'));
+  assert.match(block, /overflow-x: hidden;/, 'the phone list can never be dragged sideways');
+  assert.match(block, /overflow-y: auto;/, 'it still scrolls up and down');
+  assert.match(block, /touch-action: pan-y;/, 'a sideways swipe is not a pan');
+  assert.match(lists, /className=\{`mx-1\.5 flex gap-2 overflow-x-auto /, 'the chips still scroll sideways inside their rail');
 });

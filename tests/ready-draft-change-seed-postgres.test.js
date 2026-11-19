@@ -87,6 +87,31 @@ test('the staging ready-draft fixture reaches the state the shots need', { timeo
   assert.equal(item.mine, true, 'the member\'s own, so its card offers the action');
   assert.equal(page.thread.number, 900001);
 
+  // Beside it, a built draft whose checks ran and failed, on the project's
+  // second request: the state the card's failing line is drawn from.
+  const { rows: [failing] } = await pool.query(
+    `SELECT id, app_id, user_id, status, check_state, checks_commit_sha, linked_issues
+       FROM chat_sessions WHERE branch_name = 'staging-fixture/failing-draft'`,
+  );
+  assert.ok(failing, 'the failing fixture change exists');
+  assert.equal(Number(failing.id), 999_999_988);
+  assert.equal(Number(failing.app_id), Number(fixtureApp.id), 'the same demo project');
+  assert.equal(Number(failing.user_id), Number(member.id));
+  assert.deepEqual([failing.status, failing.check_state], ['active', 'failing']);
+  assert.match(failing.checks_commit_sha, /^[0-9a-f]{40}$/, 'a verdict about a head');
+  assert.deepEqual(failing.linked_issues, [900002]);
+  const failingThread = await threads.threadForNumber(pool, { appId: fixtureApp.id, number: 900002 });
+  assert.ok(failingThread, 'its request\'s thread');
+  const failingPage = await threads.threadPage(pool, { thread: failingThread, viewerId: member.id });
+  const failingItem = failingPage.items.find((row) => row.type === 'change' && Number(row.id) === 999_999_988);
+  assert.ok(failingItem, 'the failing change is on its request\'s page');
+  assert.equal(failingItem.state, 'underway');
+  assert.equal(failingItem.ready, false, 'its checks do not pass');
+  assert.equal(failingItem.promotable, true, 'built and checked: its card offers Put it up for a vote');
+  assert.equal(item.promotable, true, 'the ready draft is promotable too');
+  assert.equal(failingItem.mine, true);
+  assert.equal(page.items.some((row) => Number(row.id) === 999_999_988), false, 'not on the ready draft\'s page');
+
   // Anybody else's read: the draft is not theirs to propose, and (not
   // shared) not on their page at all.
   const { rows: [other] } = await pool.query(
@@ -101,6 +126,10 @@ test('the staging ready-draft fixture reaches the state the shots need', { timeo
     `SELECT COUNT(*)::int AS n FROM chat_sessions WHERE branch_name = 'staging-fixture/ready-draft'`,
   );
   assert.equal(n, 1, 'idempotent');
+  const { rows: [{ f }] } = await pool.query(
+    `SELECT COUNT(*)::int AS f FROM chat_sessions WHERE branch_name = 'staging-fixture/failing-draft'`,
+  );
+  assert.equal(f, 1, 'idempotent');
   const { rows: [{ m }] } = await pool.query(
     'SELECT COUNT(*)::int AS m FROM requests WHERE app_id = $1 AND number = 900001', [fixtureApp.id],
   );

@@ -2403,11 +2403,6 @@
       "expectSelector": "body:has(.dev-ws-side[data-ws-side] #dev-topic-thread [data-thread-exits] > [data-thread-exit=\"expand\"][aria-label=\"Open as a page\"] + [data-thread-exit=\"close\"]) #dev-workshop [data-ws-stage] #dev-kanban .dev-ws-wrow[data-on] > .dev-ws-wrow-main > a.dev-ws-wrow-link[aria-current=\"true\"]"
     },
     {
-      "name": "The Workshop renders its themes in #dev-workshop; the deep link opens one, its items the board’s rows under stage lanes",
-      "path": "/?demo=1&ws=all&shot=themes&view=workshop#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-themes [data-ws-theme] .dev-ws-theme-body [data-ws-lane] > .dev-ws-wlist > .dev-ws-wrow.dev-ws-brow:not(:has(.dev-ws-wrow-tile, [data-attr-field=\"category\"])) a.dev-ws-wrow-link"
-    },
-    {
       "name": "#app/<slug>/board resolves onto the stage pane, its cards drawn as the Workshop’s rows (#4486)",
       "path": "/?demo=1#app/usernode-2d5619/board",
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban .dev-kanban-col .dev-kanban-card .dev-ws-wrow.dev-ws-brow[data-issue-row] > .dev-ws-wrow-main > a.dev-ws-wrow-link[href*=\"/dev/issues/\"]"
@@ -2420,10 +2415,10 @@
     },
     {
       "id": "workshop.grouping-ear",
-      "name": "All items' head is one row: the way back and its name, the grouping, then the tools, on category by default (#4486)",
+      "name": "All items' head is one row: the way back and its name, then the tools, with no grouping switch and no eyebrow over the page's name; the page is the board by stage (#4486, request 6708)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-allbar > [data-ws-pagehead]:first-child + .dev-ws-group[role=\"tablist\"] > [data-ws-group=\"category\"][aria-selected=\"true\"]",
-      "expectText": "By category",
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane]:not(:has([data-ws-group], .dev-ws-themes)):has(> .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban) > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > [data-ws-pagehead]:first-child + #dev-actions",
+      "expectText": "Waiting for approval",
       "visual": true,
       "impact": [
         "frontend/src/features/dev-board/workshop/**",
@@ -2434,31 +2429,20 @@
       ]
     },
     {
-      "name": "...and that row holds the grouping, then the tools, with no eyebrow over the page's name",
+      "name": "All items' one-row head and the pipeline's steps pin together, over the board's own columns (#4486)",
       "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head > .dev-ws-allbar:not(:has(.dev-ws-pagehead-over, .dev-ws-eyebrow)) > .dev-ws-group + #dev-actions"
+      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:has(> #dev-kanban-tabs[role=\"tablist\"] > [data-kanban-tab=\"done\"]) > .dev-ws-allbar > #dev-actions"
     },
     {
-      "name": "On By stage the one-row head and the pipeline's steps pin together, over the board's own columns (#4486)",
-      "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head:has(> #dev-kanban-tabs[role=\"tablist\"] > [data-kanban-tab=\"done\"]) > .dev-ws-allbar > .dev-ws-group [data-ws-group=\"stage\"][aria-selected=\"true\"]"
-    },
-    {
-      "name": "The Workshop offers the two groupings as tabs at the head of All items, on category by default",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws-group[role=\"tablist\"] > .dev-ws-group-tab[data-ws-group=\"category\"][aria-selected=\"true\"] + .dev-ws-group-tab[data-ws-group=\"stage\"][aria-selected=\"false\"]",
-      "expectText": "By stage"
-    },
-    {
-      "name": "?group=stage swaps All items' pane for the board's own columns",
-      "path": "/?demo=1&ws=all&group=stage#app/usernode-2d5619/workshop",
+      "name": "An old ?group=category link lands on the board's own columns: All items has one view (request 6708)",
+      "path": "/?demo=1&ws=all&group=category#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-body > .dev-ws-board[data-ws-stage] > #dev-kanban #dev-kanban-col-issues .dev-ws-wrow"
     },
     {
       "name": "The Workshop carries the board's search and filter bar, and keeps it when the search matches nothing (#2090)",
       "path": "/?demo=1&ws=all&q=nothing-matches-this#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-pane] > .dev-ws-pane-head #dev-actions #dev-kanban-filterbar #dev-kanban-search",
-      "expectText": "Nothing here matches the current search and filters."
+      "expectText": "No matching cards"
     },
     {
       "name": "Workshop: the Workshop is the place lit, a dot on its row says All items' search is still on, and the search leaves the Overview whole, with no 'nothing matches' note (#2915, #4417)",
@@ -2481,12 +2465,6 @@
       "name": "An unfolded card has an auto-growing reply box and send arrow (#1584)",
       "path": "/?demo=1&ws=all&group=stage&cards=open&shot=feed-comments#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-feed-entry .dev-feed-thread form:has(textarea[aria-label=\"Reply to this item\"]) button[aria-label=\"Send reply\"]:disabled"
-    },
-    {
-      "name": "A demo theme names the mock rows, with its people count and its counts",
-      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-theme=\"demo-voting\"] .dev-ws-theme-people ~ .dev-ws-theme-counts .dev-ws-cnt",
-      "expectText": "[Mock] Voting"
     },
     {
       "name": "A project's Needs you draws the review flow, one change's page at a time",
@@ -3063,7 +3041,7 @@
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-message-image[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
       "name": "The notifications strip reads Unread, Recent threads, All, and it opens on Unread (#2718 review, #5289, #6785)",
@@ -3584,9 +3562,9 @@
       "expectSelector": "link[rel='manifest']"
     },
     {
-      "name": "Offline banner element ships in the shell (#487)",
+      "name": "The header's connection status ships in the shell (#487)",
       "path": "/",
-      "expectSelector": "#offline-banner"
+      "expectSelector": "#connection-status"
     },
     {
       "name": "PR-import: self-app dev proposals view loads with the flag on (#687)",
@@ -4078,10 +4056,10 @@
       "expectText": "Another agent"
     },
     {
-      "name": "Offline: the signed-in shell keeps a visible offline strip above everything (#1021)",
+      "name": "Offline: the header says it is connecting (#1021)",
       "path": "/?shot=offline",
-      "expectSelector": "body.is-offline #offline-banner:not(.hidden)",
-      "expectText": "Reconnecting to Homeroom. Showing saved content"
+      "expectSelector": "body.is-offline #connection-status:not(.hidden)",
+      "expectText": "Connecting…"
     },
     {
       "name": "Offline sign-in explains why the form cannot work instead of failing silently (#1021)",

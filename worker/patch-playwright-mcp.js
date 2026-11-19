@@ -28,6 +28,11 @@
 //   until the page's own requests have finished and its markup has stopped
 //   changing (#6379), then captures as it always did.
 //
+// - With SHOTS_SCREENSHOT_SETTLE=1 a still is also taken with the page's
+//   animations stopped (`animations: "disabled"`, and the same by hand for a
+//   close-up), so a spinner is never caught at a different angle on the two
+//   sides and read as the change (PR #6831, 19 Nov 2026).
+//
 // - With a `closeup` argument (the shots tools' own, through the browser
 //   observer: shots-browser-observer.js startControl), it saves one region
 //   of the visible screen at `closeup.scale` device pixels per CSS pixel,
@@ -75,6 +80,27 @@ const CLOSEUP_SCHEMA = '      closeup: z23.object({'
   + ' scale: z23.number().min(1).max(16) }).optional()'
   + '.describe("For the before/after shots tools only; leave it out.")\n';
 
+// A close-up is captured by Chrome itself (Page.captureScreenshot, below),
+// which Playwright's `animations: "disabled"` (STILL_OPTION) does not reach.
+// So in a shots browser it stops them the same way: finite animations
+// finished, infinite ones cancelled to their first frame for the capture and
+// played again after it.
+const CLOSEUP_FREEZE = '          const still = process.env.SHOTS_SCREENSHOT_SETTLE === "1";\n'
+  + '          if (still) await tab2.page.evaluate(() => {\n'
+  + '            const held = [];\n'
+  + '            for (const a of document.getAnimations()) {\n'
+  + '              try {\n'
+  + '                const t = a.effect && a.effect.getComputedTiming ? a.effect.getComputedTiming() : null;\n'
+  + '                if (t && t.iterations === Infinity) { a.cancel(); held.push(a); } else a.finish();\n'
+  + '              } catch {}\n'
+  + '            }\n'
+  + '            window.__usernodeShotsHeld = held;\n'
+  + '          }).catch(() => {});\n';
+const CLOSEUP_THAW = '            if (still) await tab2.page.evaluate(() => {\n'
+  + '              for (const a of window.__usernodeShotsHeld || []) { try { a.play(); } catch {} }\n'
+  + '              window.__usernodeShotsHeld = null;\n'
+  + '            }).catch(() => {});\n';
+
 const CLOSEUP_HANDLER = '        if (params2.closeup) {\n'
   + '          const c = params2.closeup;\n'
   + '          const resolvedFile = await response2.resolveClientOutputFile({ prefix: "page", ext: "png", suggestedFilename: params2.filename }, "Close-up screenshot");\n'
@@ -82,12 +108,14 @@ const CLOSEUP_HANDLER = '        if (params2.closeup) {\n'
   + ' ? { x: window.visualViewport.pageLeft, y: window.visualViewport.pageTop, k: window.visualViewport.scale || 1 }'
   + ' : { x: window.scrollX, y: window.scrollY, k: 1 }));\n'
   + '          const cdp = await tab2.page.context().newCDPSession(tab2.page);\n'
+  + CLOSEUP_FREEZE
   + '          try {\n'
   + '            const shot = await cdp.send("Page.captureScreenshot", { format: "png",'
   + ' clip: { x: Math.round(at.x + c.x / at.k), y: Math.round(at.y + c.y / at.k),'
   + ' width: Math.max(1, Math.round(c.width / at.k)), height: Math.max(1, Math.round(c.height / at.k)), scale: c.scale * at.k } });\n'
   + '            await require("fs").promises.writeFile(resolvedFile.fileName, Buffer.from(shot.data, "base64"));\n'
   + '          } finally {\n'
+  + CLOSEUP_THAW
   + '            await cdp.detach().catch(() => {});\n'
   + '          }\n'
   + '          response2.addTextResult(resolvedFile.printableLink);\n'
@@ -118,6 +146,18 @@ const SETTLE_HANDLER = '        if (process.env.SHOTS_SCREENSHOT_SETTLE === "1")
   + '          await tab2.page.evaluate(settleInPage, { quietMs: 250, maxMs: 3000 }).catch(() => {});\n'
   + '        }\n';
 
+// A still is taken with the page's animations stopped (every shots browser:
+// SHOTS_SCREENSHOT_SETTLE=1; never the coding agent's in-loop one).
+// Playwright's `animations: "disabled"` finishes a finite animation or
+// transition and puts an infinite one back to its first frame for the
+// capture, then lets it run again. Without it a spinner was caught at a
+// different angle on each side: PR #6831's only "change" on both screens was
+// the header's building spinner (#improve-working-dot, 17 x 12 px), and the
+// card zoomed onto it, cutting off everything else. Clips are recorded by the
+// browser's video (write-shots-mcp-config.js recordVideo) and keep their
+// motion.
+const STILL_OPTION = '          animations: process.env.SHOTS_SCREENSHOT_SETTLE === "1" ? "disabled" : void 0,\n';
+
 const CAPTURE = '        const data = target ? await target.locator.screenshot(options) : await tab2.page.screenshot(options);\n';
 
 const EDITS = [
@@ -126,7 +166,8 @@ const EDITS = [
   ['      handle: async (tab2, params2, response2) => {\n        if (params2.fullPage && params2.target)',
     `      handle: async (tab2, params2, response2) => {\n${CLOSEUP_HANDLER}        if (params2.fullPage && params2.target)`],
   ['          scale: params2.scale,\n',
-    '          scale: process.env.SHOTS_SCREENSHOT_SCALE === "device" ? "device" : params2.scale,\n'],
+    '          scale: process.env.SHOTS_SCREENSHOT_SCALE === "device" ? "device" : params2.scale,\n'
+    + STILL_OPTION],
   [CAPTURE, `${SETTLE_HANDLER}${CAPTURE}`],
   ['        if (!params2.filename)\n          await response2.registerImageResult(data, fileType);\n',
     '        if (!params2.fullPage)\n          await response2.registerImageResult(options.scale === "css" ? data'

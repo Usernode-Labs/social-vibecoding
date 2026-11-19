@@ -38,25 +38,22 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Icon } from '@/components/ui/kit';
 import { useMessages } from '../../lib/i18n/react';
 import { whenPlatformViewer } from '../../lib/platform-viewer';
-import { MENU_SKINS, WIP_TOKEN_SETS, useLiveSkin, useLiveWipTokens, useLookTools, type Skin, type WipTokens } from '../../lib/skin';
+import { LOOK_CHOICES, MENU_SKINS, WIP_TOKEN_SETS, lookChoice, parseLookChoice, useLiveSkin, useLiveWipTokens, useLookTools, type LookChoice, type Skin, type WipTokens } from '../../lib/skin';
 
 // Whole literals, so the catalog inventory can see each id asked for.
 const NAME: Record<'standard' | (typeof MENU_SKINS)[number], string> = {
   standard: 'settings:experimental.look.standard',
   wip: 'settings:experimental.look.wip',
   brand: 'settings:experimental.look.brand',
-  glass: 'settings:experimental.look.glass',
   paper: 'settings:experimental.look.paper',
-  pastel: 'settings:experimental.look.pastel',
-  mosaic: 'settings:experimental.look.mosaic',
-  sunrise: 'settings:experimental.look.sunrise',
 };
-const CHOICES = ['standard', ...MENU_SKINS] as const;
-// Standard (WIP)'s token configs, by name. Whole literals again.
-const TOKENS_NAME: Record<WipTokens, string> = {
-  current: 'settings:experimental.wipTokens.current',
-  brand: 'settings:experimental.wipTokens.brand',
-  brand2: 'settings:experimental.wipTokens.brand2',
+// Standard (WIP) under each of its other token sets is an entry of the same
+// menu, beside the looks (19 Nov 2026). Whole literals again.
+const NAME_OF: Record<string, string> = {
+  ...NAME,
+  'wip:brand': 'settings:experimental.wipTokens.brand',
+  'wip:brand2': 'settings:experimental.wipTokens.brand2',
+  'wip:highlighter': 'settings:experimental.wipTokens.highlighter',
 };
 
 // The platform header's own disc, as its bell wears it (#2798: no fill at rest).
@@ -90,19 +87,25 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark, tokens, on
   dark?: boolean;
   onDark?: () => void;
   /**
-   * Standard (WIP)'s token config and its setter. With both, and that look
-   * on, a second disc beside the look's offers the configs: pick the look,
-   * then the values that draw it.
+   * Standard (WIP)'s token set and its setter: the menu lists that look once
+   * per set, and a pick of one sets both.
    */
   tokens?: WipTokens;
   onTokens?: (next: WipTokens) => void;
 }) {
   const t = useMessages('settings');
   const label = t('settings:experimental.look.label');
-  const tokensLabel = t('settings:experimental.wipTokens.label');
   const darkName = t('settings:theme.mode.dark');
-  // Every look is one of this menu's; anything else reads as Standard here.
-  const value = (CHOICES as readonly string[]).includes(skin) ? skin : 'standard';
+  // Every look is one of this menu's, Standard (WIP) once per token set;
+  // anything else reads as Standard here.
+  const made = lookChoice(skin, tokens || 'current');
+  const value: LookChoice = LOOK_CHOICES.includes(made) ? made : 'standard';
+  // An entry names a look and, for Standard (WIP), the set that draws it.
+  const pick = (choice: string) => {
+    const next = parseLookChoice(choice);
+    if (next.skin === 'wip') onTokens?.(next.tokens);
+    onPick(next.skin);
+  };
   // Under a look, a phone's bar has room for one such disc beside the
   // title (the two left it about 85px): the pair is the desktop's, and a
   // phone gets one button whose small menu holds both (fr-d and fr-p are
@@ -117,36 +120,23 @@ export function LookPickerView({ variant, skin, onPick, dark, onDark, tokens, on
         aria-label={label}
         className={frame ? undefined : 'absolute left-1/2 top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer opacity-0'}
         value={value}
-        onChange={(event) => onPick(event.target.value as Skin)}
+        onChange={(event) => pick(event.target.value)}
       >
-        {CHOICES.map((choice) => <option key={choice} value={choice}>{t(NAME[choice])}</option>)}
+        {LOOK_CHOICES.map((choice) => <option key={choice} value={choice}>{t(NAME_OF[choice])}</option>)}
       </select>
     </label>
-    {skin === 'wip' && onTokens ? (
-      <label className={frame ? 'fr-ib fr-look' : SHELL_LOOK} title={tokensLabel} data-look-tokens={variant}>
-        <Icon name="sliders" size={20} />
-        <select
-          aria-label={tokensLabel}
-          className={frame ? undefined : 'absolute left-1/2 top-1/2 h-11 w-11 -translate-x-1/2 -translate-y-1/2 cursor-pointer opacity-0'}
-          value={tokens || 'current'}
-          onChange={(event) => onTokens(event.target.value as WipTokens)}
-        >
-          {WIP_TOKEN_SETS.map((name) => <option key={name} value={name}>{t(TOKENS_NAME[name])}</option>)}
-        </select>
-      </label>
-    ) : null}
     {onDark ? (
       <button type="button" className={frame ? 'fr-ib fr-d' : SHELL} aria-pressed={!!dark} aria-label={darkName} title={darkName} data-look-theme={variant} onClick={onDark}>
         <Icon name={dark ? 'sun' : 'moon'} size={20} />
       </button>
     ) : null}
-    {fold ? <LookFold value={value} onPick={onPick} dark={!!dark} onDark={onDark!} /> : null}
+    {fold ? <LookFold value={value} onPick={pick} dark={!!dark} onDark={onDark!} /> : null}
     </>
   );
 }
 
 /** A phone's one control for both: a disc, and under it a small menu with Look and Theme. */
-function LookFold({ value, onPick, dark, onDark }: { value: Skin; onPick: (next: Skin) => void; dark: boolean; onDark: () => void }) {
+function LookFold({ value, onPick, dark, onDark }: { value: LookChoice; onPick: (choice: string) => void; dark: boolean; onDark: () => void }) {
   const t = useMessages('settings');
   const [open, setOpen] = useState(false);
   const host = useRef<HTMLSpanElement | null>(null);
@@ -169,9 +159,9 @@ function LookFold({ value, onPick, dark, onDark }: { value: Skin; onPick: (next:
         <span className="fr-lookmenu" role="group" aria-label={name}>
           <label className="fr-lookrow" data-look-fold-look="">
             <span>{t('settings:experimental.look.label')}</span>
-            <span className="fr-v">{t(NAME[value as keyof typeof NAME] || NAME.standard)}</span>
-            <select aria-label={t('settings:experimental.look.label')} value={value} onChange={(event) => { setOpen(false); onPick(event.target.value as Skin); }}>
-              {CHOICES.map((choice) => <option key={choice} value={choice}>{t(NAME[choice])}</option>)}
+            <span className="fr-v">{t(NAME_OF[value] || NAME.standard)}</span>
+            <select aria-label={t('settings:experimental.look.label')} value={value} onChange={(event) => { setOpen(false); onPick(event.target.value); }}>
+              {LOOK_CHOICES.map((choice) => <option key={choice} value={choice}>{t(NAME_OF[choice])}</option>)}
             </select>
           </label>
           <button type="button" className="fr-lookrow" aria-pressed={dark} data-look-fold-theme="" onClick={onDark}>

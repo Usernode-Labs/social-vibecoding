@@ -94,7 +94,9 @@ test('what the list says when it has nothing to list is the standard list\'s sen
   const retrying = render({ people: [], state: { ...state, reading: true } });
   assert.doesNotMatch(retrying, /Nothing here yet|No messages yet/);
   assert.match(read(PANE), /reading: !!snap\.loadingList && !snap\.conversations\.length,/);
-  assert.match(render({ state: { ...state, offline: true } }), /<div class="fr-note fr-wait"><svg[^>]*>.*?<\/svg><div>Offline\. Queued messages retry when you reconnect\.<\/div><\/div>/s);
+  // The native-offline proposal: no offline note of its own. The header's
+  // connection status says it for every screen.
+  assert.doesNotMatch(render({ state: { ...state, offline: true } }), /fr-note fr-wait|Queued messages retry/);
 });
 
 test('what the first tour invented is gone from the catalog, and the words are the standard list\'s', () => {

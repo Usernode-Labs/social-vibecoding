@@ -42,6 +42,11 @@ export interface Data {
   // resets (services/github-budget.js; a look, a build's start or the
   // refresh found it so).
   github?: { until: string } | null;
+  // #6867: OpenRouter's credit ran out (a 402 on the bot's key): no grant
+  // until the balance read says credit is back (CreditBack, from
+  // services/openrouter-credit.js sweep). `since` and the provider's words
+  // are the outage itself; nothing here times it out.
+  credit?: { since: string; words: string | null } | null;
   // The refresh: when the next full one is due, the projects asked for
   // since (null: all), the one under way.
   refresh: { due: string; asked: number[] | null; soon: string | null; n: number; running: number | null };
@@ -58,7 +63,13 @@ const EVENTS = {
   // A request let its slot go (or took none): `ran` a look that ran (ends a
   // fault pause), `fault` the platform failed under it, `budget` the cap.
   // `github`: GitHub's hourly budget resets then.
-  Released: (p: any) => ({ ran: !!p?.ran, fault: !!p?.fault, budget: !!p?.budget, github: optTime(p?.github) }),
+  // `credit`: the turn found OpenRouter's credit gone; `words` its own.
+  Released: (p: any) => ({
+    ran: !!p?.ran, fault: !!p?.fault, budget: !!p?.budget, github: optTime(p?.github), credit: !!p?.credit,
+    words: typeof p?.words === 'string' ? p.words.slice(0, 300) : null,
+  }),
+  // Credit is back (the balance read): the pause lifts and grants resume.
+  CreditBack: () => ({}),
   // A project to refresh soon (null: every project); `now`: at once.
   RefreshAsked: (p: any) => ({ appId: optInt(p?.appId), now: !!p?.now }),
   // Its clock: the refresh due, a pause over, a request now eligible.
@@ -81,6 +92,7 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
   const messages: MessageRequest[] = [];
   if (d.budget && before(d.budget.until, ctx)) d = { ...d, budget: null };
   if (d.github && before(d.github.until, ctx)) d = { ...d, github: null };
+  // #6867: the credit pause has no time of its own; only CreditBack lifts it.
   // The refresh: the full one due, or a project asked for whose burst has
   // settled, and none under way (nor GitHub's budget held).
   const r = d.refresh;
@@ -95,7 +107,8 @@ function decide(d0: Data, f: Facts, ctx: TransitionContext): Outcome<LState> {
     d = { ...d, refresh: { due: fullDue ? at(ctx, REFRESH_EVERY_MS) : r.due, asked: [], soon: null, n, running: n } };
   }
   // Grants: none while the bot is off, paused on a fault or on its cap.
-  const paused = (d.fault && !before(d.fault.until, ctx)) || (d.budget && !before(d.budget.until, ctx)) || !!d.github;
+  const paused = (d.fault && !before(d.fault.until, ctx)) || (d.budget && !before(d.budget.until, ctx))
+    || !!d.github || !!d.credit;
   if (f.acting && !paused) {
     const inUse: Slot[] = f.inUse.slice();
     let room = Math.max(0, f.settings.liveAtOnce - inUse.length);
@@ -154,7 +167,13 @@ function released(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): O
   }
   if (p.budget) d = { ...d, budget: { until: at(ctx, BUDGET_PAUSE_MS) } };
   if (p.github) d = { ...d, github: { until: p.github } };
+  if (p.credit && !d.credit) d = { ...d, credit: { since: ctx.now.toISOString(), words: e.payload.words ?? null } };
   return decide(d, f, ctx);
+}
+
+// #6867: credit is back (the balance read): grants resume from here.
+function creditBack(s: LState, _e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
+  return decide({ ...live(s, ctx), credit: null }, f, ctx);
 }
 
 function refreshAsked(s: LState, e: Event<any>, f: Facts, ctx: TransitionContext): Outcome<LState> {
@@ -192,23 +211,24 @@ export function botLane(deps: Deps = { staging: false }) {
   const look = (s: LState, _e: Event<any>, f: Facts, ctx: TransitionContext) => decide(live(s, ctx), f, ctx);
   const row = {
     Look: any(look), Tick: any(look), Released: any(released), RefreshAsked: any(refreshAsked),
+    CreditBack: any(creditBack),
     WorkSucceeded: { to: workDone }, WorkFailed: { to: workDone }, WorkExhausted: { to: workDone },
   };
   return defineMachine<LState, Facts>({
     name: MACHINE,
     version: 1,
     events: EVENTS,
-    create: ['Look', 'Released', 'RefreshAsked', 'Tick'],
+    create: ['Look', 'Released', 'RefreshAsked', 'Tick', 'CreditBack'],
     // What web appends: a new request or a chat line asking the lane to look again.
     web: ['RefreshAsked'],
     decode: (r) => ({ name: r.state as Name, data: r.data as Data }),
     facts: (tx) => readFacts(tx, deps),
     authorize: {
-      Look: () => ok(), Released: () => ok(), RefreshAsked: () => ok(),
+      Look: () => ok(), Released: () => ok(), RefreshAsked: () => ok(), CreditBack: () => ok(),
       Tick: (e) => (e.source.kind === 'timer' || e.source.kind === 'system' ? ok() : reject('not_the_clock')),
     },
     transitions: {
-      [NONE]: { Look: any(look), Tick: any(look), Released: any(released), RefreshAsked: any(refreshAsked), '*': { ignore: 'not_started' } },
+      [NONE]: { Look: any(look), Tick: any(look), Released: any(released), RefreshAsked: any(refreshAsked), CreditBack: any(creditBack), '*': { ignore: 'not_started' } },
       open: row,
     } as any,
   });

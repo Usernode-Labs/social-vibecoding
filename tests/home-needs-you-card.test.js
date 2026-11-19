@@ -214,6 +214,8 @@ test('the brand kit V2 tokens use yellow and green as marks, never as a row\'s g
   assert.match(css, /--wip-ink-soft: var\(--wip-ask-ink\);/);
   // One size at every width, outside any media query.
   assert.match(css, /\nhtml\[data-skin-wip\] #app-list \.app-card-title \{\s*font-size: var\(--wip-title-size\);/, 'at the start of a line: not inside a media query');
+  // On a phone alone it is a size down: four across leaves a name about 85px.
+  assert.match(css, /@media \(max-width: 639\.98px\) \{[^@]*html\[data-skin-wip\] #app-list \.app-card-title \{ font-size: var\(--wip-title-size-phone\);/);
 });
 
 test('Standard (WIP): a project\'s hub folds Invite and Make it public into its hero, and keeps Needs you in For you\'s row', () => {
@@ -250,4 +252,110 @@ test('Standard (WIP): a project\'s empty Needs you says so as good news, with th
   assert.match(beside, /door\('1', 'workshop'[\s\S]{0,400}door\('3', 'discussion'[\s\S]{0,400}door\('2', 'status'/);
   assert.equal(message('communities:reel.caughtUp.title'), 'You\'re all caught up');
   assert.equal(message('communities:reel.caughtUp.next'), 'While you\'re here');
+});
+
+test('Standard (WIP): a board card\'s line says who and when first, then the item\'s number as a code', () => {
+  const src = read('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.match(src, /<span className="dev-ws-wrow-sub">\{rowWords\(b, \{ whoFirst: wipLook \}\)\}<\/span>/);
+  assert.match(src, /if \(opts\.whoFirst\) \{\s*if \(b\.by && opts\.by !== false\) parts\.push\(b\.by\);\s*if \(b\.ago && opts\.ago !== false\) parts\.push\(b\.ago\);\s*parts\.push\(codeWords\(b\)\);/);
+  assert.equal(message('project:workRow.code.request', { number: 6465 }), 'R#6465');
+  assert.equal(message('project:workRow.code.change', { number: 5990 }), 'PR#5990');
+});
+
+test('Standard (WIP): the board ties a request to the changes made for it, and opens on the board', () => {
+  const { tiesOf } = loadTsx('frontend/src/features/dev-board/workshop/board-links.ts');
+  const row = (noun, num, links) => ({
+    getAttribute: (name) => ({ 'data-ws-noun': noun, 'data-ws-num': String(num), 'data-ws-for': links || null })[name] ?? null,
+  });
+  const request = row('request', 6464);
+  const other = row('request', 6420);
+  const change = row('change', 6460, '6464');
+  const both = row('change', 6500, '6420,6464');
+  const vote = row('vote', 2462);
+  const rows = [request, other, change, both, vote];
+  // From the request: each change made for it, request → change.
+  assert.deepEqual(tiesOf(request, rows), [{ from: request, to: change }, { from: request, to: both }]);
+  // From a change: the requests it is for that are on the board, still request → change.
+  assert.deepEqual(tiesOf(both, rows), [{ from: request, to: both }, { from: other, to: both }]);
+  assert.deepEqual(tiesOf(vote, rows), [], 'a vote is tied to nothing');
+  // Nothing is written to the board: the drawing is a layer of its own on <body>.
+  const src = read('frontend/src/features/dev-board/workshop/board-links.ts');
+  assert.match(src, /document\.body\.appendChild\(svg\);/);
+  assert.doesNotMatch(src, /classList|setAttribute\('class'|\.style\./, 'no class or style is written to a row');
+  const row2 = read('frontend/src/features/dev-board/workshop/work-row.tsx');
+  assert.match(row2, /\{\.\.\.\(board && wipLook && b\.n \? \{\s*'data-ws-noun': b\.noun,\s*'data-ws-num': String\(b\.n\),/);
+  // The Workshop's door opens the board, and the board is by stage alone.
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(ws, /if \(!wipLook \|\| tab !== 'workshop'\) return;\s*if \(was === 'all' \|\| was === 'bot'\) return;\s*if \(traversed\.current\) \{ traversed\.current = false; return; \}\s*cameFrom\.current = 'all';\s*setTab\('all'\);/);
+  assert.doesNotMatch(ws, /_setWorkshopGroup|GroupStrip/, 'in every look since request 6708: there is no switch to put on By stage');
+  assert.match(ws, /useEffect\(\(\) => \(wipLook && tab === 'all' \? watchBoardLinks\(\) : undefined\), \[wipLook, tab\]\);/);
+  // Advanced mode is on <html> for the look's one detail kept for it.
+  assert.match(read('frontend/src/head.html'), /root\.setAttribute\('data-interface-mode', basic \? 'basic' : 'advanced'\);/);
+  assert.match(read('public/css/app.css'), /html\[data-skin-wip\]\[data-interface-mode="basic"\] #dev-kanban \[data-attr-field="category"\] \{ display: none; \}/);
+});
+
+test('Standard (WIP): the menu is the token set\'s own panel, and a pinned project says who is in it', () => {
+  const css = read('public/css/app.css');
+  // The sidebar and the phone's bar are one panel, drawn from the menu's tokens at every width.
+  assert.match(css, /html\[data-skin-wip\] #platform-tabs \{[^}]*background: var\(--wip-nav-bg\);[^}]*font-family: var\(--wip-nav-font\);/);
+  assert.match(css, /html\[data-skin-wip\]\[data-wip-tokens="brand"\] \{\s*--wip-nav-bg: #3c7bd8;/, 'the brand sets wear the brand\'s own sky');
+  assert.match(css, /\[aria-current="page"\] \{\s*background: var\(--wip-nav-on-bg\);\s*box-shadow: none;\s*color: var\(--wip-nav-on-ink\);/);
+  // The brand is the logotype at the panel's top, and the top bar starts beside the panel.
+  assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*mask: var\(--wip-nav-brand-logo\) left center \/ contain no-repeat;/);
+  assert.match(css, /#platform-header \{ padding-inline-start: calc\(var\(--wip-nav-w\) \+ 1rem\); \}/);
+  // A folded sidebar opens from its arrow alone.
+  assert.match(read('frontend/src/features/nav/rail-peek.ts'),
+    /export function enterPeek\(\): void \{\s*clearPeekTimer\(\);[^}]*hasAttribute\('data-skin-wip'\)\) return;/);
+  // A pinned project: members, then contributors, each on its line; no sentence; the same air on four sides.
+  const grid = read('frontend/src/features/home/app-grid.tsx');
+  assert.match(grid, /t\('home:grid\.tile\.members', \{ count: app\.members, formatted: app\.members\.toLocaleString\(\) \}\)/);
+  assert.equal(message('home:grid.tile.members_other', { formatted: '1,284', count: 1284 }), '1,284 members');
+  assert.match(read('frontend/src/features/home/home.js'), /members: Math\.max\(0, Number\(app\.member_count\) \|\| 0\),/);
+  assert.match(css, /html\[data-skin-wip\] #app-list \.app-card-desc \{ display: none; \}/);
+  assert.match(css, /html\[data-skin-wip\] #app-list \{ padding: var\(--wip-cell-pad\); \}/);
+  // A recent thread is its title, its project and when.
+  assert.match(css, /html\[data-skin-wip\] #home-needs-card \.wip-item-kind \{ display: none; \}/);
+});
+
+test('Standard (WIP): the Highlighter token set, whole in light and in dark, and offered by the menu', () => {
+  const css = read('public/css/app.css');
+  const ids = ['highlighter'];
+  // Eight sister sets were drawn with it and removed: none of their rules or names is left.
+  for (const gone of ['window', 'denim', 'afterdark', 'hands', 'shipped', 'frontpage', 'logosheet', 'greenhill']) {
+    assert.ok(!css.includes(`[data-wip-tokens="${gone}"]`), `${gone} has no rule`);
+    assert.ok(!read('frontend/locales/en/settings.json').includes(`experimental.wipTokens.${gone}`), `${gone} has no name`);
+  }
+  const names = (body) => [...body.matchAll(/(--(?:wip|lit)-[a-z0-9-]+)\s*:/g)].map((m) => m[1]).sort();
+  for (const id of ids) {
+    const light = css.match(new RegExp(`html\\[data-skin-wip\\]\\[data-wip-tokens="${id}"\\] \\{([^}]*)\\}`));
+    const dark = css.match(new RegExp(`html\\[data-skin-wip\\]\\[data-wip-tokens="${id}"\\]\\.dark \\{([^}]*)\\}`));
+    assert.ok(light && dark, `${id} has a light rule and a dark rule`);
+    // A light value never shows through in the dark: the dark rule names every token the light one does.
+    assert.deepEqual(names(dark[1]), names(light[1]), `${id}: the same tokens in both`);
+    for (const token of ['--wip-page-bg', '--wip-card-bg', '--wip-ink', '--wip-cta-from', '--wip-nav-bg', '--wip-nav-on-bg', '--lit-tint']) {
+      assert.ok(names(light[1]).includes(token), `${id} sets ${token}`);
+    }
+    assert.equal(typeof message(`settings:experimental.wipTokens.${id}`), 'string', `${id} has its name in the menu`);
+  }
+  // The three lists that must agree: the boot script's, the look module's, the picker's names.
+  const boot = read('frontend/src/head.html').match(/const TOKEN_SETS = \[([^\]]*)\];/)[1].replace(/['\s]/g, '').split(',');
+  assert.deepEqual(boot, ['brand', 'brand2', ...ids]);
+  const mod = read('frontend/src/lib/skin.ts').match(/export const WIP_TOKEN_SETS = \[([\s\S]*?)\] as const;/)[1];
+  assert.deepEqual([...mod.matchAll(/'([a-z0-9]+)'/g)].map((m) => m[1]), ['current', 'brand', 'brand2', ...ids]);
+  const picker = read('frontend/src/features/frame/look-picker.tsx');
+  // In the Look menu it is an entry beside the looks, 'wip:<set>', named with (WIP) like every drawing of that look.
+  for (const id of ids) assert.ok(picker.includes(`'wip:${id}': 'settings:experimental.wipTokens.${id}',`), `${id} is named in the picker`);
+  assert.equal(message('settings:experimental.wipTokens.brand'), 'Homeroom brand kit (WIP)');
+  assert.equal(message('settings:experimental.wipTokens.brand2'), 'Homeroom brand kit V2 (WIP)');
+  assert.equal(message('settings:experimental.wipTokens.highlighter'), 'Highlighter (WIP)');
+  assert.doesNotMatch(picker, /data-look-tokens/, 'no second menu for the token sets');
+  const skinMod = require('./lib/render-tsx').loadTsx('frontend/src/lib/skin.ts');
+  assert.deepEqual(skinMod.LOOK_CHOICES.slice(0, 5), ['standard', 'wip', 'wip:brand', 'wip:brand2', 'wip:highlighter']);
+  assert.deepEqual(skinMod.parseLookChoice('wip:brand2'), { skin: 'wip', tokens: 'brand2' });
+  assert.deepEqual(skinMod.parseLookChoice('wip'), { skin: 'wip', tokens: 'current' });
+  assert.deepEqual(skinMod.parseLookChoice('nope'), { skin: 'standard', tokens: 'current' });
+  assert.equal(skinMod.lookChoice('wip', 'highlighter'), 'wip:highlighter');
+  assert.equal(skinMod.lookChoice('brand', 'highlighter'), 'brand', 'a token set belongs to Standard (WIP) alone');
+  // The sidebar's logotype is drawn in the menu's own ink, over nothing of the bar's glass.
+  assert.match(css, /html\[data-skin-wip\] #platform-tabs::before \{[^}]*background: var\(--wip-nav-ink-strong\);/);
 });

@@ -84,7 +84,9 @@ test('shots object storage, publication, and retakes without byte columns agains
     const { rows: [after] } = await pool.query('SELECT object_key, dense_object_key FROM shot_run_files WHERE run_id = $1', [runId]);
     assert.deepEqual(after, before);
     assert.ok(store.files.has(media.objectKey(different)), 'the uploaded original survived transaction rollback');
-    assert.equal((await media.sweep(pool, store)).removed, 2, 'only the failed save’s two unreferenced objects are collected');
+    // #6825: the failed save uploaded its still's smaller copies in the same
+    // batch, so four unreferenced objects are left to collect, not two.
+    assert.equal((await media.sweep(pool, store)).removed, 4, 'only the failed save’s unreferenced objects are collected');
     assert.deepEqual(await media.bytes(store, { object_key: after.dense_object_key }), original);
   });
 
@@ -167,6 +169,47 @@ test('shots object storage, publication, and retakes without byte columns agains
     } finally { await owner.query('ROLLBACK'); owner.release(); await retake; }
     assert.deepEqual((await control.filesFor(pool, attempt))[0].data, data);
     await control.remove(pool, attempt);
+  });
+
+  // #6825: a still is saved with its smaller WebP copies and a blurred
+  // preview, beside the original, and the route serves a copy at its own
+  // address with its own ETag.
+  await t.test('a saved still keeps a thumbnail, a screen copy and a preview, served by size', async (t) => {
+    assert.ok(published.thumb_object_key, 'the thumbnail was stored');
+    assert.ok(published.screen_object_key, 'the screen copy was stored');
+    assert.match(published.placeholder, /^data:image\/webp;base64,/);
+    assert.ok(published.thumb_bytes < original.length);
+    assert.ok(Math.max(published.thumb_width, published.thumb_height) <= 600);
+    assert.ok(Math.max(published.screen_width, published.screen_height) <= 1200);
+    // Cleanup keeps objects only the copies refer to: they survive a sweep.
+    await media.sweep(pool, store);
+    for (const key of ['thumb_object_key', 'screen_object_key']) {
+      const copy = await media.bytes(store, published, { key });
+      assert.equal(sha(copy), published[key.replace('_object_key', '_sha256')]);
+    }
+    t.mock.method(require('../src/db/pool'), 'getPool', () => pool);
+    const express = require('express');
+    const app = express();
+    app.use((req, _res, next) => { req.user = { id: user.id }; next(); });
+    app.use(require('../src/routes/shots').shotsRoutes({ shots: { present: true } }, { store }));
+    const server = app.listen(0);
+    await new Promise((r) => server.once('listening', r));
+    t.after(() => new Promise((r) => { server.closeAllConnections(); server.close(r); }));
+    const url = `http://127.0.0.1:${server.address().port}/api/apps/media/proposals/${session.id}/shots/${published.id}`;
+    for (const [size, sha256, bytes] of [['thumb', published.thumb_sha256, published.thumb_bytes],
+      ['screen', published.screen_sha256, published.screen_bytes]]) {
+      const response = await fetch(`${url}?size=${size}`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'image/webp');
+      assert.equal(response.headers.get('etag'), `"${sha256}"`);
+      const body = Buffer.from(await response.arrayBuffer());
+      assert.equal(body.length, bytes);
+      assert.equal(sha(body), sha256);
+      assert.equal(body.subarray(8, 12).toString('latin1'), 'WEBP');
+    }
+    // A repeat is a 304, and the original is still served whole.
+    assert.equal((await fetch(`${url}?size=thumb`, { headers: { 'if-none-match': `"${published.thumb_sha256}"` } })).status, 304);
+    assert.equal((await fetch(url + '?density=device')).headers.get('content-length'), String(original.length));
   });
 
 });

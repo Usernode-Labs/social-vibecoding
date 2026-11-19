@@ -538,9 +538,10 @@ function verifyEdgeGrant(token) {
   });
 }
 
-function signEdgeCookie({ uid, appId, host, sid = null }) {
+function signEdgeCookie({ uid, appId, host, sid = null, storageAccess = false }) {
   const payload = { uid, appId, host, pur: PUR_EDGE_COOKIE };
   if (sid) payload.sid = sid;
+  if (storageAccess) payload.storageAccess = true;
   return jwt.sign(payload, edgeSecret(), {
     algorithm: 'HS256',
     issuer: ISSUER,

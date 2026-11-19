@@ -129,7 +129,9 @@ test('the make screen loads and renders the quota without reset copy', () => {
   assert.equal(message('dialogs:allowance.headline.used', { count: 3, used: 1 }), '1 of 3 app slots used');
   assert.equal(message('dialogs:allowance.headline.used', { count: 1, used: 1 }), '1 of 1 app slot used');
   // Make it and Import it are pale at the limit, and only then or while busy.
-  assert.match(source, /const \{ blocked: quotaBlocks \} = useAppAllowance\(\);/);
+  // #6842: the screen reads the reason too, so the pale button's line names
+  // the limit that actually applies.
+  assert.match(source, /const \{ blocked: quotaBlocks, reason: quotaReason \} = useAppAllowance\(\);/);
   assert.match(source, /disabled=\{dictating \|\| busy \|\| quotaBlocks\}/,
     'the visible at-limit screen must not offer a submit the server will refuse');
   assert.match(source, /blocked=\{quotaBlocks\}/);

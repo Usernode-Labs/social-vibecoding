@@ -29,7 +29,7 @@ import { AppIconContent, appIconKind } from '../../apps/app-card-view';
 import type { FootTone } from './card-model';
 import { dotLine } from './frame/topic-page';
 import type { RequestSpecCard } from './request-model';
-import { TouchesPicture, readTouches } from '../workshop/touches';
+import { Diagram, readDiagram } from '../../../lib/diagram/diagram';
 
 /**
  * Whether the page draws the card (the standard look and the brand look), and
@@ -417,24 +417,25 @@ export function PlanWords({ plan }: { plan: RequestSpecCard }): ReactNode {
  * are taken after them), or this version never passed them. A change that
  * is past its tests with no picture says nothing: there is no reason to give.
  */
-export function NoPicture({ none, phase, stopped, touches, diagramLed = false }: {
+export function NoPicture({ none, phase, stopped, diagram, diagramLed = false }: {
   none: boolean;
   phase: string;
   stopped: boolean;
-  /** #4490: "What it touches" for this head, if it was read for it. */
-  touches?: unknown;
+  /** #6832: the change's diagram record, if one was read for it. */
+  diagram?: unknown;
   /** The page already leads with the author's diagram, so it needs no box. */
   diagramLed?: boolean;
 }): ReactNode {
   const t = useMessages('project');
-  const touchesPicture = useMemo(() => readTouches(touches), [touches]);
+  const picture = useMemo(() => readDiagram(diagram), [diagram]);
   if (none) {
-    // #4490: nothing on screen changes, so no shots were asked for. The
-    // picture of what did change ("What it touches") says it better than the
-    // box does, and its foot still says nothing on screen changes.
+    // #6832: nothing on screen changes, so no shots were asked for. The
+    // author's picture (what you'd see, what happened, or how it works)
+    // says what the change does; with none, the card says so and Homeroom
+    // bot's follow-up adds one.
     if (diagramLed) return null;
-    if (touchesPicture) return <TouchesPicture t={touchesPicture} nothingVisible />;
-    return <ShotsWait state="none" title={t('project:topic.card.shots.noneTitle')} text={t('project:topic.card.shots.noneText')} />;
+    if (picture) return <Diagram d={picture} source="author" />;
+    return <ShotsWait state="no-picture" title={t('project:topic.card.shots.noPictureTitle')} text={t('project:topic.card.shots.noPictureText')} />;
   }
   if (phase === 'testing') return <ShotsWait state="waiting" title={t('project:topic.card.shots.notYetTitle')} text={t('project:topic.card.shots.notYetText')} />;
   if (phase === 'failed') {

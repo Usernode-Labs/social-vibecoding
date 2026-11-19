@@ -195,7 +195,7 @@ test('a draft the chat\'s turn just opened answers that message, told it is star
   let prompt = '';
   const out = await draftBot.opened({ async query() { return { rows: [] }; } }, {}, {
     bot: { id: 1 }, user: { id: 10, username: 'evan' }, settings: {}, conversationId: 7,
-    message: { id: 61, content: 'I want to change it live', threadRootId: 50 }, draftId: 3,
+    message: { id: 61, content: 'I want to change an app live', threadRootId: 50 }, draftId: 3,
     deps: {
       mayor: {
         ...realMayor, answerKey: (id) => `key-${id}`, turnsLastHour: async () => 10_000, botKey: async () => 'sk', recordTurn: async () => {},

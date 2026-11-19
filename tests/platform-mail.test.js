@@ -531,6 +531,29 @@ test('the password-reset mail carries the reset link and no secrets beyond it', 
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
 });
 
+test('the password-reset mail has a button, and still prints the address under it (#6746)', async () => {
+  const seen = [];
+  await mail.sendPasswordResetMail({ mailTransport: { send: async (m) => { seen.push(m); } } }, 'a@b.invalid', 'sample');
+  const { url } = seen[0];
+  const msg = templates.buildMessage('password_reset', seen[0]);
+  // The button: a filled link with words on it, as the other action mails have.
+  const button = msg.html.match(/<a href="([^"]+)" style="[^"]*background:#0a6ee0[^"]*">([^<]+)<\/a>/);
+  assert.ok(button, 'a filled button');
+  assert.equal(button[1], url);
+  assert.equal(button[2], 'Set a new password');
+  // The address in full as readable text, for a client that drops the button
+  // or rewrites its link: it can be copied into a browser.
+  assert.ok(msg.html.includes(`>${url}</a>`), 'the address is printed');
+  assert.ok(msg.html.indexOf(`>${url}</a>`) > button.index, 'under the button');
+  assert.ok(msg.text.includes(url));
+  // The admin console previews a template with the action's sample: the same
+  // address the real mail carries for a token of that name.
+  const { ACTIONS } = require(path.join(ROOT, 'src/services/mail/actions.js'));
+  const { PRODUCTION_ORIGIN } = require(path.join(ROOT, 'src/services/cli-auth-constants.js'));
+  assert.equal(ACTIONS.password_reset.sample.url, 'https://app.onhomeroom.com/#reset-password/sample');
+  assert.equal(url, `${PRODUCTION_ORIGIN}/#reset-password/sample`);
+});
+
 test('the release mail promises the code only on the arm that sends one (#1548)', () => {
   // Following the no-account link asks for a code straight away, so the copy
   // has to say so: the recipient is about to get a second email, and without

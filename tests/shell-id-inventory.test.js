@@ -58,6 +58,12 @@ const withInteriors = `${after}\n${lazyInteriorsHtml()}`;
 
 // Ids a conversion chunk deliberately removed, each with the reason.
 const RETIRED_IDS = {
+  // ── The native-offline proposal (18 Nov 2026) ──────────────────────
+  // The full-width amber strip is gone: the header says it now, in
+  // #connection-status (features/header/connection-status.tsx), as native
+  // apps put it in their title bar. dapp.json's two offline checks select the
+  // new status instead.
+  'offline-banner': 'The amber offline strip, replaced by the header\'s #connection-status (native-offline proposal).',
   // ── One Home (#6361): the Discover screen (#apps) is retired ────────
   // Home's Communities to join is the directory, and #apps / #apps/<slug>
   // rewrite to Home and to the project's hub (app.js), so the screen and its
@@ -430,6 +436,11 @@ const RETIRED_IDS = {
 
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
+  // ── The native-offline proposal (18 Nov 2026) ──────────────────────
+  // features/header/connection-status.tsx: the header's word on the
+  // connection ("Connecting…", "No internet", "Updated 12:41"), a pill
+  // fixed under the bar while Homeroom cannot be reached. Prerendered hidden.
+  'connection-status': 'The header\'s connection status, in place of the offline strip (native-offline proposal).',
   // ── The change preview's redesign (Nov 2026) ───────────────────────
   // features/staging/staging-overlay.tsx: one header in the theme's colours
   // with the change's name, its vote and the Preview | Before & after switch,
@@ -897,7 +908,7 @@ const ADDED_IDS = {
   // in effects, so the first render must match the prerender), which is why
   // these ids are present here even on a build where no store listing has
   // been published and the strip can never show.
-  'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits under #offline-banner and stacks with it.',
+  'mobile-install-banner': 'The phone-browser strip offering the native app (#1372). Sits at the top of the screen; the offline strip it used to stack under is gone.',
   'mobile-install-open': 'The strip\'s primary control. An anchor to the store when a listing is published for this OS (href from app_version_configs.update_url via GET /api/public/mobile-app); a button revealing the Add-to-Home-Screen steps when none is (#1513).',
   'mobile-install-dismiss': 'Dismisses the strip for this session; the answer is kept in sessionStorage, so the next visit is offered the app once more (#1514).',
   // #2255 — the eight-step welcome tour, and the two ids it took off the

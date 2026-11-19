@@ -431,18 +431,6 @@
     "text": "By open items",
     "description": "Button above the list of categories on a project's All items page: lists the categories with the most open (not yet done) items first."
   },
-  "allItems.group.label": {
-    "text": "Group the board by",
-    "description": "Accessible name of the two tabs at the top of a project's All items page that choose how the items are grouped: by category or by stage. Group is a verb."
-  },
-  "allItems.group.category": {
-    "text": "By category",
-    "description": "Name of an icon tab at the top of a project's All items page: groups the items by what part of the project they are about. Read as the tab's tooltip and by screen readers."
-  },
-  "allItems.group.stage": {
-    "text": "By stage",
-    "description": "Name of an icon tab at the top of a project's All items page: groups the items into columns by how far along they are (open, in progress, voting, done). Read as the tab's tooltip and by screen readers."
-  },
   "boardEmpty.filtered": {
     "text": "Nothing here matches the current search and filters.",
     "description": "Note shown in place of the items on a project's Hub or All items page when the search box or the filters hide every item."
@@ -658,6 +646,10 @@
   "workshop.dash.votes_one": {
     "text": "waiting on a vote",
     "description": "Label under the third large figure on a project's Workshop tab: how many proposals are waiting for votes. The number is drawn above it, so it is not in the text."
+  },
+  "workshop.dash.asOf": {
+    "text": "as of {{time}}",
+    "description": "A small line under the Workshop's waiting-on-votes figure while Homeroom cannot be reached and the figure was saved on this device earlier: when it is from. {{time}} is a time of day such as 12:41, or a short date such as Nov 17. Lower case, no full stop."
   },
   "workshop.dash.votes_other": {
     "text": "waiting on votes",
@@ -1070,6 +1062,14 @@
   "workRow.closed_other": {
     "text": "closed {{requests}}",
     "description": "One fact in the line under a live change's title in a project's lists of work: the requests this change settled when it went live. A past-tense verb; the change closed them. {{requests}} is the list of their numbers, for example \"#4455 and #4452\". {{count}} is how many requests there are and only picks the plural form."
+  },
+  "workRow.code.request": {
+    "text": "R#{{number}}",
+    "description": "A request's number as a short code at the end of the line over a card's title on a project's board, under the Standard (WIP) look, for example \"snait · 29 Oct · R#6465\". R stands for request. {{number}} is the request's number."
+  },
+  "workRow.code.change": {
+    "text": "PR#{{number}}",
+    "description": "A change's number as a short code at the end of the line over a card's title on a project's board, under the Standard (WIP) look, for example \"snait · 29 Oct · PR#5990\". PR is the usual short name for a proposed change. {{number}} is the change's number."
   },
   "workRow.facts.pair": {
     "text": "{{first}} · {{second}}",
@@ -3635,6 +3635,30 @@
     "text": "Plan for #{{number}} · building",
     "description": "On a request's page, under the title of Homeroom bot's plan for it once somebody pressed Build it: the bot is building what the plan describes. It replaces the line that said the plan waits for Build it. {{number}} is the request's number."
   },
+  "topic.request.botPlan.settled.vote": {
+    "text": "Up for a vote",
+    "description": "On a request's page, the line Homeroom bot's plan card says once its build finished and made a change: the change waits for the group's votes, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.settled.live": {
+    "text": "Live",
+    "description": "On a request's page, the line Homeroom bot's plan card says once the change its build made was approved and went live, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.settled.buildFailed": {
+    "text": "Stopped: the build didn't finish",
+    "description": "On a request's page, the line Homeroom bot's plan card says when Homeroom bot's build of the plan did not finish, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.settled.changeClosed": {
+    "text": "Stopped: its change was closed",
+    "description": "On a request's page, the line Homeroom bot's plan card says when the change its build made was closed without going live while the request stays open, in the same words the rest of the page says for the request."
+  },
+  "topic.request.botPlan.change": {
+    "text": "Change #{{number}}",
+    "description": "On a request's page, the link under the lines of Homeroom bot's plan once that plan was built: names the change it made and opens it. {{number}} is the change's number."
+  },
+  "topic.request.botPlan.changeUnnumbered": {
+    "text": "Its change",
+    "description": "On a request's page, the link under the lines of Homeroom bot's plan once that plan was built, when the change it made has no number yet: opens the change."
+  },
   "topic.request.botPlan.readWhole": {
     "text": "Read the whole plan",
     "description": "On a request's page, a row under the lines of Homeroom bot's plan: opens the whole written plan."
@@ -6123,6 +6147,10 @@
     "text": "Built, and its checks pass.",
     "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building and its checks pass."
   },
+  "topic.thread.page.failingMine": {
+    "text": "Built, but its checks don't pass. It can go up for a vote, and it merges only once they pass.",
+    "description": "Line under the Put it up for a vote button on a change's card on a request's page: the viewer's own change has finished building, and its checks ran and failed."
+  },
   "topic.thread.page.proposeAction": {
     "text": "Put it up for a vote",
     "description": "Button on a change's card on a request's page, and its row in the card's ⋯ menu: puts the viewer's own built change up for the group to vote on."
@@ -6539,10 +6567,6 @@
     "text": "Status",
     "description": "A request's or a change's page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the card in the context column that says where the request or the change stands."
   },
-  "frame.allItems.show": {
-    "text": "Show",
-    "description": "All items, the Workshop's page of every open request and change, when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). Small label over the two rows in the side column that choose whose items the list shows."
-  },
   "frame.place.general": {
     "text": "Where everyone in {{project}} talks.",
     "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title: what the channel is for, as the standard page's line says it."
@@ -6552,7 +6576,7 @@
     "description": "A project's #general channel when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The small label over the card beside the conversation that says how many members the channel reaches and holds its Mute button."
   },
   "frame.allItems.purpose": {
-    "text": "Every request and change in {{project}}, grouped by category or by stage.",
+    "text": "Every request and change in {{project}}, by stage.",
     "description": "A project's All items page when the interface is drawn in one of the frame's looks (an admin's preview in Settings > Experimental). The one sentence under the page's title; {{project}} is the project's name."
   },
   "topic.change.gate.closesClosed": {
@@ -6982,5 +7006,65 @@
   "topic.card.shots.screenOf": {
     "text": "{{index}} of {{total}} screens",
     "description": "Small line beside the row of screen pictures under a change's before and after picture: which screen the picture above is showing. {{total}} is 2 or more."
+  },
+  "diagram.kind.seen": {
+    "text": "What you’d see",
+    "description": "Small-caps label over a picture for a change that changes nothing on screen, when the picture shows one element (a status line, a message, a notice or a count) before the change and after it."
+  },
+  "diagram.kind.moment": {
+    "text": "What happened",
+    "description": "Small-caps label over a picture for a change that changes nothing on screen, when the picture tells a short timeline of a real incident from the request: its date, the change it happened to, and how long it lasted."
+  },
+  "diagram.kind.steps": {
+    "text": "How it works",
+    "description": "Small-caps label over a picture for a change that changes nothing on screen, when the picture shows a before row and an after row of small drawings, each with a short caption."
+  },
+  "diagram.seen.before": {
+    "text": "Before",
+    "description": "Label over the left side of a “What you’d see” picture: the element as it is now, before the change."
+  },
+  "diagram.seen.after": {
+    "text": "After",
+    "description": "Label over the right side of a “What you’d see” picture: the element as it is once the change is in. Also labels the second row of a “How it works” picture."
+  },
+  "diagram.moment.now": {
+    "text": "Now",
+    "description": "Label over the second part of a “What happened” picture: what happens now, after the change."
+  },
+  "diagram.moment.head": {
+    "text": "{{date}} · {{ref}} · {{lasted}}",
+    "description": "The head line of a “What happened” picture: when the incident happened, the change it happened to, and how long it lasted. {{date}} is a date such as “18 Nov 2026”; {{ref}} names a change or request such as “PR #6699”; {{lasted}} is a duration such as “about 25 minutes”. Keep the middle dots and the spaces around them."
+  },
+  "diagram.moment.headNoLasted": {
+    "text": "{{date}} · {{ref}}",
+    "description": "The head line of a “What happened” picture when the author did not say how long it lasted: when it happened and the change it happened to. {{date}} is a date such as “18 Nov 2026”, {{ref}} names a change or request such as “PR #6699”. Keep the middle dot."
+  },
+  "diagram.steps.retry": {
+    "text": "Tried again",
+    "description": "Words a screen reader hears beside a step of a “How it works” picture that was tried again, drawn with a small retry mark."
+  },
+  "diagram.text.seen": {
+    "text": "{{where}}. Before: {{before}}. After: {{after}}.",
+    "description": "A “What you’d see” picture said in words, for a screen reader. {{where}} names the element the picture shows; {{before}} and {{after}} are its words on each side."
+  },
+  "diagram.text.moment": {
+    "text": "{{date}}, {{ref}}. {{events}}. Now: {{now}}.",
+    "description": "A “What happened” picture said in words, for a screen reader (the picture's label is read before it, so it is not repeated here). {{date}} is when it happened, {{ref}} the change it happened to, {{events}} what happened then, and {{now}} what happens now, each already joined into a list."
+  },
+  "diagram.text.steps": {
+    "text": "Before: {{before}}. After: {{after}}.",
+    "description": "A “How it works” picture said in words, for a screen reader (the picture's label is read before it, so it is not repeated here). {{before}} and {{after}} are each that row's captions in order."
+  },
+  "topic.card.shots.noPictureTitle": {
+    "text": "No picture yet",
+    "description": "Heading in the box where a change's picture would be, on a change that changes nothing on screen and has no picture of what it does yet."
+  },
+  "topic.card.shots.noPictureText": {
+    "text": "Nothing on screen changes, and this change has no picture of what it does yet. Homeroom bot is adding one.",
+    "description": "Sentence under “No picture yet” in the box where a change's picture would be."
+  },
+  "topic.details.touches": {
+    "text": "What it touches",
+    "description": "Sub-heading in the Details sheet of a change, over the picture of which parts of the project the change edits: screens, server, database and tests, with a count of files."
   }
 }

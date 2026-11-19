@@ -280,7 +280,10 @@ function FreshBadge({ count, className = '' }: { count: number; className?: stri
   const t = useMessages('messages');
   if (count <= 0) return null;
   return (
-    <span className={`inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-bold ${className}`} data-ai-fresh="">
+    // `relative` holds the spoken label (sr-only, absolute) inside the badge:
+    // a chip scrolled past the rail's end would otherwise let its label sit
+    // past the screen's edge and widen the whole list (#6838).
+    <span className={`relative inline-flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full px-1.5 text-xs font-bold ${className}`} data-ai-fresh="">
       <span aria-hidden="true">{count}</span>
       <span className="sr-only">{t('messages:ai.filter.fresh', { count })}</span>
     </span>
@@ -701,7 +704,7 @@ export function AiLists({
           // picked a project, however few there are, so All is a tap away.
           <div className="flex items-start" data-ai-project-filter="">
             <FadeRail role="group" aria-label={t('messages:ai.filter.label')} data-ai-project-chips="" className="min-w-0 flex-1">
-              <Chip size="bar" className={`px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
+              <Chip size="bar" className={`gap-2 px-4 ${CHIP_EDGE}`} selected={!picked.length} onClick={() => setOnly([])}>
                 {t('messages:ai.filter.all')}
                 <FreshBadge count={freshAll} className={!picked.length ? 'bg-white text-zinc-900 dark:bg-zinc-900 dark:text-white' : 'bg-violet-600 text-white'} />
               </Chip>

@@ -509,3 +509,111 @@ test('storeAppFile: refuses a person\'s upload with no person, and an app file i
   await assert.rejects(appFiles.storeAppFile(fakePool(), fakeStore(), { ...base, owner: 'app', staging: true }), TypeError);
   await assert.rejects(appFiles.storeAppFile(fakePool(), fakeStore(), { ...base, owner: 'nobody', staging: false }), TypeError);
 });
+
+// ── The store's read deadline ──────────────────────────────────────
+//
+// A store whose gateway holds a read (it once answered a 504 after 60 s,
+// twice with the client's retry) fails the read after the deadline, as a
+// StoreTimeout the read route turns into a 503; a store that has started
+// answering is not cut, and neither is an upload.
+
+const http = require('node:http');
+
+async function withSlowStore(fn) {
+  const held = new Set();
+  const server = http.createServer((req, res) => {
+    if (req.url === '/silent') { held.add(res); return; }
+    if (req.url === '/slow-body') {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.write('first ');
+      setTimeout(() => res.end('last'), 120);
+      return;
+    }
+    res.end('ok');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const transport = appFiles.deadlineTransport(http, 60);
+  const call = (method, path) => new Promise((resolve, reject) => {
+    const req = transport.request({ host: '127.0.0.1', port, method, path }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve(body));
+    });
+    req.on('error', reject);
+    req.end();
+    call.last = req;
+  });
+  try {
+    await fn(call);
+  } finally {
+    for (const res of held) res.destroy();
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test('store reads: a store that sends nothing fails the read after the deadline', async () => {
+  await withSlowStore(async (call) => {
+    const started = Date.now();
+    await assert.rejects(call('GET', '/silent'), (err) => err.code === 'StoreTimeout');
+    assert.ok(Date.now() - started < 1000);
+    await assert.rejects(call('HEAD', '/silent'), (err) => err.code === 'StoreTimeout');
+  });
+});
+
+test('store reads: a body slower than the deadline is not cut once the store answered', async () => {
+  await withSlowStore(async (call) => {
+    assert.equal(await call('GET', '/slow-body'), 'first last');
+  });
+});
+
+test('store reads: an upload has no deadline (its answer comes after the whole body)', async () => {
+  await withSlowStore(async (call) => {
+    const pending = call('PUT', '/silent');
+    const outcome = await Promise.race([
+      pending.then(() => 'answered', (err) => err.code),
+      new Promise((resolve) => setTimeout(() => resolve('still waiting'), 200)),
+    ]);
+    assert.equal(outcome, 'still waiting');
+    call.last.destroy();
+    await pending.catch(() => {});
+  });
+});
+
+test('isMissingObject: only the store saying the key is not there', () => {
+  assert.equal(appFiles.isMissingObject({ code: 'NoSuchKey' }), true);
+  assert.equal(appFiles.isMissingObject({ code: 'NotFound' }), true);
+  assert.equal(appFiles.isMissingObject({ code: 'StoreTimeout' }), false);
+  assert.equal(appFiles.isMissingObject(new Error('Request failed after 1 retries: Error: Retryable HTTP status: 504')), false);
+  assert.equal(appFiles.isMissingObject(null), false);
+});
+
+test('createObjectStore: the minio client reads through the deadline, and a missing key stays a 404', async () => {
+  const server = http.createServer((req, res) => {
+    if (req.url.includes('location')) { // the client asks the bucket's region first
+      res.writeHead(200, { 'content-type': 'application/xml' });
+      return res.end('<?xml version="1.0" encoding="UTF-8"?><LocationConstraint>us-east-1</LocationConstraint>');
+    }
+    if (req.url.includes('silent')) return; // held until the server closes
+    res.writeHead(404, { 'content-type': 'application/xml' });
+    res.end('<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code>'
+      + '<Message>The specified key does not exist.</Message></Error>');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const store = appFiles.createObjectStore({
+    storageEndpoint: `http://127.0.0.1:${server.address().port}`,
+    storageAccessKey: 'test-access',
+    storageSecretKey: 'test-secret',
+    storageBucket: 'bucket',
+  }, { readFirstByteMs: 80 });
+  try {
+    const started = Date.now();
+    await assert.rejects(store.getObjectStream('silent'), (err) => err.code === 'StoreTimeout');
+    assert.ok(Date.now() - started < 2000);
+    await assert.rejects(store.getObjectStream('gone'), (err) => appFiles.isMissingObject(err));
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

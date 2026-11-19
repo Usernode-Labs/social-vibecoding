@@ -152,6 +152,73 @@ test('the wait ends on a quiet page at once and gives up after the 3 second cap'
   assert.equal(moving.clock(), 3000);
 });
 
+// PR #6831 (19 Nov 2026): the header's building spinner (#improve-working-dot)
+// was caught at a different angle on each side, so the only "change" on both
+// screens was a 17 x 12 px box in the corner and the card zoomed onto it. A
+// still in a shots browser is taken with the page's animations stopped.
+test('with SHOTS_SCREENSHOT_SETTLE a still is taken with animations stopped, both captures', () => {
+  assert.doesNotMatch(HANDLE, /animations:/, 'the fixture is the unpatched tool');
+  const patched = patchSource(HANDLE);
+  const handler = handlerOf(patched);
+  const options = handler.slice(handler.indexOf('const options = {'), handler.indexOf('};', handler.indexOf('const options = {')));
+  assert.match(options, /scale: process\.env\.SHOTS_SCREENSHOT_SCALE === "device" \? "device" : params2\.scale,\n {10}animations: process\.env\.SHOTS_SCREENSHOT_SETTLE === "1" \? "disabled" : void 0,\n/);
+  // The answer's CSS-scale capture spreads the same options, so it is stopped too.
+  assert.match(patched, /tab2\.page\.screenshot\(\{ \.\.\.options, scale: "css" \}\)/);
+  assert.doesNotThrow(() => new Function('require', 'module', 'exports', toolOf(patched)));
+});
+
+// The two page scripts a close-up runs around its capture, as the browser runs them.
+function closeupScripts(patched) {
+  const scripts = [];
+  let at = 0;
+  for (;;) {
+    const start = patched.indexOf('if (still) await tab2.page.evaluate(', at);
+    if (start === -1) break;
+    const from = start + 'if (still) await tab2.page.evaluate('.length;
+    const end = patched.indexOf('}).catch(() => {});', from) + 1;
+    scripts.push(patched.slice(from, end));
+    at = end;
+  }
+  return scripts;
+}
+
+test('a close-up stops the page\'s animations around its own capture and plays them again after', () => {
+  const patched = patchSource(HANDLE);
+  const handler = handlerOf(patched);
+  const closeup = handler.slice(handler.indexOf('if (params2.closeup)'), handler.indexOf('return;'));
+  assert.match(closeup, /const still = process\.env\.SHOTS_SCREENSHOT_SETTLE === "1";/);
+  const freezeAt = closeup.indexOf('if (still) await tab2.page.evaluate(');
+  const captureAt = closeup.indexOf('Page.captureScreenshot');
+  const thawAt = closeup.indexOf('if (still) await tab2.page.evaluate(', freezeAt + 1);
+  const finallyAt = closeup.indexOf('} finally {');
+  assert.ok(freezeAt > 0 && freezeAt < captureAt, 'stopped before Chrome captures');
+  assert.ok(finallyAt < thawAt && thawAt < closeup.indexOf('cdp.detach()'), 'played again in finally, even when the capture fails');
+
+  const [freeze, thaw] = closeupScripts(patched);
+  assert.ok(freeze && thaw);
+  const calls = [];
+  const anim = (name, iterations) => ({
+    effect: { getComputedTiming: () => ({ iterations }) },
+    cancel: () => calls.push(`cancel ${name}`),
+    finish: () => calls.push(`finish ${name}`),
+    play: () => calls.push(`play ${name}`),
+  });
+  const sandbox = {
+    window: {},
+    document: { getAnimations: () => [anim('spinner', Infinity), anim('fade', 1)] },
+  };
+  vm.runInNewContext(`(${freeze})()`, sandbox);
+  assert.deepEqual(calls, ['cancel spinner', 'finish fade'], 'an infinite one back to its first frame, a finite one finished');
+  vm.runInNewContext(`(${thaw})()`, sandbox);
+  assert.deepEqual(calls, ['cancel spinner', 'finish fade', 'play spinner'], 'only what was held is played again');
+  assert.equal(sandbox.window.__usernodeShotsHeld, null);
+  // An animation that throws stops nothing else.
+  calls.length = 0;
+  sandbox.document.getAnimations = () => [{ effect: null, finish: () => { throw new Error('gone'); } }, anim('dot', Infinity)];
+  vm.runInNewContext(`(${freeze})()`, sandbox);
+  assert.deepEqual(calls, ['cancel dot']);
+});
+
 test('a Playwright version whose code moved fails the image build instead of saving 1x shots', () => {
   assert.throws(() => patchSource(patchSource(HANDLE)), /no longer matches the worker's patch/, 'never applied twice');
   assert.throws(() => patchSource(HANDLE.replace('scale: params2.scale,', 'scale: params2.scale ?? "css",')), /no longer matches/);

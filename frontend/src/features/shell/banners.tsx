@@ -1,62 +1,19 @@
-import { useRef } from 'react';
-
-import { Alert } from '@/components/ui/alert';
-import { OFFLINE_BANNER_ID, offlineBannerVisible, RESTART_NOTICE_ID, restartNoticeVisible } from '../../lib/offline';
 import { useMessages } from '../../lib/i18n/react';
-import { useHiddenClass } from '../../lib/legacy-dom';
-import { useVisibility } from '../../lib/visibility-store';
 
 /**
- * The shell's two amber banners — the first regions converted to real
- * components in step 2 (#1078 chunk A).
- *
- * They are the proof slice on purpose: between them they exercise every
- * mechanism the later chunks depend on, on 48 lines of markup where a mistake
- * is obvious. The offline banner is driven by external state (the /health
- * probe, published into the visibility store), the view-as banner is driven by
- * CSS on a body class and owns an interactive control. Both are wholly
- * React-owned subtrees: nothing in public/js/** writes into either any more.
+ * The shell's amber banner — one of the first regions converted to a real
+ * component in step 2 (#1078 chunk A). It is driven by CSS on a body class
+ * and owns an interactive control, and is a wholly React-owned subtree:
+ * nothing in public/js/** writes into it any more.
  *
  * Visibility and classes retain the legacy shell's ownership contract.
  */
 
-/**
- * `#offline-banner` — Homeroom connectivity status (#487).
- *
- * Shown while the /health connectivity probe fails; everything on screen is
- * the last version that loaded successfully. This says nothing about access
- * to the rest of the internet. Hidden the moment the probe succeeds.
- *
- * Visibility comes from the store rather than props because the publisher is
- * `lib/offline.ts`, which runs at module scope — before this component's
- * effects, and before App.init() reads `Offline.isOffline()`. The initial
- * value is read from the same store so a `?shot=offline` deep link (which
- * pins the state during boot, in App._applyOfflineShot) is already reflected
- * on the first client render.
- *
- * The `hidden` class is applied through a ref rather than rendered, because
- * `className` on this element must stay a constant prop: React writes the
- * whole attribute when the prop changes, and public/js/platform-ui.js adds
- * classes to shell nodes at runtime. See lib/legacy-dom.ts.
+/*
+ * `#offline-banner`, the amber connectivity strip (#487), lived here until
+ * the native-offline proposal (18 Nov 2026) moved its word into the header:
+ * ../header/connection-status.tsx.
  */
-export function OfflineBanner() {
-  const t = useMessages();
-  const ref = useRef<HTMLDivElement>(null);
-  // `false` = the state the prerendered markup shipped with (`hidden`), so
-  // the hydrating render always matches the server markup exactly.
-  const offline = useVisibility(OFFLINE_BANNER_ID, offlineBannerVisible());
-  // A planned restart (1012) says "Updating Homeroom..." in the same strip,
-  // without the offline look and without a second element.
-  const restarting = useVisibility(RESTART_NOTICE_ID, restartNoticeVisible());
-  const visible = offline || restarting;
-  useHiddenClass(ref, !visible);
-
-  return (
-    <Alert ref={ref} id={OFFLINE_BANNER_ID} variant="banner" startHidden>
-      {t(restarting ? 'core:banner.restart.text' : 'core:banner.offline.text')}
-    </Alert>
-  );
-}
 
 /**
  * `#view-as-non-admin-banner` — the persistent reminder that an admin has

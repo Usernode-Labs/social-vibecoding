@@ -3097,11 +3097,15 @@ test('submit_work stores the diagram on the proposal and carries its text in the
   } finally { c.restore(); gh.isEnabled = real.gh; githubLink.isEnabled = real.link; }
 });
 
-// #6815: a change that shows nothing goes to the vote with "What it touches"
-// as its only picture unless its author sends a diagram. The answer says so;
-// the submission itself still goes through.
-test('submit_work warns, without failing, when a change with nothing visible arrives without a diagram', async (t) => {
+// #6815/#6832: a change that shows nothing needs one of its three pictures
+// (seen, moment or steps). Without one the answer says so and sets
+// incomplete: ["no_picture"]; the submission itself still goes through.
+test('submit_work flags a change with nothing visible that arrives without a picture', async (t) => {
   const none = { version: 1, impact: 'none', rationale: 'Server only.' };
+  const SEEN = {
+    version: 1, kind: 'seen', where: "A stuck change's status", look: 'status',
+    before: { title: 'Tests failed' }, after: { title: 'Needs a catch-up with main' },
+  };
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
   const real = { gh: gh.isEnabled, link: githubLink.isEnabled };
@@ -3113,7 +3117,8 @@ test('submit_work warns, without failing, when a change with nothing visible arr
     const pool = {
       async query(sql, params) {
         queries.push({ sql, params });
-        if (/pr_diagram IS NOT NULL AS has/.test(sql)) return { rows: [{ has: stored }] };
+        if (/SELECT pr_diagram AS d FROM chat_sessions/.test(sql)) return { rows: [{ d: stored || null }] };
+        if (/pr_diagram IS NOT NULL AS has/.test(sql)) return { rows: [{ has: !!stored }] };
         return { rows: [{ app_slug: 'recipe-box' }] };
       },
     };
@@ -3130,31 +3135,53 @@ test('submit_work warns, without failing, when a change with nothing visible arr
     const res = await first.c.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', visibleChanges: none });
     assert.notEqual(res.isError, true, 'the change is still submitted');
     assert.equal(res.structuredContent.diagramAccepted, null);
+    assert.deepEqual(res.structuredContent.incomplete, ['no_picture']);
     assert.equal(res.structuredContent.warnings.length, 1);
-    assert.match(res.structuredContent.warnings[0], /What it touches/);
-    assert.ok(first.queries.some((q) => /pr_diagram IS NOT NULL AS has/.test(q.sql)), 'it asked whether one was stored');
+    assert.match(res.structuredContent.warnings[0], /no picture of what it does/);
+    assert.match(res.structuredContent.warnings[0], /"seen"[\s\S]*"moment"[\s\S]*"steps"/, 'it names the three, in order');
+    assert.ok(first.queries.some((q) => /SELECT pr_diagram AS d FROM chat_sessions/.test(q.sql)), 'it read the stored kind');
     const { z } = require('zod');
-    assert.equal(z.object(first.c.specs.get('submit_work').outputSchema).safeParse(res.structuredContent).success, true,
-      'warnings is part of the answer shape');
+    const shape = z.object(first.c.specs.get('submit_work').outputSchema);
+    assert.equal(shape.safeParse(res.structuredContent).success, true, 'incomplete and warnings are part of the answer shape');
   } finally { first.c.restore(); }
 
-  // A stored diagram (an earlier update's) is the picture voters get: no warning.
-  const kept = make(true);
+  // A stored picture (an earlier update's) is what voters read: nothing to add.
+  const kept = make(SEEN);
   try {
     const res = await kept.c.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', visibleChanges: none });
     assert.notEqual(res.isError, true);
     assert.equal(Object.hasOwn(res.structuredContent, 'warnings'), false);
+    assert.equal(Object.hasOwn(res.structuredContent, 'incomplete'), false);
   } finally { kept.c.restore(); }
 
-  // Sending one in the same call needs no reminder either.
-  const sent = make(false);
+  // An older kind says nothing a non-technical voter can read, so it does not
+  // count: the change is still incomplete.
+  const older = make({ version: 1, kind: 'rename', from: 'a', to: 'b' });
   try {
-    const res = await sent.c.handlers.get('submit_work')({
+    const res = await older.c.handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix', visibleChanges: none });
+    assert.deepEqual(res.structuredContent.incomplete, ['no_picture']);
+  } finally { older.c.restore(); }
+
+  // Sending an older kind in the same call needs the picture too...
+  const sentOld = make(false);
+  try {
+    const res = await sentOld.c.handlers.get('submit_work')({
       proposalId: 3140, branch: 'my-fix', visibleChanges: none,
       diagram: { version: 1, kind: 'changes', rows: [{ op: 'added', what: 'A warning' }] },
     });
     assert.notEqual(res.isError, true);
+    assert.deepEqual(res.structuredContent.incomplete, ['no_picture']);
+  } finally { sentOld.c.restore(); }
+
+  // ...and one of the three sent in the same call is complete.
+  const sent = make(false);
+  try {
+    const res = await sent.c.handlers.get('submit_work')({
+      proposalId: 3140, branch: 'my-fix', visibleChanges: none, diagram: SEEN,
+    });
+    assert.notEqual(res.isError, true);
     assert.equal(Object.hasOwn(res.structuredContent, 'warnings'), false);
+    assert.equal(Object.hasOwn(res.structuredContent, 'incomplete'), false);
   } finally { sent.c.restore(); }
 });
 
@@ -3359,6 +3386,9 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // The Homeroom bot's first-version configurations (routes/bot-configs.js):
     // the next blind pair to pick. Full platform admins only, like the rest.
     'get_bot_config_pair',
+    // 19 Nov 2026. The user's own private threads with Homeroom bot, through
+    // the services the conversation routes call (tests/mcp-bot-thread.test.js).
+    'get_bot_thread',
     // #3659. Which languages people's browsers ask for, and where the
     // translation step stands. Full platform admins only.
     'get_browser_languages',

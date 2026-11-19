@@ -58,9 +58,9 @@
  * element (no `style` prop is passed), so there is no writer to race.
  */
 
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
-import { CopyIcon, LockIcon, UserGroupIcon } from '@/components/ui/icons';
+import { CopyIcon, LockIcon, UserGroupIcon, UserPenIcon } from '@/components/ui/icons';
 
 import { useMessages } from '../../lib/i18n/react';
 import { listText } from '../../lib/i18n/runtime';
@@ -71,6 +71,7 @@ import { liveAppLabel, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-app
 import { AppsLoadError } from '../apps/load-error';
 import { TileSkeleton } from '../apps/tile-skeleton';
 import { buildLineTileClass } from '../first-session/build-line-words.js';
+import { recentAppsStore, recentAppTimes } from '../nav/recent-apps-store.js';
 import { CreateTile } from './create-tile';
 import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
@@ -165,12 +166,32 @@ const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-v
   + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
   + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
 
-function AppCardTile({ app, style, yours, live, editing, rich = false }: {
+/** How long ago, in the shell's short words: "just now", "12m ago", "2h ago", "30d ago". */
+function openedAgo(at: number, t: (id: string, params?: Record<string, unknown>) => string): string {
+  const minutes = Math.max(0, Math.floor((Date.now() - at) / 60000));
+  if (minutes < 1) return t('core:time.ago.justNow');
+  if (minutes < 60) return t('core:time.ago.minutes', { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return t('core:time.ago.hours', { count: hours });
+  return t('core:time.ago.days', { count: Math.floor(hours / 24) });
+}
+
+function AppCardTile({ app, style, yours, live, editing, rich = false, openedAt = null }: {
   /** Standard (WIP): under the name, the app's sentence and its contributors. */
   rich?: boolean;
   app: HomeAppView; style?: string; yours: boolean; live: boolean; editing: boolean;
+  /** When this account last left the app on this device, in milliseconds; null says nothing. */
+  openedAt?: number | null;
 }) {
   const t = useMessages('home');
+  // "Opened 2h ago" (#4025), in the caption lane a running app leaves empty:
+  // a status has that lane first. Never part of the first render: the list
+  // it is read from is empty until an effect fills it (recent-apps-store.js).
+  // Always "30d ago" at most, never a date: lib/timestamp.ts's agoStamp turns
+  // to a date past a week, and across a new year that date carries its year,
+  // which a phone's tile has no room for.
+  const openedWhen = openedAt && !app.statusLabel && !app.buildLine ? openedAgo(openedAt, t) : '';
+  const opened = openedWhen ? t('home:grid.tile.opened', { when: openedWhen }) : '';
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -216,7 +237,9 @@ function AppCardTile({ app, style, yours, live, editing, rich = false }: {
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={live ? listText([app.name, liveAppLabel()]) : app.name}
+      aria-label={live || opened
+        ? listText([app.name, ...(live ? [liveAppLabel()] : []), ...(opened ? [opened] : [])])
+        : app.name}
       aria-haspopup="menu"
       title={t('home:grid.tile.tip', { app: app.name })}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
@@ -413,13 +436,29 @@ function AppCardTile({ app, style, yours, live, editing, rich = false }: {
         {rich && !app.statusLabel ? (
           <>
             {app.description ? <p className="app-card-desc" title={app.description}>{app.description}</p> : null}
-            {app.contributors ? (
+            {app.members ? (
               <p className="app-card-people">
                 <UserGroupIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+                <span className="truncate">{t('home:grid.tile.members', { count: app.members, formatted: app.members.toLocaleString() })}</span>
+              </p>
+            ) : null}
+            {app.contributors ? (
+              <p className="app-card-people">
+                <UserPenIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
                 <span className="truncate">{t('home:discover.card.contributors', { count: app.contributors })}</span>
               </p>
             ) : null}
           </>
+        ) : null}
+        {/* Two forms, switched by app.css at the tile's own 640px breakpoint:
+            a phone's text lane is narrower than the sentence, and a line
+            that is only a time is never cut. The tile's aria-label has the
+            sentence at every width. */}
+        {opened ? (
+          <p className="app-card-status app-card-opened">
+            <span className="app-card-opened-long">{opened}</span>
+            <span className="app-card-opened-short">{t('home:grid.tile.openedShort', { when: openedWhen })}</span>
+          </p>
         ) : null}
       </div>
     </div>
@@ -441,6 +480,9 @@ export function AppGrid() {
   // Standard (WIP), lib/skin.ts: the tile also says what the app is.
   const rich = useLiveSkin() === 'wip';
   const live = useLiveAppSlugs();
+  // When each app was last left on this device, for the tiles' "Opened" line.
+  const { apps: recents } = useStoreState(recentAppsStore);
+  const openedTimes = useMemo(() => recentAppTimes(recents), [recents]);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // `grid-template-rows` is written to the ELEMENT rather than rendered as a
@@ -535,6 +577,7 @@ export function AppGrid() {
           live={live.includes(item.app.slug)}
           editing={state.editing}
           rich={rich}
+          openedAt={state.view === 'grid' && !item.app.demo ? openedTimes.get(item.app.slug) ?? null : null}
         />
       ))}
       {/*

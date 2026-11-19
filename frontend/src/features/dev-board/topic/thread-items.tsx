@@ -43,7 +43,7 @@ import {
 import { MOVE_LABELS, ThreadMoves, moveChoices, type MoveKind } from './thread-moves';
 import { ThreadBallot } from './thread-ballot';
 import { useThreadMenu, type ThreadMenuRow } from './thread-menu';
-import { prefetchChangeDetail } from './topic-head';
+import { seedPrefetchedChange } from './topic-head';
 
 function openTopic(open: { kind: string; id: number }): void {
   const av = typeof window !== 'undefined' ? (window as any).AppView : null;
@@ -98,6 +98,157 @@ export function threadPath(slug: string, number: number): string {
   return `/api/apps/${encodeURIComponent(slug)}/threads/${number}`;
 }
 
+/** A thread's read with the rows of the changes it lists (#6827). */
+export function pathWithChanges(path: string): string {
+  return `${path}${path.includes('?') ? '&' : '?'}with=changes`;
+}
+
+// #6827: the demo flag the page's own reads carry (`?demo=1`), so a staging
+// deep link's mock rows answer every read the same way.
+function demoQS(): string {
+  try { return (window as any).AppView?._demoQS?.() || ''; } catch { return ''; }
+}
+
+/** The same URL carrying the demo flag, when the page is a staging deep link. */
+function withDemo(url: string): string {
+  const demo = demoQS();
+  if (!demo) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}${demo.replace(/^\?/, '')}`;
+}
+
+/**
+ * #6827: one read answers a change's page — the change, where it lives, its
+ * thread and its proposal row with the before/after picture addresses
+ * (`GET /api/apps/:slug/changes/:number/page`). Starting it when the route
+ * names the change makes the page's title and body arrive after one round
+ * trip instead of a chain of four. Its answer seeds the maps the page's own
+ * reads go through (prefetchedThreads, topic-head's prefetchedChanges,
+ * AppView._changeHomes), so nothing on the page asks the server again, and
+ * it starts the main picture loading.
+ */
+interface ChangePageAnswer {
+  sessionId: number;
+  prNumber: number;
+  request: number | null;
+  thread: ThreadPayload | null;
+  proposal: any;
+  context: any;
+}
+
+interface PrefetchedChangePage {
+  at: number;
+  settled: boolean;
+  data: ChangePageAnswer | null;
+  promise: Promise<ChangePageAnswer | null>;
+}
+
+const prefetchedChangePages = new Map<string, PrefetchedChangePage>();
+
+export function changePagePath(slug: string, number: number): string {
+  return withDemo(`/api/apps/${encodeURIComponent(slug)}/changes/${number}/page`);
+}
+
+/** The picture a change's page draws first (after, else before). */
+function preloadPicture(row: any): void {
+  const shots = row && row.shots;
+  if (!shots || shots.state !== 'verified' || !Array.isArray(shots.artifacts)) return;
+  const still = (side: string) => shots.artifacts.find((a: any) => a
+    && a.variant === 'context' && a.theme === 'light' && a.media === 'png'
+    && a.side === side && typeof a.url === 'string' && a.url);
+  const pick = still('head') || still('base');
+  if (!pick) return;
+  if (preloadedPictures.has(pick.url)) return;
+  preloadedPictures.add(pick.url);
+  try {
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = pick.url;
+  } catch { /* the card loads it when it mounts */ }
+}
+
+// One URL preloaded once per visit, however many answers name it.
+const preloadedPictures = new Set<string>();
+
+/** Hand a page answer to the reads the page's parts already make, so they
+ *  take it instead of asking again. */
+function seedChangePage(slug: string, answer: ChangePageAnswer): void {
+  const n = Number(answer.prNumber);
+  if (answer.thread) {
+    const path = answer.request
+      ? threadPath(slug, Number(answer.request))
+      : `${threadPath(slug, n)}?as=change`;
+    const held = prefetchedThreads.get(path);
+    if (!held || Date.now() - held.at >= PREFETCH_TTL_MS || !held.settled) {
+      prefetchedThreads.set(path, {
+        at: Date.now(), settled: true, data: answer.thread, promise: Promise.resolve(answer.thread),
+      });
+    }
+  }
+  if (answer.proposal) {
+    seedPrefetchedChange([answer.proposal]);
+    preloadPicture(answer.proposal);
+  }
+  const av = typeof window !== 'undefined' ? (window as any).AppView : null;
+  if (av && av._changeHomes instanceof Map && answer.request) {
+    av._changeHomes.set(`${slug}:${answer.sessionId}`, Promise.resolve(answer.request));
+  }
+}
+
+/** Start (or join) a change page's own read; null for anything that is not
+ *  a change's number. */
+export function prefetchChangePage(slug: string | null, number: number | null): Promise<ChangePageAnswer | null> | null {
+  if (!slug || !number) return null;
+  const path = changePagePath(slug, number);
+  const hit = prefetchedChangePages.get(path);
+  if (hit && Date.now() - hit.at < PREFETCH_TTL_MS) return hit.promise;
+  const entry: PrefetchedChangePage = {
+    at: Date.now(), settled: false, data: null, promise: Promise.resolve(null),
+  };
+  entry.promise = fetch(path, { credentials: 'same-origin' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((json) => {
+      entry.settled = true;
+      const sessionId = Number(json && json.sessionId);
+      if (!json || !Number.isInteger(sessionId) || sessionId <= 0) return null;
+      const answer: ChangePageAnswer = {
+        sessionId,
+        prNumber: Number(json.prNumber) || number,
+        request: Number(json.request) > 0 ? Number(json.request) : null,
+        thread: json.thread && Array.isArray(json.thread.items) ? json.thread : null,
+        proposal: json.proposal || null,
+        context: json.context || null,
+      };
+      entry.data = answer;
+      seedChangePage(slug, answer);
+      return answer;
+    })
+    .catch(() => { entry.settled = true; return null; });
+  prefetchedChangePages.set(path, entry);
+  return entry.promise;
+}
+
+/** A settled change page answer for this number, if it is here; leaves the
+ *  entry in place (the page's own reads take it). */
+export function peekChangePage(slug: string | null, number: number | null): ChangePageAnswer | null {
+  if (!slug || !number) return null;
+  const hit = prefetchedChangePages.get(changePagePath(slug, number));
+  if (!hit || !hit.settled || Date.now() - hit.at >= PREFETCH_TTL_MS) return null;
+  return hit.data;
+}
+
+/** The proposal row a change page's answer carried, by the change's id, so
+ *  `_fetchProposalById` reads nothing when the page already has it. */
+export function peekChangeProposal(slug: string | null, sessionId: number | null): { proposal: any; context: any } | null {
+  if (!slug || !sessionId) return null;
+  for (const hit of prefetchedChangePages.values()) {
+    if (!hit.settled || !hit.data || Date.now() - hit.at >= PREFETCH_TTL_MS) continue;
+    if (hit.data.sessionId === Number(sessionId) && hit.data.proposal) {
+      return { proposal: hit.data.proposal, context: hit.data.context };
+    }
+  }
+  return null;
+}
+
 /** Start (or join, within 10 s) a thread's own read. Returns its promise. */
 export function prefetchThread(slug: string | null, number: number | null): Promise<ThreadPayload | null> | null {
   if (!slug || !number) return null;
@@ -107,13 +258,15 @@ export function prefetchThread(slug: string | null, number: number | null): Prom
   const entry: PrefetchedThread = {
     at: Date.now(), settled: false, data: null, promise: Promise.resolve(null),
   };
-  entry.promise = fetch(path, { credentials: 'same-origin' })
+  entry.promise = fetch(withDemo(pathWithChanges(path)), { credentials: 'same-origin' })
     .then((res) => (res.ok ? res.json() : null))
     .then((json) => {
       entry.settled = true;
       entry.data = json && Array.isArray(json.items) ? json : null;
-      for (const item of entry.data?.items || []) {
-        if (item && item.type === 'change' && Number.isInteger(Number(item.id))) prefetchChangeDetail(item);
+      // #6827: the thread also carries its changes' rows (`?with=changes`),
+      // so each card's page has its proposal before it renders.
+      if (json && json.changes && typeof json.changes === 'object') {
+        seedPrefetchedChange(json.changes);
       }
       return entry.data;
     })

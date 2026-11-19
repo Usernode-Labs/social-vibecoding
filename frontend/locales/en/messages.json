@@ -15,6 +15,22 @@
     "text": "Remove file",
     "description": "Accessible name of the × button on a file waiting to be sent in the message box. Used for a file with no name; \"file\" is written as it has always been shown."
   },
+  "attachments.previewNamed": {
+    "text": "Preview {{file}}",
+    "description": "Accessible name of an image waiting to be sent in the message box: tapping its thumbnail opens the picture full size. {{file}} is the file's name."
+  },
+  "attachments.previewUnnamed": {
+    "text": "Preview file",
+    "description": "Accessible name of an image waiting to be sent in the message box that has no name: tapping its thumbnail opens the picture full size."
+  },
+  "attachments.uploadingNamed": {
+    "text": "Uploading {{file}}",
+    "description": "Accessible name of the progress ring over an image waiting to be sent in the message box while it uploads. {{file}} is the file's name."
+  },
+  "attachments.uploadingUnnamed": {
+    "text": "Uploading file",
+    "description": "Accessible name of the progress ring over an image waiting to be sent in the message box while it uploads, for an image that has no name."
+  },
   "attachments.refusedMore_one": {
     "text": "{{reason}} {{count}} more file wasn’t attached.",
     "description": "Error under the message box when several chosen files were refused. {{reason}} is a complete sentence saying why the first one was refused, kept first; {{count}} is how many other files were also left out."
@@ -2284,16 +2300,16 @@
     "description": "Error in place of the conversation list in Messages when it could not be fetched."
   },
   "store.error.unreachableList": {
-    "text": "Couldn’t reach Homeroom. Your conversations will load when you’re back online.",
-    "description": "Shown in place of the conversation list in Messages, above a Try again button, when the list could not be fetched because there was no connection and this device has no saved copy of it."
+    "text": "Not saved on this phone yet. Your conversations will load when you’re back online.",
+    "description": "Shown in the ordinary text colour, not as an error, where the conversation list would be when Homeroom cannot be reached and nothing was saved on this device yet. A Try again button follows."
   },
   "store.error.loadThread": {
     "text": "Couldn’t load this conversation.",
     "description": "Error in place of a conversation's messages when they could not be fetched."
   },
   "store.error.unreachableThread": {
-    "text": "Couldn’t reach Homeroom. This conversation will load when you’re back online.",
-    "description": "Shown in place of a conversation's messages, above a Try again button, when they could not be fetched because there was no connection and this device has no saved copy of them."
+    "text": "Not saved on this phone yet. This conversation will load when you’re back online.",
+    "description": "Shown in the ordinary text colour, not as an error, where a conversation's messages would be when Homeroom cannot be reached and nothing of it was saved on this device yet. A Try again button follows."
   },
   "store.error.loadNewer": {
     "text": "Couldn’t load newer messages.",
@@ -3194,10 +3210,6 @@
   "inbox.searchLabel": {
     "text": "Search messages",
     "description": "Accessible label of the search field above the conversation list."
-  },
-  "inbox.offline": {
-    "text": "Offline. Queued messages retry when you reconnect.",
-    "description": "Banner above the conversation list while the device has no connection: messages written now are kept and sent later."
   },
   "inbox.empty.title": {
     "text": "No messages yet",
@@ -4788,7 +4800,7 @@
     "description": "The AI tab's main view: the person's work with Homeroom bot across every project, and their private threads with it. Shown in the Needs you list when it is empty."
   },
   "ai.work.unreachable": {
-    "text": "Couldn’t reach Homeroom. Your lists will load when you’re back online.",
+    "text": "Not saved on this phone yet. Your lists will load when you’re back online.",
     "description": "The AI tab's main view: shown at the top of the Needs you list, above a Try again button, when the person's lists (what needs them, what is in progress, what is waiting) could not be fetched because there was no connection and this device has no saved copy of them."
   },
   "ai.work.failed": {
@@ -5976,11 +5988,11 @@
     "description": "Line on a thread's live draft bar when opening, proposing or closing the draft failed for a reason the server did not say."
   },
   "newThread.starts.live.label": {
-    "text": "I want to change it live<0>…</0>",
-    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
+    "text": "I want to change an app live<0>…</0>",
+    "description": "A pill in a new thread with Homeroom bot, shown once a project is picked: Homeroom bot opens a live preview of a draft of the project's app beside the chat and changes it as the person talks. Tapping it writes the same words (without the \"…\") into the message box for the person to finish. <0> is the \"…\", drawn fainter."
   },
   "newThread.starts.live.text": {
-    "text": "I want to change it live",
-    "description": "Written into the message box when the \"I want to change it live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change it live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project."
+    "text": "I want to change an app live",
+    "description": "Written into the message box when the \"I want to change an app live…\" pill is tapped, for the person to finish the sentence (for example, \"I want to change an app live: make the start button bigger\"). Must be the same words as that pill: a message that begins with them asks Homeroom bot to open a live preview of the project's app."
   }
 }

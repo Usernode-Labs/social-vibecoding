@@ -19,7 +19,7 @@
 
 // The looks a start path can pin with ?skin=, as the Look menu lists them
 // (MENU_SKINS in frontend/src/lib/skin.ts, the head's SKINS).
-const LOOK_SKINS = Object.freeze(['wip', 'brand', 'glass', 'paper', 'pastel', 'mosaic', 'sunrise']);
+const LOOK_SKINS = Object.freeze(['wip', 'brand', 'paper']);
 const LOOK_EXAMPLES = Object.freeze(['brand', 'paper']);
 
 // Each limit, as a clause that follows "The copies cannot show everything:".

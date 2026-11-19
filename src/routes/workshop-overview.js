@@ -112,7 +112,9 @@ const DEMO_COUNTS = {
   // `owed` names DEMO_NEEDS_FEED's cards, below, so a vote swiped past in
   // the demo feed takes its count off the row, as a real one does (#3526).
   'staging-demo-your-app': {
-    working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
+    // #6832: -107, -108 and -109 are the three pictures (seen, moment, none).
+    working: 2, needs: 6,
+    owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105', 'proposal:-107@0', 'proposal:-108@0', 'proposal:-109@0'],
   },
   // #4313: its one demo card, the Just-you change that asks for approval.
   'staging-demo-emoji-icon': { working: 0, needs: 5, owed: ['proposal:-106@0'] },
@@ -1185,7 +1187,7 @@ function withDemoCounts(counts) {
 
 // The rows behind DEMO_COUNTS, for ?demo=1 on staging (#3051): the same
 // reason the counts have a mock, and the same slugs. `staging-demo-your-app`
-// carries exactly its counts' 2 and 3, so the tab and the row beside it agree
+// carries exactly its counts' 2 and 6, so the tab and the row beside it agree
 // in the preview. Titles only; nothing reads these back. The ids are
 // negative so a tap can never open a real proposal by accident.
 const DEMO_ITEMS = {
@@ -1198,6 +1200,12 @@ const DEMO_ITEMS = {
       { kind: 'proposal', id: -103, title: 'Sort recipes by rating', status: 'promoted', at: '2026-09-24T12:00:00Z' },
       { kind: 'proposal', id: -104, title: 'Let members share a shopping list', status: 'promoted', at: '2026-09-22T10:00:00Z' },
       { kind: 'governance', id: -105, title: 'Rename the app to Recipe Box', status: 'rename', at: '2026-09-21T08:00:00Z' },
+      // #6832: the three changes that show nothing on screen, one per plain
+      // picture (a status, a real moment, and one with no picture yet), so
+      // the rows and the counts tell one story on ?demo=1.
+      { kind: 'proposal', id: -107, title: 'Say plainly when a catch-up with main overlaps your edit', status: 'promoted', at: '2026-09-19T11:00:00Z' },
+      { kind: 'proposal', id: -108, title: 'Catch a catch-up that keeps the same text twice', status: 'promoted', at: '2026-09-18T09:00:00Z' },
+      { kind: 'proposal', id: -109, title: 'Keep a small note of each catch-up', status: 'promoted', at: '2026-09-17T15:00:00Z' },
     ],
   },
 };
@@ -1239,14 +1247,27 @@ const DEMO_NEEDS_FEED = [
     // #5365: the demo card for an advisory vote, so the feed's label and the
     // deciding-first order can be seen on ?demo=1 without a governed project.
     advisory: true,
-    // #4490: no diagram, so its picture is "What it touches".
-    // #6814: its author declared that nothing on screen changes, so the same
-    // picture stands where its own page would show the empty box.
+    // #6832: its author declared that nothing on screen changes, so its card
+    // carries one of the three plain pictures — here a "steps" one — and
+    // "What it touches" is kept for the change's Technical details.
     shots_detail: {
       intent: {
         version: 1, impact: 'none', rationale: 'A shared list is added; nothing on screen changes yet.', stories: [],
       },
     },
+    diagram: {
+      version: 1, kind: 'steps',
+      before: [
+        { pic: 'person', caption: 'One list' },
+        { pic: 'card', caption: 'Saved here' },
+      ],
+      after: [
+        { pic: 'person', caption: 'One list' },
+        { pic: 'card', caption: 'Shared list' },
+        { pic: 'bell', caption: 'Members told' },
+      ],
+    },
+    diagram_source: 'author',
     touches: {
       version: 1, files: 3,
       areas: [
@@ -1266,6 +1287,66 @@ const DEMO_NEEDS_FEED = [
     author: 'staging-demo-partner', number: null, epoch: null, at: '2026-09-21T08:00:00Z', yes: null, no: null,
     // #4490: a group decision's diagram is drawn from its own facts.
     decision: { kind: 'rename', newName: 'Recipe Box', fromName: 'Staging demo app' },
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  // #6832: the three plain pictures a change with nothing new on screen can
+  // carry, one card each, so a preview shows all three drawn (and the empty
+  // box when there is none) without a real impact-none change to hand.
+  {
+    kind: 'proposal', id: -107, title: 'Say plainly when a catch-up with main overlaps your edit',
+    summary: 'A catch-up that meets an edit changing the same text is caught, explained in plain words and tried again.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-19T11:00:00Z', yes: 1, no: 0,
+    staging_url: null,
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A message changes; no screen is added.', stories: [] } },
+    // PR #6830's own words: the status a stuck change shows, before and after.
+    diagram: {
+      version: 1, kind: 'seen', where: 'A stuck change’s status', look: 'status',
+      before: { title: 'Tests failed', lines: ['#22 ERROR: build-shell.mjs exited with code 1'] },
+      after: {
+        title: 'Needs a catch-up with main',
+        lines: ['Your edit and a newer one changed the same text.', 'Homeroom left your change as it was.'],
+      },
+    },
+    diagram_source: 'author',
+    touches: {
+      version: 1, files: 3,
+      areas: [
+        { key: 'screens', label: 'Screens', files: 0, lines: 0 },
+        { key: 'server', label: 'Server', files: 2, lines: 74 },
+        { key: 'database', label: 'Database', files: 0, lines: 0 },
+        { key: 'tests', label: 'Tests', files: 1, lines: 38 },
+        { key: 'docs', label: 'Docs', files: 0, lines: 0 },
+        { key: 'other', label: 'Other', files: 0, lines: 0 },
+      ],
+    },
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  {
+    kind: 'proposal', id: -108, title: 'Catch a catch-up that keeps the same text twice',
+    summary: 'A resolved catch-up is checked for the same text kept twice, and tried again rather than pushed.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-18T09:00:00Z', yes: 2, no: 0,
+    staging_url: null,
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A check runs; nothing on screen changes.', stories: [] } },
+    // A real incident: the request that asked for this change reported it.
+    diagram: {
+      version: 1, kind: 'moment',
+      before: {
+        date: '2026-11-18', ref: 'PR #6699', lasted: 'about 25 minutes',
+        events: ['Caught up with main', 'The same text was kept twice', 'Couldn’t be previewed', 'Fixed by hand'],
+      },
+      after: { events: ['The same catch-up is caught in seconds', 'Tried again', 'Pushed, or handed back with a reason'] },
+    },
+    diagram_source: 'author',
+    app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
+  },
+  {
+    kind: 'proposal', id: -109, title: 'Keep a small note of each catch-up',
+    summary: 'A note of each catch-up is kept, so a hand-back can say what happened.',
+    author: 'staging-demo-partner', number: null, epoch: 0, at: '2026-09-17T15:00:00Z', yes: 0, no: 0,
+    staging_url: null,
+    // #6832: nothing on screen changes and this one has no picture yet: its
+    // card says so (the follow-up would add one).
+    shots_detail: { intent: { version: 1, impact: 'none', rationale: 'A record is kept; nothing on screen changes.', stories: [] } },
     app: { slug: 'staging-demo-your-app', name: 'Staging demo app', icon_url: null, icon_emoji: null },
   },
   // #4313: a change on a Just-you project, which asks for your approval

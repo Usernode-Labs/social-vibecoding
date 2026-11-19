@@ -239,13 +239,21 @@
     "text": "Switch back",
     "description": "Button in the banner for an administrator previewing as an ordinary member: returns to the administrator view."
   },
-  "banner.offline.text": {
-    "text": "Reconnecting to Homeroom. Showing saved content",
-    "description": "Banner across the top while the device cannot reach Homeroom's servers and the screens show what was saved earlier. Homeroom is the product's name. No full stop at the end."
+  "status.connecting": {
+    "text": "Connecting…",
+    "description": "The header's connection status, a small pill under the top bar, while the phone or computer cannot reach Homeroom's servers; the screen shows what was saved earlier. Like a messaging app's title saying it is connecting. No full stop at the end."
+  },
+  "status.noInternet": {
+    "text": "No internet",
+    "description": "The header's connection status, a small pill under the top bar, when the device itself says it has no network connection at all. No full stop at the end."
+  },
+  "status.updatedAt": {
+    "text": "Updated {{time}}",
+    "description": "Beside the header's connection status while offline: when what the screen shows was last updated from the server. {{time}} is a time of day such as 12:41, or a short date such as Nov 17 for an earlier day. No full stop at the end."
   },
   "banner.restart.text": {
     "text": "Updating Homeroom...",
-    "description": "Banner across the top for a moment while Homeroom restarts for an update; the screen reconnects by itself. Homeroom is the product's name. No full stop at the end."
+    "description": "The header's connection status, a small pill under the top bar, for a moment while Homeroom restarts for an update; the screen reconnects by itself. Homeroom is the product's name. No full stop at the end."
   },
   "list.pair": {
     "text": "{{first}}, {{second}}",
@@ -742,6 +750,10 @@
   "work.line.cooldown": {
     "text": "Paused after repeated errors: Homeroom bot tries again later",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's tries at reading the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
+  },
+  "work.line.creditWait": {
+    "text": "Waiting for building credit. Homeroom bot picks this up again by itself.",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a build stopped because the credit that pays for building ran out, and nothing needs doing."
   },
   "work.line.reply": {
     "text": "Reading your reply",

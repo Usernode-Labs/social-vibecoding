@@ -69,6 +69,9 @@ function makeHarness() {
     // (services/proposal-commit-operation.js), run here in this process
     // (tests/lib/inline-operations.js) through the stubs below.
     commitOperation: require.resolve('../src/services/proposal-commit-operation'),
+    // A head pushed to the branch with git is adopted by the same service a
+    // sync with main uses (tested on its own in cli-handoff-sync tests).
+    cliHandoffSync: require.resolve('../src/services/cli-handoff-sync'),
     subject: require.resolve('../src/routes/proposal-handoff'),
   };
   const original = new Map(Object.values(ids).map((id) => [id, require.cache[id]]));
@@ -103,6 +106,7 @@ function makeHarness() {
     uploadHead: '3'.repeat(40),
     reconciliations: [],
     promotedChecks: [],
+    adoptions: [],
     votes: 0,
     reconcileFailure: null,
     // What the proposal machine was asked to close.
@@ -455,6 +459,12 @@ function makeHarness() {
         return { ok: false, status: 500, error: err.message };
       }
       return { ok: true, branch: input.branch, sha: input.baseSha };
+    },
+  });
+  stubModule(ids.cliHandoffSync, {
+    async reconcileCliHandoffSync(args) {
+      state.adoptions.push(args);
+      return state.adoptResult || { ok: true, applied: true, headSha: args.newHead, checksStarted: true };
     },
   });
   stubModule(ids.prImportSync, {
@@ -1165,8 +1175,66 @@ test('build submission rejects a commit that did not use the verified upload pat
     assert.equal(res.statusCode, 409);
     assert.equal(res.body.error, 'head_not_uploaded');
     assert.match(res.body.message, /proposal_push_commit/);
-    assert.equal(state.github.length, 1, 'only proposal_start may touch GitHub');
+    assert.deepEqual(state.github.slice(1).map((call) => call[0]), ['read'],
+      'past proposal_start, the build only reads the branch: its head is not this commit');
     assert.equal(state.revisions.length, 0);
+    assert.equal(state.adoptions.length, 0);
+  } finally { restore(); }
+});
+
+// A commit pushed to the proposal branch with plain git is on the branch
+// already. Submitting it adopts it as a sync with main adopts its push; a
+// head that is not the branch's, or that drops the revision it replaces,
+// is refused as before.
+test('build submission adopts a head pushed to the proposal branch with git', async () => {
+  const { router, state, restore } = makeHarness();
+  try {
+    const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
+    await start({
+      params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+      user: { id: 7, username: 'maker' },
+    }, mockRes());
+    const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+    const submit = async () => {
+      const res = mockRes();
+      await build({
+        params: { id: '101' }, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+        body: {
+          schemaVersion: 1, headSha: HEAD, tests: [],
+          history: [{ id: 'pushed-1', kind: 'summary', phase: 'build', content: 'Pushed with git.' }],
+        },
+      }, res);
+      return res;
+    };
+
+    state.remoteHead = HEAD;
+    const adopted = await submit();
+    assert.equal(adopted.statusCode, 202);
+    assert.equal(adopted.body.adoptedPushedHead, true);
+    assert.equal(adopted.body.headSha, HEAD);
+    assert.equal(state.adoptions.length, 1);
+    assert.equal(state.adoptions[0].newHead, HEAD, 'the exact head the branch has');
+    assert.equal(state.adoptions[0].session.id, 101);
+    assert.deepEqual(state.github.slice(1).map((call) => call[0]), ['read', 'compare', 'compare'],
+      'read the branch, and checked it descends from the base and from the revision it replaces');
+
+    // The adoption found the branch moved again: refused, nothing claimed.
+    state.adoptResult = { ok: false, reason: 'branch_moved', headSha: '9'.repeat(40) };
+    const moved = await submit();
+    assert.equal(moved.statusCode, 409);
+    assert.equal(moved.body.error, 'branch_moved');
+    state.adoptResult = null;
+
+    // Not descended from the base: refused before anything is adopted.
+    const github = require('../src/services/github');
+    const compare = github.compareCommitAncestry;
+    github.compareCommitAncestry = async () => ({ status: 'diverged', aheadBy: 1 });
+    const diverged = await submit();
+    github.compareCommitAncestry = compare;
+    assert.equal(diverged.statusCode, 409);
+    assert.equal(diverged.body.error, 'head_not_descendant_of_base');
+    assert.equal(state.adoptions.length, 2, 'only the two submits whose head descends were adopted');
   } finally { restore(); }
 });
 

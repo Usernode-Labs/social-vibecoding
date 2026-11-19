@@ -62,11 +62,13 @@ import { useAutoGrow } from '../../lib/use-auto-grow';
 import { enterSends, useEnterSends } from '../../lib/enter-sends';
 import { DropOverlay, useFileDrag } from '../attachments/file-drag';
 import { MAX_ATTACHMENTS, stageFiles } from '../attachments/limits';
+import { PendingStripRows } from '../attachments/pending-strip';
+import { attachmentView, pendingUploadView, type PendingUpload } from './attachment-views';
 import { SpeakButton } from '../dictation/speak-button';
 import * as api from './api';
 import { closeThread, openThread } from './store';
 import { useStagedCard } from './composer';
-import { BOT_AVATAR, fileSize, pendingObjectLabel } from './format';
+import { BOT_AVATAR, pendingObjectLabel } from './format';
 import { takeCarried } from './new-chat-carry';
 import type { MessageAttachment, SharedObjectReference, StagedObject } from './types';
 import { communityScopeStore, describe, loadCommunities } from '../workshop/community-scope';
@@ -227,7 +229,13 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   // thread exists; the thread is still made only on the first send, and an
   // upload never sent is left to the orphan-attachment sweep.
   const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
-  const [uploading, setUploading] = useState(0);
+  // #6862: a file still uploading is drawn too — an image as its own local
+  // preview, dimmed with a progress ring, with no × until it lands.
+  const [pending, setPending] = useState<PendingUpload[]>([]);
+  const uploading = pending.length;
+  const pendingRef = useRef<PendingUpload[]>([]);
+  pendingRef.current = pending;
+  const uploadSeq = useRef(0);
   const [addOpen, setAddOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const addRef = useRef<HTMLDivElement>(null);
@@ -325,19 +333,37 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
     return () => window.removeEventListener('focus', again);
   }, [setup, links.load]);
 
+  /** #6862: an upload's row and its local preview go together. */
+  const forgetPending = (key: string) => {
+    setPending((items) => {
+      const gone = items.find((item) => item.key === key);
+      if (gone?.thumbUrl) URL.revokeObjectURL(gone.thumbUrl);
+      return items.filter((item) => item.key !== key);
+    });
+  };
+  // A preview outlives neither the box nor its host.
+  useEffect(() => () => {
+    for (const item of pendingRef.current) if (item.thumbUrl) URL.revokeObjectURL(item.thumbUrl);
+  }, []);
+
   /** Attach a drop's, a paste's or a pick's files: stage them against the cap, then upload each. */
   const addFiles = async (files: File[]) => {
     const { upload, refused } = stageFiles(files, attachments.length + uploading, t);
     setError(refused || null);
     for (const file of upload) {
-      setUploading((count) => count + 1);
+      // #6862: the row appears at once. An image shows its own picture, made
+      // from the File and not yet on the server; anything else waits as a
+      // card. Both say "uploading" and offer no × until the upload lands.
+      const key = `p${(uploadSeq.current += 1)}`;
+      const thumbUrl = file.type.startsWith('image/') ? URL.createObjectURL(file) : null;
+      setPending((items) => [...items, { key, file, thumbUrl }]);
       try {
         const attachment = await api.uploadAttachment(conversationId, file);
         setAttachments((items) => [...items, attachment]);
+        forgetPending(key);
       } catch (err) {
         setError(err instanceof Error && err.message ? err.message : t('messages:composer.uploadFailed', { file: file.name }));
-      } finally {
-        setUploading((count) => Math.max(0, count - 1));
+        forgetPending(key);
       }
     }
   };
@@ -437,6 +463,14 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
   // What the keys do, once the text runs to a second line, as under every
   // message box (./composer.tsx).
   const keysHint = enterKey && words.includes('\n') && !nearLimit;
+
+  // #6862: what is staged, as the pending strip draws it — the files already
+  // uploaded, then the ones still in flight. Only a landed file carries a ×.
+  const staged = [...attachments.map(attachmentView), ...pending.map(pendingUploadView)];
+  const removeStaged = (index: number) => {
+    const item = attachments[index];
+    if (item) setAttachments((items) => items.filter((candidate) => candidate.id !== item.id));
+  };
 
   return (
     <aside className="messages-reply-pane platform-kb-column dc-lift dc-lift-session" aria-label={t('messages:newThread.title')} data-bot-new-thread-pane="" data-bot-new-thread-own={own || undefined} data-bot-new-thread-setup={setup ? builder : undefined}>
@@ -546,17 +580,9 @@ export function NewThreadPanel({ conversationId }: { conversationId: number }): 
               <button type="button" onClick={() => { setObject(null); setPrompt(null); }} aria-label={t('messages:composer.removeSharedItem')}>×</button>
             </div>
           ) : null}
-          {attachments.length || uploading ? (
+          {staged.length ? (
             <div className="dc-attach-strip dc-attach-strip-active">
-              {attachments.map((item) => (
-                <div key={item.id} className="dc-attach-item">
-                  <div className="min-w-0">
-                    <div className="dc-attach-name">{item.name}</div>
-                    <div className="dc-attach-size">{fileSize(item.size)}</div>
-                  </div>
-                  <button type="button" className="dc-attach-remove" onClick={() => setAttachments((items) => items.filter((candidate) => candidate.id !== item.id))} aria-label={t('messages:composer.removeAttachment', { file: item.name })}>×</button>
-                </div>
-              ))}
+              <PendingStripRows items={staged} onRemove={removeStaged} />
               {uploading ? <span className="dc-attach-uploading">{t('messages:composer.uploading', { count: uploading })}</span> : null}
             </div>
           ) : null}

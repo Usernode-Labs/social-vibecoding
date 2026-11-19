@@ -319,6 +319,14 @@
     "text": "Reconnect",
     "description": "Button under a connection whose sign-in ran out, on its AI tool's card in Settings > Connectors: opens that tool's setup steps at the one step that signs in again, so the person can connect it again without repeating the whole setup. Shown for Claude and Codex."
   },
+  "connectors.list.rename": {
+    "text": "Rename",
+    "description": "Text button under a connection's lines, on its AI tool's card in Settings > Connectors: opens a small form under the row where the person types their own name for that connection (for example \"Work laptop\"), so two connections of the same tool can be told apart. A verb."
+  },
+  "connectors.list.renameNamed": {
+    "text": "Rename {{name}}",
+    "description": "Screen-reader label of the Rename button on a connection's row in Settings > Connectors. {{name}} is the connection's current name: the person's own name for it, or the AI tool's name such as \"Claude (claude.ai)\". \"Rename\" is a verb."
+  },
   "connectors.claudeSteps.open.title": {
     "text": "Open connector settings.",
     "description": "Step 1 of the Claude.ai connector setup steps, shown in Settings > Connectors and in a new thread's setup steps. Shown in bold at the start of the step's text; an instruction to the reader."
@@ -694,6 +702,10 @@
   "grants.spentToday": {
     "text": "${{spent}} / ${{cap}} today",
     "description": "Figure on an app's row in Settings > App AI permissions: what the app has spent today out of its daily cap. {{spent}} and {{cap}} are amounts in US dollars such as 0.12; the dollar signs are part of the text."
+  },
+  "grants.totalToday": {
+    "text": "Apps have spent ${{spent}} today",
+    "description": "Line above the list of apps in Settings > App AI permissions: what all the apps together have spent on AI today, the same day each row's own figure covers. {{spent}} is an amount in US dollars such as 0.37; the dollar sign is part of the text."
   },
   "grants.capLabel": {
     "text": "Cap $",
@@ -1211,41 +1223,21 @@
     "text": "Paper, simplified, with brand styling",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style. It draws Homeroom's usual pages the clean way the Paper look does (cards with no outlines, white on a cream page in light and one step off a dark navy page in dark), in the website's own colours and typefaces. \"Paper\" is the name of another look in the same menu; translate it the same way there and here."
   },
-  "experimental.look.glass": {
-    "text": "Glass",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (frosted glass panels floating on the wallpaper). A proper name; translate it as a short name, not a sentence."
-  },
   "experimental.look.paper": {
     "text": "Paper",
     "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (one white sheet on the wallpaper with quiet grey panels). A proper name; translate it as a short name, not a sentence."
   },
-  "experimental.look.pastel": {
-    "text": "Pastel",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (groups tinted lavender, pink and peach in turn). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.mosaic": {
-    "text": "Mosaic",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (lists drawn as tiles, two across). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.look.sunrise": {
-    "text": "Sunrise",
-    "description": "Option of the Look menu in Settings, Experimental: the name of one visual style (white cards and a peach-to-lavender main button). A proper name; translate it as a short name, not a sentence."
-  },
-  "experimental.wipTokens.label": {
-    "text": "Design tokens",
-    "description": "Name and tooltip of a second menu beside the Look menu in the header, next to the bell, which admins see only while the Standard (WIP) look is picked: which set of colours and typeface (design tokens) that look is drawn with."
-  },
-  "experimental.wipTokens.current": {
-    "text": "Current",
-    "description": "First option of the Design tokens menu beside the bell (admins, Standard (WIP) look): that look drawn with the colours it has today."
-  },
   "experimental.wipTokens.brand": {
-    "text": "Homeroom brand kit",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): that look drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name."
+    "text": "Homeroom brand kit (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with the colours and typeface of Homeroom's brand guidelines (cream, yellow, blue, black, the Geist typeface). Homeroom is the product name. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
   },
   "experimental.wipTokens.brand2": {
-    "text": "Homeroom brand kit V2",
-    "description": "Option of the Design tokens menu beside the bell (admins, Standard (WIP) look): a second, bolder drawing of that look from Homeroom's brand guidelines (a yellow block for what needs you, serif section titles, black and cream). V2 means version two. Homeroom is the product name."
+    "text": "Homeroom brand kit V2 (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with a second drawing from Homeroom's brand guidelines (serif section titles, black and cream). V2 means version two. Homeroom is the product name. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
+  },
+  "experimental.wipTokens.highlighter": {
+    "text": "Highlighter (WIP)",
+    "description": "Option of the Look menu (beside the bell for admins, and in Settings, Experimental): the Standard (WIP) look drawn with a white page and yellow used like a marker pen. (WIP) means work in progress and marks every entry that is a drawing of that look. Translate it as a short name, not a sentence."
   },
   "experimental.look.description": {
     "text": "Homeroom is drawn in “Paper, simplified, with brand styling” unless another look is chosen here. Standard is the look it had before. The other five each have their own typeface, colours and shapes, and not every screen is drawn in them yet. Only admins see this menu. Kept for this browser.",
@@ -1790,6 +1782,22 @@
   "appPermissions.intro": {
     "text": "Apps you've allowed to use your location, microphone, camera, screen or connected devices. Each app is asked for separately, and only the app you granted gets it. If an app is open in this tab, revoking closes it so it stops at once. Anywhere else it is open, it keeps access until it is closed. On another device, opening the app again within a minute may bring the permission back until it is closed again.",
     "description": "Explanation under the App device permissions heading in Settings. Revoking closes the app when it is open in this browser tab. A running app keeps a permission until it is closed, and another device that reopens the app within about a minute of the revoke may still give it the permission, which it then keeps until it is closed."
+  },
+  "appPermissions.summary.device_one": {
+    "text": "{{count}} app can use your device",
+    "description": "First half of the summary line at the top of Settings > App permissions: how many apps currently hold at least one device permission (location, microphone, camera, screen or a connected device). {{count}} is the number of apps. Shown only when it is at least one."
+  },
+  "appPermissions.summary.device_other": {
+    "text": "{{count}} apps can use your device",
+    "description": "First half of the summary line at the top of Settings > App permissions: how many apps currently hold at least one device permission (location, microphone, camera, screen or a connected device). {{count}} is the number of apps. Shown only when it is at least one."
+  },
+  "appPermissions.summary.ai_one": {
+    "text": "{{count}} app can use AI on your budget",
+    "description": "Second half of the summary line at the top of Settings > App permissions: how many apps are currently allowed to use AI on the person's budget. {{count}} is the number of apps. Shown only when it is at least one."
+  },
+  "appPermissions.summary.ai_other": {
+    "text": "{{count}} apps can use AI on your budget",
+    "description": "Second half of the summary line at the top of Settings > App permissions: how many apps are currently allowed to use AI on the person's budget. {{count}} is the number of apps. Shown only when it is at least one."
   },
   "appPermissions.loadFailed": {
     "text": "Could not load app permissions.",
@@ -2970,6 +2978,30 @@
   "connectors.disconnect.failed": {
     "text": "Could not disconnect.",
     "description": "Error in Settings > Connectors when disconnecting a chat app failed and there is no more specific reason."
+  },
+  "connectors.rename.fieldLabel": {
+    "text": "Your name for this {{tool}} connection",
+    "description": "Screen-reader label of the text field that renames a connection, under its row in Settings > Connectors. {{tool}} is the AI tool's own name, such as \"Claude (claude.ai)\"."
+  },
+  "connectors.rename.note": {
+    "text": "Only you see this name. Save it empty to show {{tool}} again.",
+    "description": "Note under the text field that renames a connection in Settings > Connectors. {{tool}} is the AI tool's own name, such as \"Claude (claude.ai)\", which the row shows when the person has given no name."
+  },
+  "connectors.rename.done": {
+    "text": "Renamed.",
+    "description": "Confirmation in Settings > Connectors after the person saved their own name for a connection."
+  },
+  "connectors.rename.cleared": {
+    "text": "Name removed.",
+    "description": "Confirmation in Settings > Connectors after the person saved an empty name for a connection, so its row shows the AI tool's own name again."
+  },
+  "connectors.rename.tooLong": {
+    "text": "A name can be up to {{max}} characters.",
+    "description": "Error in Settings > Connectors when the name typed for a connection is too long. {{max}} is the largest number of characters allowed, 60."
+  },
+  "connectors.rename.failedRetry": {
+    "text": "Could not rename. Try again.",
+    "description": "Error in Settings > Connectors when saving the person's name for a connection failed."
   },
   "socialIdentity.load.failed": {
     "text": "Could not load social accounts. Try again shortly.",

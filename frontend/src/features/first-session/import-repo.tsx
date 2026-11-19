@@ -142,7 +142,11 @@ export function ImportForm({ className, header, submit, onDescribe, allowance, b
   submit: (answers: { repoUrl: string; name: string; manifest: RepoManifest }) => Promise<string | null>;
   /** "Describe a new project instead": back to Make it. */
   onDescribe: () => void;
-  /** The make screen's allowance row, when it bears on this. */
+  /**
+   * The make screen's allowance row, when it bears on this: Create's quiet
+   * App allowance card, or (#6842) the one-line reason a pale Import it is
+   * pale. It is drawn above the form's error line.
+   */
   allowance?: ReactNode;
 }) {
   const t = useMessages('onboarding');
