@@ -9,7 +9,7 @@ description: Inspect or change Homeroom app or platform state through the generi
 
 The hosted Homeroom connector (`https://app.onhomeroom.com/mcp`, usually added as `homeroom`) is a different server from the local `social_vibecoding` MCP server the rest of this skill describes. It has no `api_read` or `api_write`; its tools are named for what they do. When it is connected:
 
-- Do the task with its tools. A discussion thread: `get_discussion` reads it and `post_message` posts on it. A change's description: `update_proposal_description`. Requests: `list_requests`, `get_request`, `create_request`, `claim_request`, `release_request`, `propose_close_request`. Proposals: `get_proposal`, `list_my_proposals`, `prepare_work`, `submit_work`.
+- Do the task with its tools. A discussion thread: `get_discussion` reads it and `post_message` posts on it. The user's own thread with Homeroom bot (a `#homeroom-bot/thread/<number>` link): `get_bot_thread` reads it. A change's description: `update_proposal_description`. Requests: `list_requests`, `get_request`, `create_request`, `claim_request`, `release_request`, `propose_close_request`. Proposals: `get_proposal`, `list_my_proposals`, `prepare_work`, `submit_work`.
 - Do not run the `social-vibecoding` setup, login or `api` commands, and do not start a device login. A login the user did not ask for is a second credential and a browser prompt they then have to make sense of.
 - If no connector tool does what was asked, tell the user exactly what is missing and stop. A missing capability is a connector tool to propose, not a reason to reach around the connector. Use the CLI only when the user explicitly asks for it.
 
