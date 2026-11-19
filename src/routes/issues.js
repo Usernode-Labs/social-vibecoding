@@ -615,6 +615,15 @@ function stagingMockIssues(repoUrl) {
       'Staging demo: obviously fake. Its build failed, so the bot said so, '
       + 'and it failed again after somebody replied.\n\n'
       + '**Source:** Homeroom user (usernode-capture)', 3),
+    // #6867: the request a build left waiting for OpenRouter's credit
+    // (seedStagingBotWaitingRows in src/db/migrate.js stores its queue row).
+    // A staging copy has no GitHub to read the request from, so its page's
+    // own fetch finds it here, and only the after copy has it.
+    mk(9119, 'Staging demo: a request waiting for building credit',
+      'Staging demo: obviously fake. Its build stopped because the credit '
+      + 'that pays for building ran out, so it waits for Homeroom bot to '
+      + 'pick it up again by itself.\n\n'
+      + '**Source:** Homeroom user (usernode-capture)', 1),
   ];
 }
 

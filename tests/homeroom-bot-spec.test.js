@@ -260,7 +260,9 @@ test('a good spec carries no note; a failed one says why the build worked from t
   assert.equal(out.specNote, undefined);
   const broken = harness({ spec: 'API Error: Connection lost mid-response' });
   const b = await live.buildAndPropose({ pool: broken.pool, deps: broken.deps, ...ARGS, propose: false });
-  assert.equal(b.specNote, 'no spec (the spec turn ended on an API error); the build worked from the plan');
+  // #6867: a failed plan turn keeps the provider's own first line with its
+  // run, as a failed build turn does ("it ended on an API error: …").
+  assert.equal(b.specNote, 'no spec (the spec turn ended on an API error: API Error: Connection lost mid-response); the build worked from the plan');
 });
 
 test('the build session is linked to its run before any turn runs, so a restart can find it (#3401)', async () => {

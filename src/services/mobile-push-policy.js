@@ -172,8 +172,25 @@ function incidentKindLabel(kind) {
 // title nor what it is about: a lock screen is not private.
 const INCIDENT_SIGNAL_RE = /^signal:(\d{1,9})$/;
 const INCIDENT_PRIVATE_RE = /^private:(\d{1,10})$/;
+// #6867: services/openrouter-credit.js detailToken().
+const INCIDENT_CREDIT_RE = /^credit:(low|urgent):(\d{1,7}):(\d{1,7}):(\d{1,4})$/;
 
 function platformIncidentCopy(detail) {
+  if (detail === 'credit:out') {
+    return {
+      title: 'OpenRouter credit ran out',
+      body: 'Homeroom bot paused building. It starts again by itself once credit is added',
+    };
+  }
+  const credit = INCIDENT_CREDIT_RE.exec(detail);
+  if (credit) {
+    const [, , threshold, balance, days] = credit;
+    const about = Number(days) > 0 ? `, about ${days} days at this week's rate` : '';
+    return {
+      title: `OpenRouter credit is below $${Number(threshold).toLocaleString('en-US')}`,
+      body: `$${Number(balance).toLocaleString('en-US')} left${about}. Add credit before Homeroom bot stops building`,
+    };
+  }
   const signal = INCIDENT_SIGNAL_RE.exec(detail);
   if (signal) {
     return {

@@ -110,6 +110,24 @@ async function setLimit({ apiKey, baseUrl, origin, hash, limit, limitReset }) {
   };
 }
 
+// #6867: how much account credit is left. OpenRouter reports the total
+// bought and the total used, in dollars; the remainder is derived here and
+// returned in cents, so a caller never divides twice.
+async function getCredits({ apiKey, baseUrl, origin }) {
+  const result = await request('/credits', { apiKey, baseUrl, origin, method: 'GET', body: null });
+  const data = result.data || {};
+  const totalCredits = Number(data.total_credits);
+  const totalUsage = Number(data.total_usage);
+  if (!Number.isFinite(totalCredits) || !Number.isFinite(totalUsage)) {
+    throw new OpenRouterManagementError('OpenRouter returned no credit totals.', { code: 'invalid_provider_response' });
+  }
+  return {
+    totalCreditsUsd: totalCredits,
+    totalUsageUsd: totalUsage,
+    remainingCents: Math.round((totalCredits - totalUsage) * 100),
+  };
+}
+
 async function deleteKey({ apiKey, baseUrl, origin, hash }) {
   try {
     return await request(`/keys/${encodeURIComponent(hash)}`, {
@@ -127,5 +145,6 @@ module.exports = {
   createKey,
   setDisabled,
   setLimit,
+  getCredits,
   deleteKey,
 };

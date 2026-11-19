@@ -751,6 +751,10 @@
     "text": "Paused after repeated errors: Homeroom bot tries again later",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot's tries at reading the request failed several times in a row, so it waits a day before trying again. Nothing to do with building time."
   },
+  "work.line.creditWait": {
+    "text": "Waiting for building credit. Homeroom bot picks this up again by itself.",
+    "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: a build stopped because the credit that pays for building ran out, and nothing needs doing."
+  },
   "work.line.reply": {
     "text": "Reading your reply",
     "description": "Where a request or a change stands, the same words on every screen (the Homeroom bot tab, the chat's drawer, a request's page, a project's chat, the bell). Second line: Homeroom bot is reading what the person replied."

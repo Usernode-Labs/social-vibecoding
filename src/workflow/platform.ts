@@ -890,6 +890,15 @@ export async function botRefresh(appId: number | null, { now = false }: { now?: 
     { requestKey: `refresh:${randomUUID()}`, source: BOT_SOURCE('refresh'), appId: appId ?? undefined });
 }
 
+// #6867: OpenRouter's credit is back (the balance read): the lane lifts its
+// pause and grants slots again, so the requests the outage held run in their
+// usual order without anybody replying.
+export async function botCreditBack(): Promise<void> {
+  if (!runtime) return;
+  await runtime.append(BOT_LANE, LANE_KEY, { type: 'CreditBack', payload: {} },
+    { requestKey: `credit:${randomUUID()}`, source: BOT_SOURCE('credit') });
+}
+
 // What the bot's queue would answer about a request now: its instance's
 // state (an admin's view, a DM's "already on it").
 export async function botRequestState(appId: number, issueNumber: number): Promise<{ state: string; data: any } | null> {
