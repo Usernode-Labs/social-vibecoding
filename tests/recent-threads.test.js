@@ -210,6 +210,24 @@ test('the statement reads every way of taking part, and never follows', () => {
   assert.doesNotMatch(sql, /issue_claims/, 'a lapsed Claim is not something they did');
 });
 
+// 19 Nov 2026: Home's card titled a change handed in through the connector
+// "Homeroom": it read only the session's title, which such a change does not
+// have, and fell back to the project's name.
+test('a change is titled by its pull request, then its session, and never by its project', () => {
+  const { LIST_SQL, serialize } = require('../src/services/recent-threads');
+  assert.match(LIST_SQL, /SELECT s\.pr_number, COALESCE\(NULLIF\(s\.pr_title, ''\), NULLIF\(s\.session_title, ''\)\) AS title,/);
+  assert.match(LIST_SQL, /ch\.pr_number, ch\.title AS change_title,/);
+  const row = {
+    id: 3, kind: 'work', number: 3, title: null, created_at: null,
+    slug: 'homeroom', app_name: 'Homeroom', icon_emoji: null, icon_image_id: null,
+    request_number: null, request_title: null, pr_number: 6872,
+    change_title: null, decision_id: null, last_at: null,
+  };
+  assert.equal(serialize(row).title, '', 'no title of its own: the row calls it what it is, not by its project');
+  assert.equal(serialize({ ...row, change_title: 'Show more opens under the rows in sight' }).title, 'Show more opens under the rows in sight');
+  assert.equal(serialize({ ...row, title: 'The thread\'s own title' }).title, 'The thread\'s own title');
+});
+
 // ── the route ───────────────────────────────────────────────────────────
 
 const poolMod = require('../src/db/pool');

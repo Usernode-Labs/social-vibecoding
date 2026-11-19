@@ -8,11 +8,12 @@
 //
 //   1. It is drawn where there is a thread to list, as a section: its label
 //      line on the page, then one card.
-//   2. Rows read like the sheet's own (ThreadRow): the project's 44px tile,
-//      what the thread is, its title and the project with how long ago. No
-//      pill: a row here is not something asked of the viewer.
-//   3. Beside Pinned apps the column lists as many as fit and its last row
-//      says how many more there are; everywhere else it lists NEEDS_ROWS.
+//   2. A row is two lines beside the project's 40px tile: its title, then
+//      the project and how long ago (19 Nov 2026). No pill: a row here is not
+//      something asked of the viewer.
+//   3. Beside Pinned apps the column lists as many as fit; everywhere else
+//      it lists NEEDS_ROWS. The heading opens the rest: no count, no "more"
+//      row.
 //
 // Run with: node --test tests/home-needs-you-card.test.js
 
@@ -59,18 +60,16 @@ test('it is a section as Pinned apps is: its label line on the page, then one ca
   assert.match(src, /const drawn = feed \? feed\.length > 0 : hint > 0;/);
   assert.match(src, /if \(!drawn\) return null;/);
   assert.match(src, /<section ref=\{sectionRef\} id="home-needs-card" aria-label=\{t\('home:needsCard\.eyebrow'\)\} data-threads=\{String\(count\)\}>/);
-  // The label, the count and a chevron are one thing to press, opening the
-  // sheet's own list; it is a button, because the list is a sheet not a page.
+  // The label and a chevron are one thing to press, opening the sheet's own
+  // list; it is a button, because the list is a sheet not a page.
   assert.match(src, /<SectionHeading>\s*<WipHeadMore\s+id="home-needs-card-btn"\s+direction="right"\s+onClick=\{openThreadsList\}/);
-  assert.match(src, /<span id="home-needs-card-title" className="wip-head-words">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<span className="wip-count" aria-hidden="true">\{count\}<\/span>\s*<\/WipHeadMore>/);
-  assert.match(src, /label=\{leftOut > 0 \? t\('home:needsCard\.seeAllCount', \{ count \}\) : t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
+  assert.match(src, /<span id="home-needs-card-title" className="wip-head-words">\{t\('home:needsCard\.eyebrow'\)\}<\/span>\s*<\/WipHeadMore>/);
+  assert.match(src, /label=\{t\('home:needsCard\.seeAll'\)\}/, 'it has no words of its own on screen, so its name says what it opens');
   assert.equal(message('home:needsCard.eyebrow'), 'Recent threads');
   assert.equal(message('home:needsCard.seeAll'), 'See all');
-  assert.equal(message('home:needsCard.seeAllCount_other'), 'See all {{count}}');
-  // The number is a glyph beside the label; a screen reader gets the sentence.
-  assert.match(src, /<span className="sr-only">\{t\('home:needsCard\.total', \{ count \}\)\}<\/span>/);
-  assert.equal(message('home:needsCard.total_one'), '{{count}} recent thread');
-  assert.equal(message('home:needsCard.total_other'), '{{count}} recent threads');
+  // 19 Nov 2026: no count. How many threads the viewer ever took part in
+  // (3524 for an admin) is not news on a card of recent ones.
+  assert.doesNotMatch(src, /wip-count|home:needsCard\.(total|seeAllCount)/);
   // The card holds the list alone.
   assert.match(src, /<WipCard className="wip-panel" data-tone="ask">\s*<ul ref=\{listRef\} className="wip-rows wip-rows-cols"/);
 });
@@ -101,40 +100,35 @@ test('while the list is on its way the card holds its place, from what the last 
   assert.match(src, /Array\.from\(\{ length: Math\.min\(hint, NEEDS_ROWS\) \}, \(_, i\) => <li key=\{i\}><WipSkelRow \/><\/li>\)/);
 });
 
-test('beside Pinned apps it lists as many as fit, and its last row says how many more there are', () => {
+test('beside Pinned apps it lists as many as fit, and the heading opens the rest', () => {
   const { needsLayout, NEEDS_ROWS } = loadTsx(CARD);
   const feed = Array.from({ length: 16 }, (_, i) => thread(i + 1));
   assert.equal(NEEDS_ROWS, 8, 'where the column cannot be measured it lists two lines of four');
-  assert.deepEqual(needsLayout(feed, null), { rows: feed.slice(0, NEEDS_ROWS), more: 0 }, 'no measurement: as it always listed');
+  assert.deepEqual(needsLayout(feed, null), { rows: feed.slice(0, NEEDS_ROWS), more: 8 }, 'no measurement: as it always listed');
+  // 19 Nov 2026: every row of the space is a thread; no row goes to "N more".
   const { rows, more } = needsLayout(feed, 7);
-  assert.equal(rows.length, 6, 'one row of the space goes to the "more" row');
-  assert.equal(more, 10);
-  assert.equal(rows.length + more, feed.length, 'the rows shown plus "N more" are the count in the heading');
+  assert.equal(rows.length, 7, 'as many threads as fit');
+  assert.equal(more, 9, 'and how many it could not list, which the card does not draw');
   const two = feed.slice(0, 2);
   assert.deepEqual(needsLayout(two, 7), { rows: two, more: 0 }, 'a short list lists all of itself and ends there');
-  assert.deepEqual(needsLayout(feed, 16), { rows: feed, more: 0 }, 'everything fits: no "more" row');
-  // With only room for one row, that one and the "more" row are the column.
-  const tight = needsLayout(feed, 2);
-  assert.deepEqual(tight.rows, feed.slice(0, 1));
-  assert.equal(tight.more, 15);
-  // A list longer than the page the card asked for counts what it could not
-  // have asked for either: the heading's number stays the rows plus "more".
+  assert.deepEqual(needsLayout(feed, 16), { rows: feed, more: 0 }, 'everything fits');
+  assert.deepEqual(needsLayout(feed, 2).rows, feed.slice(0, 2), 'room for two is two threads');
+  // A list longer than the page the card asked for counts what it could not have asked for either.
   const long = needsLayout(feed, 7, 40);
-  assert.equal(long.rows.length + long.more, 40);
+  assert.deepEqual([long.rows.length, long.more], [7, 33]);
   const src = read(CARD);
   // It measures the column beside Pinned apps only: the page's grid puts the aside in column 2.
   assert.match(src, /getComputedStyle\(aside\)\.gridColumnStart !== '2'/);
   assert.match(src, /new ResizeObserver\(measure\);/);
   assert.match(src, /aside\.clientHeight - \(heading\?\.offsetHeight \|\| 0\) - padding/);
-  // The last row opens the whole list and carries the count.
-  assert.match(src, /<button type="button" className="wip-row wip-row-more" data-threads-more="" onClick=\{openThreadsList\}>\s*\{t\('home:needsCard\.more', \{ count: more \}\)\}/);
-  assert.equal(message('home:needsCard.more_other'), '{{count}} more');
+  // No "3517 more" row: the heading is the way to the rest.
+  assert.doesNotMatch(src, /wip-row-more|data-threads-more|home:needsCard\.more/);
   const css = read('public/css/app.css');
   assert.doesNotMatch(css, /#home-needs-card \.wip-rows > li:nth-child\(n \+ 6\)/, 'nothing is hidden after the fifth');
-  assert.match(css, /#home-needs-card \.wip-row-more \{[^}]*width: 100%;[^}]*text-align: start;/, 'a button takes the row\'s width');
+  assert.doesNotMatch(css, /#home-needs-card \.wip-row-more/);
 });
 
-test('the heading and the last row open the sheet on its Recent threads list', () => {
+test('the heading opens the sheet on its Recent threads list', () => {
   const src = read(CARD);
   assert.match(src, /import \{ notificationsSheetStore \} from '\.\.\/notifications\/notifications-sheet-store\.js';/);
   assert.match(src, /try \{ notificationsSheetStore\.set\(\{ tab: 'threads' \}\); \}/);
@@ -145,7 +139,7 @@ test('the heading and the last row open the sheet on its Recent threads list', (
   assert.match(sheet, /if \(!open \|\| !wantedTab\) return;\s*setTab\(wantedTab\);\s*notificationsSheetStore\.set\(\{ tab: null \}\);/);
 });
 
-test('a row reads like a Recent threads row: the project\'s tile, what it is, its title, the project and how long ago', () => {
+test('a row is the project\'s tile, the thread\'s title, then the project and how long ago', () => {
   const src = read(CARD);
   const { kindId } = loadTsx(CARD);
   assert.equal(kindId({ kind: 'change', number: 6800 }), 'home:needsCard.kind.change');
@@ -157,12 +151,14 @@ test('a row reads like a Recent threads row: the project\'s tile, what it is, it
   assert.equal(message('home:needsCard.kind.request'), 'Request #{{number}}');
   assert.equal(message('home:needsCard.kind.decision'), 'Decision');
   assert.equal(message('home:needsCard.meta'), '{{project}} · <0>{{when}}</0>');
-  // The same app tile the notifications sheet draws, from the same two pieces.
+  // The same app tile the notifications sheet draws, from the same two pieces, 40px beside two lines.
   assert.match(src, /from '\.\.\/apps\/app-card-view'/);
-  assert.match(src, /data-icon=\{appIconKind\(app\)\}\s*className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"\s*>\s*<AppIconContent app=\{app\} \/>/);
-  // Three lines in the text column, the title on one line.
-  assert.match(src, /<span className="wip-item-kind block text-xs text-zinc-500 dark:text-zinc-400 truncate">\s*\{t\(kindId\(thread\)/);
-  assert.match(src, /<b className="wip-item-title block text-\[15px\] font-\[650\] truncate">\{thread\.title\}<\/b>/);
+  assert.match(src, /data-icon=\{appIconKind\(app\)\}\s*className="app-icon-tile w-10 h-10 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"\s*>\s*<AppIconContent app=\{app\} \/>/);
+  // Two lines, 15 over 13: the title, then the project and when. Not what
+  // kind of thread it is nor its number (asked 19 Nov 2026), except as the
+  // title of a thread with none of its own, never the project's name.
+  assert.doesNotMatch(src, /wip-item-kind/);
+  assert.match(src, /<b className="wip-item-title block text-\[15px\] font-\[650\] truncate">\s*\{thread\.title \|\| t\(kindId\(thread\), \{ number: thread\.number == null \? '' : String\(thread\.number\) \}\)\}\s*<\/b>/);
   assert.match(src, /<RichMessage\s+id="home:needsCard\.meta"\s+values=\{\{ project: app\.name, when \}\}\s+components=\{\[<time title=\{whenTitle\} \/>\]\}\s*\/>/);
   // No waiting time: the project's name alone.
   assert.match(src, /\) : \(\s*<span className="wip-item-meta block text-\[13px\][^"]*">\{app\.name\}<\/span>/);
@@ -198,6 +194,10 @@ test('a challenge is its picture, then its words beside it, in a row that pages 
   // A row and a poster keep a project tile's own padding, so the three lists' icons start on the same lines.
   assert.match(css, /\.wip-row \{[^}]*padding: 0\.5rem var\(--wip-cell-pad\);/);
   assert.match(css, /\.wip-poster \{[^}]*padding: 0\.5rem var\(--wip-cell-pad\);/);
+  // 19 Nov 2026: the brand look sets no --wip-cell-pad, so that padding fell
+  // away and a recent thread's lines sat on the hairlines. Its rows are
+  // padded top and bottom from 768px (a phone's rows are cards of their own).
+  assert.match(css, /@media \(min-width: 768px\) \{\s*html\[data-skin="brand"\][^{]*#home-needs-card \.wip-row \{\s*padding: 0\.5rem 0;\s*\}\s*\}/);
 });
 
 test('the brand kit V2 tokens use yellow and green as marks, never as a row\'s ground, and a project\'s name is one size', () => {
@@ -313,8 +313,8 @@ test('Standard (WIP): the menu is the token set\'s own panel, and a pinned proje
   assert.match(read('frontend/src/features/home/home.js'), /members: Math\.max\(0, Number\(app\.member_count\) \|\| 0\),/);
   assert.match(css, /html\[data-skin-wip\] #app-list \.app-card-desc \{ display: none; \}/);
   assert.match(css, /html\[data-skin-wip\] #app-list \{ padding: var\(--wip-cell-pad\); \}/);
-  // A recent thread is its title, its project and when.
-  assert.match(css, /html\[data-skin-wip\] #home-needs-card \.wip-item-kind \{ display: none; \}/);
+  // A recent thread is its title, its project and when, in every look now: there is no kind line to hide.
+  assert.doesNotMatch(css, /#home-needs-card \.wip-item-kind/);
 });
 
 test('Standard (WIP): the Highlighter token set, whole in light and in dark, and offered by the menu', () => {

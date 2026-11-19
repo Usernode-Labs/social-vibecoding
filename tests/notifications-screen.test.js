@@ -162,7 +162,7 @@ test('#6785: a Recent threads row is one thread, with the app tile on the left',
   // the 15/650 title and the 13px project-and-when line.
   assert.match(row, /notifications:sheet\.threads\.kind\.request/, 'the kind line says what the thread is');
   const afterTile = row.slice(row.indexOf('<AppIconContent app={app} />'));
-  assert.match(afterTile, /text-\[15px\] font-\[650\][\s\S]{0,160}?\{thread\.title\}/, 'the title is a row title, 15 over 13');
+  assert.match(afterTile, /text-\[15px\] font-\[650\][\s\S]{0,160}?\{thread\.title \|\| kind\}/, 'the title is a row title, 15 over 13, and an untitled thread is called what it is');
   assert.match(afterTile,
     /id="notifications:sheet\.threads\.meta"[\s\S]{0,200}?values=\{\{ project: thread\.appName \|\| ''/, 'and the project it belongs to, with when');
   // A row stands for a discussion, so it carries no unread dot and no
