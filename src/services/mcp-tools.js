@@ -6228,7 +6228,7 @@ function registerTools(server, ctx) {
       visualEvidence: z.unknown().optional()
         .describe('Older name for visibleChanges, still accepted. Send visibleChanges.'),
       diagram: z.unknown().optional()
-        .describe('Expected when visibleChanges declares impact "none" (it is the change\'s only picture), and recommended for a rename, a changed flow, a data or settings change, or a measured improvement (#4490). A small diagram of the change, which Homeroom draws on its Needs-you card when it has no before & after shots, leads its page with, and writes into the pull request as text. Send DATA, never SVG or HTML: {"version":1,"kind":"rename","from":"spec","to":"plan","places":["Chat cards","Buttons"],"note":"Only the words change."}, {"version":1,"kind":"flow","before":["Vote","Closes"],"after":["Vote","Checks","Closes"]}, {"version":1,"kind":"changes","rows":[{"op":"added|changed|removed","what":"…","detail":"…"}]} or {"version":1,"kind":"numbers","unit":"s","rows":[{"label":"Load time","before":2.4,"after":0.9}]}. Every text 1-60 characters; at most 8 places, 6 steps a side, 6 rows. Use one when the change is a rename, a changed flow, a data or settings change, or a measured improvement. Only when visibleChanges declares impact "none" in this same call and none of the four fits, {"version":1,"kind":"mermaid","source":"flowchart TD\\n  A[Copy] --> B[Retry]"} is accepted: at most 2000 characters and 40 lines, opening with flowchart, graph, sequenceDiagram, stateDiagram-v2, classDiagram or erDiagram, with no %%{ directives, click, href, callback, or < > outside arrows. An invalid one fails the call with invalid_diagram and nothing is written; an update replaces the stored one.'),
+        .describe('Required when visibleChanges declares impact "none" (one of the three pictures voters can read without the code; see incomplete), and recommended for a rename, a changed flow, a data or settings change, or a measured improvement (#4490). A small diagram of the change, which Homeroom draws on its Needs-you card when it has no before & after shots, leads its page with, and writes into the pull request as text. Send DATA, never SVG or HTML: {"version":1,"kind":"rename","from":"spec","to":"plan","places":["Chat cards","Buttons"],"note":"Only the words change."}, {"version":1,"kind":"flow","before":["Vote","Closes"],"after":["Vote","Checks","Closes"]}, {"version":1,"kind":"changes","rows":[{"op":"added|changed|removed","what":"…","detail":"…"}]} or {"version":1,"kind":"numbers","unit":"s","rows":[{"label":"Load time","before":2.4,"after":0.9}]}. Every text 1-60 characters; at most 8 places, 6 steps a side, 6 rows. For a change nobody sees, prefer one of these three, in this order: {"version":1,"kind":"seen","where":"A stuck change\'s status","look":"status|notice|message|count","before":{"title":"…","lines":["…"]},"after":{"title":"…","lines":["…"]}} when anything a person could notice changes (a status, message, notice or count), in the change\'s real words, at most 2 lines a side; {"version":1,"kind":"moment","before":{"date":"YYYY-MM-DD","ref":"PR #6699","lasted":"about 25 minutes","events":["…"]},"after":{"events":["…"]}} when the request reports a real incident, taken only from its own dates, refs and durations, 1-4 events a side and never a future date; or {"version":1,"kind":"steps","before":[{"pic":"two-edits","caption":"Two edits","note":"…","retry":true}],"after":["…"]} otherwise, at most 5 steps a row, a caption of 1-3 words, at most one note a row, and pic from two-edits, text-twice, text-once, merged, checked, retry, builds, cant-build, handed-back, person, bell, card, vote. Use a fixed kind when the change is a rename, a changed flow, a data or settings change, or a measured improvement. Only when visibleChanges declares impact "none" in this same call and none of these fits, {"version":1,"kind":"mermaid","source":"flowchart TD\\n  A[Copy] --> B[Retry]"} is accepted: at most 2000 characters and 40 lines, opening with flowchart, graph, sequenceDiagram, stateDiagram-v2, classDiagram or erDiagram, with no %%{ directives, click, href, callback, or < > outside arrows. An invalid one fails the call with invalid_diagram and nothing is written; an update replaces the stored one.'),
       expectedHeadSha: z.string().optional()
         .describe('Only for an update: the proposal’s current commit as you last read it, from get_proposal’s `branch.headSha`. Pass it and Homeroom refuses with `branch_moved` if somebody advanced the proposal while you were working, instead of building on a head you have not seen. Optional — omitted, your branch still has to sit on top of whatever the current head is. For an update by patch it is the commit the patch was made from, where it is applied; omitted, that is the update task’s base commit.'),
       recheck: z.boolean().optional()
@@ -6282,8 +6282,10 @@ function registerTools(server, ctx) {
         .describe('Whether supplied visibleChanges were not persisted (for example because collection is disabled). Validation errors fail the tool instead of silently returning true here.'),
       diagramAccepted: z.boolean().nullable().optional()
         .describe('Whether this call stored the supplied diagram. Null when none was supplied or nothing was written.'),
+      incomplete: z.array(z.string()).optional()
+        .describe('What this submission is still missing. Present as ["no_picture"] when the change declared impact "none" and has none of the three pictures that make such a change complete (diagram kind seen, moment or steps). The submission still stands: send the picture in an update, and Homeroom bot\'s follow-up adds one otherwise.'),
       warnings: z.array(z.string()).optional()
-        .describe('Advisory notes about this submission. Present when the change declared impact "none" and no diagram was sent or stored: it then goes to the vote with "What it touches" as its only picture.'),
+        .describe('Advisory notes about this submission. Present when the change declared impact "none" and no seen, moment or steps picture was sent or stored: voters then see only what files it touches. The answer also sets incomplete: ["no_picture"].'),
       shotsRequired: z.boolean().nullable()
         .describe('Whether the proposal gets before/after shots for its current revision.'),
       shotsNextStep: z.string().nullable()
@@ -6652,16 +6654,29 @@ function registerTools(server, ctx) {
       diagramAccepted = await proposalDiagram.store(pool, target, acceptedDiagram, 'author');
     }
 
-    // #6815: nothing visible changes and no diagram was sent, so the change
-    // goes to the vote with "What it touches" as its only picture. Advisory:
-    // the submission stands. A stored diagram (an earlier update's, or this
-    // build's) means there is nothing to remind about.
+    // #6832: nothing visible changes and the change has no picture of what it
+    // does. One of the three pictures (seen, moment, steps) is what makes such
+    // a change complete; an older kind does not count, because it says nothing
+    // a non-technical voter can read. Advisory: the submission still stands,
+    // and Homeroom bot's follow-up adds the picture.
     let warnings = null;
-    if (acceptedVisibleChanges?.impact === 'none' && !acceptedDiagram && !result.alreadySubmitted) {
+    let incomplete = null;
+    if (acceptedVisibleChanges?.impact === 'none' && !result.alreadySubmitted) {
       const target = Number(updating ? proposalId : (result.proposalId || result.sessionId));
-      const kept = (updating || result.update === true) && await proposalDiagram.hasStored(pool, target);
-      if (!kept) {
-        warnings = ['No diagram was sent and nothing visible changes, so this change goes to the vote with "What it touches" as its only picture. Send diagram (flow, changes, numbers or rename) in an update.'];
+      const sent = acceptedDiagram ? acceptedDiagram.kind : null;
+      const keptKind = sent || !(updating || result.update === true)
+        ? null
+        : await proposalDiagram.storedKind(pool, target);
+      const kind = sent || keptKind;
+      const complete = kind === 'unknown' || diagramContract.NONE_KINDS.includes(kind);
+      if (!complete) {
+        incomplete = ['no_picture'];
+        warnings = ['Nothing on screen changes and this change has no picture of what it does, so voters only see what files it touches. '
+          + 'Send diagram with kind "seen" (a small before and after of one element, with the change\'s real words), '
+          + '"moment" (a dated before and after timeline taken from the request\'s own evidence) or '
+          + '"steps" (a before row and an after row of at most five pictures from the fixed set) in an update. '
+          + 'Use seen when anything a person could notice changes, moment when the request came from a real incident, '
+          + 'and steps otherwise.'];
       }
     }
 
@@ -6858,6 +6873,7 @@ function registerTools(server, ctx) {
         visibleChangesRejected: acceptedVisibleChanges ? result.visibleChangesRejected === true : null,
         diagramAccepted,
         ...(warnings ? { warnings } : {}),
+        ...(incomplete ? { incomplete } : {}),
         shotsRequired: acceptedVisibleChanges ? result.shotsRequired === true : null,
         shotsNextStep: acceptedVisibleChanges ? (result.shotsNextStep || 'none') : null,
         // #2066. What this push actually set going, rather than what the
@@ -6913,6 +6929,7 @@ function registerTools(server, ctx) {
         visibleChangesRejected: acceptedVisibleChanges ? result.visibleChangesRejected === true : null,
         diagramAccepted,
         ...(warnings ? { warnings } : {}),
+        ...(incomplete ? { incomplete } : {}),
         shotsRequired: acceptedVisibleChanges ? result.shotsRequired === true : null,
         shotsNextStep: acceptedVisibleChanges ? (result.shotsNextStep || 'none') : null,
         proposed: null,
@@ -6995,6 +7012,7 @@ function registerTools(server, ctx) {
       visibleChangesRejected: acceptedVisibleChanges ? result.visibleChangesRejected === true : null,
       diagramAccepted,
       ...(warnings ? { warnings } : {}),
+      ...(incomplete ? { incomplete } : {}),
       shotsRequired: acceptedVisibleChanges ? result.shotsRequired === true : null,
       shotsNextStep: acceptedVisibleChanges ? (result.shotsNextStep || 'none') : null,
       // A first submission is promoted by the import itself — `propose` is

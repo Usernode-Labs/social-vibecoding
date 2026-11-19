@@ -18,9 +18,16 @@ const ESCALATION_HEADING =
 // is the only picture voters get. The guidance says so, with an example.
 test('conventions doc asks for a diagram after a change with nothing visible', () => {
   const doc = getAppConventions().replace(/\s+/g, ' ');
-  // The offline excerpt is capped at 9 KB, so it carries the step and a valid
-  // example; the kinds and the size rule are spelled out below it.
-  assert.match(doc, /record `impact: "none"` with a specific rationale\. Then call `declare_diagram`: `\{"version":1,"kind":"flow","before":\["A"\],"after":\["B"\]\}`\./);
+  // The offline excerpt is capped at 9 KB, so it carries the step compactly;
+  // the kinds and the size rule are spelled out below it.
+  // #6832: a change nobody sees needs one of its three pictures, chosen in
+  // this order, and one with no picture counts as incomplete.
+  const at = doc.indexOf('record `impact: "none"` with a specific rationale, then call `declare_diagram`: `seen`, `moment` or `steps`; none counts as incomplete.');
+  assert.ok(at > 0, 'the step names the three pictures');
+  const step = doc.slice(at, at + 900);
+  assert.ok(step.indexOf('`seen`') < step.indexOf('`moment`') && step.indexOf('`moment`') < step.indexOf('`steps`'),
+    'seen, then moment, then steps');
+  assert.match(step, /counts as incomplete/);
   assert.match(doc, /declare a diagram of it: `flow`, `changes`, `numbers` or `rename`, plain words, 1-60 characters a text, e\.g\. `\{"version":1,"kind":"flow"/);
   // Both examples are diagrams the platform accepts, not invented shapes.
   const { parseDiagram } = require('../src/services/diagram.js');

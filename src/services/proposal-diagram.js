@@ -59,6 +59,26 @@ async function hasStored(pool, sessionId) {
 }
 
 /**
+ * The kind of the change's stored diagram ('seen', 'steps', …), or null when
+ * it has none. #6832: a change that changes nothing on screen is complete
+ * only with one of the three pictures, so a stored older kind does not count.
+ * Resolves 'unknown' when the lookup fails, so a failure never invents a
+ * missing picture.
+ */
+async function storedKind(pool, sessionId) {
+  const id = Number(sessionId);
+  if (!pool || !Number.isInteger(id) || id <= 0) return null;
+  try {
+    const { rows } = await pool.query('SELECT pr_diagram AS d FROM chat_sessions WHERE id = $1', [id]);
+    const value = diagram.storedDiagram(rows[0]?.d);
+    return value ? value.kind : null;
+  } catch (err) {
+    log.warn('proposal-diagram', 'Could not read the stored diagram', { sessionId: id, err: err.message });
+    return 'unknown';
+  }
+}
+
+/**
  * A hosted build's declared diagram: the row, and in the same transaction the
  * proposal machine's DiagramStored, which owes the pull request's body its
  * block (`pr.diagram`, syncPrBlock). Written after the commit instead, a
@@ -127,4 +147,4 @@ async function syncPrBlock(pool, sessionId, deps = {}) {
   return { updated: true };
 }
 
-module.exports = { store, storeDeclared, syncPrBlock, hasStored, SOURCES };
+module.exports = { store, storeDeclared, syncPrBlock, hasStored, storedKind, SOURCES };

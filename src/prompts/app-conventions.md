@@ -94,8 +94,8 @@ Ordered by how badly an agent working offline gets each one wrong.
    `declare_visible_changes` with the change, real steps, focus,
    persona, viewports, and animation (`motion` gets clips). Homeroom takes
    before/after shots of it on the exact builds. For a non-visual change,
-   record `impact: "none"` with a specific rationale. Then call `declare_diagram`:
-   `{"version":1,"kind":"flow","before":["A"],"after":["B"]}`.
+   record `impact: "none"` with a specific rationale, then call
+   `declare_diagram`: `seen`, `moment` or `steps`; none counts as incomplete.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,

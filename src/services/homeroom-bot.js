@@ -6471,7 +6471,7 @@ async function reconcileRevision({ config, pool, session, app, issueNumber, deps
 //     round has revised the proposal (`fix_revised`), so it never loops.
 
 const CHECKS_ROW_SQL = `SELECT cs.id, cs.app_id, cs.linked_issues, cs.check_state, cs.checks_commit_sha,
-            cs.reviewed_head_sha, cs.test_results, cs.shots_state, cs.shots_detail, a.slug, a.name, a.repo_url,
+            cs.reviewed_head_sha, cs.test_results, cs.shots_state, cs.shots_detail, cs.pr_diagram, a.slug, a.name, a.repo_url,
             EXISTS (
               SELECT 1 FROM homeroom_bot_runs r
                WHERE r.proposal_session_id = cs.id
@@ -6624,7 +6624,9 @@ async function runChecksFix(pool, config, {
   const broken = Array.isArray(checks.broken) ? checks.broken : [];
   // And those they skipped for want of data the change can seed itself.
   const skipped = Array.isArray(checks.skipped) ? checks.skipped : [];
-  const onlyShots = followup.onlyShotsDue(checks);
+  // #6832: a change that changes nothing on screen with none of its pictures.
+  const noPicture = checks.noPicture === true;
+  const onlyShots = followup.onlyShotsDue(checks) || followup.onlyNoPictureDue(checks);
   // The run keeps what the bot has seen of the issue: nobody said anything,
   // so the last run's mark stands (without one the next refresh would read
   // the whole thread as new).
@@ -6956,7 +6958,7 @@ async function runChecksFix(pool, config, {
   const overlap = await fixOverlapContext(pool, { app, session, head, failing, deps })
     .catch(() => ({ mainChanges: [], openOverlaps: [], firstTry: false }));
   const prompt = followup.checksFixPrompt({
-    seed, proposalBlock, prNumber, failing, total, broken, skipped, locale: requester?.locale || null,
+    seed, proposalBlock, prNumber, failing, total, broken, skipped, noPicture, locale: requester?.locale || null,
     mainChanges: overlap.mainChanges, openOverlaps: overlap.openOverlaps, firstTry: overlap.firstTry,
   });
   snapshot = {
@@ -7066,7 +7068,9 @@ async function runChecksFix(pool, config, {
     // this for the new head (server.js finalizeRecoveredTurn).
     await look.once('reconcile', async () => { await reconcileRevision({ config, pool, session, app, issueNumber, deps }); return true; });
     const summary = parsed?.summary || parsed?.reply || (onlyShots
-      ? 'It added the data the before and after shots need.'
+      ? (noPicture
+        ? 'It added the picture of what the change does.'
+        : 'It added the data the before and after shots need.')
       : 'It updated the change so its checks pass.');
     runId = await insertRun(pool, {
       ...billingOf(item, runMode),

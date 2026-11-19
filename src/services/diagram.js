@@ -16,6 +16,16 @@
 //   { version: 1, kind: 'numbers', unit?, rows: [{ label, before, after }] }
 //   { version: 1, kind: 'mermaid', source }
 //
+// #6832: three more kinds for a change that changes nothing on screen, so its
+// card carries a picture anyone can read instead of "What it touches":
+//
+//   { version: 1, kind: 'seen', where, look, before: { title, lines? }, after: { title, lines? } }
+//   { version: 1, kind: 'moment', before: { date, ref, lasted?, events }, after: { events } }
+//   { version: 1, kind: 'steps', before: [{ pic, caption, note?, retry? }], after: [..] }
+//
+// Like Mermaid they are accepted only for a submission that declares
+// visibleChanges impact "none": a change people can see has shots instead.
+//
 // The four fixed kinds are text only, so React escapes them and there is
 // nothing to sanitise. Mermaid is text too; the browser draws it with the
 // vendored library under strict settings and DOMPurify cleans the SVG
@@ -26,8 +36,20 @@
 
 const VERSION = 1;
 const FIXED_KINDS = Object.freeze(['rename', 'flow', 'changes', 'numbers']);
-const KINDS = Object.freeze([...FIXED_KINDS, 'mermaid']);
+// #6832: the kinds only a change that changes nothing on screen may carry.
+const NONE_KINDS = Object.freeze(['seen', 'moment', 'steps']);
+const KINDS = Object.freeze([...FIXED_KINDS, ...NONE_KINDS, 'mermaid']);
 const OPS = Object.freeze(['added', 'changed', 'removed']);
+
+// The element a "seen" picture draws, and the fixed picture set a "steps"
+// row is made from. Frozen: a picture is chosen from this list, never
+// described, and the renderer draws one drawing for each (frontend
+// lib/diagram/scene.tsx).
+const SEEN_LOOKS = Object.freeze(['status', 'notice', 'message', 'count']);
+const SCENES = Object.freeze([
+  'two-edits', 'text-twice', 'text-once', 'merged', 'checked', 'retry', 'builds', 'cant-build',
+  'handed-back', 'person', 'bell', 'card', 'vote',
+]);
 
 const LIMITS = Object.freeze({
   text: 60,
@@ -35,6 +57,11 @@ const LIMITS = Object.freeze({
   places: 8,
   steps: 6,
   rows: 6,
+  seenLines: 2,
+  momentEvents: 4,
+  stepsPerRow: 5,
+  caption: 24,
+  captionWords: 3,
   mermaidChars: 2000,
   mermaidLines: 40,
 });
@@ -68,7 +95,6 @@ const MERMAID_ARROW_RE = /(?:<<|<\|?)?[-=.]+(?:>>|\|?>)?/g;
 const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f]/;
 
 const KIND_WORDS = 'rename, flow, changes or numbers';
-
 class DiagramValidationError extends Error {
   constructor(message) {
     super(message);
@@ -145,17 +171,52 @@ function checkMermaidSource(value, path = 'diagram.source') {
 }
 
 /**
+ * #6832: the kinds that are only for a change nobody sees — Mermaid, and the
+ * three pictures "What you'd see", "What happened" and "How it works".
+ */
+function checkNoneKind(kind, impact) {
+  if (impact === 'none') return;
+  const why = impact ? `this one declares "${impact}"` : 'this one declares no visibleChanges';
+  fail(`diagram.kind: ${kind} is only for a change nobody sees, declared with visibleChanges impact "none" in the same submission (${why}). Use ${KIND_WORDS} instead.`);
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** A real calendar date, no later than today (UTC), as `YYYY-MM-DD`. */
+function checkDate(value, path) {
+  if (typeof value !== 'string' || !ISO_DATE_RE.test(value)) fail(`${path}: must be a date written YYYY-MM-DD`);
+  const [y, m, d] = value.split('-').map(Number);
+  const at = new Date(Date.UTC(y, m - 1, d));
+  if (at.getUTCFullYear() !== y || at.getUTCMonth() !== m - 1 || at.getUTCDate() !== d) fail(`${path}: must be a real calendar date`);
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  if (at.getTime() > todayUtc) fail(`${path}: must not be in the future`);
+  return value;
+}
+
+// A real moment is about a change or a request that happened: a "#6699"-style
+// reference names one, a made-up sentence does not.
+const REF_RE = /^(?:PR|request|change) #\d+$/;
+
+function checkRef(value, path) {
+  const ref = text(value, path, { max: 24 });
+  if (!REF_RE.test(ref)) fail(`${path}: must name the change it happened to, like "PR #6699"`);
+  return ref;
+}
+
+/**
  * Validate and normalise one diagram record. `impact` is the SAME
  * submission's declared visible-changes impact ('ui' | 'motion' | 'none', or
- * null when it declared none): Mermaid is accepted only when it is 'none',
- * because a change people can see has shots, and one of the four fixed kinds
- * says what else it needs in words anyone can read.
+ * null when it declared none): Mermaid and the three "nothing on screen
+ * changes" pictures (#6832) are accepted only when it is 'none', because a
+ * change people can see has shots, and one of the four fixed kinds says what
+ * else it needs in words anyone can read.
  */
 function parseDiagram(value, { impact = null } = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('diagram: must be an object with version 1 and a kind');
   if (value.version !== VERSION) fail('diagram.version: must be 1');
   const kind = value.kind;
-  if (!KINDS.includes(kind)) fail(`diagram.kind: must be ${KIND_WORDS} (or mermaid, for a change nobody sees)`);
+  if (!KINDS.includes(kind)) fail(`diagram.kind: must be ${KIND_WORDS} (or mermaid, seen, moment or steps, for a change nobody sees)`);
   switch (kind) {
     case 'rename': {
       onlyKeys(value, ['version', 'kind', 'from', 'to', 'places', 'note'], 'diagram');
@@ -200,11 +261,72 @@ function parseDiagram(value, { impact = null } = {}) {
       });
       return { version: VERSION, kind, ...(unit ? { unit } : {}), rows };
     }
+    case 'seen': {
+      onlyKeys(value, ['version', 'kind', 'where', 'look', 'before', 'after'], 'diagram');
+      checkNoneKind('seen', impact);
+      if (!SEEN_LOOKS.includes(value.look)) fail(`diagram.look: must be ${SEEN_LOOKS.join(', ')}`);
+      const side = (raw, path) => {
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) fail(`${path}: must be { title, lines? }`);
+        onlyKeys(raw, ['title', 'lines'], path);
+        const lines = list(raw.lines, `${path}.lines`, { min: 0, max: LIMITS.seenLines })
+          .map((l, i) => text(l, `${path}.lines.${i}`));
+        return { title: text(raw.title, `${path}.title`), ...(lines.length ? { lines } : {}) };
+      };
+      const before = side(value.before, 'diagram.before');
+      const after = side(value.after, 'diagram.after');
+      if (JSON.stringify(before) === JSON.stringify(after)) fail('diagram.after: must differ from diagram.before');
+      return { version: VERSION, kind, where: text(value.where, 'diagram.where'), look: value.look, before, after };
+    }
+    case 'moment': {
+      onlyKeys(value, ['version', 'kind', 'before', 'after'], 'diagram');
+      checkNoneKind('moment', impact);
+      const events = (raw, path) => list(raw, path, { max: LIMITS.momentEvents })
+        .map((e, i) => text(e, `${path}.${i}`));
+      if (!value.before || typeof value.before !== 'object' || Array.isArray(value.before)) fail('diagram.before: must be { date, ref, lasted?, events }');
+      onlyKeys(value.before, ['date', 'ref', 'lasted', 'events'], 'diagram.before');
+      if (!value.after || typeof value.after !== 'object' || Array.isArray(value.after)) fail('diagram.after: must be { events }');
+      onlyKeys(value.after, ['events'], 'diagram.after');
+      const lasted = text(value.before.lasted, 'diagram.before.lasted', { optional: true });
+      const before = {
+        date: checkDate(value.before.date, 'diagram.before.date'),
+        ref: checkRef(value.before.ref, 'diagram.before.ref'),
+        ...(lasted ? { lasted } : {}),
+        events: events(value.before.events, 'diagram.before.events'),
+      };
+      const after = { events: events(value.after.events, 'diagram.after.events') };
+      return { version: VERSION, kind, before, after };
+    }
+    case 'steps': {
+      onlyKeys(value, ['version', 'kind', 'before', 'after'], 'diagram');
+      checkNoneKind('steps', impact);
+      const row = (raw, path) => {
+        const out = list(raw, path, { max: LIMITS.stepsPerRow }).map((s, i) => {
+          const at = `${path}.${i}`;
+          if (!s || typeof s !== 'object' || Array.isArray(s)) fail(`${at}: must be { pic, caption, note?, retry? }`);
+          onlyKeys(s, ['pic', 'caption', 'note', 'retry'], at);
+          if (!SCENES.includes(s.pic)) fail(`${at}.pic: must be one of the picture set (${SCENES.join(', ')})`);
+          const caption = text(s.caption, `${at}.caption`, { max: LIMITS.caption });
+          if (caption.split(' ').length > LIMITS.captionWords) fail(`${at}.caption: at most ${LIMITS.captionWords} words`);
+          if (s.retry !== undefined && typeof s.retry !== 'boolean') fail(`${at}.retry: must be true or false`);
+          const note = text(s.note, `${at}.note`, { optional: true });
+          return {
+            pic: s.pic,
+            caption,
+            ...(note ? { note } : {}),
+            ...(s.retry === true ? { retry: true } : {}),
+          };
+        });
+        if (out.filter((s) => s.note).length > 1) fail(`${path}: at most one step may carry a note`);
+        return out;
+      };
+      const before = row(value.before, 'diagram.before');
+      const after = row(value.after, 'diagram.after');
+      if (JSON.stringify(before) === JSON.stringify(after)) fail('diagram.after: must differ from diagram.before');
+      return { version: VERSION, kind, before, after };
+    }
     default: {
       onlyKeys(value, ['version', 'kind', 'source'], 'diagram');
-      if (impact !== 'none') {
-        fail(`diagram.kind: mermaid is only for a change nobody sees, declared with visibleChanges impact "none" in the same submission${impact ? ` (this one declares "${impact}")` : ' (this one declares no visibleChanges)'}. Use ${KIND_WORDS} instead.`);
-      }
+      checkNoneKind('mermaid', impact);
       return { version: VERSION, kind, source: checkMermaidSource(value.source) };
     }
   }
@@ -256,6 +378,9 @@ const LABELS = Object.freeze({
   changes: 'What changes',
   numbers: 'Numbers',
   mermaid: 'Diagram',
+  seen: "What you'd see",
+  moment: 'What happened',
+  steps: 'How it works',
 });
 
 /**
@@ -288,6 +413,19 @@ function toMarkdown(diagram) {
     case 'numbers':
       return ['**Numbers:**', '',
         ...d.rows.map((r) => `- ${md(r.label)}: ${md(figure(r.before, d.unit))} → ${md(figure(r.after, d.unit))}`)].join('\n');
+    case 'seen': {
+      const side = (s) => [s.title, ...(s.lines || [])].map(md).join('. ');
+      return [`**What you'd see:** ${md(d.where)}`, '', `- Before: ${side(d.before)}`, `- After: ${side(d.after)}`].join('\n');
+    }
+    case 'moment': {
+      const head = [d.before.date, d.before.ref, d.before.lasted].filter(Boolean).map(md).join(' · ');
+      return ['**What happened:**', '', head, '',
+        ...d.before.events.map((e) => `- ${md(e)}`), '', '- Now:', ...d.after.events.map((e) => `  - ${md(e)}`)].join('\n');
+    }
+    case 'steps': {
+      const row = (label, steps) => `- ${label}: ${steps.map((s) => md(s.caption)).join(' → ')}`;
+      return ['**How it works:**', '', row('Before', d.before), row('After', d.after)].join('\n');
+    }
     default:
       // The source passed checkMermaidSource, which leaves no fence in it.
       return ['```mermaid', d.source.replace(/```/g, ''), '```'].join('\n');
@@ -333,6 +471,9 @@ module.exports = {
   VERSION,
   KINDS,
   FIXED_KINDS,
+  NONE_KINDS,
+  SEEN_LOOKS,
+  SCENES,
   OPS,
   LIMITS,
   LABELS,

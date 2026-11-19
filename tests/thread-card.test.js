@@ -228,15 +228,16 @@ test('the card keeps to itself: the menu on its first line, a reason where a pic
   assert.match(card, /\{dotLine\(\[app \? app\.name : null, what, category\]\)\}/);
   assert.match(read(REQUEST), /<ThreadKicker kind="request" number=\{r\.number\} category=\{r\.category\} \/>/);
   assert.match(read(CHANGE), /<ThreadKicker kind="change" number=\{v\.number\} category=\{v\.category\} \/>/);
-  // No picture: why, where it would be.
-  assert.match(card, /export function NoPicture\(\{ none, phase, stopped, touches, diagramLed = false \}/);
-  assert.match(read(CHANGE), /\{cardLook && !v\.shots \? <NoPicture none=\{!!v\.shotsNone\} phase=\{phaseOf\(v\)\} stopped=\{fixStanding\(v\.testing\) === 'stopped'\} touches=\{v\.touches\} diagramLed=\{!!readDiagram\(body\.diagram\)\} \/> : null\}/);
-  // #6814: a change with nothing visible shows "What it touches" where the
-  // box was, and drops the box when the author's diagram already leads.
+  // No picture: why, where it would be (#6832: the change's diagram, not
+  // "What it touches", which moved to its Technical details).
+  assert.match(card, /export function NoPicture\(\{ none, phase, stopped, diagram, diagramLed = false \}/);
+  assert.match(read(CHANGE), /\{cardLook && !v\.shots \? <NoPicture none=\{!!v\.shotsNone\} phase=\{phaseOf\(v\)\} stopped=\{fixStanding\(v\.testing\) === 'stopped'\} diagram=\{body\.diagram\} diagramLed=\{!!readDiagram\(body\.diagram\)\} \/> : null\}/);
+  // #6832: a change with nothing visible draws its own picture where the box
+  // was, and says it has none yet when there is none.
   assert.match(card, /if \(diagramLed\) return null;/);
-  assert.match(card, /if \(touchesPicture\) return <TouchesPicture t=\{touchesPicture\} nothingVisible \/>;/);
-  assert.match(card, /return <ShotsWait state="none" title=\{t\('project:topic\.card\.shots\.noneTitle'\)\} text=\{t\('project:topic\.card\.shots\.noneText'\)\} \/>;/, 'no touches keeps today\'s box');
-  assert.match(read(CHANGES), /<NoPicture none=\{!!view\.v\.shotsNone\} phase=\{phaseOf\(view\.v\)\} stopped=\{fixStanding\(view\.v\.testing\) === 'stopped'\} touches=\{view\.v\.touches\} \/>/);
+  assert.match(card, /if \(picture\) return <Diagram d=\{picture\} source="author" \/>;/);
+  assert.match(card, /return <ShotsWait state="no-picture" title=\{t\('project:topic\.card\.shots\.noPictureTitle'\)\} text=\{t\('project:topic\.card\.shots\.noPictureText'\)\} \/>;/);
+  assert.match(read(CHANGES), /<NoPicture none=\{!!view\.v\.shotsNone\} phase=\{phaseOf\(view\.v\)\} stopped=\{fixStanding\(view\.v\.testing\) === 'stopped'\} diagram=\{view\.body\.diagram\} \/>/);
   assert.equal(message('project:topic.card.shots.notYetTitle'), 'No screenshots yet');
   assert.equal(message('project:topic.card.shots.neverTitle'), 'No screenshots');
   // A layer opens directly under the title and stays inside the card, which
@@ -447,27 +448,24 @@ test('the ballot\'s foot says who leads, that the leaders are level, or that the
   assert.equal(message('project:topic.card.ballot.which'), 'Which one should go live?');
 });
 
-test('#6814: a change with nothing visible shows "What it touches" where the empty box was, and nothing under a diagram', () => {
+test('#6832: a change with nothing visible shows its picture where the empty box was, and a box saying it has none yet', () => {
   const { renderComponent } = require('./lib/render-tsx');
-  const touches = {
-    version: 1, files: 2,
-    areas: [
-      { key: 'screens', label: 'Screens', files: 0, lines: 0 },
-      { key: 'server', label: 'Server', files: 2, lines: 9 },
-      { key: 'database', label: 'Database', files: 0, lines: 0 },
-      { key: 'tests', label: 'Tests', files: 0, lines: 0 },
-    ],
+  const seen = {
+    version: 1, kind: 'seen', where: "A stuck change's status", look: 'status',
+    before: { title: 'Tests failed', lines: ['#22 ERROR: exit code: 1'] },
+    after: { title: 'Needs a catch-up with main', lines: ['Your edit and a newer one changed the same text.'] },
   };
   const none = { none: true, phase: 'live', stopped: false };
-  const drawn = renderComponent(CARD, 'NoPicture', { ...none, touches });
-  assert.match(drawn, /class="dev-ws-diagram dev-ws-touches"/);
-  assert.match(drawn, /Nothing on screen changes/);
+  const drawn = renderComponent(CARD, 'NoPicture', { ...none, diagram: seen });
+  assert.match(drawn, /data-ws-diagram="seen"/, 'the change counts its own picture, never "What it touches"');
+  assert.match(drawn, /Needs a catch-up with main/);
+  assert.doesNotMatch(drawn, /data-ws-touches/, 'that picture lives in Technical details now');
   assert.doesNotMatch(drawn, /data-thread-wait/, 'the empty box is not drawn under the picture');
-  assert.equal(renderComponent(CARD, 'NoPicture', { ...none, touches, diagramLed: true }), '',
+  assert.equal(renderComponent(CARD, 'NoPicture', { ...none, diagram: seen, diagramLed: true }), '',
     'the author’s diagram already leads the page');
   const box = renderComponent(CARD, 'NoPicture', { ...none });
-  assert.match(box, /data-thread-wait="none"/, 'no picture read yet keeps today’s box');
-  assert.match(box, /Nothing you can see changes/);
+  assert.match(box, /data-thread-wait="no-picture"/, 'nothing on screen changes and there is no picture');
+  assert.match(box, /No picture yet/);
 });
 
 test('a request with a summary shows it on the card, says what it was written from, and keeps the asker\'s words a press away', () => {

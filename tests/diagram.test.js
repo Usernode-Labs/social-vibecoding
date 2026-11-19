@@ -157,10 +157,101 @@ test('declare_diagram is expected, not optional, for a change declared impact no
   assert.ok(at > 0);
   const block = worker.slice(at, worker.indexOf('inputSchema:', at));
   assert.doesNotMatch(block, /'Optional\./, 'the description no longer opens by calling it optional');
-  assert.match(block, /Expected for every change you declared with declare_visible_changes impact "none"/);
+  // #6832: it says what a change nobody sees needs, and names the three
+  // pictures in the order the bot chooses them.
+  assert.match(block, /Required for every change you declared with declare_visible_changes impact "none"/);
   assert.match(block, /Call declare_visible_changes first\. Calling again replaces the diagram\./,
     'the kind rules and limits are kept');
+  assert.ok(block.indexOf('kind seen') < block.indexOf('kind moment') && block.indexOf('kind moment') < block.indexOf('kind steps'),
+    'the three pictures are named in the order the bot picks them');
   assert.match(worker, /After impact none, call declare_diagram: it is the only picture voters get\./);
   assert.match(read('src/services/homeroom-bot-live.js'),
-    /'If you declared impact "none", always call declare_diagram: it is the only picture voters get\.'/);
+    /'If you declared impact "none", always call declare_diagram with one of its three pictures/);
+});
+
+// ── #6832: the three pictures for a change nobody sees ────────────────────
+
+const SEEN = {
+  version: 1, kind: 'seen', where: "A stuck change's status", look: 'status',
+  before: { title: 'Tests failed', lines: ['#22 ERROR: exit code: 1'] },
+  after: { title: 'Needs a catch-up with main', lines: ['Your edit and a newer one changed the same text.'] },
+};
+const MOMENT = {
+  version: 1, kind: 'moment',
+  before: { date: '2026-11-18', ref: 'PR #6699', lasted: 'about 25 minutes', events: ['Caught up with main', 'The same text was kept twice'] },
+  after: { events: ['Tried again', 'Pushed or handed back'] },
+};
+const STEP = { pic: 'two-edits', caption: 'Two edits' };
+const STEPS = {
+  version: 1, kind: 'steps',
+  before: [STEP, { pic: 'text-twice', caption: 'Same text twice' }, { pic: 'cant-build', caption: "Preview can't build" }],
+  after: [STEP, { pic: 'merged', caption: 'Merged' }, { pic: 'checked', caption: 'Checked', retry: true, note: 'Handed back if still wrong' }, { pic: 'builds', caption: 'Preview builds' }],
+};
+
+test('#6832: seen, moment and steps are accepted and normalised beside impact "none"', () => {
+  assert.deepEqual(diagram.parseDiagram(SEEN, { impact: 'none' }), SEEN);
+  assert.deepEqual(diagram.parseDiagram(MOMENT, { impact: 'none' }), MOMENT);
+  const steps = diagram.parseDiagram(STEPS, { impact: 'none' });
+  assert.equal(steps.before.length, 3);
+  assert.equal(steps.after[2].retry, true);
+  // The list the renderer draws from is frozen and exported.
+  assert.ok(Object.isFrozen(diagram.SCENES));
+  assert.ok(diagram.SCENES.includes('two-edits') && diagram.SCENES.includes('vote'));
+  assert.deepEqual([...diagram.NONE_KINDS], ['seen', 'moment', 'steps']);
+  assert.ok(Object.isFrozen(diagram.SEEN_LOOKS));
+});
+
+test('#6832: each of the three is refused unless the call declares impact "none"', () => {
+  for (const d of [SEEN, MOMENT, STEPS]) {
+    assert.throws(() => diagram.parseDiagram(d, { impact: 'ui' }), /only for a change nobody sees/);
+    assert.throws(() => diagram.parseDiagram(d, {}), /only for a change nobody sees/);
+    // A stored record reads back without re-asking its submission's impact.
+    assert.equal(diagram.storedDiagram(d).kind, d.kind);
+  }
+});
+
+test('#6832: a seen picture needs a look from the frozen set, at most two lines a side, and must change', () => {
+  assert.equal(diagram.parseDiagram({ ...SEEN, look: 'notice' }, { impact: 'none' }).look, 'notice');
+  assert.throws(() => diagram.parseDiagram({ ...SEEN, look: 'banner' }, { impact: 'none' }), /diagram\.look: must be status, notice, message, count/);
+  assert.throws(() => diagram.parseDiagram({ ...SEEN, after: { title: 'Tests failed', lines: SEEN.before.lines } }, { impact: 'none' }), /must differ/);
+  assert.throws(() => diagram.parseDiagram({ ...SEEN, before: { title: 'x', lines: ['a', 'b', 'c'] } }, { impact: 'none' }), /at most 2 entries|1 to 2|0 to 2/);
+  assert.throws(() => diagram.parseDiagram({ ...SEEN, where: 'x'.repeat(61) }, { impact: 'none' }), /at most 60/);
+  assert.throws(() => diagram.parseDiagram({ ...SEEN, extra: 1 }, { impact: 'none' }), /unknown field "extra"/);
+  assert.throws(() => diagram.parseDiagram({ ...SEEN, before: { title: 'x', extra: 1 } }, { impact: 'none' }), /unknown field "extra"/);
+});
+
+test('#6832: a moment needs a real past date, a change it happened to, and 1 to 4 events a side', () => {
+  assert.throws(() => diagram.parseDiagram({ ...MOMENT, before: { ...MOMENT.before, date: '2999-01-01' } }, { impact: 'none' }), /must not be in the future/);
+  assert.throws(() => diagram.parseDiagram({ ...MOMENT, before: { ...MOMENT.before, date: '2026-02-31' } }, { impact: 'none' }), /real calendar date/);
+  assert.throws(() => diagram.parseDiagram({ ...MOMENT, before: { ...MOMENT.before, date: '18 Nov' } }, { impact: 'none' }), /YYYY-MM-DD/);
+  assert.throws(() => diagram.parseDiagram({ ...MOMENT, before: { ...MOMENT.before, ref: 'a merge that went wrong' } }, { impact: 'none' }), /must name the change it happened to/);
+  assert.throws(() => diagram.parseDiagram({ ...MOMENT, after: { events: [] } }, { impact: 'none' }), /1 to 4/);
+  assert.throws(() => diagram.parseDiagram({ ...MOMENT, before: { ...MOMENT.before, events: ['a', 'b', 'c', 'd', 'e'] } }, { impact: 'none' }), /1 to 4/);
+  assert.equal(diagram.parseDiagram({ ...MOMENT, before: { date: '2026-11-18', ref: 'request #6829', events: ['One'] }, after: { events: ['Two'] } }, { impact: 'none' }).before.lasted, undefined);
+});
+
+test('#6832: a steps picture keeps to the fixed set, five a row, three caption words and one note a row', () => {
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, before: [{ pic: 'sparkles', caption: 'x' }] }, { impact: 'none' }), /picture set/);
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, before: Array(6).fill(STEP) }, { impact: 'none' }), /1 to 5/);
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, before: [{ pic: 'merged', caption: 'one two three four' }] }, { impact: 'none' }), /at most 3 words/);
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, before: [{ pic: 'merged', caption: 'x'.repeat(25) }] }, { impact: 'none' }), /at most 24/);
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, before: [{ pic: 'merged', caption: 'a', note: 'n' }, { pic: 'vote', caption: 'b', note: 'm' }] }, { impact: 'none' }), /at most one step may carry a note/);
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, before: [{ pic: 'merged', caption: 'a', retry: 'yes' }] }, { impact: 'none' }), /must be true or false/);
+  assert.throws(() => diagram.parseDiagram({ ...STEPS, after: STEPS.before }, { impact: 'none' }), /must differ/);
+});
+
+test('#6832: the pull request block says a seen, a moment and a steps picture in words', () => {
+  const seen = diagram.toMarkdown(SEEN);
+  assert.match(seen, /What you'd see:\*\* A stuck change's status/);
+  assert.match(seen, /Before: Tests failed\. /);
+  assert.match(seen, /After: Needs a catch-up with main\./);
+  const moment = diagram.toMarkdown(MOMENT);
+  assert.match(moment, /2026-11-18 · PR \\#6699 · about 25 minutes/);
+  assert.match(moment, /- Now:/);
+  const steps = diagram.toMarkdown(STEPS);
+  assert.match(steps, /Before: Two edits → Same text twice → Preview can't build/);
+  assert.match(steps, /After: Two edits → Merged → Checked → Preview builds/);
+  assert.equal(diagram.LABELS.seen, "What you'd see");
+  assert.equal(diagram.LABELS.moment, 'What happened');
+  assert.equal(diagram.LABELS.steps, 'How it works');
 });

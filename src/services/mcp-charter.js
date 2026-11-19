@@ -214,6 +214,14 @@ const CHARTER_SECTIONS = Object.freeze([
     text: 'A proposal is read by the app\'s whole group, and not all of them are developers. submit_work takes TWO pieces of prose for that reason, and they are shown as two sections. `summary` is the user-facing half and the first thing anybody reads: one to three short sentences, plain everyday English, saying what changes for somebody USING the app — what looks different, what they can now do, what stops going wrong. No file names, no identifiers, no code, no developer vocabulary. `description` is the technical half: it becomes the pull request body and sits behind a collapsed "Technical details" disclosure, so implementation, trade-offs and testing detail belong there and are not lost. Sending only `description` is the common mistake and it is the one worth avoiding: a proposal that arrives without a summary shows a non-technical voter nothing but the diff explained in developer terms. Write the summary from what the person voting would notice, not from what you edited. On-platform sessions have this written for them; a submission through this connector does not, so it is yours to write.',
   },
   {
+    // Charter-only (#6832). It binds a coding agent that declared impact
+    // "none": the three pictures are the only thing a non-technical voter can
+    // read about such a change, and Homeroom's follow-up adds one otherwise.
+    id: 'no-visible-change-picture',
+    title: 'A change nobody sees still gets a picture',
+    text: 'A change that alters nothing on screen has no before & after shots, so `declare_diagram` is the only picture voters get, and a declaration with none of its three pictures counts as incomplete. Choose one in this fixed order. First, kind `seen` when anything a person could notice changes — a status line, a message, a notice, a count — with the change\'s real words on each side and a `where` naming the element. Otherwise kind `moment` when the request reports a real incident: a dated before and after timeline taken only from the request\'s own dates, references and durations, never an invented one. Otherwise kind `steps`: a before row and an after row of at most five drawings from the fixed set (two-edits, text-twice, text-once, merged, checked, retry, builds, cant-build, handed-back, person, bell, card, vote), each with a caption of one to three words, at most one note a row, and `retry` on a step that was tried again. Every text is 1 to 60 characters, and the call is refused with `invalid_diagram` and nothing written when a record breaks those limits.',
+  },
+  {
     // Charter-only. It binds a coding agent declaring `visibleChanges` on
     // submit_work, which the work order also tells it at that moment; the
     // list itself lives in shots-copy-limits.js, so the bot's build lines,
