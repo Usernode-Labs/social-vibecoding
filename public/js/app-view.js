@@ -13347,7 +13347,9 @@ const AppView = {
         // is not up for one.
         const state = ws.rowWords ? PlatformI18n.t(ws.rowWords.stage.id, ws.rowWords.stage.values || {})
           : WORDS[ws.key] ? PlatformI18n.t(WORDS[ws.key]) : ws.label;
-        const person = ws.who && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
+        // The request's own row leading (_rowOverPerson) names nobody: its
+        // words are not about the person whose session is there.
+        const person = ws.who && !ws.rowLeads && (ws.key === 'in_review' || ws.key === 'working' || ws.key === 'paused' || ws.key === 'claimed')
           ? ws.who : null;
         const more = ws.people > 1 ? ws.people - 1 : 0;
         let label = state;
@@ -28039,6 +28041,18 @@ const AppView = {
   // off its standing). Its sessions are never `in_progress`, so before this
   // state a request it was building read as nobody's and offered Claim.
   //
+  // The one rule (frontend/src/lib/work-state.ts): a member's own work (a
+  // session, a claim) words the chip only while the request's stored row
+  // says the same, or says nobody has started (_rowOverPerson). When the row
+  // says something else, the row leads: Homeroom bot's state when it is on
+  // it (the same chip it has with nobody else there; a paused session beside
+  // the bot never named anybody either), else the row's own stage words with
+  // the person's work as the detail (the chip's title and the page's note
+  // still say who started what, and when it clears itself). The chip used to
+  // prefer any member's active session, so a request the bot was building,
+  // or one whose change was taking its screenshots, read "Being worked on ·
+  // zura" from a session that had nothing to do with where it stood.
+  //
   // Pure and DOM-free so it can be unit-tested directly, and shared by the
   // chip, the topic head's plain-language note and the report's row notes —
   // one derivation, so those three can never disagree. It is deliberately
@@ -28097,12 +28111,15 @@ const AppView = {
     // list: routes/issues.js), else the request's own row when that change is
     // its lead. Null while it is up for a vote: then "Waiting for approval".
     let rowWords = null;
+    // The stored row's words when they are not a person's work (above).
+    const over = review.length ? null : AppView._rowOverPerson(issue);
+    let rowLeads = false;
     if (review.length) {
       key = 'in_review'; tone = 'violet';
       const s = pick(review); who = named(s); at = s.lastActivityAt;
       rowWords = AppView._reviewRowWords(issue, s);
       if (rowWords && rowWords.busy) spinner = true;
-    } else if (active.length) {
+    } else if (active.length && !over) {
       key = 'working';
       // Emerald + spinner only while a turn is genuinely running, which is
       // the same `busy` the session card itself paints — the two surfaces
@@ -28113,6 +28130,29 @@ const AppView = {
     } else if (bot) {
       key = 'bot'; spinner = true;
       at = bot.since || null;
+    } else if (over && (active.length || paused.length || claims.length)) {
+      // Somebody's session or claim is there, and the row says where the
+      // request stands: its words, quietly, naming nobody. The key stays the
+      // person's state, which the note under it (who, since when, and the
+      // day a paused session or a claim clears itself) and the board's
+      // column read.
+      rowLeads = true; rowWords = over;
+      tone = over.busy ? 'sky' : 'zinc'; spinner = !!over.busy;
+      if (active.length) {
+        key = 'working';
+        const s = pick(active); who = named(s); at = s.lastActivityAt;
+      } else if (paused.length) {
+        key = 'paused';
+        const s = pick(paused); who = named(s); at = s.lastActivityAt;
+        clearAt = clearMs(at, AppView.WORK_PAUSED_WINDOW_DAYS);
+      } else {
+        key = 'claimed';
+        const c = claims.find((x) => x.mine) || claims[0];
+        who = c.mine ? 'you' : (c.username || null);
+        at = c.claimedAt || null;
+        clearAt = Date.parse(c.expiresAt || '') || clearMs(at, AppView.WORK_CLAIM_TTL_DAYS);
+        if (!Number.isFinite(clearAt)) clearAt = 0;
+      }
     } else if (paused.length) {
       key = 'paused'; tone = 'zinc';
       const s = pick(paused); who = named(s); at = s.lastActivityAt;
@@ -28150,7 +28190,8 @@ const AppView = {
     const namesAPerson = key === 'in_review' || key === 'working'
       || key === 'paused' || key === 'claimed';
     let label = rowWords ? PlatformI18n.t(rowWords.stage.id, rowWords.stage.values || {}) : PlatformI18n.t(LABEL_IDS[key]);
-    if (namesAPerson && who) {
+    // The row's own words are not about the person whose session is there.
+    if (namesAPerson && who && !rowLeads) {
       // `who` is the viewer ('you') or a username; the chip says either.
       const person = who === 'you' ? PlatformI18n.t('changes:chips.work.you') : who;
       label = people > 1
@@ -28164,7 +28205,32 @@ const AppView = {
       botAskedBy: bot && !bot.mine ? (bot.askedBy || null) : null,
       otherClaims: key !== 'claimed' && claims.length > 0,
     });
-    return { key, label, tone, spinner, who, people, at, clearAt, tip: note, note, ...(rowWords ? { rowWords } : {}) };
+    return {
+      key, label, tone, spinner, who, people, at, clearAt, tip: note, note,
+      ...(rowWords ? { rowWords } : {}), ...(rowLeads ? { rowLeads: true } : {}),
+    };
+  },
+
+  // The one rule: the request's stored row, when it does not say what a
+  // person's own work (a session, a claim) would: { stage, line, busy }, its
+  // words as this viewer reads them. Null when the row says somebody is
+  // building it (`claimed`, the builder's move) or that nobody has started,
+  // which is when a person's work is the truest thing to say (the same test
+  // the status card makes, _standingCard); and null with no stored row: a
+  // standing rebuilt from an older payload's fields (_issueStanding) is not
+  // one, so such a row keeps the order it always had.
+  _rowOverPerson(issue) {
+    if (!issue || issue.state === 'closed') return null;
+    const s = AppView._issueStanding(issue);
+    const stored = !!s && (s === issue.standing || (!!issue.track && s === issue.track.work));
+    if (!stored) return null;
+    const code = s.line && s.line.code;
+    const idle = s.stage === 'reading' && AppView.STANDING_NOT_STARTED.has(code);
+    const theirs = s.stage === 'building' && (code === 'claimed' || s.whoseMove === 'builder');
+    if (idle || theirs) return null;
+    const words = AppView._standingWords(s);
+    if (!words) return null;
+    return { ...words, busy: s.stage === 'building' || s.stage === 'checking' || s.stage === 'going_live' };
   },
 
   // T2.5 (19 Nov 2026): the stored row's words for a change a request is in
