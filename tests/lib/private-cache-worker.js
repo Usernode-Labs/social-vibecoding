@@ -18,9 +18,10 @@ const json = (body, scope = A, { status = 200, policy = 'private', headers = {} 
 // storage/network/lifecycle APIs replaced. Cache handles survive deletion,
 // matching Cache Storage's behavior rather than hiding late-write races.
 // `timers` replaces setTimeout/clearTimeout, so a test can fire a deadline
-// on demand instead of waiting it out.
+// on demand instead of waiting it out. `clock`, when given, is the worker's
+// Date.now(), so a test can step past a gap the worker measures in time.
 function worker({ source = fs.readFileSync(require.resolve('../../public/sw.js'), 'utf8'), fetcher,
-  timers = { setTimeout, clearTimeout } } = {}) {
+  timers = { setTimeout, clearTimeout }, clock = null } = {}) {
   const stores = new Map(), handlers = {}, messages = [], requests = [], lifetime = [];
   let network = fetcher || (async () => json({ fake: 'A' }));
   const requestOf = key => typeof key === 'string' ? new Request(new URL(key, ORIGIN)) : key;
@@ -62,8 +63,9 @@ function worker({ source = fs.readFileSync(require.resolve('../../public/sw.js')
     self: { location: { origin: ORIGIN }, addEventListener(name, fn) { handlers[name] = fn; },
       clients: { claim: async () => {}, matchAll: async () => [{ postMessage: m => messages.push(m) }] },
       skipWaiting: async () => {} },
-    URL, Headers, Request, Response, ReadableStream, DOMException,
+    URL, Headers, Request, Response, ReadableStream, TransformStream, DOMException,
     caches, fetch, setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout,
+    ...(clock ? { Date: class extends Date { static now() { return clock(); } } } : {}),
   });
   const waitUntil = promise => { lifetime.push(Promise.resolve(promise)); };
   return {

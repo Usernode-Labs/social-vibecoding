@@ -824,14 +824,26 @@ function watch(promise) {
 // time, and a network that now waits for the test to answer it.
 async function savedCopyWorker(path = '/api/private-fixture', body = { fake: 'saved' }) {
   const timers = manualTimers();
-  const h = harness.worker({ timers, fetcher: async () => harness.json(body) });
+  const clock = stepClock();
+  const h = harness.worker({ timers, clock: clock.now, fetcher: async () => harness.json(body) });
   await (await h.get(harness.A, path)).json();
   await h.drain();
   assert.equal(timers.live().length, 0, 'an answer in time leaves no deadline running');
+  // That answer's body told the page the network answered; start each test
+  // with nothing said, and past the gap that notice keeps.
+  h.messages.length = 0;
+  clock.step(NETWORK_ANSWERED_GAP_MS);
   const held = deferred();
   h.setNetwork(() => held.promise);
-  return { h, timers, held };
+  return { h, timers, held, clock };
 }
+
+// The worker's Date.now(): the real time, plus however far a test stepped.
+function stepClock() {
+  let ahead = 0;
+  return { now: () => Date.now() + ahead, step(ms) { ahead += ms; } };
+}
+const NETWORK_ANSWERED_GAP_MS = 2000;
 
 test('a fresh read with a saved copy is answered from it once the network misses the long deadline', async () => {
   const { h, timers, held } = await savedCopyWorker();
@@ -908,7 +920,8 @@ test('a fresh read the network answers in time is the network\'s answer, exactly
   assert.equal(answer.value.headers.get('sw-cached-at'), null);
   await h.drain();
   assert.equal(timers.live().length, 0, 'the deadline is cancelled');
-  assert.equal(h.messages.length, 0, 'the page already has this answer, and read-timeout counts it there');
+  assert.deepEqual(posted(h), [], 'the page already has this answer: nothing to re-read');
+  assert.equal(answeredPosts(h), 1, 'its body arriving is the network answering (reportArriving)');
 });
 
 test('with no saved copy a fresh read waits for the network, however long it takes', async () => {
@@ -1003,6 +1016,128 @@ test('late network answers behind saved copies are told at most once every two s
   next.resolve(harness.json({ fake: 'saved' }));
   await h.drain();
   assert.equal(answeredPosts(h), 1, 'a burst of late answers is one message, not one per read');
+});
+
+// ── 2d. A body still arriving is the network answering ───────────────────
+//
+// The fourth native-offline follow-up (19 Nov 2026 retest, 600 ms / 500 kbps):
+// a change page's four before/after shots queued 17 s of bytes on the link,
+// and every read asked for after them waited behind that queue, the /health
+// probe too. The page never sees an image's bytes, so it went 10 s without an
+// answer and showed "Connecting…" while a chunk arrived every 250 ms.
+
+function chunkedBody() {
+  let controller;
+  const stream = new ReadableStream({ start(c) { controller = c; } });
+  return {
+    stream,
+    push: (text) => controller.enqueue(new TextEncoder().encode(text)),
+    end: () => controller.close(),
+  };
+}
+const SHOT = `/api/apps/fake/proposals/1/shots/${'f'.repeat(32)}?density=device`;
+
+test('a network body says the network is answering while it arrives, not once it is done', async () => {
+  assert.match(SW_SRC, new RegExp(`const NETWORK_ANSWERED_GAP_MS = ${NETWORK_ANSWERED_GAP_MS};`));
+  const clock = stepClock();
+  const body = chunkedBody();
+  const h = harness.worker({ timers: manualTimers(), clock: clock.now, fetcher: async () => new Response(body.stream, {
+    headers: { 'Content-Type': 'image/png', 'Cache-Control': 'private', 'Content-Length': '9' },
+  }) });
+  const res = await h.get(harness.A, SHOT);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('Content-Type'), 'image/png');
+  assert.equal(res.headers.get('Content-Length'), '9', 'a body that was not encoded keeps its length');
+  const reader = res.body.getReader();
+  const bytes = [];
+  const next = async () => { const got = await reader.read(); if (!got.done) bytes.push(...got.value); return got; };
+
+  body.push('abc');
+  await next();
+  await until(() => answeredPosts(h) === 1, 'the first bytes to be told');
+  body.push('def');
+  await next();
+  clock.step(NETWORK_ANSWERED_GAP_MS);
+  body.push('ghi');
+  await next();
+  await until(() => answeredPosts(h) === 2, 'a later chunk, past the gap');
+  body.end();
+  assert.equal((await next()).done, true);
+  await h.drain();
+  assert.equal(new TextDecoder().decode(new Uint8Array(bytes)), 'abcdefghi', 'the bytes reach the page unchanged');
+  assert.equal(answeredPosts(h), 2, 'at most once every two seconds, however many chunks');
+  assert.deepEqual(posted(h), [], 'nothing for the page to re-read');
+});
+
+test('a body the network already decoded is not labelled as encoded', async () => {
+  const h = harness.worker({ timers: manualTimers(), fetcher: async () => harness.json({ fake: 'A' }, harness.A, {
+    headers: { 'Content-Encoding': 'br', 'Content-Length': '7' },
+  }) });
+  const res = await h.get(harness.A);
+  assert.equal(res.headers.get('Content-Encoding'), null);
+  assert.equal(res.headers.get('Content-Length'), null, 'the encoded length is not the length of these bytes');
+  assert.deepEqual(await res.json(), { fake: 'A' });
+  await h.drain();
+  assert.equal(answeredPosts(h), 1);
+});
+
+test('a saved copy, a server that is down and a stored picture say nothing about the network', async () => {
+  const { h, timers, held } = await savedCopyWorker();
+  const saved = watch(h.get(harness.A));
+  await until(() => timers.live().length === 1, 'the deadline');
+  timers.fire();
+  await until(() => saved.settled, 'the saved copy');
+  assert.deepEqual(await saved.value.json(), { fake: 'saved' });
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(answeredPosts(h), 0, 'a saved copy is not the network');
+  held.resolve(harness.json({ fake: 'saved' }));
+  await h.drain();
+
+  const down = harness.worker({ timers: manualTimers(),
+    fetcher: async () => harness.json({ error: 'FAKE_DOWN' }, harness.A, { status: 503, policy: 'no-store' }) });
+  const failed = await down.get(harness.A);
+  assert.equal(failed.status, 503);
+  await failed.json();
+  await down.drain();
+  assert.equal(answeredPosts(down), 0, 'a server that is down is no answer');
+
+  // A picture from the immutable cache: its first download is the network,
+  // the stored copy afterwards is not.
+  const clock = stepClock();
+  const icons = harness.worker({ clock: clock.now,
+    fetcher: async () => new Response('fake-png', { headers: { 'Content-Type': 'image/png' } }) });
+  const avatar = `/avatars/${'a'.repeat(32)}`;
+  assert.equal(await (await icons.get(null, avatar)).text(), 'fake-png');
+  await icons.drain();
+  assert.equal(answeredPosts(icons), 1, 'its download is the network answering');
+  clock.step(NETWORK_ANSWERED_GAP_MS);
+  assert.equal(await (await icons.get(null, avatar)).text(), 'fake-png');
+  await icons.drain();
+  assert.equal(icons.requests.length, 1, 'the second one came from the cache');
+  assert.equal(answeredPosts(icons), 1, 'and said nothing');
+});
+
+test('the notice still goes from a body that outlives its fetch event', async () => {
+  const body = chunkedBody();
+  const h = harness.worker({ timers: manualTimers(),
+    fetcher: async () => new Response(body.stream, { headers: { 'Content-Type': 'image/png' } }) });
+  let result;
+  let settled = false;
+  h.handlers.fetch({
+    request: new Request(`${harness.ORIGIN}${SHOT}`, { cache: 'reload', headers: { [harness.SCOPE_HEADER]: harness.A } }),
+    respondWith(p) { result = p; p.then(() => { settled = true; }, () => { settled = true; }); },
+    // A finished event has no lifetime left to extend; browsers throw.
+    waitUntil() { if (settled) throw new DOMException('The event handler is already finished.', 'InvalidStateError'); },
+  });
+  const res = await result;
+  await tick();
+  assert.equal(settled, true);
+  const reader = res.body.getReader();
+  body.push('late bytes');
+  await reader.read();
+  await until(() => answeredPosts(h) === 1, 'the notice');
+  body.end();
+  assert.equal((await reader.read()).done, true);
 });
 
 test('only answers that speak about the copy retire it on screen', () => {
